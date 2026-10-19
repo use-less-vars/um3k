@@ -2,7 +2,7 @@
 \label{sec:results}
 
 \noindent\emph{Status: draft -- everything in this section is produced by two short scripts that together
-run in under five seconds and whose numbers have been re-measured for this revision; the cavity frequency
+run in under ten seconds and whose numbers have been re-measured for this revision; the cavity frequency
 tables themselves are in Section~\ref{sec:eigen} and are cross-referenced rather than repeated here.}
 
 The report has so far been about structure: which operators, which identity, which bound. This section is about
@@ -11,10 +11,10 @@ which builds the $10\times7\times5$ cavity of $1.0\times0.7\times0.5$ m, drives 
 pulse of nominal bandwidth \SI{400}{\mega\hertz} on a single $z$-directed edge near a corner, records the
 following $1500$ steps of ring-down, and writes the spectrum, a field slice and the energy trace. The time step
 is $\Delta t=1.907\times10^{-10}$ s from \eqref{eq:cfl}, so the recorded window is \SI{343}{\nano\second} of
-simulated time, and that run takes about \SI{3}{\second} on one core. The fourth, Figure~\ref{fig:abc}, comes
+simulated time, and that run takes about \SI{8}{\second} on one core. The fourth, Figure~\ref{fig:abc}, comes
 from a second and much shorter example, \texttt{examples/abc\_duct.py}, which needs about \SI{1.3}{\second}.
 Between them the two examples produce every number and every figure in this section, and together they run in
-under \SI{5}{\second} on one core. Neither uses a random number generator, and the four figures regenerate
+under \SI{10}{\second} on one core. Neither uses a random number generator, and the four figures regenerate
 byte-identically.
 
 \subsection{The ring-down spectrum}
