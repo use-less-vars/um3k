@@ -1,18 +1,21 @@
 \section{Results}
 \label{sec:results}
 
-\noindent\emph{Status: draft -- everything in this section is produced by a single script that runs in about six
-seconds and whose numbers have been re-measured for this revision; the cavity frequency tables themselves are in
-Section~\ref{sec:eigen} and are cross-referenced rather than repeated here.}
+\noindent\emph{Status: draft -- everything in this section is produced by two short scripts that together
+run in under five seconds and whose numbers have been re-measured for this revision; the cavity frequency
+tables themselves are in Section~\ref{sec:eigen} and are cross-referenced rather than repeated here.}
 
 The report has so far been about structure: which operators, which identity, which bound. This section is about
-what comes out. All three figures below are produced by one artefact, \texttt{examples/cavity\_resonance.py},
+what comes out. The first three figures below come from one artefact, \texttt{examples/cavity\_resonance.py},
 which builds the $10\times7\times5$ cavity of $1.0\times0.7\times0.5$ m, drives it for $300$ steps with a Ricker
 pulse of nominal bandwidth \SI{400}{\mega\hertz} on a single $z$-directed edge near a corner, records the
 following $1500$ steps of ring-down, and writes the spectrum, a field slice and the energy trace. The time step
 is $\Delta t=1.907\times10^{-10}$ s from \eqref{eq:cfl}, so the recorded window is \SI{343}{\nano\second} of
-simulated time, and the whole run takes about $5.5$ s on one core. There is no randomness anywhere in it, and the
-figures regenerate byte-identically.
+simulated time, and that run takes about \SI{3}{\second} on one core. The fourth, Figure~\ref{fig:abc}, comes
+from a second and much shorter example, \texttt{examples/abc\_duct.py}, which needs about \SI{1.3}{\second}.
+Between them the two examples produce every number and every figure in this section, and together they run in
+under \SI{5}{\second} on one core. Neither uses a random number generator, and the four figures regenerate
+byte-identically.
 
 \subsection{The ring-down spectrum}
 \label{sec:res-spectrum}
@@ -129,6 +132,82 @@ vanishes as $h/\lambda\to0$, and it is neither an instability nor a symptom of a
 test, the field at the probe is exactly zero in the first three steps after the source is excited, which is the
 causality check on a scheme that advances both fields at once.
 
+\subsection{Absorbing boundaries}
+\label{sec:res-abc}
+
+The rest of this section gets by without the boundary condition that an open-region problem cannot do
+without. Mur's first-order condition \cite{mur1981} is a one-way relation: it lets an outgoing wave leave the
+domain instead of reflecting from the wall. Written for an edge on the boundary, in terms of the tangential
+electric field and the derivative normal to the wall, it is
+\begin{equation}
+  \frac{\partial E_{\mathrm{tan}}}{\partial t}
+  + c_0\frac{\partial E_{\mathrm{tan}}}{\partial n} = 0
+  \qquad\Longleftrightarrow\qquad
+  \hat e^{\,n+1}_{0} = \hat e^{\,n}_{1}
+  + K\bigl(\hat e^{\,n+1}_{1} - \hat e^{\,n}_{0}\bigr),
+  \label{eq:mur}
+\end{equation}
+on the left the continuum statement and on the right the update the code applies, with
+$K=(c_0\Delta t-h)/(c_0\Delta t+h)$, $h$ the cell size normal to the wall, and the subscripts selecting the
+boundary edge ($0$) and its neighbour one cell inward ($1$). Two details of \eqref{eq:mur} carry the accuracy.
+Both correction terms are taken at the pre-step level $n$; moving either of them to $n+1$ is a one-character
+edit that degrades the measured reflection from $-49.6$ dB to $-9.0$ dB on the duct below. And the $K\to0$ limit
+is exactly $\hat e^{\,n+1}_{0}=\hat e^{\,n}_{1}$, the one-cell translation of a purely outgoing wave, which the
+suite asserts as an identity rather than as a tolerance. The stencil is one cell deep, carries no auxiliary
+field and no history array, and an edge shared by two absorbing planes is updated by exactly one of them, in a
+fixed priority order.
+
+The measurement is a two-dimensional duct. \texttt{examples/abc\_duct.py} propagates the $\mathrm{TE}_{10}$ mode
+of a $2.4\times0.64$ m guide on a $320\times16\times1$ grid with $h=\SI{7.5}{mm}$, the four remaining walls
+being perfect conductors, so the problem is exactly $\mathrm{TM}_z$ in two dimensions. A \SI{2}{\giga\hertz}
+burst about \SI{1.5}{\nano\second} wide is launched at $x=\SI{1.2}{m}$ and the field is recorded at
+$x=\SI{0.9}{m}$, which is \SI{0.9}{m} from the near absorbing wall and \SI{1.5}{m} from the far one. The run is
+$900$ steps of $\Delta t=\SI{23.94}{ps}$, or \SI{21.5}{\nano\second} of simulated time.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{../figures/abc_duct.png}
+  \caption{Probe signal in the duct above, with perfect conductors on all six walls and with the first-order
+  condition of \eqref{eq:mur} on the two longitudinal walls. Left panel: the waveform at the probe in linear
+  units, the all-PEC trace dashed and the absorbing trace solid, with the three expected arrivals marked by
+  dotted vertical lines, one at the incident pulse and one at each wall's echo; the two traces are
+  indistinguishable at the incident pulse and separate immediately after it. Right panel: the same two traces
+  in dB relative to the incident peak, with the $-40$ dB test threshold drawn dash-dotted; the absorbing trace
+  falls to a floor of about $-50$ dB and the all-PEC trace stays at about $0$ dB.}
+  \label{fig:abc}
+\end{figure}
+
+Measured against the incident peak, the near wall returns $-49.57$ dB and the far wall $-49.58$ dB, while the
+same duct with perfect conductors returns $+0.21$ and $+0.22$ dB, which is the whole pulse. The two runs
+produce the same incident peak, $186.741$ in both, so the absorption figure is a ratio of two launches and not a
+difference between two different ones. The $-49.57$ dB is not fitted. The burst travels at $1.00693\,c_0$ on
+this mesh, and a condition that assumes $c_0$ cannot absorb a wave that does not travel at $c_0$, so the
+reflection it leaves behind should be $|v_{\mathrm{ph}}-c_0|/(v_{\mathrm{ph}}+c_0)$, or $-49.24$ dB; the
+measured floor sits $0.3$ dB below that prediction. The peak times behave the same way: each measured peak is
+late by the same \SI{0.12}{ns}, and the separations between arrivals, which are what the wall positions fix,
+agree with the geometric ones to $0.002$ ns -- $5.961$ ns against $5.963$ for the near echo, $1.987$ against
+$1.988$ for the far one.
+
+The residual is a dispersion floor rather than a defect of the boundary condition. The first-order condition is
+exact for normal incidence on a non-dispersive medium, so the only thing left to reflect is the part of the
+pulse that the interior has already distorted, and $|v_{\mathrm{ph}}-c_0|/(2c_0)$ is then a prediction rather
+than a coincidence. It also says what a finer mesh would do: the interior's phase-velocity error is second order
+in $h$ and the reflection it induces is first order in the same small quantity, so the floor should deepen by
+about $12$ dB per halving of the cell size, which is a prediction this section does not test. Two things
+follow about what the absorber is not. It is not a PML: there is no conductivity profile, no added layer and no
+auxiliary field, only a modified update on edges that already exist. And it produces no field at a distance from
+anything, because there is still no near-to-far-field transform; what it buys is that an outgoing wave can be
+let out of the box to about $-50$ dB instead of being reflected in full.
+
+The caveat is that this is one measurement, on one mesh, at normal incidence, in two dimensions. Oblique
+incidence is where a first-order one-way condition is weakest, and it is not measured here at all. Evanescent
+and grazing fields are not represented by a condition that assumes a single propagating speed. The edges where
+an absorbing plane meets a conducting one are resolved by the fixed priority order quoted above, and on this
+duct the two absorbing planes do not meet, so that rule is not exercised by the numbers here. What the
+subsection supports is the claim that an outgoing wave can be let out to about $-50$ dB at normal incidence on a
+\SI{7.5}{mm} mesh, which is the first thing an open-region problem needs; it does not support the claim that the
+package absorbs well in general.
+
 \subsection{What this establishes, and what it does not}
 \label{sec:res-scope}
 
@@ -142,16 +221,19 @@ one per cent of the analytic box spectrum on the coarse grids used here, with th
 at the rate Table~\ref{tab:convergence} measures. And a wavefront travels at a speed consistent with the
 dispersion relation of the scheme, with the correct sign and the correct size.
 
-What the results do not establish is anything about radiation. Every number in this section comes from a problem
-whose boundary is a perfect conductor, so no field ever has to leave the domain, and the solver was never asked
-to do the thing that an open-region problem demands: absorb an outgoing wave without reflecting it, and compute a
-field at a distance. There is no absorbing boundary condition in the package, no near-to-far-field transform and
-no port, and consequently there is no scattering result, no impedance and no $S$-parameter here. A cavity is the
-easiest problem in computational electromagnetics precisely in this respect -- it is the one case where the
-boundary condition costs nothing -- so the accuracy quoted above should be read as an accuracy about the
-interior problem, on which every open-region result will later rest but none of which it can replace.
+What the results do not establish is anything about radiation. Apart from the duct of
+Section~\ref{sec:res-abc}, every number in this section comes from a problem whose boundary is a perfect
+conductor, so no field ever has to leave the domain, and the solver is not asked to compute a field at a
+distance from anything. Section~\ref{sec:res-abc} closes half of that gap and only half: it reflects $-49.6$ dB
+of an outgoing pulse where a perfect conductor reflects all of it, the residual being set by the dispersion of
+the interior rather than by the boundary condition itself, and it does so for normal incidence in two dimensions
+only. What is still absent from the package is a near-to-far-field transform and a port, so there is still no
+scattering result, no impedance and no $S$-parameter here. A cavity is the easiest problem in computational
+electromagnetics precisely in this respect -- it is the one case where the boundary condition costs nothing --
+so the accuracy quoted above should be read as an accuracy about the interior problem, on which every
+open-region result will later rest but none of which it can replace.
 
 Closing that gap is the next milestone rather than a refinement of this one, and the acceptance test for it is
 stated in terms of a quantity we cannot currently compute at all. Until a scatterer's bistatic radar cross
 section has been compared with a Mie series, the honest summary of the present state is that the machinery is
-verified and the physics it can address is still enclosed by walls.
+verified and the physics it can address is still short of an open-region scattering problem.

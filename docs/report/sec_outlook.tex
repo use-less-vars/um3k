@@ -2,15 +2,18 @@
 \label{sec:outlook}
 
 \noindent\emph{Status: draft -- the milestone list and the acceptance criteria are transcribed from the roadmap
-that governs the work; the open problems are stated as problems, and none of the milestones after M0 is claimed
-to be working.}
+that governs the work; the open problems are stated as problems, and no milestone after M0 is claimed
+to be complete.}
 
 What remains is not a refinement of what is finished. The cavity solver of Sections~\ref{sec:eigen}
-and~\ref{sec:results} is accurate and its energy is exact, but the package cannot yet radiate: there is no
-absorbing boundary, no near-to-far-field transform and no port, so every problem it can address is enclosed by
-walls. The roadmap is therefore a list of capabilities rather than a list of improvements, and each entry carries
-an acceptance test expressed in terms of a quantity the code cannot currently compute. That is deliberate: a
-milestone is done when its number is reproduced by the test suite, not when the module exists.
+and~\ref{sec:results} is accurate and its energy is exact, and a wave can now be let out of the domain: the
+first-order absorbing condition of Section~\ref{sec:res-abc} reflects about $-50$ dB of an outgoing pulse at
+normal incidence in two dimensions. What the package still cannot do is radiate in the sense a user of it would
+mean: there is no near-to-far-field transform and no port, so nothing has a radiation pattern, nothing scatters,
+and no radar cross section can be quoted. The roadmap is therefore a list of capabilities rather than a list of
+improvements, and each entry carries an acceptance test expressed in terms of a quantity the code cannot
+currently compute. That is deliberate: a milestone is done when its number is reproduced by the test suite, not
+when the module exists.
 
 \begin{table}[H]
   \centering
@@ -21,10 +24,11 @@ milestone is done when its number is reproduced by the test suite, not when the 
     \toprule
     & Status & Deliverable & Acceptance criterion \\
     \midrule
-    M0 & done & time-domain core with the exact invariant; dense cavity eigensolver & thirty tests pass; box
+    M0 & done & time-domain core with the exact invariant; dense cavity eigensolver & thirty-four tests pass; box
     modes within $1.3$\,\% ($1.213$\,\% coarse, $0.615$\,\% fine) and second-order ratio $0.507$ \\
-    M1 & in progress & first-order Mur absorbing condition on the six outer walls, then a stretched-coordinate
-    PML layer & PEC sphere of radius $0.1$ m: bistatic RCS within $0.5$ dB of the Mie series at $ka=1$
+    M1 & in progress & first-order Mur absorbing condition on the six outer planes -- done and measured at normal
+    incidence in two dimensions, Section~\ref{sec:res-abc} -- then a stretched-coordinate PML layer, still to do
+    & PEC sphere of radius $0.1$ m: bistatic RCS within $0.5$ dB of the Mie series at $ka=1$
     (\SI{477}{\mega\hertz}) and $ka=3$ \\
     M2 & planned & near-to-far-field transformation over a Huygens surface, one transient run transformed &
     half-wave dipole at \SI{300}{\mega\hertz}: $\operatorname{Re}Z_{\mathrm{in}}=73\pm5$\,\si{\ohm},
@@ -42,9 +46,10 @@ milestone is done when its number is reproduced by the test suite, not when the 
   \end{tabular}
 \end{table}
 
-Two of these entries are gates rather than features. M1 is the gate to every open-region question: without an
-absorbing boundary there is nothing to compare with a Mie series, and without a far-field transform there is no
-radiation pattern to draw, so M2 has no meaning until M1 has produced a field that leaves the domain. M5 is the
+Two of these entries are gates rather than features. M1 is the gate to every open-region question, and half of it
+is now open: the absorbing condition produces a field that leaves the domain (Section~\ref{sec:res-abc}), so what
+remains is the far-field transform, without which there is no radiation pattern to draw and nothing to compare
+with a Mie series. M2 is therefore blocked on a near-to-far-field transform rather than on the boundary. M5 is the
 gate to every engineering-sized geometry: the dense solver of Section~\ref{sec:eigen} refuses more than $3000$
 free edges, which is a cavity of a few wavelengths and no more, and nothing about a printed antenna fits inside
 that budget. The other four are independent of each other, which is why they can be reordered as time and
@@ -78,12 +83,16 @@ the question we would have to answer before the corresponding milestone could be
         multiply the number of steps by four orders of magnitude. Local time stepping is the textbook answer and
         it interacts badly with an exact global invariant, since a scheme with different steps in different
         regions does not have a single conserved quadratic form of the simple sort.
-  \item \textbf{Where the boundary goes.} Mur's condition and a Berenger layer both assume an outgoing wave and
-        both are approximate on a staggered grid, and the reflection they leave behind sets the floor on any
-        scattering result. Absorbing more than $20$ dB, and then more than $40$ dB, is a numerical question we
-        have not answered; and a PML needs a diagonal tensor material in the layer, which the present scalar
-        material layer cannot express, so M1 begins with an extension of the data structure rather than with an
-        algorithm.
+  \item \textbf{Where the boundary goes.} The first-order condition of Section~\ref{sec:res-abc} reaches about
+        $-50$ dB at normal incidence in two dimensions, so the staging this list used to carry -- absorbing more
+        than $20$ dB, and then more than $40$ dB -- is met. What is open is everything the measurement does not
+        cover. Oblique and grazing incidence is where a one-way condition first-order in $h$ is weakest, and it is
+        unmeasured. A broadband or low-frequency incident field is not represented at all by a condition that
+        assumes a single propagating speed. And the floor left at normal incidence is the interior's dispersion
+        rather than the boundary's: it sits at $|v_{\mathrm{ph}}-c_0|/(2c_0)$ and can only be lowered by refining
+        the mesh, so on a coarse grid no absorbing condition can beat it. Beyond that, a PML needs a diagonal
+        tensor material in the layer, which the present scalar material layer cannot express, so that route begins
+        with an extension of the data structure rather than with an algorithm.
 \end{enumerate}
 
 \subsection{Scope}
@@ -92,7 +101,7 @@ We want to be plain about what the report as a whole claims. \texttt{emfit} is, 
 closed, isotropic, lossless problems on structured grids: it conserves the discrete energy to rounding, it
 reproduces the analytic spectrum of a conducting box to about one per cent on coarse grids with second-order
 convergence, and it propagates a wavefront at the speed its own dispersion relation predicts. It is not yet a tool
-for the questions posed in Section~\ref{sec:theory} about antennas, laminate or scatterers, because those need a
-field that leaves the domain and a port through which power is measured, and neither exists. The milestones above
-are acceptance tests for that transition; the open problems are the parts of it we cannot yet cost. Progress will
-be recorded here as it happens, including the parts that go badly.
+for the questions posed in Section~\ref{sec:theory} about antennas, laminate or scatterers, because those need a far
+field transformed from a Huygens surface and a port through which power is measured, and neither exists. The
+milestones above are acceptance tests for that transition; the open problems are the parts of it we cannot yet
+cost. Progress will be recorded here as it happens, including the parts that go badly.

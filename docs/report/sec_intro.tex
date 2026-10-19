@@ -91,18 +91,22 @@ tense. Where the two disagree, the roadmap is authoritative for status and this 
         fields; the sharp CFL bound, stable at $1.01$ times the limit and divergent at $1.02$; a soft current
         source with the power balance $P = \vec e\cdot\vec j$; a dense cavity eigensolver with static-mode
         filtering and an analytic rectangular-box reference; and a headless visualisation layer with a runnable
-        example. The suite is 30 tests and takes about 51~s.
+        example. The suite is 34 tests and takes about $30$--$55$~s.
   \item[] \textbf{Measured accuracy.} On a $1.0\times0.7\times0.5$~m PEC box the first six modes are reproduced
         with a mean absolute error of $1.213\,\%$ and a maximum of $1.390\,\%$ on the $10\times7\times5$ grid, and
         $0.615\,\%$ / $0.711\,\%$ on $14\times10\times7$ -- a mean-error ratio of $0.507$ against the $0.510$
-        predicted by second order for the $1.44$ times refinement used.
-  \item[] \textbf{Not implemented.} Absorbing boundaries, first Mur \cite{mur1981} and then a perfectly matched
-        layer \cite{berenger1994}: today a domain is closed by PEC or PMC walls only. The near-to-far-field
-        transform and radiating antennas. Waveguide ports and S-parameters. Geometry import from a board layout.
-        A large-grid eigensolver, the dense path refusing more than 3000 free edges. Magnetoquasistatic eddy
-        currents and time-parallel integration. Lossy and dispersive media: $\Ms$ is assembled but not yet
-        coupled into the step, and the material layer understands diagonal tensors only. There is no
-        two-dimensional transverse-magnetic mode, no non-orthogonal grid, and no finite-element path.
+        predicted by second order for the $1.4$ times refinement used.
+  \item[] \textbf{Absorbing boundaries, in part.} The first-order condition of G.~Mur \cite{mur1981} is
+        implemented and measured (Section~\ref{sec:res-abc}): an outgoing pulse is absorbed to the level the
+        discretisation allows, so a domain need no longer be closed by PEC or PMC walls. The perfectly
+        matched layer \cite{berenger1994} is not implemented: it needs a diagonal tensor material that the
+        present scalar material layer cannot express. The near-to-far-field transform, waveguide ports and
+        S-parameters, and hence far fields and scattering cross-sections, remain unavailable.
+  \item[] \textbf{Not implemented.} Geometry import from a board layout. A large-grid eigensolver, the dense
+        path refusing more than 3000 free edges. Magnetoquasistatic eddy currents and time-parallel
+        integration. Lossy and dispersive media: $\Ms$ is assembled but not yet coupled into the step, and
+        the material layer understands diagonal tensors only. There is no two-dimensional
+        transverse-magnetic mode, no non-orthogonal grid, and no finite-element path.
 \end{itemize}
 
 \subsection{Notation and conventions}

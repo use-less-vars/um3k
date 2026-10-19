@@ -147,19 +147,22 @@ Two consequences of the layout are visible from outside. Because a field is one 
 function of that array alone, and \texttt{energy\_components()} returns the four terms of \eqref{eq:invariant}
 separately rather than a single number -- which is how the wrong-sign and missing-term variants of
 Table~\ref{tab:candidates} were measured. And because the constraint is a mask rather than a boundary condition
-inside the solver, an open boundary will be an addition to the same array and not a change to the data layout:
-the absorbing layers of Section~\ref{sec:outlook} update edges in place and introduce no new unknowns.
+inside the solver, the absorbing condition of Section~\ref{sec:res-abc} was an addition to the same array and not a
+change to the data layout: it updates edges in place and introduces no new unknowns. A PML layer would not be so
+cheap, since it needs a diagonal tensor material that the present scalar material array cannot express
+(Section~\ref{sec:outlook}).
 
 \subsection{Testing}
 \label{sec:testing}
 
-The suite is thirty \texttt{pytest} tests in three modules and takes about $51$ s to run, of which the cavity
-module accounts for roughly $50$ s. That imbalance is deliberate, and is worth stating plainly: the algebra and
-the conservation laws are cheap to check, and a dense eigenvalue solve on a $14\times10\times7$ grid is not.
+The suite is thirty-four \texttt{pytest} tests in four modules and takes $30$--$55$~s to run, of which the
+cavity module accounts for roughly $28$--$42$~s, idle to loaded. That imbalance is deliberate, and is worth
+stating plainly: the algebra and the conservation laws are cheap to check, and a dense eigenvalue solve on a
+$14\times10\times7$ grid is not.
 
 \begin{table}[H]
   \centering
-  \caption{The three test modules, what each one is allowed to claim, and its share of the run time.}
+  \caption{The four test modules, what each one is allowed to claim, and its share of the run time.}
   \label{tab:tests}
   \begin{tabular}{@{}l p{7.4cm} r l@{}}
     \toprule
@@ -167,7 +170,10 @@ the conservation laws are cheap to check, and a dense eigenvalue solve on a $14\
     \midrule
     \texttt{test\_operators} & $\Cmat\Gmat=0$, $\Smat\Cmat=0$, shapes, transposes, signs, metric independence & 15 & $\approx1$ s \\
     \texttt{test\_energy}    & star values and units, exact conservation, CFL sharpness, wave speed          & 6  & $\approx2$ s \\
-    \texttt{test\_cavity}    & spectrum against analytic values, null-space count, order of convergence      & 9  & $\approx50$ s \\
+    \texttt{test\_abc} & Mur absorption against the PEC control, $K\to0$ oracle, neighbour map & 4 & $\approx1$ s \\
+    \texttt{test\_cavity}    & spectrum against analytic values, null-space count, order of convergence      & 9  & $28$--$42$ s \\
+    \midrule
+    \textbf{total} & & 34 & $30$--$55$ s \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -198,5 +204,5 @@ infeasible dense solve.
 
 There are no golden files anywhere in the suite. Every expected value is either an integer count, a closed form,
 or a number produced in the same run by an independent path, so a failing test names a broken law rather than a
-changed output. The price of that discipline is the fifty seconds of dense eigensolve; the benefit is that the
+changed output. The price of that discipline is the $28$--$42$~s of dense eigensolve; the benefit is that the
 tolerances in the suite can be read as statements about the method rather than about the machine it last ran on.
