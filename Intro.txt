@@ -1,1 +1,175 @@
 Hey. This is an electrical engineering workspace. We want to eventually build tools that help an engineer: run simulations of electro magnetic fields. We primarily want to use the Finite Integral Technique, FIT, as opposed to FEM, Finite elements method. This theory has been invented by my old professor, Thomas Weiland. We want to build a functioning tool for actual engineering. We need not build this tool overnight. We need to decide which programming language, what the workspace runtime must be etc. What you need installed etc. We can do this later, when you know what you need. Now. I encourage you to be the lead in this project. USe the KB, create plans, manage the project wisely. Write stuff down that you want to pick up later etc. Or eventual goal is to have a fully functioning EM solver for certain areas of frequency, like the HF solver, the EM solver (these are the most important). We want to later maybe be able to run magneto quasistatic hyperbolic problems, I researched on the parareal algorithm, we might introduce it at some point. We can also do FIT and FEM. The user needs tools that allow to calculate fields of 3d objects, maybe we start with 2d. Also, another soon to come usecase is simulating an antenna. I think FIT is especially good at that. We could use a Kicad pcp and simulate it somehow, I know that we need waveports or something. Then there is the different solver methods, like this leapfrog thing etc. Additionally we want to always be able to see the outline of the project, maybe you need to do some research etc. You can use the workspace containers to run simulations, can go to sleep if they keep long etc. We may later add more compute, but for now lets try stuff with not-so-big architectures etc. Yeah. In parallel the user needs a doc, maybe latex, which is added what the current state of the research is, what stuff is being implemented, maybe some simple graphics or something, so the user can later read the idea, the development, the used solvers, all the specific math stuff etc. Dont worry about "direction" of the project. I am not clear on all this 100% myself. I know there is companies like CST and this other one. Never mind we need not get a product of that maturety on day one. If we can make something that can be improved in a million ways but does basic fit or fem simulations, can maybe simulate some simple antenna stuff, maybe show some fields in a not yet ultra refined way, this is cool too. I want to only lightly manage the project, I am busy with something else, so this is a side project I cannot "invest a lot of brainpower in" right now. Lets do it like that: you have all the time in the world. If you have an idea, think it brings us in direction of a first prototype that we can improve upon, that lets the user "see and use something" even if not ultra performance etc, lets try and start with a nice "see it works" approach that a human can appreciate. If you think you can structurally improve the system, do so, I will be infrequently be looking what you are doing. Dont stop often due to questions, if you feel you are doing something useful, keep going. Good luck. 
+
+Additional Engineer idea: 
+
+Your current state is stronger than the report's modest tone suggests: you have an **exactly verified FIT core**, a **second-order converged cavity solver**, and **transparently measured open-region limitations**. The strategic question is not whether the mathematics works—it does—but how to turn that verified core into a PCB engineer's tool without getting trapped in solver perfectionism.
+
+My overarching recommendation is this: **treat ports and KiCad import as the immediate product, and treat solver physics improvements as infrastructure that follows the first useful result.** A PCB engineer does not need a perfect far-field pattern to get value; they need to know whether their trace is 50 Ω, whether their matching network resonates, and where the current crowds. A solver that answers those questions approximately, but from their actual layout, is already useful.
+
+---
+
+## 1. Where the software should be going
+
+### The honest product definition
+
+The tool should be a **layout-to-S-parameter and field-visualization engine** for PCBs, initially at normal incidence and moderate frequencies, with the ability to grow into antenna and EMI analysis.
+
+The report already identifies the gap precisely: there is no port, so there is no impedance and no S-parameter. That is the gate. Everything the user described—matching networks, PCB antennas, HF behavior—routes through that gate. The far-field transform and the scattering machinery are valuable, but they are downstream of a driven port. I would not spend another cycle refining the Mie comparison before a single microstrip line can be excited and its S11 plotted.
+
+### What "useful" looks like in the first prototype
+
+A realistic first useful artifact is:
+
+1. **Import a KiCad layout** with a microstrip trace and a ground plane.
+2. **Place two lumped or microstrip ports** on the trace.
+3. **Run a broad-band excitation** through the FIT stepper.
+4. **Extract S11 and S21** over frequency, and plot them.
+5. **Show the E-field on the substrate mid-plane** at one frequency.
+
+That is a complete workflow. It does not require a perfect PML, a perfect staircase, or a perfect near-to-far-field transform. It requires a port, a mesh that respects the PCB stackup, and a Fourier accumulator.
+
+The KiCad plugin ecosystem already demonstrates that this is the right product shape: a KiCad plugin that simulates S-parameters directly in the PCB editor with openEMS exists, and it includes port definition, Touchstone output, Smith charts, field animation, and far-field calculation. Your differentiation is not "another KiCad-to-openEMS bridge"; it is **a FIT core with exact discrete energy conservation and a transparent verification story**. You can offer the same workflow with a stronger guarantee about the interior solution.
+
+---
+
+## 2. Architecture and language strategy
+
+### Do not port the solver yet
+
+The report's Python implementation is about 6,400 lines, with 71 tests, and the largest cavity solve takes seconds. For the first prototype, **Python plus NumPy/SciPy is the correct choice** because it keeps the verification instrument simple and the iteration cycle short. The report's design—separating metric from topology, exposing the operators as sparse matrices, caching reciprocals—is already performance-conscious.
+
+The moment to introduce a compiled hot loop is when **time-to-solution becomes the bottleneck for a real layout**, not before. At that point, the decision is between C++ and Rust. My recommendation is **Rust with PyO3 bindings**, for three reasons:
+
+- Rust's borrow checker and lack of undefined behavior are valuable for a solver that will grow to handle non-orthogonal stars, lossy media, and ports.
+- PyO3/Maturin gives a clean Python API without a C++ build-system tax.
+- There is already a precedent for Rust electromagnetic kernels with PyO3 bindings achieving ~10^8 elements per second per core and exposing them to Python for design sweeps and interactive visualization.
+
+The strategy is therefore: **keep the Python reference implementation as the verification oracle, and port only the step loop, the curl products, and the port accumulation to Rust when profiling demands it.** The Python path remains the executable specification.
+
+### The module boundary that matters
+
+The report's split between `grid.py` and `operators.py` is the right structural decision. The next boundary to enforce is **solver core versus geometry front end**. The solver should never know whether a geometry came from KiCad, a script, or a test fixture. Define a narrow interface:
+
+```
+Geometry -> VoxelMask + MaterialFields -> FITSystem -> PortDefinitions -> TimeStepper -> Spectrum
+```
+
+KiCad import, mesh generation, and port placement are all outside the solver. This keeps the verified core stable while the front end evolves rapidly.
+
+---
+
+## 3. The critical path: ports, meshing, and PCB physics
+
+### Ports are the hardest remaining problem, and they have two distinct meanings
+
+A **lumped port** applies a voltage across a gap and measures the current. It is simple and sufficient for a first microstrip S-parameter demonstration. A **wave port** solves for the transverse mode of the transmission line and injects that mode with a matched impedance. The latter is what commercial PCB tools use, and it is significantly harder.
+
+The openEMS community's approach is instructive: solve the waveguide eigenmodes with an external FEM library, sample the E and H fields onto the FDTD mesh, and inject them as the port excitation. For a microstrip, this means solving the 2D cross-section problem for the quasi-TEM mode. You already have a 2D eigenmode capability in the cavity solver; the port problem is a **2D generalised eigenproblem on the cross-section**, with the propagation constant as the eigenvalue. This is not a small addition, but it is structurally close to what the report already does.
+
+The pragmatic sequence is:
+
+1. **Lumped port first.** A gap voltage source plus a current probe gives you S11 immediately. It will be approximate for a microstrip because the lumped port does not match the distributed mode, but it will show resonance and matching qualitatively.
+2. **Microstrip wave port second.** A 2D quasi-TEM mode solve on the port cross-section, sampled onto the FIT mesh. This is the milestone that makes S-parameters quantitative.
+3. **De-embedding third.** Move the reference plane from the port to the device under test, using the propagation constant from the mode solve.
+
+Do not attempt a general waveguide port before a microstrip port works. PCBs are planar and mostly quasi-TEM; the general rectangular waveguide port is a detour.
+
+### Meshing and the PCB stackup
+
+A PCB is a layered, thin, planar structure. A uniform cubic mesh at a cell size fine enough to resolve a 35 µm copper trace over a useful board area is computationally wasteful. The report already has non-uniform orthogonal grids and diagonal Hodge stars that scale linearly with cell size, so grading is structurally cheap. The first PCB mesh should use **anisotropic cells**: fine in the stackup direction, coarser laterally.
+
+The **Thin Sheet Technique (TST)** is the key idea to adopt early: model a PCB trace as a sheet thinner than a cell by adjusting the effective material tensor of the cell it passes through, rather than resolving the copper thickness geometrically. This is what allows CST to simulate PCBs on practical grids, and it is compatible with your existing diagonal star formulation. For a first prototype, a trace can be represented as a perfect conductor sheet with an effective thickness; a lossy trace can use a surface impedance.
+
+**Perfect Boundary Approximation (PBA)** is the longer-term refinement for curved geometries, but it is not on the critical path for PCBs. A PCB is rectangular. Staircasing is not the dominant error for a microstrip trace; the port and the substrate resolution are. I would defer PBA until the tool is asked to simulate a curved antenna or a connector.
+
+### The solver regime
+
+For PCB S-parameters, the time-domain leapfrog is appropriate, but the report's CFL bound is set by the smallest cell anywhere. An anisotropic PCB mesh with a very fine stackup direction will have a small cell and therefore a small time step. This is acceptable for a first prototype on a small board, but it is the reason local time stepping eventually matters. Do not solve it now; measure it and put it on the roadmap.
+
+The **frequency-domain path** (the generalised eigenproblem) is also valuable for PCB work: a driven frequency-domain solve gives S-parameters at a single frequency without a long transient. But the report's eigenpath is currently a cavity eigensolver, not a driven solver. A driven frequency-domain FIT solve requires a linear solve at each frequency, which reintroduces the global solve that FIT avoids in the time domain. For the first prototype, stay time-domain.
+
+---
+
+## 4. Verification and reliability
+
+### The report's testing philosophy is the right one, and it should be extended
+
+The report deliberately avoids golden files and checks every number against a closed form, an integer count, or an independent path. That is the correct discipline for a solver whose results are hard to measure. Extend it in three ways:
+
+**First, add a method-of-moments cross-check for planar structures.** A 2.5D MoM solver for microstrip is computationally cheap and well-understood. It is not a competitor to FIT; it is an independent oracle for the same planar geometry. A KiCad-to-EM tool already includes a 2.5D MoM simulator alongside openEMS specifically because some planar structures are cheaper and easier to verify that way. A MoM path gives you a second opinion on S-parameters at low cost.
+
+**Second, use the analytical microstrip formulas as a first gate.** The Hammerstad-Jensen formulas for microstrip characteristic impedance, and the closed-form resonant frequency of a patch antenna, are already in your roadmap as acceptance criteria. Put them in the test suite before the full-wave port is finished. A lumped-port simulation of a microstrip should reproduce the effective permittivity and impedance to within a few percent on a coarse grid; if it does not, the port or the mesh is wrong.
+
+**Third, publish convergence plots, not single numbers.** The report's cavity convergence study is exemplary. Do the same for a microstrip: refine the lateral mesh, refine the stackup mesh, and show how S11 converges. A PCB engineer will trust a convergence plot more than a single simulated Smith chart.
+
+The complementary FEM solver is valuable, but I would build it as a **verification tool for a specific geometry class**, not as a general second solver. A 2D FEM cross-section solver for port modes and microstrip impedance is small, useful, and directly supports the port path. A full 3D FEM solver is a separate project with its own meshing, assembly, and conditioning problems; the report is right that it trades geometric fidelity for a global solve. Build the 2D FEM first.
+
+---
+
+## 5. Performance and the path to larger problems
+
+### Profile before you port
+
+The report's dense eigensolver is capped at 3,000 free edges because the cost is cubic. That cap is acceptable for a cavity but will be exceeded immediately by a PCB. However, the **time-domain stepper does not use the eigensolver**. A PCB S-parameter run is a leapfrog march, and its cost is linear in the number of steps times the number of edges. The eigensolver cap is therefore not the PCB bottleneck; the step count and the port solve are.
+
+The performance path is:
+
+1. **Profile the Python stepper on a realistic PCB mesh.** Measure the cost of the sparse products, the elementwise scalings, and the source injection. The report says a step is two sparse products and four scalings; verify where the time actually goes.
+2. **Port the step kernel to Rust** only if the profile demands it. The rest of the orchestration—geometry, ports, Fourier accumulation, plotting—stays in Python.
+3. **Parallelize the sparse products** with Rayon or an equivalent once the kernel is compiled. The step is embarrassingly parallel in the field array; the sparse matrix-vector product is the natural target.
+
+Do not introduce GPU support early. The report's problems are small enough that a single CPU core is adequate for a prototype, and GPU portability is a tax on the verification instrument.
+
+---
+
+## 6. User interface and the "see something" requirement
+
+### The GUI should be a thin layer over a reproducible script
+
+The report already has a headless visualization layer and a webapp front end. That is the right instinct: **the simulation must be scriptable first, and the GUI is a view onto the script**. For a PCB engineer, the most valuable GUI is not a generic 3D field viewer; it is a **KiCad plugin** that takes the board, asks for ports and a frequency range, runs the solver, and plots S-parameters and fields. The existing KiCad RF simulation plugins show the expected interaction model: click pads to define ports, set the substrate and mesh, run, and get Touchstone output and field animation.
+
+Build the GUI as a **KiCad action plugin** that:
+
+- reads the board geometry and stackup,
+- lets the user click ports on pads or traces,
+- exposes mesh and frequency settings in a small dialog,
+- calls the solver as a subprocess,
+- and displays S-parameters with `scikit-rf` and fields with a lightweight viewer.
+
+This keeps the solver independent and lets the plugin evolve quickly without destabilizing the verified core.
+
+For 3D field visualization, do not write a renderer. Use **PyVista or ParaView** for cut planes and field dumps. The report's visualization layer can export VTK files; the GUI can load them. This is a solved problem and not where your differentiation lies.
+
+---
+
+## 7. A concrete phased roadmap
+
+**Phase 0 — Stabilize the verified core (immediate).** The report's cavity and energy results are already strong. Freeze the Python reference implementation, tag it, and treat it as the executable specification. Add the 2D FEM cross-section solver for port modes as a separate module.
+
+**Phase 1 — Lumped-port microstrip (the first useful result).** Anisotropic mesh, perfect-conductor trace via a thin-sheet mask, lumped gap port, Fourier accumulator, S11 plot. Verify against Hammerstad-Jensen impedance and a convergence study. This is the prototype that lets the user "see something" that is actually their board.
+
+**Phase 2 — KiCad import and microstrip wave port.** Board geometry to voxel mask, stackup to material fields, 2D quasi-TEM mode solve, mode injection, de-embedding, Touchstone output. This is the gate to quantitative PCB S-parameters.
+
+**Phase 3 — Antenna and far-field workflow.** Patch antenna from KiCad, near-to-far-field transform, radiation pattern, efficiency. The report's transform exists but needs the port and the illumination taper resolved.
+
+**Phase 4 — Solver improvements driven by measured pain.** Rust step kernel, local time stepping, PBA for curved geometry, lossy and dispersive media, magnetoquasistatics. Each of these should be justified by a specific simulation that is too slow or too inaccurate, not by a general desire for completeness.
+
+The complementary FEM solver belongs in Phase 0 for 2D cross-sections and Phase 4 for a 3D verification study, not earlier.
+
+---
+
+## 8. Additions to the intro text
+
+The original brief is clear and well-intentioned. What it lacks is a statement of the **engineering contract** and the **verification contract**. I would add the following paragraphs:
+
+> **What the tool promises, and what it does not.** The tool is a verified FIT solver for closed, isotropic, lossless problems on structured grids. It conserves a discrete energy to round-off, it converges at second order on a rectangular cavity, and it can already let a wave leave the domain through a first-order absorbing condition and a matched lossy layer. It does not yet have a port, so it cannot yet quote an impedance or an S-parameter, and its scattering results agree with an exact series in shape rather than in level. The first product milestone is a lumped-port microstrip S-parameter workflow from a KiCad layout. Every claim in the documentation is backed by a test that fails if the claim stops being true.
+>
+> **How we will know it is right.** We do not trust a simulation because it looks plausible. We check it against a closed form, an integer identity, an independent numerical method, or a convergence study. The cavity solver is checked against the analytic box spectrum. The discrete energy is checked against the exact invariant. The PCB workflow will be checked against the Hammerstad-Jensen microstrip formulas and a 2D method-of-moments cross-section. A result that cannot be checked in one of these ways is reported as a measurement with a stated error bar, not as a fact.
+>
+> **The language and runtime strategy.** The verified reference implementation is Python on NumPy and SciPy, because that is the fastest way to keep the verification instrument honest and the iteration cycle short. Performance-critical kernels are ported to Rust with PyO3 bindings only when profiling on a real layout demands it. The solver core never depends on the geometry front end; KiCad import, meshing, and visualization are separate layers that call the solver through a narrow interface.
+
+These additions do three things the current brief does not: they **bound the promise**, they **make verification a first-class product feature**, and they **prevent the language debate from becoming a distraction**. The user's instinct—start with "see it works" and improve from there—is correct, but it needs a contract to keep the improvements honest.
+
+---
+
+The most important judgment I can offer is this: **your current solver is ahead of your product.** The cavity physics is verified more thoroughly than many commercial tools' documentation would suggest. The bottleneck is not the mathematics of the step; it is the engineering of the interface between a PCB and that step. Spend the next phase on ports, KiCad import, and S-parameter extraction, and let the solver improvements follow the measured needs of real layouts. A tool that simulates one microstrip correctly is worth more than a tool that simulates a cavity perfectly and a PCB not at all.
