@@ -1,9 +1,12 @@
 \section{Results}
 \label{sec:results}
 
-\noindent\emph{Status: draft -- everything in this section is produced by two short scripts that together
-run in under ten seconds and whose numbers have been re-measured for this revision; the cavity frequency
-tables themselves are in Section~\ref{sec:eigen} and are cross-referenced rather than repeated here.}
+\noindent\emph{Status: draft -- every number here has been re-measured for this revision. The cavity figures come
+from \texttt{examples/cavity\_resonance.py}, Figure~\ref{fig:abc} from \texttt{examples/abc\_duct.py}, the layer
+of Section~\ref{sec:res-pml} from the test suite and from the duct study with \texttt{termination=pml}, and the
+three scattering figures of Section~\ref{sec:res-scatter}, together with the animation beside the last of them,
+from the \texttt{scatter} and \texttt{rcs} studies behind the front ends; the cavity frequency tables themselves
+are in Section~\ref{sec:eigen} and are cross-referenced rather than repeated here.}
 
 The report has so far been about structure: which operators, which identity, which bound. This section is about
 what comes out. The first three figures below come from one artefact, \texttt{examples/cavity\_resonance.py},
@@ -13,9 +16,9 @@ following $1500$ steps of ring-down, and writes the spectrum, a field slice and 
 is $\Delta t=1.907\times10^{-10}$ s from \eqref{eq:cfl}, so the recorded window is \SI{343}{\nano\second} of
 simulated time, and that run takes about \SI{8}{\second} on one core. The fourth, Figure~\ref{fig:abc}, comes
 from a second and much shorter example, \texttt{examples/abc\_duct.py}, which needs about \SI{1.3}{\second}.
-Between them the two examples produce every number and every figure in this section, and together they run in
-under \SI{10}{\second} on one core. Neither uses a random number generator, and the four figures regenerate
-byte-identically.
+Between them the two examples produce every number and figure of this section's first four subsections, and
+together they run in under \SI{10}{\second} on one core. Neither uses a random number generator, and those four
+figures regenerate byte-identically.
 
 \subsection{The ring-down spectrum}
 \label{sec:res-spectrum}
@@ -158,8 +161,9 @@ field and no history array, and an edge shared by two absorbing planes is update
 fixed priority order.
 
 The measurement is a two-dimensional duct. \texttt{examples/abc\_duct.py} propagates the $\mathrm{TE}_{10}$ mode
-of a $2.4\times0.64$ m guide on a $320\times16\times1$ grid with $h=\SI{7.5}{mm}$, the four remaining walls
-being perfect conductors, so the problem is exactly $\mathrm{TM}_z$ in two dimensions. A \SI{2}{\giga\hertz}
+of a $2.4\times0.64$ m guide on a $320\times16\times1$ grid, $\SI{7.5}{mm}$ along the guide and
+$\SI{40}{mm}$ across it, the four remaining walls being perfect conductors, so the problem is exactly
+$\mathrm{TM}_z$ in two dimensions. A \SI{2}{\giga\hertz}
 burst about \SI{1.5}{\nano\second} wide is launched at $x=\SI{1.2}{m}$ and the field is recorded at
 $x=\SI{0.9}{m}$, which is \SI{0.9}{m} from the near absorbing wall and \SI{1.5}{m} from the far one. The run is
 $900$ steps of $\Delta t=\SI{23.94}{ps}$, or \SI{21.5}{\nano\second} of simulated time.
@@ -193,11 +197,12 @@ exact for normal incidence on a non-dispersive medium, so the only thing left to
 pulse that the interior has already distorted, and $|v_{\mathrm{ph}}-c_0|/(2c_0)$ is then a prediction rather
 than a coincidence. It also says what a finer mesh would do: the interior's phase-velocity error is second order
 in $h$ and the reflection it induces is first order in the same small quantity, so the floor should deepen by
-about $12$ dB per halving of the cell size, which is a prediction this section does not test. Two things
-follow about what the absorber is not. It is not a PML: there is no conductivity profile, no added layer and no
-auxiliary field, only a modified update on edges that already exist. And it produces no field at a distance from
-anything, because there is still no near-to-far-field transform; what it buys is that an outgoing wave can be
-let out of the box to about $-50$ dB instead of being reflected in full.
+about $12$ dB per halving of the cell size, which is a prediction this section does not test. What the absorber
+is not is a PML: there is no conductivity profile, no added layer and no auxiliary field, only a modified update
+on edges that already exist. The matched lossy layer of Section~\ref{sec:res-pml} is the other thing, and the
+field a scatterer sends to a distance is now computed, by the transform of Section~\ref{sec:res-scatter}. What
+the condition buys is that an outgoing wave can be let out of the box to about $-50$ dB instead of being
+reflected in full.
 
 The caveat is that this is one measurement, on one mesh, at normal incidence, in two dimensions. Oblique
 incidence is where a first-order one-way condition is weakest, and it is not measured here at all. Evanescent
@@ -205,8 +210,389 @@ and grazing fields are not represented by a condition that assumes a single prop
 an absorbing plane meets a conducting one are resolved by the fixed priority order quoted above, and on this
 duct the two absorbing planes do not meet, so that rule is not exercised by the numbers here. What the
 subsection supports is the claim that an outgoing wave can be let out to about $-50$ dB at normal incidence on a
-\SI{7.5}{mm} mesh, which is the first thing an open-region problem needs; it does not support the claim that the
-package absorbs well in general.
+mesh whose axial cell is \SI{7.5}{mm}, which is the first thing an open-region problem needs; it does not support
+the claim that the package absorbs well in general.
+
+\subsection{The perfectly matched layer}
+\label{sec:res-pml}
+
+The condition of Section~\ref{sec:res-abc} is a one-way approximation: exact at normal incidence on a
+non-dispersive medium, weaker everywhere else. The second absorber in the package attacks the same problem from
+the other side. Instead of modifying the update on the wall, it gives the last few cells of the mesh a lossy
+medium whose electric and magnetic conductivities are matched,
+\begin{equation}
+  \frac{\sigma_m}{\mu_0} = \frac{\sigma_e}{\eps_0},
+  \label{eq:pml-match}
+\end{equation}
+so that the medium presents the impedance of vacuum and a wave entering it is attenuated rather than scattered.
+This is the matched lossy layer, and it is what \texttt{emfit/pml.py} implements. It is deliberately not
+Berenger's split-field formulation \cite{berenger1994}: there is no split field, no auxiliary variable, no
+stretched coordinate, and nothing is added to the material array. That is a decision about this codebase rather
+than about electromagnetics. A split-field layer doubles the storage of every tangential field it touches, and
+a stretched coordinate puts a complex metric into the star matrices of Section~\ref{sec:theory}; a matched
+lossy medium asks only that each field be multiplied by a scalar after its own update.
+
+The damping is therefore a per-step multiplicative decay, with the exact decay of a constant conductivity over
+one step,
+\begin{equation}
+  a_e = \exp\!\left(-\frac{\sigma_e\Delta t}{\eps_0}\right), \qquad
+  a_m = \exp\!\left(-\frac{\sigma_m\Delta t}{\mu_0}\right),
+  \label{eq:pml-factor}
+\end{equation}
+applied to $\mathbf{e}$ immediately after the $\mathbf{e}$ update and to $\mathbf{h}$ immediately after the
+$\mathbf{h}$ update. Because $\sigma_m$ is generated as $\sigma_e\mu_0/\eps_0$ from the same sampled profile,
+the two exponents in \eqref{eq:pml-factor} are equal wherever the profile is non-zero, so the two families are
+damped at the same rate and the matching of \eqref{eq:pml-match} holds step by step and not only in the
+continuum. Each factor lies in $(0,1]$ and is exactly one wherever $\sigma$ vanishes, which is the whole
+physical interior and not merely most of it. The exponential is also a choice against the trapezoidal factor
+$(1-s\Delta t/2\eps_0)/(1+s\Delta t/2\eps_0)$: the grading below drives $\sigma_{\max}$ up until
+$\sigma\Delta t/(2\eps_0)$ exceeds one, since $\Delta t$ is capped by \eqref{eq:cfl} while $\sigma_{\max}$
+grows like $1/d$, and the trapezoidal factor then turns negative -- a sign flip every step, which is a Nyquist
+oscillation and not a decay. The exponential is unconditionally dissipative and monotone, so the layer cannot
+inject energy.
+
+What that costs is a claim. The damping is a real loss term, so the invariant \eqref{eq:invariant} is not
+claimed inside the layer and is not measured there. What the suite asserts of a damped run is that its energy
+is non-increasing step by step and that it falls by more than three orders of magnitude after the source stops,
+which is the statement a lossy region actually owes.
+
+The conductivity is graded, because a uniform value would reflect at the interface between the interior and the
+layer. With $d$ the physical thickness of the layer on one axis, $\xi$ the distance from the wall into the
+layer and $p$ the polynomial order,
+\begin{equation}
+  \sigma(\xi) = \sigma_{\max}\left(1-\frac{\xi}{d}\right)^{p}, \qquad
+  \sigma_{\max} = -\frac{(p+1)\ln|\mathrm{target}|}{\eta_0 d},
+  \label{eq:pml-profile}
+\end{equation}
+with $\eta_0=\sqrt{\mu_0/\eps_0}$ the impedance of vacuum and ``target'' the one-way amplitude the profile is
+designed to leave. The closed form follows from the one-way attenuation $\exp(-\eta_0\int_0^d\sigma\,\dd\xi)$,
+whose exponent for \eqref{eq:pml-profile} is $\eta_0\sigma_{\max}d/(p+1)$: a round trip therefore returns
+$\mathrm{target}^2$, so the parameter is the amplitude that gets through one way and not the reflection that
+comes back. Everything here uses $p=2$ and $\mathrm{target}=10^{-4}$, and $p=2$ measured better than $p=3$ at
+fixed thickness. The formula also sets the scale of the claim: in the continuum this profile would return
+$10^{-8}$, or $-160$ dB, and the discretisation delivers $-79$ dB. The gap is the subject of the measurements
+below.
+
+Two further details of the construction are what a reader changing it will touch. $\sigma$ is sampled where
+each component lives -- on the edges for $\sigma_e$, on the faces for $\sigma_m$, at the cell centre along the
+edge direction and at node values across it -- by the same rule as \texttt{material\_matrices}, because half a
+cell of slip in a graded profile is a first-order error where the profile is steepest. And the two axes are
+summed in a corner, which is the standard combination: both parts are matched individually, so their sum is
+matched too, and a corner is lossier than either wall alone without being more reflective. The class is five
+arguments, \texttt{PML(grid, thickness\_cells, order=2, target=1e-4, axes=('x','y'), cc=None)}, and it refuses
+two things at construction time: a periodic direction, where the layer would wrap onto itself, and a layer
+thicker than half the grid, where there would be no undamped interior left. Attachment is one keyword,
+\texttt{FITStepper(cc, m\_eps, m\_mu, pml=pml)}.
+
+With \texttt{pml=None} the layer is invisible. The two damping calls are guarded out of \texttt{step}, so the
+update executes the same sequence of floating-point operations as it did before the layer existed, and the
+trajectory is bit-identical rather than close: comparing the stepper against the same update written out by
+hand from \eqref{eq:leapfrog-h}--\eqref{eq:leapfrog-e}, \texttt{numpy.array\_equal} returns true for both
+fields after $50$ steps on a $20\times12\times1$ grid with a conductor mask, with a maximum difference of
+exactly zero. No tolerance is involved, and every number earlier in this section was produced with that branch
+switched off.
+
+The measurement is a two-run difference, and the reason is the one Section~\ref{sec:res-abc} already gives for
+distrusting a single number: one run cannot separate an absorber's reflection from the dispersion the interior
+has already imposed. Two runs are made with the same grid, the same step, the same source, the same probe and
+the same absorber at the near end, and they differ in the termination of the far end of one axis only. The
+source, the near-end absorption, both transverse walls and the dispersion floor appear in both runs in
+identical geometry from identical data, and cancel exactly in the difference; only the far-end reflection
+survives. Growing the box along one axis rather than two makes the reference run four times cheaper, and
+holding the probe at the same absolute coordinate keeps the sampled waveform comparable.
+
+The time window is the part that cannot be eyeballed. The two absorbers do not reflect from the same place:
+the condition of \eqref{eq:mur} reflects at the wall, the layer at its inner interface, which on a layer of
+thickness $d$ is a time $d/c_0$ earlier. On the test box -- $1.2\times0.6$ m, source at $x=0.6$ m, probe at
+$x=0.8$ m, layer from $x=1.0$ m -- the interface echo arrives \SI{2.00}{\nano\second} after the peak, the wall
+echo at \SI{3.34}{\nano\second} and the shared $-x$ wall at \SI{4.67}{\nano\second}; a window from
+\SI{0.9}{} to \SI{4.2}{\nano\second} spans both and excludes the rest. Closing it at \SI{3.0}{\nano\second}
+instead excludes the wall echo altogether, and the difference of two runs that then agree to rounding returns
+$-186$ dB of floating-point noise: the wall would appear a hundred decibels better than it is. The test guards
+against exactly that, by asserting that the surviving difference is above $10^{-6}$ of the incident peak in
+both runs, so a window that misses an echo fails rather than passes.
+
+\begin{table}[H]
+  \centering
+  \caption{The matched layer measured against the first-order condition, and against itself in a single run.
+  The two geometries are not the same: the guide is the duct of Section~\ref{sec:res-abc}, the box is the small
+  two-dimensional reference the suite uses. Every figure is a reflection relative to the incident peak, so more
+  negative is better.}
+  \label{tab:pml}
+  \small
+  \setlength{\tabcolsep}{4.5pt}
+  \begin{tabular}{@{}l p{3.0cm} r r r@{}}
+    \toprule
+    Measurement & Geometry and layer & Mur (dB) & Layer (dB) & Margin (dB) \\
+    \midrule
+    Two-run difference, normal incidence & guide $2.4\times0.64$ m, $320\times16\times1$, $\SI{7.5}{mm}$
+      along $x$ and $\SI{40}{mm}$ across, $40$ cells
+      & $-49.58$ & $-79.09$ & $29.51$ \\
+    Box case in the test suite & box $1.2\times0.6$ m, $h=\SI{10}{mm}$ at \SI{3}{\giga\hertz}, $20$ cells
+      & $-26.50$ & $-65.47$ & $38.97$ \\
+    Duct study, \texttt{termination=pml} & same guide as the first row, one run, both ends
+      & --- & $-78.31$ / $-79.09$ & --- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Three rows, and they are three measurements rather than three readings of one. The first is the comparison the
+layer exists for: on the guide of Section~\ref{sec:res-abc}, with the layer at both ends, the two-run
+difference puts the layer at $-79.09$ dB, and the same differencing with the first-order condition in place of
+the layer puts that condition at $-49.58$ dB -- indistinguishable from the $-49.57$ and $-49.58$ dB its own
+single run reports, so the subtraction leaves the wall reflection intact and removes only what the two runs
+share. The $40$-cell layer is counted along the guide, where the mesh step is \SI{7.5}{mm}; across the guide
+it is \SI{40}{mm}, so a cell count and a thickness in metres are the same statement only once the axis is
+named, and along the guide the layer is \SI{0.30}{m}, two wavelengths. The second row is the small box the
+suite actually runs, $1.2\times0.6$ m with a $20$-cell layer at
+$h=\SI{10}{mm}$; its numbers differ because the geometry, the resolution and the layer thickness do. It is
+quoted because it is the assertion the suite maintains, a margin of at least $10$ dB with $38.97$ dB observed.
+The third row is one run of the duct study and not a difference: \texttt{--set termination=pml} prints the
+echo at both ends of the guide, $-78.31$ dB at the near end and $-79.09$ dB at the far one, an echo-to-incident
+ratio of $10^{-4}$, the measured phase velocity $1.00693\,c_0$, and a wall time of about \SI{3}{\second}. That
+phase velocity is the same figure the condition of Section~\ref{sec:res-abc} measured on the same guide, which
+is the right check to make: the layer has changed the end of the problem and not the speed of its interior.
+
+The layer also has a sizing rule, and it is not a cell count. What sets the reflection is the thickness in
+wavelengths: measured the same way, one free-space wavelength of thickness returns about $-52$ dB and two about
+$-79$ dB, linearly in dB between the two, and \texttt{cells\_for\_wavelength(lam0, h, target\_db=-79)} is the
+inverse of that measurement. With $\lambda$ the thickness in free-space wavelengths it reads
+\begin{equation}
+  \lambda = 1 + \frac{\mathrm{target\_db}+52}{-27}, \qquad
+  N = \max\!\left(8, \left\lceil \frac{\lambda\lambda_0}{h} \right\rceil\right),
+  \label{eq:pml-law}
+\end{equation}
+with eight cells the floor at which a layer still behaves like one. The duct uses $40$ cells at
+$h=\SI{7.5}{mm}$ and \SI{2}{\giga\hertz}, and \eqref{eq:pml-law} is where the count comes from: the target
+of $-79$~dB gives $\lambda=1+(-79+52)/(-27)=2$, hence $N=\lceil 2\lambda_0/h\rceil=\lceil 39.97\rceil=40$
+cells, two free-space wavelengths of \SI{0.15}{m} and \SI{0.30}{m} of layer. It is asked for $-79$~dB and it
+delivers $-79.09$~dB. The law is worth stating as one because it is nearly mesh independent: the same
+\SI{0.30}{m} of layer, measured the same way, returns $-79.1$~dB at twenty points per wavelength and
+$-78.5$~dB at forty, so doubling the resolution costs about $0.6$~dB and not a factor, and a change of
+resolution does not silently change the absorber.
+
+Two limits bound it, and both were found by measuring rather than by reading \eqref{eq:pml-profile}. Beyond
+about $1.5$~Np per cell the reflection stops improving and stalls near $-45$ dB, whichever way the attenuation
+is pushed: a larger $\sigma_{\max}$ or more cells stops helping once each cell attenuates that hard, because
+the residual is then the discretisation of the profile rather than the loss it accumulates. That is the ceiling
+on the useful thickness, and it is why the default target is $10^{-4}$ rather than something stronger. The
+second limit is geometric. In the duct the layer is sized by \texttt{\_duct\_pml\_cells(nx, f0, h)}, which is
+\eqref{eq:pml-law} clipped to $[8, \lfloor n_x/4\rfloor]$: eight cells is the floor a coarse run can afford,
+and a quarter of the grid is the most the layer may take before there is no interior left to propagate in.
+
+One detail belongs to the tests rather than to the physics. $\exp(-\sigma\Delta t/\eps_0)$ underflows in the
+tail of the profile, where $\sigma_{\max}$ is reached, so what the suite asserts of \eqref{eq:pml-factor} is
+that the multiplier is non-increasing in $\sigma$, and not that it is strictly decreasing.
+
+\subsection{Scattering, the near-to-far-field transform and radar cross section}
+\label{sec:res-scatter}
+
+Everything above measures the solver against something it can be asked to reproduce internally: a spectrum, a
+conserved quantity, a reflection coefficient. The rest of this section is the opposite case. A body is put
+into the domain, the field it radiates is measured on a contour around it, and that contour is turned into a
+cross section which is then compared with a series solution that owes the solver nothing. Nothing here is an
+identity. Every number below is an agreement, and the size of the disagreement is the result.
+
+Three modules carry it, all under \texttt{emfit/}. \texttt{scatter.py} pins a perfect conductor into the mesh
+and runs the subtraction pair; \texttt{nearfield.py} turns a near field into a far one; \texttt{mie.py}
+supplies the exact answer for the one shape where it is cheap. Two studies exercise them, \texttt{run scatter}
+and \texttt{run rcs}, as do thirteen tests across \texttt{test\_scatter.py}, \texttt{test\_nearfield.py} and
+\texttt{test\_mie.py}.
+
+The scatterer is a circular perfect conductor of radius $a=0.4775$~m in a single cell layer: the mode is TMz
+with $n_z=1$, so the field does not vary along the axis and the cylinder is a disc in the plane. The
+background is $\lambda_0=1.0$~m at $h=50$~mm, twenty points per wavelength, which puts the radius at $9.55$
+cells and $ka=3$. That size is chosen for contrast: three is large enough that the pattern has real
+structure -- lobes, nulls, a forward peak nearly ten times the shadow-side level -- and small enough that a
+staircase of nineteen cells across the diameter is still a fair description of a circle.
+
+The body is imposed the way the boundary conditions of Section~\ref{sec:impl} are imposed, as a mask over
+degrees of freedom rather than as a special update. The mask is built from edge coordinates, not from a
+cell-centre radius: for each edge the code asks whether the midpoint lies within $|\mathbf{r}|\le a$, which is
+the same question the discrete curl operator answers when it decides where an edge lives, so mask and
+operator agree by construction about what is inside. The count is $293$ pinned edges against $286.5$ from the
+analytic area ratio, $1.023$ times too many, the excess being the staircase that over-covers a convex
+boundary by half a cell of perimeter. The test asserts that the count is within $10$~\% of the analytic
+figure; the study prints the ratio, and those are not the same claim. Coarsening to fifteen points per
+wavelength gives $161$ edges against $161.14$, a tenth of a per cent short where the count at twenty points
+per wavelength is $2.3$~\% over, the sign of the staircase error changing with the radial alignment -- a
+reminder that agreement to a tenth of a per cent at one resolution is not an accuracy law. $E_z$ is then set
+to zero on the nodes those edges touch, and that it stays zero is asserted exactly: the pinned values come
+back as $0.0$, not as $10^{-16}$.
+
+The scattered field is obtained by subtraction rather than by injection. Two runs share the grid, the time
+step, the source time series and the absorbing layer; one carries the cylinder and one does not; the
+difference is the field the body radiates. If the two differ in nothing but the mask then the pair is the
+linear decomposition of the problem itself, with no seam anywhere in the domain and no injected residual to
+account for. A total-field/scattered-field injector was designed for this and deliberately not used: a seam
+would add an error term at the boundary whose size would itself have to be measured, in exchange for saving
+one run, and the pair costs \SI{1.59}{s} of wall clock for $481$ steps at
+$\Delta t=9.5329\times10^{-11}$~s. That it does what it claims is checked directly: with an empty mask the
+scattered field is bitwise zero, $\mathtt{np.array\_equal}$ against the array of zeros rather than a norm
+below a tolerance, which is the strongest statement available and is one line of test.
+
+The peaks say how large the object is in the field rather than how large it is in the mesh. The total field
+reaches $253.620$~V/m and the scattered field $193.873$~V/m. The number the study prints beside them is the
+scattered peak over the incident peak: $0.9233$ is $193.873$ divided by the $210.0$~V/m peak of the same
+pulse in the empty-background run, so the body radiates within $8$~\% of the amplitude that illuminates it.
+Against the total peak the same pair of peaks gives $0.7644$, which is a different quantity. So the scatterer
+is not a perturbation, and any error in either run appears at full size in the difference instead of being
+suppressed by a small parameter. The ratio is also resolution-dependent, honestly so: at fifteen points per
+wavelength the same scattered-over-incident ratio is $0.9149$ ($191.85$ against $209.7$~V/m), the coarse mesh
+resolving the launched pulse as well as the circle slightly differently. It is printed rather than asserted,
+because there is no closed form to assert it against.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{../figures/scatter-snapshot.png}
+  \caption{The cylinder at $ka=3$ in the plane, at the instant the pulse peak is over its centre. Left: total
+  field $|E_z|$ in V/m. Right: the scattered field $|E_z^{\mathrm{scat}}|$, which is the with-cylinder run
+  minus the background run on the same grid. The dashed circle is the ideal scatterer; the squares mark the
+  nodes the staircase actually pins, which is where the $293$ edges of the text sit. The panel text gives
+  $ka$, the cells per wavelength, the radius in cells and the pinned-node count, so the picture carries the
+  numbers it was drawn from.}
+  \label{fig:scatter-shot}
+\end{figure}
+
+Figure~\ref{fig:scatter-shot} is that pair as a picture: the left panel is what the solver sees, the right
+panel what the subtraction produces, and the emptiness outside the body is the visible form of the empty-mask
+test. Figure~\ref{fig:scatter-seq} spreads the same field over time on one shared colour scale taken from the
+largest scattered amplitude anywhere in the sequence, which is the point of it: with per-panel scaling every
+frame looks equally interesting and the reader learns nothing about where the energy is.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{../figures/scatter-sequence.png}
+  \caption{The scattered field as the pulse sweeps the cylinder, six instants at offsets from one wavelength
+  before to one wavelength after arrival at the centre, timed from the peak of the launched pulse. One shared
+  colour scale, set by the largest $|E_z^{\mathrm{scat}}|$ anywhere in the sequence, and one shared colour
+  bar, so the panels can be compared with each other rather than only read individually.}
+  \label{fig:scatter-seq}
+\end{figure}
+
+The illumination is where this subsection has to be careful with itself. The incident front is plane-wave-like,
+not plane: the drive is launched across the duct and the transverse perfectly matched layers absorb its own
+footprint, as they must, so the incident amplitude falls off towards the side walls. Sampled along the centre
+line the ratio of $|E_z|$ to its peak runs $0.07$, $0.58$, $1.00$, $0.92$, $1.00$, $0.07$. Conducting walls
+there would be worse rather than better, since a hard wall reflects the incident pulse back into the region
+being measured. The taper is therefore a real error term in every comparison below; it is not separated out
+from the others, and it belongs on the account rather than off it.
+
+The near-to-far-field transform is the standard contour integral of the FDTD literature \cite{taflove2005},
+and the implementation is deliberately narrow. A \texttt{Contour} is an axis-aligned rectangle in the grid; a
+\texttt{DFTAccumulator} accumulates the discrete Fourier transform of the field on it at a single frequency as
+the run proceeds, so the contour is never stored, only one complex number per contour point. A Kirchhoff
+integral over those phasors gives the far amplitude, and the bistatic scattering width follows. In two
+dimensions a width is a length, not an area, and writing it out makes that explicit:
+
+\begin{equation}
+  \sigma_{2\mathrm{D}}(\phi) = \lim_{r\to\infty} 2\pi r\,
+  \frac{\lvert E_z^{\mathrm{scat}}(r,\phi)\rvert^{2}}{\lvert E_z^{\mathrm{inc}}\rvert^{2}},
+  \label{eq:sigma2d}
+\end{equation}
+
+with $\phi$ measured from the $+x$ axis and increasing anticlockwise, and the subscript keeping the width
+distinct from the layer conductivity $\sigma$ of the previous subsection, which is the same letter for a
+different quantity. It is a cross section per unit length in the invariant direction, which is why the
+figures below are labelled in dB relative to one metre and why the values are of order one.
+
+What makes the transform checkable is that a point source has a closed-form field in two dimensions: the field
+radiated by a line source at $\mathbf{r}_0$ is $a\,H_0^{(2)}(k\lvert\mathbf{r}-\mathbf{r}_0\rvert)$, so each
+piece of the bookkeeping can be tested against an answer rather than only for self-consistency. The recovered
+amplitude is flat around the contour to $0.4$~\% against the closed-form value $0.25\sqrt{2/(\pi k)}$ at
+twenty points per wavelength, where the test asserts $2$~\% and $0.2$~dB of ripple, and the phase slope across
+contours centred differently recovers $kx_0$ and $ky_0$ to $1.6\times10^{-3}$ with the right signs against a
+$1$~\% assertion. The laws behind those magnitudes were measured by refining the grid: the relative amplitude
+error falls as $0.072\,(kh)^2$, the ripple as $1.15\,(kh)^2$~dB and the phase error as $6.5\,(kh)^2$~degrees,
+the second order of the contour quadrature rather than merely small numbers. The flatness gate that guards a
+production run -- it refuses a contour whose amplitude is not flat enough to trust -- passes at twelve points
+per wavelength or finer, so the default of twenty has margin, and a zero phasor returns exactly zero amplitude
+and width, which rules out a transform that manufactures something from nothing.
+
+One defect is documented rather than removed. The transform carries a global phase of $e^{i\pi}$: applied to
+a point source it returns $a_{\mathrm{code}}=-a_{\mathrm{true}}$. Two checks were run and agreed -- the
+large-argument asymptotics of the Hankel function, and an exact quadrature of the same integral with no
+asymptotics, which returns $-1.000000$. That is two checks on one integral, not two derivations, and it
+should be read as such. The sign cancels in $\lvert a\rvert^2$ and hence in every number here; it is written
+down because a sign nobody has derived is a sign nobody has validated.
+
+The reference solution is \texttt{emfit/mie.py}: the exact two-dimensional TMz series for a circular
+conductor, summed to a truncation rule rather than to a fixed number of terms. It is a reference, not a
+solver -- nothing in it is discretised and it shares no code with the grid, which is what makes the comparison
+worth making. It is checked in its own right: the coefficients satisfy $\lvert b_n\rvert\le 1$, and the pattern
+satisfies the optical theorem, $(1/2\pi)\int\sigma_{2\mathrm{D}}\,d\phi = \sigma_{\mathrm{tot}}$, which is
+why the command line reports a mean and a total for what is in two dimensions one number.
+
+The cross-section study runs a $3.60\times3.60$ wavelength contour around the body, accumulates for
+\SI{2.01}{s}, and reports $\sigma_{2\mathrm{D}}(\phi)$ against Mie over the whole circle. Five angles are
+quoted in Table~\ref{tab:rcs}, chosen to sit on the features rather than between them.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{rrrr}
+    \toprule
+    $\phi$ (deg) & $\sigma_{2\mathrm{D}}$, this work (m) & $\sigma_{2\mathrm{D}}$, Mie (m) & Difference (dB) \\
+    \midrule
+    $0$   & $6.1385$ & $9.7556$ & $-2.01$ \\
+    $45$  & $0.9531$ & $1.1463$ & $-0.80$ \\
+    $90$  & $0.6964$ & $1.3352$ & $-2.83$ \\
+    $135$ & $1.2292$ & $1.5050$ & $-0.88$ \\
+    $180$ & $1.6133$ & $1.5691$ & $+0.12$ \\
+    \midrule
+    mean over $\phi$ & $1.6610$ & $2.3598$ & -- \\
+    \bottomrule
+  \end{tabular}
+  \caption{Bistatic scattering width of the $ka=3$ cylinder at five angles, against the exact series. The
+  difference is this work minus Mie. The last row is the mean of the width over $\phi$, which in two
+  dimensions is the total scattering width divided by $2\pi$; it is a diagnostic of the whole pattern rather
+  than of any one direction.}
+  \label{tab:rcs}
+\end{table}
+
+Over the full pattern the difference has an rms of $1.830$~dB and a worst case of $3.202$~dB at $284$~deg,
+and it is not a scatter about zero: it is a broad underestimate of roughly $2$~dB on the shadow side, the
+only positive entry being $+0.12$~dB at $180$~deg in the back direction, essentially exact. The forward
+direction carries the largest absolute error, $-2.01$~dB, on the peak the pattern is dominated by. One earlier
+defect is worth naming because its absence is part of the result: the pattern is no longer mirrored, and the
+forward/back asymmetry now has the same sign as Mie's. The mean width is low as well, $1.6610$~m against
+$2.3598$~m -- a factor of $0.70$, or $1.52$~dB, the same sign as the shadow-side deficit though not the same
+size -- so what is missing is a systematic underestimate rather than a redistribution of energy around the
+circle.
+
+Where the error sits is informative in itself. The largest dB differences fall near the nulls, where a
+roughly fixed relative error in the field becomes a large error in dB because the width is small, so a
+criterion quoted in dB over a whole pattern is dominated by the directions carrying the least energy -- worth
+remembering both when reading the rms and when setting a target. The residual is attributed to three causes
+acting the same way: the near-field solve, the staircase body, and the finite windowed beam of the
+illumination, the taper discussed above being the third.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{../figures/rcs-pattern.png}
+  \caption{Bistatic scattering width of the $ka=3$ cylinder against the exact series. Left: polar plot of
+  $10\log_{10}\sigma_{2\mathrm{D}}$ in dB relative to one metre, $0$~deg along $+x$ and increasing
+  anticlockwise, with the radial limits taken from the data so the forward lobe stays in frame; solid is this
+  work, dashed is Mie. Right: the same two curves on Cartesian axes with their difference, this work minus
+  Mie, shaded against the right-hand axis, and the rms and maximum annotated. The difference is largest where
+  the pattern is shallowest, because a fixed relative error in the field is a large error in dB where the
+  width is small.}
+  \label{fig:rcs}
+\end{figure}
+
+Figure~\ref{fig:rcs} shows the pattern and the difference on the same page, which is the only way to read the
+dB error honestly: the shape is right, the level is low, and the eye can see that the two statements are
+different. The same sweep is also stored as an animation, \texttt{rcs-animation.gif} in \texttt{docs/figures},
+twenty four frames at eight per second and one frame per source time step; it is referred to here and not
+included, because a GIF cannot be carried through the typesetting pipeline that produces this document.
+
+The milestone for this study asked for agreement within $0.5$~dB, and that target is missed by a factor of
+nearly four on the rms. It has been left visible rather than tuned: no calibrated factor on the contour
+integral, no fitted radius for the staircase, no shaved interior, because a residual that is understood and
+reported is worth more than one absorbed into a constant. The tests assert mechanisms and not physics -- an
+empty mask gives bitwise zero, pinned nodes stay at zero, the transform returns the closed-form amplitude and
+phase with the stated orders, the sign of $a$ is fixed, the series satisfies the optical theorem -- and they
+would not have caught this study's error, which lies in the physics of the illumination and the body rather
+than in any one routine.
 
 \subsection{What this establishes, and what it does not}
 \label{sec:res-scope}
@@ -221,19 +607,20 @@ one per cent of the analytic box spectrum on the coarse grids used here, with th
 at the rate Table~\ref{tab:convergence} measures. And a wavefront travels at a speed consistent with the
 dispersion relation of the scheme, with the correct sign and the correct size.
 
-What the results do not establish is anything about radiation. Apart from the duct of
-Section~\ref{sec:res-abc}, every number in this section comes from a problem whose boundary is a perfect
-conductor, so no field ever has to leave the domain, and the solver is not asked to compute a field at a
-distance from anything. Section~\ref{sec:res-abc} closes half of that gap and only half: it reflects $-49.6$ dB
-of an outgoing pulse where a perfect conductor reflects all of it, the residual being set by the dispersion of
-the interior rather than by the boundary condition itself, and it does so for normal incidence in two dimensions
-only. What is still absent from the package is a near-to-far-field transform and a port, so there is still no
-scattering result, no impedance and no $S$-parameter here. A cavity is the easiest problem in computational
+What the results do not establish is anything about radiation that goes beyond what
+Section~\ref{sec:res-scatter} measures. The open-region work of this section is the duct of
+Section~\ref{sec:res-abc}, the layer of Section~\ref{sec:res-pml} and the scattering width of
+Section~\ref{sec:res-scatter}, and every one of the three is measured at normal incidence in two dimensions only;
+everything else here comes from a problem whose boundary is a perfect conductor, so no field ever has to leave the
+domain. What is still absent from the package is a port, so there is still no impedance and no $S$-parameter
+here. A cavity is the easiest problem in computational
 electromagnetics precisely in this respect -- it is the one case where the boundary condition costs nothing --
 so the accuracy quoted above should be read as an accuracy about the interior problem, on which every
 open-region result will later rest but none of which it can replace.
 
 Closing that gap is the next milestone rather than a refinement of this one, and the acceptance test for it is
-stated in terms of a quantity we cannot currently compute at all. Until a scatterer's bistatic radar cross
-section has been compared with a Mie series, the honest summary of the present state is that the machinery is
-verified and the physics it can address is still short of an open-region scattering problem.
+stated in terms of a quantity the package can now compute but does not yet compute well enough. The bistatic
+width of a cylinder has been compared with a Mie series, in Section~\ref{sec:res-scatter}, and it misses the
+target set there; so the honest summary of the present state is that the machinery is verified, that an
+open-region field can be computed but is wrong by a margin that is measured rather than unknown, and that what
+remains is the port.

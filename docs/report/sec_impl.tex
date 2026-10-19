@@ -15,9 +15,9 @@ first.
 
 The package is pure Python on top of \texttt{numpy} and \texttt{scipy}. There is no compiled extension and no
 generated code, and the only dependency beyond those two is \texttt{matplotlib}, which is imported by the
-plotting module alone and never by the solver. The whole of \texttt{emfit} is about $1.76$ thousand lines,
-distributed as in Table~\ref{tab:modules}; the demonstration script, the three test modules and the visualisation
-module together are roughly as large again, which is a fair reflection of where the effort went.
+plotting module alone and never by the solver. The whole of \texttt{emfit} is about $6.4$ thousand lines,
+distributed as in Table~\ref{tab:modules}; the ten test modules add a further $2.4$ thousand lines and the two
+example scripts another four hundred, which is a fair reflection of where the effort went.
 
 \subsection{The module map}
 \label{sec:modules}
@@ -30,20 +30,30 @@ Each module owns exactly one of the objects of Section~\ref{sec:theory}, and the
   the part of the theory that fixes the module's behaviour.}
   \label{tab:modules}
   \small
-  \begin{tabular}{@{}lrl p{3.9cm} p{3.5cm}@{}}
+  \begin{tabular}{@{}l r p{7.0cm} p{3.6cm}@{}}
     \toprule
     Module & Lines & Owns & Governing equations \\
     \midrule
-    \texttt{grid.py}       & 223 & node coordinates, widths, dual widths, areas, volumes & \eqref{eq:stars} \\
-    \texttt{operators.py}  & 305 & index maps, $\Gmat$, $\Cmat$, $\Smat$, duals, PEC mask & \eqref{eq:identities}, \eqref{eq:pec} \\
-    \texttt{materials.py}  & 266 & the diagonal stars $\Em$, $\Mm$, $\Ms$, constants     & \eqref{eq:stars} \\
-    \texttt{evolve.py}     & 264 & leapfrog step, sources, CFL bound, energy             & \eqref{eq:leapfrog-h}--\eqref{eq:invariant} \\
-    \texttt{maxwell.py}    & 103 & curl--curl assembly, PEC constraints                  & \eqref{eq:rcurl} \\
-    \texttt{eigen.py}      & 261 & resonances, static cut, residual screen, analytic box & \eqref{eq:geneig-f}, \eqref{eq:cut} \\
-    \texttt{viz.py}        & 303 & spectrum, field slice, energy panels                  & --- \\
-    \texttt{\_\_init\_\_}  & 33  & version and the submodule imports                     & --- \\
+    \texttt{grid.py}       & 254  & node coordinates, widths, dual widths, areas, volumes & \eqref{eq:stars} \\
+    \texttt{operators.py}  & 326  & index maps, $\Gmat$, $\Cmat$, $\Smat$, duals, PEC mask & \eqref{eq:identities}, \eqref{eq:pec} \\
+    \texttt{materials.py}  & 266  & the diagonal stars $\Em$, $\Mm$, $\Ms$, constants & \eqref{eq:stars} \\
+    \texttt{evolve.py}     & 276  & leapfrog step, sources, CFL bound, energy & \eqref{eq:leapfrog-h}--\eqref{eq:invariant} \\
+    \texttt{maxwell.py}    & 103  & curl--curl assembly, PEC constraints & \eqref{eq:rcurl} \\
+    \texttt{eigen.py}      & 261  & resonances, static cut, residual screen, analytic box & \eqref{eq:geneig-f}, \eqref{eq:cut} \\
+    \texttt{abc.py}        & 348  & Mur planes, neighbour map, coefficient $K$ & \eqref{eq:mur} \\
+    \texttt{pml.py}        & 461  & conductivity profile, damping multipliers, layer fit & \eqref{eq:pml-match}, \eqref{eq:pml-profile} \\
+    \texttt{scatter.py}    & 565  & staircase PEC cylinder, background subtraction & --- \\
+    \texttt{nearfield.py}  & 922  & DFT accumulator, contour integral, far field, RCS & \eqref{eq:sigma2d} \\
+    \texttt{mie.py}        & 295  & analytic two-dimensional PEC cylinder series & --- \\
+    \texttt{studies.py}    & 1182 & the named runs behind every front end & --- \\
+    \texttt{viz.py}        & 352  & spectrum, field slice, energy panels & --- \\
+    \texttt{webapp.py}     & 431  & routes, forms, rendered figures & --- \\
+    \texttt{cli.py}        & 191  & argument parsing, table output & --- \\
+    \texttt{\_env.py}      & 70   & thread pinning before \texttt{numpy} & --- \\
+    \texttt{\_\_init\_\_.py} & 41 & version and submodule imports & --- \\
+    \texttt{\_\_main\_\_.py} & 13 & \texttt{python -m} entry point & --- \\
     \midrule
-    total                  & 1758 &                                                      & \\
+    total                  & 6357 &                                                      & \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -62,7 +72,7 @@ The second split is time domain against frequency domain. \texttt{evolve.py} and
 and the operators and nothing else; the stepper never assembles a matrix, and the eigensolver never takes a step.
 \texttt{maxwell.py} is the bridge: a thin class that assembles the curl--curl system of Section~\ref{sec:eigen}
 for a caller who wants a system object rather than a function call, and applies the conductor constraint as a
-restriction of the unknown space rather than as a penalty. It is the smallest module in the package, which is the
+restriction of the unknown space rather than as a penalty. It is the smallest module that carries physics, which is the
 intended outcome of having written the operators first.
 
 \subsection{Data layout and sparse operators}
@@ -135,7 +145,7 @@ print(step.n, step.time, step.energy())                          # 400, 1.53e-8 
 \end{lstlisting}
 
 The grid is the validation grid of Section~\ref{sec:energy} at $h=0.02$ m: $5404$ edges, $4836$ faces,
-$\Delta t=3.81\times10^{-11}$ s from the bound \eqref{eq:cfl}, and $400$ steps in about $1.6$ s of wall-clock
+$\Delta t=3.81\times10^{-11}$ s from the bound \eqref{eq:cfl}, and $400$ steps in a few tens of milliseconds of wall-clock
 time on a single core. Nothing is hidden in the six lines. The grid is built first because it carries the metric,
 the complex from it because it carries the topology, the stars from both because they need both, and the stepper
 is handed the reciprocal stars because that is all it uses. \texttt{step.step} takes the source values as an
@@ -148,32 +158,37 @@ function of that array alone, and \texttt{energy\_components()} returns the four
 separately rather than a single number -- which is how the wrong-sign and missing-term variants of
 Table~\ref{tab:candidates} were measured. And because the constraint is a mask rather than a boundary condition
 inside the solver, the absorbing condition of Section~\ref{sec:res-abc} was an addition to the same array and not a
-change to the data layout: it updates edges in place and introduces no new unknowns. A PML layer would not be so
-cheap, since it needs a diagonal tensor material that the present scalar material array cannot express
-(Section~\ref{sec:outlook}).
+change to the data layout: it updates edges in place and introduces no new unknowns. The layer of
+Section~\ref{sec:res-pml} is as cheap, and for the same reason. It never enters the material tensor: it is a matched
+lossy medium applied as one multiplication per field update on the arrays the stepper already touches.
 
 \subsection{Testing}
 \label{sec:testing}
 
-The suite is thirty-four \texttt{pytest} tests in four modules and takes $30$--$55$~s to run, of which the
-cavity module accounts for roughly $28$--$42$~s, idle to loaded. That imbalance is deliberate, and is worth
-stating plainly: the algebra and the conservation laws are cheap to check, and a dense eigenvalue solve on a
-$14\times10\times7$ grid is not.
+The suite is seventy-one \texttt{pytest} tests in ten modules and takes $10$--$20$~s to run, of which the
+cavity module accounts for roughly half. That imbalance is deliberate, and is worth stating plainly: the algebra
+and the conservation laws are cheap to check, and a dense eigenvalue solve on a $14\times10\times7$ grid is not.
 
 \begin{table}[H]
   \centering
-  \caption{The four test modules, what each one is allowed to claim, and its share of the run time.}
+  \caption{The ten test modules, what each one is allowed to claim, and how many tests it holds.}
   \label{tab:tests}
-  \begin{tabular}{@{}l p{7.4cm} r l@{}}
+  \begin{tabular}{@{}l p{8.8cm} r@{}}
     \toprule
-    Module & Claim under test & Tests & Time \\
+    Module & Claim under test & Tests \\
     \midrule
-    \texttt{test\_operators} & $\Cmat\Gmat=0$, $\Smat\Cmat=0$, shapes, transposes, signs, metric independence & 15 & $\approx1$ s \\
-    \texttt{test\_energy}    & star values and units, exact conservation, CFL sharpness, wave speed          & 6  & $\approx2$ s \\
-    \texttt{test\_abc} & Mur absorption against the PEC control, $K\to0$ oracle, neighbour map & 4 & $\approx1$ s \\
-    \texttt{test\_cavity}    & spectrum against analytic values, null-space count, order of convergence      & 9  & $28$--$42$ s \\
+    \texttt{test\_operators} & $\Cmat\Gmat=0$, $\Smat\Cmat=0$, shapes, transposes, signs, metric independence & 15 \\
+    \texttt{test\_energy}    & star values and units, exact conservation, CFL sharpness, wave speed & 6 \\
+    \texttt{test\_abc}       & Mur absorption against the PEC control, $K\to0$ oracle, neighbour map & 5 \\
+    \texttt{test\_pml}       & $\sigma_{\max}$ closed form, profile shape, multipliers, layer fit, below Mur & 7 \\
+    \texttt{test\_periodic}  & seam identified with index zero, wrapped dual metric, dispersion & 9 \\
+    \texttt{test\_cavity}    & spectrum against analytic values, null-space count, order of convergence & 9 \\
+    \texttt{test\_scatter}   & staircase area, zero-radius control, forward-scattered energy & 3 \\
+    \texttt{test\_nearfield} & DFT accumulator, Kirchhoff amplitude against a point source, RCS against Mie & 5 \\
+    \texttt{test\_mie}       & truncation, losslessness, optical theorem, pinned pattern, large-$ka$ limit & 5 \\
+    \texttt{test\_webapp}    & routing, form rendering, validation error, a real study and its figure & 7 \\
     \midrule
-    \textbf{total} & & 34 & $30$--$55$ s \\
+    \textbf{total} & & 71 \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -195,7 +210,8 @@ against the dispersion relation \eqref{eq:phase} on a grid ten cells per nominal
 measurement reported in Section~\ref{sec:results}.
 
 The cavity module is the expensive one and is the reason the suite is not instantaneous. A $14\times10\times7$
-grid is large enough that a dense symmetric solve takes tens of seconds and small enough that its answer can be
+grid is large enough that a dense symmetric solve takes a few seconds -- about five in this container, and
+plausibly more on a slower machine -- and small enough that its answer can be
 compared with a fine-grid reference computed from the same code. What it establishes is the order of convergence,
 the magnitude of the error on the two grids used in the report, the count of rejected static modes, and the
 equality of the degenerate pairs -- all numbers quoted in Section~\ref{sec:eigen}. It also holds the one test

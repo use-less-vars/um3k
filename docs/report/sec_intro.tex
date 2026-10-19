@@ -91,22 +91,27 @@ tense. Where the two disagree, the roadmap is authoritative for status and this 
         fields; the sharp CFL bound, stable at $1.01$ times the limit and divergent at $1.02$; a soft current
         source with the power balance $P = \vec e\cdot\vec j$; a dense cavity eigensolver with static-mode
         filtering and an analytic rectangular-box reference; and a headless visualisation layer with a runnable
-        example. The suite is 34 tests and takes about $30$--$55$~s.
+        example. The suite is 71 tests in ten modules and takes about $10$--$20$~s.
   \item[] \textbf{Measured accuracy.} On a $1.0\times0.7\times0.5$~m PEC box the first six modes are reproduced
         with a mean absolute error of $1.213\,\%$ and a maximum of $1.390\,\%$ on the $10\times7\times5$ grid, and
         $0.615\,\%$ / $0.711\,\%$ on $14\times10\times7$ -- a mean-error ratio of $0.507$ against the $0.510$
         predicted by second order for the $1.4$ times refinement used.
   \item[] \textbf{Absorbing boundaries, in part.} The first-order condition of G.~Mur \cite{mur1981} is
         implemented and measured (Section~\ref{sec:res-abc}): an outgoing pulse is absorbed to the level the
-        discretisation allows, so a domain need no longer be closed by PEC or PMC walls. The perfectly
-        matched layer \cite{berenger1994} is not implemented: it needs a diagonal tensor material that the
-        present scalar material layer cannot express. The near-to-far-field transform, waveguide ports and
-        S-parameters, and hence far fields and scattering cross-sections, remain unavailable.
+        discretisation allows, so a domain need no longer be closed by PEC or PMC walls. A matched lossy layer
+        stands in for the perfectly matched layer of \cite{berenger1994} and is implemented too
+        (Section~\ref{sec:res-pml}): it absorbs far more deeply than the condition does on the same geometry,
+        but a layer of finite-difference cells is not a perfect match, and the acceptance criterion attached to
+        it is not met. The near-to-far-field transform is implemented and checked against a closed-form source,
+        and a bistatic scattering width computed through it has been set beside a Mie series
+        (Section~\ref{sec:res-scatter}), though the agreement the milestone asks for has not been reached.
+        Waveguide ports and S-parameters remain unavailable, and with them every input impedance.
   \item[] \textbf{Not implemented.} Geometry import from a board layout. A large-grid eigensolver, the dense
         path refusing more than 3000 free edges. Magnetoquasistatic eddy currents and time-parallel
         integration. Lossy and dispersive media: $\Ms$ is assembled but not yet coupled into the step, and
-        the material layer understands diagonal tensors only. There is no two-dimensional
-        transverse-magnetic mode, no non-orthogonal grid, and no finite-element path.
+        the material layer understands diagonal tensors only. There is no non-orthogonal grid and no
+        finite-element path; the two-dimensional studies of Section~\ref{sec:results} are the transverse-magnetic
+        case of a grid one cell thick in the normal direction, which is what a single cell gives.
 \end{itemize}
 
 \subsection{Notation and conventions}
