@@ -59,6 +59,8 @@ __all__ = [
     "Probe",
     "LumpedPort",
     "DftAccumulator",
+    "column_path",
+    "row_path",
     "edge_path_voltage",
     "probe_voltage",
     "travelling_waves",
@@ -211,6 +213,150 @@ class LumpedPort:
     def probe(self) -> Probe:
         """The equivalent :class:`Probe`, all signs ``+1``."""
         return Probe(self.name, self.edges, np.ones(self.edges.size))
+
+
+# ---------------------------------------------------------------------------
+# probe paths on a cell complex
+# ---------------------------------------------------------------------------
+def _node_index(axis: str, i, limit: int) -> int:
+    """Validate a point-layer index on ``axis``: whole, and ``0 <= i < limit``.
+
+    No periodic wrap is applied: an index equal to the layer count is an error,
+    because a probe path that silently wrapped onto the other side of the mesh
+    would measure a different gap and no test would notice.
+    """
+    j = int(i)
+    if j != i:
+        raise ValueError(f"{axis} must be a whole point-layer index, got {i!r}")
+    if not 0 <= j < limit:
+        raise IndexError(
+            f"{axis}={j} is outside the {limit} point layers on that axis "
+            f"(valid 0..{limit - 1}); no periodic wrap is applied")
+    return j
+
+
+def _stack_range(axis: str, k0, k1, limit: int) -> tuple[int, int]:
+    """Validate a half-open run of cells on ``axis``, defaulting the upper end."""
+    lo = int(k0)
+    hi = limit if k1 is None else int(k1)
+    if lo != k0 or (k1 is not None and hi != k1):
+        raise ValueError(
+            f"{axis} bounds must be whole cell indices, got {k0!r} and {k1!r}")
+    if not 0 <= lo < hi <= limit:
+        raise ValueError(
+            f"the run [{lo}, {hi}) is empty or leaves the {limit} cells on "
+            f"that axis (need 0 <= lo < hi <= {limit})")
+    return lo, hi
+
+
+def column_path(cc, ix, iy, k0=0, k1=None) -> np.ndarray:
+    """Edge indices of one straight column of ``ez`` edges through the stack.
+
+    A parallel-plate gap, and any other quasi-one-dimensional gap, is crossed
+    by a line of ``ez`` edges that share one ``(x, y)`` point and step through
+    the z cells.  This helper returns exactly that line, in path order, so that
+    :func:`edge_path_voltage` can integrate ``E_z`` across the gap without the
+    caller hand-rolling flat index arithmetic from ``cc.off_ez``.
+
+    Ordering and signs
+    ------------------
+    The edge indices come back with the z cell index increasing,
+    ``k0, k0 + 1, ..., k1 - 1``, which is the path that walks in the ``+z``
+    direction.  Each edge is traversed with its own orientation, so a matching
+    :class:`Probe` wants ``signs`` all ``+1`` -- the default of
+    :func:`edge_path_voltage`.  Reversing the list reverses the voltage.
+
+    The path runs from the z point layer ``k0`` to the point layer ``k1``, so
+    with the defaults its two ends are ``z = zmin`` and ``z = zmax`` and the
+    summed edge voltages are the whole plate separation, in volts.
+
+    Parameters
+    ----------
+    cc : CellComplex
+        The cell complex the flat edge vector belongs to; only its index
+        helpers and counts are used.
+    ix, iy : int
+        Point-layer indices of the column: ``0 <= ix < cc.nxn`` and
+        ``0 <= iy < cc.nyn``.  No periodic wrap is applied, so an index equal
+        to the count raises instead of folding onto the far side.
+    k0, k1 : int, optional
+        Half-open run of z *cells*, ``0 <= k0 < k1 <= cc.nz``; ``k1`` defaults
+        to ``cc.nz``, the full stack.
+
+    Returns
+    -------
+    ndarray of int
+        ``k1 - k0`` edge indices into the flat ``e`` vector, in path order.
+
+    Raises
+    ------
+    ValueError
+        If a bound is not a whole number, or the run ``[k0, k1)`` is empty or
+        leaves the ``cc.nz`` cells.
+    IndexError
+        If ``ix`` or ``iy`` is outside the point layers of its axis.
+
+    Examples
+    --------
+    The gap probe of a two-cell-thick parallel plate, with z the gap axis::
+
+        gap = Probe("gap", column_path(cc, ix, iy), np.ones(cc.nz))
+
+    which is the path :class:`LumpedPort` only names.
+    """
+    ix = _node_index("ix", ix, cc.nxn)
+    iy = _node_index("iy", iy, cc.nyn)
+    lo, hi = _stack_range("k", k0, k1, cc.nz)
+    return np.asarray(cc.idx_ez(ix, iy, np.arange(lo, hi)), dtype=int)
+
+
+def row_path(cc, iy, iz, i0=0, i1=None) -> np.ndarray:
+    """Edge indices of one straight run of ``ex`` edges along the x axis.
+
+    The transverse counterpart of :func:`column_path`: a line of ``ex`` edges
+    that share one ``(y, z)`` point and step through the x cells, in path
+    order.  This is the path that integrates ``E_x`` along a line -- the
+    tangential field down a parallel-plate line, say -- which is the quantity
+    an along-line phase or a group delay is read from.
+
+    Ordering and signs
+    ------------------
+    The edge indices come back with the x cell index increasing,
+    ``i0, i0 + 1, ..., i1 - 1``, which is the path that walks in the ``+x``
+    direction, each edge with its own orientation, so ``signs`` all ``+1``.
+    The summed edge voltages are in volts and run from the point layer ``i0`` to
+    the point layer ``i1``.
+
+    Parameters
+    ----------
+    cc : CellComplex
+    iy, iz : int
+        Point-layer indices of the row: ``0 <= iy < cc.nyn`` and
+        ``0 <= iz < cc.nzn``; no periodic wrap is applied.  Both transverse
+        coordinates of an ``ex`` edge are point layers, so on a bounded z axis
+        ``iz`` runs up to ``cc.nzn``, which is one more than the ``cc.nz``
+        cells.
+    i0, i1 : int, optional
+        Half-open run of x *cells*, ``0 <= i0 < i1 <= cc.nx``; ``i1`` defaults
+        to ``cc.nx``, the full line.
+
+    Returns
+    -------
+    ndarray of int
+        ``i1 - i0`` edge indices into the flat ``e`` vector, in path order.
+
+    Raises
+    ------
+    ValueError
+        If a bound is not a whole number, or the run ``[i0, i1)`` is empty or
+        leaves the ``cc.nx`` cells.
+    IndexError
+        If ``iy`` or ``iz`` is outside the point layers of its axis.
+    """
+    iy = _node_index("iy", iy, cc.nyn)
+    iz = _node_index("iz", iz, cc.nzn)
+    lo, hi = _stack_range("i", i0, i1, cc.nx)
+    return np.asarray(cc.idx_ex(np.arange(lo, hi), iy, iz), dtype=int)
 
 
 # ---------------------------------------------------------------------------
