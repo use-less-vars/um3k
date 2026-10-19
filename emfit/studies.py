@@ -57,10 +57,13 @@ from .pml import PML, cells_for_wavelength
 from .ports import (
     DftAccumulator,
     LumpedPort,
+    StationFit,
     column_path,
     edge_path_voltage,
     fit_beta,
+    fit_station_impedance,
     plate_current,
+    sigma_beta_from_curvature,
 )
 
 import matplotlib.pyplot as plt  # noqa: E402  (after the backend is fixed)
@@ -1164,6 +1167,14 @@ class MicrostripWave:
             return current is summed in the opposite sense, so the raw
             ``V / I`` is negated -- which makes ``arg(z0)`` the excess phase of
             the port impedance (about +17 deg at the default case).
+        station_fit: The characteristic impedance of the *line*, fitted to the
+            station voltages and to the station ground currents at ``beta`` --
+            a different quantity from ``z0``, which is one port plane's
+            ``V / I``.  It comes with its own uncertainty budget (statistical
+            plus the part carried over from ``beta``) and with the reference
+            plane it is referred to, without which the number means nothing.
+            A line of stations sees the standing wave over several centimetres,
+            so it can separate the two travelling waves; one port plane cannot.
         z0_model: Closed-form quasi-static impedance of the cross-section [ohm].
         eps_eff: Effective permittivity implied by ``beta``, i.e. by the
             one-wave fit and not by the two-station difference.
@@ -1184,6 +1195,7 @@ class MicrostripWave:
     fit_residual: float
     beta_model: float
     z0: complex
+    station_fit: StationFit
     z0_model: float
     eps_eff: float
     eps_eff_model: float
@@ -1429,7 +1441,8 @@ def microstrip_wave(
     # --- the time loop -----------------------------------------------------
     acc = DftAccumulator([f0], dt)
     current = np.zeros(cc.n_edges, dtype=float)
-    signals = np.zeros(n_stations + 3, dtype=float)
+    n_currents = n_stations + 3        # station currents start here in signals
+    signals = np.zeros(n_currents + n_stations, dtype=float)
     for n in range(nsteps):
         current[:] = 0.0
         ramp = min(1.0, (n + 1) / max(n_warm, 1))
@@ -1443,6 +1456,18 @@ def microstrip_wave(
         signals[n_stations + 1] = plate_current(stepper.h, cc, ix_port, 0)
         signals[n_stations + 2] = plate_current(
             stepper.h, cc, ix_port, 0, y_extent=y_half)
+        # Station currents, on the same node layers as the voltages.  The E_z
+        # edges a column walks sit at the *node* layer x = ix * cell, but the
+        # FY faces ``plate_current`` sums are the faces of an x *cell*, centred
+        # half a cell further along.  Taking the two cells that straddle the
+        # station and averaging them interpolates the current back onto the
+        # node to second order; without it the ratio would carry beta * cell / 2
+        # of spurious phase (about 2.7 deg at the default case).  The sum is
+        # truncated like the port's, so it is the same physical current.
+        for i, ix in enumerate(js):
+            signals[n_currents + i] = 0.5 * (
+                plate_current(stepper.h, cc, int(ix) - 1, 0, y_extent=y_half)
+                + plate_current(stepper.h, cc, int(ix), 0, y_extent=y_half))
         acc.add(signals, n)
 
     spec = acc.spectrum[0]
@@ -1450,6 +1475,10 @@ def microstrip_wave(
     v_port = complex(spec[n_stations])
     i_full = complex(spec[n_stations + 1])
     i_trunc = complex(spec[n_stations + 2])
+    # Same reference-plane convention as ``z0`` below: the ground return is
+    # summed in its own sense, antiparallel to the trace current, so negating
+    # it refers the station impedance to the forward current.
+    i_stations = -np.asarray(spec[n_currents:n_currents + n_stations], dtype=complex)
 
     # --- phase constant: multi-station fits, the old difference kept beside --
     # The two-station difference is what this study used to quote.  It only
@@ -1463,6 +1492,37 @@ def microstrip_wave(
     fit_one = fit_beta(station_x, v_stations, n_wave=1)
     fit_two = fit_beta(station_x, v_stations, n_wave=2)
     beta = float(fit_one.beta)
+
+    # --- line impedance from the stations, with its uncertainty ------------
+    # ``beta``'s own uncertainty comes from the curvature of the one-wave
+    # misfit, which is the only route available: ``fit_beta`` returns no
+    # covariance.  It is then carried into ``z0`` by refitting both series at
+    # beta +- sigma_beta rather than by a derivative.
+    sigma_beta = sigma_beta_from_curvature(station_x, v_stations, beta)
+
+    def blank_station_fit() -> StationFit:
+        """The station fit of an empty record: every number is n/a.
+
+        A run too short to carry the drive (the mesh test takes eight steps)
+        leaves both series identically zero, so there is no mode to fit and
+        :func:`fit_station_impedance` refuses rather than inventing one.  The
+        port's ``z0`` already falls back to NaN in that case, and this keeps a
+        mesh-only run from raising as well.
+        """
+        nan = float(np.nan)
+        return StationFit(
+            z0=complex(nan, nan), z0_sigma_stat=None, z0_sigma_beta=None,
+            z0_sigma_total=None, phase_deg=nan, gamma_v=complex(nan, nan),
+            gamma_i=complex(nan, nan), mode_purity=nan, beta=beta,
+            sigma_beta=sigma_beta, reference_plane=float(station_x[0]),
+            n_stations=int(station_x.size), residual_v=nan, residual_i=nan,
+            residual_v_stations=np.full(station_x.size, nan, dtype=complex),
+            residual_i_stations=np.full(station_x.size, nan, dtype=complex))
+
+    station_fit = (fit_station_impedance(station_x, v_stations, i_stations,
+                                        beta, sigma_beta)
+                   if np.any(v_stations) and np.any(i_stations)
+                   else blank_station_fit())
 
     line = Microstrip(w=float(w), h=float(h), eps_r=float(eps_r))
     beta_model = float(line.beta(f0))
@@ -1537,6 +1597,7 @@ def microstrip_wave(
         fit_residual=float(fit_one.residual),
         beta_model=beta_model,
         z0=z0,
+        station_fit=station_fit,
         z0_model=float(line.z0),
         eps_eff=float(eps_eff),
         eps_eff_model=float(line.eps_eff),
@@ -1552,6 +1613,14 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         sink=sink)
     g = result.geometry
     gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
+    sf = result.station_fit
+
+    def num(value, unit, spec=".4f"):
+        """Format an optional number, or ``n/a`` when the fit could not give it."""
+        if value is None or not np.isfinite(value):
+            return "n/a"
+        return f"{value:{spec}} {unit}".strip()
+
     return {
         "drive frequency": (f"{g['f'] / 1e9:.4f} GHz "
                             f"(asked {g['f_target'] / 1e9:.4f} GHz, snapped to a DFT bin)"),
@@ -1581,6 +1650,22 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "line Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
         "port modulus / model": f"{abs(result.z0) / result.z0_model:.4f}",
         "port real part / model": f"{result.z0.real / result.z0_model:.4f}",
+        "line Z0 from stations, modulus": num(abs(sf.z0), "ohm"),
+        "line Z0 from stations, phase": (num(sf.phase_deg, "deg")
+                                         + " (two-wave fit, forward current)"),
+        "line Z0 from stations, real part": num(sf.z0.real, "ohm"),
+        "line Z0, sigma (statistical)": num(sf.z0_sigma_stat, "ohm"),
+        "line Z0, sigma (beta)": num(sf.z0_sigma_beta, "ohm"),
+        "line Z0, sigma total": num(sf.z0_sigma_total, "ohm"),
+        "line mode purity": (num(sf.mode_purity, "", ".3e")
+                             + " as |gamma_I + gamma_V|; 0 is a pure mode"),
+        "line Z0, reference plane": num(sf.reference_plane * 1e3, "mm"),
+        "beta sigma (curvature)": (num(sf.sigma_beta, "rad/m", ".4g")
+                                   + (" (relative "
+                                      + num(sf.sigma_beta / abs(sf.beta), "", ".2e")
+                                      + ")")
+                                   if sf.sigma_beta is not None and sf.beta
+                                   else ""),
         "ground current, full domain": f"{abs(result.i_ground_full):.6e} A",
         "ground current, strip extent": f"{abs(result.i_ground_truncated):.6e} A",
         "full / strip current": f"{gain:.3f}",

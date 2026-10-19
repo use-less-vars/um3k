@@ -894,6 +894,373 @@ def suggest_probe_spacing(beta_max, fraction=0.25) -> float:
 
 
 # ---------------------------------------------------------------------------
+# station impedance
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, eq=False)
+class StationFit:
+    """A characteristic impedance fitted to station voltages and currents.
+
+    All lengths are SI metres, impedances ohm and phase constants rad/m.
+
+    The model is the two-wave one of :func:`fit_beta`, applied to the voltage
+    and to the current separately at the *same* ``beta``::
+
+        v(u) = A_V exp(-j beta u) + B_V exp(+j beta u)
+        i(u) = A_I exp(-j beta u) + B_I exp(+j beta u)
+
+    with ``u = x - reference_plane``.  The impedance is then ``A_V / A_I``: the
+    ratio of the two waves that travel the same way, not the ratio of the total
+    fields at one station (which a standing wave makes meaningless -- it swings
+    through zero).
+
+    Attributes:
+        z0: ``A_V / A_I`` at the reference plane [ohm].
+        z0_sigma_stat: One standard deviation on ``z0`` from the least-squares
+            covariance of the two fits alone [ohm], taken as
+            ``sqrt(var Re z0 + var Im z0)`` so that it bounds both parts at
+            once.  It answers 'how much of this number is the data scatter?'
+            and says nothing about model error -- a fit that is wrong the same
+            way at every station has no scatter at all.
+        z0_sigma_beta: How far ``z0`` moves when ``beta`` moves by
+            ``sigma_beta`` [ohm], from a central difference over the *whole*
+            refit rather than a linearisation: ``|z0(beta + s) - z0(beta -
+            s)| / 2``.  On a line with a reflection this is usually the
+            dominant term, because a wrong ``beta`` rotates the backward wave
+            against the forward one and the reference plane turns into a
+            phase lever.
+        z0_sigma_total: ``sqrt(z0_sigma_stat**2 + z0_sigma_beta**2)`` [ohm],
+            or ``None`` when either contribution is unknown -- an incomplete
+            budget is reported as missing, never as zero.
+        phase_deg: ``arg(z0)`` in degrees.  A lossless line carrying a single
+            travelling wave has exactly zero here; a nonzero value says the
+            voltage and current waves disagree by a phase, which is what
+            loss, dispersion or a contaminated ground return all look like.
+        gamma_v: ``B_V / A_V``, the reflection coefficient of the voltage wave
+            at the reference plane.  Dimensionless.
+        gamma_i: ``B_I / A_I``, the same for the current wave.  For one mode
+            it equals ``gamma_v``; a wave reflected from a short gives
+            ``gamma_i = -gamma_v``, because the current reverses with the
+            voltage.
+        mode_purity: ``abs(gamma_i + gamma_v)``, dimensionless.  Zero exactly
+            when the two waves agree about which way the reflected wave
+            travels, i.e. when the stations hold a single mode; anything else
+            is the residual of a second mode or of a reference-plane error,
+            and it is the number to read before believing ``z0`` at all.
+        beta: The phase constant the fit was made at [rad/m].
+        sigma_beta: The uncertainty quoted for ``beta`` [rad/m], passed in
+            through ``sigma_beta``; ``None`` if the caller has none.
+        reference_plane: The ``x`` the amplitudes were referred to [m], which
+            is the first station after sorting.  It is recorded because with a
+            reflection present ``z0`` is *not* plane independent: a quarter
+            wavelength away a short looks like an open.  A ``z0`` without the
+            plane it belongs to cannot be compared with anything.
+        n_stations: Number of stations the fit saw.
+        residual_v: Relative RMS misfit of the voltage fit,
+            ``||v - model|| / ||v||``.
+        residual_i: The same for the current.
+        residual_v_stations: Data minus model at each station for the voltage
+            [V], so that a caller can see one bad station rather than a whole
+            line that has drifted.  Ordered by ``x``.
+        residual_i_stations: The same for the current [A].
+    """
+
+    z0: complex
+    z0_sigma_stat: float | None
+    z0_sigma_beta: float | None
+    z0_sigma_total: float | None
+    phase_deg: float
+    gamma_v: complex
+    gamma_i: complex
+    mode_purity: float
+    beta: float
+    sigma_beta: float | None
+    reference_plane: float
+    n_stations: int
+    residual_v: float
+    residual_i: float
+    residual_v_stations: np.ndarray
+    residual_i_stations: np.ndarray
+
+
+def _two_wave_fit(u: np.ndarray, series: np.ndarray, beta: float):
+    """Two-wave least squares of one series at fixed ``beta``.
+
+    Returns ``(amps, rss, relative_rms, model)`` with the amplitudes ordered
+    forward then backward, exactly as :func:`fit_beta` orders them, so the two
+    can be read side by side.
+    """
+    phi = _fit_design(u, beta, 2)
+    amps, *_ = np.linalg.lstsq(phi, series, rcond=None)
+    model = phi @ amps
+    miss = series - model
+    rss = float(np.sum(np.abs(miss) ** 2))
+    scale = float(np.linalg.norm(series))
+    return amps, rss, (float(np.sqrt(rss)) / scale if scale > 0.0 else np.inf), model
+
+
+def _amplitude_covariance(u: np.ndarray, rss: float, beta: float):
+    """Real covariance of the two complex amplitudes of a two-wave fit.
+
+    The complex fit ``v = Phi a`` is written as a real one by stacking the real
+    and imaginary parts, ``[Re v; Im v] = [[Re Phi, -Im Phi], [Im Phi, Re Phi]]
+    [Re a; Im a]``, which is the standard trick and is worth spelling out
+    because the second column carries a ``-`` that a reader can check:
+    multiplying by ``j`` rotates by 90 degrees, so the real part of ``j a`` is
+    ``-Im a``.  The residual sum of squares is the same in either form, so
+    ``s**2 = rss / (2N - 2p)`` with ``N`` stations and ``p = 2`` complex
+    amplitudes, and the covariance of the amplitudes is ``s**2 (M^T M)^-1``.
+
+    Returns the ``4 x 4`` real covariance, or ``None`` if there is no residual
+    degree of freedom left or the design is singular.
+    """
+    phi = _fit_design(u, beta, 2)
+    m = np.block([[phi.real, -phi.imag], [phi.imag, phi.real]])
+    dof = 2 * u.size - 2 * phi.shape[1]
+    if dof <= 0:
+        return None
+    try:
+        return (rss / dof) * np.linalg.inv(m.T @ m)
+    except np.linalg.LinAlgError:      # pragma: no cover - needs a singular pair
+        return None
+
+
+def fit_station_impedance(x, v, i, beta, sigma_beta=None) -> StationFit:
+    """Fit ``z0`` to the voltages and currents measured at several stations.
+
+    ``x`` are station positions [m], ``v`` the complex voltage at each [V],
+    ``i`` the complex current at each [A] **flowing in the direction of the
+    forward voltage wave**, and ``beta`` the phase constant [rad/m], normally
+    the one :func:`fit_beta` returns for ``v`` itself.
+
+    Why fit both sides instead of dividing at one station
+    ----------------------------------------------------
+    A standing wave's ``v / i`` at a single station is not an impedance: it
+    swings between zero and infinity as the station moves through the pattern,
+    and near a null it is pure noise amplified.  The two travelling waves are
+    the plane-independent objects, and ``A_V / A_I`` is the ratio that actually
+    describes the line.  Fitting both series at the same ``beta`` also gives,
+    for free, ``gamma_v`` and ``gamma_i`` and hence a test of whether the two
+    series describe the same mode.
+
+    Why ``i`` must be the forward-oriented current
+    ----------------------------------------------
+    ``z0`` is positive for a passive line only when the voltage and current
+    waves carry power the same way.  A solver naturally measures the ground
+    return, which flows backwards, so the caller negates it; a sign error here
+    shows up as a ``z0`` near ``-z0`` and is otherwise invisible.
+
+    How the uncertainties are propagated
+    ------------------------------------
+    The statistical part is a first-order (delta-method) propagation of the
+    amplitude covariance of the two fits, which are independent:
+    ``d(A_V / A_I) = (1/A_I) dA_V - (A_V / A_I**2) dA_I``, with each complex
+    linear map written as its ``2 x 2`` real rotation-scale block.  The
+    reported ``z0_sigma_stat`` is ``sqrt(trace)`` of the resulting ``2 x 2``
+    real covariance, i.e. the uncertainty of the complex value as a whole.
+
+    The ``beta`` part is not linearised.  ``sigma_beta`` is applied to the
+    whole fit -- both series refitted at ``beta +- sigma_beta`` -- and the
+    symmetric difference taken, because ``z0`` depends on ``beta`` through the
+    complex exponentials and a small-``sigma`` Taylor expansion is exactly what
+    fails when the lever arm is long.  A ``sigma_beta`` at or beyond ``beta``
+    itself is refused rather than folded back to a positive trial value: a
+    negative phase constant would refit the backward wave as the forward one
+    and return a confident, wrong number.
+
+    Raises:
+        ValueError: If the three arrays differ in length, hold fewer than four
+            stations, hold non-finite values, if ``x`` spans nothing, if
+            ``beta`` is not positive, if ``sigma_beta`` is negative or not
+            below ``beta``, or if a fitted forward amplitude is zero (no
+            impedance can be formed from it).
+    """
+    x = np.asarray(x, dtype=float).ravel()
+    v = np.asarray(v, dtype=complex).ravel()
+    i = np.asarray(i, dtype=complex).ravel()
+    if not x.size == v.size == i.size:
+        raise ValueError(
+            f"x, v and i must hold the same number of stations, got {x.size}, "
+            f"{v.size} and {i.size}")
+    if x.size < 4:
+        raise ValueError(
+            f"a two-wave fit on both sides needs at least 4 stations, got {x.size}")
+    if not (np.all(np.isfinite(x)) and np.all(np.isfinite(v))
+            and np.all(np.isfinite(i))):
+        raise ValueError("x, v and i must be finite")
+    beta = float(beta)
+    if not beta > 0.0:
+        raise ValueError(f"beta must be positive, got {beta!r}")
+
+    order = np.argsort(x, kind="stable")
+    x, v, i = x[order], v[order], i[order]
+    span = float(x[-1] - x[0])
+    if span <= 0.0:
+        raise ValueError(
+            "all stations sit at the same place: no phase can be measured "
+            "across a zero span")
+    plane = float(x[0])
+    u = x - plane
+
+    amp_v, rss_v, res_v, model_v = _two_wave_fit(u, v, beta)
+    amp_i, rss_i, res_i, model_i = _two_wave_fit(u, i, beta)
+    if amp_v[0] == 0.0 or amp_i[0] == 0.0:
+        raise ValueError("a fitted forward amplitude is zero: no impedance exists")
+
+    z0 = complex(amp_v[0] / amp_i[0])
+    gamma_v = complex(amp_v[1] / amp_v[0])
+    gamma_i = complex(amp_i[1] / amp_i[0])
+
+    # Statistical part: delta method on z0 = A_V / A_I.
+    cov_v = _amplitude_covariance(u, rss_v, beta)
+    cov_i = _amplitude_covariance(u, rss_i, beta)
+    sigma_stat = None
+    if cov_v is not None and cov_i is not None:
+        # d z0 for unit d Re/Im aV and d Re/Im aI, each a 2 x 2 real block.
+        jac = np.zeros((2, 8))
+        for col, grad in ((0, 1.0 / amp_i[0]), (4, -amp_v[0] / amp_i[0] ** 2)):
+            jac[:, col:col + 2] = np.array([[grad.real, -grad.imag],
+                                            [grad.imag, grad.real]])
+        cov_amp = np.zeros((8, 8))
+        cov_amp[:4, :4] = cov_v
+        cov_amp[4:, 4:] = cov_i
+        sigma_stat = float(np.sqrt(max(np.trace(jac @ cov_amp @ jac.T), 0.0)))
+
+    # Systematic part: the whole refit at beta +- sigma_beta.
+    sigma_beta = None if sigma_beta is None else float(sigma_beta)
+    sigma_z0_beta = None
+    if sigma_beta is not None:
+        if sigma_beta < 0.0:
+            raise ValueError(f"sigma_beta must not be negative, got {sigma_beta!r}")
+        if sigma_beta >= beta:
+            raise ValueError(
+                f"sigma_beta ({sigma_beta!r}) must be smaller than beta "
+                f"({beta!r}): the trial at beta - sigma_beta would go negative")
+        if sigma_beta == 0.0:
+            sigma_z0_beta = 0.0
+        else:
+            up = _two_wave_fit(u, v, beta + sigma_beta)[0][0] \
+                / _two_wave_fit(u, i, beta + sigma_beta)[0][0]
+            down = _two_wave_fit(u, v, beta - sigma_beta)[0][0] \
+                / _two_wave_fit(u, i, beta - sigma_beta)[0][0]
+            sigma_z0_beta = float(abs(up - down) / 2.0)
+
+    total = None
+    if sigma_stat is not None and sigma_z0_beta is not None:
+        total = float(np.hypot(sigma_stat, sigma_z0_beta))
+
+    return StationFit(
+        z0=z0,
+        z0_sigma_stat=sigma_stat,
+        z0_sigma_beta=sigma_z0_beta,
+        z0_sigma_total=total,
+        phase_deg=float(np.degrees(np.angle(z0))),
+        gamma_v=gamma_v,
+        gamma_i=gamma_i,
+        mode_purity=float(abs(gamma_i + gamma_v)),
+        beta=beta,
+        sigma_beta=sigma_beta,
+        reference_plane=plane,
+        n_stations=int(x.size),
+        residual_v=res_v,
+        residual_i=res_i,
+        residual_v_stations=v - model_v,
+        residual_i_stations=i - model_i,
+    )
+
+
+def sigma_beta_from_curvature(z, v, beta, n_wave=1):
+    """One-sigma uncertainty on ``beta`` from the curvature of its own misfit.
+
+    ``z`` are station positions [m], ``v`` the complex station voltages [V],
+    ``beta`` the fitted phase constant [rad/m] -- normally the value
+    :func:`fit_beta` returned for the same arguments -- and ``n_wave`` which
+    model that was, since the count of degrees of freedom depends on it.
+
+    The estimate is the textbook curvature (Gauss-Newton) one.  Write the
+    profile misfit ``C(b) = ||v - Phi(b) a(b)||**2``: it is minimised at
+    ``beta``, and near a minimum it is ``C(beta) + C'' (db)**2 / 2``.  If the
+    residual sums of squares are scaled by ``s**2 = C(beta) / (2N - 2 p)``, the
+    usual unbiased variance with ``p = n_wave`` complex amplitudes, then the
+    variance of the estimator is ``2 s**2 / C''``, which is the number
+    returned [rad/m].  ``C''`` is a central second difference with a step of
+    two per cent of the natural width ``1 / span``; the same difference is
+    taken again at half that step and the two must agree to within a factor of
+    two, otherwise the misfit is not locally parabolic over the step and
+    ``None`` is returned instead of a number nobody should trust.
+
+    Read the answer as an *internal* uncertainty.  It treats the mismatch of
+    the model with the data as if it were independent noise at each station,
+    which is optimistic: a biased model (dispersion, a second mode, stations
+    drifting off the line) biases ``beta`` and leaves no scatter to show for
+    it.  Noiseless data give a value at machine roundoff, which is the honest
+    answer for the algebra and the wrong answer for the experiment -- it says
+    the arithmetic is exact, not that ``beta`` is right.
+
+    Returns:
+        The one-sigma uncertainty on ``beta`` [rad/m], or ``None`` when there
+        is no residual degree of freedom, when the profile is not curved
+        upwards at ``beta`` (i.e. ``beta`` is not a minimum), or when the two
+        step sizes disagree.
+    """
+    z = np.asarray(z, dtype=float).ravel()
+    v = np.asarray(v, dtype=complex).ravel()
+    if z.size != v.size:
+        raise ValueError(
+            f"z and v must hold the same number of stations, got {z.size} and "
+            f"{v.size}")
+    n_wave = int(n_wave)
+    if n_wave not in (1, 2):
+        raise ValueError(f"n_wave must be 1 or 2, got {n_wave}")
+    if not np.all(np.isfinite(z)) or not np.all(np.isfinite(v)):
+        raise ValueError("z and v must be finite")
+    order = np.argsort(z, kind="stable")
+    z, v = z[order], v[order]
+    span = float(z[-1] - z[0])
+    if span <= 0.0:
+        raise ValueError(
+            "all stations sit at the same place: no phase can be measured "
+            "across a zero span")
+    beta = float(beta)
+    if not beta > 0.0:
+        raise ValueError(f"beta must be positive, got {beta!r}")
+
+    dof = 2 * z.size - 2 * n_wave
+    if dof <= 0:
+        return None
+
+    def cost(b: float) -> float:
+        phi = _fit_design(z, b, n_wave)
+        amps, *_ = np.linalg.lstsq(phi, v, rcond=None)
+        return float(np.sum(np.abs(v - phi @ amps) ** 2))
+
+    base = cost(beta)
+    var = base / dof
+    width = 1.0 / span                    # rad/m; the width of the minimum
+
+    def sigma_at(fraction: float):
+        step = fraction * width
+        if step >= beta:
+            return None
+        curved = (cost(beta + step) - 2.0 * base + cost(beta - step)) / step ** 2
+        if not np.isfinite(curved) or curved <= 0.0:
+            return None
+        return float(np.sqrt(2.0 * var / curved))
+
+    coarse = sigma_at(0.02)
+    if coarse is None:
+        return None
+    if coarse <= 1e-9 * beta:
+        return coarse                     # machine roundoff; no conditioning check
+    fine = sigma_at(0.01)
+    if fine is None:
+        return None
+    ratio = max(coarse, fine) / min(coarse, fine)
+    if not np.isfinite(ratio) or ratio > 2.0:
+        return None
+    return coarse
+
+
+# ---------------------------------------------------------------------------
 # Touchstone
 # ---------------------------------------------------------------------------
 def write_touchstone(handle, freqs, s, *, z0=50.0, fmt="ri") -> None:

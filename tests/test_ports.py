@@ -5,8 +5,10 @@ up (a tone of known amplitude, a wave of known phase) or a value worked out by
 hand from ``e[k] = k``, so a failure means an algebra or convention error, never
 a badly conditioned run.  The groups are: probe voltages (a line integral over
 edge unknowns), the running DFT that turns probe samples into phasors, the
-two-probe split that turns phasors into travelling waves and S-parameters, and
-the Touchstone writer/reader that carries the S-matrix between runs.
+two-probe split that turns phasors into travelling waves and S-parameters, the
+station fit that turns several stations into a line impedance with its
+uncertainty, and the Touchstone writer/reader that carries the S-matrix between
+runs.
 """
 
 from __future__ import annotations
@@ -23,10 +25,12 @@ from emfit.ports import (
     LumpedPort,
     Probe,
     edge_path_voltage,
+    fit_station_impedance,
     plate_current,
     probe_voltage,
     read_touchstone,
     reflection,
+    sigma_beta_from_curvature,
     suggest_probe_spacing,
     transmission,
     travelling_waves,
@@ -442,4 +446,154 @@ def test_plate_current_default_extent_is_the_plain_sum():
         for iz in range(cc.nz):
             want = float(sum(h[cc.idx_fy(ix, j, iz)] for j in range(cc.nyn)))
             assert plate_current(h, cc, ix, iz) == want
+
+
+
+# ---------------------------------------------------------------------------
+# station impedance: two travelling waves seen at several stations
+# ---------------------------------------------------------------------------
+#: Nine stations 3 mm apart: a 24 mm span, across which the phase is
+#: beta * 24 mm = 4.8 rad at the 200 rad/m used below.  Less than a turn, so
+#: neither series aliases, and the two waves stay separable -- which is the
+#: whole reason for putting stations along the line rather than one plane.
+N_STATIONS = 9
+STATION_STEP = 3.0e-3
+BETA = 200.0
+
+
+def _station_x() -> np.ndarray:
+    """Station positions [m] for the station-fit tests."""
+    return np.arange(N_STATIONS) * STATION_STEP
+
+
+def _forward(z: np.ndarray, beta: float = BETA, amp: float = 1.0e-3):
+    """Voltage and current [V, A] of a pure forward wave on a 50 ohm line.
+
+    ``V = Z0 I`` with the forward phase ``exp(-j beta z)``, so the fit must
+    return the real number it was built from and no backward amplitude at all.
+    """
+    current = amp * np.exp(-1j * beta * z)
+    return 50.0 * current, current
+
+
+def _reflected(z: np.ndarray, beta: float = BETA,
+               gamma: complex = 0.1 * np.exp(1j * np.deg2rad(30.0))):
+    """Voltage and current [V, A] of a 50 ohm line carrying forward + reflected.
+
+    With ``a = 1 mA`` and ``b = gamma a`` the pair is
+    ``V = Z0 (a e^{-j beta z} + b e^{+j beta z})`` and
+    ``I = a e^{-j beta z} - b e^{+j beta z}``.  The minus sign on the backward
+    current is the physics: a reflected wave carries power backwards, so on a
+    line of one direction it is a current of the opposite sign.  Both series
+    therefore hold the *same* two exponentials, with coefficients ``b / a`` for
+    ``V`` and ``-b / a`` for ``I``, which is what the fit unpicks.
+    """
+    forward = 1.0e-3 * np.exp(-1j * beta * z)
+    backward = gamma * 1.0e-3 * np.exp(1j * beta * z)
+    return 50.0 * (forward + backward), forward - backward
+
+
+def test_fit_station_impedance_recovers_a_pure_forward_wave():
+    """One wave only: the fit returns the built-in 50 ohm and no reflection."""
+    z = _station_x()
+    v, i = _forward(z)
+    fit = fit_station_impedance(z, v, i, BETA)
+
+    assert fit.n_stations == N_STATIONS
+    assert fit.beta == BETA
+    assert fit.reference_plane == pytest.approx(float(z[0]))
+    assert abs(fit.z0 - 50.0) <= 1e-9 * 50.0
+    # a travelling wave is the pure mode: gamma_I = -gamma_V cancels exactly
+    assert fit.mode_purity < 1e-9
+    assert abs(fit.gamma_v) < 1e-9
+    assert abs(fit.gamma_i) < 1e-9
+    # no scatter and no beta lever arm asked for, so every sigma is roundoff
+    # or absent rather than a number
+    assert fit.residual_v < 1e-9
+    assert fit.residual_i < 1e-9
+    assert fit.z0_sigma_stat < 1e-9
+    assert fit.z0_sigma_beta is None
+    assert fit.z0_sigma_total is None
+    assert np.all(np.abs(fit.residual_v_stations) < 1e-9)
+    assert np.all(np.abs(fit.residual_i_stations) < 1e-9)
+
+
+def test_fit_station_impedance_separates_the_two_waves():
+    """A known reflection comes back as ``+gamma`` on V and ``-gamma`` on I.
+
+    The algebra: with ``A_f = a`` and ``A_b = b`` in both series, the fit
+    returns ``gamma_V = b / a`` and ``gamma_I = -b / a``, so their sum is zero
+    whatever the reflection -- the pair is still one mode on one line, only
+    its impedance magnitude changes.  ``z0 = A_V^f / A_I^f = Z0`` too, because
+    the forward amplitudes divide out the common factor.
+    """
+    z = _station_x()
+    gamma = 0.1 * np.exp(1j * np.deg2rad(30.0))
+    v, i = _reflected(z, gamma=gamma)
+    fit = fit_station_impedance(z, v, i, BETA)
+
+    assert abs(fit.z0 - 50.0) <= 1e-9 * 50.0
+    assert fit.gamma_v == pytest.approx(gamma, rel=1e-9, abs=1e-9)
+    assert fit.gamma_i == pytest.approx(-gamma, rel=1e-9, abs=1e-9)
+    assert fit.mode_purity < 1e-9
+    assert abs(fit.phase_deg) < 1e-9
+
+
+def test_fit_station_impedance_carries_a_wrong_beta_into_z0():
+    """A beta that is 2 % too large moves z0 -- and only if a wave reflects.
+
+    With two waves present and the wrong phase constant, the refit can only
+    match the data by attributing part of the forward wave to the backward
+    one, so the recovered ratio stops being real: here it drops below 50 ohm
+    and picks up a positive imaginary part (measured 49.9499 + 0.0714j).  The
+    same wrong beta on a pure travelling wave leaves ``z0`` exact, because one
+    exponential divided by another cancels whatever phase constant both were
+    fitted with -- but the mode test still fails, since the pair of spurious
+    coefficients come out with the same sign instead of opposite ones
+    (``mode_purity`` 0.0175 against roundoff).  So neither series on its own
+    can police ``beta``: only the sum signature can, which is why the beta
+    part of the budget is reported separately and not folded into a
+    statistical sigma.
+    """
+    z = _station_x()
+    sigma_beta = 4.0
+
+    v, i = _reflected(z)
+    shifted = fit_station_impedance(z, v, i, 1.02 * BETA, sigma_beta)
+    assert shifted.z0.real < 50.0
+    assert shifted.z0.imag > 0.0
+    assert shifted.phase_deg > 0.0
+    assert shifted.z0_sigma_beta == pytest.approx(0.0911, abs=5e-4)
+    # the assumed pair no longer has gamma_I = -gamma_V at the wrong beta
+    assert shifted.mode_purity > 0.0
+
+    v, i = _forward(z)
+    exact = fit_station_impedance(z, v, i, 1.02 * BETA, sigma_beta)
+    assert abs(exact.z0 - 50.0) <= 1e-9 * 50.0
+    assert exact.z0_sigma_beta < 1e-9 * 50.0
+    # one wave, wrong beta: ``z0`` cannot see it, the mode signature can
+    assert exact.mode_purity == pytest.approx(0.01746, abs=1e-4)
+
+
+def test_sigma_beta_from_curvature_is_roundoff_on_exact_data():
+    """Noiseless data: the curvature estimate is roundoff, not a measurement.
+
+    The estimator scales with the residual sum of squares, so exact data give
+    ``s = 0`` and a sigma at machine precision (measured 3e-15 rad/m against
+    ``beta`` = 200 rad/m).  That is the honest answer for the arithmetic and
+    no answer at all for an experiment; the test pins the *behaviour* -- a
+    fitted beta that is exact must not be dressed up as a measured one.
+    """
+    z = _station_x()
+    v, i = _forward(z)
+    sigma = sigma_beta_from_curvature(z, v, BETA)
+    assert sigma is not None
+    assert 0.0 <= sigma < 1e-9 * BETA
+
+    # On data that a single wave cannot fit, the same estimate is a real
+    # number: a few rad/m, i.e. per cent level, and finite.
+    v, i = _reflected(z)
+    sigma = sigma_beta_from_curvature(z, v, BETA)
+    assert sigma is not None
+    assert 0.0 < sigma < 0.1 * BETA
 
