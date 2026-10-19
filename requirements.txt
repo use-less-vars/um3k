@@ -1,0 +1,6 @@
+# emfit runtime and test dependencies.
+# Floors match the versions currently verified in the build container.
+numpy>=2.5.0
+scipy>=1.18.0
+matplotlib>=3.11.0
+pytest>=9.1.0
