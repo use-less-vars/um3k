@@ -51,12 +51,29 @@ from .eigen import analytic_box_modes, resonances
 from .evolve import FITStepper, RickerSource, cfl_dt
 from .grid import Grid
 from .materials import C0, material_matrices
+from .microstrip import Microstrip
 from .operators import CellComplex
 from .pml import PML, cells_for_wavelength
+from .ports import (
+    DftAccumulator,
+    LumpedPort,
+    column_path,
+    edge_path_voltage,
+    plate_current,
+)
 
 import matplotlib.pyplot as plt  # noqa: E402  (after the backend is fixed)
 
-__all__ = ["Param", "Study", "FigureSink", "STUDIES", "coerce", "get"]
+__all__ = [
+    "Param",
+    "Study",
+    "FigureSink",
+    "MicrostripWave",
+    "STUDIES",
+    "coerce",
+    "get",
+    "microstrip_wave",
+]
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -1044,6 +1061,427 @@ def _run_rcs(values: Mapping[str, Any], sink: FigureSink) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# study 6: microstrip wave -- phasors along the line, and what the layer does
+# ---------------------------------------------------------------------------
+#: Substrate thickness of the default cross-section [m].
+MS_H = 1.6e-3
+#: Strip width of the default cross-section [m]; ``w/h = 2``.
+MS_W = 3.2e-3
+#: Relative permittivity of the default substrate.
+MS_EPS_R = 4.4
+#: Drive frequency asked for [Hz]; snapped onto a DFT bin of the record.
+MS_F_TARGET = 6.0e9
+#: Leapfrog steps of the default run.
+MS_NSTEPS = 600
+#: Matched-layer cells at each absorbing face (``x``, ``y`` and ``zmax``).
+MS_N_PML = 6
+#: First and last probe station of the default run [m].
+MS_X_FIRST, MS_X_LAST = 10.4e-3, 20.0e-3
+#: Probe stations along the line.
+MS_N_STATIONS = 9
+#: Substrate cells across ``h``; this fixes the cell size of the whole mesh.
+#: Four cells over 1.6 mm is a 0.4 mm cell: the historical reference mesh.
+MS_N_SUB = 4
+#: Air cells between the strip and the layer at ``zmax``.
+MS_N_AIR = 12
+#: Matched-layer cells against the ``zmax`` face; ``0`` leaves it a plain PEC
+#: lid and builds no layer there.  A single :class:`emfit.pml.PML` carries one
+#: thickness for every wall it opens, so a non-zero value has to equal
+#: ``MS_N_PML``; that is checked, never silently ignored.
+MS_N_TOP = 6
+#: Cells across the strip width.
+MS_N_STRIP = 8
+#: Clean cells between the strip edge and the lateral matched layer.
+MS_N_CLEAN = 12
+#: Line cells between the port plane and the layer behind it.
+MS_N_REF = 2
+#: Line cells between the port plane and the far (PEC) end of the strip.
+MS_N_LINE = 54
+#: Nominal port impedance carried by the :class:`LumpedPort` [ohm].
+MS_Z0_NOMINAL = 50.0
+
+
+@dataclass
+class MicrostripWave:
+    """What one :func:`microstrip_wave` run measured, and on which mesh.
+
+    Every length is SI metres and every phasor is a complex DFT coefficient of
+    the state at ``geometry['f']``, accumulated over the same record for every
+    signal, so ratios of two of them are meaningful and the overall normalising
+    factor cancels.
+
+    Attributes:
+        geometry: Everything the mesh build decided -- cell counts, cell size,
+            the strip and port indices, the station cells, ``dt``, the drive
+            frequency actually used (a DFT bin, which is not ``f_target``) and
+            the warm-up split of the record.
+        station_x: ``(n_stations,)`` x positions of the voltage probes [m].
+        v_stations: ``(n_stations,)`` complex gap voltages at those stations [V].
+        v_port: Complex gap voltage on the port plane [V].
+        i_ground_full: Complex return current summed over **every** ``y``
+            column of the ground plane at the port station [A].
+        i_ground_truncated: The same sum over the physical strip extent only,
+            i.e. with the lateral matched-layer columns left out [A].
+        y_extent: Half-width used for the truncated sum [m].
+        beta: Phase constant from the plain phase difference between the first
+            and the last station [rad/m].  No fit: exact only for a single
+            travelling wave, and ambiguous once ``beta * d`` passes ``pi``
+            (flagged in ``geometry['beta_ambiguous']``).
+        beta_model: ``emfit.microstrip`` Hammerstad-Jensen value at the same
+            frequency [rad/m].
+        z0: ``V / I`` at the port station, ``V`` from the port gap and ``I``
+            from the truncated ground return [ohm].
+        z0_model: Closed-form quasi-static impedance of the cross-section [ohm].
+        eps_eff: Effective permittivity implied by ``beta``.
+        eps_eff_model: Closed-form effective permittivity of the cross-section.
+    """
+
+    geometry: dict
+    station_x: np.ndarray
+    v_stations: np.ndarray
+    v_port: complex
+    i_ground_full: complex
+    i_ground_truncated: complex
+    y_extent: float
+    beta: float
+    beta_model: float
+    z0: complex
+    z0_model: float
+    eps_eff: float
+    eps_eff_model: float
+
+    def summary(self) -> str:
+        """One machine-readable line, the same fields the CLI prints."""
+        g = self.geometry
+        return (
+            f"microstrip f={g['f'] / 1e9:.4f}GHz"
+            f" f_target={g['f_target'] / 1e9:.4f}GHz"
+            f" cells={g['nx']}x{g['ny']}x{g['nz']}"
+            f" cell={g['cell'] * 1e3:.4f}mm nsteps={g['nsteps']}"
+            f" n_warm={g['n_warm']}"
+            f" beta={self.beta:.4f}rad/m beta_model={self.beta_model:.4f}rad/m"
+            f" eps_eff={self.eps_eff:.5f} eps_eff_model={self.eps_eff_model:.5f}"
+            f" z0={abs(self.z0):.4f}ohm z0_model={self.z0_model:.4f}ohm"
+            f" i_ground_full={abs(self.i_ground_full):.6e}A"
+            f" i_ground_truncated={abs(self.i_ground_truncated):.6e}A"
+            f" y_extent={self.y_extent * 1e3:.4f}mm")
+
+
+def microstrip_wave(
+    *,
+    h: float = MS_H,
+    w: float = MS_W,
+    eps_r: float = MS_EPS_R,
+    n_sub: int = MS_N_SUB,
+    n_air: int = MS_N_AIR,
+    n_top: int = MS_N_TOP,
+    n_strip: int = MS_N_STRIP,
+    n_clean: int = MS_N_CLEAN,
+    n_pml: int = MS_N_PML,
+    n_ref: int = MS_N_REF,
+    n_line: int = MS_N_LINE,
+    x_first: float = MS_X_FIRST,
+    x_last: float = MS_X_LAST,
+    n_stations: int = MS_N_STATIONS,
+    f_target: float = MS_F_TARGET,
+    nsteps: int = MS_NSTEPS,
+    n_warm: int = None,
+    drive: float = 1.0,
+    sink: FigureSink = None,
+) -> MicrostripWave:
+    """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
+
+    The line runs along ``x`` on a uniform mesh of one cell size (``h / n_sub``,
+    isotropic on all three axes), the ground plane is the ``zmin`` PEC wall and
+    the strip is a thin PEC sheet on the ``z = h`` node layer, ``n_strip`` cells
+    wide.  The ground plane and the four lateral faces are PEC, and a matched
+    layer of ``n_pml`` cells sits against the two ``x`` walls (behind the port
+    and behind the far end of the strip) and against the two ``y`` walls.  The
+    **top face is not a lid**: ``n_top`` cells of matched layer close the box at
+    ``zmax``, so the air channel above the strip is terminated by an absorber
+    and ``nz = n_sub + n_air + n_top``.  Passing ``n_top=0`` restores the plain
+    PEC lid (and builds no layer at ``zmax``); that is not the default, because
+    a PEC lid over a few air cells reflects the vertical field straight back
+    onto the strip.  The strip runs
+    from the port plane to the far ``x`` wall, so the line is **unterminated**:
+    there is no resistive edge in this solver, so the far end is a PEC wall and
+    the line carries a standing wave.  That is a property of the default case,
+    not an accident, and it is why the phase difference below is only a plain
+    two-station estimate.
+
+    The default case is the recovered historical mesh, and the numbers in it are
+    load-bearing: ``h = 1.6 mm`` resolved by ``n_sub = 4`` cells makes the cell
+    size of the whole cubic mesh ``0.4 mm``, which in turn gives ``62 x 44 x 22``
+    cells -- ``n_line = 54`` along the line, ``n_strip = 8`` across a 3.2 mm
+    strip, ``n_clean = 12`` clear cells either side, ``n_air = 12`` above the
+    strip and ``n_top = 6`` absorber cells on top.  The substrate is therefore
+    ``h/4``, not the ``h/2`` a first-principles mesh would pick: 0.4 mm is the
+    cell size the reference result was taken at, so ``n_sub`` is fixing the
+    cell, not claiming four layers resolve the substrate.  Change any of these
+    and the reported ``Z0`` and ``eps_eff`` are a different case, not a better
+    one.
+
+    The port is a lumped current source on the ``E_z`` edges that span the
+    substrate across the whole strip width at the port plane, ramped on over the
+    warm-up so the record that is Fourier transformed holds a steady sine.  A
+    :class:`DftAccumulator` then accumulates one phasor per signal over the
+    remaining steps: the gap voltage at each probe station (a ``E_z`` column
+    from the ground plane up to the strip), the port gap voltage, and the ground
+    return current **twice** -- once over the whole domain and once over the
+    physical strip extent only, using ``plate_current(..., y_extent=...)`` with a
+    half-width that excludes the lateral matched-layer columns.  Comparing those
+    two currents is the diagnostic point of the study: what a matched layer adds
+    to a plate-current sum is not current any conductor carries.
+
+    The drive frequency is snapped to an integer number of cycles over the
+    accumulated record, because a tone off a bin leaks into its neighbours
+    (see :class:`emfit.ports.DftAccumulator`).  ``geometry['f_target']`` keeps
+    what was asked for and ``geometry['f']`` what was used.
+
+    Args:
+        h, w, eps_r: Substrate thickness, strip width and relative permittivity.
+        n_sub: Substrate cells across ``h``; this sets the cell size.
+        n_air: Air cells between the strip and the layer at ``zmax``.
+        n_top: Matched-layer cells at ``zmax``; ``0`` puts a plain PEC lid there
+            instead.  Must equal ``n_pml`` when non-zero, because one
+            :class:`emfit.pml.PML` has a single thickness for all its walls.
+        n_strip: Cells across the strip width.
+        n_clean: Clean cells between the strip edge and the lateral layer.
+        n_pml: Cells of matched layer at each absorbing face.
+        n_ref: Line cells between the port plane and the layer behind it.
+        n_line: Line cells from the port plane to the far end of the strip.
+        x_first, x_last: Wanted first and last probe station, in metres; each is
+            snapped to the nearest node layer and the positions actually used
+            come back in ``station_x``.
+        n_stations: Number of probe stations, equally spaced in the wanted span.
+        f_target: Wanted drive frequency [Hz].
+        nsteps: Leapfrog steps; the first ``n_warm`` are warm-up.
+        n_warm: Warm-up steps, ``nsteps // 4`` by default.
+        drive: Source amplitude [A].
+        sink: Where to put the figure; ``None`` (the default) draws nothing.
+
+    Returns:
+        A :class:`MicrostripWave`.
+
+    Raises:
+        ValueError: If the mesh or the station span leaves no interior to
+            probe, or if warm-up leaves no record to transform.
+    """
+    n_sub, n_air, n_strip = int(n_sub), int(n_air), int(n_strip)
+    n_top = int(n_top)
+    n_clean, n_pml, n_ref, n_line = int(n_clean), int(n_pml), int(n_ref), int(n_line)
+    n_stations, nsteps = int(n_stations), int(nsteps)
+    if n_sub < 1 or n_air < 1 or n_strip < 1 or n_clean < 1 or n_pml < 1:
+        raise ValueError(
+            "n_sub, n_air, n_strip, n_clean and n_pml must all be at least 1")
+    if n_line < 1 or n_ref < 0:
+        raise ValueError(f"n_line must be at least 1 and n_ref at least 0")
+    if n_stations < 2:
+        raise ValueError(
+            f"n_stations must be at least 2 to take a phase difference, got "
+            f"{n_stations}")
+
+    if n_top < 0:
+        raise ValueError(f"n_top must be at least 0, got {n_top}")
+    if n_top and n_top != n_pml:
+        raise ValueError(
+            f"n_top={n_top} does not match n_pml={n_pml}: a single PML carries "
+            f"one thickness for every wall it opens, so the zmax layer has to "
+            f"share the lateral thickness. Pass n_top={n_pml} (or 0 for a "
+            f"plain PEC lid)")
+
+    cell = float(h) / n_sub
+    nx = n_pml + n_ref + n_line
+    ny = 2 * n_pml + n_strip + 2 * n_clean
+    nz = n_sub + n_air + n_top
+    grid = Grid.uniform(nx, ny, nz, nx * cell, ny * cell, nz * cell)
+    cc = CellComplex(grid)
+
+    substrate = lambda x, y, z: np.where(z <= float(h), float(eps_r), 1.0)  # noqa: E731
+    m_eps, m_mu = material_matrices(grid, cc, eps_r=substrate)
+
+    # --- where everything is ------------------------------------------------
+    ix_port = n_pml + n_ref                  # node layer of the port plane
+    k_strip = n_sub                          # node layer of the strip (z = h)
+    j0 = n_pml + n_clean                     # first y point layer of the strip
+    j1 = j0 + n_strip                        # one past the last one
+    j_centre = j0 + n_strip // 2
+    y_half = 0.5 * (n_strip + 2 * n_clean) * cell   # physical strip extent
+
+    # --- PEC: the six walls plus the thin strip sheet ------------------------
+    pec = np.array(cc.pec_edge_mask(), dtype=bool)
+    strip = np.zeros(cc.n_edges, dtype=bool)
+    x_cells = np.arange(ix_port, nx)                  # ex edges run along x
+    j_points = np.arange(j0, j1 + 1)
+    strip[cc.idx_ex(x_cells[:, None], j_points[None, :], k_strip)] = True
+    x_points = np.arange(ix_port, nx + 1)             # ey edges run along y
+    j_cells = np.arange(j0, j1)
+    strip[cc.idx_ey(x_points[:, None], j_cells[None, :], k_strip)] = True
+    pec |= strip
+
+    # ``walls`` replaces ``axes``: name every face, and add zmax only when a
+    # top layer was actually asked for.
+    pml_walls = ("xmin", "xmax", "ymin", "ymax") + (("zmax",) if n_top else ())
+    pml = PML(grid, thickness_cells=n_pml, order=2, target=1e-4,
+              walls=pml_walls, cc=cc)
+    stepper = FITStepper(cc, m_eps, m_mu, dt=cfl_dt(grid), pec=pec, pml=pml)
+    dt = float(stepper.dt)
+
+    # --- the record and its DFT bin ----------------------------------------
+    n_warm = nsteps // 4 if n_warm is None else int(n_warm)
+    n_acc = nsteps - n_warm
+    if n_acc < 1:
+        raise ValueError(
+            f"n_warm={n_warm} leaves no steps to transform out of nsteps={nsteps}")
+    span = n_acc * dt
+    f0 = max(1, int(round(float(f_target) * span))) / span
+
+    # --- probe stations, snapped to node layers ----------------------------
+    wanted = np.linspace(float(x_first), float(x_last), n_stations)
+    js = np.floor(wanted / cell + 0.5).astype(int)
+    js = np.clip(js, ix_port + 1, nx - 2)
+    if np.unique(js).size < 2:
+        raise ValueError(
+            f"the stations collapse onto one node layer on this mesh: "
+            f"x_first={x_first!r} m, x_last={x_last!r} m, cell={cell!r} m")
+    station_x = js * cell
+    columns = [column_path(cc, int(ix), j_centre, 0, k_strip) for ix in js]
+    port_column = column_path(cc, ix_port, j_centre, 0, k_strip)
+    port = LumpedPort("line", port_column, z0=MS_Z0_NOMINAL)
+    port_edges = np.unique(np.concatenate(
+        [column_path(cc, ix_port, int(j), 0, k_strip) for j in range(j0, j1 + 1)]))
+
+    # --- the time loop -----------------------------------------------------
+    acc = DftAccumulator([f0], dt)
+    current = np.zeros(cc.n_edges, dtype=float)
+    signals = np.zeros(n_stations + 3, dtype=float)
+    for n in range(nsteps):
+        current[:] = 0.0
+        ramp = min(1.0, (n + 1) / max(n_warm, 1))
+        current[port_edges] = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt)
+        stepper.step(current)
+        if n < n_warm:
+            continue
+        for i, col in enumerate(columns):
+            signals[i] = edge_path_voltage(stepper.e, col)
+        signals[n_stations] = port.voltage(stepper.e)
+        signals[n_stations + 1] = plate_current(stepper.h, cc, ix_port, 0)
+        signals[n_stations + 2] = plate_current(
+            stepper.h, cc, ix_port, 0, y_extent=y_half)
+        acc.add(signals, n)
+
+    spec = acc.spectrum[0]
+    v_stations = np.asarray(spec[:n_stations], dtype=complex)
+    v_port = complex(spec[n_stations])
+    i_full = complex(spec[n_stations + 1])
+    i_trunc = complex(spec[n_stations + 2])
+
+    # --- plain two-station phase difference; no fit this turn ---------------
+    d_probe = float(station_x[-1] - station_x[0])
+    d_phase = float(np.angle(v_stations[-1] * np.conj(v_stations[0])))
+    beta = -d_phase / d_probe
+
+    line = Microstrip(w=float(w), h=float(h), eps_r=float(eps_r))
+    beta_model = float(line.beta(f0))
+    eps_eff = (beta * C0 / (2.0 * np.pi * f0)) ** 2
+    z0 = complex(v_port / i_trunc) if i_trunc != 0.0 else complex(np.nan, np.nan)
+
+    geometry = {
+        "nx": nx, "ny": ny, "nz": nz, "cell": cell,
+        "length": nx * cell, "width": ny * cell, "height": nz * cell,
+        "h": float(h), "w": float(w), "eps_r": float(eps_r),
+        "n_sub": n_sub, "n_air": n_air, "n_top": n_top, "n_strip": n_strip,
+        "n_clean": n_clean, "n_pml": n_pml, "n_ref": n_ref, "n_line": n_line,
+        "ix_port": ix_port, "ix_far": nx, "k_strip": k_strip,
+        "j_strip": (j0, j1), "j_centre": j_centre, "y_extent": y_half,
+        "station_cells": [int(v) for v in js],
+        "f": f0, "f_target": float(f_target), "dt": dt,
+        "nsteps": nsteps, "n_warm": n_warm, "n_acc": n_acc,
+        "n_edges": cc.n_edges, "n_faces": cc.n_faces,
+        "beta_ambiguous": bool(abs(beta_model) * d_probe > np.pi),
+    }
+
+    if sink is not None:
+        fig, (ax_mag, ax_phase) = plt.subplots(1, 2, figsize=(9.2, 3.2),
+                                              constrained_layout=True)
+        ax_mag.plot(station_x * 1e3,
+                    20.0 * np.log10(np.maximum(np.abs(v_stations), 1e-30)),
+                    "o-", color=viz.COL_PRIMARY, lw=1.0)
+        ax_mag.set_xlabel("x [mm]")
+        ax_mag.set_ylabel("$|V|$ [dB]")
+        ax_mag.set_title("gap voltage along the line")
+        phase = np.unwrap(np.angle(v_stations))
+        ax_phase.plot(station_x * 1e3, phase, "o-", color=viz.COL_PRIMARY,
+                      lw=1.0, label="measured")
+        ax_phase.plot(station_x * 1e3,
+                      phase[0] - beta_model * (station_x - station_x[0]),
+                      ls=":", lw=0.9, color=viz.COL_INK,
+                      label="Hammerstad-Jensen")
+        ax_phase.set_xlabel("x [mm]")
+        ax_phase.set_ylabel("phase [rad]")
+        ax_phase.set_title("phase, and the closed form")
+        ax_phase.legend(loc="best", fontsize=7)
+        sink.add_figure(
+            "line-phasors", "Probe voltage magnitude and phase along the line", fig,
+            caption=(f"{n_stations} stations from "
+                     f"{station_x[0] * 1e3:.2f} to {station_x[-1] * 1e3:.2f} mm, "
+                     f"driven at {f0 / 1e9:.3f} GHz, {nsteps} steps of "
+                     f"{dt:.3e} s. The dotted ramp is the closed-form phase "
+                     "slope at the same frequency."))
+
+    return MicrostripWave(
+        geometry=geometry,
+        station_x=station_x,
+        v_stations=v_stations,
+        v_port=v_port,
+        i_ground_full=i_full,
+        i_ground_truncated=i_trunc,
+        y_extent=y_half,
+        beta=beta,
+        beta_model=beta_model,
+        z0=z0,
+        z0_model=float(line.z0),
+        eps_eff=float(eps_eff),
+        eps_eff_model=float(line.eps_eff),
+    )
+
+
+def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
+    """Study wrapper: one default wave run, reported as formatted strings."""
+    result = microstrip_wave(
+        f_target=float(values["f0"]) * 1e9,
+        nsteps=int(values["nsteps"]),
+        n_pml=int(values["npml"]),
+        sink=sink)
+    g = result.geometry
+    gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
+    return {
+        "drive frequency": (f"{g['f'] / 1e9:.4f} GHz "
+                            f"(asked {g['f_target'] / 1e9:.4f} GHz, snapped to a DFT bin)"),
+        "mesh": f"{g['nx']} x {g['ny']} x {g['nz']} cells at {g['cell'] * 1e3:.4f} mm",
+        "box": (f"{g['length'] * 1e3:.2f} x {g['width'] * 1e3:.2f} x "
+                f"{g['height'] * 1e3:.2f} mm, {g['nsteps']} steps "
+                f"({g['n_acc']} transformed)"),
+        "stations": (f"{len(result.station_x)} from "
+                     f"{result.station_x[0] * 1e3:.2f} to "
+                     f"{result.station_x[-1] * 1e3:.2f} mm"),
+        "beta": f"{result.beta:.3f} rad/m",
+        "beta (Hammerstad-Jensen)": f"{result.beta_model:.3f} rad/m",
+        "beta error": (f"{100.0 * (result.beta / result.beta_model - 1.0):.2f} %"
+                       if result.beta_model else "n/a"),
+        "eps_eff": f"{result.eps_eff:.5f}",
+        "eps_eff (Hammerstad-Jensen)": f"{result.eps_eff_model:.5f}",
+        "Z0 = V/I at the port": f"{abs(result.z0):.3f} ohm",
+        "Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
+        "ground current, full domain": f"{abs(result.i_ground_full):.6e} A",
+        "ground current, strip extent": f"{abs(result.i_ground_truncated):.6e} A",
+        "full / strip current": f"{gain:.3f}",
+        "beta ambiguity": ("beta*d > pi: the two-station difference has aliased"
+                           if g["beta_ambiguous"] else "phase step below pi"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # registry
 # ---------------------------------------------------------------------------
 CAVITY = Study(
@@ -1165,7 +1603,41 @@ RCS = Study(
     run=_run_rcs,
 )
 
-STUDIES: dict = {study.name: study for study in (CAVITY, MODES, DUCT, SCATTER, RCS)}
+MICROSTRIP = Study(
+    name="microstrip",
+    title="Microstrip wave: beta, Z0 and the return current the layer spoils",
+    blurb=(
+        "A microstrip line (h = 1.6 mm, w = 3.2 mm, eps_r = 4.4) driven by a "
+        "lumped current port at one end, with the gap voltage sampled at nine "
+        "stations between 10.4 mm and 20.0 mm and the ground return current "
+        "taken twice: over the whole domain, and over the physical strip "
+        "extent only, with the lateral matched-layer columns left out. "
+        "Comparing those two currents is the point -- what a matched layer "
+        "adds to a plate-current sum is not current any conductor carries. "
+        "beta comes from a plain phase difference between the first and last "
+        "station (no fit yet), Z0 from V/I at the port station, eps_eff from "
+        "beta, and each is printed next to the Hammerstad-Jensen closed form. "
+        "The far end of the strip is a PEC wall, so the default case carries a "
+        "standing wave; read the phasor figure before believing beta."),
+    params=(
+        Param("nsteps", "leapfrog steps", "int", MS_NSTEPS, lo=64, hi=4000,
+              help="The first quarter is warm-up; the rest is Fourier "
+                   "transformed, and the drive frequency is snapped to one of "
+                   "its bins."),
+        Param("f0", "drive frequency", "float", MS_F_TARGET / 1e9,
+              lo=1.0, hi=20.0, unit="GHz",
+              help="Wanted tone; the run uses the nearest DFT bin of the "
+                   "record and reports both."),
+        Param("npml", "matched-layer cells", "int", MS_N_PML, lo=2, hi=12,
+              help="Layer thickness at each absorbing face (both x ends and "
+                   "both lateral ends); thicker absorbs more and costs more "
+                   "cells."),
+    ),
+    run=_run_microstrip,
+)
+
+STUDIES: dict = {study.name: study
+                 for study in (CAVITY, MODES, DUCT, SCATTER, RCS, MICROSTRIP)}
 """Registry of every study, keyed by :attr:`Study.name`."""
 
 
@@ -1180,3 +1652,41 @@ def get(name: str) -> Study:
         raise ValueError(
             f"unknown study {name!r}; available: {', '.join(sorted(STUDIES))}")
     return STUDIES[key]
+
+
+# ---------------------------------------------------------------------------
+# command line
+# ---------------------------------------------------------------------------
+def _main(argv: list[str] = None) -> int:
+    """Run one study: ``python -m emfit.studies NAME [key=value ...]``.
+
+    Prints a single ``RESULT`` line of ``key=value`` tokens (spaces inside a
+    value become underscores, so the line splits on whitespace) followed by one
+    ``FIGURE`` line per image, and writes the figures under
+    ``$EMFIT_STUDY_OUT`` (default ``study-out/<name>``).  Nothing here is
+    interactive, so the line can be taken from a detached ``nohup`` run.
+    """
+    import sys
+
+    argv = list(sys.argv[1:] if argv is None else argv)
+    name = argv.pop(0) if argv else "cavity"
+    study = get(name)
+    values = coerce(study, dict(arg.split("=", 1) for arg in argv if "=" in arg))
+
+    sink = FigureSink()
+    t_start = time.perf_counter()
+    metrics = study.run(values, sink)
+    elapsed = time.perf_counter() - t_start
+
+    fields = " ".join(f"{k.replace(' ', '_')}={str(v).replace(' ', '_')}"
+                      for k, v in metrics.items())
+    print(f"RESULT study={study.name} wall={elapsed:.2f}s {fields}", flush=True)
+
+    out = os.environ.get("EMFIT_STUDY_OUT") or os.path.join("study-out", study.name)
+    for path in sink.save_to(out):
+        print(f"FIGURE {path}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
