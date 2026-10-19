@@ -41,6 +41,7 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from . import scatter
 from . import viz  # selects the Agg backend before pyplot is imported anywhere
 from .abc import Mur1Boundary
 from .eigen import analytic_box_modes, resonances
@@ -621,6 +622,149 @@ def _run_duct(values: Mapping[str, Any], sink: FigureSink) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# study 4: 2-D scattering from a PEC cylinder
+# ---------------------------------------------------------------------------
+SCATTER_FRAMES = 6              # panels in the sequence figure
+SCATTER_SPAN = 1.0              # half-width of the sequence, in wavelengths
+
+
+def _scatter_vector(cc: CellComplex, ez) -> np.ndarray:
+    """Full edge vector holding ``ez`` in the ``Ez`` block, zero elsewhere.
+
+    :func:`emfit.viz.plot_field_slice` wants one value per primal edge, while
+    this study only has the ``Ez`` node array: a single cell layer between two
+    PEC ``z`` planes leaves ``Ez`` as the only electric component, so the
+    padded vector's ``MAGNITUDE`` is ``|Ez|`` exactly rather than approximately.
+    """
+    vals = np.zeros(cc.n_edges, dtype=float)
+    vals[cc.off_ez:cc.off_ez + cc.n_ez] = np.asarray(ez, dtype=float).ravel()
+    return vals
+
+
+def _scatter_overlay(ax, cc: CellComplex, mask, centre, radius: float) -> None:
+    """Circle of the ideal scatterer plus the ``Ez`` nodes the PEC pins."""
+    theta = np.linspace(0.0, 2.0 * np.pi, 361)
+    ax.plot(centre[0] + radius * np.cos(theta), centre[1] + radius * np.sin(theta),
+            color=viz.COL_INK, lw=0.9, ls="--")
+    ii, jj = np.meshgrid(np.arange(cc.nxn), np.arange(cc.nyn), indexing="ij")
+    pinned = np.asarray(mask, dtype=bool)[cc.idx_ez(ii, jj, 0)]
+    ax.plot(np.asarray(cc.grid.x, dtype=float)[ii[pinned]],
+            np.asarray(cc.grid.y, dtype=float)[jj[pinned]],
+            linestyle="none", marker="s", ms=1.6, color=viz.COL_ACCENT)
+
+
+def _run_scatter(values: Mapping[str, Any], sink: FigureSink) -> dict:
+    """Plane-wave-like incidence on a PEC cylinder, background subtracted.
+
+    Two pictures from **one** pair of integrations: a total/scattered snapshot
+    of the instant the pulse peak is over the cylinder, and a sequence of that
+    same scattered field as the wave sweeps the body.  The scattered field is
+    defined by subtraction, never by an approximate decomposition, so the
+    incident pulse, the taper of the source line and the residual reflection of
+    the layer all cancel exactly.
+    """
+    ka, ppw = float(values["ka"]), int(values["ppw"])
+
+    # Snapshot delays, measured from the pulse peak, around the instant the
+    # peak reaches the cylinder centre.  Spacing well below one wavelength
+    # keeps the frames distinct at every ppw the parameter allows.
+    to_centre = 0.5 * scatter.N_LAMBDA - scatter.PML_LAMBDA - scatter.SRC_INSET
+    offsets = np.linspace(-SCATTER_SPAN, SCATTER_SPAN, SCATTER_FRAMES)
+    delays = (to_centre + offsets) * scatter.LAM0 / C0
+
+    result = scatter.run_scatter(ka=ka, ppw=ppw, delays=delays)
+    st = result.setup
+    cc = result.cc
+    total = np.asarray(result.ez_total, dtype=float)
+    scattered = np.asarray(result.ez_scattered, dtype=float)
+    if total.ndim == 2:                              # a single frame came back
+        total, scattered = total[None, ...], scattered[None, ...]
+    delay_ns = (np.asarray(result.times, dtype=float) - st.t0) * 1e9
+    n_frames = delay_ns.size
+
+    # --- figure: total and scattered field at the money frame ---------------
+    fig, (ax_tot, ax_sca) = plt.subplots(1, 2, figsize=(9.6, 4.0),
+                                         constrained_layout=True)
+    for ax, data, heading, label in (
+            (ax_tot, total[-1], "total field", r"$|E_z|$ [V/m]"),
+            (ax_sca, scattered[-1], "scattered field",
+             r"$|E_z^{scat}|$ [V/m]")):
+        viz.plot_field_slice(st.grid, _scatter_vector(cc, data), "MAGNITUDE",
+                             axis="z", ax=ax, cmap="viridis", colorbar=False,
+                             title=f"{heading}, $t$ = {delay_ns[-1]:.2f} ns")
+        fig.colorbar(ax.collections[0], ax=ax, shrink=0.9, label=label)
+        _scatter_overlay(ax, cc, result.mask, st.centre, result.a)
+    ax_tot.text(0.02, 0.98,
+                f"$ka$ = {result.ka:g}\n{result.ppw} cells / wavelength\n"
+                f"radius a = {result.radius_cells:.2f} cells\n"
+                f"{result.n_pec_edges} pinned $E_z$ nodes",
+                transform=ax_tot.transAxes, va="top", ha="left", fontsize=7,
+                color=viz.COL_INK)
+    fig.suptitle(f"PEC cylinder, $ka$ = {result.ka:g}, {result.ppw} cells per "
+                 f"wavelength: incident and scattered field", fontsize=10)
+    sink.add_figure(
+        "scatter-snapshot", "PEC cylinder: total and scattered |Ez|", fig,
+        caption=(f"TMz incidence on a PEC cylinder of radius a = "
+                 f"{result.radius_cells:.2f} cells ({result.a:.3f} m), "
+                 f"{result.n_pec_edges} pinned Ez nodes, the instant the pulse "
+                 f"peak is over the centre. Left: the total field, which is the "
+                 f"incident beam plus the body response; right: the same instant "
+                 f"with the cylinder removed and subtracted, so only the field "
+                 f"the body radiates survives. Dashed circle: the ideal "
+                 f"scatterer; squares: the nodes the staircase actually pins."))
+
+    # --- figure: the scattered field as the pulse sweeps the body -----------
+    ncols = min(3, n_frames)
+    nrows = -(-n_frames // ncols)                     # ceil
+    fig, axes = plt.subplots(nrows, ncols, squeeze=False,
+                            figsize=(3.2 * ncols, 2.6 * nrows),
+                            constrained_layout=True)
+    panels = axes.ravel()
+    peak = float(np.max(np.abs(scattered))) or 1.0
+    mesh = None
+    for i in range(n_frames):
+        _, ax = viz.plot_field_slice(
+            st.grid, _scatter_vector(cc, scattered[i]), "MAGNITUDE", axis="z",
+            ax=panels[i], cmap="viridis", colorbar=False,
+            title=f"$t$ = {delay_ns[i]:.2f} ns")
+        mesh = ax.collections[0]
+        mesh.set_clim(0.0, peak)
+        _scatter_overlay(ax, cc, result.mask, st.centre, result.a)
+    for ax in panels[n_frames:]:
+        ax.axis("off")
+    fig.colorbar(mesh, ax=panels.tolist(), shrink=0.9,
+                 label=r"$|E_z^{scat}|$ [V/m]")
+    fig.suptitle(f"Scattered field, $ka$ = {result.ka:g}, {result.ppw} cells "
+                 f"per wavelength", fontsize=10)
+    sink.add_figure(
+        "scatter-sequence", "Scattered |Ez| as the pulse sweeps the cylinder",
+        fig,
+        caption=(f"One shared colour scale and one shared bar, so the panels "
+                 f"can be compared: 0 to {peak:.1f} V/m, the largest "
+                 f"|Ez scattered| anywhere in the sequence. Times are measured "
+                 f"from the peak of the launched pulse. The front is "
+                 f"plane-wave-like rather than ideal, and the scattered field "
+                 f"is the response to that known illumination of finite "
+                 f"aperture."))
+
+    return {
+        "electrical size ka": f"{result.ka:.3f}",
+        "cells per wavelength": f"{result.ppw}",
+        "cylinder radius a": f"{result.a:.4f} m",
+        "radius in cells": f"{result.radius_cells:.2f}",
+        "wavelength": f"{result.lam0:.3f} m",
+        "pinned Ez nodes": f"{result.n_pec_edges}",
+        "peak |Ez|, total": f"{result.peak_total:.3f} V/m",
+        "peak |Ez|, scattered": f"{result.peak_scattered:.3f} V/m",
+        "scattered / incident": f"{result.scattered_fraction:.4f}",
+        "time steps": f"{result.nsteps}",
+        "time step dt": f"{result.dt:.4e} s",
+        "snapshots": f"{n_frames}",
+        "wall time": f"{result.timings.get('total', 0.0):.2f} s",
+    }
+
+
+# ---------------------------------------------------------------------------
 # registry
 # ---------------------------------------------------------------------------
 CAVITY = Study(
@@ -693,7 +837,32 @@ DUCT = Study(
     run=_run_duct,
 )
 
-STUDIES: dict = {study.name: study for study in (CAVITY, MODES, DUCT)}
+SCATTER = Study(
+    name="scatter",
+    title="PEC cylinder in a plane-wave-like beam",
+    blurb=("A pulse launched from a uniform line source sweeps a PEC cylinder "
+           "and the field with the body present is compared with the same run "
+           "without it. The difference is the scattered field and nothing "
+           "else, because the two runs share the mesh, the time step, the "
+           "source, the layer and the walls -- so the whole artefact stack "
+           "cancels exactly. Two figures: total against scattered field at the "
+           "instant the peak is over the cylinder, and the scattered field "
+           "running through the body. The incident front is plane-wave-like, "
+           "not plane, as documented in emfit.scatter."),
+    params=(
+        Param("ka", "electrical size ka", "float", 3.0, lo=0.5, hi=6.0,
+              help="Circumference in wavelengths, 2 pi a / lambda; the radius "
+                   "follows as ka / (2 pi) wavelengths, so below ka = 1 the "
+                   "staircase is only a few cells across."),
+        Param("ppw", "cells per wavelength", "int", 20, lo=8, hi=32,
+              help="The domain is six wavelengths square and the layer one "
+                   "wavelength thick, so the cell count and the run time "
+                   "follow directly from this."),
+    ),
+    run=_run_scatter,
+)
+
+STUDIES: dict = {study.name: study for study in (CAVITY, MODES, DUCT, SCATTER)}
 """Registry of every study, keyed by :attr:`Study.name`."""
 
 
