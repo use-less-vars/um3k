@@ -7,6 +7,7 @@ prints what came back.  Two commands::
 
     python -m emfit list
     python -m emfit run <study> [--set KEY=VALUE ...] [--out DIR] [--json]
+    python -m emfit serve [--host H] [--port N]
 
 Exit codes, because scripts want to tell the cases apart:
 
@@ -132,6 +133,18 @@ def _cmd_run(args) -> int:
     return 0
 
 
+def _cmd_serve(args) -> int:
+    """``serve``: run the browser front end until interrupted."""
+    from .webapp import serve                  # imported only when needed
+
+    try:
+        serve(host=args.host, port=args.port)
+    except OSError as exc:                     # port in use, no such interface
+        print(f"cannot bind {args.host}:{args.port}: {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # entry point
 # ---------------------------------------------------------------------------
@@ -161,6 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--json", action="store_true",
                        help="print one JSON object instead of the tables")
     p_run.set_defaults(func=_cmd_run)
+
+    p_serve = sub.add_parser("serve", help="run the browser front end")
+    p_serve.add_argument("--host", metavar="HOST", default="127.0.0.1",
+                         help="interface to bind (default: 127.0.0.1; keep it "
+                              "on loopback, the server has no authentication)")
+    p_serve.add_argument("--port", metavar="PORT", type=int, default=8000,
+                         help="port to bind (default: 8000; 0 picks a free one)")
+    p_serve.set_defaults(func=_cmd_serve)
     return parser
 
 
