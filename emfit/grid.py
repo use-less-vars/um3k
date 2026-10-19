@@ -42,29 +42,52 @@ class Grid:
     x: np.ndarray
     y: np.ndarray
     z: np.ndarray
+    periodic: tuple = (False, False, False)
 
     def __post_init__(self):
         object.__setattr__(self, "x", _axis("x", self.x))
         object.__setattr__(self, "y", _axis("y", self.y))
         object.__setattr__(self, "z", _axis("z", self.z))
+        p = tuple(bool(v) for v in self.periodic)
+        if len(p) != 3:
+            raise ValueError(f"periodic must have 3 entries, got {self.periodic!r}")
+        object.__setattr__(self, "periodic", p)
+
+    # ------------------------------------------------------------------
+    # periodicity
+    # ------------------------------------------------------------------
+    def is_periodic(self, axis: str) -> bool:
+        """Whether ``axis`` is identified with itself (toroidal topology)."""
+        return self.periodic["xyz".index(axis)]
+
+    def nodes(self, axis: str) -> int:
+        """Number of primal *point layers* along ``axis``.
+
+        ``n+1`` for a bounded axis, ``n`` for a periodic one: the last node is
+        the first node, so it is not a separate entity.
+        """
+        n = self.shape["xyz".index(axis)]
+        return n if self.is_periodic(axis) else n + 1
 
     # ------------------------------------------------------------------
     # construction
     # ------------------------------------------------------------------
     @classmethod
-    def uniform(cls, nx, ny, nz, lx=1.0, ly=1.0, lz=1.0, origin=(0.0, 0.0, 0.0)):
+    def uniform(cls, nx, ny, nz, lx=1.0, ly=1.0, lz=1.0, origin=(0.0, 0.0, 0.0),
+                periodic=(False, False, False)):
         """Shoebox grid with ``nx*ny*nz`` equal cells spanning ``lx*ly*lz``."""
         ox, oy, oz = (float(o) for o in origin)
         return cls(
             np.linspace(ox, ox + float(lx), int(nx) + 1),
             np.linspace(oy, oy + float(ly), int(ny) + 1),
             np.linspace(oz, oz + float(lz), int(nz) + 1),
+            periodic=periodic,
         )
 
     @classmethod
-    def nonuniform(cls, x, y, z):
+    def nonuniform(cls, x, y, z, periodic=(False, False, False)):
         """Grid from explicit, strictly increasing node coordinate arrays."""
-        return cls(x, y, z)
+        return cls(x, y, z, periodic=periodic)
 
     # ------------------------------------------------------------------
     # sizes
@@ -113,13 +136,18 @@ class Grid:
         return np.diff(getattr(self, axis))
 
     def dual_widths(self, axis):
-        """Dual cell widths centred on each *node*; length ``n + 1``.
+        """Dual cell widths centred on each *node*; length ``nodes(axis)``.
 
         Interior nodes use the circumcentric average
-        ``(a[i+1] - a[i-1]) / 2``; the two boundary nodes get a half cell, so
-        the dual complex terminates on the domain boundary.
+        ``(a[i+1] - a[i-1]) / 2``; on a bounded axis the two boundary nodes get
+        a half cell, so the dual complex terminates on the domain boundary.
+        On a *periodic* axis every node is interior and the averaging wraps, so
+        the dual complex closes on itself (no half cells, no terminating faces).
         """
         a = getattr(self, axis)
+        if self.is_periodic(axis):
+            w = np.diff(a)                       # n_cells widths, n_cells nodes
+            return 0.5 * (w + np.roll(w, 1))      # circular circumcentric mean
         w = np.empty(a.size, dtype=float)
         w[1:-1] = 0.5 * (a[2:] - a[:-2])
         w[0] = 0.5 * (a[1] - a[0])
@@ -130,22 +158,25 @@ class Grid:
     # array shapes of the primal/dual entities
     # ------------------------------------------------------------------
     def edge_shape(self, axis):
-        """Shape of edges parallel to ``axis`` (= shape of their dual face)."""
-        nx, ny, nz = self.shape
-        return {
-            "x": (nx, ny + 1, nz + 1),
-            "y": (nx + 1, ny, nz + 1),
-            "z": (nx + 1, ny + 1, nz),
-        }[axis]
+        """Shape of edges parallel to ``axis`` (= shape of their dual face).
+
+        Along ``axis`` the count is the number of cells; transversely it is the
+        number of point layers, i.e. ``n + 1`` on a bounded axis and ``n`` on a
+        periodic one (the seam node is not duplicated).
+        """
+        n = self.shape
+        nodes = tuple(self.nodes(a) for a in "xyz")
+        return tuple(
+            n[t] if "xyz"[t] == axis else nodes[t] for t in range(3)
+        )
 
     def face_shape(self, axis):
         """Shape of primal faces orthogonal to ``axis``."""
-        nx, ny, nz = self.shape
-        return {
-            "x": (nx + 1, ny, nz),
-            "y": (nx, ny + 1, nz),
-            "z": (nx, ny, nz + 1),
-        }[axis]
+        n = self.shape
+        nodes = tuple(self.nodes(a) for a in "xyz")
+        return tuple(
+            n[t] if "xyz"[t] != axis else nodes[t] for t in range(3)
+        )
 
     # ------------------------------------------------------------------
     # primary metric: edge length L_i and face area A_f

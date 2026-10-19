@@ -243,12 +243,15 @@ class Mur1Boundary:
         """
         cc = self.cc
         nx, ny, nz = cc.nx, cc.ny, cc.nz
+        # point layers, not cells: an axis transverse to the plane may be
+        # periodic, in which case its seam layer is not a separate entity.
+        nxn, nyn, nzn = cc.nxn, cc.nyn, cc.nzn
         if name in ("xmin", "xmax"):
             if nx < 2:
                 raise ValueError(f"{name}: need at least 2 cells along x")
             i0, i1 = (0, 1) if name == "xmin" else (nx, nx - 1)
-            J, K = np.indices((ny, nz + 1))          # EY edges (parallel to y)
-            J2, K2 = np.indices((ny + 1, nz))        # EZ edges (parallel to z)
+            J, K = np.indices((ny, nzn))             # EY edges (parallel to y)
+            J2, K2 = np.indices((nyn, nz))           # EZ edges (parallel to z)
             idx = np.concatenate([cc.idx_ey(i0, J, K).ravel(),
                                   cc.idx_ez(i0, J2, K2).ravel()])
             nbr = np.concatenate([cc.idx_ey(i1, J, K).ravel(),
@@ -258,8 +261,8 @@ class Mur1Boundary:
             if ny < 2:
                 raise ValueError(f"{name}: need at least 2 cells along y")
             j0, j1 = (0, 1) if name == "ymin" else (ny, ny - 1)
-            I, K = np.indices((nx, nz + 1))          # EX edges (parallel to x)
-            I2, K2 = np.indices((nx + 1, nz))        # EZ edges (parallel to z)
+            I, K = np.indices((nx, nzn))             # EX edges (parallel to x)
+            I2, K2 = np.indices((nxn, nz))           # EZ edges (parallel to z)
             idx = np.concatenate([cc.idx_ex(I, j0, K).ravel(),
                                   cc.idx_ez(I2, j0, K2).ravel()])
             nbr = np.concatenate([cc.idx_ex(I, j1, K).ravel(),
@@ -269,8 +272,8 @@ class Mur1Boundary:
             if nz < 2:
                 raise ValueError(f"{name}: need at least 2 cells along z")
             k0, k1 = (0, 1) if name == "zmin" else (nz, nz - 1)
-            I, J = np.indices((nx, ny + 1))          # EX edges (parallel to x)
-            I2, J2 = np.indices((nx + 1, ny))        # EY edges (parallel to y)
+            I, J = np.indices((nx, nyn))             # EX edges (parallel to x)
+            I2, J2 = np.indices((nxn, ny))           # EY edges (parallel to y)
             idx = np.concatenate([cc.idx_ex(I, J, k0).ravel(),
                                   cc.idx_ey(I2, J2, k0).ravel()])
             nbr = np.concatenate([cc.idx_ex(I, J, k1).ravel(),

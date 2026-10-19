@@ -47,14 +47,17 @@ class CellComplex:
         nx, ny, nz = grid.shape
         self.nx, self.ny, self.nz = nx, ny, nz
 
+        # --- point-layer counts (n on a periodic axis, n+1 otherwise) ------
+        self.nxn, self.nyn, self.nzn = (grid.nodes(a) for a in "xyz")
+
         # --- entity counts -------------------------------------------------
-        self.n_ex = nx * (ny + 1) * (nz + 1)
-        self.n_ey = (nx + 1) * ny * (nz + 1)
-        self.n_ez = (nx + 1) * (ny + 1) * nz
-        self.n_fx = (nx + 1) * ny * nz
-        self.n_fy = nx * (ny + 1) * nz
-        self.n_fz = nx * ny * (nz + 1)
-        self.n_nodes = (nx + 1) * (ny + 1) * (nz + 1)
+        self.n_ex = nx * self.nyn * self.nzn
+        self.n_ey = self.nxn * ny * self.nzn
+        self.n_ez = self.nxn * self.nyn * nz
+        self.n_fx = self.nxn * ny * nz
+        self.n_fy = nx * self.nyn * nz
+        self.n_fz = nx * ny * self.nzn
+        self.n_nodes = self.nxn * self.nyn * self.nzn
 
         self.n_edges = self.n_ex + self.n_ey + self.n_ez
         self.n_faces = self.n_fx + self.n_fy + self.n_fz
@@ -73,26 +76,36 @@ class CellComplex:
     # ------------------------------------------------------------------
     # scalar index helpers (for hand checks and small loops)
     # ------------------------------------------------------------------
+    #: ``i % n_i`` wraps the index on a periodic axis, which is the whole of
+    #: the periodic boundary condition at the topological level.  ``%`` is a
+    #: no-op on a bounded axis because the index never reaches the count.
     def idx_ex(self, i, j, k):
-        return self.off_ex + i * (self.ny + 1) * (self.nz + 1) + j * (self.nz + 1) + k
+        return (self.off_ex + (i % self.nx) * self.nyn * self.nzn
+                + (j % self.nyn) * self.nzn + (k % self.nzn))
 
     def idx_ey(self, i, j, k):
-        return self.off_ey + i * self.ny * (self.nz + 1) + j * (self.nz + 1) + k
+        return (self.off_ey + (i % self.nxn) * self.ny * self.nzn
+                + (j % self.ny) * self.nzn + (k % self.nzn))
 
     def idx_ez(self, i, j, k):
-        return self.off_ez + i * (self.ny + 1) * self.nz + j * self.nz + k
+        return (self.off_ez + (i % self.nxn) * self.nyn * self.nz
+                + (j % self.nyn) * self.nz + (k % self.nz))
 
     def idx_fx(self, i, j, k):
-        return self.off_fx + i * self.ny * self.nz + j * self.nz + k
+        return (self.off_fx + (i % self.nxn) * self.ny * self.nz
+                + (j % self.ny) * self.nz + (k % self.nz))
 
     def idx_fy(self, i, j, k):
-        return self.off_fy + i * (self.ny + 1) * self.nz + j * self.nz + k
+        return (self.off_fy + (i % self.nx) * self.nyn * self.nz
+                + (j % self.nyn) * self.nz + (k % self.nz))
 
     def idx_fz(self, i, j, k):
-        return self.off_fz + i * self.ny * (self.nz + 1) + j * (self.nz + 1) + k
+        return (self.off_fz + (i % self.nx) * self.ny * self.nzn
+                + (j % self.ny) * self.nzn + (k % self.nzn))
 
     def idx_node(self, i, j, k):
-        return i * (self.ny + 1) * (self.nz + 1) + j * (self.nz + 1) + k
+        return ((i % self.nxn) * self.nyn * self.nzn
+                + (j % self.nyn) * self.nzn + (k % self.nzn))
 
     def idx_cell(self, i, j, k):
         return i * self.ny * self.nz + j * self.nz + k
@@ -257,6 +270,14 @@ class CellComplex:
         Selecting all six walls closes the domain into a cavity.
         """
         wallset = set(walls)
+        for axis in "xyz":
+            if self.grid.is_periodic(axis):
+                # a periodic axis has no boundary: pinning "ymin" would pin the
+                # seam node, which is an interior node of the torus.
+                for w in (f"{axis}min", f"{axis}max"):
+                    if w in wallset:
+                        raise ValueError(
+                            f"{w}: axis {axis} is periodic, it has no boundary")
         mask = np.zeros(self.n_edges, dtype=bool)
         nx, ny, nz = self.nx, self.ny, self.nz
 
