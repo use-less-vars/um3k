@@ -7,8 +7,9 @@ a badly conditioned run.  The groups are: probe voltages (a line integral over
 edge unknowns), the running DFT that turns probe samples into phasors, the
 two-probe split that turns phasors into travelling waves and S-parameters, the
 station fit that turns several stations into a line impedance with its
-uncertainty, and the Touchstone writer/reader that carries the S-matrix between
-runs.
+uncertainty, the plane shift that re-quotes a wave where it is wanted and the
+power-current check that licenses calling a ``V / I`` an impedance at all, and
+the Touchstone writer/reader that carries the S-matrix between runs.
 """
 
 from __future__ import annotations
@@ -24,9 +25,12 @@ from emfit.ports import (
     DftAccumulator,
     LumpedPort,
     Probe,
+    deembed_reflection,
+    deembed_transmission,
     edge_path_voltage,
     fit_station_impedance,
     plate_current,
+    power_current_check,
     probe_voltage,
     read_touchstone,
     reflection,
@@ -597,3 +601,111 @@ def test_sigma_beta_from_curvature_is_roundoff_on_exact_data():
     assert sigma is not None
     assert 0.0 < sigma < 0.1 * BETA
 
+
+
+# ---------------------------------------------------------------------------
+# reference planes: de-embedding, and the power-current check
+# ---------------------------------------------------------------------------
+def test_deembed_reflection_round_trip_returns_the_original():
+    """Shift a reflection upstream and back: the plane must leave no trace.
+
+    A factor of ``exp(-2j beta d)`` applied twice with opposite ``d`` is the
+    identity, for a real phase constant and for a lossy complex one, because
+    nothing in the algebra knows which is which.  This is the test that would
+    catch a sign error, which is otherwise invisible: a wrong-sign de-embedding
+    still returns a number of the right size.
+    """
+    gamma = 0.21 - 0.13j
+    distance = 7.2e-3
+    for beta in (232.4, 180.0 - 3.5j):
+        there = deembed_reflection(gamma, beta, distance)
+        back = deembed_reflection(there, beta, -distance)
+        assert abs(back - gamma) < 1e-12
+
+    # the transmission coefficient removes the delay it crossed, so a bare
+    # length of line comes back as exactly 1
+    beta = 232.4
+    delay = np.exp(-1j * beta * distance)
+    assert abs(deembed_transmission(delay, beta, distance) - 1.0) < 1e-12
+
+
+def test_deembed_magnitude_moves_only_through_absorption():
+    """Real ``beta``: the plane shift is phase only.  Complex ``beta``: loss.
+
+    With a real phase constant ``|gamma|`` is the same on every plane, so a
+    de-embedded magnitude that differs from the measured one is an algebra
+    bug.  With ``beta = beta' - 1j * alpha`` the shift multiplies the magnitude
+    by ``exp(-2 alpha d)`` -- the round trip the wave makes over that distance
+    -- and the transmission by ``exp(-alpha d)``, the one-way loss.  That is
+    the definition of the lossy case, not a side effect.
+    """
+    gamma = 0.0075 + 0.002j
+    for distance in (-1.0e-2, 0.0, 7.2e-3):
+        moved = deembed_reflection(gamma, 232.4, distance)
+        assert abs(abs(moved) - abs(gamma)) < 1e-12
+
+    alpha = 4.0                     # 1/m
+    beta = 232.4 - 1j * alpha
+    distance = 1.0e-2
+    # a reflection referred upstream shrinks: it died twice over the round trip
+    got = abs(deembed_reflection(gamma, beta, distance))
+    assert abs(got - abs(gamma) * np.exp(-2.0 * alpha * distance)) < 1e-12
+    # a transmission referred upstream grows by the attenuation undone
+    got = abs(deembed_transmission(1.0, beta, distance))
+    assert abs(got - np.exp(alpha * distance)) < 1e-12
+
+
+def test_power_current_ratio_is_one_for_a_single_wave():
+    """One mode, real ``Z0``: the pair's power and current give that ``Z0``.
+
+    ``V = Z0 I`` with ``Z0 = 50`` ohm and 1 mA of current carries 25 uW; the
+    impedance the power and the current imply must be the 50 ohm that was put
+    in, and the ratio to the fitted value must be 1 at roundoff.  A dead
+    current gives no impedance and must come back NaN rather than infinity.
+    """
+    z0 = 50.0
+    current = np.array([1e-3, 1e-3 * np.exp(-0.3j), 0.0])
+    voltage = z0 * current
+    z0_power, ratio = power_current_check(voltage, current, z0)
+
+    assert abs(z0_power[0] - 50.0) < 1e-9
+    assert abs(z0_power[1] - 50.0) < 1e-9
+    assert abs(ratio[0] - 1.0) < 1e-12
+    assert abs(ratio[1] - 1.0) < 1e-12
+    assert np.isnan(z0_power[2]) and np.isnan(ratio[2])
+
+
+def test_power_current_ratio_follows_the_standing_wave():
+    """Forward plus reflected wave: the ratio is the closed form, not 1.
+
+    With ``V = A (e^{-j b u} + G e^{+j b u})`` and
+    ``I = (A / Z0) (e^{-j b u} - G e^{+j b u})`` the ratio is
+
+        ``(1 + |G|**2 + 2 Re(G e^{2j b u})) / (1 + |G|**2 - 2 Re(G e^{2j b u}))``
+
+    which is the number the check exists to bound: 1 at a maximum of the
+    pattern, and large near a null where the current vanishes.  Getting this
+    wrong in either direction means the current convention is wrong, and a
+    station impedance fitted through it is then not an impedance.
+    """
+    z0 = 50.0
+    beta = BETA
+    gamma = 0.2 + 0.1j
+    u = _station_x()
+    forward = np.exp(-1j * beta * u)
+    backward = np.exp(1j * beta * u)
+    amplitude = 1.0e-3
+    voltage = z0 * amplitude * (forward + gamma * backward)
+    current = amplitude * (forward - gamma * backward)
+
+    z0_power, ratio = power_current_check(voltage, current, z0)
+    # the power is plane-independent, 1 - |G|**2; only |I|**2 ripples
+    ripple = np.real(gamma * backward ** 2)
+    expected = ((1.0 - abs(gamma) ** 2)
+                / (1.0 + abs(gamma) ** 2 - 2.0 * ripple))
+    assert np.allclose(ratio, expected, rtol=0.0, atol=1e-9)
+    assert np.allclose(z0_power, z0 * expected, rtol=0.0, atol=1e-6)
+    # a real reflection of this size really does move the ratio off 1
+    assert np.max(np.abs(ratio - 1.0)) > 0.15
+    assert np.max(np.abs(ratio - 1.0)) < ((1.0 + abs(gamma))
+                                          / (1.0 - abs(gamma))) ** 2 - 1.0

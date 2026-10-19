@@ -43,6 +43,20 @@ run or test that pins it is named.
 - **Why that argument does not win.** The box shrinks with the mesh because the walls are pinned at 3h from the trace, so the air capacitance moves with the box -- 36.585, 38.432 and 39.107 pF/m at 3h, 6h and 12h clearance at cell 0.4 mm. Comparing across boxes compares two different problems. Inside a 12h box refined to h/16 the value is 37.677 pF/m against Hammerstad-Jensen 37.467, so 37.677 is the reference and the coarse-box excess is 12.8 per cent, not the 14 per cent previously quoted.
 - **Evidence.** Values above; the static air impedance agreeing with the model to 1 per cent at h/4 is a cancellation of -2.4 per cent in `C_air` against +7.0 per cent in `eps_eff`, not accuracy.
 
+## The power check is an independent path, not a restatement
+
+- **Decision.** Losslessness is checked by forming, at every probe station, the power-current impedance `|V|^2 / (2 P)` with `P = Re(V I*)/2` from the strip current, dividing it by the fitted `Re(z0)`, and reporting the mean, the spread and the worst station against the bound the measured reflection alone can produce. The check consumes the current phasor and is never obtained by adding `|S11|` and `|S21|` together.
+- **Strongest argument against.** Both routes read the same station fields, so a ratio of 1 proves only that the solver is self-consistent, and a self-consistency check printed beside the measurement it implies is a restatement dressed as evidence.
+- **Why that argument does not win.** The two routes share the stations but not the field: the impedance comes from the fitted travelling-wave amplitude of the line voltage across the gap, the power from `Re(V I*)` with the strip current integrated on a different edge set. An error that is not a property of one mode -- a second mode, a station in the near field, a mis-set gap -- moves the two apart, which is exactly what this row is for. What is left over after the bound is subtracted is 0.08 per cent on the mean, so the row says the record carries one mode and says nothing else.
+- **Evidence.** Ratio mean 0.999177, spread 2.19e-02, worst station 10.40 mm at 1.011186; the bound from `|gamma| = 0.0075` is 3.0 per cent (0.0304), so the observed spread sits inside it; on the port plane the ratio is 1.000000 by construction, which is why the port is not where this check is quoted.
+
+## The far end is an absorber, and every reflection number is attributed to it
+
+- **Decision.** The strip is run from the source into the `n_pml`-cell absorber on the far `x` wall and is deliberately not terminated in a load. The reflected mode that the stations measure, `|S11| = 0.00748` (`-42.52 dB`), is reported as the residual reflection of that termination together with the source lump, and neither the row nor the prose calls the line matched or gives it a load.
+- **Strongest argument against.** An absorber is a numerical device whose reflection depends on its cell count and its profile, so a reflection coefficient attributed to it is a property of the mesh rather than of the transmission line, and quoting it as an S-parameter lends a numerical residue the standing of a physical measurement.
+- **Why that argument does not win.** The model contains no other termination: the metal wall behind the absorber is never reached by the wave, and there is no resistor anywhere, so the 0.0075 has to belong to the layer -- calling it a load or a matched port would name a thing the model does not contain. The attribution is also testable rather than decorative, because the same 0.0075 sets the 3.0 per cent bound the power-ratio row is judged against, and it reproduces between the one-wave fit and the station fit.
+- **Evidence.** `|S11| = 0.00748` (`-42.52 dB`) at the first station, 10.40 mm; the same magnitude on the port plane at `d = 7.20 mm`, since `beta` is real; VSWR `1.0151 : 1`; `|gamma|` one-wave 0.00749 against 0.00748 from the station fit; six-cell absorber, `n_pml = 6`.
+
 ---
 
 ## Retracted claims

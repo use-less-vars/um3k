@@ -1261,6 +1261,134 @@ def sigma_beta_from_curvature(z, v, beta, n_wave=1):
 
 
 # ---------------------------------------------------------------------------
+# reference planes: moving a wave to the plane it is quoted on
+# ---------------------------------------------------------------------------
+def deembed_reflection(gamma, beta, distance):
+    """Move a reflection coefficient towards the source by ``distance``.
+
+    ``gamma`` is the reflection coefficient on the plane it was measured on,
+    ``beta`` the phase constant of the line it was measured on [rad/m] and
+    ``distance`` how far that plane has to move upstream, towards the source,
+    in metres.
+
+    The forward wave is ``exp(-1j * beta * x)`` throughout this module, so with
+    ``V(x) = A exp(-1j beta x) + B exp(+1j beta x)`` the reflection coefficient
+    on the plane ``x`` is ``(B / A) exp(2j beta x)``.  Moving the plane to
+    ``x - distance`` therefore multiplies it by ``exp(-2j beta distance)``: a
+    positive ``distance`` is upstream, against ``+x``, which is the direction
+    the source sits in for the studies in this package.  Get the sign wrong
+    and the phase is de-embedded the wrong way -- a number that still looks
+    like a number.
+
+    ``beta`` may be complex.  Writing the lossy case as
+    ``beta = beta' - 1j * alpha`` with ``alpha > 0`` [1/m], the factor has
+    magnitude ``exp(-2 * alpha * distance)``: a reflection de-embedded
+    upstream *grows*, because the incident wave it is referred to had decayed
+    on the way down.  That is the intended behaviour, not a bug, and it is why
+    a de-embedded magnitude larger than the measured one is not by itself
+    evidence that anything is wrong.
+
+    Returns:
+        ``gamma * exp(-2j * beta * distance)``: a complex scalar for scalar
+        input, an array shaped like ``gamma`` otherwise.
+    """
+    out = np.asarray(gamma, dtype=complex) * np.exp(
+        -2j * complex(beta) * float(distance))
+    return complex(out) if out.ndim == 0 else out
+
+
+def deembed_transmission(s21, beta, distance):
+    """Refer a transmission coefficient to a plane ``distance`` upstream.
+
+    ``s21`` is the transmission measured across ``distance`` metres of line:
+    the amplitude that arrived at the downstream plane over the one that left
+    the upstream one, so it carries the line's own delay
+    ``exp(-1j beta distance)``.  Referring it to the upstream plane removes
+    that delay, i.e. multiplies by ``exp(+1j beta distance)``, after which a
+    lossless length of line comes back as exactly ``1`` and a lossy one as
+    ``exp(-alpha distance)``.  Note the sign against
+    :func:`deembed_reflection`, which carries ``exp(-2j beta distance)``: a
+    reflection accumulates the forward phase once and the backward phase once,
+    and both run against the forward delay that is being taken out here.
+
+    ``beta`` may be complex: with ``beta = beta' - 1j * alpha`` and
+    ``alpha > 0`` [1/m] the factor's magnitude is ``exp(+alpha distance)``,
+    which is precisely the attenuation that is being undone.
+
+    Returns:
+        ``s21 * exp(+1j * beta * distance)``: a complex scalar for scalar
+        input, an array shaped like ``s21`` otherwise.
+    """
+    out = np.asarray(s21, dtype=complex) * np.exp(
+        1j * complex(beta) * float(distance))
+    return complex(out) if out.ndim == 0 else out
+
+
+# ---------------------------------------------------------------------------
+# the power-current check: are the two phasors one mode?
+# ---------------------------------------------------------------------------
+def power_current_check(v, i, z0):
+    """Compare the fitted impedance with the one the phasors' power implies.
+
+    ``v`` and ``i`` are the complex voltage [V] and current [A] phasors on the
+    same planes and ``z0`` the impedance :func:`fit_station_impedance`
+    returned for them [ohm].  For a single travelling wave ``V = Z0 I`` and the
+    power crossing a plane is ``P = Re(V conj(I)) / 2 = |I|**2 Re(Z0) / 2``, so
+    the ratio
+
+    ``Re(V conj(I)) / (|I|**2 Re(z0))``
+
+    is 1 for a pure mode, and it departs from 1 in a way that a *passive*
+    reflection alone cannot.  Put ``V = A (e^{-j b u} + G e^{+j b u})`` and
+    ``I = (A / Z0) (e^{-j b u} - G e^{+j b u})`` into the ratio: the power is
+    ``|A|**2 (1 - |G|**2)`` on every plane, as it must be on a lossless line,
+    and only the current ripples, so the ratio becomes
+
+    ``(1 - |G|**2) / (1 + |G|**2 - 2 Re(G e^{2j b u}))``,
+
+    i.e. the standing-wave ratio and its reciprocal.  Its departure from 1 is
+    therefore at most ``((1 + |G|) / (1 - |G|))**2 - 1``.  For
+    the ``|G| = 0.0075`` measured on the default line that bound is 3.0 per
+    cent, so a station whose ratio is further out than that is not a
+    standing-wave ripple: the two phasors there are not one mode -- a probe
+    off the line, a second mode, a current with the wrong sign -- and their
+    ratio is not an impedance.  A ratio *inside* the bound proves little; it
+    says only that the pair is consistent with one mode to within the
+    reflection the fit already found.  The genuine failure would look like a
+    large ratio at the stations nearest the port, decaying away from it: that
+    is a higher-order mode or an evanescent field, not a reflection.
+
+    No Poynting vector is computed here.  That needs ``E`` and ``H`` phasors on
+    a closed surface and this study keeps neither; the axial power from one
+    plane is a smaller job, but it is not worth doing until this cheap check
+    fails, because a power flow computed from phasors that are not one mode
+    has no more meaning than the impedance that fails here.
+
+    Returns:
+        ``(z0_power, ratio)``, arrays shaped like ``v``: the impedance [ohm]
+        the pair's own power and current imply, and that impedance divided by
+        ``Re(z0)``.  Both are NaN where the current vanishes.
+    """
+    v = np.asarray(v, dtype=complex).ravel()
+    i = np.asarray(i, dtype=complex).ravel()
+    if v.shape != i.shape:
+        raise ValueError(
+            f"v and i must have the same shape, got {v.shape} and {i.shape}")
+    z0 = np.asarray(z0, dtype=complex)
+    z0 = np.broadcast_to(z0, v.shape).ravel() if z0.ndim == 0 else z0.ravel()
+    if z0.shape != v.shape:
+        raise ValueError(
+            f"z0 must be a scalar or match v, got {z0.shape} and {v.shape}")
+    amp2 = np.abs(i) ** 2
+    dead = amp2 == 0.0                   # no current: no impedance, no ratio
+    safe = np.where(dead, 1.0, amp2)
+    power = np.real(v * np.conj(i))
+    z0_power = np.where(dead, np.nan, power / safe)
+    ratio = np.where(dead, np.nan, power / (safe * np.real(z0)))
+    return z0_power, ratio
+
+
+# ---------------------------------------------------------------------------
 # Touchstone
 # ---------------------------------------------------------------------------
 def write_touchstone(handle, freqs, s, *, z0=50.0, fmt="ri") -> None:

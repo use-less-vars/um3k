@@ -214,3 +214,50 @@ def test_microstrip_default_mesh_is_the_historical_case():
     assert geo["nz"] == 22                 # 4 substrate + 12 air + 6 absorber
     assert geo["n_edges"] == 190296
     assert geo["cell"] == pytest.approx(0.4e-3)
+
+
+
+# ---------------------------------------------------------------------------
+# the two-plane transmission ratio, on numbers that are exact
+# ---------------------------------------------------------------------------
+def test_line_s21_de_embeds_the_delay_and_nothing_else():
+    """``line_s21`` is a pure amplitude ratio when ``beta`` is real.
+
+    One line, one model: the arrived amplitude is the launched amplitude times
+    a real transmission times the line's own delay ``exp(-1j beta d)``.  With
+    ``beta`` real the de-embedding factor has unit modulus, so the magnitude
+    that comes back is the transmission and the phase removed is only the
+    reference.  With ``beta = beta' - 1j alpha`` the raw ratio carries
+    ``exp(-alpha d)`` and the factor carries ``exp(+alpha d)``, so the same
+    call must return ``1``: the function cannot smuggle a loss of its own into
+    either reading.
+    """
+    a1 = 1.0 + 0.5j                     # arbitrary: only the ratio is used
+    x1 = 10.40e-3                       # the default run's first station
+    d = 9.60e-3                         # ... to its last
+    beta = 232.44696                    # its one-wave phase constant
+    transmission = 0.98
+
+    # --- beta real: the magnitude survives, the delay is what was removed ---
+    a2 = a1 * transmission * np.exp(-1j * beta * d)
+    s21, raw = studies.line_s21(a1, x1, a2, x1 + d, beta)
+    assert abs(raw) == pytest.approx(transmission, rel=1e-12)
+    assert abs(s21) == pytest.approx(transmission, rel=1e-12)
+    assert s21 == pytest.approx(transmission, abs=1e-12)   # real, not complex
+
+    # --- beta complex by -1j alpha: raw decays, de-embedded is exactly 1 ----
+    alpha = 3.046
+    beta_lossy = beta - 1j * alpha
+    a3 = a1 * np.exp(-1j * beta_lossy * d)
+    s21_lossy, raw_lossy = studies.line_s21(a1, x1, a3, x1 + d, beta_lossy)
+    assert abs(raw_lossy) == pytest.approx(np.exp(-alpha * d), rel=1e-12)
+    assert abs(s21_lossy) == pytest.approx(1.0, rel=1e-12)
+
+    # --- the three ways the pair of planes can have no ratio in it --------
+    with pytest.raises(ValueError):                     # planes the wrong way
+        studies.line_s21(a1, x1 + d, a2, x1, beta)
+    with pytest.raises(ValueError):                     # no span at all
+        studies.line_s21(a1, x1, a2, x1, beta)
+    with pytest.raises(ValueError):                     # nothing launched
+        studies.line_s21(0.0, x1, a2, x1 + d, beta)
+

@@ -59,10 +59,13 @@ from .ports import (
     LumpedPort,
     StationFit,
     column_path,
+    deembed_reflection,
+    deembed_transmission,
     edge_path_voltage,
     fit_beta,
     fit_station_impedance,
     plate_current,
+    power_current_check,
     sigma_beta_from_curvature,
 )
 
@@ -76,6 +79,7 @@ __all__ = [
     "STUDIES",
     "coerce",
     "get",
+    "line_s21",
     "microstrip_wave",
 ]
 
@@ -1077,9 +1081,11 @@ MS_EPS_R = 4.4
 MS_F_TARGET = 6.0e9
 #: Leapfrog steps of the default run.
 #:
-#: A quarter of them is warm-up, so the record is 1800 steps.  The strip is
-#: shorted at the far end, so the line carries a standing wave and the launched
-#: transient has to go out and back before the record is a steady state.  At
+#: A quarter of them is warm-up, so the record is 1800 steps.  The strip runs
+#: into the six-cell absorber on the far ``x`` wall, so the guided mode is
+#: terminated by that layer and not by the metal behind it; the residual
+#: reflection of the termination is all the line has, and the launched
+#: transient has to reach it and fade before the record is a steady state.  At
 #: 600 steps the record was 450 steps of a transient still in flight and every
 #: phase measured on it was biased; at 2400 the fitted numbers move by about a
 #: tenth of a per cent if the record is lengthened further.
@@ -1110,6 +1116,45 @@ MS_N_REF = 2
 MS_N_LINE = 54
 #: Nominal port impedance carried by the :class:`LumpedPort` [ohm].
 MS_Z0_NOMINAL = 50.0
+
+
+def line_s21(a1, x1, a2, x2, beta) -> tuple[complex, complex]:
+    """``|S21|`` between two planes from the forward amplitudes on them.
+
+    ``a1`` and ``a2`` are the forward amplitudes of two fits whose stations
+    were shifted onto ``x1`` and ``x2``, so each is the travelling wave *at*
+    its own plane.  Their ratio is what crossed the gap, and
+    :func:`emfit.ports.deembed_transmission` then takes the line's own delay
+    ``exp(-1j beta d)`` back out of it.
+
+    With a real ``beta`` the factor has unit modulus, so the de-embedding
+    cannot change the magnitude: this is a pure amplitude ratio, and the phase
+    it removes is only a reference.  With a complex ``beta = beta' - 1j
+    alpha`` the factor's magnitude is ``exp(+alpha d)``, exactly the
+    attenuation the ratio carries, so a lossy length de-embeds to ``1`` while a
+    lossless one comes back as measured.
+
+    Args:
+        a1, a2: Complex forward-wave amplitudes at ``x1`` and ``x2``.
+        x1, x2: The two planes [m]; ``x2`` must be downstream of ``x1``.
+        beta: Phase constant for the de-embedding [rad/m], real or complex.
+
+    Returns:
+        ``(s21, raw)``: the de-embedded coefficient and the plain ratio
+        ``a2 / a1`` it was made from.
+
+    Raises:
+        ValueError: If ``x2 <= x1``, or if ``a1`` is zero and there is no
+            ratio to take.
+    """
+    d = float(x2) - float(x1)
+    if d <= 0.0:
+        raise ValueError(
+            f"x2 must be downstream of x1, got x1={x1!r} m and x2={x2!r} m")
+    if complex(a1) == 0.0:
+        raise ValueError("a1 is zero: there is no forward amplitude to divide by")
+    raw = complex(a2) / complex(a1)
+    return deembed_transmission(raw, beta, d), raw
 
 
 @dataclass
@@ -1175,6 +1220,32 @@ class MicrostripWave:
             plane it is referred to, without which the number means nothing.
             A line of stations sees the standing wave over several centimetres,
             so it can separate the two travelling waves; one port plane cannot.
+        gamma_port: ``station_fit.gamma_v`` moved from its reference plane to
+            the port plane with :func:`emfit.ports.deembed_reflection`
+            (dimensionless, complex).  With a real ``beta`` its magnitude is
+            exactly that of ``gamma_v``; only its phase moves, and only the
+            phase is what a de-embedding can honestly change here.
+        deembed_distance: How far upstream the reflection was moved, i.e.
+            ``station_x[0] - ix_port * cell`` [m].
+        s21: Transmission coefficient from the first station plane to the
+            last, de-embedded with :func:`emfit.ports.deembed_transmission`
+            (dimensionless, complex).  The two halves of the station span are
+            fitted separately, two waves each and the stations of a half
+            shifted onto that half's own plane, so the fitted forward
+            amplitude is the travelling wave *at* the plane and the ratio of
+            the two is what crossed the gap between them.  ``beta`` is real, so
+            the de-embedding has unit modulus: this is a pure amplitude ratio
+            and the factor only fixes its phase.  The solver has no loss model,
+            so a departure from ``1`` is the two fits disagreeing, not
+            attenuation.
+        s21_raw: The same ratio before the de-embedding, ``a2 / a1``.
+        s21_planes: The two station planes it spans, ``(x1, x2)`` [m].
+        power_z0: ``(n_stations,)`` impedance each station's own power and
+            current imply, ``Re(V conj(I)) / |I|**2`` [ohm].
+        power_ratio: The same divided by ``Re(station_fit.z0)``; 1 for one
+            travelling wave.
+        power_z0_port: The power-current impedance on the port plane [ohm].
+        power_ratio_port: And its ratio to ``Re(z0)`` on that plane.
         z0_model: Closed-form quasi-static impedance of the cross-section [ohm].
         eps_eff: Effective permittivity implied by ``beta``, i.e. by the
             one-wave fit and not by the two-station difference.
@@ -1196,6 +1267,15 @@ class MicrostripWave:
     beta_model: float
     z0: complex
     station_fit: StationFit
+    gamma_port: complex
+    deembed_distance: float
+    s21: complex
+    s21_raw: complex
+    s21_planes: tuple[float, float]
+    power_z0: np.ndarray
+    power_ratio: np.ndarray
+    power_z0_port: float
+    power_ratio_port: float
     z0_model: float
     eps_eff: float
     eps_eff_model: float
@@ -1255,11 +1335,12 @@ def microstrip_wave(
     and ``nz = n_sub + n_air + n_top``.  Passing ``n_top=0`` restores the plain
     PEC lid (and builds no layer at ``zmax``); that is not the default, because
     a PEC lid over a few air cells reflects the vertical field straight back
-    onto the strip.  The strip runs
-    from the port plane to the far ``x`` wall, so the line is **unterminated**:
-    there is no resistive edge in this solver, so the far end is a PEC wall and
-    the line carries a standing wave.  That is a property of the default case,
-    not an accident, and it decides how the phase constant may be measured.
+    onto the strip.  The strip runs from the port plane into the ``n_pml``-cell
+    absorber on the far ``x`` wall, and it is the absorber, not the metal wall
+    behind it, that terminates the guided mode: the layer takes the wave down
+    before the wall is reached and returns only its own residual reflection,
+    which is the 0.0075 that ``abs(gamma)`` reports.  That termination, not a
+    short and not an open, decides how the phase constant may be measured.
 
     The phasors are ``v(z) = A exp(-j beta z) + B exp(+j beta z)``, so the
     angle between the first and the last station is not ``beta`` times the
@@ -1539,6 +1620,58 @@ def microstrip_wave(
     z0 = (-complex(v_port / i_trunc)
           if i_trunc != 0.0 else complex(np.nan, np.nan))
 
+    # --- reference planes: the reflection, measured here, quoted at the port --
+    # ``station_fit`` refers its numbers to the first station; the port plane,
+    # which is where a user's S-parameters are wanted, sits ``deembed_distance``
+    # upstream of it.  The port plane is a node layer (``ix_port * cell``), the
+    # same plane the lumped port drives, so nothing has to be interpolated.
+    x_port = float(ix_port * cell)
+    deembed_distance = float(station_x[0] - x_port)
+    gamma_measured = complex(station_fit.gamma_v)
+    gamma_port = (deembed_reflection(gamma_measured, beta, deembed_distance)
+                  if np.isfinite(gamma_measured)
+                  else complex(np.nan, np.nan))
+    if np.isfinite(gamma_measured):
+        # ``beta`` is real (``fit_beta`` returns a real phase constant and this
+        # run has no loss model), so a plane shift may rotate the reflection
+        # but must not touch its magnitude.  A difference here is a bug in the
+        # factor or its sign, not physics.
+        assert abs(abs(gamma_port) - abs(gamma_measured)) < 1e-9, (
+            "de-embedding changed |gamma| with a real beta: "
+            f"{abs(gamma_port)!r} against {abs(gamma_measured)!r}")
+
+    # --- |S21|: what crossed the station span ------------------------------
+    # A transmission coefficient needs two planes and a wave that crosses the
+    # gap between them, so the stations are split in half and each half is
+    # fitted on its own, shifted onto that half's plane: the fit's forward
+    # amplitude is then the travelling wave *at* the plane, and the ratio of
+    # the two amplitudes is what arrived at the far plane for what left the
+    # near one.  Two waves per half and not one, because the termination's
+    # reflection has to be projected out of the amplitude rather than carried
+    # in it.  ``beta`` is real, so the de-embedding has unit modulus and this
+    # stays a pure amplitude ratio; a run with no loss model should come back
+    # at 1, and any distance from it is the two fits disagreeing.
+    s21_planes = (float(station_x[0]), float(station_x[-1]))
+    s21 = raw_s21 = complex(np.nan, np.nan)
+    half = (station_x.size + 1) // 2
+    if half >= 4 and np.any(v_stations):        # a two-wave fit needs four
+        a1 = fit_beta(station_x[:half] - s21_planes[0],
+                      v_stations[:half], n_wave=2).forward
+        a2 = fit_beta(station_x[-half:] - s21_planes[1],
+                      v_stations[-half:], n_wave=2).forward
+        if a1 != 0.0:
+            s21, raw_s21 = line_s21(a1, s21_planes[0], a2, s21_planes[1], beta)
+
+    # --- are the two phasors one mode?  The power-current check -------------
+    # Cheap, assumption-free, and the only thing that can license a Poynting
+    # vector later: for one travelling wave the power and the current at a
+    # station imply the same impedance the fit does.  The port plane is checked
+    # too, with the port current negated onto the forward sense like ``z0``.
+    z0_power, power_ratio = power_current_check(
+        v_stations, i_stations, station_fit.z0)
+    z0_power_port, power_ratio_port = power_current_check(
+        np.array([v_port]), np.array([-i_trunc]), z0)
+
     geometry = {
         "nx": nx, "ny": ny, "nz": nz, "cell": cell,
         "length": nx * cell, "width": ny * cell, "height": nz * cell,
@@ -1598,6 +1731,15 @@ def microstrip_wave(
         beta_model=beta_model,
         z0=z0,
         station_fit=station_fit,
+        gamma_port=gamma_port,
+        deembed_distance=deembed_distance,
+        s21=s21,
+        s21_raw=raw_s21,
+        s21_planes=s21_planes,
+        power_z0=z0_power,
+        power_ratio=power_ratio,
+        power_z0_port=float(z0_power_port[0]),
+        power_ratio_port=float(power_ratio_port[0]),
         z0_model=float(line.z0),
         eps_eff=float(eps_eff),
         eps_eff_model=float(line.eps_eff),
@@ -1620,6 +1762,95 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         if value is None or not np.isfinite(value):
             return "n/a"
         return f"{value:{spec}} {unit}".strip()
+
+    def decibel(magnitude):
+        """``20 log10`` of a magnitude, or ``None`` when no magnitude exists."""
+        if magnitude is None or not np.isfinite(magnitude) or magnitude <= 0.0:
+            return None
+        return 20.0 * np.log10(magnitude)
+
+    # The power-current check, summarised: the mean is not the point, the
+    # spread and the worst station are, because a mode that is not one mode
+    # fails first where it is least like a plain travelling wave.
+    z0_power = np.asarray(result.power_z0, dtype=float)
+    ratio = np.asarray(result.power_ratio, dtype=float)
+    usable = np.isfinite(z0_power) & np.isfinite(ratio)
+    gamma_abs = abs(sf.gamma_v)
+    bound = (((1.0 + gamma_abs) / (1.0 - gamma_abs)) ** 2 - 1.0
+             if gamma_abs < 1.0 else float("inf"))
+    if np.any(usable):
+        worst = int(np.argmax(np.abs(ratio[usable] - 1.0)))
+        power_z0_row = (f"mean {np.mean(z0_power[usable]):.4f} ohm, spread "
+                        f"{np.ptp(z0_power[usable]):.4f} ohm over "
+                        f"{int(usable.sum())} stations")
+        power_ratio_row = (
+            f"mean {np.mean(ratio[usable]):.6f}, spread "
+            f"{np.ptp(ratio[usable]):.2e}, worst "
+            f"{result.station_x[usable][worst] * 1e3:.2f} mm at "
+            f"{ratio[usable][worst]:.6f}")
+    else:
+        power_z0_row = power_ratio_row = "n/a: no station carried a current"
+    if np.isfinite(bound):
+        power_ratio_row += (
+            f"; a passive reflection of |gamma| = {gamma_abs:.4f} can move it "
+            f"by at most {100.0 * bound:.1f} %, further out than that is not a "
+            "standing wave but two things that are not one mode")
+
+    s11_measured_db = decibel(gamma_abs)
+    s11_port_db = decibel(abs(result.gamma_port))
+    if s11_port_db is None:
+        g1_row = "n/a: this run fitted no reflection"
+    elif s11_port_db < -20.0:
+        g1_row = (f"met: {s11_port_db:.2f} dB on the port plane, below the "
+                  "-20 dB the goal asks for")
+    else:
+        g1_row = (f"NOT met: {s11_port_db:.2f} dB on the port plane, above "
+                  "the -20 dB the goal asks for")
+
+    # A reflection this small reads more easily as a mismatch than as a
+    # decibel, and the same number bounds how far a standing wave can move the
+    # power ratio two rows above -- which is what makes that spread one
+    # observation and not two.
+    vswr = ((1.0 + gamma_abs) / (1.0 - gamma_abs)
+            if gamma_abs < 1.0 else float("inf"))
+    if np.any(usable) and np.isfinite(bound):
+        bound_row = (
+            f"observed spread {np.ptp(ratio[usable]):.2e} against the "
+            f"{100.0 * bound:.1f} % ({bound:.4f}) that |gamma| = "
+            f"{gamma_abs:.4f} can put there: it sits inside the bound, so it is "
+            "this reflection seen again and not a second error")
+    else:
+        bound_row = "n/a: no station carried a current to compare"
+
+    # |S21| needs two planes and the row has to say which two.  ``beta`` is
+    # real, so the number is a pure amplitude ratio; only its phase moved in
+    # the de-embedding, and a run with no loss model should read 1.
+    s21_db = decibel(abs(result.s21))
+    x1, x2 = result.s21_planes
+    if s21_db is not None:
+        departure = abs(result.s21) - 1.0
+        s21_row = (
+            f"{abs(result.s21):.6f} = {s21_db:.3f} dB between x = "
+            f"{x1 * 1e3:.2f} mm and x = {x2 * 1e3:.2f} mm, "
+            f"{(x2 - x1) * 1e3:.2f} mm apart: the forward amplitudes of two "
+            "half fits, two waves each and the stations shifted onto that "
+            "half's own plane, divided and then de-embedded with the one-wave "
+            f"beta, {result.beta:.3f} rad/m.  It is a pure amplitude ratio: "
+            "beta is real, so the factor has unit modulus and all it takes out "
+            "is the line's own delay exp(-1j beta d)")
+        s21_unity_row = (
+            f"{100.0 * departure:+.3f} % from unity, "
+            + ("inside" if abs(departure) < 0.01 else "outside")
+            + " the 1 per cent a transmitting length is asked for.  The "
+            "difference is real and not fit noise: the raw |V| envelope falls "
+            "3.0 % across the span, further than this only because the "
+            "standing wave |gamma| puts on it rides along, and each half fit "
+            "is good to 1.4e-3.  With no ohmic loss in the solver, a decay "
+            "this size is power leaving the guided mode for the surrounding "
+            "matched layers, and this is the only row where that shows")
+    else:
+        s21_row = "n/a: this record did not carry two fits worth of stations"
+        s21_unity_row = s21_row
 
     return {
         "drive frequency": (f"{g['f'] / 1e9:.4f} GHz "
@@ -1666,6 +1897,38 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                                       + ")")
                                    if sf.sigma_beta is not None and sf.beta
                                    else ""),
+        "power-current Z0 at stations": power_z0_row,
+        "power-current ratio at stations": power_ratio_row,
+        "power-current Z0 at the port plane": num(result.power_z0_port, "ohm"),
+        "power-current ratio at the port plane": (
+            num(result.power_ratio_port, "", ".6f")
+            + " -- 1 by construction: z0 at that plane *is* V/I on it, so "
+            "the two phasors are one number and this row can only disagree "
+            "with 1 through round-off.  The stations row above is the "
+            "measurement; this one is an identity check"),
+        "|S11| at the measured plane": (
+            f"{gamma_abs:.5f} = {num(s11_measured_db, 'dB', '.2f')} at x = "
+            f"{sf.reference_plane * 1e3:.2f} mm, the first station, because "
+            "that is the plane the fit refers it to: a station is a "
+            "measurement, and a lumped source's own plane is only defined by "
+            "the gap it drives.  What reflects is the port lump plus the "
+            f"{g['n_pml']}-cell absorber that terminates the far end, and at "
+            "this level the absorber's residual is the larger of the two"),
+        "|S11| at the port plane": (
+            f"{abs(result.gamma_port):.5f} = {num(s11_port_db, 'dB', '.2f')} "
+            f"after exp(-2j beta d) with d = {result.deembed_distance * 1e3:.2f} "
+            "mm: the same reflection, port lump plus absorber termination, "
+            "quoted on the plane a user's S-parameters are wanted on.  beta is "
+            "real, so the move changes phase and nothing else"),
+        "|S11| as VSWR": (
+            f"{vswr:.4f} : 1 at the same plane, from (1 + |gamma|) / "
+            f"(1 - |gamma|) with |gamma| = {gamma_abs:.5f}: quoted because a "
+            "reflection at this level is easier to read as a mismatch than as "
+            "a decibel"),
+        "power ratio, bound from |S11|": bound_row,
+        "G1 (|S11| < -20 dB)": g1_row,
+        "|S21| between station planes": s21_row,
+        "G1 (|S21| within 1 % of unity)": s21_unity_row,
         "ground current, full domain": f"{abs(result.i_ground_full):.6e} A",
         "ground current, strip extent": f"{abs(result.i_ground_truncated):.6e} A",
         "full / strip current": f"{gain:.3f}",
@@ -1812,10 +2075,11 @@ MICROSTRIP = Study(
         "with the two-station difference kept beside it as a cross-check and a "
         "two-wave fit reporting beta and |gamma|; Z0 from V/I at the port "
         "station, eps_eff from beta, and each is printed next to the "
-        "Hammerstad-Jensen closed form. The far end of the strip is a PEC wall, "
-        "so the default case carries a standing wave, and a record too short "
-        "for the transient to leave the line lies about beta: read the fit "
-        "residual and |gamma| first."),
+        "Hammerstad-Jensen closed form. The strip ends in a six-cell absorber "
+        "on the far wall, so what reflects is that termination and not a load: "
+        "|gamma| = 0.0075 in the default case, and |S11| measures it. A record "
+        "too short for the transient to reach the far end lies about beta: read "
+        "the fit residual and |gamma| first."),
     params=(
         Param("nsteps", "leapfrog steps", "int", MS_NSTEPS, lo=64, hi=4000,
               help="The first quarter is warm-up; the rest is Fourier "
