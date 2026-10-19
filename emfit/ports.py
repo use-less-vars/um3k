@@ -61,6 +61,7 @@ __all__ = [
     "DftAccumulator",
     "column_path",
     "row_path",
+    "plate_current",
     "edge_path_voltage",
     "probe_voltage",
     "travelling_waves",
@@ -357,6 +358,114 @@ def row_path(cc, iy, iz, i0=0, i1=None) -> np.ndarray:
     iz = _node_index("iz", iz, cc.nzn)
     lo, hi = _stack_range("i", i0, i1, cc.nx)
     return np.asarray(cc.idx_ex(np.arange(lo, hi), iy, iz), dtype=int)
+
+
+def _y_columns(cc, y_extent) -> tuple[int, int]:
+    """Half-open run of ``y`` point layers selected by ``y_extent``."""
+    if y_extent is None:
+        return 0, cc.nyn
+    if np.ndim(y_extent) == 0:
+        half = float(y_extent)
+        if not half > 0.0:
+            raise ValueError(
+                f"y_extent must be a positive half-width in metres, or a pair "
+                f"of y point layers, got {y_extent!r}")
+        nodes = np.asarray(cc.grid.y, dtype=float)
+        centre = 0.5 * (float(nodes[0]) + float(nodes[-1]))
+        tol = 1e-12 * (float(nodes[-1]) - float(nodes[0]))
+        inside = np.flatnonzero(np.abs(nodes - centre) <= half + tol)
+        if inside.size == 0:
+            raise ValueError(
+                f"y_extent={half!r} m selects no y point layer: the grid "
+                f"spans {float(nodes[0])!r}..{float(nodes[-1])!r} m in y")
+        if int(inside[-1]) - int(inside[0]) + 1 != int(inside.size):
+            raise ValueError(
+                f"y_extent={half!r} m selects {inside.size} y point layers "
+                f"that are not one contiguous run; pass a pair of indices "
+                f"instead of a half-width")
+        return int(inside[0]), int(inside[-1]) + 1
+    pair = tuple(y_extent)
+    if len(pair) != 2:
+        raise ValueError(
+            f"y_extent must be None, a positive half-width in metres, or a "
+            f"pair of y point-layer indices, got {y_extent!r}")
+    return _stack_range("y", pair[0], pair[1], cc.nyn)
+
+
+def plate_current(h, cc, ix, iz, y_extent=None) -> float:
+    """Current in the plate section at one ``(x, z)`` station, in amperes.
+
+    A parallel-plate line carries its current on the plates, and the discrete
+    field knows it only as a circulation of the dual magnetic unknowns: ``h``
+    holds magnetic *voltages* ``H_y * dy`` in amperes on the faces, so the sum
+    of the ``FY`` unknowns that bridge the ``y`` point layers at one station is
+    already a loop integral, hence already a current.  No cell width is applied
+    and none is missing -- ``V / I`` with ``V`` from :func:`probe_voltage` is
+    then the line impedance in volts per amp (for a TEM line of height ``LZ``
+    and width ``LY`` it comes out as ``eta0 * LZ / LY``).
+
+    On a periodic ``y`` axis ``range(cc.nyn)`` is the closed loop: the last
+    entry is the seam dual edge, not a copy of the first, so the full sum is
+    the total current and not one column short.
+
+    Why ``y_extent`` exists
+    -----------------------
+    Inside a :class:`emfit.pml.PML` the field is a numerical absorber, not the
+    physical field: summing ``H`` across it adds a current that no conductor
+    carries.  Truncating the sum to the physical strip is the fix, and it is
+    worth doing deliberately rather than by choosing a magic grid.
+
+    Parameters
+    ----------
+    h : ndarray (n_faces,)
+        Dual magnetic unknowns of one step -- the flat face vector of
+        :class:`emfit.evolve.FITStepper`, whose ``FY`` block carries magnetic
+        voltages along ``y`` in amperes.
+    cc : CellComplex
+        Cell complex the face vector belongs to.
+    ix, iz : int
+        Station of the sum: ``0 <= ix < cc.nx`` (the ``x`` cell) and
+        ``0 <= iz < cc.nz`` (the ``z`` cell); no periodic wrap is applied.
+    y_extent : float or pair of int, optional
+        Which ``y`` point layers to include.  ``None`` (default) sums all
+        ``cc.nyn`` of them.  A scalar is a half-width in metres about the
+        centre of the ``y`` axis, converted to the contiguous run of point
+        layers inside it.  A pair ``(j0, j1)`` is the half-open run
+        ``j0 <= j < j1`` of point layers, the same convention as
+        :func:`column_path`.
+
+    Returns
+    -------
+    float
+        Sum of the included dual magnetic voltages, in amperes.
+
+    Raises
+    ------
+    ValueError
+        If ``h`` is not a flat face vector of length ``cc.n_faces``, or
+        ``y_extent`` is not a positive half-width / a non-empty pair of point
+        layers / ``None``.
+    IndexError
+        If ``ix`` or ``iz`` is outside the cells of its axis.
+
+    Examples
+    --------
+    The plate current of a line whose plates are the ``z`` walls, taken on the
+    top wall and away from any absorber::
+
+        current = plate_current(h, cc, ix=28, iz=cc.nz - 1,
+                               y_extent=0.5 * width_between_pmls)
+    """
+    h = np.asarray(h, dtype=float)
+    if h.ndim != 1 or h.size != cc.n_faces:
+        raise ValueError(
+            f"h must be the flat face vector of length {cc.n_faces} "
+            f"(n_faces), got shape {h.shape}")
+    ix = _node_index("ix", ix, cc.nx)
+    iz = _node_index("iz", iz, cc.nz)
+    j0, j1 = _y_columns(cc, y_extent)
+    faces = np.asarray(cc.idx_fy(ix, np.arange(j0, j1), iz), dtype=int)
+    return float(h[faces].sum())
 
 
 # ---------------------------------------------------------------------------

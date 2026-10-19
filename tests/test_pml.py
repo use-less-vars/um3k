@@ -46,7 +46,7 @@ import pytest
 from emfit.abc import Mur1Boundary
 from emfit.evolve import FITStepper, cfl_dt
 from emfit.grid import Grid
-from emfit.materials import EPS0, ETA0, material_matrices
+from emfit.materials import EPS0, ETA0, MU0, material_matrices
 from emfit.operators import CellComplex
 from emfit.pml import PML
 
@@ -295,3 +295,148 @@ def test_energy_decays_monotonically_after_the_source_stops():
     assert tail[0] > 0.0
     assert np.all(np.diff(tail) <= 0.0)          # monotone, no tolerance
     assert tail[-1] < 1e-3 * tail[0]             # and it really dies away
+
+
+# ---------------------------------------------------------------------------
+# 5. per-wall selection: walls= replaces axes=
+# ---------------------------------------------------------------------------
+def test_default_walls_reproduce_the_both_ended_profile():
+    """``walls=None`` is the two-sided layer this class has always built."""
+    nx = ny = 40
+    nz = 20
+    grid = Grid.uniform(nx, ny, nz, 0.4, 0.4, 0.2)
+    cc = CellComplex(grid)
+    kw = dict(thickness_cells=8, order=2, target=1e-4, cc=cc)
+    default = PML(grid, axes=("x", "y"), **kw)
+    explicit = PML(grid, walls=("xmin", "xmax", "ymin", "ymax"), **kw)
+
+    assert default.walls == ("xmin", "xmax", "ymin", "ymax")
+    assert explicit.walls == default.walls
+    assert default.axes == explicit.axes == ("x", "y")
+    # bit for bit, not approximate: the default path is the same arithmetic
+    assert np.array_equal(default.sigma_e, explicit.sigma_e)
+    assert np.array_equal(default.sigma_m, explicit.sigma_m)
+
+    # and both are the closed form, sampled where the EX edges and the FY faces
+    # actually sit: an edge along x and a face normal to y both put x at a cell
+    # centre and y at a node, so a single closed form serves both blocks.
+    # ``d`` is thickness_cells * the axis's smallest cell width, as documented;
+    # taking that width from the grid keeps the arithmetic bit-identical.
+    def layer(name):
+        d = 8 * float(np.min(grid.widths(name)))
+        return d, -(2 + 1.0) * np.log(1.0e-4) / (ETA0 * d)
+
+    d_x, sigma_max_x = layer("x")
+    d_y, sigma_max_y = layer("y")
+
+    def prof(nodes, pos, d, sigma_max):
+        depth = np.minimum(pos - nodes[0], nodes[-1] - pos)
+        return sigma_max * np.clip(1.0 - depth / d, 0.0, 1.0) ** 2
+
+    x = np.asarray(grid.x, dtype=float)
+    y = np.asarray(grid.y, dtype=float)
+    xc = 0.5 * (x[:-1] + x[1:])
+    per_axis = (prof(x, xc, d_x, sigma_max_x).reshape(-1, 1, 1)
+                + prof(y, y, d_y, sigma_max_y).reshape(1, -1, 1))
+
+    got_e = default.sigma_e[cc.off_ex:cc.off_ex + cc.n_ex]
+    want_e = np.broadcast_to(per_axis, grid.edge_shape("x")).ravel()
+    assert np.allclose(got_e, want_e, rtol=1e-13, atol=0.0)
+
+    got_m = default.sigma_m[cc.off_fy:cc.off_fy + cc.n_fy]
+    want_m = np.broadcast_to(per_axis, grid.face_shape("y")).ravel() * (MU0 / EPS0)
+    assert np.allclose(got_m, want_m, rtol=1e-13, atol=0.0)
+
+
+def test_walls_selecting_one_end_zeroes_the_other():
+    """One wall, one layer: the far end is exactly zero, not merely small."""
+    n = 40
+    grid = Grid.uniform(n, n, n, 0.4, 0.4, 0.4)
+    cc = CellComplex(grid)
+    kw = dict(thickness_cells=10, order=2, target=1e-4, cc=cc)
+    near = PML(grid, walls=("zmin",), **kw)
+    far = PML(grid, walls=("zmax",), **kw)
+
+    assert near.walls == ("zmin",) and near.axes == ("z",)
+    assert far.walls_for("z") == ("zmax",)
+    assert near.walls_for("x") == ()
+
+    z = np.asarray(grid.z, dtype=float)
+    mid = 0.5 * (float(z[0]) + float(z[-1]))
+    zc = 0.5 * (z[:-1] + z[1:])          # an EZ edge runs along z at cell centres
+    assert not np.any(zc == mid)         # no edge sits on the gating plane
+    cut = np.array([cc.idx_ez(n // 2, n // 2, k) for k in range(cc.nz)])
+
+    lo, hi = near.sigma_e[cut], far.sigma_e[cut]
+    assert lo[zc > mid].max() == 0.0     # untouched end: exactly zero
+    assert hi[zc < mid].max() == 0.0
+    assert lo[zc < mid].max() > 0.0      # selected end: a real layer
+    assert hi[zc > mid].max() > 0.0
+    # the same graded layer, seen from the other wall
+    assert np.allclose(lo, hi[::-1], rtol=1e-12, atol=0.0)
+
+    # one end only needs thickness_cells cells, not twice that
+    small = Grid.uniform(20, 20, 20, 0.2, 0.2, 0.2)      # h = 0.01 m on each axis
+    one_end = PML(small, thickness_cells=10, walls=("zmin",))
+    assert one_end.d["z"] == pytest.approx(10 * 0.2 / 20, rel=1e-12)   # 0.1 m
+    with pytest.raises(ValueError, match="do not fit"):
+        PML(small, thickness_cells=10, axes=("z",))
+
+
+def test_subclass_overriding_profile_still_works():
+    """A subclass profile is used unchanged, and the gating is applied on top."""
+
+    class Flat(PML):
+        """3 S/m wherever it is asked -- no position dependence at all."""
+
+        def profile(self, axis, position):
+            return np.full(np.shape(position), 3.0)
+
+    grid = Grid.uniform(20, 20, 20, 0.2, 0.2, 0.2)
+    cc = CellComplex(grid)
+
+    both = Flat(grid, thickness_cells=4, axes=("x", "y"), cc=cc)
+    # A flat profile never decays to zero, so it is non-zero everywhere and
+    # every active axis contributes on every block: 3 S/m from x plus 3 from y
+    assert np.all(both.sigma_e[cc.off_ex:cc.off_ex + cc.n_ex] == 6.0)
+    assert np.all(both.sigma_e[cc.off_ez:cc.off_ez + cc.n_ez] == 6.0)
+
+    one_end = Flat(grid, thickness_cells=4, cc=cc, walls=("xmin", "ymin"))
+    assert one_end.axes == ("x", "y")
+    mid = 10                                   # node 10 sits at the mid-plane
+    for i, j, want in ((0, 0, 6.0), (mid, 0, 6.0), (0, 20, 3.0),
+                       (20, 0, 3.0), (20, 20, 0.0)):
+        assert one_end.sigma_e[cc.idx_ez(i, j, 5)] == want
+
+
+def test_pec_edge_mask_and_pml_accept_the_same_wall_names():
+    """One spelling of the six walls, shared with the PEC helper."""
+    grid = Grid.uniform(20, 20, 20, 0.2, 0.2, 0.2)
+    cc = CellComplex(grid)
+    walls = ("xmin", "ymax")
+
+    mask = cc.pec_edge_mask(walls)
+    assert mask.shape == (cc.n_edges,) and mask.any()
+
+    pml = PML(grid, thickness_cells=3, cc=cc, walls=walls)
+    assert pml.walls == ("xmin", "ymax")
+    assert pml.axes == ("x", "y")
+    assert pml.walls_for("x") == ("xmin",)
+    assert pml.walls_for("y") == ("ymax",)
+    assert pml.walls_for("z") == ()
+    assert set(pml.sigma_summary()) == {"x", "y"}
+
+    # order and duplicates do not matter; an unknown name is refused
+    assert PML(grid, thickness_cells=3,
+               walls=("ymax", "xmin", "xmin")).walls == walls
+    with pytest.raises(ValueError, match="unknown wall"):
+        PML(grid, thickness_cells=3, walls=("xmin", "wmin"))
+
+    # both agree that a periodic axis has no boundary to work on
+    periodic = Grid.uniform(20, 20, 20, 0.2, 0.2, 0.2,
+                            periodic=(False, True, False))
+    with pytest.raises(ValueError):
+        CellComplex(periodic).pec_edge_mask(("ymin",))
+    with pytest.raises(ValueError):
+        PML(periodic, thickness_cells=3, walls=("ymin",))
+

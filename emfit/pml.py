@@ -117,6 +117,9 @@ __all__ = ["PML", "AXES", "cells_for_wavelength"]
 #: the three index axes, in the order the flat edge/face vectors use
 AXES = ("x", "y", "z")
 
+#: the six walls, spelled exactly as :meth:`emfit.operators.CellComplex.pec_edge_mask`
+_WALLS = ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
+
 
 # ----------------------------------------------------------------------
 # geometry helpers
@@ -158,6 +161,37 @@ def _coordinates(grid, axis: str, along_mid: bool):
         shape[t] = values.size
         out.append(np.broadcast_to(values.reshape(shape), target))
     return out
+
+
+def _wall_names(walls) -> tuple:
+    """Canonicalise ``walls`` to a tuple in ``_WALLS`` order.
+
+    Duplicates collapse and the order is fixed, so two callers who name the
+    same walls in a different order get the same layer (and the same
+    ``repr``).  An unknown name, a bare string or an empty selection is an
+    error rather than a silently ignored wall: a misspelt ``"zmin"`` would
+    otherwise leave the field reflecting off a wall the caller believed was
+    absorbing.
+    """
+    if isinstance(walls, str):
+        raise ValueError(
+            f"walls must be a sequence of wall names, not the single string "
+            f"{walls!r}; expected a subset of {_WALLS}")
+    try:
+        names = tuple(walls)
+    except TypeError:
+        raise ValueError(
+            f"walls must be a sequence of wall names, got {walls!r}; "
+            f"expected a subset of {_WALLS}") from None
+    for name in names:
+        if name not in _WALLS:
+            raise ValueError(
+                f"unknown wall {name!r}; expected a subset of {_WALLS}")
+    if not names:
+        raise ValueError(
+            f"walls is empty: a layer that damps no wall damps nothing; "
+            f"expected a subset of {_WALLS}")
+    return tuple(name for name in _WALLS if name in names)
 
 
 def _blocks(cc, kind: str):
@@ -206,9 +240,24 @@ class PML:
         Which directions get a layer, a subset of ``("x", "y", "z")``
         (default ``("x", "y")``).  A direction that is not listed keeps
         whatever boundary condition the caller imposes, so an open direction
-        should always be listed and a periodic one never.
+        should always be listed and a periodic one never.  Ignored (and
+        replaced, see ``walls``) when ``walls`` is given.
     cc : emfit.operators.CellComplex, optional
         Cell complex of ``grid``, built on demand if omitted.
+    walls : sequence of str, optional
+        Which of the six walls get a layer, a subset of ``("xmin", "xmax",
+        "ymin", "ymax", "zmin", "zmax")`` -- the same spelling
+        :meth:`emfit.operators.CellComplex.pec_edge_mask` takes, so one tuple
+        can be handed to both.  ``None`` (default) means "both ends of every
+        axis in ``axes``", which is the historical behaviour.
+
+        When ``walls`` is given it **replaces** ``axes``: the active axes are
+        the ones the named walls belong to, and a layer can be opened on one
+        end of an axis while the other end keeps whatever boundary condition
+        the caller imposes -- the case of a guide that runs out of the box on
+        one side only.  A single-ended layer only needs ``thickness_cells``
+        cells, not ``2 * thickness_cells``, and the profile it applies is the
+        same graded one either way: the unselected end is exactly zero.
 
     Attributes
     ----------
@@ -222,10 +271,12 @@ class PML:
         ``{axis: sigma_max}`` actually used [S/m].
     d : dict
         ``{axis: physical thickness}`` [m].
+    walls : tuple of str
+        The selected walls, in ``("xmin", ..., "zmax")`` order.
     """
 
     def __init__(self, grid, thickness_cells: int = 20, order: int = 2,
-                 target: float = 1e-4, axes=("x", "y"), cc=None):
+                 target: float = 1e-4, axes=("x", "y"), cc=None, walls=None):
         self.grid = grid
         self.cc = CellComplex(grid) if cc is None else cc
         self.thickness_cells = int(thickness_cells)
@@ -246,7 +297,22 @@ class PML:
             if name not in AXES:
                 raise ValueError(
                     f"unknown axis {name!r}; expected a subset of {AXES}")
-        self.axes = tuple(name for name in AXES if name in axes)
+        axes = tuple(name for name in AXES if name in axes)
+
+        if walls is None:
+            self.walls = tuple(f"{name}{end}" for name in axes
+                               for end in ("min", "max"))
+        else:
+            self.walls = _wall_names(walls)
+            if axes != ("x", "y"):
+                for name in axes:
+                    if not any(w.startswith(name) for w in self.walls):
+                        raise ValueError(
+                            f"axis {name!r} is listed in axes={axes!r} but "
+                            f"walls={self.walls!r} selects no wall on it: "
+                            f"walls replaces axes when it is given, so name "
+                            f"the walls you want instead of passing both")
+        self.axes = tuple(name for name in AXES if self.walls_for(name))
 
         self.d = {}
         self.sigma_max = {}
@@ -255,10 +321,16 @@ class PML:
                 raise ValueError(
                     f"axis {name!r} is periodic: a PML would wrap onto itself")
             n_cells = int(grid.shape[AXES.index(name)])
-            if 2 * self.thickness_cells >= n_cells:
+            ends = self.walls_for(name)
+            if len(ends) == 2:
+                if 2 * self.thickness_cells >= n_cells:
+                    raise ValueError(
+                        f"axis {name!r}: {self.thickness_cells} cells of PML "
+                        f"on each side do not fit in {n_cells} cells")
+            elif self.thickness_cells >= n_cells:
                 raise ValueError(
                     f"axis {name!r}: {self.thickness_cells} cells of PML on "
-                    f"each side do not fit in {n_cells} cells")
+                    f"the {ends[0]} side do not fit in {n_cells} cells")
             h = float(np.min(grid.widths(name)))
             self.d[name] = self.thickness_cells * h
             # normal-incidence grading: exp(-eta0 * int sigma dx) = target
@@ -286,13 +358,46 @@ class PML:
         s = np.clip(1.0 - depth / self.d[axis], 0.0, 1.0)
         return self.sigma_max[axis] * s ** self.order
 
+    def walls_for(self, axis: str) -> tuple:
+        """The selected walls of ``axis``, in ``_WALLS`` order.
+
+        Empty means the axis carries no layer; one entry means a single-ended
+        layer on that wall.
+        """
+        if axis not in AXES:
+            raise ValueError(
+                f"unknown axis {axis!r}; expected one of {AXES}")
+        return tuple(w for w in self.walls if w.startswith(axis))
+
+    def _wall_profile(self, axis: str, position, walls) -> np.ndarray:
+        """1-D profile of ``axis`` restricted to the selected ``walls``.
+
+        With both ends selected this is :meth:`profile` unchanged, bit for bit,
+        which is what keeps the default layer identical to the two-sided one
+        this class has always built.  With a single end the profile keeps the
+        values on that half of the axis and sets the other half to exactly
+        zero, so the layer stops at the mid-plane instead of leaking a second
+        one in through the far wall.
+        """
+        values = np.asarray(self.profile(axis, position), dtype=float)
+        if len(walls) == 2:
+            return values
+        nodes = np.asarray(getattr(self.grid, axis), dtype=float)
+        mid = 0.5 * (float(nodes[0]) + float(nodes[-1]))
+        position = np.asarray(position, dtype=float)
+        if walls[0] == f"{axis}min":
+            return np.where(position <= mid, values, 0.0)
+        return np.where(position > mid, values, 0.0)
+
     def _sigma_block(self, axis: str, along_mid: bool) -> np.ndarray:
         """Sum of the active 1-D profiles on one edge/face block."""
         coords = _coordinates(self.grid, axis, along_mid)
         total = np.zeros(coords[0].shape, dtype=float)
         for name, pos in zip(AXES, coords):
-            if name in self.axes:
-                total = total + self.profile(name, pos)
+            walls = self.walls_for(name)
+            if not walls:
+                continue
+            total = total + self._wall_profile(name, pos, walls)
         return total.ravel()
 
     def _sigma(self, kind: str, along_mid: bool) -> np.ndarray:

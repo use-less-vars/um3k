@@ -16,11 +16,14 @@ import io
 import numpy as np
 import pytest
 
+from emfit.grid import Grid
+from emfit.operators import CellComplex
 from emfit.ports import (
     DftAccumulator,
     LumpedPort,
     Probe,
     edge_path_voltage,
+    plate_current,
     probe_voltage,
     read_touchstone,
     reflection,
@@ -382,3 +385,61 @@ def test_lossless_two_port_obeys_passivity():
     power = abs(s11) ** 2 + abs(s21) ** 2
     assert power <= 1.0 + 1e-12  # nothing is created at the port ...
     assert abs(power - 1.0) < 1e-12  # ... and this device is lossless
+
+
+# ---------------------------------------------------------------------------
+# plate current: a sum of dual H unknowns, so a closed form in amperes
+# ---------------------------------------------------------------------------
+def test_plate_current_scales_with_the_included_columns():
+    """``n`` columns carrying ``F`` amperes add up to ``n * F``, and nothing else."""
+    grid = Grid.uniform(4, 6, 3, 0.04, 0.06, 0.03)
+    cc = CellComplex(grid)
+    amp = 2.5
+    h = np.zeros(cc.n_faces)
+    for j in range(cc.nyn):
+        h[cc.idx_fy(2, j, 1)] = amp
+
+    # every y point layer of one station: ny + 1 dual edges, no cell width
+    assert plate_current(h, cc, 2, 1) == pytest.approx(amp * cc.nyn)
+    # the sum is per station, not global
+    assert plate_current(h, cc, 1, 1) == 0.0
+    assert plate_current(h, cc, 2, 0) == 0.0
+    # a pair of point layers is a half-open run, exactly like column_path
+    assert plate_current(h, cc, 2, 1, y_extent=(0, 3)) == pytest.approx(amp * 3)
+
+
+def test_plate_current_extent_excludes_the_omitted_columns():
+    """A strip extent sums the strip only: the omitted columns are not seen."""
+    grid = Grid.uniform(3, 8, 2, 0.03, 0.08, 0.02)
+    cc = CellComplex(grid)
+    y = np.asarray(grid.y, dtype=float)
+    centre = 0.5 * (float(y[0]) + float(y[-1]))
+    half = 0.025
+    inner = [j for j in range(cc.nyn) if abs(float(y[j]) - centre) <= half]
+    outer = [j for j in range(cc.nyn) if j not in inner]
+    assert inner and outer                     # the strip is neither all nor none
+
+    h = np.zeros(cc.n_faces)
+    for j in range(cc.nyn):
+        h[cc.idx_fy(1, j, 0)] = (1.0 + j) if j in inner else 100.0
+
+    strip = plate_current(h, cc, 1, 0, y_extent=half)
+    whole = plate_current(h, cc, 1, 0)
+    assert strip == pytest.approx(float(sum(1.0 + j for j in inner)))
+    # what the extent leaves out is exactly the omitted columns' contribution
+    assert whole - strip == pytest.approx(100.0 * len(outer))
+    # the metre form and the index form of the same strip agree exactly
+    assert plate_current(h, cc, 1, 0,
+                         y_extent=(inner[0], inner[-1] + 1)) == strip
+
+
+def test_plate_current_default_extent_is_the_plain_sum():
+    """``y_extent=None`` is the hand-written sum over every y column, bit for bit."""
+    grid = Grid.uniform(5, 5, 2, 0.05, 0.05, 0.02)
+    cc = CellComplex(grid)
+    h = np.random.default_rng(20250517).standard_normal(cc.n_faces)
+    for ix in range(cc.nx):
+        for iz in range(cc.nz):
+            want = float(sum(h[cc.idx_fy(ix, j, iz)] for j in range(cc.nyn)))
+            assert plate_current(h, cc, ix, iz) == want
+
