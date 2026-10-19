@@ -30,4 +30,12 @@ quantity         location                                   array shape
 The package version is not released yet.
 """
 
+# Thread pinning must run before anything imports numpy: BLAS reads its thread
+# count once, when the shared library is loaded (see emfit/_env.py).
+from ._env import pin_threads as _pin_threads
+
+_pin_threads()
+
+del _pin_threads
+
 __version__ = "0.1.0.dev0"

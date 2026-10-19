@@ -16,6 +16,7 @@ Typical use::
 
 from __future__ import annotations
 
+import io
 import os
 
 import matplotlib
@@ -27,7 +28,7 @@ import numpy as np  # noqa: E402
 
 from .operators import CellComplex  # noqa: E402
 
-__all__ = ["save", "plot_spectrum", "plot_field_slice", "plot_energy"]
+__all__ = ["save", "png_bytes", "plot_spectrum", "plot_field_slice", "plot_energy"]
 
 # --- style -----------------------------------------------------------------
 plt.rcParams.update(
@@ -58,11 +59,52 @@ COL_INK = "#1a202c"       # outlines and axes
 
 
 # ---------------------------------------------------------------------------
+def _render(fig, fmt: str = "png", dpi: int = 140) -> bytes:
+    """Render ``fig`` to ``fmt`` bytes -- the single drawing path of the module.
+
+    :func:`save` and :func:`png_bytes` both go through here and pass the same
+    arguments to ``Figure.savefig``, so a figure written to a file and the same
+    figure handed to a web page are produced by identical code and cannot
+    drift apart (same ``dpi``, same tight bounding box, same colour defaults).
+
+    Args:
+        fig: Matplotlib figure to render.
+        fmt: Any format ``savefig`` understands (``png``, ``pdf``, ``svg`` ...).
+        dpi: Raster resolution for bitmap formats.
+
+    Returns:
+        The encoded image as ``bytes``.
+    """
+    buf = io.BytesIO()
+    fig.savefig(buf, format=fmt, dpi=int(dpi), bbox_inches="tight",
+                facecolor="auto", edgecolor="auto")
+    return buf.getvalue()
+
+
+def png_bytes(fig, dpi: int = 140) -> bytes:
+    """Render ``fig`` to PNG bytes and close it (no file is touched).
+
+    This is the in-memory twin of :func:`save`; it exists so the web layer can
+    serve a figure without inventing a temporary file.  See :func:`_render`.
+
+    Args:
+        fig: Matplotlib figure to render.
+        dpi: Raster resolution.
+
+    Returns:
+        The PNG file contents as ``bytes``.
+    """
+    data = _render(fig, "png", dpi=dpi)
+    plt.close(fig)
+    return data
+
+
 def save(fig, path, dpi: int = 140) -> str:
     """Write ``fig`` to ``path`` and close it.
 
     Parent directories are created when missing; the tight bounding box is
-    used so the LaTeX page sees no wasted margin.
+    used so the LaTeX page sees no wasted margin.  The bytes come from
+    :func:`_render`, the same path :func:`png_bytes` takes.
 
     Args:
         fig: Matplotlib figure to write.
@@ -76,7 +118,9 @@ def save(fig, path, dpi: int = 140) -> str:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    fig.savefig(path, dpi=int(dpi), bbox_inches="tight")
+    fmt = os.path.splitext(path)[1].lstrip(".").lower() or plt.rcParams["savefig.format"]
+    with open(path, "wb") as handle:
+        handle.write(_render(fig, fmt, dpi=dpi))
     plt.close(fig)
     return path
 
@@ -160,7 +204,7 @@ def _co_locate(a: np.ndarray, axis: int) -> np.ndarray:
 
 
 def plot_field_slice(grid, values, component, axis="z", index=None, ax=None,
-                     cmap="RdBu_r", title=None):
+                     cmap="RdBu_r", title=None, colorbar=True):
     """Colour map of one electric-field component on a grid-aligned slice.
 
     ``values`` is the **full** concatenated primal edge-voltage vector (length
@@ -181,6 +225,10 @@ def plot_field_slice(grid, values, component, axis="z", index=None, ax=None,
         ax: Axes to draw on; a new figure is made when omitted.
         cmap: Matplotlib colormap (diverging for signed components).
         title: Optional axes title.
+        colorbar: Draw a colour bar for this panel.  Pass ``False`` when several
+            panels share one colour scale and a single figure-level bar is drawn
+            instead; the mesh stays available as ``ax.collections[0]`` so that
+            bar can be built from it.
 
     Returns:
         ``(fig, ax)``.
@@ -237,8 +285,9 @@ def plot_field_slice(grid, values, component, axis="z", index=None, ax=None,
     amp = float(np.max(np.abs(data))) or 1.0
     kw = {"vmin": -amp, "vmax": amp} if signed else {"vmin": 0.0, "vmax": amp}
     mesh = ax.pcolormesh(ue, ve, data.T, shading="flat", cmap=cmap, **kw)
-    cbar = fig.colorbar(mesh, ax=ax)
-    cbar.set_label(label)
+    if colorbar:
+        cbar = fig.colorbar(mesh, ax=ax)
+        cbar.set_label(label)
 
     ax.plot([ue[0], ue[-1], ue[-1], ue[0], ue[0]],
             [ve[0], ve[0], ve[-1], ve[-1], ve[0]], color=COL_INK, lw=0.9)
