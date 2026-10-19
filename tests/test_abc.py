@@ -45,6 +45,7 @@ from emfit.evolve import FITStepper
 from emfit.grid import CartesianGrid, Grid
 from emfit.materials import C0, M_eps, M_mu
 from emfit.operators import CellComplex
+from emfit.pml import PML
 
 # ---------------------------------------------------------------------------
 # physical test configuration (rationale in the module docstring)
@@ -298,3 +299,28 @@ def test_pec_control_reflects(pec_run):
     # the probe does see the echo (a dead probe would report a tiny "echo")
     assert pec_run["near"] > 0.5 * pec_run["inc"], msg
     assert pec_run["far"] > 0.5 * pec_run["inc"], msg
+
+
+# ---------------------------------------------------------------------------
+# 5. the matched layer refuses to eat the physical region
+# ---------------------------------------------------------------------------
+def test_pml_thicker_than_half_the_grid_is_refused():
+    """A layer that does not fit must raise, not silently consume the interior.
+
+    ``2 * thickness_cells >= n_cells`` means the two layers meet or overlap and
+    there is no undamped region left.  That failure is invisible in a
+    reflection measurement -- the run stays stable, it just gets very lossy and
+    very small -- so it has to be a guard, not a note in a docstring.
+    """
+    grid = CartesianGrid(20, 20, 1, lx=1.0, ly=1.0, lz=0.1)
+    for too_thick in (10, 11, 20):
+        with pytest.raises(ValueError, match="do not fit"):
+            PML(grid, thickness_cells=too_thick, axes=("x", "y"))
+
+    # exactly half the grid is already too thick, one cell less is not
+    assert PML(grid, thickness_cells=9, axes=("x",)).thickness_cells == 9
+
+    # any too-small active axis is refused, not just the first one
+    with pytest.raises(ValueError, match="axis 'y'"):
+        PML(CartesianGrid(20, 6, 1, lx=1.0, ly=1.0, lz=0.1),
+            thickness_cells=4, axes=("x", "y"))

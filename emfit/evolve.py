@@ -74,6 +74,10 @@ class FITStepper:
         Either a boolean mask of length ``n_edges`` or the index array of the
         PEC-constrained edges.  Their voltages are reset to zero after every
         update, so they are never unknowns.
+    pml : emfit.pml.PML, optional
+        Absorbing layer to apply inside :meth:`step` (at the two leapfrog
+        points, see below).  Left as ``None`` the update is bit-identical to
+        the one without a layer.
 
     Attributes
     ----------
@@ -85,9 +89,12 @@ class FITStepper:
         Simulation time of the current ``e`` state [s].
     n : int
         Number of steps taken.
+    pml : emfit.pml.PML or None
+        The layer given to the constructor, if any.
     """
 
-    def __init__(self, cc, m_eps, m_mu, dt: float | None = None, pec=None):
+    def __init__(self, cc, m_eps, m_mu, dt: float | None = None, pec=None,
+                 pml=None):
         self.cc = cc
         self.C = cc.curl()
         self.C_tilde = cc.curl_dual()
@@ -106,6 +113,7 @@ class FITStepper:
 
         self.dt = float(cfl_dt(cc.grid) if dt is None else dt)
 
+        self.pml = pml
         self.pec_idx = self._index_array(pec, self.C.shape[1])
         if self.pec_idx is not None:
             self.free = np.ones(self.C.shape[1], dtype=bool)
@@ -135,10 +143,14 @@ class FITStepper:
         ``j`` is an optional current vector [A] on the primal edges.
         """
         self.h -= self.dt * (self.inv_m_mu * (self.C @ self.e))
+        if self.pml is not None:
+            self.pml.damp_h(self.h, self.dt)
         ce = self.C_tilde @ self.h
         if j is not None:
             ce = ce - j
         self.e += self.dt * (self.inv_m_eps * ce)
+        if self.pml is not None:
+            self.pml.damp_e(self.e, self.dt)
         if self.pec_idx is not None:
             self.e[self.pec_idx] = 0.0
         self.time += self.dt

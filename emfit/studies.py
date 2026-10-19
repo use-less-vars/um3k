@@ -48,6 +48,7 @@ from .evolve import FITStepper, RickerSource, cfl_dt
 from .grid import Grid
 from .materials import C0, material_matrices
 from .operators import CellComplex
+from .pml import PML
 
 import matplotlib.pyplot as plt  # noqa: E402  (after the backend is fixed)
 
@@ -479,8 +480,19 @@ DUCT_LX, DUCT_LY, DUCT_LZ = 2.4, 0.64, 0.04          # metres
 DUCT_SRC_X, DUCT_PRB_X = 0.5 * DUCT_LX, 0.375 * DUCT_LX
 DUCT_F0, DUCT_T0, DUCT_TAU = 2.0e9, 3.0e-9, 0.8e-9
 DUCT_SIDE_WALLS = ("ymin", "ymax", "zmin", "zmax")
+DUCT_PML_MIN_CELLS, DUCT_PML_MAX_CELLS = 8, 40   # matched-layer clip
 DUCT_ABC_PLANES = ("xmin", "xmax")
 DUCT_THRESHOLD_DB = -40.0
+
+
+def _duct_pml_cells(nx: int) -> int:
+    """Matched-layer thickness (cells) for a duct resolved with ``nx`` cells.
+
+    Eight cells is the floor that still fits a coarse run, forty is the point
+    where the layer is worth about -79 dB at normal incidence, and the 1/8 rule
+    keeps the layer proportional to the grid in between.
+    """
+    return min(DUCT_PML_MAX_CELLS, max(DUCT_PML_MIN_CELLS, nx // 8))
 
 
 def _duct_waveform(t: float) -> float:
@@ -498,20 +510,26 @@ def _duct_peak(trace, t, t_expected, half_window):
 
 
 def _run_duct(values: Mapping[str, Any], sink: FigureSink) -> dict:
-    """Pulse in a PEC duct, with either a Mur ABC or a reflecting wall."""
+    """Pulse in a PEC duct ended by a matched layer, a Mur ABC or a wall."""
     nx, ny = int(values["nx"]), int(values["ny"])
     nsteps = int(values["nsteps"])
     termination = str(values["termination"])
-    absorbing = termination == "mur"
+    mur_on = termination == "mur"
+    pml_on = termination == "pml"
+    absorbing = mur_on or pml_on
 
     grid = Grid.uniform(nx, ny, 1, DUCT_LX, DUCT_LY, DUCT_LZ)
     cc = CellComplex(grid)
     m_eps, m_mu = material_matrices(grid, cc)
 
-    walls = DUCT_SIDE_WALLS if absorbing else DUCT_ABC_PLANES + DUCT_SIDE_WALLS
-    stepper = FITStepper(cc, m_eps, m_mu, pec=cc.pec_edge_mask(walls))
+    # The layer sits against the PEC end planes, so the same wall mask serves
+    # both absorbing terminations; only the Mur run leaves the ends free.
+    walls = DUCT_SIDE_WALLS if mur_on else DUCT_ABC_PLANES + DUCT_SIDE_WALLS
+    pml = (PML(grid, thickness_cells=_duct_pml_cells(nx), order=2,
+               target=1e-4, axes=("x",), cc=cc) if pml_on else None)
+    stepper = FITStepper(cc, m_eps, m_mu, pec=cc.pec_edge_mask(walls), pml=pml)
     mur = (Mur1Boundary(grid, stepper.dt, cc=cc, planes=DUCT_ABC_PLANES,
-                        pec=stepper.pec_idx) if absorbing else None)
+                        pec=stepper.pec_idx) if mur_on else None)
 
     dx = DUCT_LX / nx
     i_src = int(round(DUCT_SRC_X / dx))
@@ -549,7 +567,8 @@ def _run_duct(values: Mapping[str, Any], sink: FigureSink) -> dict:
     # --- figure: linear trace and the same trace in dB --------------------
     fig, (ax_t, ax_db) = plt.subplots(1, 2, figsize=(9.2, 3.2))
     colour = viz.COL_PRIMARY if absorbing else viz.COL_ACCENT
-    label = "Mur ABC" if absorbing else "PEC (reflecting)"
+    label = {"mur": "Mur ABC", "pml": "PML (matched layer)"}.get(
+        termination, "PEC (reflecting)")
     ax_t.plot(t * 1e9, trace, color=colour, lw=1.0, label=label)
     for t_expected, name in ((t_inc, "incident"), (t_near, "echo @ probe"),
                              (t_far, "echo @ source")):
@@ -584,7 +603,8 @@ def _run_duct(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "far-end termination": label,
         "echo level, near end": f"{db_near:.2f} dB",
         "echo level, far end": f"{db_far:.2f} dB",
-        "theory: Mur reflection": f"{theory_db:.2f} dB",
+        "theory: Mur reflection": (f"{theory_db:.2f} dB" if mur_on else
+                                   "n/a, no closed form for the layer"),
         "echo / incident, far end": f"{far / inc:.4f}",
         "incident peak": f"{inc:.3f} V",
         "phase velocity": f"{v_ph / C0:.5f} c",
@@ -644,12 +664,13 @@ MODES = Study(
 
 DUCT = Study(
     name="duct",
-    title="Absorbing duct termination: Mur vs PEC",
+    title="Absorbing duct termination: Mur vs PML vs PEC",
     blurb=("A pulse launched into a PEC waveguide, measured at a probe near the "
            "source. With the first-order Mur condition at the two ends of the "
            "duct the outgoing pulse is absorbed (-49 dB, matching the analytic "
-           "reflection coefficient); with a plain PEC wall it comes back almost "
-           "undamped. Switch the termination to see the difference."),
+           "reflection coefficient); with a matched lossy layer (PML) of 12 "
+           "cells at each end the echo is weaker still; with a plain PEC wall it "
+           "comes back almost undamped. Switch the termination to compare."),
     params=(
         Param("nx", "cells along the duct", "int", 320, lo=64, hi=400,
               help="Axial resolution; the duct is 2.4 m long."),
@@ -658,8 +679,9 @@ DUCT = Study(
               help="Enough steps must be taken for the echo to reach the probe "
                    "(about 10 ns after the incident pulse)."),
         Param("termination", "far-end termination", "choice", "mur",
-              choices=("mur", "pec"),
-              help="'mur' absorbs the outgoing pulse, 'pec' reflects it so the "
+              choices=("mur", "pml", "pec"),
+              help="'mur' and 'pml' absorb the outgoing pulse (a first-order "
+                   "ABC and a matched lossy layer), 'pec' reflects it so the "
                    "reflection is visible."),
     ),
     run=_run_duct,
