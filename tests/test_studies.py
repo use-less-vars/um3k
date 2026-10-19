@@ -12,6 +12,13 @@ Only two kinds of claim are made here, and both are cheap:
   shape and finiteness only.  ``Z0`` and ``eps_eff`` on such a grid are junk --
   pinning junk is worse than pinning nothing -- so they are deliberately
   **not** asserted.
+* *The default case, once.*  The one grid whose numbers mean something is the
+  default mesh, and the two ways to get a plausible-looking wrong ``beta`` out
+  of it are a record too short for the transient and a phase difference taken
+  between two stations.  That run is pinned: the snapped drive frequency, the
+  fitted ``beta``, ``eps_eff`` and the two fit diagnostics, so neither failure
+  can come back unnoticed.  It costs a few seconds, which is the price of the
+  only physical claim in the file.
 """
 
 from __future__ import annotations
@@ -66,7 +73,7 @@ def test_microstrip_wave_smoke():
         n_line=6,
         x_first=6.4e-3,
         x_last=11.2e-3,
-        n_stations=3,
+        n_stations=4,     # the two-wave fit needs four stations
         nsteps=40,
         sink=None,
     )
@@ -84,11 +91,11 @@ def test_microstrip_wave_smoke():
     assert geo["f"] > 0.0 and np.isfinite(geo["f"])
     assert geo["dt"] > 0.0 and np.isfinite(geo["dt"])
     assert geo["n_edges"] > 0
-    assert len(geo["station_cells"]) == 3
+    assert len(geo["station_cells"]) == 4
 
     # --- stations have the requested count, and are ordered -------------
-    assert result.station_x.shape == (3,)
-    assert result.v_stations.shape == (3,)
+    assert result.station_x.shape == (4,)
+    assert result.v_stations.shape == (4,)
     assert np.all(np.isfinite(result.station_x))
     assert np.all(np.diff(result.station_x) > 0.0)  # strictly increasing
     assert result.y_extent > 0.0
@@ -107,7 +114,13 @@ def test_microstrip_wave_smoke():
     assert result.beta_model > 0.0
     assert result.eps_eff_model > 1.0
     assert result.z0_model > 0.0
-    assert np.isfinite(result.beta)
+    assert np.isfinite(result.beta) and result.beta > 0.0
+
+    # --- the fits ran and returned numbers, plausible or not ------------
+    assert np.isfinite(result.beta_two_station)
+    assert np.isfinite(result.beta_two_wave) and result.beta_two_wave > 0.0
+    assert np.isfinite(result.gamma)
+    assert np.isfinite(result.fit_residual) and result.fit_residual >= 0.0
 
     # --- and the one-line summary is actually a line --------------------
     line = result.summary()
@@ -116,6 +129,64 @@ def test_microstrip_wave_smoke():
 
     # Cheap is the point: this must not become a slow test by accident.
     assert elapsed < 10.0, f"the tiny case took {elapsed:.2f} s"
+
+
+# ---------------------------------------------------------------------------
+# the default case: the only physical claim in this file
+# ---------------------------------------------------------------------------
+def test_microstrip_default_case_is_converged():
+    """The default run measures the line, not the transient.
+
+    Each number below is a property of the default mesh and the default record,
+    and each is here because it has been wrong once:
+
+    * the drive is snapped to a DFT bin of the record, and the bin is decided
+      by ``n_acc * dt``: ``8 / (1800 dt) = 5.8277864 GHz``, which is also
+      ``2 / (450 dt)``, so lengthening the record must not move it;
+    * ``beta`` comes from a one-wave fit over all nine stations and must land
+      on the analytic 232.5 rad/m for this cross-section; the two-station
+      difference over the same span agrees to 0.02 per cent **here**, which is
+      why it is kept as a cross-check and not as the answer;
+    * ``abs(gamma)`` and the fit residual are the record-length diagnostics: a
+      transient still in flight leaves 0.018 and 0.020 at 1200 steps, and by
+      the default 2400 they have fallen to 0.007 and 0.009 and stopped moving;
+    * ``eps_eff`` follows from ``beta``, so it is pinned to 3.624 -- the value
+      the fitted phase constant implies -- and not to the closed-form 3.344,
+      which this mesh does not reproduce.
+
+    The tolerances are wide enough for a compiler's rounding and tight enough
+    that a truncated record, or a two-station ``beta`` on a wrapped span,
+    fails them.
+    """
+    t_start = time.perf_counter()
+    result = studies.microstrip_wave(sink=None)
+    elapsed = time.perf_counter() - t_start
+
+    geo = result.geometry
+    assert geo["nsteps"] == 2400
+    assert geo["n_warm"] == 600                  # a quarter of 2400
+    assert geo["n_acc"] == 1800
+
+    # --- the tone actually driven, to the part in a million ---------------
+    assert geo["f"] == pytest.approx(5.8277864e9, rel=1e-6)
+
+    # --- the phase constant, from the fit, against the closed form --------
+    assert result.beta == pytest.approx(232.5, rel=0.01)
+    assert result.beta > 0.0                     # a forward wave, always
+
+    # --- the standing wave and the misfit that make that believable ------
+    assert abs(result.gamma) < 0.02
+    assert result.fit_residual < 0.01
+
+    # --- eps_eff is beta's, so it is pinned to beta's value --------------
+    assert result.eps_eff == pytest.approx(3.624, rel=0.01)
+
+    # --- the old estimator is the cross-check now, and it agrees ---------
+    assert result.beta_two_station == pytest.approx(result.beta, rel=0.02)
+
+    # A few seconds is the cost of the only physical claim in the file; it is
+    # still bounded, so it cannot quietly become a slow test.
+    assert elapsed < 15.0, f"the default run took {elapsed:.2f} s"
 
 
 # ---------------------------------------------------------------------------

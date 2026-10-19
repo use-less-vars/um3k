@@ -59,6 +59,7 @@ from .ports import (
     LumpedPort,
     column_path,
     edge_path_voltage,
+    fit_beta,
     plate_current,
 )
 
@@ -1072,7 +1073,14 @@ MS_EPS_R = 4.4
 #: Drive frequency asked for [Hz]; snapped onto a DFT bin of the record.
 MS_F_TARGET = 6.0e9
 #: Leapfrog steps of the default run.
-MS_NSTEPS = 600
+#:
+#: A quarter of them is warm-up, so the record is 1800 steps.  The strip is
+#: shorted at the far end, so the line carries a standing wave and the launched
+#: transient has to go out and back before the record is a steady state.  At
+#: 600 steps the record was 450 steps of a transient still in flight and every
+#: phase measured on it was biased; at 2400 the fitted numbers move by about a
+#: tenth of a per cent if the record is lengthened further.
+MS_NSTEPS = 2400
 #: Matched-layer cells at each absorbing face (``x``, ``y`` and ``zmax``).
 MS_N_PML = 6
 #: First and last probe station of the default run [m].
@@ -1123,16 +1131,35 @@ class MicrostripWave:
         i_ground_truncated: The same sum over the physical strip extent only,
             i.e. with the lateral matched-layer columns left out [A].
         y_extent: Half-width used for the truncated sum [m].
-        beta: Phase constant from the plain phase difference between the first
-            and the last station [rad/m].  No fit: exact only for a single
-            travelling wave, and ambiguous once ``beta * d`` passes ``pi``
-            (flagged in ``geometry['beta_ambiguous']``).
+        beta_two_station: Phase constant from the plain phase difference
+            between the first and the last station [rad/m], ``-angle(v_last *
+            conj(v_first)) / span``.  Kept as a cross-check: it is exact only
+            for a single travelling wave, and it carries the sign of whichever
+            way the phasor happened to rotate over the span, so it may come out
+            negative.
+        beta: Phase constant from a least-squares one-wave fit over every
+            station, ``v(z) = A exp(-j beta z)`` [rad/m].  Positive by
+            construction: the fit only searches ``beta > 0``, so this is the
+            forward wave and no branch ambiguity can arise.  This is the
+            number to quote.
+        beta_two_wave: Phase constant from the two-wave fit, ``v(z) = A
+            exp(-j beta z) + B exp(+j beta z)`` [rad/m].  Its distance from
+            ``beta`` is the size of the standing wave the one-wave model had to
+            swallow.
+        gamma: ``B / A`` of that two-wave fit, the reflection coefficient at
+            ``z = 0`` (dimensionless, complex).  ``abs(gamma)`` is the
+            standing-wave diagnostic.
+        fit_residual: Relative RMS misfit of the one-wave fit,
+            ``||v - model|| / ||v||`` (dimensionless).  Large means the phasors
+            are not one travelling wave -- a standing wave, or a record too
+            short for the transient to have left the line.
         beta_model: ``emfit.microstrip`` Hammerstad-Jensen value at the same
             frequency [rad/m].
         z0: ``V / I`` at the port station, ``V`` from the port gap and ``I``
             from the truncated ground return [ohm].
         z0_model: Closed-form quasi-static impedance of the cross-section [ohm].
-        eps_eff: Effective permittivity implied by ``beta``.
+        eps_eff: Effective permittivity implied by ``beta``, i.e. by the
+            one-wave fit and not by the two-station difference.
         eps_eff_model: Closed-form effective permittivity of the cross-section.
     """
 
@@ -1143,7 +1170,11 @@ class MicrostripWave:
     i_ground_full: complex
     i_ground_truncated: complex
     y_extent: float
+    beta_two_station: float
     beta: float
+    beta_two_wave: float
+    gamma: complex
+    fit_residual: float
     beta_model: float
     z0: complex
     z0_model: float
@@ -1206,8 +1237,38 @@ def microstrip_wave(
     from the port plane to the far ``x`` wall, so the line is **unterminated**:
     there is no resistive edge in this solver, so the far end is a PEC wall and
     the line carries a standing wave.  That is a property of the default case,
-    not an accident, and it is why the phase difference below is only a plain
-    two-station estimate.
+    not an accident, and it decides how the phase constant may be measured.
+
+    The phasors are ``v(z) = A exp(-j beta z) + B exp(+j beta z)``, so the
+    angle between the first and the last station is not ``beta`` times the
+    span, and the trouble is worse than a small bias: an angle is a principal
+    value, so once the total phase across the span passes ``pi`` the
+    two-station difference is aliased outright.  ``beta`` therefore comes from
+    a least-squares fit over **all** the stations -- one wave for the number
+    quoted, positive by construction because the fit only searches
+    ``beta > 0``, and two waves alongside it.  The two-wave fit is what says
+    how much wave the one-wave model had to swallow: it returns
+    ``beta_two_wave`` and ``gamma = B/A``, so ``abs(gamma)`` is the standing
+    wave, and ``fit_residual`` is the relative RMS the one-wave model left.
+    The old first-to-last difference is still reported, as
+    ``beta_two_station``, as a cross-check; it carries the sign of whichever
+    way the phasors happened to rotate over the span, so it can come out
+    negative.
+
+    The other half of the measurement is the record length.  The line is a
+    cavity until the launched transient has gone out to the far wall and come
+    back, and every phasor transformed before that is a snapshot of a wave in
+    flight.  At the default ``nsteps = 2400`` the record is 1800 steps, and by
+    then the diagnostics have settled: the two-wave fit finds
+    ``abs(gamma) = 0.0075``, the one-wave fit leaves a residual of 0.0095, and
+    both read the same to a thousandth at 3600 and 4800 steps.  ``beta`` itself
+    keeps creeping (232.45 rad/m at 2400 steps, 232.11 at 3600, 232.00 at
+    4800), so quote it to three or four digits and not to five.  Read the
+    residual and ``abs(gamma)`` before believing ``beta``: 1200 steps gives
+    0.020 and 0.018, which is a record still filling up, not a measurement.
+    ``geometry['beta_ambiguous']`` flags the one failure the two-station
+    difference cannot survive on its own, the total phase across the span
+    passing ``pi``.
 
     The default case is the recovered historical mesh, and the numbers in it are
     load-bearing: ``h = 1.6 mm`` resolved by ``n_sub = 4`` cells makes the cell
@@ -1253,9 +1314,11 @@ def microstrip_wave(
         x_first, x_last: Wanted first and last probe station, in metres; each is
             snapped to the nearest node layer and the positions actually used
             come back in ``station_x``.
-        n_stations: Number of probe stations, equally spaced in the wanted span.
+        n_stations: Number of probe stations, equally spaced in the wanted span;
+            at least 4, the minimum a two-wave fit needs.
         f_target: Wanted drive frequency [Hz].
-        nsteps: Leapfrog steps; the first ``n_warm`` are warm-up.
+        nsteps: Leapfrog steps; the first ``n_warm`` are warm-up and the rest
+            are Fourier transformed, so this is the record length.
         n_warm: Warm-up steps, ``nsteps // 4`` by default.
         drive: Source amplitude [A].
         sink: Where to put the figure; ``None`` (the default) draws nothing.
@@ -1265,7 +1328,8 @@ def microstrip_wave(
 
     Raises:
         ValueError: If the mesh or the station span leaves no interior to
-            probe, or if warm-up leaves no record to transform.
+            probe, if fewer than four stations survive, or if warm-up leaves no
+            record to transform.
     """
     n_sub, n_air, n_strip = int(n_sub), int(n_air), int(n_strip)
     n_top = int(n_top)
@@ -1276,10 +1340,11 @@ def microstrip_wave(
             "n_sub, n_air, n_strip, n_clean and n_pml must all be at least 1")
     if n_line < 1 or n_ref < 0:
         raise ValueError(f"n_line must be at least 1 and n_ref at least 0")
-    if n_stations < 2:
+    if n_stations < 4:
         raise ValueError(
-            f"n_stations must be at least 2 to take a phase difference, got "
-            f"{n_stations}")
+            f"n_stations must be at least 4: the phase constant comes from a "
+            f"two-wave fit, which needs four stations to leave a residual to "
+            f"judge, got {n_stations}")
 
     if n_top < 0:
         raise ValueError(f"n_top must be at least 0, got {n_top}")
@@ -1376,10 +1441,18 @@ def microstrip_wave(
     i_full = complex(spec[n_stations + 1])
     i_trunc = complex(spec[n_stations + 2])
 
-    # --- plain two-station phase difference; no fit this turn ---------------
+    # --- phase constant: multi-station fits, the old difference kept beside --
+    # The two-station difference is what this study used to quote.  It only
+    # looks at the ends of the span, so it cannot tell a standing wave from a
+    # travelling one and it aliases once the phase across the span passes pi.
+    # The fits use every station, and only search beta > 0, so the value they
+    # return is the forward wave without a branch choice to make.
     d_probe = float(station_x[-1] - station_x[0])
     d_phase = float(np.angle(v_stations[-1] * np.conj(v_stations[0])))
-    beta = -d_phase / d_probe
+    beta_two_station = -d_phase / d_probe
+    fit_one = fit_beta(station_x, v_stations, n_wave=1)
+    fit_two = fit_beta(station_x, v_stations, n_wave=2)
+    beta = float(fit_one.beta)
 
     line = Microstrip(w=float(w), h=float(h), eps_r=float(eps_r))
     beta_model = float(line.beta(f0))
@@ -1398,7 +1471,7 @@ def microstrip_wave(
         "f": f0, "f_target": float(f_target), "dt": dt,
         "nsteps": nsteps, "n_warm": n_warm, "n_acc": n_acc,
         "n_edges": cc.n_edges, "n_faces": cc.n_faces,
-        "beta_ambiguous": bool(abs(beta_model) * d_probe > np.pi),
+        "beta_ambiguous": bool(abs(beta) * d_probe > np.pi),
     }
 
     if sink is not None:
@@ -1437,7 +1510,11 @@ def microstrip_wave(
         i_ground_full=i_full,
         i_ground_truncated=i_trunc,
         y_extent=y_half,
+        beta_two_station=float(beta_two_station),
         beta=beta,
+        beta_two_wave=float(fit_two.beta),
+        gamma=complex(fit_two.gamma),
+        fit_residual=float(fit_one.residual),
         beta_model=beta_model,
         z0=z0,
         z0_model=float(line.z0),
@@ -1465,7 +1542,11 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "stations": (f"{len(result.station_x)} from "
                      f"{result.station_x[0] * 1e3:.2f} to "
                      f"{result.station_x[-1] * 1e3:.2f} mm"),
-        "beta": f"{result.beta:.3f} rad/m",
+        "beta (one-wave fit)": f"{result.beta:.3f} rad/m",
+        "beta (two-wave fit)": f"{result.beta_two_wave:.3f} rad/m",
+        "beta (two stations)": f"{result.beta_two_station:.3f} rad/m",
+        "|gamma|": f"{abs(result.gamma):.5f}",
+        "fit residual": f"{result.fit_residual:.5f}",
         "beta (Hammerstad-Jensen)": f"{result.beta_model:.3f} rad/m",
         "beta error": (f"{100.0 * (result.beta / result.beta_model - 1.0):.2f} %"
                        if result.beta_model else "n/a"),
@@ -1476,7 +1557,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "ground current, full domain": f"{abs(result.i_ground_full):.6e} A",
         "ground current, strip extent": f"{abs(result.i_ground_truncated):.6e} A",
         "full / strip current": f"{gain:.3f}",
-        "beta ambiguity": ("beta*d > pi: the two-station difference has aliased"
+        "beta ambiguity": ("total span phase > pi: the two-station difference "
+                           "has wrapped, read the fit"
                            if g["beta_ambiguous"] else "phase step below pi"),
     }
 
@@ -1614,16 +1696,20 @@ MICROSTRIP = Study(
         "extent only, with the lateral matched-layer columns left out. "
         "Comparing those two currents is the point -- what a matched layer "
         "adds to a plate-current sum is not current any conductor carries. "
-        "beta comes from a plain phase difference between the first and last "
-        "station (no fit yet), Z0 from V/I at the port station, eps_eff from "
-        "beta, and each is printed next to the Hammerstad-Jensen closed form. "
-        "The far end of the strip is a PEC wall, so the default case carries a "
-        "standing wave; read the phasor figure before believing beta."),
+        "beta comes from a least-squares one-wave fit over all nine stations, "
+        "with the two-station difference kept beside it as a cross-check and a "
+        "two-wave fit reporting beta and |gamma|; Z0 from V/I at the port "
+        "station, eps_eff from beta, and each is printed next to the "
+        "Hammerstad-Jensen closed form. The far end of the strip is a PEC wall, "
+        "so the default case carries a standing wave, and a record too short "
+        "for the transient to leave the line lies about beta: read the fit "
+        "residual and |gamma| first."),
     params=(
         Param("nsteps", "leapfrog steps", "int", MS_NSTEPS, lo=64, hi=4000,
               help="The first quarter is warm-up; the rest is Fourier "
                    "transformed, and the drive frequency is snapped to one of "
-                   "its bins."),
+                   "its bins. The record also has to be long enough for the "
+                   "launched transient to leave the line."),
         Param("f0", "drive frequency", "float", MS_F_TARGET / 1e9,
               lo=1.0, hi=20.0, unit="GHz",
               help="Wanted tone; the run uses the nearest DFT bin of the "
