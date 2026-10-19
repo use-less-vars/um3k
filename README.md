@@ -19,7 +19,7 @@ hence limited to grids with at most 3000 free edges.
 | ID | Milestone | Status | Key deliverable | Acceptance test |
 | -- | --------- | ------ | --------------- | --------------- |
 | M0 | Time-domain core + cavity eigensolver | DONE | `emfit/{grid,operators,materials,evolve,maxwell,eigen,viz}.py` | 30 passed; mean error 1.213 % / 0.615 %, ratio 0.507 |
-| M1 | Absorbing boundaries (Mur, then PML) | PLANNED | `emfit/abc.py`, `emfit/pml.py`; material layer -> diagonal tensors | PEC-sphere bistatic RCS vs Mie, ka = 1, 3: < 0.5 dB |
+| M1 | Absorbing boundaries (Mur, then PML) | IN PROGRESS | viz.py + figures (done); `emfit/abc.py`, `emfit/pml.py`; material layer -> diagonal tensors | PEC-sphere bistatic RCS vs Mie, ka = 1, 3: < 0.5 dB |
 | M2 | Near-to-far-field transform and antennas | PLANNED | `emfit/nearfield.py` (Huygens box -> far field) | half-wave dipole: 73 ohm, 2.15 dBi |
 | M3 | Waveguide ports and S-parameters | PLANNED | `emfit/ports.py` (2-D modal solve, overlaps, de-embedding) | matched WR-90 line: abs(S21) = 1.000, abs(S11) < -30 dB |
 | M4 | PCB import from KiCad | PLANNED | `emfit/kicad.py`, `emfit/raster.py` | microstrip Z0 within 5 % of Hammerstad; patch in band |
