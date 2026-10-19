@@ -34,6 +34,29 @@ Parameters
 relevant count (``n_edges`` for ``eps_r``, ``n_faces`` for ``mu_r``), or a
 callable ``f(x, y, z)`` evaluated at the centre of each edge / face.  A
 callable must be vectorised: it receives three coordinate arrays.
+
+Sampling a callable, and material interfaces
+--------------------------------------------
+The coordinates a callable is evaluated at are built from the grid's node
+arrays truncated to :meth:`emfit.grid.Grid.nodes`, so the seam node of a
+*periodic* axis -- the first node over again, not a separate entity of the
+complex -- is never sampled.  A callable and an explicit per-edge array
+therefore describe the same field on periodic and bounded axes alike.
+
+``interface`` decides what happens where an edge or face lies *in* a material
+interface.  ``"point"`` (the default) evaluates the callable at the entity
+centre only; on a node-aligned interface that centre sits exactly *on* the
+surface, so the value is whatever the callable's own comparison returns and
+one of the two sides is silently picked.  That is deterministic but it is not
+the energy-consistent Hodge entry, and the misassigned entities stay on the
+interface as the mesh is refined, so the error does not converge away.
+``"dual"`` instead averages over the *dual* entity of the same edge or face
+-- the dual face crossed by an edge, the dual edge crossed by a face --
+weighting each part by its own extent, which is the amount of material the
+permittivity actually occupies there.  On a node-aligned interface that is the
+arithmetic mean of the two sides on a uniform grid and the width weighted mean
+on a non-uniform one; for a smoothly varying callable it is a midpoint rule
+over the dual entity, exact for a linear profile on a uniform grid.
 """
 
 from __future__ import annotations
@@ -69,18 +92,122 @@ def _centres(grid: Grid, axis: str, along_mid: bool):
 
     For an edge parallel to ``axis`` the coordinate along ``axis`` is the cell
     centre and the two transverse coordinates are node values; for a face
-    normal to ``axis`` it is the other way round.
+    normal to ``axis`` it is the other way round.  Node values are truncated to
+    :meth:`emfit.grid.Grid.nodes`: on a periodic axis the last node is the
+    first one again and is not part of the complex, so the full node array
+    carries one entry too many there.
     """
     target = grid.edge_shape(axis) if along_mid else grid.face_shape(axis)
     a = "xyz".index(axis)
     out = []
     for t, name in enumerate("xyz"):
         v = getattr(grid, name)
-        v = _interval_centres(v) if ((t == a) == along_mid) else v
+        if (t == a) == along_mid:
+            v = _interval_centres(v)          # cell centres: one per cell
+        else:
+            v = v[:grid.nodes(name)]          # node values: seam node dropped
         shp = [1, 1, 1]
         shp[t] = v.size
         out.append(np.broadcast_to(v.reshape(shp), target))
     return out
+
+
+def _node_halves(grid: Grid, axis: str):
+    """Extent of the two cells that meet at every node of ``axis``.
+
+    The dual entity centred on a node is cut *by that node* into half of each
+    adjacent cell, so the two parts have extent ``w[j-1] / 2`` and
+    ``w[j] / 2``.  The returns here are the un-halved widths, i.e. the weights:
+    their sum is the full dual width ``2 * dual_widths(axis)[j]``.  A bounded
+    axis terminates at its outer nodes (the outside part is zero), a periodic
+    one wraps.
+    """
+    w = np.asarray(grid.widths(axis), dtype=float)
+    if grid.is_periodic(axis):
+        return np.roll(w, 1), w.copy()
+    return np.concatenate(([0.0], w)), np.concatenate((w, [0.0]))
+
+
+def _dual_samples(grid: Grid, axis: str, along_mid: bool):
+    """Midpoints of the parts of every edge's / face's *dual* entity.
+
+    An edge is crossed by a dual *face* (an area) and a face by a dual *edge*
+    (a line).  Both are centred on the primal entity, and the primal nodes cut
+    them into ``2**k`` parts, ``k`` being the number of directions
+    perpendicular to the primal entity: two for an edge, one for a face.
+
+    Returns a list of ``(coords, weight)`` pairs -- the three coordinate arrays
+    of the part midpoints and the part's share of the dual entity, the weights
+    summing to one.  Averaging with them is the ``interface="dual"`` rule of
+    :func:`material_matrices`.
+    """
+    target = grid.edge_shape(axis) if along_mid else grid.face_shape(axis)
+    a = "xyz".index(axis)
+    base = _centres(grid, axis, along_mid)          # the primal midpoint
+    averaged = [t for t in range(3) if t != a] if along_mid else [a]
+
+    halves = {}
+    for t in averaged:
+        lo, hi = _node_halves(grid, "xyz"[t])
+        shp = [1, 1, 1]
+        shp[t] = lo.size
+        halves[t] = (np.broadcast_to(lo.reshape(shp), target),
+                     np.broadcast_to(hi.reshape(shp), target))
+
+    out = []
+    for mask in range(2 ** len(averaged)):
+        upper = [bool((mask >> i) & 1) for i in range(len(averaged))]
+        coords = list(base)
+        weight = np.ones(target, dtype=float)
+        for t, up in zip(averaged, upper):
+            lo, hi = halves[t]
+            side, other = (hi, lo) if up else (lo, hi)
+            # ``side`` is a whole cell width and the part keeps HALF of it, so
+            # its midpoint sits side/4 from the primal entity -- sampling at
+            # side/2 would land on the neighbouring cell centre instead.
+            coords[t] = base[t] + (0.25 if up else -0.25) * side
+            weight = weight * (side / (side + other))
+        out.append((tuple(coords), weight))
+    return out
+
+
+def _check_interface(interface):
+    """Reject an unknown dual-entity sampling rule."""
+    if interface not in ("point", "dual"):
+        raise ValueError(
+            f"interface must be 'point' or 'dual', got {interface!r}"
+        )
+
+
+def _sampled(func, grid: Grid, axis: str, along_mid: bool, interface: str,
+             count: int, name: str) -> np.ndarray:
+    """Evaluate the callable ``func`` on every edge (``along_mid``) / face."""
+    if interface == "point":
+        val = np.asarray(func(*_centres(grid, axis, along_mid)),
+                         dtype=float).ravel()
+    else:                                    # "dual", validated by the caller
+        target = grid.edge_shape(axis) if along_mid else grid.face_shape(axis)
+        total = np.zeros(target, dtype=float)
+        for coords, weight in _dual_samples(grid, axis, along_mid):
+            val = np.asarray(func(*coords), dtype=float)
+            if val.ndim == 0:
+                return np.full(count, float(val))
+            if val.shape != target:
+                if val.size != count:
+                    raise ValueError(
+                        f"{name} callable returned shape {val.shape}, "
+                        f"expected {target}"
+                    )
+                val = val.reshape(target)
+            total = total + weight * val
+        val = total.ravel()
+    if val.size == 1:
+        return np.full(count, float(val[0]))
+    if val.size != count:
+        raise ValueError(
+            f"{name} callable returned {val.size} values, expected {count}"
+        )
+    return val
 
 
 def _edge_blocks(cc: CellComplex):
@@ -111,12 +238,20 @@ def _parameter(value, count: int, name: str) -> np.ndarray:
 # ----------------------------------------------------------------------
 # the material matrices
 # ----------------------------------------------------------------------
-def material_matrices(grid: Grid, cc: CellComplex, eps_r=1.0, mu_r=1.0):
+def material_matrices(grid: Grid, cc: CellComplex, eps_r=1.0, mu_r=1.0,
+                      *, interface="point"):
     """Return ``(m_eps, m_mu)``, both 1-D float arrays (diagonal matrices).
 
     ``m_eps`` has length ``cc.n_edges`` (edge order = column order of ``C``),
     ``m_mu`` has length ``cc.n_faces`` (face order = row order of ``C``).
+
+    ``interface`` selects how a callable ``eps_r`` / ``mu_r`` is sampled where
+    an edge or face lies in a material interface: ``"point"`` (default) at the
+    entity centre itself, ``"dual"`` as the weighted average over the whole
+    dual entity (see the module docstring).  Floats and arrays are unaffected.
     """
+    _check_interface(interface)
+
     # --- permittivity, on primal edges, needs the DUAL perpendicular area ---
     if not callable(eps_r):
         eps_all = _parameter(eps_r, cc.n_edges, "eps_r")
@@ -127,12 +262,7 @@ def material_matrices(grid: Grid, cc: CellComplex, eps_r=1.0, mu_r=1.0):
             getattr(grid, f"dual_face_area_{axis}")(), dtype=float
         ).ravel()
         if callable(eps_r):
-            val = np.asarray(eps_r(*_centres(grid, axis, along_mid=True)),
-                             dtype=float).ravel()
-            if val.size == 1:
-                val = np.full(n, float(val[0]))
-            if val.size != n:
-                raise ValueError(f"eps_r callable returned {val.size} values, expected {n}")
+            val = _sampled(eps_r, grid, axis, True, interface, n, "eps_r")
         else:
             val = eps_all[off:off + n]
         m_eps[off:off + n] = val * EPS0 * (A_dual / L_e)
@@ -148,12 +278,7 @@ def material_matrices(grid: Grid, cc: CellComplex, eps_r=1.0, mu_r=1.0):
         shp["xyz".index(axis)] = w.size
         L_dual = np.broadcast_to(w.reshape(shp), grid.face_shape(axis)).ravel()
         if callable(mu_r):
-            val = np.asarray(mu_r(*_centres(grid, axis, along_mid=False)),
-                             dtype=float).ravel()
-            if val.size == 1:
-                val = np.full(n, float(val[0]))
-            if val.size != n:
-                raise ValueError(f"mu_r callable returned {val.size} values, expected {n}")
+            val = _sampled(mu_r, grid, axis, False, interface, n, "mu_r")
         else:
             val = mu_all[off:off + n]
         m_mu[off:off + n] = val * MU0 * (A_f / L_dual)
@@ -161,9 +286,15 @@ def material_matrices(grid: Grid, cc: CellComplex, eps_r=1.0, mu_r=1.0):
     return m_eps, m_mu
 
 
-def _sigma_diag(grid: Grid, cc: CellComplex, sigma=0.0) -> np.ndarray:
-    """Edge-wise conductance ``sigma * A~_e / L_e`` [S]."""
-    sig = sigma if not callable(sigma) else None
+def _sigma_diag(grid: Grid, cc: CellComplex, sigma=0.0,
+                *, interface="point") -> np.ndarray:
+    """Edge-wise conductance ``sigma * A~_e / L_e`` [S].
+
+    ``interface`` is the sampling rule of :func:`material_matrices`, so a
+    conductivity step on a node plane carries the same dual-face average as a
+    permittivity step does.
+    """
+    _check_interface(interface)
     if not callable(sigma):
         sig_all = _parameter(sigma, cc.n_edges, "sigma")
     out = np.empty(cc.n_edges, dtype=float)
@@ -173,10 +304,7 @@ def _sigma_diag(grid: Grid, cc: CellComplex, sigma=0.0) -> np.ndarray:
             getattr(grid, f"dual_face_area_{axis}")(), dtype=float
         ).ravel()
         if callable(sigma):
-            val = np.asarray(sigma(*_centres(grid, axis, along_mid=True)),
-                             dtype=float).ravel()
-            if val.size == 1:
-                val = np.full(n, float(val[0]))
+            val = _sampled(sigma, grid, axis, True, interface, n, "sigma")
         else:
             val = sig_all[off:off + n]
         out[off:off + n] = val * (A_dual / L_e)
@@ -222,22 +350,30 @@ class MaterialMatrix:
         return f"MaterialMatrix({self.name}, n={self.diag.size})"
 
 
-def M_eps(grid: Grid, cc: CellComplex | None = None, eps_r=1.0) -> MaterialMatrix:
+def M_eps(grid: Grid, cc: CellComplex | None = None, eps_r=1.0,
+          *, interface="point") -> MaterialMatrix:
     """``M_eps`` as a :class:`MaterialMatrix`."""
     cc = cc if cc is not None else CellComplex(grid)
-    return MaterialMatrix(material_matrices(grid, cc, eps_r=eps_r)[0], "M_eps")
+    return MaterialMatrix(
+        material_matrices(grid, cc, eps_r=eps_r, interface=interface)[0], "M_eps"
+    )
 
 
-def M_mu(grid: Grid, cc: CellComplex | None = None, mu_r=1.0) -> MaterialMatrix:
+def M_mu(grid: Grid, cc: CellComplex | None = None, mu_r=1.0,
+         *, interface="point") -> MaterialMatrix:
     """``M_mu`` as a :class:`MaterialMatrix`."""
     cc = cc if cc is not None else CellComplex(grid)
-    return MaterialMatrix(material_matrices(grid, cc, mu_r=mu_r)[1], "M_mu")
+    return MaterialMatrix(
+        material_matrices(grid, cc, mu_r=mu_r, interface=interface)[1], "M_mu"
+    )
 
 
-def M_sigma(grid: Grid, cc: CellComplex | None = None, sigma=0.0) -> MaterialMatrix:
+def M_sigma(grid: Grid, cc: CellComplex | None = None, sigma=0.0,
+            *, interface="point") -> MaterialMatrix:
     """``M_sigma`` as a :class:`MaterialMatrix` (units of siemens)."""
     cc = cc if cc is not None else CellComplex(grid)
-    return MaterialMatrix(_sigma_diag(grid, cc, sigma), "M_sigma")
+    return MaterialMatrix(_sigma_diag(grid, cc, sigma, interface=interface),
+                          "M_sigma")
 
 
 class Material:
