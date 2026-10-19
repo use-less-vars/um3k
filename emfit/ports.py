@@ -678,6 +678,202 @@ def transmission(v_from, v_to, d, beta) -> np.ndarray:
     return (v_to / v_from) * np.exp(1j * beta * d)
 
 
+@dataclass(frozen=True, eq=False)
+class BetaFit:
+    """A phase constant fitted to station voltages, and the fit that produced it.
+
+    All lengths are SI metres and all phase constants rad/m.
+
+    Attributes:
+        beta: Fitted phase constant, always positive and taken to belong to the
+            forward (``+z``) wave.
+        forward: Complex amplitude ``A`` of the forward wave at ``z = 0`` [V].
+        backward: Complex amplitude ``B`` of the backward wave at ``z = 0`` [V];
+            identically ``0.0`` for a one-wave fit.
+        gamma: ``B / A``, so ``abs(gamma)`` is the reflection coefficient and
+            ``arg(gamma)`` its phase referred to ``z = 0``.  Zero for a
+            one-wave fit.
+        residual: Relative RMS misfit, ``||v - model|| / ||v||``.  Zero means
+            the model reproduces the data exactly; ``0.1`` means a tenth of the
+            signal is unexplained.
+        n_stations: Number of stations the fit saw.
+        n_wave: One or two, i.e. which model was fitted.
+        span: Distance from the first to the last station [m].
+    """
+
+    beta: float
+    forward: complex
+    backward: complex
+    gamma: complex
+    residual: float
+    n_stations: int
+    n_wave: int
+    span: float
+
+
+def _fit_design(z: np.ndarray, beta: float, n_wave: int) -> np.ndarray:
+    """Model matrix of one or two travelling waves at trial ``beta``."""
+    forward = np.exp(-1j * beta * z)
+    if n_wave == 1:
+        return forward[:, None]
+    return np.column_stack((forward, np.conj(forward)))
+
+
+def _fit_at(z: np.ndarray, v: np.ndarray, beta: float, n_wave: int):
+    """Least-squares amplitudes at fixed ``beta``; returns (residual, amps)."""
+    phi = _fit_design(z, beta, n_wave)
+    amps, *_ = np.linalg.lstsq(phi, v, rcond=None)
+    miss = float(np.linalg.norm(v - phi @ amps))
+    scale = float(np.linalg.norm(v))
+    return (miss / scale if scale > 0.0 else np.inf), amps
+
+
+def _polish_one_wave(z: np.ndarray, v: np.ndarray, beta: float) -> float:
+    """Newton steps on the one-wave misfit, which is smooth in ``beta``.
+
+    At fixed ``beta`` the least-squares amplitude of ``A exp(-j beta z)`` makes
+    the squared misfit ``||v||**2 - |S(beta)|**2 / N`` with
+    ``S = sum v exp(+j beta z)``, so minimising it means maximising
+    ``F = |S|**2``.  Both derivatives of ``F`` are analytic, so a few Newton
+    steps land on the maximiser far more precisely than a bracket search can,
+    which matters because the minimiser is flat in ``beta``.
+    """
+    for _ in range(32):
+        e = np.exp(1j * beta * z)
+        s = np.sum(v * e)
+        s1 = np.sum(1j * z * v * e)
+        s2 = np.sum(-(z * z) * v * e)
+        f1 = 2.0 * float(np.real(np.conj(s) * s1))
+        f2 = 2.0 * (abs(s1) ** 2 + float(np.real(np.conj(s) * s2)))
+        if f2 >= 0.0:
+            break                     # not a maximum; keep the bracket result
+        step = f1 / f2
+        beta = beta - step
+        if beta <= 0.0:
+            break
+        if abs(step) <= 1e-15 * max(abs(beta), 1e-300):
+            break
+    return beta
+
+
+def fit_beta(z, v, n_wave=1) -> BetaFit:
+    """Fit one or two travelling waves to station voltages and return ``beta``.
+
+    ``z`` is the 1-D array of station positions in metres, ``v`` the complex
+    voltages measured there (or the DFT coefficients at one frequency, which is
+    the same thing).  ``beta`` comes back in rad/m.
+
+    The model is
+
+        ``n_wave=1``:  ``v(z) = A exp(-j beta z)``
+        ``n_wave=2``:  ``v(z) = A exp(-j beta z) + B exp(+j beta z)``
+
+    Both are linear in the amplitudes once ``beta`` is fixed, so for every trial
+    ``beta`` the amplitudes are a least-squares solve and the misfit is a
+    one-dimensional function of ``beta`` alone.  That function is scanned
+    coarsely over ``(0, pi / dz_min]`` -- beyond one half cycle per station
+    spacing the stations cannot see the wave at all -- then refined on the
+    winning bracket, and for ``n_wave=1`` polished with Newton steps on the
+    analytic derivative.  Only positive ``beta`` is ever searched, so the
+    returned value is unambiguously the forward wave and the branch ambiguity of
+    an ``exp(-j beta z)`` model does not arise.
+
+    The amplitudes are referred to ``z = 0``, not to the first station, so
+    ``gamma = B / A`` is a reflection coefficient at the origin of the ``z``
+    axis; shift ``z`` if you want it referred elsewhere.
+
+    Warning:
+        With two waves the fit has to tell ``exp(-j beta z)`` from
+        ``exp(+j beta z)``, which it can only do if the stations span a
+        reasonable fraction of a wavelength.  Over a small fraction of a
+        wavelength the two columns of the model matrix are nearly parallel, the
+        problem is ill-conditioned, and ``beta`` and ``gamma`` trade off against
+        each other almost freely.  In that regime read ``abs(gamma)`` as an
+        order of magnitude -- 'there is a reflection of roughly this size' --
+        and not as a calibrated reflection coefficient; check ``residual`` and
+        the span before believing a number to more than a digit or so.  A
+        one-wave fit has no such difficulty: it is well posed for any span.
+
+    Raises:
+        ValueError: If ``z`` and ``v`` differ in length, hold too few stations,
+            span no distance, hold non-finite values, or if ``n_wave`` is not
+            1 or 2.
+    """
+    z = np.asarray(z, dtype=float).ravel()
+    v = np.asarray(v, dtype=complex).ravel()
+    if z.size != v.size:
+        raise ValueError(
+            f"z and v must hold the same number of stations, got {z.size} and "
+            f"{v.size}")
+    n_wave = int(n_wave)
+    if n_wave not in (1, 2):
+        raise ValueError(f"n_wave must be 1 or 2, got {n_wave}")
+    if z.size < n_wave + 2:
+        raise ValueError(
+            f"a {n_wave}-wave fit needs at least {n_wave + 2} stations to leave "
+            f"a residual to judge, got {z.size}")
+    if not np.all(np.isfinite(z)) or not np.all(np.isfinite(v)):
+        raise ValueError("z and v must be finite")
+
+    order = np.argsort(z, kind="stable")
+    z, v = z[order], v[order]
+    span = float(z[-1] - z[0])
+    if span <= 0.0:
+        raise ValueError(
+            "all stations sit at the same place: no phase can be measured "
+            "across a zero span")
+    dz = float(np.min(np.diff(z)))
+    if dz <= 0.0:
+        raise ValueError("two stations coincide: the spacing is zero")
+
+    beta_max = np.pi / dz                 # one half cycle per station spacing
+    n_scan = 2048
+    grid = np.linspace(beta_max / n_scan, beta_max, n_scan)
+    coarse = np.array([_fit_at(z, v, float(b), n_wave)[0] for b in grid])
+    best = int(np.argmin(coarse))
+    lo = float(grid[max(best - 1, 0)])
+    hi = float(grid[min(best + 1, n_scan - 1)])
+    if hi <= lo:
+        lo, hi = 0.5 * float(grid[best]), 1.5 * float(grid[best])
+
+    # Local refinement.  Brent with parabolic steps gets close; the one-wave
+    # polish then finishes the job analytically.  scipy is imported here rather
+    # than at module scope so that emfit.ports stays a numpy-only module.
+    from scipy.optimize import minimize_scalar
+
+    bracket = minimize_scalar(
+        lambda b: _fit_at(z, v, float(b), n_wave)[0],
+        bounds=(lo, hi), method="bounded",
+        options={"xatol": 1e-14 * hi, "maxiter": 500})
+    beta = float(bracket.x) if bracket.success else float(grid[best])
+    residual, amps = _fit_at(z, v, beta, n_wave)
+
+    if n_wave == 1:
+        polished = _polish_one_wave(z, v, beta)
+        if polished > 0.0:
+            trial_residual, trial_amps = _fit_at(z, v, polished, n_wave)
+            if trial_residual <= residual:
+                beta, residual, amps = polished, trial_residual, trial_amps
+
+    forward = complex(amps[0])
+    backward = complex(amps[1]) if n_wave == 2 else complex(0.0, 0.0)
+    if n_wave == 2:
+        gamma = (backward / forward) if forward != 0.0 else complex(0.0, 0.0)
+    else:
+        gamma = complex(0.0, 0.0)
+
+    return BetaFit(
+        beta=beta,
+        forward=forward,
+        backward=backward,
+        gamma=gamma,
+        residual=float(residual),
+        n_stations=int(z.size),
+        n_wave=n_wave,
+        span=span,
+    )
+
+
 def suggest_probe_spacing(beta_max, fraction=0.25) -> float:
     """A probe spacing that keeps the split well conditioned up to ``beta_max``.
 
