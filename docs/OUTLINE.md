@@ -4,9 +4,10 @@
 equations on interlocked cell complexes, with topology (`G`, `C`, `S` in {-1, 0, +1}) kept strictly separate from
 metric (the diagonal Hodge stars `M_eps`, `M_mu`), so uniform and graded grids run on identical algebra. Today it is
 an explicit leapfrog time-domain integrator with an *exactly* conserved discrete energy plus a PEC-cavity eigenmode
-solver validated mode-by-mode against the analytic box spectrum (1.2 % coarse, 0.6 % fine, second order). It cannot
-yet open the box (no absorbing boundaries), drive a port or an antenna, import geometry, or run lossy materials, and
-its eigenmode path is dense, stopping at 3000 free edges.
+solver validated mode-by-mode against the analytic box spectrum (1.2 % coarse, 0.6 % fine, second order). It can now
+truncate the box for normally incident waves -- a first-order Mur boundary on the six outer faces -- but a true
+broadband absorber (PML) is still missing, it cannot drive a port or an antenna, import geometry, or run lossy
+materials, and its eigenmode path is dense, stopping at 3000 free edges.
 
 ## Where we are
 
@@ -22,13 +23,19 @@ its eigenmode path is dense, stopping at 3000 free edges.
 - Graded (non-uniform) grids: they change only the metric, never the integer operators
   (`tests/test_operators.py::test_operators_are_metric_free`).
 - Headless plotting layer -- spectrum, field slice, energy history -> PNG, Agg backend, no GUI (`emfit/viz.py`).
-- 30 tests in ~52 s, every number locked by an explicit tolerance.
-- A ~6 s demo that prints the mode table and writes three figures (`examples/cavity_resonance.py`).
+- First-order Mur absorbing boundary (`emfit/abc.py`): `Mur1Boundary` updates the tangential `e` on the six outer
+  faces in fixed plane order, so no edge is double-updated at an edge or corner; a pulse leaves a 2-D PEC duct with
+  `-49.57 dB` and `-49.58 dB` of reflection against `-49.24 dB` of discrete-dispersion theory (`tests/test_abc.py`).
+- 34 tests in ~30-55 s, every number locked by an explicit tolerance.
+- Two demos: a ~6 s mode table that writes three figures (`examples/cavity_resonance.py`) and a ~1.5 s duct that
+  writes a fourth (`examples/abc_duct.py`).
 
 **Does not work yet**
 
-- No absorbing boundaries / open regions: Mur and PML are designed (M1) but absent, so every simulation is a closed
-  metal box.
+- No broadband absorber / open region: only the first-order Mur boundary exists (M1), exact at normal incidence in
+  the 1-D limit and degrading at oblique incidence and at low frequency, where the local-plane-wave assumption
+  fails. A PML is the real broadband answer and is blocked on the material layer going tensorial (`M_eps` /
+  `M_mu` as diagonal tensors).
 - No ports, no S-parameters, no de-embedding (M3): nothing is driven but a soft edge current.
 - No near-to-far-field transform, no antenna impedance or pattern (M2).
 - No geometry import: structures are PEC faces of a rectangular grid -- staircase only, no CAD/KiCad path (M4).
@@ -61,6 +68,8 @@ its eigenmode path is dense, stopping at 3000 free edges.
      +---------+--------+
                v
              viz ...... emfit/viz.py   plot_spectrum / plot_field_slice / plot_energy
+
+   Mur1Boundary .... emfit/abc.py    post-step e_tan update on the six outer faces (open-region truncation)
 ```
 
 Two invariants hold in exact integer arithmetic; everything else rests on them.
@@ -93,17 +102,19 @@ Every value below is asserted by a test; break one and the suite goes red.
 | Non-physical modes rejected | `0` on both grids | same two cavity tests |
 | TE/TM degenerate pairs | equal to 1e-6 relative | `tests/test_cavity.py::test_coarse_grid_degenerate_pairs_coincide` |
 | Hodge-star scaling | 2x cell -> exactly 2x `M_eps`, 2x `M_mu` | `tests/test_energy.py::test_material_matrix_units` |
-| Suite | 30 tests, ~51 s | `python -m pytest` |
+| Mur-1 duct end reflections, 320x16x1 | `-49.57 dB` / `-49.58 dB` (assert < -40 dB), theory `-49.24 dB` | `tests/test_abc.py::test_mur_absorbs_outgoing_pulse` |
+| Suite | 34 tests, ~30-55 s | `python -m pytest` |
 
 ## Milestone tracker
 
-Reproduced from `README.md` (identical to `## Summary` of [`docs/roadmap.md`](roadmap.md), authoritative for the
-detailed plans); the last column is the one next concrete step.
+Reproduced from `README.md` and from `## Summary` of [`docs/roadmap.md`](roadmap.md), which stays authoritative for
+the detailed plans: every row and the first five columns are identical in all three files, so the content cannot
+drift -- this outline only adds one extra final column, the next concrete step.
 
 | ID | Milestone | Status | Key deliverable | Acceptance test | Next action |
 | -- | --------- | ------ | --------------- | --------------- | ----------- |
-| M0 | Time-domain core + cavity eigensolver | DONE | `emfit/{grid,operators,materials,evolve,maxwell,eigen,viz}.py` | 30 passed; mean error 1.213 % / 0.615 %, ratio 0.507 | Nothing to build -- keep the suite green |
-| M1 | Absorbing boundaries (Mur, then PML) | IN PROGRESS | viz.py + figures (done); `emfit/abc.py`, `emfit/pml.py`; material layer -> diagonal tensors | PEC-sphere bistatic RCS vs Mie, ka = 1, 3: < 0.5 dB | `emfit/abc.py`: first-order Mur on the six outer walls, pulse leaves with < 1 % reflection |
+| M0 | Time-domain core + cavity eigensolver | DONE | `emfit/{grid,operators,materials,evolve,maxwell,eigen,viz}.py` | 34 passed; mean error 1.213 % / 0.615 %, ratio 0.507 | Nothing to build -- keep the suite green |
+| M1 | Absorbing boundaries (Mur, then PML) | IN PROGRESS | Mur-1 done (`emfit/abc.py`, `tests/test_abc.py`, `examples/abc_duct.py`); remaining: `emfit/pml.py` | PEC-sphere bistatic RCS vs Mie, ka = 1, 3: < 0.5 dB (needs M2 near-to-far field) | Widen `M_eps` / `M_mu` to diagonal tensors (PML prerequisite), then build the PML on them |
 | M2 | Near-to-far-field transform and antennas | PLANNED | `emfit/nearfield.py` (Huygens box -> far field) | half-wave dipole: 73 ohm, 2.15 dBi | Freeze the Huygens-box API (E, H on a closed surface), validate on the analytic dipole |
 | M3 | Waveguide ports and S-parameters | PLANNED | `emfit/ports.py` (2-D modal solve, overlaps, de-embedding) | matched WR-90 line: abs(S21) = 1.000, abs(S11) < -30 dB | Solve the 2-D modal eigenproblem on one port face, check orthogonality |
 | M4 | PCB import from KiCad | PLANNED | `emfit/kicad.py`, `emfit/raster.py` | microstrip Z0 within 5 % of Hammerstad; patch in band | Raster one straight track, compare quasi-static Z0 to Hammerstad |
@@ -151,10 +162,49 @@ Each finding is a claim the code or a test already relies on; re-introducing the
    therefore keeps the dense path with a `max_dense = 3000` guard raising `NotImplementedError` at M5, and the roadmap
    fix is explicit gradient deflation before the Krylov solve, not a cleverer shift.
 
+### 2026-10-19 -- session 2
+
+1. **Both Mur history terms must be sampled at time level n, not at n and n-1.** The correct first-order update is
+   `E_tan^{n+1}(0) = E_tan^n(1) + K (E_tan^{n+1}(1) - E_tan^n(0))`. The implementation detail that decides
+   everything: the field snapshot must be taken *before* the leapfrog step. Taken after, the boundary reads
+   `E^{n-1}` and the measured absorption collapses from `-49.6 dB` to `-9.0 dB` -- 40 dB lost while the code still
+   runs and the field still looks like a wave leaving the domain. Evidence: 320x16x1 PEC duct, `dx = 7.5 mm`,
+   `dt = 2.394e-11 s`, 900 steps, TE10 2 GHz pulse, both end reflections `-49.57 dB` / `-49.58 dB` against a PEC
+   control of `+0.21` / `+0.22 dB`. The lesson: this was caught only because a cheap independent oracle existed,
+   and that oracle is the `K -> 0` limit below.
+
+2. **The `K -> 0` limit is an exact, free unit test of the boundary wiring.** As `K = (c dt - h)/(c dt + h) -> 0`
+   the update degenerates to `E_tan^{n+1}(0) = E_tan^n(1)`, a pure one-cell translation of the boundary layer.
+   That prediction is checkable bit-for-bit (`np.array_equal` plus `rtol = 1e-15`) with no physics modelling at
+   all, and it catches index-map and ordering mistakes that a dB-threshold test passes happily. It must be paired
+   with a positive check that the boundary still moves once `K` is restored, otherwise a completely bypassed
+   update also passes.
+
+3. **The `-49.6 dB` absorption is the discrete waveguide's dispersion floor, not a boundary-error figure.** The
+   continuum prediction for the same guide, `|v_ph - c| / (v_ph + c)` at `v_ph = 1.00693 c`, is `-49.24 dB`; the
+   measurement lands 0.35 dB away. The boundary is therefore already at the limit of the physics in that
+   benchmark and no absorber tuning improves the number -- only a finer grid would. Corollary: the residual is a
+   dispersion diagnostic, which is why the `0.904 c` wavefront and this floor must always be quoted together with
+   cells per wavelength.
+
+4. **Mur-1 is first order, so it is not a substitute for a PML.** It is exact at normal incidence in the 1-D limit
+   and degrades at oblique incidence and at low frequency, where the local-plane-wave assumption fails. Its real
+   value is that open-region problems stop being silently wrong; the broadband answer is still a PML, and that is
+   blocked on `M_eps` / `M_mu` becoming diagonal tensors. Record too that a parallel-plate TEM validation is
+   impossible in this codebase and must not be attempted: it needs `E = Ey`, but with `nz = 1` and PEC z-walls
+   `Ey` is forced to zero, and a y-uniform `Ez` violates the PEC y-walls.
+
+5. **The corner/edge rule must be a fixed single-owner assignment.** Every boundary-layer tangential edge is
+   claimed by exactly one of the six planes, in the order xmin, xmax, ymin, ymax, zmin, zmax. Updating one edge
+   from two planes double-counts the correction and destabilises the mode, so the test asserts that no edge
+   appears in two planes' index arrays and that no PEC edge enters the maps at all.
+
 ## Open questions
 
-1. Which ABC/PML fits the diagonal FIT metric best -- Mur on primal edges, a graded-sigma layer in `M_sigma`, or a
-   stretched-coordinate metric? The primal/dual split may make a naive PML reflective.
+1. Which PML fits the diagonal FIT metric best -- a graded-sigma layer in `M_sigma`, or a stretched-coordinate
+   metric? Mur on primal edges is answered for now: first-order Mur works (`emfit/abc.py`, both duct ends at the
+   dispersion floor) but is exact only at normal incidence, so a PML is still needed, and the primal/dual split may
+   make a naive one reflective.
 2. Is the static-eigenvalue cut robust on strongly graded meshes, where the null cluster may spread and `lam_ref`
    (from `Lmax`) may no longer bound the spectrum? Does it need to become a relative gap test?
 3. How to handle non-rectangular PEC boundaries without staircase blow-up -- conformal partially filled cells with a
@@ -174,13 +224,15 @@ Each finding is a claim the code or a test already relies on; re-introducing the
 
 ```bash
 cd /workspace
-python -m pytest                      # 30 tests, ~52 s (dense eigh dominates)
+python -m pytest                      # 34 tests, ~30-55 s (~42 s of it the fine-grid cavity)
 python examples/cavity_resonance.py   # mode table + 3 PNGs, ~6 s
+python examples/abc_duct.py           # Mur vs PEC reflection in a 2-D duct, +4th PNG, ~1.5 s
 ```
 
-The demo overwrites `docs/figures/cavity_spectrum.png`, `cavity_field_z.png` and `energy_drift.png`, so re-running it
-is how the committed figures are regenerated. `pyproject.toml` already sets `-q`, so `pytest -q` becomes `-qq` and
-prints no summary line; use bare `pytest` or `pytest -o addopts=''` when you want the timing.
+The first demo overwrites `docs/figures/cavity_spectrum.png`, `cavity_field_z.png` and `energy_drift.png`; the duct
+demo writes `docs/figures/abc_duct.png`. Re-running the two is how the committed figures are regenerated.
+`pyproject.toml` already sets `-q`, so `pytest -q` becomes `-qq` and prints no summary line; use bare `pytest` or
+`pytest -o addopts=''` when you want the timing.
 
 ## Deferred
 

@@ -27,3 +27,5 @@ dist/
 *.blg
 *.xdv
 .tools/
+.build.exit
+reports/

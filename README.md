@@ -11,15 +11,16 @@ This repository is a working 3-D FIT solver: an explicit leapfrog time-domain
 integrator with an exactly conserved discrete energy, and an eigenmode solver for
 PEC cavities validated mode-by-mode against the analytic box spectrum (mean error
 0.6-1.2 %, second order, every mode on the low side). It is **not** a product yet:
-no absorbing boundaries, no ports, no S-parameters, and the eigensolver is dense,
-hence limited to grids with at most 3000 free edges.
+the absorbing boundary is first-order Mur only (no PML yet), there are no ports and
+no S-parameters, and the eigensolver is dense, hence limited to grids with at most
+3000 free edges.
 
 ## Status
 
 | ID | Milestone | Status | Key deliverable | Acceptance test |
 | -- | --------- | ------ | --------------- | --------------- |
-| M0 | Time-domain core + cavity eigensolver | DONE | `emfit/{grid,operators,materials,evolve,maxwell,eigen,viz}.py` | 30 passed; mean error 1.213 % / 0.615 %, ratio 0.507 |
-| M1 | Absorbing boundaries (Mur, then PML) | IN PROGRESS | viz.py + figures (done); `emfit/abc.py`, `emfit/pml.py`; material layer -> diagonal tensors | PEC-sphere bistatic RCS vs Mie, ka = 1, 3: < 0.5 dB |
+| M0 | Time-domain core + cavity eigensolver | DONE | `emfit/{grid,operators,materials,evolve,maxwell,eigen,viz}.py` | 34 passed; mean error 1.213 % / 0.615 %, ratio 0.507 |
+| M1 | Absorbing boundaries (Mur, then PML) | IN PROGRESS | Mur-1 done (`emfit/abc.py`, `tests/test_abc.py`, `examples/abc_duct.py`); remaining: `emfit/pml.py` | PEC-sphere bistatic RCS vs Mie, ka = 1, 3: < 0.5 dB (needs M2 near-to-far field) |
 | M2 | Near-to-far-field transform and antennas | PLANNED | `emfit/nearfield.py` (Huygens box -> far field) | half-wave dipole: 73 ohm, 2.15 dBi |
 | M3 | Waveguide ports and S-parameters | PLANNED | `emfit/ports.py` (2-D modal solve, overlaps, de-embedding) | matched WR-90 line: abs(S21) = 1.000, abs(S11) < -30 dB |
 | M4 | PCB import from KiCad | PLANNED | `emfit/kicad.py`, `emfit/raster.py` | microstrip Z0 within 5 % of Hammerstad; patch in band |
@@ -29,11 +30,25 @@ hence limited to grids with at most 3000 free edges.
 This table is identical to the Summary table of [`docs/roadmap.md`](docs/roadmap.md), which
 is authoritative. M0 has landed, and its delivered scope also covers the operator and
 Hodge-star unit tests, the headless visualisation layer (`emfit/viz.py`), the runnable cavity
-demo and packaging (`pyproject.toml`). M1 is underway: the visualisation layer and the figures
-it produces are in place, while the absorbing boundary conditions are still outstanding.
+demo and packaging (`pyproject.toml`).
 
-Test suite: **30 tests**, full run **~51 s** (dominated by the dense `eigh` of the
-14x10x7 cavity grid in `tests/test_cavity.py`).
+M1 is in progress. A first-order Mur absorbing boundary (`emfit/abc.py`, class
+`Mur1Boundary`) is implemented, tested (`tests/test_abc.py`) and demoed
+(`examples/abc_duct.py`): both absorbing ends of a 2-D PEC duct reflect at `-49.6 dB`,
+against a continuum-dispersion floor of `-49.2 dB` for that discrete guide, with a PEC
+control at `+0.21` / `+0.22 dB` and an incident amplitude ratio of `1.000000`. Read that
+number as the numerical-dispersion floor of the discrete waveguide, not as a boundary
+error, and note that Mur is **first order**: exact at normal incidence in the 1-D limit,
+degrading at oblique incidence and at low frequency, where the local-plane-wave assumption
+fails. It is not broadband absorption -- it lets us truncate open problems for the first
+time, and a PML is the real broadband answer and remains open. M1's two remaining items
+are the PML, blocked on widening `M_eps` / `M_mu` from scalars to diagonal tensors
+(anisotropic material support), and a PEC-sphere-vs-Mie RCS validation, blocked on M2's
+near-to-far-field transform.
+
+Test suite: **34 tests**, full run **~30-55 s** (of which ~28-42 s, idle to loaded, is the dense `eigh` of the
+14x10x7 cavity grid in `tests/test_cavity.py`); the new `tests/test_abc.py` runs in about
+1 s.
 
 ## Quick start
 
@@ -41,14 +56,20 @@ Test suite: **30 tests**, full run **~51 s** (dominated by the dense `eigh` of t
 python -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev]'
 
-python -m pytest                      # 30 tests, ~1 min
+python -m pytest                      # 34 tests, ~30-55 s
 python examples/cavity_resonance.py   # prints the mode table, writes three PNGs
+python examples/abc_duct.py           # Mur duct: prints the end reflections, one PNG
 ```
 
-The demo solves the 10x7x5 eigenproblem of a `1.0 x 0.7 x 0.5 m` PEC cavity and
+The cavity demo solves the 10x7x5 eigenproblem of a `1.0 x 0.7 x 0.5 m` PEC cavity and
 prints mode index / computed MHz / analytic MHz / relative error; it then rings
 the same cavity with a Ricker source for 1800 steps and writes the three PNGs
 under `docs/figures/`. Runtime about 6 s.
+
+The duct demo launches a 2 GHz TE10 Gaussian pulse down a PEC duct on 320x16x1 cells,
+runs 900 steps and reports the reflection from each Mur-terminated end (`-49.6 dB`) next
+to a PEC-terminated control (`+0.2 dB`); it writes `docs/figures/abc_duct.png`, the fourth
+figure. Runtime about 1.5 s.
 
 ## What is implemented
 
@@ -68,6 +89,9 @@ under `docs/figures/`. Runtime about 6 s.
   null space filtered; `analytic_box_modes()` for the PEC box.
 - **`emfit/viz.py`** -- matplotlib-Agg-only plotting: spectrum vs analytic,
   field slices, energy and drift. Headless-safe, every helper returns the figure.
+- **`emfit/abc.py`** -- `Mur1Boundary`: first-order Mur absorbing edges driven by the
+  boundary layer's one-cell history; each tangential edge is owned by exactly one plane
+  (xmin, xmax, ymin, ymax, zmin, zmax), so corners and edges are never double-updated.
 
 ## The discretisation in one page
 
@@ -132,7 +156,7 @@ PEC box `1.0 x 0.7 x 0.5 m`, all six walls PEC, first six modes [MHz]:
 | max \|err\| | | 1.390 % | | 0.711 % | |
 
 The mean-error ratio between the two grids is **0.507**, i.e. `O(h^2)`
-convergence for a refinement factor of 1.44 (`1/1.44^2 = 0.51`). Degenerate
+convergence for a refinement factor of 1.4 (`1/1.4^2 = 0.51`). Degenerate
 TE/TM pairs agree to the printed digit, and every computed mode lies *below* the
 analytic one. Rejected spurious modes: 216 and 702, as predicted.
 
@@ -186,10 +210,12 @@ EE/
 │   ├── evolve.py       FITStepper, RickerSource, cfl_dt, Leapfrog
 │   ├── maxwell.py      FITSystem assembly (curl-curl system, PEC constraint)
 │   ├── eigen.py        resonance pencil, static-mode filtering, analytic modes
-│   └── viz.py          headless matplotlib figures
-├── tests/              30 pytest checks: operators, energy, cavity spectrum
-├── examples/           cavity_resonance.py -- end-to-end demo + figures
-├── docs/figures/       PNGs for the report (generated by the demo)
+│   ├── viz.py          headless matplotlib figures
+│   └── abc.py          first-order Mur absorbing boundary
+├── tests/              34 pytest checks: operators, energy, cavity, Mur edge
+├── examples/           cavity_resonance.py, abc_duct.py -- end-to-end demos
+├── docs/figures/       PNGs for the report (generated by the demos)
+├── docs/report/        LaTeX report: main.tex + 7 sections, compiled main.pdf
 ├── pyproject.toml      setuptools packaging, pytest configuration
 ├── requirements.txt    pinned floors used in the build container
 └── README.md
@@ -197,14 +223,18 @@ EE/
 
 ## Documentation
 
-- `docs/figures/` -- the three PNGs embedded above, regenerated by
-  `examples/cavity_resonance.py`.
+- `docs/figures/` -- the three PNGs embedded above plus `abc_duct.png`, regenerated
+  by `examples/cavity_resonance.py` and `examples/abc_duct.py`.
 - `emfit.eigen` raises a `NotImplementedError` that points at milestone M5 for
   grids above 3000 free edges.
 - [`docs/roadmap.md`](docs/roadmap.md) -- the authoritative M0-M6 plan: per milestone
   goal, deliverables, measurable acceptance criteria and technical risks.
-- There is **no LaTeX report under `docs/report/` yet**; the numbers live in the
-  sections above and in the docstrings of `emfit/`.
+- [`docs/report/`](docs/report/) -- the technical report: `main.tex` plus the seven
+  `sec_*.tex` sections, with the compiled `main.pdf` (~350 KiB) checked in.
+- [`docs/OUTLINE.md`](docs/OUTLINE.md) -- the living project outline: milestone tracker,
+  numbers board, dated research log with the reasons behind each finding, open questions,
+  and the deferred-work list. Its milestone table shares its rows and first five columns
+  with the summary table in this README, plus a sixth `Next action` column.
 
 ## License
 

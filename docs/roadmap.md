@@ -11,19 +11,20 @@ installable (`pip install -e '.[dev]'`) and green: nothing starts that cannot be
 
 | ID | Milestone | Status | Key deliverable | Acceptance test |
 | -- | --------- | ------ | --------------- | --------------- |
-| M0 | Time-domain core + cavity eigensolver | DONE | `emfit/{grid,operators,materials,evolve,maxwell,eigen,viz}.py` | 30 passed; mean error 1.213 % / 0.615 %, ratio 0.507 |
-| M1 | Absorbing boundaries (Mur, then PML) | IN PROGRESS | viz.py + figures (done); `emfit/abc.py`, `emfit/pml.py`; material layer -> diagonal tensors | PEC-sphere bistatic RCS vs Mie, ka = 1, 3: < 0.5 dB |
+| M0 | Time-domain core + cavity eigensolver | DONE | `emfit/{grid,operators,materials,evolve,maxwell,eigen,viz}.py` | 34 passed; mean error 1.213 % / 0.615 %, ratio 0.507 |
+| M1 | Absorbing boundaries (Mur, then PML) | IN PROGRESS | Mur-1 done (`emfit/abc.py`, `tests/test_abc.py`, `examples/abc_duct.py`); remaining: `emfit/pml.py` | PEC-sphere bistatic RCS vs Mie, ka = 1, 3: < 0.5 dB (needs M2 near-to-far field) |
 | M2 | Near-to-far-field transform and antennas | PLANNED | `emfit/nearfield.py` (Huygens box -> far field) | half-wave dipole: 73 ohm, 2.15 dBi |
 | M3 | Waveguide ports and S-parameters | PLANNED | `emfit/ports.py` (2-D modal solve, overlaps, de-embedding) | matched WR-90 line: abs(S21) = 1.000, abs(S11) < -30 dB |
 | M4 | PCB import from KiCad | PLANNED | `emfit/kicad.py`, `emfit/raster.py` | microstrip Z0 within 5 % of Hammerstad; patch in band |
 | M5 | Large-grid eigensolver, thin features, FEM | IN PROGRESS | `emfit/eigen.py`: ARPACK/LOBPCG on the Helmholtz-projected operator | 100k free edges, 6 modes, < 0.1 % vs dense |
 | M6 | MQS eddy currents and parareal | PLANNED | `emfit/mqs.py` (A-V), `emfit/parareal.py` | slab skin depth within 2 % of analytic |
 
-Status provenance: M0 has landed (30 tests, ~51 s, numpy 2.5.4 / scipy 1.18.1). M5 is IN PROGRESS
+Status provenance: M0 has landed (34 tests, ~30-55 s, numpy 2.5.4 / scipy 1.18.1). M5 is IN PROGRESS
 because `resonances()` already exposes a `sigma` shift argument and the `max_dense = 3000` guard is covered by
 `tests/test_cavity.py::test_dense_limit_raises_not_implemented` -- neither is a working large-grid path, and the
-`sigma = 0` shift-invert route is a dead end (see M5). M1 is partially landed: `emfit/viz.py` and the figures
-it produces are in place, while `emfit/abc.py` / `emfit/pml.py` are outstanding. M2-M4 and M6 have no code yet.
+`sigma = 0` shift-invert route is a dead end (see M5). M1 is partially landed: `emfit/viz.py`, the figures it
+produces, and the first-order Mur boundary (`emfit/abc.py`, `tests/test_abc.py`, `examples/abc_duct.py`) are in
+place, while `emfit/pml.py` and the PEC-sphere RCS validation are outstanding. M2-M4 and M6 have no code yet.
 
 ## M0 -- Time-domain core and cavity eigensolver
 
@@ -44,8 +45,8 @@ not to `O(dt)`), plus a dense PEC-cavity eigenmode solver used as the validation
 - `test_energy.py::test_energy_exact_conservation` -- relative drift **8.5e-16** over 343 ns (1800 steps).
 - `test_energy.py::test_cfl_bound_is_sharp` -- stable at 1.01x the bound, divergent at 1.02x (`6.7e122` growth).
 - PEC box `1.0 x 0.7 x 0.5 m`, first six modes: mean error **1.213 %** (10x7x5) and **0.615 %** (14x10x7),
-  mean-error **ratio 0.507** (second order for 1.44x refinement); rejected spurious modes exactly 216 and 702.
-- Whole suite: 30 tests, ~51 s.
+  mean-error **ratio 0.507** (second order for 1.4x refinement); rejected spurious modes exactly 216 and 702.
+- Whole suite: 34 tests, ~30-55 s (`test_abc.py` adds 4 tests in ~1 s; the fine-grid cavity sets the wall clock).
 
 **Risks / notes.**
 - The invariant is fragile: dropping `-(dt/2)(C e).h` gives drift 3.7e-1, using the wrong `h` time level 3.4e-1.
@@ -58,27 +59,37 @@ not to `O(dt)`), plus a dense PEC-cavity eigenmode solver used as the validation
 invariant inside the physical domain.
 
 **Deliverables.**
-- `emfit/abc.py` -- first-order Mur ABC as a cheap edge-history update on the boundary's tangential electric edges:
-  `e_i^{n+1} = e_j^n + (c dt - d)/(c dt + d) * (e_j^{n+1} - e_i^n)`, with `d` the primal edge length and `e_i`, `e_j`
-  the tangential edges either side of the boundary. No new unknowns, no change to `C`.
-- **First task: widen the material layer from scalars to diagonal tensors** (`Material` holding `eps_xx, eps_yy,
+- `emfit/abc.py` -- **landed.** First-order Mur ABC as a cheap edge-history update on the boundary's tangential
+  electric edges: `e_i^{n+1} = e_j^n + (c dt - h)/(c dt + h) * (e_j^{n+1} - e_i^n)`, with `h` the normal cell width
+  at the boundary face and `e_i`, `e_j` the tangential edges either side of the boundary. No new unknowns, no
+  change to `C`.
+- **Next task: widen the material layer from scalars to diagonal tensors** (`Material` holding `eps_xx, eps_yy,
   eps_zz`, same for `mu`). A stretched-coordinate PML is a complex anisotropic medium and cannot be a scalar.
 - `emfit/pml.py` -- PML as an anisotropic lossy layer of `n` cells with stretched coordinates
   `s_x = 1 + sigma_x/(j omega eps0)`, polynomial grading `sigma = sigma_max (d/L)^3`, giving complex `eps`/`mu` inside
   the layer only -- expressed through the diagonal tensor above, not as a special-case absorber.
 - `examples/sphere_rcs.py` -- PEC sphere under plane-wave illumination, bistatic RCS with the Mie series overlaid.
-- `tests/test_abc.py` -- reflection of a normally incident plane wave: Mur < -20 dB, PML < -40 dB at 8-10 cells.
+- `tests/test_abc.py` -- **landed** (4 tests, ~1 s): reflection of a normally incident plane wave in a 320x16x1
+  duct, Mur measured at `-49.57` / `-49.58 dB` against the `-49.24 dB` dispersion floor (asserted < -40 dB), PEC
+  control `+0.21` / `+0.22 dB`, incident amplitude ratio `1.000000`; PML < -40 dB at 8-10 cells stays the target.
+- `examples/abc_duct.py` -- **landed** (~1.5 s): TE10 pulse in a WR-90 duct, 900 steps, 21.55 ns, `v_ph = 1.0069 c`,
+  writes `docs/figures/abc_duct.png`.
 
 **Acceptance criteria.**
-- Normal-incidence reflection: Mur < -20 dB, PML < -40 dB (`test_abc.py`).
+- Normal-incidence reflection: Mur < -20 dB (measured `-49.6 dB`, i.e. at the dispersion floor), PML < -40 dB
+  (`test_abc.py`).
 - PEC sphere `a = 0.1 m`, bistatic RCS at `ka = 1` (477 MHz) and `ka = 3`: max deviation from Mie < 0.5 dB over
-  `theta` in [0, 180] deg -- pin the first measured tolerance, then freeze it in the test.
+  `theta` in [0, 180] deg -- blocked on M2 (no near-to-far-field transform yet); pin the first measured tolerance
+  when it lands, then freeze it in the test.
 - Closed lossless PEC cavity still conserves energy to `1e-15` (the ABC must not leak when it is not applied).
 
 **Risks / notes.**
 - Staircasing dominates at `ka = 3`; a tolerance is meaningless unless quoted with the grid (`h/a`).
 - A complex *scalar* `eps` is not enough: the PML needs `s_y`, `s_z` active per face orientation.
 - PML adds loss, so keep two energies in tests: total (monotone decay) and physical-domain-only (flat).
+- Mur-1 is first order: exact for normal incidence in 1-D, degrading at oblique incidence and at low frequency where
+  the local-plane-wave assumption fails. The duct's `-49.6 dB` is the discrete waveguide's dispersion floor, not a
+  boundary-error figure, and it does not generalise; the PML is the broadband answer, not Mur.
 
 ## M2 -- Near-to-far-field transform and antennas
 
@@ -223,8 +234,8 @@ testing, laminations) and make long transients affordable.
 
 ## Known limitations (today)
 
-- No absorbing boundaries, no ports, no far-field transform: every problem is enclosed by PEC; radiation into open
-  space cannot be modelled at all.
+- No broadband absorber, no ports, no far-field transform: the only truncation is the first-order Mur boundary
+  (`emfit/abc.py`), accurate at normal incidence only, so radiating problems are modelled crudely at best.
 - Energy conservation and CFL are validated for PEC cavities on orthogonal grids only; the lossy path (`M_sigma`) is
   assembled but never exercised by a test that regresses loss.
 - Materials are scalar per entity: real `eps_r`, `mu_r`, `sigma`. No anisotropy, no complex permittivity, no
@@ -235,7 +246,9 @@ testing, laminations) and make long transients affordable.
 - Only the 3-D FIT formulation exists (the 2-D pencil is still planned for ports); no 2-D TM mode, no axisymmetric mode.
 - Single process, NumPy/SciPy only: no MPI, no GPU, no parallelism beyond BLAS inside `eigh`/matvec.
 - Packaging is minimal: `pyproject.toml` + `pip install -e '.[dev]'` works, but nothing is released, tagged or CI-tested.
-- The LaTeX report and written outline referenced by the working agreement do not exist as files yet; the numbers in
+- The LaTeX report and the written outline exist and are living documents, not one-off artefacts: `docs/report/`
+  holds `main.tex` plus one file per section and a checked-in `main.pdf` (~350 KiB), and `docs/OUTLINE.md` is the
+  project outline. Both are expected to move in the same commit as the code that changes a number; the numbers in
   this roadmap are the measured ones from the test suite.
 
 ## Deferred ideas / parking lot
