@@ -310,28 +310,60 @@ def test_lateral_step_is_honoured(coupon):
 
 
 def test_epsilon_reaches_the_materials_matrices(coupon, board):
+    """The coupon's eps reaches ``m_eps`` through the dual interface average.
+
+    A node plane in the *middle* of the dielectric sees dielectric on both
+    sides, so it comes out 4.5 under either interface convention.  A node plane
+    at the *board surface* is a dielectric/air interface lying exactly on a
+    node, and the default dual average makes it the extent-weighted mean of the
+    two sides -- so it is neither 4.5 nor 1.0.
+    """
     grid, cc = coupon.grid, coupon.cc
     baseline, _ = material_matrices(grid, cc, eps_r=1.0)
     ratio = coupon.m_eps / baseline
-    # 4.5 comes back as 4.499999999999999 / 4.500000000000001 out of the
-    # division, so compare the rounded values
-    assert set(np.unique(np.round(ratio, 12))) == {1.0, 4.5}
 
+    eps_d = 4.5     # the coupon's single stackup dielectric
+    eps_air = 1.0   # vacuum outside the meshed stack
     z = layer_z_positions(board)
+    widths = grid.widths("z")
 
-    # an EX edge on an *interior* copper node plane lies in the dielectric above
-    k_inner = int(np.argmin(np.abs(grid.z - z["In3.Cu"])))
-    assert grid.z[k_inner] == z["In3.Cu"]
-    assert ratio[cc.idx_ex(0, 0, k_inner)] == pytest.approx(4.5)
+    # An EX edge on a z node plane sits on the dual face that spans half of the
+    # cell below the plane and half of the cell above it, so its coefficient is
+    # the extent-weighted mean of the two eps values.  (The factor 1/2 cancels
+    # in the mean; it is kept because it is the face extent being averaged.)
 
-    # the topmost node plane *is* the top of the stack, so the half-open rule
-    # looks at the slab above it and finds the air box
+    # top of the stack: dielectric below, air box above
     k_top = int(np.argmin(np.abs(grid.z - z["F.Cu"])))
     assert grid.z[k_top] == z["F.Cu"]
-    assert ratio[cc.idx_ex(0, 0, k_top)] == pytest.approx(1.0)
+    w_lo_top, w_up_top = 0.5 * widths[k_top - 1], 0.5 * widths[k_top]
+    eps_top = (eps_d * w_lo_top + eps_air * w_up_top) / (w_lo_top + w_up_top)
+
+    # bottom of the stack: air box below, dielectric above
+    k_bot = int(np.argmin(np.abs(grid.z - z["B.Cu"])))
+    assert grid.z[k_bot] == z["B.Cu"]
+    w_lo_bot, w_up_bot = 0.5 * widths[k_bot - 1], 0.5 * widths[k_bot]
+    eps_bot = (eps_air * w_lo_bot + eps_d * w_up_bot) / (w_lo_bot + w_up_bot)
+
+    # exactly these four levels and no others: pure air, pure dielectric, and
+    # the two hybrid planes on the board surfaces.  (The division returns
+    # 4.499999999999999 for some entries, so round before comparing.)
+    levels = np.unique(np.round(ratio, 12))
+    expected = np.round(np.sort([eps_air, eps_top, eps_bot, eps_d]), 12)
+    assert levels.size == expected.size, levels
+    for got, want in zip(levels, expected):
+        assert got == pytest.approx(want, abs=1e-9)
+
+    # an EX edge on an *interior* copper node plane: dielectric on both sides,
+    # so it is 4.5 whatever the interface convention
+    k_inner = int(np.argmin(np.abs(grid.z - z["In3.Cu"])))
+    assert grid.z[k_inner] == z["In3.Cu"]
+    assert ratio[cc.idx_ex(0, 0, k_inner)] == pytest.approx(eps_d, abs=1e-12)
+
+    assert ratio[cc.idx_ex(0, 0, k_top)] == pytest.approx(eps_top, abs=1e-9)
+    assert ratio[cc.idx_ex(0, 0, k_bot)] == pytest.approx(eps_bot, abs=1e-9)
 
     # ... and the bottom-most node plane is inside the lower air box
-    assert ratio[cc.idx_ex(0, 0, 0)] == pytest.approx(1.0)
+    assert ratio[cc.idx_ex(0, 0, 0)] == pytest.approx(eps_air)
     assert grid.z[0] < z["B.Cu"]
 
 

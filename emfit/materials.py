@@ -44,19 +44,19 @@ complex -- is never sampled.  A callable and an explicit per-edge array
 therefore describe the same field on periodic and bounded axes alike.
 
 ``interface`` decides what happens where an edge or face lies *in* a material
-interface.  ``"point"`` (the default) evaluates the callable at the entity
+interface.  ``"point"`` evaluates the callable at the entity
 centre only; on a node-aligned interface that centre sits exactly *on* the
 surface, so the value is whatever the callable's own comparison returns and
 one of the two sides is silently picked.  That is deterministic but it is not
 the energy-consistent Hodge entry, and the misassigned entities stay on the
 interface as the mesh is refined, so the error does not converge away.
-``"dual"`` instead averages over the *dual* entity of the same edge or face
--- the dual face crossed by an edge, the dual edge crossed by a face --
-weighting each part by its own extent, which is the amount of material the
-permittivity actually occupies there.  On a node-aligned interface that is the
-arithmetic mean of the two sides on a uniform grid and the width weighted mean
-on a non-uniform one; for a smoothly varying callable it is a midpoint rule
-over the dual entity, exact for a linear profile on a uniform grid.
+``"dual"`` (the default) instead averages over the *dual* entity of the same
+edge or face -- the dual face crossed by an edge, the dual edge crossed by a
+face -- weighting each part by its own extent, which is the amount of material
+the permittivity actually occupies there.  On a node-aligned interface that is
+the arithmetic mean of the two sides on a uniform grid and the width weighted
+mean on a non-uniform one; for a smoothly varying callable it is a midpoint
+rule over the dual entity, exact for a linear profile on a uniform grid.
 """
 
 from __future__ import annotations
@@ -239,16 +239,17 @@ def _parameter(value, count: int, name: str) -> np.ndarray:
 # the material matrices
 # ----------------------------------------------------------------------
 def material_matrices(grid: Grid, cc: CellComplex, eps_r=1.0, mu_r=1.0,
-                      *, interface="point"):
+                      *, interface="dual"):
     """Return ``(m_eps, m_mu)``, both 1-D float arrays (diagonal matrices).
 
     ``m_eps`` has length ``cc.n_edges`` (edge order = column order of ``C``),
     ``m_mu`` has length ``cc.n_faces`` (face order = row order of ``C``).
 
     ``interface`` selects how a callable ``eps_r`` / ``mu_r`` is sampled where
-    an edge or face lies in a material interface: ``"point"`` (default) at the
-    entity centre itself, ``"dual"`` as the weighted average over the whole
-    dual entity (see the module docstring).  Floats and arrays are unaffected.
+    an edge or face lies in a material interface: ``"point"`` at the entity
+    centre itself, ``"dual"`` (the default) as the weighted average over the
+    whole dual entity (see the module docstring).  Floats and arrays are
+    unaffected.
     """
     _check_interface(interface)
 
@@ -287,7 +288,7 @@ def material_matrices(grid: Grid, cc: CellComplex, eps_r=1.0, mu_r=1.0,
 
 
 def _sigma_diag(grid: Grid, cc: CellComplex, sigma=0.0,
-                *, interface="point") -> np.ndarray:
+                *, interface="dual") -> np.ndarray:
     """Edge-wise conductance ``sigma * A~_e / L_e`` [S].
 
     ``interface`` is the sampling rule of :func:`material_matrices`, so a
@@ -351,7 +352,7 @@ class MaterialMatrix:
 
 
 def M_eps(grid: Grid, cc: CellComplex | None = None, eps_r=1.0,
-          *, interface="point") -> MaterialMatrix:
+          *, interface="dual") -> MaterialMatrix:
     """``M_eps`` as a :class:`MaterialMatrix`."""
     cc = cc if cc is not None else CellComplex(grid)
     return MaterialMatrix(
@@ -360,7 +361,7 @@ def M_eps(grid: Grid, cc: CellComplex | None = None, eps_r=1.0,
 
 
 def M_mu(grid: Grid, cc: CellComplex | None = None, mu_r=1.0,
-         *, interface="point") -> MaterialMatrix:
+         *, interface="dual") -> MaterialMatrix:
     """``M_mu`` as a :class:`MaterialMatrix`."""
     cc = cc if cc is not None else CellComplex(grid)
     return MaterialMatrix(
@@ -369,7 +370,7 @@ def M_mu(grid: Grid, cc: CellComplex | None = None, mu_r=1.0,
 
 
 def M_sigma(grid: Grid, cc: CellComplex | None = None, sigma=0.0,
-            *, interface="point") -> MaterialMatrix:
+            *, interface="dual") -> MaterialMatrix:
     """``M_sigma`` as a :class:`MaterialMatrix` (units of siemens)."""
     cc = cc if cc is not None else CellComplex(grid)
     return MaterialMatrix(_sigma_diag(grid, cc, sigma, interface=interface),

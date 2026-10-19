@@ -95,7 +95,7 @@ def test_material_callable():
     def eps_r(x, y, z):
         return np.where(x > 3.0, 2.0, 1.0)
 
-    m_eps, _ = material_matrices(grid, cc, eps_r=eps_r)
+    m_eps, _ = material_matrices(grid, cc, eps_r=eps_r, interface="point")
 
     # Divide out the geometric Hodge factor: the raw diagonal has several
     # levels purely because A~_e/L_e is 1/2 at the domain boundary edges.

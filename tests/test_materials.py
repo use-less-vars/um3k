@@ -180,10 +180,12 @@ def test_callable_is_sampled_on_the_seam_free_complex(periodic):
     cc = CellComplex(grid)
     func = lambda x, y, z: 1.0 + 0.1 * x + 0.2 * y + 0.3 * z   # noqa: E731
 
-    m_eps, m_mu = material_matrices(grid, cc, eps_r=func, mu_r=func)
+    m_eps, m_mu = material_matrices(grid, cc, eps_r=func, mu_r=func,
+                                    interface="point")
     np.testing.assert_allclose(m_eps,
                                material_matrices(grid, cc,
-                                                 eps_r=_edge_array(grid, cc, func))[0],
+                                                 eps_r=_edge_array(grid, cc, func),
+                                                 interface="point")[0],
                                rtol=1e-12)
 
     # the same check for faces: mu_r is sampled at face centres
@@ -199,7 +201,8 @@ def test_callable_is_sampled_on_the_seam_free_complex(periodic):
         off_f = getattr(cc, "off_f" + axis)
         mu_ref[off_f:off_f + count] = np.asarray(func(fx, fy, fz)).ravel()
     np.testing.assert_allclose(m_mu, material_matrices(grid, cc,
-                                                       mu_r=mu_ref)[1],
+                                                       mu_r=mu_ref,
+                                                       interface="point")[1],
                                rtol=1e-12)
 
 
@@ -209,10 +212,11 @@ def test_callable_matches_the_explicit_array_on_a_bounded_grid():
     cc = CellComplex(grid)
     func = lambda x, y, z: 2.0 + 0.5 * z - 0.25 * y    # noqa: E731
 
-    m_eps, _ = material_matrices(grid, cc, eps_r=func)
+    m_eps, _ = material_matrices(grid, cc, eps_r=func, interface="point")
     np.testing.assert_allclose(m_eps,
                                material_matrices(grid, cc,
-                                                 eps_r=_edge_array(grid, cc, func))[0],
+                                                 eps_r=_edge_array(grid, cc, func),
+                                                 interface="point")[0],
                                rtol=1e-15)
 
     # a per-family array that is exactly right, from the same convention
@@ -249,7 +253,7 @@ def test_interface_point_sampling_picks_one_branch_and_dual_averages():
     callers used to build by hand.
     """
     grid, cc, eps_r = _layered_cube()
-    m_point, _ = material_matrices(grid, cc, eps_r=eps_r)
+    m_point, _ = material_matrices(grid, cc, eps_r=eps_r, interface="point")
     m_dual, _ = material_matrices(grid, cc, eps_r=eps_r, interface="dual")
 
     # tangential edges (EX, EY) sit at z nodes; the family normal to the
@@ -299,7 +303,7 @@ def test_dual_interface_average_is_width_weighted_on_a_non_uniform_grid():
     cc = CellComplex(grid)
     eps_r = lambda x, y, z: np.where(z < 1.5, 4.0, 1.0)      # noqa: E731
 
-    m_point, _ = material_matrices(grid, cc, eps_r=eps_r)
+    m_point, _ = material_matrices(grid, cc, eps_r=eps_r, interface="point")
     m_dual, _ = material_matrices(grid, cc, eps_r=eps_r, interface="dual")
 
     expected = (1.0 * 4.0 + 1.5 * 1.0) / (1.0 + 1.5)         # 2.2
@@ -332,7 +336,7 @@ def test_dual_sampling_midpoint_rule_is_exact_on_a_non_uniform_grid():
     cc = CellComplex(grid)
     eps_r = lambda x, y, z: 1.0 + z                 # noqa: E731
 
-    m_point, _ = material_matrices(grid, cc, eps_r=eps_r)
+    m_point, _ = material_matrices(grid, cc, eps_r=eps_r, interface="point")
     m_dual, _ = material_matrices(grid, cc, eps_r=eps_r, interface="dual")
 
     expected = (1.0 * (1.0 + 0.75) + 2.0 * (1.0 + 1.5)) / (1.0 + 2.0)
@@ -353,7 +357,7 @@ def test_dual_sampling_is_exact_for_a_linear_profile_on_a_uniform_grid():
     cc = CellComplex(grid)
     func = lambda x, y, z: 1.0 + 0.5 * z        # noqa: E731
 
-    m_point, _ = material_matrices(grid, cc, eps_r=func)
+    m_point, _ = material_matrices(grid, cc, eps_r=func, interface="point")
     m_dual, _ = material_matrices(grid, cc, eps_r=func, interface="dual")
 
     # Around an *interior* node the two half-cell midpoints straddle it
@@ -378,14 +382,16 @@ def test_dual_sampling_averages_both_transverse_directions():
 
     ``eps`` is a product of two step functions, so the area-weighted mean over
     the four quadrants of the dual face is the product of the two means:
-    ``2.5 * 1.5 = 3.75`` for an ``EX`` edge on both node planes, ``6`` for the
-    ``EZ`` edge that is only in the ``y = 2`` plane (z is its own axis there).
+    ``2.5 * 1.5 = 3.75`` for an ``EX`` edge on both node planes.  An ``EZ``
+    edge is dual only in the two directions transverse to it, so it sees the
+    ``y`` mean alone, ``(2 + 1) / 2 = 1.5``, and nothing from ``z`` -- ``z`` is
+    its own axis and the dual entity does not reach across it.
     """
     grid = _cube(4, 4, 4, 4.0, 4.0, 4.0)
     cc = CellComplex(grid)
     eps_r = lambda x, y, z: (np.where(z < 2.0, 4.0, 1.0)      # noqa: E731
                              * np.where(y < 2.0, 2.0, 1.0))
-    m_point, _ = material_matrices(grid, cc, eps_r=eps_r)
+    m_point, _ = material_matrices(grid, cc, eps_r=eps_r, interface="point")
     m_dual, _ = material_matrices(grid, cc, eps_r=eps_r, interface="dual")
 
     ex_ratio = _blocks(grid, m_dual)["x"] / _blocks(grid, m_point)["x"]
@@ -405,7 +411,7 @@ def test_dual_sampling_works_across_a_periodic_axis():
     cc = CellComplex(grid)
     eps_r = lambda x, y, z: np.where(z < 2.0, 4.0, 1.0)      # noqa: E731
 
-    m_point, _ = material_matrices(grid, cc, eps_r=eps_r)
+    m_point, _ = material_matrices(grid, cc, eps_r=eps_r, interface="point")
     m_dual, _ = material_matrices(grid, cc, eps_r=eps_r, interface="dual")
     ratio = _blocks(grid, m_dual)["x"] / _blocks(grid, m_point)["x"]
     on_iface = np.zeros(grid.edge_shape("x"), dtype=bool)
@@ -445,7 +451,7 @@ def test_sigma_callable_handles_a_periodic_axis_and_interfaces():
     """``sigma`` follows the same sampling rules as ``eps_r``."""
     grid, cc, _ = _layered_cube()
     sigma = lambda x, y, z: np.where(z < 2.0, 0.5, 0.1)      # noqa: E731
-    m_point = M_sigma(grid, cc, sigma=sigma)
+    m_point = M_sigma(grid, cc, sigma=sigma, interface="point")
     m_dual = M_sigma(grid, cc, sigma=sigma, interface="dual")
 
     ratio = _blocks(grid, m_dual.diag)["x"] / _blocks(grid, m_point.diag)["x"]

@@ -250,17 +250,21 @@ def epsilon_callable(
     docstring), so it contributes no permittivity here either: the vacuum
     starts at the outer copper mid-plane.
 
-    Two boundary conventions are worth stating, because the FIT sampling makes
-    both of them *hit*:
+    The callable is **pointwise**: it answers "which material is at this
+    point" and is evaluated at the point it is given.  The half-open interval
+    rule (``[z_bottom, z_top)``) is still how it decides which slab a point
+    belongs to, so a point sitting exactly on an interval bound -- a copper
+    mid-plane or a dielectric interface -- takes the slab *above* it.
 
-    * a point exactly on a **copper mid-plane** belongs to the dielectric
-      *above* it (intervals are half-open, ``[z_bottom, z_top)``).  This
-      matters: ``material_matrices`` samples ``EX``/``EY`` edges at z *node*
-      values (``materials._centres``), and the z nodes are exactly the copper
-      mid-planes, so every in-plane edge sits on one of these boundaries.  The
-      rule is deterministic and the same on every layer;
-    * a point exactly on a **dielectric interface** is resolved by the same
-      rule -- it takes the upper slab.
+    What a pointwise answer *means* for the FIT coefficients is the **caller's**
+    decision, not this function's: ``emfit.materials.material_matrices`` now
+    defaults to ``interface="dual"``, so an edge whose dual face straddles a
+    node-aligned material interface gets the extent-weighted mean of the two
+    sides rather than the value at the node.
+
+    None of that touches the **copper** indexing: the copper mask is a separate
+    array built elsewhere, so any copper indexing that relies on the half-open
+    rule above is unaffected by the interface convention.
 
     The returned array always has the broadcast shape of the inputs, which is
     what ``material_matrices`` expects (it passes one array per edge).
@@ -479,6 +483,9 @@ def build(
         warnings=warnings,
     )
     cc = CellComplex(grid)
+    # the library default interface convention (dual) is wanted here: the board
+    # top is a dielectric/air interface exactly on a node plane, the case point
+    # sampling gets wrong by a fixed 5.7 % in capacitance (emfit/quasistatic.py)
     m_eps, m_mu = material_matrices(grid, cc, eps_r=epsilon_callable(board))
     dt = cfl_dt(grid)
 
