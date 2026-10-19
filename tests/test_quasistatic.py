@@ -12,21 +12,23 @@ broke:
 
 2. *Convergence and regression pins for the microstrip section*  (``h = 1.6 mm``,
    ``W = 3.2 mm``, ``eps_r = 4.4``, ``3h`` of clean space laterally and above,
-   ``4`` substrate cells at the coarsest level).  The permittivity is written
-   into the edge array **by hand** -- ``4.4`` below the ``z = h`` interface,
-   ``1.0`` above, and the dual-face average ``2.7`` for the tangential edges
-   lying *in* the interface plane -- because a callable is sampled at the edge
-   centre, which sits exactly on that plane and silently picks one branch (see
-   ``test_interface_plane_assignment_does_not_converge_away``).  ``C'``
-   converges to the closed-form value from above; the two coarse levels are
-   pinned at ``rtol = 1e-4`` as a regression.
+   ``4`` substrate cells at the coarsest level).  The permittivity is a plain
+   callable handed to :func:`capacitance_per_length`, which hands it straight
+   to :func:`emfit.materials.material_matrices`; the library's default
+   ``interface="dual"`` rule then gives the tangential edges lying *in* the
+   ``z = h`` interface the dual-face average ``2.7`` and never reads a value
+   sampled exactly on that plane.  ``C'`` converges to the closed-form value
+   from above; the two coarse levels are pinned at ``rtol = 1e-4`` as a
+   regression.
 
 3. *Structural claims about the box and about the interface.*  The vacuum
    capacitance is limited by the homogeneous-Neumann box -- a fixed bias, not a
    discretisation error -- so ``eps_eff`` and ``Z0`` inherit it; the interface
-   convention error does **not** refine away; and ``C'`` does not depend on the
-   width of the cell along the line axis, which is what proves the
-   normalisation inside :func:`capacitance_per_length` is right.
+   plane is resolved exactly, in the sense that the value sampled *on* it is
+   never used (two callables differing only there agree bit for bit, which the
+   old edge-centre rule could not do); and ``C'`` does not depend on the width
+   of the cell along the line axis, which is what proves the normalisation
+   inside :func:`capacitance_per_length` is right.
 
 The analytic oracle in layers 2 and 3 is :func:`emfit.microstrip.z0_eps_eff`,
 the Hammerstad-Jensen fit, itself good only to a few per cent -- hence per-cent
@@ -45,7 +47,7 @@ import numpy as np
 import pytest
 
 from emfit.grid import Grid
-from emfit.materials import C0, EPS0
+from emfit.materials import C0, EPS0, material_matrices
 from emfit.microstrip import z0_eps_eff as analytic_z0_eps_eff
 from emfit.operators import CellComplex
 from emfit.quasistatic import (
@@ -127,13 +129,13 @@ def test_parallel_plate_matches_closed_form(eps_r):
 def test_two_layer_series_capacitor_matches_closed_form():
     """``C' = eps0 W / (t1/eps1 + t2/eps2)`` for two layers in series.
 
-    This one is a useful trap.  The callable *does* misassign the tangential
-    edges lying in the interface plane (it returns the upper branch there --
-    ``1.0`` instead of the dual-face average ``2.5``), yet the closed form still
-    holds exactly, because in a parallel-plate field those edges carry no flux.
-    The microstrip case below is different precisely because the field there is
-    *not* tangential to the interface, which is why it needs the explicit
-    array.
+    This one is a useful trap.  The tangential edges lying in the interface
+    plane carry no flux in a parallel-plate field, so their permittivity cannot
+    matter and the closed form holds for *any* value assigned there -- the
+    library's dual rule hands them the mean ``2.5``, the old edge-centre rule
+    handed them ``1.0``, and both are exact here.  The microstrip below is the
+    case where it does matter, because there the field is **not** tangential to
+    the interface.
     """
     grid = _plate_grid()
     fixed = _plate_fixed(grid)
@@ -156,9 +158,9 @@ def test_two_layer_series_capacitor_matches_closed_form():
 class _Microstrip(NamedTuple):
     """Everything one refinement level of the microstrip section yields."""
 
-    c_avg: float        # C' with the dual-face average on the interface plane
+    c_avg: float        # C' of the callable, resolved by the dual-face rule
     c_air: float        # C' with eps_r = 1.0 everywhere (the air reference)
-    c_call: float       # C' with a callable, i.e. one branch on that plane
+    c_alt: float        # same callable written ``z <= h``: must be bit-identical
     z0: float           # quasi-TEM impedance [ohm]
     eps_eff: float      # C'/C'_air
     nodes: int          # transverse node count
@@ -186,35 +188,14 @@ def _microstrip_fixed(grid: Grid, cell: float):
     return [(1.0, strip), (0.0, ground)]
 
 
-def _edge_eps_array(grid: Grid, k_sub: float, h: float, iface=None) -> np.ndarray:
-    """One permittivity per primal edge, with a rule for the interface plane.
-
-    Edges of a family sit at cell centres **along their own axis** and at node
-    positions transversely, with the periodic seam node dropped -- the ordering
-    ``material_matrices`` expects (x block, then y, then z).  ``iface`` selects
-    the value for a tangential edge whose transverse coordinate is exactly
-    ``h``: ``None`` means the energy-consistent dual-face average
-    ``(k_sub + 1)/2``; pass a float to override it (test 5 misassigns ``1.0``
-    this way, reproducing the callable's silent branch choice).
-    """
-    cc = CellComplex(grid)
-    out = np.empty(cc.n_edges, dtype=float)
-    tol = 1e-9 * h
-    for axis in "xyz":
-        coords = []
-        for name in "xyz":
-            a = getattr(grid, name)
-            coords.append(0.5 * (a[:-1] + a[1:]) if name == axis
-                          else a[: grid.nodes(name)])
-        _, _, zz = np.meshgrid(*coords, indexing="ij")
-        val = np.where(zz < h - tol, float(k_sub), 1.0)
-        on_iface = np.abs(zz - h) <= tol
-        fill = 0.5 * (float(k_sub) + 1.0) if iface is None else float(iface)
-        val = np.where(on_iface, fill, val)
-        off = getattr(cc, "off_e" + axis)
-        count = getattr(cc, "n_e" + axis)
-        out[off: off + count] = val.ravel()
-    return out
+#: The substrate, written as the callers write it -- a bare callable.  Nothing
+#: below builds an edge array: ``material_matrices`` resolves the interface.
+_SUBSTRATE = lambda x, y, z: np.where(z < H_SUB, EPS_SUB, 1.0)   # noqa: E731
+#: The same substrate, differing from ``_SUBSTRATE`` **only** on the plane
+#: ``z = h`` itself.  The dual-face rule never reads that value, so this must
+#: return exactly the same numbers -- see
+#: ``test_interface_plane_node_value_is_never_sampled``.
+_SUBSTRATE_LE = lambda x, y, z: np.where(z <= H_SUB, EPS_SUB, 1.0)  # noqa: E731
 
 
 @lru_cache(maxsize=None)
@@ -222,25 +203,28 @@ def _microstrip(level: int) -> _Microstrip:
     """Solve one refinement level once and share it between the tests."""
     grid, cell = _microstrip_grid(level)
     fixed = _microstrip_fixed(grid, cell)
-    c_avg = capacitance_per_length(grid, _edge_eps_array(grid, EPS_SUB, H_SUB), fixed)
+    c_avg = capacitance_per_length(grid, _SUBSTRATE, fixed)
     c_air = capacitance_per_length(grid, 1.0, fixed)
-    c_call = capacitance_per_length(
-        grid, lambda x, y, z: np.where(z < H_SUB, EPS_SUB, 1.0), fixed
-    )
-    z0, eps_eff = z0_eps_eff(grid, _edge_eps_array(grid, EPS_SUB, H_SUB), fixed)
-    return _Microstrip(c_avg, c_air, c_call, float(z0), float(eps_eff),
+    c_alt = capacitance_per_length(grid, _SUBSTRATE_LE, fixed)
+    z0, eps_eff = z0_eps_eff(grid, _SUBSTRATE, fixed)
+    return _Microstrip(c_avg, c_air, c_alt, float(z0), float(eps_eff),
                        int(np.prod(node_shape(grid))))
 
 
 def test_microstrip_capacitance_converges_upward_bounded():
     """``C'`` converges to the closed form monotonically from above.
 
-    Measured, with the explicit ``4.4 / 1.0 / 2.7`` edge array, in pF/m::
+    Measured, with the callable resolved by the library's dual-face interface
+    rule, in pF/m::
 
         h/4   130.89447459510577   (561 nodes)
         h/8   127.17360354273877   (2145 nodes)
         h/16  125.36373600589517   (8385 nodes)
         fit   125.28711219305132
+
+    These are the numbers the hand-built ``4.4 / 1.0 / 2.7`` edge array used to
+    give, to the last bit that roundoff allows, which is why the pins did not
+    move when the array was deleted.
 
     The error falls by roughly a factor three per refinement, and the ``6e-4``
     relative agreement at ``h/16`` is inside the Hammerstad-Jensen fit's own
@@ -311,38 +295,53 @@ def test_vacuum_capacitance_is_box_limited():
     )
 
 
-def test_interface_plane_assignment_does_not_converge_away():
-    """The interface-plane convention is a bias in ``C'``, not a mesh error.
+def test_interface_plane_node_value_is_never_sampled():
+    """``z < h`` and ``z <= h`` give bit-identical ``C'``: only dual faces count.
 
-    ``eps_r`` is per edge, but the dual face of an edge lying *in* the
-    interface straddles both materials; the energy-consistent value is their
-    dual-face average, ``2.7``.  Sampling a callable there lands exactly on the
-    plane and picks the upper branch, ``1.0``.  Measured relative gaps
-    ``(C'_avg - C'_callable) / C'_avg``::
+    ``material_matrices`` resolves the callable with its default
+    ``interface="dual"`` rule, so an edge lying *in* the ``z = h`` interface
+    takes the dual-face mean of the two materials and the value sampled exactly
+    *on* the plane is never read.  Two callables that differ only there
+    therefore agree to the last bit at every refinement level.
+
+    That is precisely what the old edge-centre rule could not do: the centre of
+    a tangential interface edge sits exactly on the plane, so ``<`` and ``<=``
+    silently selected different branches -- a bias in ``C'``, not a mesh error.
+    Measured relative gaps of that rule, ``(C'_dual - C'_point) / C'_dual``::
 
         h/4    5.685 %
         h/8    3.490 %
         h/16   2.051 %
 
-    It shrinks first order but does not vanish -- the misassigned edges stay on
-    the interface however fine the mesh gets -- so it must be fixed by the
-    caller, not by refinement.  (``emfit.materials`` does not implement the
-    dual-face average yet, so every caller has to build the array by hand.)
+    It shrinks first order but does not vanish, because the misassigned edges
+    stay on the interface however fine the mesh gets.  The rule is still
+    selectable at the materials level, so the size of the error it made is
+    pinned below as a regression -- and as the reason the default is ``dual``.
     """
-    coarse, fine = _microstrip(0), _microstrip(2)
-    gap_coarse = (coarse.c_avg - coarse.c_call) / coarse.c_avg
-    gap_fine = (fine.c_avg - fine.c_call) / fine.c_avg
+    for level in (0, 1, 2):
+        result = _microstrip(level)
+        assert result.c_avg == result.c_alt, (
+            f"C'(h/{4 * 2 ** level}) depends on the value sampled *on* the "
+            f"interface plane: {result.c_avg!r} vs {result.c_alt!r} F/m"
+        )
 
-    assert gap_coarse == pytest.approx(0.05685062637519966, rel=1e-3), (
-        f"interface gap at h/4 is {gap_coarse:.5%}, pinned 5.685 %"
+    # Reproduce the edge-centre rule: `capacitance_per_length` has no interface
+    # argument (it must not, the rule is the library's), so the point-rule star
+    # is asked for directly and divided by the vacuum star (eps_r = 1) to undo
+    # the geometry and hand the solver the per-edge permittivity it expects.
+    grid, cell = _microstrip_grid(0)
+    cc = CellComplex(grid)
+    m_point, _ = material_matrices(grid, cc, eps_r=_SUBSTRATE, interface="point")
+    m_unit, _ = material_matrices(grid, cc, eps_r=1.0)
+    c_point = capacitance_per_length(
+        grid, np.asarray(m_point) / np.asarray(m_unit),
+        _microstrip_fixed(grid, cell),
     )
-    assert gap_fine == pytest.approx(0.02050588633179871, rel=1e-3), (
-        f"interface gap at h/16 is {gap_fine:.5%}, pinned 2.051 %"
-    )
-    assert gap_coarse > 0.04, f"interface gap at h/4 only {gap_coarse:.3%}"
-    assert gap_fine > 0.015, (
-        f"interface gap at h/16 fell to {gap_fine:.3%}: the convention error "
-        "appears to be refining away, which it must not"
+    c_dual = _microstrip(0).c_avg
+    gap = (c_dual - c_point) / c_dual
+    assert gap == pytest.approx(0.05685062637519966, rel=1e-6), (
+        f"the edge-centre rule's interface gap at h/4 is {gap:.5%}, "
+        "pinned 5.685 % (measured when it was the default)"
     )
 
 

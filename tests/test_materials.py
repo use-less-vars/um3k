@@ -244,6 +244,25 @@ def _layered_cube(z_iface=2.0, eps_below=4.0, eps_above=1.0):
     return grid, cc, eps_r
 
 
+def test_default_interface_rule_is_the_dual_face_average():
+    """Leaving ``interface`` out is ``interface="dual"``, exactly.
+
+    The default is what every caller of :func:`material_matrices` gets, and it
+    is the rule that fixes a node-aligned interface, so it is pinned here
+    rather than left to a keyword default nobody reads.
+    """
+    grid, cc, eps_r = _layered_cube()
+    default, _ = material_matrices(grid, cc, eps_r=eps_r)
+    m_dual, _ = material_matrices(grid, cc, eps_r=eps_r, interface="dual")
+    m_point, _ = material_matrices(grid, cc, eps_r=eps_r, interface="point")
+
+    assert np.array_equal(default, m_dual), "the default is not the dual rule"
+    assert not np.array_equal(default, m_point), (
+        "the default agrees with point sampling across a node-aligned "
+        "interface, so this grid cannot tell the two rules apart"
+    )
+
+
 def test_interface_point_sampling_picks_one_branch_and_dual_averages():
     """``interface="point"`` lands on the surface; ``"dual"`` takes the mean.
 

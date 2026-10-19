@@ -39,18 +39,19 @@ Limitations -- read before trusting a number
 --------------------------------------------
 * **Permittivity assignment on an interface.** ``eps_r`` is a per-*edge*
   quantity, but an edge lying *in* a material interface has a dual face that
-  straddles two materials, and the energy-consistent value there is their
-  dual-face average -- the arithmetic mean on a uniform grid.  Two traps
-  follow.  (a) A callable ``eps_r(x, y, z)`` is sampled at the edge *centre*,
-  which on a node-plane interface sits exactly *on* the interface, so a test
-  like ``z < h`` silently selects one branch.  On the microstrip of
-  ``tests/test_quasistatic.py`` that misassignment costs about 6% of ``C'``
-  and, because the misassigned edges stay on the interface as the mesh is
-  refined, the error does **not** converge away.  (b) If the interface is not
-  on a node plane, every edge of the family normal to it lies *inside* a cell
-  and the potential step across the interface is not represented at all.  Build
-  the ``cc.n_edges``-long array explicitly (:func:`material_matrices` accepts
-  it) whenever an interface exists; the microstrip tests do exactly that.
+  straddles two materials.  The convention used here is the library's
+  ``interface="dual"`` rule (:func:`emfit.materials.material_matrices`, the
+  default): each edge is assigned the average of ``eps_r`` over its dual face,
+  which on a uniform grid is the arithmetic mean of the two sides.  That is
+  what makes a **node-aligned** material interface well defined: the edges
+  running *in* the interface get the mean of the two materials, and no value
+  sampled exactly *on* the interface plane is ever used, so ``z < h`` and
+  ``z <= h`` produce bit-identical results.  :func:`node_shape` and
+  :func:`node_index` are unchanged by this -- they describe where the nodes are,
+  not how anything is sampled.  One limitation survives: if the interface is
+  **not** on a node plane, every edge of the family normal to it lies *inside*
+  a cell, so the potential step across the interface is not represented at
+  all.  Put material interfaces on node planes.
 * **Geometry.** Conductor thickness and finite conductivity are not modelled:
   a conductor is the set of nodes handed to ``fixed``, so a strip one mesh cell
   wide is a strip of width ``n_cells * dx``.  There is no radiation and nothing
@@ -138,45 +139,12 @@ def node_index(grid: Grid, iy: int, iz: int) -> int:
     return i * n2 + j
 
 
-def _edge_eps(grid: Grid, cc: CellComplex, eps_r):
-    """Expand a callable ``eps_r(x, y, z)`` to one value per primal edge.
-
-    :func:`emfit.materials.material_matrices` samples a callable at the edge
-    centre itself, but it builds those centres from the *full* node arrays and
-    so cannot handle the periodic line axis, where the seam node is not part of
-    the complex.  The sampling rule here is the same one -- cell centres along
-    the edge, node values transversely -- with the seam node dropped.
-    """
-    if not callable(eps_r):
-        return eps_r
-    out = np.empty(cc.n_edges, dtype=float)
-    for axis in "xyz":
-        shape = grid.edge_shape(axis)
-        coords = []
-        for name in "xyz":
-            a = getattr(grid, name)
-            coords.append(0.5 * (a[:-1] + a[1:]) if name == axis
-                          else a[:grid.nodes(name)])
-        x, y, z = np.meshgrid(*coords, indexing="ij")
-        val = np.asarray(eps_r(x, y, z), dtype=float).ravel()
-        count = int(np.prod(shape))
-        if val.size == 1:
-            val = np.full(count, float(val[0]))
-        elif val.size != count:
-            raise ValueError(
-                f"eps_r callable returned {val.size} values, expected {count}"
-            )
-        off = getattr(cc, f"off_e{axis}")
-        out[off:off + count] = val
-    return out
-
-
 def _transverse_metric(grid: Grid, eps_r):
     """2-D transverse incidence ``G`` and its diagonal ``m``, plus the line axis."""
     line, transverse = _line_and_transverse(grid)
     t1, t2 = transverse
     cc = CellComplex(grid)
-    m_eps, _ = material_matrices(grid, cc, eps_r=_edge_eps(grid, cc, eps_r))
+    m_eps, _ = material_matrices(grid, cc, eps_r=eps_r)
 
     n1_cells = grid.shape["xyz".index(t1)]
     n2_cells = grid.shape["xyz".index(t2)]
@@ -314,10 +282,12 @@ def capacitance_per_length(grid: Grid, eps_r=1.0, fixed=None) -> float:
         Cross-section mesh: one cell thick and periodic along the line axis,
         any number of cells transversely (:func:`node_shape`).
     eps_r:
-        Relative permittivity of every primal edge -- a float, a callable
-        ``eps_r(x, y, z)``, or an explicit array of length ``cc.n_edges``.  See
-        the module docstring for the interface-plane caveat: build the array by
-        hand whenever a material interface exists.
+        Relative permittivity -- a float, a callable ``eps_r(x, y, z)``, or an
+        explicit array of length ``cc.n_edges``, handed straight to
+        :func:`emfit.materials.material_matrices`.  Callables are turned into
+        edge values by the library's ``interface="dual"`` rule, so a material
+        interface lying on a node plane is handled without any help from the
+        caller; see the module docstring.
     fixed:
         ``[(potential, node_indices), ...]`` with the conductor potentials in
         volts and flat node indices from :func:`node_index`.  At least two
@@ -342,7 +312,8 @@ def capacitance_per_length(grid: Grid, eps_r=1.0, fixed=None) -> float:
     ValueError
         If the grid is not one cell thick and periodic along exactly one axis,
         if a node index is out of range, if fewer than two distinct conductor
-        potentials are given, or if ``eps_r`` does not match ``cc.n_edges``.
+        potentials are given, or if ``eps_r`` is an array that does not match
+        ``cc.n_edges``.
     """
     phi, K, length = _solve(grid, eps_r, fixed)
     _, _, v_scale = _dirichlet(grid, fixed)
