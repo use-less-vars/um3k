@@ -1,0 +1,100 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{listings}
+\usepackage[colorlinks,linkcolor=blue!50!black,urlcolor=blue!50!black,citecolor=blue!50!black]{hyperref}
+\usepackage{microtype}
+\usepackage{siunitx}
+\usepackage{float}
+\usepackage{enumitem}
+
+\newcommand{\eps}{\varepsilon}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\Em}{{M_{\eps}}}   \newcommand{\Mm}{{M_{\mu}}}   \newcommand{\Ms}{{M_{\sigma}}}
+\newcommand{\Cmat}{\mathbf{C}}  \newcommand{\Gmat}{\mathbf{G}}  \newcommand{\Smat}{\mathbf{S}}
+\newcommand{\R}{ℝ}         \newcommand{\Ohm}{\Omega}     \renewcommand{\unit}[1]{\,\mathrm{#1}} % siunitx already owns \unit
+\newtheorem{definition}{Definition}  \newtheorem{proposition}{Proposition}  \newtheorem{remark}{Remark}
+
+\title{emfit: a finite integration technique solver for computational electromagnetics\\
+  \large A living technical report -- state of the implementation}
+\author{Project EE}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent
+\texttt{emfit} is a finite integration technique (FIT) solver for computational electromagnetics on structured
+hexahedral grids. It implements the curl and divergence operators of the primal and dual cell complexes together
+with the diagonal Hodge star matrices that carry the material parameters, so that the discrete Maxwell system
+inherits the algebraic structure of the continuous one. The time-domain core is a leapfrog stepper that conserves
+a discrete energy to round-off, and the eigenvalue path solves the cavity problem with a dense eigensolver. The
+computed cavity frequencies converge at second order and lie within of order one percent of the analytic
+rectangular-box spectrum on the coarse grids used in the examples. This report is a living document: it records
+what is currently verified, what is known to fail, and what is merely planned.
+\end{abstract}
+
+\tableofcontents
+
+\clearpage
+
+\lstdefinestyle{python}{language=Python,basicstyle=\ttfamily\small,showstringspaces=false,frame=single,breaklines}
+
+\input{sec_intro}      % \section{Aims and scope}
+\input{sec_theory}     % \section{The finite integration technique}
+\input{sec_energy}     % \section{Energy conservation and stability}
+\input{sec_eigen}      % \section{The eigenmode problem and the null space}
+\input{sec_impl}       % \section{Implementation}
+\input{sec_results}    % \section{Validation results}
+\input{sec_outlook}    % \section{Outlook}
+
+\begin{thebibliography}{99}
+
+\bibitem{weiland1977} T.~Weiland, ``A discretization method for the solution of Maxwell's equations for
+six-component fields'', AEU-International Journal of Electronics and Communications, vol.~31, pp.~116--120, 1977.
+
+\bibitem{weiland1996} T.~Weiland, ``Time domain electromagnetic field computation with finite difference
+methods'', International Journal of Numerical Modelling: Electronic Networks, Devices and Fields, vol.~9,
+pp.~295--319, 1996.
+
+\bibitem{clemens2001} M.~Clemens and T.~Weiland, ``Discrete electromagnetism with the finite integration
+technique'', Progress in Electromagnetics Research, PIER 32, pp.~65--87, 2001.
+
+\bibitem{schuhmann2001} R.~Schuhmann and T.~Weiland, ``Conservation of discrete energy and related laws in the
+finite integration technique'', Progress in Electromagnetics Research, PIER 32, pp.~301--316, 2001.
+
+\bibitem{yee1966} K.~S. Yee, ``Numerical solution of initial boundary value problems involving Maxwell's
+equations in isotropic media'', IEEE Transactions on Antennas and Propagation, vol.~14, no.~3, pp.~302--307,
+1966.
+
+\bibitem{bossavit1998} A.~Bossavit, \emph{Computational Electromagnetism: Variational Formulations,
+Complementarity, Edge Elements}, Academic Press, 1998.
+
+\bibitem{taflove2005} A.~Taflove and S.~C. Hagness, \emph{Computational Electrodynamics: The Finite-Difference
+Time-Domain Method}, 3rd ed., Artech House, 2005.
+
+\bibitem{mur1981} G.~Mur, ``Absorbing boundary conditions for the finite-difference approximation of the
+time-domain electromagnetic-field equations'', IEEE Transactions on Electromagnetic Compatibility, vol.~23,
+no.~4, pp.~377--382, 1981.
+
+\bibitem{berenger1994} J.-P. Berenger, ``A perfectly matched layer for the absorption of electromagnetic
+waves'', Journal of Computational Physics, vol.~114, no.~2, pp.~185--200, 1994.
+
+\bibitem{jin2014} J.-M. Jin, \emph{The Finite Element Method in Electromagnetics}, 3rd ed., Wiley, 2014.
+
+\bibitem{balanis2016} C.~A. Balanis, \emph{Antenna Theory: Analysis and Design}, 4th ed., Wiley, 2016.
+
+\end{thebibliography}
+
+\end{document}

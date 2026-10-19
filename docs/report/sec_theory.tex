@@ -1,0 +1,316 @@
+\section{The finite integration technique}
+\label{sec:theory}
+
+\noindent\emph{Status: draft -- everything stated here is implemented and unit-tested; the derivation, the
+motivating prose and the discussion of the non-orthogonal case are still being written.}
+
+This section fixes the objects the implementation manipulates. It defines the two cell complexes of the grid, the
+degrees of freedom as integrals over their elements, the three topological operators and the two identities they
+satisfy exactly, the Maxwell grid equations, the diagonal Hodge stars that carry the material, and the way
+boundary conditions and sources enter. The presentation follows Weiland \cite{weiland1977,weiland1996} and
+\cite{clemens2001}; the energy and stability analysis that makes use of these objects is deferred to
+the section on energy conservation and stability.
+
+\subsection{The two cell complexes}
+
+A structured hexahedral grid is the tensor product of three strictly increasing sequences of node coordinates,
+$x_0 < \dots < x_{n_x}$, $y_0 < \dots < y_{n_y}$, $z_0 < \dots < z_{n_z}$. Its \emph{primal} objects are the
+familiar ones: nodes at the corners, edges the segments joining adjacent nodes, faces the rectangles spanned by
+two edges, cells the boxes spanned by three. Writing $n_k$ for the number of \emph{cells} along axis $k$, so that
+axis $k$ carries $n_k+1$ nodes, the counts are those in Table~\ref{tab:counts}.
+
+\begin{table}[H]
+  \centering
+  \caption{Entities of the primal and dual complexes of an $n_x\times n_y\times n_z$ grid, and their values for
+  the $10\times7\times5$ cavity used in the validation runs.}
+  \label{tab:counts}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Entity & Count & $10\times7\times5$ \\
+    \midrule
+    primal nodes   & $(n_x+1)(n_y+1)(n_z+1)$ & 528  \\
+    primal edges   & $n_x(n_y+1)(n_z+1) + (n_x+1)n_y(n_z+1) + (n_x+1)(n_y+1)n_z$ & 1382 \\
+    \quad of which $x$ & $n_x(n_y+1)(n_z+1)$ & 480 \\
+    \quad of which $y$ & $(n_x+1)n_y(n_z+1)$ & 462 \\
+    \quad of which $z$ & $(n_x+1)(n_y+1)n_z$ & 440 \\
+    primal faces   & $(n_x+1)n_yn_z + n_x(n_y+1)n_z + n_xn_y(n_z+1)$ & 1205 \\
+    \quad of which $x$ & $(n_x+1)n_yn_z$ & 385 \\
+    \quad of which $y$ & $n_x(n_y+1)n_z$ & 400 \\
+    \quad of which $z$ & $n_xn_y(n_z+1)$ & 420 \\
+    primal cells   & $n_xn_yn_z$ & 350 \\
+    dual nodes     & $n_xn_yn_z$ & 350 \\
+    dual edges     & equal to the primal faces & 1205 \\
+    dual faces     & equal to the primal edges & 1382 \\
+    dual cells     & equal to the primal nodes & 528 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The \emph{dual} complex is shifted by half a cell in every direction. A dual node sits at the centre of every
+primal cell. A dual edge joins the two dual nodes on either side of a primal face and therefore \emph{pierces}
+that face. A dual face spanned by the four dual edges around a primal edge therefore \emph{crosses} that edge. A
+dual cell encloses a primal node and is bounded by the dual faces that cross the primal edges incident on that
+node.
+
+The counts in Table~\ref{tab:counts} are not an accident. For a single brick the alternating sum satisfies
+\begin{equation}
+  n_0 - n_1 + n_2 - n_3 = 528 - 1382 + 1205 - 350 = 1,
+  \label{eq:euler}
+\end{equation}
+which is the Euler characteristic of a ball and holds for every grid; it is the reason the primal and dual counts
+pair up as they do. In particular each dual edge threads exactly one primal face, and each dual face is pierced by
+exactly one primal edge, so the pairing of primal and dual objects is a bijection. The implementation exploits
+this: dual objects carry no indices of their own and are addressed by the primal object they are paired with,
+which is why the code has exactly three index families -- edges, faces, cells -- and not six.
+
+\subsection{Degrees of freedom as integrals}
+
+Each field component is stored as its integral over the object it is naturally associated with,
+\begin{align}
+  \hat e_i &= \int_{L_i} \vec e\cdot\dd\vec l \quad [\mathrm{V}], &
+  \hat h_f &= \int_{L_{\tilde f}} \vec h\cdot\dd\vec l \quad [\mathrm{A}], &
+  \hat b_f &= \int_{A_f} \vec b\cdot\dd\vec A \quad [\mathrm{Wb}], \label{eq:dof-a}\\[2pt]
+  \hat d_i &= \int_{A_{\tilde i}} \vec d\cdot\dd\vec A \quad [\mathrm{C}], &
+  \hat\jmath_i &= \int_{A_{\tilde i}} \vec j\cdot\dd\vec A \quad [\mathrm{A}], &
+  \hat q_c &= \int_{V_c} \rho\,\dd V \quad [\mathrm{C}]. \label{eq:dof-b}
+\end{align}
+The electric quantities $\mathbf{e}$ and $\mathbf{d}$ live on primal edges and the dual faces paired with them; the
+magnetic quantities $\mathbf{h}$ and $\mathbf{b}$ live on the dual edges paired with primal faces and on those
+primal faces themselves. The electromagnetic unknowns of the method are thus the pair $(\mathbf{e},\mathbf{h})$,
+and $\mathbf{b}$, $\mathbf{d}$ are recovered from them through the constitutive relations of
+Section~\ref{sec:hodge}.
+
+\begin{proposition}[Exactness of the integral form]
+\label{prop:exactness}
+Let the fields satisfy Maxwell's equations in the continuum, and let a cell of the grid be given. Then Faraday's
+law applied to the boundary of a primal face, Ampere's law applied to the boundary of a dual face, the divergence
+theorem applied to the boundary of a primal cell and to the boundary of a dual cell are \emph{exact} relations
+among the numbers \eqref{eq:dof-a}, \eqref{eq:dof-b} attached to that cell. No approximation is involved in
+passing from the continuum to these relations.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Apply Stokes' theorem on a primal face: the surface integral of the curl of $\vec e$ equals the circulation of
+$\vec e$ around the boundary, which by construction splits into the four edge integrals $\hat e_i$ with signs
+$+1$ or $-1$. Apply the divergence theorem on a primal cell: the volume integral of the divergence of $\vec b$
+equals the flux through the six bounding faces, which splits into the six face integrals $\hat b_f$. The dual
+statements follow by applying the same two theorems to dual faces and dual cells.
+\end{proof}
+
+This is the property that motivates the whole method. The integral form of Maxwell's equations is not an
+approximation of the differential form that becomes accurate for small cells -- it is equivalent to it, and the
+two are related by the same two theorems. What a discretisation can get wrong is therefore not the differential
+operator but only the constitutive law, which is what the next three subsections make precise.
+
+\subsection{Topological operators}
+
+The three operators are matrices of incidence. All of their entries are drawn from $\{-1,0,+1\}$; no length, area
+or timestep enters any of them.
+
+\begin{definition}[Gradient]
+$\Gmat\in\{-1,0,+1\}^{n_1\times n_0}$ has one row per primal edge, with $+1$ at the node at the tail of the edge
+and $-1$ at the node at its head (with a fixed orientation convention for the three edge families). Applied to a
+nodal scalar potential it returns the potential difference along each edge, $\Gmat\boldsymbol\varphi$.
+\end{definition}
+
+\begin{definition}[Curl]
+$\Cmat\in\{-1,0,+1\}^{n_2\times n_1}$ has one row per primal face and one nonzero entry per edge of that face,
+$+1$ or $-1$ according to whether the edge is traversed with or against the face's orientation. Then
+$(\Cmat\mathbf{e})_f$ is the circulation of $\mathbf{e}$ around the boundary of face $f$, so that $\Cmat\mathbf{e}$
+is the discrete curl of the edge field.
+\end{definition}
+
+\begin{definition}[Divergence]
+$\Smat\in\{-1,0,+1\}^{n_3\times n_2}$ has one row per primal cell and one nonzero entry per bounding face, $+1$
+for the face in the positive direction along the face's axis and $-1$ for the opposite one. Then
+$(\Smat\mathbf{b})_c$ is the net outward flux of $\mathbf{b}$ through the boundary of cell $c$.
+\end{definition}
+
+The dual operators are the transposes: $\tilde\Smat = \Smat^{\!\top}$ maps a cell quantity to its face fluxes, and
+$\tilde\Cmat = \Cmat^{\!\top}$ maps a face quantity to a dual edge quantity. That transposition is not a coincidence
+but the discrete shadow of integration by parts on the dual pair of complexes.
+
+\begin{proposition}[The two exact identities]
+\label{prop:identities}
+For every orthogonal grid, uniform or not, and in exact integer arithmetic,
+\begin{equation}
+  \Cmat\Gmat = \mathbf{0} \quad\text{and}\quad \Smat\Cmat = \mathbf{0}.
+  \label{eq:identities}
+\end{equation}
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+$(\Cmat\Gmat\boldsymbol\varphi)_f$ is a sum of potential differences taken once around the closed loop bounding
+face $f$. Every node of that loop is visited exactly once with $+1$ and once with $-1$, so the sum telescopes to
+zero. For the second identity, $(\Smat\Cmat\mathbf{e})_c$ sums the circulations around the six faces of cell $c$
+with outward signs; every edge of the cell belongs to exactly two of those faces and is traversed in opposite
+directions by them, so every contribution appears twice with opposite signs.
+\end{proof}
+
+\begin{remark}[Metric freedom]
+Because the entries of $\Cmat$, $\Gmat$ and $\Smat$ are integers, the identities \eqref{eq:identities} cannot
+degrade under refinement: they are not approximately satisfied, they are satisfied. Nothing in the three matrices
+refers to a length scale, so moving the nodes -- grading the mesh, refining one corner of the domain -- leaves the
+operators bit-for-bit identical, provided only the counts are unchanged. This is asserted directly by comparing a
+uniform and a non-uniform grid of the same shape. All geometric information of the problem is therefore collected
+in one place, the Hodge stars of Section~\ref{sec:hodge}, and that separation is the structural reason a graded
+grid costs nothing here.
+\end{remark}
+
+Taken together the three operators form the discrete de Rham complex
+\begin{equation}
+  \text{scalar potential} \xrightarrow{\ \Gmat\ } \text{primal edges} \xrightarrow{\ \Cmat\ } \text{primal faces}
+  \xrightarrow{\ \Smat\ } \text{primal cells},
+  \label{eq:complex}
+\end{equation}
+with the dual complex running the other way, $\tilde\Smat$ from cells to faces and $\tilde\Cmat$ from faces to dual
+edges. Proposition~\ref{prop:identities} says that \eqref{eq:complex} is a chain complex: the image of each map
+lies in the kernel of the next. Exactness -- the converse inclusion, image equal to kernel -- holds on a simply
+connected domain without boundary conditions and is precisely what fails once a conductor cuts the domain; the
+consequence is the gradient null space of the eigenmode section.
+
+\subsection{The Maxwell grid equations}
+
+With the degrees of freedom of \eqref{eq:dof-a}, \eqref{eq:dof-b} and the operators above, Maxwell's equations
+read
+\begin{align}
+  \Cmat\,\mathbf{e} &= -\frac{\dd}{\dd t}\bigl(\Mm\,\mathbf{h}\bigr), \label{eq:faraday}\\
+  \tilde\Cmat\,\mathbf{h} &= \frac{\dd}{\dd t}\bigl(\Em\,\mathbf{e}\bigr) + \mathbf{j}, \label{eq:ampere}\\
+  \Smat\bigl(\Em\,\mathbf{e}\bigr) &= \mathbf{q}, \label{eq:gauss-e}\\
+  \Smat\bigl(\Mm\,\mathbf{h}\bigr) &= \mathbf{0}, \label{eq:gauss-b}
+\end{align}
+where $\mathbf{b} = \Mm\mathbf{h}$ and $\mathbf{d} = \Em\mathbf{e}$ are the constitutive relations, and $\Mm$,
+$\Em$ are the diagonal Hodge star matrices of Section~\ref{sec:hodge}. Equations \eqref{eq:faraday} and
+\eqref{eq:ampere} are Faraday's and Ampere's laws on primal and dual faces; \eqref{eq:gauss-e} and
+\eqref{eq:gauss-b} are the two Gauss laws on primal cells.
+
+\begin{remark}[Where the approximation went]
+Equations \eqref{eq:faraday}--\eqref{eq:gauss-b} are exact. They were obtained by applying the integral form to
+the faces and cells of the grid, which Proposition~\ref{prop:exactness} permits without approximation, and no Taylor expansion has
+been performed. The single approximate step of the entire method is the replacement of the constitutive laws by
+the diagonal matrices $\Em$ and $\Mm$. Everything that can go wrong with this discretisation -- dispersion,
+staircasing, the wrong energy at short wavelengths -- originates in that one step.
+\end{remark}
+
+The two Gauss laws need not be imposed: they are consequences of \eqref{eq:faraday}, \eqref{eq:ampere} and the
+identities \eqref{eq:identities}, and are preserved in time. Differentiating \eqref{eq:gauss-b} and substituting
+Faraday's law,
+\begin{equation}
+  \frac{\dd}{\dd t}\,\Smat\bigl(\Mm\mathbf{h}\bigr) = -\Smat\Cmat\,\mathbf{e} = \mathbf{0},
+  \label{eq:gauss-preserved}
+\end{equation}
+so magnetic flux stays divergence free if it starts that way; the electric counterpart follows the same way from
+the dual identity $\tilde\Cmat\tilde\Smat = (\Smat\Cmat)^{\!\top} = \mathbf{0}$. The implementation integrates only
+\eqref{eq:faraday} and \eqref{eq:ampere} and relies on this for the rest.
+
+\subsection{The Hodge star (material) matrices}
+\label{sec:hodge}
+
+The constitutive relations are where the metric, and with it the physics of the material, enters. Reconstruct the
+field inside the cell as uniform: the component of $\vec e$ along primal edge $i$ is $\hat e_i/L_i$, and the flux
+of $\vec d$ through the dual face $\tilde A_i$ perpendicular to that edge is then
+$\eps_r\eps_0\,\hat e_i A_{\tilde i}/L_i$. The same argument on the magnetic side, where $\hat h_f$ is a line
+integral over a dual edge and $\vec b$ is fluxed through the primal face, gives
+\begin{equation}
+  [\Em]_{ii} = \eps_{r,i}\,\eps_0\,\frac{A_{\tilde i}}{L_i}\ \ [\mathrm{F}],
+  \qquad\qquad
+  [\Mm]_{ff} = \mu_{r,f}\,\mu_0\,\frac{A_f}{L_{\tilde f}}\ \ [\mathrm{H}],
+  \label{eq:stars}
+\end{equation}
+with all off-diagonal entries zero: the primal edge $i$ and its dual face are perpendicular by construction, and
+on an orthogonal grid no other pair contributes. The ratio of the dual measure to the primal measure is the entire
+content of the star; the material parameters $\eps_r$ and $\mu_r$ may be scalars, per-edge and per-face arrays, or
+callables of position, in which case they are sampled at the centre of the corresponding object.
+
+The choice of a single reconstructed component per cell is an averaging assumption. It is second order accurate on
+orthogonal grids because the primal edge is centred on its dual face and the primal face is centred on its dual
+edge, so the midpoint rule is exact for linear fields. The \emph{units} of \eqref{eq:stars} are the check that the
+whole scheme is consistent. $\Em$ has units of capacitance and $\Mm$ of inductance, and therefore
+\begin{equation}
+  U_{\mathrm{e}} = \tfrac12\,\mathbf{e}\cdot(\Em\mathbf{e})\ \ [\mathrm{J}], \qquad
+  U_{\mathrm{m}} = \tfrac12\,\mathbf{h}\cdot(\Mm\mathbf{h})\ \ [\mathrm{J}], \qquad
+  P = \mathbf{e}\cdot\mathbf{j}\ \ [\mathrm{W}],
+  \label{eq:energies}
+\end{equation}
+which is the normalisation the energy analysis of the section on energy conservation and stability relies on.
+
+Two consequences deserve emphasis. First, because the stars are diagonal, a product with $\Em$ or $\Mm$ is an
+elementwise scaling and never a linear solve. A time step therefore costs two sparse matrix-vector products by
+$\Cmat$ and $\tilde\Cmat$ plus four elementwise scalings, and nothing else; this is what makes an explicit scheme
+viable in three dimensions.
+
+Second, the star is \emph{not} length invariant, unlike the topological operators. Since $A_{\tilde i}/L_i$ has
+dimension of length, scaling every cell by a factor $s$ multiplies every entry of $\Em$ and of $\Mm$ by exactly
+$s$ -- the test suite asserts precisely this for $s=2$. As a grid is refined the stars shrink linearly with the
+cell size, which is the origin of the linear-in-$h$ CFL bound of the section on energy conservation and stability.
+
+\begin{remark}[Graded and non-orthogonal grids]
+On an orthogonal grid with non-uniform spacing the stars remain diagonal -- only their entries change -- and this
+is why grading costs nothing structurally. On a non-orthogonal (skew) grid the reconstruction inside a cell mixes
+field components, so the stars become sparse, symmetric positive definite, banded matrices. The topology
+operators, and hence Proposition~\ref{prop:exactness}, are untouched; what changes is that the explicit step now needs an
+approximate inverse of a sparse matrix. That case is outside the present implementation, and it is the reason the
+material layer is kept strictly separate from the topological operators in the code.
+\end{remark}
+
+\subsection{Boundary conditions and sources}
+
+A perfect electric conductor prescribes vanishing tangential electric field on its surface. In the discrete model
+that is the statement that the edge voltages of all edges lying in the wall vanish identically,
+\begin{equation}
+  \hat e_i = 0 \quad\text{for every edge } i \text{ tangential to a PEC wall}.
+  \label{eq:pec}
+\end{equation}
+The implementation imposes \eqref{eq:pec} as a constraint on the unknown space rather than as an operation on the
+solution: the unknown vector is restricted to the free edges and the corresponding columns of $\Cmat$ never
+participate. This matters for exactness. A zero column contributes nothing to $\Cmat\mathbf{e}$, so the restricted
+update is an exact leapfrog on a smaller complex and inherits the invariant of the section on energy conservation and stability bit for bit,
+whereas the alternative of stepping everywhere and then overwriting the wall values with zero would silently
+inject or remove the energy belonging to those edges. On the $10\times7\times5$ cavity with all six walls
+conducting, 620 of the 1382 edge voltages are pinned this way, leaving 762 unknowns.
+
+A perfect magnetic conductor is the dual condition: the tangential magnetic field vanishes, which in these
+variables means that the magnetic flux through each wall face vanishes, $\hat b_f = 0$ for faces in the wall. PEC
+therefore constrains the primal edge space and PMC the primal face space, and the two conditions are the two ends
+of the duality that runs through the whole construction.
+
+The restriction to free edges does, however, cost something, and it is worth naming it here. Proposition~\ref{prop:exactness}
+concerns the full complex; after deleting the PEC unknowns the restricted curl no longer annihilates the
+restricted gradient by the same integer identity, and the surviving gradient fields reappear as a null space of
+the discrete curl--curl operator. For a box with all six walls conducting that null space has dimension
+$(n_x-1)(n_y-1)(n_z-1)$ -- 216 on the coarse cavity grid and 702 on the fine one. The eigenmode section shows how
+that cluster is identified and removed.
+
+Sources enter in two ways. A \emph{soft} source is a current density carried by the dual faces and added to the
+right-hand side of \eqref{eq:ampere}; because $\mathbf{e}\cdot\mathbf{j}$ has units of power, by \eqref{eq:energies}
+it injects
+\begin{equation}
+  P = \mathbf{e}\cdot\mathbf{j}\ \ [\mathrm{W}],
+  \label{eq:power}
+\end{equation}
+which is the only channel by which energy enters the system and is used verbatim in the section on energy conservation and stability. A
+\emph{hard} source, by contrast, prescribes the value of $\hat e_i$ on a chosen edge and overrides the update
+there; the example drives the cavity with a Ricker waveform imposed this way. Losses would enter as the
+conduction current $\mathbf{j} = \Ms\mathbf{e}$; $\Ms$ is assembled with the right units but is not yet coupled
+into the step, which is why every statement about energy conservation in this report is a statement about a
+lossless problem.
+
+\subsection{Relation to Yee's scheme and to finite elements}
+
+Choose a uniform orthogonal grid and identify the primal edge voltages with the components of $\vec e$ at the
+primal edge midpoints and the dual edge magnetic voltages with the components of $\vec h$ at the primal face
+centres. Eliminating $\mathbf{b}$ and $\mathbf{d}$ through the diagonal stars, equations \eqref{eq:faraday} and
+\eqref{eq:ampere} become exactly the staggered update of Yee \cite{yee1966}. FIT is thus not a competitor of the
+finite-difference time-domain method but its structural generalisation: the staggering is the same, while the
+metric has been isolated into an explicit object, which is what allows non-uniform spacing without touching a
+single operator. On the uniform grid the classical results on numerical dispersion, the CFL condition and the
+staircase error of curved boundaries \cite{taflove2005} apply verbatim.
+
+The same de Rham complex underlies edge-element finite elements \cite{bossavit1998,jin2014}, where Whitney one-forms
+carry $\vec e$ and two-forms carry $\vec b$; the incidences are the same integers. The difference is entirely in
+the Hodge star. A finite-element assembly builds a sparse mass matrix from element integrals, which represents
+curved and anisotropic geometry accurately but must be solved at every step. FIT replaces it with a diagonal,
+measure-based, low-order approximation, which is why an explicit step exists at all. Bossavit's complementarity
+view puts the two families on one footing; for the problems this project targets the trade of geometric fidelity
+against cost per unknown falls on the FIT side, at the price of a structured grid and of a staircase at curved
+surfaces.

@@ -1,0 +1,383 @@
+\section{Cavity resonances: the generalised eigenproblem and its null space} \label{sec:eigen}
+
+\noindent\emph{Status: draft -- the eigenproblem, the free-edge restriction and the dense solve are
+implemented and covered by tests; the computed spectrum of a rectangular cavity lies below the
+analytic one by $0.6$ per cent on the fine grid and the gradient null space is removed by a
+static-eigenvalue cut. The deflation that would let the same problem be solved iteratively is not
+implemented, so a grid whose free-edge count exceeds \texttt{max\_dense} is refused rather than
+approximated.}
+
+The two Maxwell grid equations \eqref{eq:faraday} and \eqref{eq:ampere} of Section~\ref{sec:theory}
+are a generalised eigenproblem in disguise: assume harmonic time dependence, drop the source,
+eliminate one of the two fields, and what remains is a statement about the primal curl and the two
+Hodge stars alone. Everything that follows turns on the one structural fact proved in
+Proposition~\ref{prop:identities}: the curl annihilates gradients. On the full complex that is a
+property one is glad to have. After the PEC restriction discussed in Section~\ref{sec:theory} it
+becomes a nuisance, because the restricted curl--curl operator inherits a null space that is neither
+empty nor small -- 216 of the 762 unknowns on the coarse cavity grid. No spectrum can be believed
+before those modes are identified. Section~\ref{sec:formulation} states the eigenproblem and the
+symmetrisation the code actually solves; Section~\ref{sec:nullspace} characterises the null space
+and settles which test for it works; Section~\ref{sec:spectrum} compares the surviving frequencies
+with the analytic spectrum of a conducting box and measures their convergence;
+Section~\ref{sec:rejected} records the two approaches that failed, because a failure with a reason
+is worth more than a heuristic that happens to work.
+
+\subsection{Formulation} \label{sec:formulation}
+
+With the phasor convention $\mathbf{e}(t)=\hat{\mathbf{e}}\exp(-\mathrm{i}\omega t)$ -- the only
+place in this
+report where complex fields are used -- and with no source, $\mathbf{j}=\mathbf{0}$, the grid
+equations
+\eqref{eq:faraday} and \eqref{eq:ampere} become a pair of algebraic relations between phasors,
+\begin{equation}
+  \Cmat\hat{\mathbf{e}} = \mathrm{i}\omega\Mm\hat{\mathbf{h}}, \qquad
+  \Cmat^{\!\top}\hat{\mathbf{h}} = -\mathrm{i}\omega\Em\hat{\mathbf{e}}.
+  \label{eq:harmonic}
+\end{equation}
+Eliminating $\hat{\mathbf{h}}$ between the two lines of \eqref{eq:harmonic} leaves a statement
+about the electric
+field alone,
+\begin{equation}
+  \Cmat^{\!\top}\Mm^{-1}\Cmat\,\hat{\mathbf{e}} = \omega^{2}\Em\,\hat{\mathbf{e}},
+  \label{eq:geneig}
+\end{equation}
+a generalised symmetric eigenproblem with the same curl--curl operator whose time-domain
+counterpart we met in
+Section~\ref{sec:energy}. The two matrices on the left and right of \eqref{eq:geneig} are symmetric
+and
+$\Em$ is positive definite because both stars are diagonal with positive entries \eqref{eq:stars},
+so the pencil
+is self-adjoint in the $\Em$ inner product. Two consequences are used below without further
+comment: the
+eigenvalues $\omega^{2}$ are real and non-negative, and eigenvectors belonging to distinct
+eigenvalues are
+$\Em$-orthogonal. Eliminating $\hat{\mathbf{e}}$ instead gives the dual statement with $\Mm$ and
+$\tilde\Cmat$ in the roles of $\Em$ and $\Cmat$; the two formulations have the same spectrum, and
+we keep the
+electric one because $\Em$ is diagonal and cheap to invert.
+
+The conductor condition \eqref{eq:pec} pins the tangential voltage on every wall edge to zero,
+which is a
+constraint on the unknown space rather than on the equation. Writing $\mathcal{F}$ for the set of
+free edges and
+$\Cmat_f=\Cmat_{:,\mathcal{F}}$ for the curl with the pinned columns deleted, \eqref{eq:geneig}
+restricted to the
+unknowns reads
+\begin{equation}
+  \Cmat_f^{\!\top}\Mm^{-1}\Cmat_f\,\hat{\mathbf{e}}_f = \omega^{2}\Em_f\,\hat{\mathbf{e}}_f,
+  \label{eq:geneig-f}
+\end{equation}
+with $\Em_f$ the corresponding submatrix of the diagonal star. Only edges are restricted: a perfect
+conductor
+constrains the primal edge space, whereas a perfect magnetic conductor would constrain the primal
+face space, so
+$\Mm$ and the face count are untouched. This is the same asymmetry that the two Gauss laws exhibit,
+and it is the
+reason the free-edge restriction costs us a null space while the dual restriction would not.
+
+Equation \eqref{eq:geneig-f} is a symmetric pencil but not a standard problem, and the dense
+routine we call
+expects the latter. Since $\Em_f$ is diagonal and positive we multiply through by $\Em_f^{-1/2}$,
+\begin{equation}
+  \Em_f^{-1/2}\Cmat_f^{\!\top}\Mm^{-1}\Cmat_f\Em_f^{-1/2}\,\mathbf{y} = \omega^{2}\mathbf{y},
+  \qquad \hat{\mathbf{e}}_f=\Em_f^{-1/2}\mathbf{y},
+  \label{eq:symm}
+\end{equation}
+and are left with a symmetric positive semi-definite matrix whose eigenvalues are the squared
+angular frequencies
+directly and whose eigenvectors are the scaled edge voltages. The semi-definiteness is not a defect
+of the
+scaling: the matrix in \eqref{eq:symm} is a Gram matrix of $\Mm^{-1/2}\Cmat_f\Em_f^{-1/2}$ and its
+kernel is
+exactly the null space of Section~\ref{sec:nullspace}.
+
+The code assembles the sparse product $\Cmat^{\!\top}\Mm^{-1}\Cmat$ once, takes its free--free
+block, and hands it to \texttt{scipy.linalg.eigh}, which returns the complete spectrum. We chose a
+dense solver deliberately, and the reasons are worth stating because they will have to be given up
+one at a time. It is exact in the sense that it needs no convergence argument, no shift, no
+preconditioner and no estimate of how many eigenvalues the caller wants: there is no way for it to
+return a plausible wrong answer. It also returns the null cluster, which we want, because its
+dimension is the quantity we check against $(n_x-1)(n_y-1)(n_z-1)$. The cost is cubic, and at the
+sizes that matter here it is irrelevant: the largest grid in this report has 2355 unknowns, a
+symmetric eigenproblem of that order costs of order $2355^{3}\approx1.3\times10^{10}$ floating-point
+operations, and one solve takes seconds. Above \texttt{max\_dense} $=3000$ the routine raises
+instead of trying, which is the behaviour we want from a validation instrument.
+Table~\ref{tab:sizes} lists the sizes.
+
+\begin{table}[H]
+  \centering
+  \caption{Size of the restricted eigenproblem \eqref{eq:symm} for the two cavity grids used in
+this report, and
+  the split between the gradient null space and the physical unknowns. The last two columns sum to
+the third.}
+  \label{tab:sizes}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    grid & primal edges & free edges & gradient null modes & physical unknowns \\
+    \midrule
+    $10\times7\times5$ & 1382 & 762  & 216 & 546  \\
+    $14\times10\times7$ & 3587 & 2355 & 702 & 1653 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{The gradient null space} \label{sec:nullspace}
+
+A gradient field $\Gmat\boldsymbol\varphi$ is annihilated by the curl, $\Cmat\Gmat=\mathbf{0}$, so
+every such
+field is a solution of \eqref{eq:geneig} with $\omega=0$. The question is which of them survive the
+restriction.
+A vector in the restricted unknown space must vanish on the pinned edges, and a gradient field
+$\Gmat\boldsymbol\varphi$
+does so exactly when the potential $\varphi$ is equal at the two endpoints of every wall edge. The
+pinned edges
+connect the boundary nodes to each other, so this forces $\varphi$ to be constant on the boundary,
+and a constant
+is no field at all; what remains is a potential that vanishes on every boundary node and is free at
+the interior
+nodes. There are exactly $(n_x-1)(n_y-1)(n_z-1)$ of those, and each gives an independent gradient
+field, so
+\begin{equation}
+  \dim\ker\Cmat_f = (n_x-1)(n_y-1)(n_z-1) = 9\cdot6\cdot4 = 216
+  \label{eq:nullcount}
+\end{equation}
+on the coarse grid, the count of \eqref{eq:nullcount}, and $13\cdot9\cdot6=702$ on the fine one.
+The solver reports
+exactly those counts as rejected static modes, on every grid we have tried.
+
+It is tempting to conclude from the preceding paragraph that the restriction is what removes the
+null space. It is not, and the error is instructive because it is easy to make in a code review. The
+identity $\Cmat\Gmat=\mathbf{0}$ is an identity on the \emph{full} complex, and the proof in
+Proposition~\ref{prop:identities} is a telescoping sum around the loop bounding a face. Deleting the
+columns of the pinned edges deletes precisely those terms of the sum that cancel, so the restricted
+product $\Cmat_f\Gmat_f$ is not zero, and there is no restricted identity to appeal to. On the full
+1382-edge space there are $528-1=527$ independent gradients; after the restriction 216 of them are
+still in the kernel, and the remaining 311 are not in the unknown space at all, since their pinned
+entries are non-zero. The restriction shrinks the null space; it does not remove it.
+
+The second test we tried, and the second one to be discarded, was the divergence residual. Since a
+physical mode of the ideal problem satisfies $\Gmat_f^{\!\top}\Em_f\hat{\mathbf{e}}_f=\mathbf{0}$,
+one may hope that $\|\Gmat_f^{\!\top}\Em_f\hat{\mathbf{e}}_f\|/\|\Em_f\hat{\mathbf{e}}_f\|$
+separates the two families. Measured on the coarse grid, the gradients return $2.40$ to $2.68$ and
+the physical modes $0.45$ to $0.78$: two clusters of the same order of magnitude, with no
+machine-precision zero anywhere. The reason is structural rather than numerical. The only discrete
+identity available is $\Smat\Cmat=\mathbf{0}$ in \eqref{eq:identities}, and it relates the
+divergence to the \emph{curl}, not to the gradient; a discrete analogue of
+$\nabla\cdot(\eps\nabla\varphi)=0$ would require $\Smat\Em\Gmat=\mathbf{0}$, which fails because
+$\Em$ is a metric and not the identity. A gradient therefore has no reason to be distinguished by
+any divergence test, and none is. The implementation still applies the residual as a screen with a
+threshold of $1.5$, between the two clusters, but it is a belt over braces: on every grid of this
+report it rejects nothing, and the tests assert that it rejects nothing.
+
+What does work is the crudest test available. The null cluster sits at rounding level, and the
+physical spectrum
+does not, so a threshold on the eigenvalue separates them,
+\begin{equation}
+  \text{accept } \omega^{2} > \tau\,\omega^{2}_{\mathrm{ref}}, \qquad \tau=10^{-10}, \qquad
+  \omega^{2}_{\mathrm{ref}} = \left(\frac{\pi c_0}{L_{\max}}\right)^{2},
+  \label{eq:cut}
+\end{equation}
+with $L_{\max}$ the largest box dimension, $1.0$ m. On the coarse grid the reference frequency is
+$c_0/2L_{\max}=149.9$ MHz; the null cluster is measured at
+$1.3\times10^{-13}\,\omega^{2}_{\mathrm{ref}}$ and the
+fundamental at $3.0\,\omega^{2}_{\mathrm{ref}}$. The gap is therefore thirteen orders of magnitude
+wide, and the
+threshold sits about three orders above the cluster and ten below the fundamental -- it could be
+moved by an
+order in either direction without changing a single accepted mode. This is the most load-bearing
+number in the
+solver, and it is the one we would least like to lose: $\tau$ is a statement about floating-point
+arithmetic, not
+about the physics, and on a strongly graded mesh, where the assembly error may spread the cluster,
+it will need
+to become a relative gap test between consecutive eigenvalues.
+
+\subsection{The spectrum of a conducting box} \label{sec:spectrum}
+
+A rectangular cavity with perfectly conducting walls has the textbook spectrum
+\begin{equation}
+  f_{mnp} = \frac{c_0}{2}\sqrt{\left(\frac{m}{a}\right)^{2}+\left(\frac{n}{b}\right)^{2}
+  +\left(\frac{p}{d}\right)^{2}},
+  \label{eq:analytic}
+\end{equation}
+for a box $a\times b\times d=1.0\times0.7\times0.5$ m, and it is our reference because it exercises
+the
+discretisation on three different length scales at once. The counting is the part that is usually
+got wrong.
+Triples with a single non-zero index are not Maxwell modes and must be dropped: a TM mode needs
+$m,n\ge1$ and a
+TE mode needs $p\ge1$ together with $m\ge1$ or $n\ge1$. A triple with exactly two non-zero indices
+is one mode --
+$(m,n,0)$ is TM, $(m,0,p)$ and $(0,n,p)$ are TE -- and a triple with all three non-zero is TE/TM
+degenerate and
+counts twice. The lowest six modes are then $261.388$, $335.178$, $368.416$ twice and $397.743$
+twice, in MHz, and
+the doubling has two different causes that we keep apart. The pair at $397.743$ MHz is the genuine
+degeneracy of
+$(1,1,1)$, one TE and one TM mode that any rectangular box has. The pair at $368.416$ MHz is an
+accident of the
+proportions: because $b=d=a/2$, the triples $(0,1,1)$ and $(2,1,0)$ give the same value
+$\sqrt{6.0408}\,c_0/2a$ even though they are one TE and one TM mode of different shape. A box with
+$b\neq d$
+would separate them. Counting the accident as a degeneracy is right for this box and wrong as a
+rule, and the
+reference list intentionally contains the duplicate so that it can be compared one-to-one with a
+computed
+spectrum that resolves both polarisations.
+
+\begin{table}[H]
+  \centering
+  \caption{Lowest six resonances of the $1.0\times0.7\times0.5$ m cavity: analytic values from
+\eqref{eq:analytic}
+  and the computed ones on the two grids. Errors are relative and in per cent. Every computed value
+lies below
+  its analytic counterpart, as the variational argument requires.}
+  \label{tab:cavity}
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    mode & analytic [MHz] & mult.\ & coarse [MHz] & err [\%] & fine [MHz] & err [\%] \\
+    \midrule
+    $(1,1,0)$          & 261.388 & 1 & 259.567 & 0.697 & 260.487 & 0.345 \\
+    $(1,0,1)$          & 335.178 & 1 & 330.518 & 1.390 & 332.794 & 0.711 \\
+    $(0,1,1)$, $(2,1,0)$ & 368.416 & 2 & 363.384 & 1.366 & 365.863 & 0.693 \\
+    $(1,1,1)$          & 397.743 & 2 & 392.852 & 1.230 & 395.260 & 0.624 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:cavity} puts the two spectra side by side. Two features matter more than the
+individual numbers. First, every computed frequency is \emph{below} its analytic counterpart,
+without exception. That is not luck: the discretisation is a Rayleigh--Ritz method on a subspace of
+the continuous solution space, so its eigenvalues bound the exact ones from above in $\omega^{2}$
+and the frequencies from below \cite{bossavit1998,jin2014}. A method that overshot the analytic
+value on a converged grid would be a method with a sign error somewhere, and the bound gives us a
+check that costs nothing. Second, the errors are of order one per cent on the coarse grid, which is
+what the dispersion analysis of Section~\ref{sec:dispersion} leads one to expect: the fundamental is
+resolved by about ten cells per wavelength along the long side, and the deficit is second order in
+$h/\lambda$.
+
+The comparison in Table~\ref{tab:cavity} covers the six lowest modes because they are the ones the
+reference list resolves unambiguously. Beyond them the matching becomes a question about resolution
+rather than about the operator: the seventh and eighth analytic values, $423.971$ and $453.749$ MHz,
+come out at $417.031$ and $440.131$ MHz on the coarse grid -- $1.6$ and $3.0$ per cent -- and at
+$420.421$ and $447.033$ MHz on the fine one, because $(1,2,0)$ resolves only three and a half cells
+per half wavelength along the $0.7$ m side. Those errors belong to the same second-order family, and
+we quote them rather than hide them, but they are not part of the mean below.
+
+\subsection{Convergence under refinement}
+
+The refinement between the two grids is a factor $1.4$ in every direction: $h=0.1$ m on the coarse
+grid and $h=0.1/1.4=0.0714$ m on the fine one, with cells that are cubic to within two per cent, so
+the star metric \eqref{eq:stars} stays isotropic and the comparison isolates the mesh size. The mean
+relative error over the six modes falls from $1.213$ to $0.615$ per cent, a ratio of $0.507$, and
+the worst-case error from $1.39$ to $0.711$ per cent. The ratio predicted by a second-order method
+is $1/1.4^{2}=0.510$. Table~\ref{tab:convergence} collects the numbers.
+
+\begin{table}[H]
+  \centering
+  \caption{Convergence of the six lowest resonances of Table~\ref{tab:cavity} under uniform
+refinement by a
+  factor $1.4$. The error ratio is compared with the $h^{2}$ prediction.}
+  \label{tab:convergence}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    grid & $h$ [m] & free edges & mean err [\%] & worst err [\%] \\
+    \midrule
+    $10\times7\times5$   & 0.1000 & 762  & 1.213 & 1.390 \\
+    $14\times10\times7$  & 0.0714 & 2355 & 0.615 & 0.711 \\
+    \midrule
+    ratio                & 0.714  &      & 0.507 & 0.512 \\
+    prediction $h^{2}$   &        &      & 0.510 & 0.510 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The agreement between $0.507$ and $0.510$ is the strongest evidence in this report that the
+discretisation is right rather than tuned. A fitted correction factor, an empirically adjusted star,
+or a reference spectrum adjusted to fit the output would all reproduce the coarse numbers; none of
+them would halve the error when the cell size is divided by $1.4$. Second order is also what the
+construction promises -- the only approximation in the method is the diagonal star, and the FIT
+operators themselves are exact \cite{weiland1977,clemens2001} -- so the measurement confirms the
+analysis rather than standing in for it. The caveat is that both grids are uniform, and second order
+has not been demonstrated on a graded mesh; that remains an open question.
+
+\subsection{What we tried and rejected} \label{sec:rejected}
+
+Everything above is a dense solve. A dense solve is not available on the grids we want next, and
+the obvious
+alternative -- an iterative Krylov eigensolver, ARPACK's \texttt{eigsh} with shift-invert -- fails
+here in three
+distinct ways, each of which produces a plausible-looking answer rather than an error:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt,topsep=2pt]
+  \item With the shift at $\sigma=0$ the iteration converges onto the null space, since the null
+space sits
+        exactly at the shift and is 216- to 702-dimensional; a request for six vectors returns
+mostly static
+        modes, and too few physical ones survive to be called a spectrum.
+  \item Shifting upwards to escape the null space is worse, not better: shift-invert finds the
+eigenvalues
+        nearest the shift, so a shift placed above the fundamental returns a window \emph{above} it
+and the
+        lowest mode is silently missing. The output looks like a cavity spectrum with the
+fundamental absent,
+        which is exactly the failure mode hardest to notice.
+  \item Escalating or overlapping several shifts does not repair this, because no choice of shift
+makes a Krylov
+        method find eigenvalues below its target. The difficulty is not the shift but the order in
+which the
+        method visits the spectrum, and the null space is always visited first.
+\end{itemize}
+The conclusion is that the null space has to be removed \emph{before} the iteration, not filtered
+afterwards and
+not avoided by shifting. The fix is a deflation: project the gradient subspace out with the
+$\Em$-orthogonal
+projector built from a sparse potential solve,
+$\mathbf{P}=\mathbf{I}-\Gmat_f(\Gmat_f^{\!\top}\Em_f\Gmat_f)^{-1}
+\Gmat_f^{\!\top}\Em_f$, and run a block method such as LOBPCG on the deflated operator. The
+operator in brackets
+is a discrete Laplacian on the interior nodes, so applying the projector costs one sparse solve per
+iteration --
+cheap, but not yet written. That work is milestone M5 of the roadmap; until it lands, dense
+\texttt{eigh} ships
+with the \texttt{max\_dense} guard, which covers every grid in this report and none of the ones we
+want next.
+
+One further idea deserves a paragraph, because it looks like a filter and is not one. Define the
+curl residual
+\begin{equation}
+  r(\hat{\mathbf{e}}) = \frac{\|\Cmat\hat{\mathbf{e}}\|}{\|\hat{\mathbf{e}}\|\;\omega/c_0} \ \
+[\mathrm{m}],
+  \label{eq:rcurl}
+\end{equation}
+which has the dimensions of a length and was meant to answer the question "is this vector a wave or
+junk?" It
+does not answer it. The curl $\Cmat$ is dimensionless, so the numerator measures how much the field
+changes from
+one edge to the next, which for any resolved mode is of order $h/\lambda$ relative to the field
+itself; dividing
+by $\omega/c_0=2\pi/\lambda$ leaves the cell size and nothing else. Measured on the coarse grid,
+\eqref{eq:rcurl}
+returns $0.1000$ m -- exactly the pitch $h=0.1$ m -- for the fundamental, for the degenerate pair,
+and for every
+other physical mode, whatever its frequency or polarisation. It is a rewriting of the eigen-relation
+\eqref{eq:geneig}, which pins
+$\|\Cmat\hat{\mathbf{e}}\|^{2}_{\Mm^{-1}}=\omega^{2}\|\hat{\mathbf{e}}\|^{2}_{\Em}$
+for each eigenvector, so it cannot distinguish one eigenvector from another. The only vectors for
+which
+\eqref{eq:rcurl} returns something else are the exact gradients, where
+$\Cmat\hat{\mathbf{e}}=\mathbf{0}$; those
+are precisely the modes the static cut \eqref{eq:cut} already removes at machine precision, so the
+residual adds
+nothing even there, and for a contaminated vector -- the case it was invented for -- the physical
+admixture
+dominates the norm and the quotient returns the pitch again. We record it here so that it is not
+reinvented.
+
+What we can claim, then, is narrow and we state it narrowly. The FIT eigenproblem is symmetric and
+its spectrum is real and bounded below by zero; on a rectangular box the computed frequencies
+converge at second order to the analytic ones, from below, with errors of half a per cent on a grid
+of 2355 unknowns; the gradient null space is of dimension $(n_x-1)(n_y-1)(n_z-1)$, it is a
+consequence of the PEC restriction rather than of the discretisation, and it is separated from the
+physical spectrum by more than ten orders of magnitude. What we cannot claim is that any of this
+survives an iterative solver, a graded mesh, or a shape that is not a box, and the next section
+describes the implementation that the dense path rests on.

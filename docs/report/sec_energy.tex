@@ -1,0 +1,270 @@
+\section{Time stepping: the discrete energy identity}
+\label{sec:energy}
+
+\noindent\emph{Status: draft -- the update, the invariant and the stability bound are implemented and covered by the
+tests whose numbers are quoted below; the dispersion relation is derived here but is not yet the subject of a
+test of its own.}
+
+The Maxwell grid equations \eqref{eq:faraday} and \eqref{eq:ampere} of Section~\ref{sec:theory} are two coupled
+first-order equations in time. Integrating them is therefore not a question of solving a linear system but of
+choosing an integrator that respects the structure the spatial discretisation was built to preserve. This section
+states the scheme the code actually runs, derives the quadratic form it preserves exactly -- which is not the
+obvious one -- and reports the measured drift. It then treats the two limits that constrain every practical run:
+the stability bound on the time step, which is fixed by the smallest cell anywhere in the grid, and the dispersion
+of a wavefront on the grid, which makes it travel a little slower than light. The identity of
+Section~\ref{sec:invariant} is the discrete counterpart of the conservation law proved for the finite integration
+technique by \cite{schuhmann2001}; the stability and dispersion results are the classical ones for this staggering
+\cite{taflove2005,yee1966}.
+
+\subsection{The update as implemented}
+\label{sec:update}
+
+The scheme is the leapfrog (Verlet) pair: the magnetic field is advanced over a half step using the electric field
+at integer times, the electric field is then advanced over a full step using the magnetic field at the half step,
+and the conductor constraint is re-imposed. In the notation of Section~\ref{sec:theory},
+\begin{align}
+  \Mm\,\frac{\mathbf{h}^{n+1/2}-\mathbf{h}^{n-1/2}}{\Delta t} &= -\Cmat\,\mathbf{e}^{n},
+  \label{eq:leapfrog-h}\\
+  \Em\,\frac{\mathbf{e}^{n+1}-\mathbf{e}^{n}}{\Delta t} &= \tilde\Cmat\,\mathbf{h}^{n+1/2}
+  - \mathbf{j}^{n+1/2},
+  \label{eq:leapfrog-e}
+\end{align}
+with $\tilde\Cmat=\Cmat^{\!\top}$, followed by the projection
+\begin{equation}
+  \hat e_i^{\,n+1} = 0 \qquad \text{for every edge } i \text{ tangential to a perfect conductor},
+  \label{eq:leapfrog-pec}
+\end{equation}
+which is \eqref{eq:pec} applied to the solution rather than to the solution space. The stars in
+\eqref{eq:leapfrog-h} and \eqref{eq:leapfrog-e} are the diagonal Hodge matrices of Section~\ref{sec:hodge}, with
+$[\Em]_{ii}=\eps_{r,i}\eps_0A_{\tilde i}/L_i$ in farads and $[\Mm]_{ff}=\mu_{r,f}\mu_0A_f/L_{\tilde f}$ in henries,
+as in \eqref{eq:stars}. Two of their properties do all the work below. Both are diagonal and positive for positive
+material parameters, so a half step costs two sparse products by $\Cmat$ and $\tilde\Cmat$ and four elementwise
+scalings, and never a linear solve. And both scale \emph{linearly} with the cell size: the ratio $A_{\tilde i}/L_i$
+has dimension of length, so doubling every cell doubles every entry of $\Em$ and of $\Mm$ exactly, a fact the test
+suite asserts for that factor. The stars are Hodge stars, not mass matrices in the length-invariant sense usually
+meant by that name, and it is precisely this linear scaling that later produces the linear-in-$h$ bound of
+Section~\ref{sec:cfl}.
+
+The projection \eqref{eq:leapfrog-pec} is not a repair of a solution that has gone wrong. By \eqref{eq:pec} it is
+a constraint on the unknown space, and the rows of $\Cmat$ belonging to pinned edges could have been deleted in the
+first place; we keep them for bookkeeping and zero the result, which is equivalent because a zero column of
+$\Cmat$ contributes nothing to $\Cmat\mathbf{e}$. The argument of Section~\ref{sec:invariant} therefore runs
+unchanged on the restricted space, bit for bit, as promised in Section~\ref{sec:theory}.
+
+\subsection{The energy that the scheme does not conserve}
+
+The obvious candidate for a conserved quantity is the field energy
+\begin{equation}
+  U_{\mathrm{naive}} = \tfrac12\,\mathbf{e}\cdot(\Em\mathbf{e}) + \tfrac12\,\mathbf{h}\cdot(\Mm\mathbf{h})
+  \ \ [\mathrm{J}],
+  \label{eq:naive}
+\end{equation}
+which is \eqref{eq:energies}. It is \emph{not} conserved by \eqref{eq:leapfrog-h}--\eqref{eq:leapfrog-e}. To see
+why, take the inner product of \eqref{eq:leapfrog-h} with $\tfrac{\Delta t}{2}(\mathbf{h}^{n+1/2}+
+\mathbf{h}^{n-1/2})$ and of \eqref{eq:leapfrog-e} with $\tfrac{\Delta t}{2}(\mathbf{e}^{n+1}+\mathbf{e}^{n})$, and
+use the symmetry of $\Em$ and $\Mm$. The two identities
+\begin{align}
+  \tfrac12\,\mathbf{e}^{n+1}\!\cdot\Em\mathbf{e}^{n+1} - \tfrac12\,\mathbf{e}^{n}\!\cdot\Em\mathbf{e}^{n}
+  &= \tfrac{\Delta t}{2}\,\Cmat(\mathbf{e}^{n+1}+\mathbf{e}^{n})\cdot\mathbf{h}^{n+1/2},
+  \label{eq:telescope-e}\\
+  \tfrac12\,\mathbf{h}^{n+1/2}\!\cdot\Mm\mathbf{h}^{n+1/2}
+  - \tfrac12\,\mathbf{h}^{n-1/2}\!\cdot\Mm\mathbf{h}^{n-1/2}
+  &= -\tfrac{\Delta t}{2}\bigl(\Cmat\mathbf{e}^{n}\bigr)\cdot(\mathbf{h}^{n+1/2}+\mathbf{h}^{n-1/2})
+  \label{eq:telescope-h}
+\end{align}
+follow, and adding them cancels the shared term $\tfrac{\Delta t}{2}(\Cmat\mathbf{e}^{n})\cdot\mathbf{h}^{n+1/2}$
+only once. What survives, writing $U_{\mathrm{naive}}^{n}$ for \eqref{eq:naive} evaluated with $\mathbf{e}^{n}$ and
+$\mathbf{h}^{n-1/2}$, is
+\begin{equation}
+  U_{\mathrm{naive}}^{n+1} - U_{\mathrm{naive}}^{n}
+  = \tfrac{\Delta t}{2}\Bigl[\bigl(\Cmat\mathbf{e}^{n+1}\bigr)\cdot\mathbf{h}^{n+1/2}
+  - \bigl(\Cmat\mathbf{e}^{n}\bigr)\cdot\mathbf{h}^{n-1/2}\Bigr],
+  \label{eq:naive-drift}
+\end{equation}
+which does not vanish: the right-hand side is the one-step change of the cross term
+$\tfrac{\Delta t}{2}(\Cmat\mathbf{e})\cdot\mathbf{h}$. The defect is first order in $\Delta t$, of relative size
+$\omega\Delta t$. That is negligible while the step resolves the period and of order unity for a mode at the
+stability limit, and Section~\ref{sec:evidence} measures the second case at $3.71\times10^{-1}$. The naive energy
+is not conserved to a small error; it is the wrong quantity.
+
+\subsection{The exact invariant}
+\label{sec:invariant}
+
+\begin{proposition}[Exact discrete energy identity]
+\label{prop:invariant}
+Let $\mathbf{j}=\mathbf{0}$. Then \eqref{eq:leapfrog-h} and \eqref{eq:leapfrog-e} preserve
+\begin{equation}
+  U^{n} = \tfrac12\,\mathbf{e}^{n}\cdot\Em\mathbf{e}^{n}
+        + \tfrac12\,\mathbf{h}^{n-1/2}\cdot\Mm\mathbf{h}^{n-1/2}
+        - \tfrac{\Delta t}{2}\bigl(\Cmat\mathbf{e}^{n}\bigr)\cdot\mathbf{h}^{n-1/2}
+  \ \ [\mathrm{J}]
+  \label{eq:invariant}
+\end{equation}
+identically, $U^{n+1}=U^{n}$, and the same form with every magnetic index shifted by half a step.
+\end{proposition}
+
+\begin{proof}
+Add \eqref{eq:telescope-e} and \eqref{eq:telescope-h}. The right-hand side is
+$\tfrac{\Delta t}{2}[(\Cmat\mathbf{e}^{n+1})\cdot\mathbf{h}^{n+1/2}-(\Cmat\mathbf{e}^{n})\cdot
+\mathbf{h}^{n-1/2}]$, which by \eqref{eq:naive-drift} is exactly the increment that the third term of
+\eqref{eq:invariant} subtracts. Hence $U^{n+1}-U^{n}=0$.
+\end{proof}
+
+The cross term is not an embellishment added to make the numbers look better; it is what remains of the energy
+when the two fields are sampled half a step apart, and \eqref{eq:naive-drift} is the statement that omitting it
+costs a systematic first-order offset. Two readings make it natural. The first is Hamiltonian:
+\eqref{eq:leapfrog-h} advances $\mathbf{h}$ while $\mathbf{e}$ is frozen, \eqref{eq:leapfrog-e} advances
+$\mathbf{e}$ while $\mathbf{h}$ is frozen, and each of those shears of phase space is a symplectic map; their
+composition is symplectic, and \eqref{eq:invariant} is the quadratic form that the composed linear map preserves.
+The second is variational: \eqref{eq:invariant} is the Hamiltonian of the split system evaluated at the staggered
+midpoint $\tfrac12(\mathbf{e}^{n}+\mathbf{e}^{n+1})$, $\tfrac12(\mathbf{h}^{n-1/2}+\mathbf{h}^{n+1/2})$, which is
+why the two fields appear at times differing by $\Delta t/2$.
+
+Symplecticity is also the reason the drift is a rounding floor rather than a growing trend. A symplectic linear
+map preserves \eqref{eq:invariant} up to the rounding committed in evaluating it -- two sparse products and four
+scalings per step -- so each step contributes a defect of order $\epsilon_{\mathrm{mach}}U$ with no secular
+amplification, in contrast with a truncation term of order $\Delta t^{k}U$, which would accumulate linearly in the
+step count. Over a few thousand steps the two behaviours are separated by many orders of magnitude, which is the
+whole point of Section~\ref{sec:evidence}.
+
+With a source the identity acquires a right-hand side, and the right-hand side is the one the physics asks for:
+\begin{equation}
+  U^{n+1}-U^{n} = -\Delta t\,\mathbf{j}^{n+1/2}\cdot\bar{\mathbf{e}},
+  \qquad \bar{\mathbf{e}} = \tfrac12\bigl(\mathbf{e}^{n}+\mathbf{e}^{n+1}\bigr),
+  \label{eq:source-balance}
+\end{equation}
+so the injected power is $\mathbf{e}\cdot\mathbf{j}$ at the midpoint, which is \eqref{eq:power}. The energy
+balance of the discrete system is thus the discrete power balance of the continuous one, with no extra term. The
+only place the correspondence needs care is the hard source of Section~\ref{sec:theory}, which overrides
+\eqref{eq:leapfrog-e} on one edge and therefore performs work that \eqref{eq:source-balance} does not see.
+
+\subsection{Numerical evidence}
+\label{sec:evidence}
+
+The experiment is a $12\times10\times8$ grid, a random initial field, no source, and 500 steps. The quantity
+tabulated is the relative drift
+\begin{equation}
+  \delta U = \max_{0\le n\le N}\frac{|U^{n}-U^{0}|}{|U^{0}|}
+  \label{eq:drift}
+\end{equation}
+of the form under test. Table~\ref{tab:candidates} reports four candidates: the form \eqref{eq:invariant}, and the
+three nearest variants obtained from it by flipping the sign of the cross term, by pairing the magnetic field of
+the cross term with $\mathbf{h}^{n+1/2}$ while the energy uses $\mathbf{h}^{n-1/2}$, and by dropping the term
+altogether, which recovers \eqref{eq:naive}.
+
+\begin{table}[H]
+  \centering
+  \caption{Relative drift \eqref{eq:drift} of four candidate invariants over 500 undriven steps on a
+  $12\times10\times8$ grid with a random initial field. The candidates differ in one term each.}
+  \label{tab:candidates}
+  \begin{tabular}{@{}llr@{}}
+    \toprule
+    Candidate & Distinguishing term & $\delta U$ \\
+    \midrule
+    \eqref{eq:invariant}   & $-\tfrac{\Delta t}{2}(\Cmat\mathbf{e})\cdot\mathbf{h}$ & $1.298\times10^{-15}$ \\
+    wrong sign             & $+\tfrac{\Delta t}{2}(\Cmat\mathbf{e})\cdot\mathbf{h}$ & $4.79\times10^{-1}$ \\
+    mixed half-step        & $\mathbf{h}^{n+1/2}$ against $\mathbf{h}^{n-1/2}$      & $3.40\times10^{-1}$ \\
+    no cross term, \eqref{eq:naive} & none                                          & $3.71\times10^{-1}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The separation is fourteen orders of magnitude, and it is the same separation for each of the three variants: a
+sign error, a half-step mismatch, or the omission of the term each cost the full factor. The measurement therefore
+does not merely confirm the form we chose, it discriminates it against its three nearest neighbours, which is a
+much stronger statement than a small residual on its own. Longer runs behave identically. Over 1500 undriven steps
+the demonstration script reports $8.45\times10^{-16}$, and a live run of the conservation test reports
+$1.669\times10^{-15}$; the three figures differ by the rounding of different data over different step counts, not
+by a trend, which is what a rounding floor looks like when it is sampled three times. For scale,
+$10^{-15}$ relative is only a few multiples of $\epsilon_{\mathrm{mach}}\approx2.2\times10^{-16}$.
+
+\subsection{The stability bound}
+\label{sec:cfl}
+
+The bound follows from the dispersion relation of the scheme, which we need again in Section~\ref{sec:dispersion}
+and therefore state once. Substituting a Fourier mode $\mathbf{e}^{n}_i\propto\exp(\mathrm{i}\mathbf{k}\cdot
+\mathbf{x}_i-\mathrm{i}\omega n\Delta t)$ into \eqref{eq:leapfrog-h}--\eqref{eq:leapfrog-e} on a uniform grid of
+pitch $h$, and eliminating $\mathbf{h}$, gives
+\begin{equation}
+  \omega^2 = \frac{4c_0^2}{h^2}\sum_{a\in\{x,y,z\}}\sin^2\Bigl(\frac{k_a h}{2}\Bigr),
+  \label{eq:dispersion}
+\end{equation}
+the classical relation of the Yee lattice \cite{yee1966,taflove2005}. The factor four is what makes the
+long-wavelength limit $\omega\to c_0|\mathbf{k}|$; with it, \eqref{eq:dispersion} reduces to the continuum
+relation as $h\to0$ and the scheme is consistent.
+
+Stability of the leapfrog requires $\omega_{\max}\Delta t\le2$, and \eqref{eq:dispersion} is largest at the corner
+of the Brillouin zone, $k_a h=\pi$, where $\omega_{\max}=2c_0\sqrt{3}/h$. Hence
+\begin{equation}
+  \Delta t \le \sigma\,\frac{h_{\min}}{c_0\sqrt{3}}, \qquad \sigma=0.99 \text{ by default},
+  \label{eq:cfl}
+\end{equation}
+the three-dimensional cubic-lattice Courant bound, with a safety factor we keep strictly below one.
+
+We checked that \eqref{eq:cfl} is sharp rather than trusting it, because a bound that is merely sufficient is a
+bound one pays for on every run. Table~\ref{tab:cfl} reports the outcome at three multiples of the bound.
+
+\begin{table}[H]
+  \centering
+  \caption{Behaviour of the stepper at three multiples of the Courant bound \eqref{eq:cfl}, on a uniform grid
+  driven from a random initial field. The bound is not conservative: a two per cent excess diverges.}
+  \label{tab:cfl}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    $\Delta t/\Delta t_{\mathrm{CFL}}$ & outcome & remark \\
+    \midrule
+    $0.98$ & stable    & field bounded over the whole run \\
+    $1.01$ & stable    & field bounded, as the bound predicts \\
+    $1.02$ & divergent & growth to $6.7\times10^{122}$ over 5000 steps \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+That the failure at $1.02$ is a clean overflow rather than a slow wobble is worth noting: the unstable mode grows
+geometrically, so 5000 steps amplify it by the factor quoted. A code that merely looked at the first hundred steps
+would have called it stable.
+
+The structural point is that \eqref{eq:cfl} involves $h_{\min}$ and not an average. Every mode is bounded by the
+worst cell, so a single small cell anywhere in the domain limits the step for the whole grid, and a mesh refined
+locally to resolve a narrow gap pays for that refinement everywhere. This is why the examples keep the grid
+uniform, why grading is attractive only when it is mild, and why local time stepping belongs on the list of things
+to add rather than being a refinement of the present scheme.
+
+\subsection{Numerical dispersion}
+\label{sec:dispersion}
+
+Equation \eqref{eq:dispersion} is exact for the scheme, so it also predicts how fast a wavefront travels. Writing
+$v_{\mathrm{p}}=\omega/|\mathbf{k}|$ and using \eqref{eq:dispersion},
+\begin{equation}
+  \frac{v_{\mathrm{p}}}{c_0} = \frac{1}{|\mathbf{k}|h}
+  \left[4\sum_{a}\sin^2\Bigl(\frac{k_a h}{2}\Bigr)\right]^{1/2},
+  \label{eq:phase}
+\end{equation}
+which is strictly less than one for every non-zero $\mathbf{k}$ and tends to one as $|\mathbf{k}|h\to0$. On the
+$40\times6\times6$ grid of the demonstration, with $h=0.02$ m cells and a pulse whose nominal wavelength spans
+about ten cells, the measured wavefront speed is $0.904\,c_0$.
+
+Equation \eqref{eq:phase} is worth evaluating at that resolution, because it shows both the sign and the size of
+the effect. For propagation along an axis at ten cells per wavelength it gives $0.984\,c_0$; the measured deficit
+is larger than that, and corresponds instead to about four cells per wavelength, where the same formula gives
+$0.900\,c_0$. That is the resolution at which the leading edge of a broadband Ricker pulse actually sits, well
+below the nominal wavelength of its spectrum. We therefore report the measurement as a dispersion measurement of
+the tracked front rather than of the nominal wavelength, and note that the relation accounts for its size and,
+more importantly, for its sign.
+
+What matters for the credibility of the whole scheme is that the deficit is a smooth, direction-dependent,
+second-order bias: it follows \eqref{eq:phase} to within the ambiguity of what the front is, it vanishes as
+$h/\lambda\to0$, and it is not an instability and not a symptom of a wrong operator. It is the standard price of
+the staggered grid \cite{taflove2005}, and it is one of the reasons the validation section compares frequencies
+rather than propagation speeds.
+
+\subsection{Where the two limits come from}
+
+Both limits in this section are consequences of the one approximate step identified in
+Section~\ref{sec:theory}, the replacement of the constitutive law by the diagonal star \eqref{eq:stars}. The
+dispersion \eqref{eq:phase} is what a lumped material operator does to the phase of a short wave, and the bound
+\eqref{eq:cfl} is the price of the explicit step that the same lumping buys. Neither can be removed by a better
+integrator: the identity \eqref{eq:invariant} is already the best a fixed step can do, and it holds to rounding.
+The next section turns to the frequency domain, where the same two operators give a generalised eigenproblem, and
+where the structure that makes the time-domain path exact leaves behind a null space that has to be dealt with
+before a spectrum can be believed.

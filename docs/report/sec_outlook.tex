@@ -1,0 +1,98 @@
+\section{Outlook}
+\label{sec:outlook}
+
+\noindent\emph{Status: draft -- the milestone list and the acceptance criteria are transcribed from the roadmap
+that governs the work; the open problems are stated as problems, and none of the milestones after M0 is claimed
+to be working.}
+
+What remains is not a refinement of what is finished. The cavity solver of Sections~\ref{sec:eigen}
+and~\ref{sec:results} is accurate and its energy is exact, but the package cannot yet radiate: there is no
+absorbing boundary, no near-to-far-field transform and no port, so every problem it can address is enclosed by
+walls. The roadmap is therefore a list of capabilities rather than a list of improvements, and each entry carries
+an acceptance test expressed in terms of a quantity the code cannot currently compute. That is deliberate: a
+milestone is done when its number is reproduced by the test suite, not when the module exists.
+
+\begin{table}[H]
+  \centering
+  \caption{The roadmap. Status, deliverable and acceptance criterion for each milestone, in dependency order
+  rather than order of value. Only M0 is complete; M1 and M5 are in progress.}
+  \label{tab:milestones}
+  \begin{tabular}{@{}lp{1.8cm}p{5.6cm}p{5.6cm}@{}}
+    \toprule
+    & Status & Deliverable & Acceptance criterion \\
+    \midrule
+    M0 & done & time-domain core with the exact invariant; dense cavity eigensolver & thirty tests pass; box
+    modes within $1.3$\,\% ($1.213$\,\% coarse, $0.615$\,\% fine) and second-order ratio $0.507$ \\
+    M1 & in progress & first-order Mur absorbing condition on the six outer walls, then a stretched-coordinate
+    PML layer & PEC sphere of radius $0.1$ m: bistatic RCS within $0.5$ dB of the Mie series at $ka=1$
+    (\SI{477}{\mega\hertz}) and $ka=3$ \\
+    M2 & planned & near-to-far-field transformation over a Huygens surface, one transient run transformed &
+    half-wave dipole at \SI{300}{\mega\hertz}: $\operatorname{Re}Z_{\mathrm{in}}=73\pm5$\,\si{\ohm},
+    $|\operatorname{Im}Z_{\mathrm{in}}|<20$\,\si{\ohm}, $2.15\pm0.15$\,dBi \\
+    M3 & planned & two-dimensional modal port eigenproblem, mode overlaps, de-embedding & WR-90 waveguide,
+    TE$_{10}$ at \SI{6.557}{\giga\hertz}: $|S_{11}|<-30$\,dB, $|S_{21}|=1.000\pm0.001$, phase within
+    \SI{1}{\degree} \\
+    M4 & planned & KiCad s-expression reader, staircase voxelisation, stack-up to material parameters & microstrip
+    $Z_0$ within $5$\,\% of Hammerstad--Jensen; patch resonance within $3$\,\% of $c/(2L\sqrt{\eps_{\mathrm{eff}}})$ \\
+    M5 & in progress & gradient null-space deflation followed by a matrix-free eigensolver beyond the dense
+    threshold & $10^5$ free edges, six modes in under five minutes, within $0.1$\,\% of a dense solve \\
+    M6 & planned & $\mathbf{A}$--$V$ magnetoquasistatics with eddy currents; parareal time integration & aluminium
+    slab, skin depth $2.7$ mm at \SI{1}{\kilo\hertz} and $11.0$ mm at \SI{60}{\hertz}, within $2$\,\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Two of these entries are gates rather than features. M1 is the gate to every open-region question: without an
+absorbing boundary there is nothing to compare with a Mie series, and without a far-field transform there is no
+radiation pattern to draw, so M2 has no meaning until M1 has produced a field that leaves the domain. M5 is the
+gate to every engineering-sized geometry: the dense solver of Section~\ref{sec:eigen} refuses more than $3000$
+free edges, which is a cavity of a few wavelengths and no more, and nothing about a printed antenna fits inside
+that budget. The other four are independent of each other, which is why they can be reordered as time and
+interest allow.
+
+\subsection{Open problems}
+
+The following are difficulties we do not yet know how to price, not features we have promised. Each is stated as
+the question we would have to answer before the corresponding milestone could be called finished.
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=3pt]
+  \item \textbf{Whether the dispersion is worth repairing.} At about four cells per wavelength the tracked front
+        travels at $0.904\,c_0$, and \eqref{eq:phase} says why. The open question is what to do about it: raise
+        the order of the spatial operator, refine until the bias is negligible, or accept it and quote
+        frequencies with a known sign of error. Higher order means giving up the two-point stencil on which the
+        exact identity \eqref{eq:invariant} rests, so the cheap repair and the strong conservation result are in
+        direct competition, and we do not know which we would choose.
+  \item \textbf{The staircase error on curved geometry.} Voxelisation of a curved surface produces a boundary
+        off by up to half a cell, and the resulting frequency error is not second order. A patch antenna imported
+        from a layout file will be a staircase, and by how much that degrades the resonance is unknown to us; it
+        may be that a fine local grid is enough, or it may be that a conformal treatment of the boundary is
+        unavoidable and the structured-grid advantage is lost exactly where it is most wanted.
+  \item \textbf{Deflating the null space at scale.} The gradient modes that make \eqref{eq:geneig} singular
+        number in the thousands on the grids that matter, and the projector that removes them is a dense-ish
+        operator applied inside an iterative solve. Whether the deflated iteration converges in a time an engineer
+        will wait for, and whether it holds the $0.1$\,\% accuracy the dense path gives, is the substance of M5;
+        the shift-invert route was tried and rejected, which tells us the obvious approach is wrong but not that
+        the replacement is right.
+  \item \textbf{The global time step.} The bound \eqref{eq:cfl} is set by the smallest cell anywhere, so one
+        narrow gap or one thin conductor dictates the step count for the whole domain, and a graded grid can
+        multiply the number of steps by four orders of magnitude. Local time stepping is the textbook answer and
+        it interacts badly with an exact global invariant, since a scheme with different steps in different
+        regions does not have a single conserved quadratic form of the simple sort.
+  \item \textbf{Where the boundary goes.} Mur's condition and a Berenger layer both assume an outgoing wave and
+        both are approximate on a staggered grid, and the reflection they leave behind sets the floor on any
+        scattering result. Absorbing more than $20$ dB, and then more than $40$ dB, is a numerical question we
+        have not answered; and a PML needs a diagonal tensor material in the layer, which the present scalar
+        material layer cannot express, so M1 begins with an extension of the data structure rather than with an
+        algorithm.
+\end{enumerate}
+
+\subsection{Scope}
+
+We want to be plain about what the report as a whole claims. \texttt{emfit} is, today, a verified solver for
+closed, isotropic, lossless problems on structured grids: it conserves the discrete energy to rounding, it
+reproduces the analytic spectrum of a conducting box to about one per cent on coarse grids with second-order
+convergence, and it propagates a wavefront at the speed its own dispersion relation predicts. It is not yet a tool
+for the questions posed in Section~\ref{sec:theory} about antennas, laminate or scatterers, because those need a
+field that leaves the domain and a port through which power is measured, and neither exists. The milestones above
+are acceptance tests for that transition; the open problems are the parts of it we cannot yet cost. Progress will
+be recorded here as it happens, including the parts that go badly.

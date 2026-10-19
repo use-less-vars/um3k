@@ -27,9 +27,10 @@ hence limited to grids with at most 3000 free edges.
 | M6 | MQS eddy currents and parareal | PLANNED | `emfit/mqs.py` (A-V), `emfit/parareal.py` | slab skin depth within 2 % of analytic |
 
 This table is identical to the Summary table of [`docs/roadmap.md`](docs/roadmap.md), which
-is authoritative. M0 is the only landed milestone; its delivered scope also covers the
-operator and Hodge-star unit tests, the headless visualisation layer (`emfit/viz.py`), the
-runnable cavity demo and packaging (`pyproject.toml`).
+is authoritative. M0 has landed, and its delivered scope also covers the operator and
+Hodge-star unit tests, the headless visualisation layer (`emfit/viz.py`), the runnable cavity
+demo and packaging (`pyproject.toml`). M1 is underway: the visualisation layer and the figures
+it produces are in place, while the absorbing boundary conditions are still outstanding.
 
 Test suite: **30 tests**, full run **~51 s** (dominated by the dense `eigh` of the
 14x10x7 cavity grid in `tests/test_cavity.py`).

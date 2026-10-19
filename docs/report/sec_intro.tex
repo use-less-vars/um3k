@@ -1,0 +1,148 @@
+\section{Aims and scope}
+
+\noindent\emph{Status: draft -- the purpose, the division of labour between the sections and the notation are
+settled; the framing will be adjusted as milestones land.}
+
+\texttt{emfit} is meant to be an engineer's tool rather than a demonstration of a method. Given a
+three-dimensional structure -- a cavity, a piece of laminate, a patch of a printed circuit board -- together with
+a description of the materials filling it, the tool should answer the questions an engineer actually asks: where
+the field is, at which frequencies the structure rings, and how much power leaves through which port. The
+discretisation used throughout is the finite integration technique (FIT) introduced by Weiland
+\cite{weiland1977,weiland1996} and systematised, in the form adopted here, by Clemens and Weiland
+\cite{clemens2001} and Schuhmann and Weiland \cite{schuhmann2001}. The rest of this report is about how far that
+single sentence has been made true, and where it has not.
+
+\subsection{What the tool is for}
+
+Two high-frequency workflows set the direction of the work, and a third, low-frequency extension follows once
+they are solid.
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{A general three-dimensional solver.} A box of (for now isotropic, lossless) material is excited by
+        a soft current source, and the fields are stepped in time. What is wanted out of it is the ring-down
+        spectrum of a cavity, field maps on a cut plane, and an energy balance that can be trusted because it is
+        exact rather than merely small.
+  \item \textbf{An antenna on a printed circuit board.} A driven structure with feed and load ports, from which
+        scattering parameters and a radiation pattern are extracted. This is the commercially relevant case and
+        it is the reason the roadmap insists on ports, on a near-to-far-field transform and on importing real
+        geometry, rather than on ever larger toy cavities; the antenna-theory side of the acceptance tests
+        follows \cite{balanis2016}.
+  \item \textbf{A low-frequency extension.} Magnetoquasistatic eddy currents in laminations and conductors, and a
+        time-parallel integrator for long transient runs. This is deliberately last: it shares the grid and the
+        material layer, and nothing else.
+\end{itemize}
+
+\subsection{Why the finite integration technique}
+
+The choice of method is not incidental; six properties carried the decision.
+
+FIT discretises the \emph{integral} form of Maxwell's equations rather than the differential form. The unknowns
+are line integrals of the electric and magnetic field along primal and dual edges, and surface integrals of flux
+through primal and dual faces \cite{weiland1977,clemens2001}. Because the integral form is an exact statement
+about any cell, not only about an infinitesimally small one, there is no Taylor expansion anywhere in the
+derivation: the only step at which the discrete model departs from Maxwell's equations is the constitutive step,
+where the material response is replaced by a matrix on the grid.
+
+Topology is exact and \emph{metric free}. The discrete operators are incidence matrices whose entries are $0$ and
+$\pm 1$ and nothing else, so the identities $\Cmat\Gmat = 0$ and $\Smat\Cmat = 0$ hold in integer arithmetic on
+every grid, uniform or not. Refining one region of the domain therefore changes nothing but the metric, i.e.\ the
+Hodge star; that is a property a general finite-element assembly does not give for free, and it is what makes
+non-uniform meshing cheap here.
+
+The scheme is energy conserving in a strong sense, made precise in the section on energy conservation and stability: the leapfrog update
+has an exact discrete invariant, a mixed-state energy that includes a first-order cross term, and that invariant
+is conserved at the level of round-off rather than merely bounded.
+
+There is no linear system to solve in the time domain. The Hodge stars are diagonal, so a step is two sparse
+matrix-vector products: the electric and magnetic unknowns update each other explicitly. No global matrix is
+factored, no preconditioner is built, and no iterative tolerance has to be chosen -- which is why a step is cheap
+enough that the time domain is a practical way to obtain a spectrum.
+
+FIT is the parent of Yee's scheme \cite{yee1966}. On a uniform orthogonal grid with staggered unknowns the two
+coincide, so fifty years of accumulated experience with finite-difference time-domain methods on dispersion,
+stability and staircasing \cite{taflove2005} transfers directly, and the FIT derivation supplies the reason why
+those properties hold.
+
+The price is regularity. FIT lives on structured hexahedral grids, so a curved surface becomes a staircase.
+Finite elements on unstructured tetrahedra, or edge elements in the sense of Bossavit \cite{bossavit1998} and
+Whitney forms in the sense of \cite{jin2014}, fit geometry better but pay for it with a global sparse solve at
+every step, or with an implicit formulation and its conditioning problems. For the class of problems this project
+targets -- boxes, cavities, layered laminates, antennas over a finite ground plane -- the structured grid is not
+a practical limitation, and the cheap explicit step is decisive.
+
+\subsection{Scope of this report}
+
+This is a living document. It records what is implemented, the mathematics the implementation rests on, and the
+measured evidence for each claim; every number quoted in the validation section is asserted by a test in the
+repository, so a claim that stops being true turns the suite red. Anything that is designed but not implemented is
+confined to the Outlook and to \texttt{docs/roadmap.md}; it is not described here in the present
+tense. Where the two disagree, the roadmap is authoritative for status and this report for method.
+
+\subsection{Implemented and not yet implemented}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item[] \textbf{Working today.}
+        Orthogonal grids with non-uniform spacing and their dual cell complexes (\texttt{emfit/grid.py},
+        \texttt{emfit/operators.py}); the three topological operators with $\Cmat\Gmat = 0$ and $\Smat\Cmat = 0$
+        exact, verified against hand-checked stencils; the diagonal Hodge stars $\Em$, $\Mm$ and $\Ms$; the
+        assembled system \texttt{FITSystem} with PEC walls imposed as a constraint on the unknown vector; the
+        explicit leapfrog stepper, whose mixed-state invariant drifts by $8.5\times10^{-16}$ relative over the
+        $343$~ns ring-down of the example (1800 steps) and stays at the $10^{-15}$ level over 2000 steps of random
+        fields; the sharp CFL bound, stable at $1.01$ times the limit and divergent at $1.02$; a soft current
+        source with the power balance $P = \vec e\cdot\vec j$; a dense cavity eigensolver with static-mode
+        filtering and an analytic rectangular-box reference; and a headless visualisation layer with a runnable
+        example. The suite is 30 tests and takes about 51~s.
+  \item[] \textbf{Measured accuracy.} On a $1.0\times0.7\times0.5$~m PEC box the first six modes are reproduced
+        with a mean absolute error of $1.213\,\%$ and a maximum of $1.390\,\%$ on the $10\times7\times5$ grid, and
+        $0.615\,\%$ / $0.711\,\%$ on $14\times10\times7$ -- a mean-error ratio of $0.507$ against the $0.510$
+        predicted by second order for the $1.44$ times refinement used.
+  \item[] \textbf{Not implemented.} Absorbing boundaries, first Mur \cite{mur1981} and then a perfectly matched
+        layer \cite{berenger1994}: today a domain is closed by PEC or PMC walls only. The near-to-far-field
+        transform and radiating antennas. Waveguide ports and S-parameters. Geometry import from a board layout.
+        A large-grid eigensolver, the dense path refusing more than 3000 free edges. Magnetoquasistatic eddy
+        currents and time-parallel integration. Lossy and dispersive media: $\Ms$ is assembled but not yet
+        coupled into the step, and the material layer understands diagonal tensors only. There is no
+        two-dimensional transverse-magnetic mode, no non-orthogonal grid, and no finite-element path.
+\end{itemize}
+
+\subsection{Notation and conventions}
+
+\begin{table}[H]
+  \centering
+  \caption{Symbols used throughout. The unit is the unit of the corresponding discrete quantity, which is what
+  the code stores; the continuum field is the integrand, not the unknown.}
+  \label{tab:notation}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    Symbol & Meaning & Unit \\
+    \midrule
+    $\vec e$      & electric field strength            & V/m   \\
+    $\vec h$      & magnetic field strength            & A/m   \\
+    $\vec b$      & magnetic flux density              & Wb/m$^2$ \\
+    $\vec d$      & electric flux density              & C/m$^2$ \\
+    $\vec j$      & electric current density           & A/m$^2$ \\
+    $\Em$         & diagonal Hodge star, permittivity  & F     \\
+    $\Mm$         & diagonal Hodge star, permeability  & H     \\
+    $\Cmat$       & primal curl (faces $\times$ edges) & 1     \\
+    $\Gmat$       & primal gradient (edges $\times$ nodes) & 1 \\
+    $\Smat$       & primal divergence (cells $\times$ faces) & 1 \\
+    $\eps_0$      & vacuum permittivity                & F/m   \\
+    $\mu_0$       & vacuum permeability                & H/m   \\
+    $c_0$         & vacuum speed of light              & m/s   \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item SI units throughout, with no unitless rescaling anywhere in the code: lengths in metres, energies in
+        joules, powers in watts. All internal quantities are \texttt{float64}.
+  \item Real-valued time-domain fields everywhere except in the eigenmode analysis, where complex phasors are used; the phasor convention is stated there where it
+        matters and nowhere else.
+  \item Degrees of freedom are written as bold lower case letters, and a tilde marks a quantity on the dual
+        complex: $\mathbf{e}$, $\mathbf{h}$, and $\tilde{\mathbf{h}}$ for the dual line integral of $\vec h$.
+  \item Unknown vectors are the concatenation \texttt{EX}, \texttt{EY}, \texttt{EZ} of the primal edges, then
+        \texttt{FX}, \texttt{FY}, \texttt{FZ} of the primal faces, with each block flattened in C order; material
+        vectors are indexed exactly like the block they belong to, not like the cells.
+  \item Three dimensions only. There is no two-dimensional transverse-magnetic reduction, and every statement in
+        this report is about a hexahedral complex.
+\end{itemize}

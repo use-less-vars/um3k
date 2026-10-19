@@ -19,14 +19,11 @@ installable (`pip install -e '.[dev]'`) and green: nothing starts that cannot be
 | M5 | Large-grid eigensolver, thin features, FEM | IN PROGRESS | `emfit/eigen.py`: ARPACK/LOBPCG on the Helmholtz-projected operator | 100k free edges, 6 modes, < 0.1 % vs dense |
 | M6 | MQS eddy currents and parareal | PLANNED | `emfit/mqs.py` (A-V), `emfit/parareal.py` | slab skin depth within 2 % of analytic |
 
-Numbering note: the README status table still carries the previous numbering (M1 = cavity eigenmodes, M5 = ARPACK,
-M6 = PML/ports/antenna). **This file is authoritative**; the cavity eigensolver is folded into M0 because it is the
-instrument that validates the time-domain core.
-
-Status provenance: M0 is the only landed milestone (30 tests, ~51 s, numpy 2.5.4 / scipy 1.18.1). M5 is IN PROGRESS
+Status provenance: M0 has landed (30 tests, ~51 s, numpy 2.5.4 / scipy 1.18.1). M5 is IN PROGRESS
 because `resonances()` already exposes a `sigma` shift argument and the `max_dense = 3000` guard is covered by
 `tests/test_cavity.py::test_dense_limit_raises_not_implemented` -- neither is a working large-grid path, and the
-`sigma = 0` shift-invert route is a dead end (see M5). M1-M4 and M6 have no code yet.
+`sigma = 0` shift-invert route is a dead end (see M5). M1 is partially landed: `emfit/viz.py` and the figures
+it produces are in place, while `emfit/abc.py` / `emfit/pml.py` are outstanding. M2-M4 and M6 have no code yet.
 
 ## M0 -- Time-domain core and cavity eigensolver
 

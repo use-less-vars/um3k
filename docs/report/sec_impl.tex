@@ -1,0 +1,202 @@
+\section{The implementation}
+\label{sec:impl}
+
+\noindent\emph{Status: draft -- the module map, the data layout and the API example describe the code as it
+stands and have been re-checked against it, including a run of the example reproduced below; the test inventory
+is quoted from a full run of the suite.}
+
+The theory of Sections~\ref{sec:theory} and~\ref{sec:energy} occupies far fewer lines than the code that carries
+it. That is expected, and it is worth saying why: the mathematics of the finite integration technique is a
+handful of incidence matrices and diagonal star matrices, but an implementation has to decide where each of them
+lives, how the unknowns are numbered, which quantity is a vector and which a sparse matrix, which arrays are
+cached, and how the conductor constraint is expressed so that it costs nothing at run time. Those decisions are
+what this section records, because they are the part of the package that a reader wanting to change it needs
+first.
+
+The package is pure Python on top of \texttt{numpy} and \texttt{scipy}. There is no compiled extension and no
+generated code, and the only dependency beyond those two is \texttt{matplotlib}, which is imported by the
+plotting module alone and never by the solver. The whole of \texttt{emfit} is about $1.76$ thousand lines,
+distributed as in Table~\ref{tab:modules}; the demonstration script, the three test modules and the visualisation
+module together are roughly as large again, which is a fair reflection of where the effort went.
+
+\subsection{The module map}
+\label{sec:modules}
+
+Each module owns exactly one of the objects of Section~\ref{sec:theory}, and the dependency arrows point one way.
+
+\begin{table}[H]
+  \centering
+  \caption{The modules of \texttt{emfit}, their size, and the object each one owns. The last column points at
+  the part of the theory that fixes the module's behaviour.}
+  \label{tab:modules}
+  \small
+  \begin{tabular}{@{}lrl p{3.9cm} p{3.5cm}@{}}
+    \toprule
+    Module & Lines & Owns & Governing equations \\
+    \midrule
+    \texttt{grid.py}       & 223 & node coordinates, widths, dual widths, areas, volumes & \eqref{eq:stars} \\
+    \texttt{operators.py}  & 305 & index maps, $\Gmat$, $\Cmat$, $\Smat$, duals, PEC mask & \eqref{eq:identities}, \eqref{eq:pec} \\
+    \texttt{materials.py}  & 266 & the diagonal stars $\Em$, $\Mm$, $\Ms$, constants     & \eqref{eq:stars} \\
+    \texttt{evolve.py}     & 264 & leapfrog step, sources, CFL bound, energy             & \eqref{eq:leapfrog-h}--\eqref{eq:invariant} \\
+    \texttt{maxwell.py}    & 103 & curl--curl assembly, PEC constraints                  & \eqref{eq:rcurl} \\
+    \texttt{eigen.py}      & 261 & resonances, static cut, residual screen, analytic box & \eqref{eq:geneig-f}, \eqref{eq:cut} \\
+    \texttt{viz.py}        & 303 & spectrum, field slice, energy panels                  & --- \\
+    \texttt{\_\_init\_\_}  & 33  & version and the submodule imports                     & --- \\
+    \midrule
+    total                  & 1758 &                                                      & \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The split that matters is \texttt{grid} against \texttt{operators}. \texttt{grid.py} holds a frozen dataclass
+whose entire content is the three coordinate arrays; it answers metric questions -- the width of a cell, the
+length of an edge, the area of a face, the volume of a cell -- and it knows nothing about topology, numbering or
+materials. \texttt{operators.py} holds the \texttt{CellComplex}, which answers topological questions -- how many
+edges, which edge is which, what $\Cmat$ and $\Smat$ are -- and it knows nothing about lengths. The claim tested
+in \texttt{test\_operators} is precisely that: the incidence matrices of a uniform grid and of a deliberately
+jittered non-uniform grid of the same cell counts are the same integer arrays, because refinement can only change
+the stars and never the connectivity. A package that mixed the two would still produce plausible numbers on a
+uniform grid and would fail silently on a graded one.
+
+The second split is time domain against frequency domain. \texttt{evolve.py} and \texttt{eigen.py} share the stars
+and the operators and nothing else; the stepper never assembles a matrix, and the eigensolver never takes a step.
+\texttt{maxwell.py} is the bridge: a thin class that assembles the curl--curl system of Section~\ref{sec:eigen}
+for a caller who wants a system object rather than a function call, and applies the conductor constraint as a
+restriction of the unknown space rather than as a penalty. It is the smallest module in the package, which is the
+intended outcome of having written the operators first.
+
+\subsection{Data layout and sparse operators}
+\label{sec:layout}
+
+Every field quantity is a flat one-dimensional \texttt{float64} array, and every operator is a
+\texttt{scipy.sparse} matrix in CSR form. The two statements are related: the operators have at most six
+non-zeros per row, so a matrix--vector product is a short gather, and that gather is the whole of the spatial
+discretisation at each step. The number of unknowns in each family follows from the cell counts through the
+relations tabulated in Table~\ref{tab:counts}; the $10\times7\times5$ cavity of the demonstration has $1382$
+edges, of which $762$ remain free once the six walls are constrained, and the $40\times6\times6$ validation grid
+has $5404$ edges and $4836$ faces.
+
+Numbering within each family is a stride formula, and it is not something a caller should ever write out: the
+complex exposes \texttt{idx\_ex}, \texttt{idx\_ey}, \texttt{idx\_ez}, \texttt{idx\_fx}, \texttt{idx\_fy},
+\texttt{idx\_fz}, \texttt{idx\_node} and \texttt{idx\_cell}, each taking $(i,j,k)$ and returning an offset into
+the corresponding block. The six families share one flat index space, which keeps a field as a single array and
+lets a source be described by a list of edge indices. The index helpers are also what the tests use to write a
+stencil by hand and compare it with the assembled row, which is how the sign conventions of
+\eqref{eq:identities} are pinned down.
+
+The operators are assembled once, from coordinate triplets, and cached on the complex: $\Cmat$ of shape
+$(n_{\mathrm{faces}},n_{\mathrm{edges}})$, $\Gmat$ of shape $(n_{\mathrm{edges}},n_{\mathrm{nodes}})$ and $\Smat$
+of shape $(n_{\mathrm{cells}},n_{\mathrm{faces}})$. The two dual operators are not stored; they are the
+transposes \texttt{curl\_dual()} $=\Cmat^{\!\top}$ and \texttt{divergence\_dual()} $=\Smat^{\!\top}$, exposed as
+properties so that callers never index a transpose they have built themselves. This is the one place in the
+package where it is easy to go wrong: \texttt{divergence()} builds one row per \emph{cell} with six face
+contributions and outward signs, and therefore has shape $(n_{\mathrm{cells}},n_{\mathrm{faces}})$, while the
+identities are often written with the divergence mapping faces to cells and the curl mapping edges to faces. Both
+conventions are consistent, and a mismatch shows up immediately as the failure of \eqref{eq:identities} -- which
+is exactly what the first tests assert, so the convention is checked on every run rather than remembered.
+
+The stars are diagonal, so they are not stored as matrices at all. \texttt{material\_matrices} returns two
+one-dimensional arrays, one entry per edge and one per face, and an application is an elementwise product. The
+stepper caches their reciprocals once at construction, so the update \eqref{eq:leapfrog-h}--\eqref{eq:leapfrog-e}
+costs two sparse products, two elementwise multiplications and one gather per step, with no allocation.
+\texttt{MaterialMatrix} exists alongside the arrays for the eigensolver and for callers who prefer the linear
+algebra to look like linear algebra; it holds the diagonal, its inverse and its solve, and supports
+\texttt{@}. Material parameters may be given as a scalar, as a per-dof array, or as a vectorised callable of
+$(x,y,z)$ sampled at edge or face centres -- the form \texttt{test\_energy} uses to build a two-layer medium
+whose ratio must come out at exactly two.
+
+The conductor constraint is a boolean mask. \texttt{pec\_edge\_mask} returns, for a choice of walls among the six
+outer ones, a mask that is true exactly on the edges tangential to a conducting wall; the eigensolver uses it to
+restrict the unknown space and the stepper uses it as an index, so that \eqref{eq:leapfrog-pec} is the single
+assignment \texttt{e[mask] = 0.0} per step. On the demonstration grid it selects $620$ of the $1382$ edges, which
+is the count the eigenvalue argument of Section~\ref{sec:nullspace} predicts without any geometric reasoning.
+
+\subsection{A worked example}
+\label{sec:api}
+
+The following is a complete run, and is exactly what the package offers at its lowest level: no configuration
+object, no solver class to inherit from, six lines from grid to field.
+
+\begin{lstlisting}[style=python]
+from emfit.grid import Grid
+from emfit.operators import CellComplex
+from emfit.materials import material_matrices
+from emfit.evolve import FITStepper, RickerSource, cfl_dt
+
+grid = Grid.uniform(40, 6, 6, lx=0.8, ly=0.12, lz=0.12)          # h = 0.02 m everywhere
+cc   = CellComplex(grid)                                         # G, C, S and the PEC mask
+m_eps, m_mu = material_matrices(grid, cc, eps_r=1.0)             # Hodge stars, one per dof
+step = FITStepper(cc, m_eps, m_mu, dt=cfl_dt(grid), pec=cc.pec_edge_mask())
+src  = RickerSource(cc.n_edges, idx=[cc.idx_ex(10, 3, 3)], fmax=1.5e9)
+
+for _ in range(400):
+    step.step(src(step.time))                                    # soft current on one edge
+print(step.n, step.time, step.energy())                          # 400, 1.53e-8 s, 3.19e-9 J
+\end{lstlisting}
+
+The grid is the validation grid of Section~\ref{sec:energy} at $h=0.02$ m: $5404$ edges, $4836$ faces,
+$\Delta t=3.81\times10^{-11}$ s from the bound \eqref{eq:cfl}, and $400$ steps in about $1.6$ s of wall-clock
+time on a single core. Nothing is hidden in the six lines. The grid is built first because it carries the metric,
+the complex from it because it carries the topology, the stars from both because they need both, and the stepper
+is handed the reciprocal stars because that is all it uses. \texttt{step.step} takes the source values as an
+argument rather than storing them, which makes a time-dependent excitation a closure and keeps the driver loop in
+the caller's hands; \texttt{step.run(nsteps, source=..., probe=..., callback=...)} wraps the same loop for the
+common case, and is what the demonstration uses.
+
+Two consequences of the layout are visible from outside. Because a field is one array, a diagnostic can be a
+function of that array alone, and \texttt{energy\_components()} returns the four terms of \eqref{eq:invariant}
+separately rather than a single number -- which is how the wrong-sign and missing-term variants of
+Table~\ref{tab:candidates} were measured. And because the constraint is a mask rather than a boundary condition
+inside the solver, an open boundary will be an addition to the same array and not a change to the data layout:
+the absorbing layers of Section~\ref{sec:outlook} update edges in place and introduce no new unknowns.
+
+\subsection{Testing}
+\label{sec:testing}
+
+The suite is thirty \texttt{pytest} tests in three modules and takes about $51$ s to run, of which the cavity
+module accounts for roughly $50$ s. That imbalance is deliberate, and is worth stating plainly: the algebra and
+the conservation laws are cheap to check, and a dense eigenvalue solve on a $14\times10\times7$ grid is not.
+
+\begin{table}[H]
+  \centering
+  \caption{The three test modules, what each one is allowed to claim, and its share of the run time.}
+  \label{tab:tests}
+  \begin{tabular}{@{}l p{7.4cm} r l@{}}
+    \toprule
+    Module & Claim under test & Tests & Time \\
+    \midrule
+    \texttt{test\_operators} & $\Cmat\Gmat=0$, $\Smat\Cmat=0$, shapes, transposes, signs, metric independence & 15 & $\approx1$ s \\
+    \texttt{test\_energy}    & star values and units, exact conservation, CFL sharpness, wave speed          & 6  & $\approx2$ s \\
+    \texttt{test\_cavity}    & spectrum against analytic values, null-space count, order of convergence      & 9  & $\approx50$ s \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The algebra module is the cheapest and the most useful. It checks that the two compositions vanish, that the
+convenience views agree with the transposes, that every entry of the assembled operators is in
+$\{-1,0,+1\}$, that a hand-written gradient stencil matches the assembled row, and that a jittered non-uniform
+grid of the same size produces the same integer arrays -- the metric-independence claim of
+Section~\ref{sec:modules}. These tests run in about a second and would catch any change to the numbering, which
+is the kind of change that otherwise leaves the physics plausible and the answers wrong.
+
+The time-domain module checks four things against closed forms rather than against stored output. The star
+entries are compared with $A_{\tilde e}/L_e$ and $A_f/L_{\tilde f}$ computed by hand, and with a material ratio
+that must come out at exactly two. The invariant \eqref{eq:invariant} is checked on random fields over $2000$
+steps, with a tolerance of $10^{-6}$ against a measured drift of $1.3\times10^{-15}$, so the test asserts a
+structural property and not a tuned number. The stability bound is checked on both sides: a step at $0.98$ of
+\eqref{eq:cfl} stays bounded, and a step above the bound grows without limit. And the wave speed is measured
+against the dispersion relation \eqref{eq:phase} on a grid ten cells per nominal wavelength, which is the
+measurement reported in Section~\ref{sec:results}.
+
+The cavity module is the expensive one and is the reason the suite is not instantaneous. A $14\times10\times7$
+grid is large enough that a dense symmetric solve takes tens of seconds and small enough that its answer can be
+compared with a fine-grid reference computed from the same code. What it establishes is the order of convergence,
+the magnitude of the error on the two grids used in the report, the count of rejected static modes, and the
+equality of the degenerate pairs -- all numbers quoted in Section~\ref{sec:eigen}. It also holds the one test
+that asserts a limit: above the dense threshold the eigensolver must raise rather than silently attempt an
+infeasible dense solve.
+
+There are no golden files anywhere in the suite. Every expected value is either an integer count, a closed form,
+or a number produced in the same run by an independent path, so a failing test names a broken law rather than a
+changed output. The price of that discipline is the fifty seconds of dense eigensolve; the benefit is that the
+tolerances in the suite can be read as statements about the method rather than about the machine it last ran on.

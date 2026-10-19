@@ -17,7 +17,7 @@ Operator shapes
 ---------------
 ``G``  (n_edges, n_nodes)   node potential -> edge voltage
 ``C``  (n_faces, n_edges)   primal curl, edge voltage -> face flux rate
-``S``  (n_faces, n_cells)   cell charge -> outward face flux
+``S``  (n_cells, n_faces)   cell charge -> outward face flux
 
 Maxwell in FIT notation::
 
