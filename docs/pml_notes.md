@@ -72,3 +72,8 @@ damping points are: straight after the `h` update, and straight after the `e`
 update (i.e. at the end of the step, before the PEC reset - PEC wins on the
 walls either way).
 
+
+### Two lessons from the 2024 reflection measurements
+
+- **Window trap.**  A shared probe window must span *both* echoes: the wall echo (~3.3 ns after the source peak) *and* the PML interface echo (~2.0 ns). A window that closes before the Mur echo arrives differences to float noise (-186 dB) and made Mur look 109 dB better than it is — the comparison must be timed from the arrival table, never eyeballed.
+- **Wavelength law.**  Thickness in dB is linear: ~-52 dB at one free-space wavelength, ~-79 dB at two, mesh independent to 0.6 dB between 20 and 40 ppw. `emfit.pml.cells_for_wavelength(lam0, h)` encodes it.

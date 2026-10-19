@@ -29,3 +29,6 @@ dist/
 .tools/
 .build.exit
 reports/
+
+# Scratch runs (ad-hoc harnesses, never committed)
+.scratch/

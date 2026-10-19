@@ -112,7 +112,7 @@ import numpy as np
 from .materials import EPS0, ETA0, MU0
 from .operators import CellComplex
 
-__all__ = ["PML", "AXES"]
+__all__ = ["PML", "AXES", "cells_for_wavelength"]
 
 #: the three index axes, in the order the flat edge/face vectors use
 AXES = ("x", "y", "z")
@@ -419,3 +419,43 @@ class PML:
                           for name in self.axes)
         return (f"PML(axes=({', '.join(self.axes)}), "
                 f"order={self.order}, target={self.target:.1e}, {parts})")
+
+
+# ----------------------------------------------------------------------
+# sizing helper
+# ----------------------------------------------------------------------
+def cells_for_wavelength(lam0: float, h: float, target_db: float = -79.0) -> int:
+    """Layer thickness (cells) worth ``target_db`` of reflection at ``lam0``.
+
+    Empirical law for *this* discretisation (graded profile, ``order=2``,
+    ``target=1e-4``), measured by the two-run difference at normal incidence:
+    the reflection improves linearly in dB with thickness, from about -52 dB at
+    one free-space wavelength to -79 dB at two::
+
+        lam = 1.0 + (target_db + 52.0) / -27.0
+
+    The law is mesh independent to within 0.6 dB between 20 and 40 points per
+    wavelength, which is the range it is meant for.  The count is clipped from
+    below at 8 cells, the smallest layer that still behaves like one.
+
+    Parameters
+    ----------
+    lam0 : float
+        Longest free-space wavelength to absorb, in metres (must be > 0).
+    h : float
+        Mesh cell size, in metres (must be > 0).
+    target_db : float, optional
+        Wanted reflection level in dB, negative; defaults to -79 dB, the
+        figure measured for the 40-cell duct layer.
+
+    Returns
+    -------
+    int
+        Cell count to hand to ``PML(thickness_cells=...)``.
+    """
+    if not lam0 > 0.0:
+        raise ValueError(f"lam0 must be > 0, got {lam0!r}")
+    if not h > 0.0:
+        raise ValueError(f"h must be > 0, got {h!r}")
+    lam = 1.0 + (float(target_db) + 52.0) / -27.0
+    return max(8, int(np.ceil(lam * lam0 / h)))

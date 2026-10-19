@@ -48,7 +48,7 @@ from .evolve import FITStepper, RickerSource, cfl_dt
 from .grid import Grid
 from .materials import C0, material_matrices
 from .operators import CellComplex
-from .pml import PML
+from .pml import PML, cells_for_wavelength
 
 import matplotlib.pyplot as plt  # noqa: E402  (after the backend is fixed)
 
@@ -485,13 +485,19 @@ DUCT_ABC_PLANES = ("xmin", "xmax")
 DUCT_THRESHOLD_DB = -40.0
 
 
-def _duct_pml_cells(nx: int) -> int:
+def _duct_pml_cells(nx: int, f0: float = None, h: float = None) -> int:
     """Matched-layer thickness (cells) for a duct resolved with ``nx`` cells.
 
-    Eight cells is the floor that still fits a coarse run, forty is the point
-    where the layer is worth about -79 dB at normal incidence, and the 1/8 rule
-    keeps the layer proportional to the grid in between.
+    Given the drive frequency and the mesh step, the thickness comes from the
+    measured reflection law in :func:`emfit.pml.cells_for_wavelength`, aimed at
+    -79 dB -- the level the duct run quotes.  The two clips keep it sane: eight
+    cells is the floor that still fits a coarse run, and a quarter of the grid
+    is the most the layer may take before the interior is gone.  Without
+    ``f0`` and ``h`` the 1/8 rule is used instead.
     """
+    if f0 is not None and h is not None:
+        cells = cells_for_wavelength(C0 / f0, h, target_db=-79.0)
+        return min(max(cells, DUCT_PML_MIN_CELLS), nx // 4)
     return min(DUCT_PML_MAX_CELLS, max(DUCT_PML_MIN_CELLS, nx // 8))
 
 
@@ -518,6 +524,7 @@ def _run_duct(values: Mapping[str, Any], sink: FigureSink) -> dict:
     pml_on = termination == "pml"
     absorbing = mur_on or pml_on
 
+    dx = DUCT_LX / nx
     grid = Grid.uniform(nx, ny, 1, DUCT_LX, DUCT_LY, DUCT_LZ)
     cc = CellComplex(grid)
     m_eps, m_mu = material_matrices(grid, cc)
@@ -525,13 +532,12 @@ def _run_duct(values: Mapping[str, Any], sink: FigureSink) -> dict:
     # The layer sits against the PEC end planes, so the same wall mask serves
     # both absorbing terminations; only the Mur run leaves the ends free.
     walls = DUCT_SIDE_WALLS if mur_on else DUCT_ABC_PLANES + DUCT_SIDE_WALLS
-    pml = (PML(grid, thickness_cells=_duct_pml_cells(nx), order=2,
+    pml = (PML(grid, thickness_cells=_duct_pml_cells(nx, DUCT_F0, dx), order=2,
                target=1e-4, axes=("x",), cc=cc) if pml_on else None)
     stepper = FITStepper(cc, m_eps, m_mu, pec=cc.pec_edge_mask(walls), pml=pml)
     mur = (Mur1Boundary(grid, stepper.dt, cc=cc, planes=DUCT_ABC_PLANES,
                         pec=stepper.pec_idx) if mur_on else None)
 
-    dx = DUCT_LX / nx
     i_src = int(round(DUCT_SRC_X / dx))
     i_prb = int(round(DUCT_PRB_X / dx))
     profile = np.sin(np.pi * np.arange(ny + 1) / ny)
