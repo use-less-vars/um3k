@@ -351,12 +351,14 @@ class ScatterRun:
         return float(np.max(np.abs(self.frames))) if self.frames.size else 0.0
 
 
-def run_field(st: ScatterSetup, frames, mask=None) -> ScatterRun:
+def run_field(st: ScatterSetup, frames, mask=None, probe=None) -> ScatterRun:
     """Integrate one member of the pair, keeping ``Ez`` at step ``frames``.
 
     ``mask`` is a PEC mask from :func:`cylinder_pec_mask` (``None`` = no
     scatterer).  Everything else -- grid, ``dt``, source object, layer, walls --
     comes from ``st``, so the two members of a pair differ only by the mask.
+    ``probe`` is a callable ``probe(time, stepper)`` invoked after every
+    completed step; the default ``None`` leaves the result bit-identical.
     """
     frames_idx = np.asarray(frames, dtype=np.intp)
     pec = st.cc.pec_edge_mask(st.walls)
@@ -369,6 +371,8 @@ def run_field(st: ScatterSetup, frames, mask=None) -> ScatterRun:
     times = np.empty(len(wanted))
     for n in range(st.nsteps):
         stepper.step(st.source(stepper.time))
+        if probe is not None:
+            probe(stepper.time, stepper)
         slot = wanted.get(n)
         if slot is not None:
             out[slot] = ez_slice(st.cc, stepper.e)

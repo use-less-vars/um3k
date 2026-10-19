@@ -36,11 +36,14 @@ more cell in any direction crosses the limit and raises
 from __future__ import annotations
 
 import os
+import tempfile
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from . import nearfield
 from . import scatter
 from . import viz  # selects the Agg backend before pyplot is imported anywhere
 from .abc import Mur1Boundary
@@ -129,6 +132,7 @@ class FigureSink:
 
     def __init__(self) -> None:
         self._figures: list[dict] = []
+        self._attachments: list[dict] = []
 
     # -- filling ------------------------------------------------------------
     def add(self, slug: str, title: str, png: bytes, caption: str = "") -> None:
@@ -145,11 +149,31 @@ class FigureSink:
         """Render ``fig`` through :func:`emfit.viz.png_bytes` and append it."""
         self.add(slug, title, viz.png_bytes(fig, dpi=dpi), caption=caption)
 
+    def add_attachment(self, slug: str, filename: str, data: bytes,
+                       title: str = "", caption: str = "") -> None:
+        """Attach an output that is not a PNG (the ``rcs`` animation).
+
+        The figures themselves are PNG by contract -- both front ends embed
+        them as ``<img>`` -- but an animation is a GIF and cannot travel that
+        way.  An attachment keeps the same declaration (``slug``, ``title``,
+        ``caption``) and adds the file ``filename`` it must be written as, so
+        :meth:`save_to` can put it next to the figures and report its path
+        without the caller having to know that a study produced one.
+        """
+        self._attachments.append(
+            {"slug": str(slug), "title": str(title), "filename": str(filename),
+             "data": bytes(data), "caption": str(caption)})
+
     # -- reading ------------------------------------------------------------
     @property
     def figures(self) -> list[dict]:
         """The collected figures as ``{slug, title, png, caption}`` dicts."""
         return [dict(f) for f in self._figures]
+
+    @property
+    def attachments(self) -> list[dict]:
+        """The collected non-PNG outputs as ``{slug, title, filename, data}``."""
+        return [dict(a) for a in self._attachments]
 
     def slugs(self) -> list[str]:
         return [f["slug"] for f in self._figures]
@@ -168,7 +192,12 @@ class FigureSink:
 
     # -- persistence --------------------------------------------------------
     def save_to(self, directory) -> list[str]:
-        """Write every figure as ``<slug>.png`` under ``directory``."""
+        """Write every figure as ``<slug>.png`` under ``directory``.
+
+        Attachments are written too, under their own file name, after the
+        figures; the returned list is every file written, so a caller that
+        just prints it reports the animation as well.
+        """
         directory = os.fspath(directory)
         os.makedirs(directory, exist_ok=True)
         paths = []
@@ -176,6 +205,11 @@ class FigureSink:
             path = os.path.join(directory, f"{fig['slug']}.png")
             with open(path, "wb") as handle:
                 handle.write(fig["png"])
+            paths.append(path)
+        for attachment in self._attachments:
+            path = os.path.join(directory, attachment["filename"])
+            with open(path, "wb") as handle:
+                handle.write(attachment["data"])
             paths.append(path)
         return paths
 
@@ -765,6 +799,251 @@ def _run_scatter(values: Mapping[str, Any], sink: FigureSink) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# study 5: bistatic RCS of the PEC cylinder (polar pattern, animation)
+# ---------------------------------------------------------------------------
+RCS_SAMPLES = 180                 # pattern points, two degrees apart
+RCS_ANIM_FRAMES = 24              # frames in the animation
+RCS_ANIM_SPAN = (-1.5, 3.5)       # wavelengths either side of the peak arrival
+RCS_ANIM_HALF_WIDTH = 2.2         # half-width of the animated window [lambda]
+RCS_ANIM_DPI = 72
+RCS_ANIM_FPS = 8
+
+
+def _rcs_animation_gif(result, delay_ns: np.ndarray) -> bytes:
+    """GIF bytes of |Ez scattered| sweeping past the PEC cylinder.
+
+    ``result`` is an :class:`emfit.scatter.ScatterResult` holding one frame per
+    entry of ``delay_ns``.  The colour scale is computed **once** from the
+    whole stack and then held fixed, so a frame can be compared with any other
+    frame; per-frame scaling would make the outgoing wave look constant in
+    amplitude and hide exactly what the animation is for.  The cylinder circle
+    is drawn from the analytic geometry, the same overlay the still figures
+    use, so the staircase is never mistaken for the ideal body.
+
+    The animation is written through
+    :class:`matplotlib.animation.PillowWriter`, which needs no external
+    encoder (the image has no ffmpeg).  ``PillowWriter`` insists on a path it
+    can resolve, so the frames go through a private temporary file and come
+    back as bytes; the study itself still owns no output location -- it hands
+    the bytes to the sink, which decides where they land.
+
+    Parameters
+    ----------
+    result : ScatterResult
+        Fields of the sweep, ``ez_scattered`` of shape ``(n_frames, nx+1,
+        ny+1)`` (or ``(nx+1, ny+1)`` for a single frame).
+    delay_ns : ndarray
+        Time of each frame [ns], measured from the peak of the launched pulse.
+
+    Returns
+    -------
+    bytes
+        The complete GIF.
+    """
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    st = result.setup
+    frames = np.abs(np.asarray(result.ez_scattered, dtype=float))
+    if frames.ndim == 2:                          # a single frame came back
+        frames = frames[None, ...]
+    peak = float(np.max(frames)) or 1.0
+    delay_ns = np.asarray(delay_ns, dtype=float).ravel()
+
+    grid = st.grid
+    x = np.asarray(grid.x, dtype=float)
+    y = np.asarray(grid.y, dtype=float)
+    centre = st.centre
+    half = RCS_ANIM_HALF_WIDTH * st.lam
+
+    fig, ax = plt.subplots(figsize=(3.4, 2.9), dpi=RCS_ANIM_DPI,
+                           constrained_layout=True)
+    mesh = ax.imshow(frames[0], origin="lower",
+                     extent=(x[0], x[-1], y[0], y[-1]), cmap="viridis",
+                     vmin=0.0, vmax=peak, interpolation="nearest")
+    _scatter_overlay(ax, result.cc, result.mask, centre, result.a)
+    ax.set_xlim(centre[0] - half, centre[0] + half)
+    ax.set_ylim(centre[1] - half, centre[1] + half)
+    ax.set_aspect("equal")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    fig.colorbar(mesh, ax=ax, shrink=0.9, label=r"$|E_z^{scat}|$ [V/m]")
+    heading = ax.set_title("")
+
+    def update(index: int):
+        mesh.set_data(frames[index])
+        heading.set_text(f"$ka$ = {result.ka:g}, {result.ppw} cells / "
+                         f"$\\lambda$, $t$ = {delay_ns[index]:.2f} ns")
+        return ()
+
+    anim = FuncAnimation(fig, update, frames=frames.shape[0], blit=False)
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            path = os.path.join(scratch, "rcs-animation.gif")
+            anim.save(path, writer=PillowWriter(fps=RCS_ANIM_FPS),
+                      dpi=RCS_ANIM_DPI)
+            with open(path, "rb") as handle:
+                return handle.read()
+    finally:
+        plt.close(fig)
+
+
+def _rcs_at(phis_deg: np.ndarray, values: np.ndarray, angle: float) -> float:
+    """Value of ``values`` at the sampled angle nearest ``angle`` [deg]."""
+    return float(np.asarray(values, dtype=float)[
+        int(np.argmin(np.abs(np.asarray(phis_deg, dtype=float) - angle)))])
+
+
+def _run_rcs(values: Mapping[str, Any], sink: FigureSink) -> dict:
+    """Bistatic scattering width of a PEC cylinder, against exact Mie.
+
+    One :func:`emfit.nearfield.run_rcs` call at every angle gives the whole
+    pattern; the contour integral is a post-processing step over the same two
+    integrations, so sweeping the observation angle costs nothing.  The second
+    figure is an animation of the run the same setup produces, animated past
+    the body so the outgoing wave is visible rather than inferred.
+    """
+    ka, ppw = float(values["ka"]), int(values["ppw"])
+    t_start = time.perf_counter()
+
+    phis = np.arange(0.0, 360.0, 360.0 / RCS_SAMPLES)
+    result = nearfield.run_rcs(ka=ka, ppw=ppw, phis_deg=phis)
+    ours_db = np.asarray(result.sigma_2d_db, dtype=float)
+    mie_db = np.asarray(result.sigma_mie_db, dtype=float)
+    diff = np.asarray(result.db_diff, dtype=float)
+    rms_db = float(np.sqrt(np.mean(diff ** 2)))
+    worst = int(np.argmax(np.abs(diff)))
+    worst_db = float(diff[worst])
+
+    # Mean over a uniform angle sweep is the 2-D total scattering width normalised
+    # so that an isotropic pattern has sigma_total = sigma(phi).
+    sigma_total_ours = float(np.mean(result.sigma_2d))
+    sigma_total_mie = float(np.mean(result.sigma_mie))
+
+    # --- figure: polar pattern and the same curves on Cartesian axes --------
+    fig = plt.figure(figsize=(11.0, 4.6), constrained_layout=True)
+    ax_polar = fig.add_subplot(1, 2, 1, projection="polar")
+    ax_polar.set_theta_zero_location("E")     # 0 deg at +x, to the right
+    ax_polar.set_theta_direction(1)           # increasing anticlockwise
+    theta = np.radians(phis)
+    ax_polar.plot(theta, ours_db, color=viz.COL_PRIMARY, lw=1.4,
+                  label="FIT (this code)")
+    ax_polar.plot(theta, mie_db, color=viz.COL_ACCENT, lw=1.1, ls="--",
+                  label="exact Mie")
+
+    # Radial limits from the data, with a margin: the forward lobe is the
+    # largest value on the plot and must stay inside the frame.
+    lo = float(np.floor(min(ours_db.min(), mie_db.min()))) - 1.0
+    hi = float(np.ceil(max(ours_db.max(), mie_db.max()))) + 1.0
+    ticks = np.arange(np.ceil(lo / 10.0) * 10.0, hi, 10.0)
+    ax_polar.set_rlim(lo, hi)
+    ax_polar.set_rgrids(ticks, labels=[f"{tick:g}" for tick in ticks],
+                        angle=135.0, fontsize=7)
+    ax_polar.set_thetagrids(np.arange(0.0, 360.0, 30.0),
+                            labels=[f"{a:g}" for a in np.arange(0.0, 360.0, 30.0)],
+                            fontsize=7)
+    ax_polar.grid(color=viz.COL_MUTED, lw=0.4, alpha=0.6)
+    ax_polar.set_title(r"$10\log_{10}\,\sigma_{2D}$ [dB m] against $\phi$",
+                       fontsize=9)
+    ax_polar.text(0.02, 0.98,
+                  f"$ka$ = {result.ka:g}\n{result.ppw} cells / wavelength\n"
+                  f"radius $a$ = {result.a:.4f} m ({result.radius_cells:.2f} cells)\n"
+                  f"$\\sigma_{{tot}}$ = {sigma_total_ours:.3f} / "
+                  f"{sigma_total_mie:.3f} m",
+                  transform=ax_polar.transAxes, va="top", ha="left", fontsize=7,
+                  color=viz.COL_INK)
+    ax_polar.legend(loc="lower left", fontsize=7, framealpha=0.9)
+
+    ax_db = fig.add_subplot(1, 2, 2)
+    ax_db.plot(phis, ours_db, color=viz.COL_PRIMARY, lw=1.4,
+               label="FIT (this code)")
+    ax_db.plot(phis, mie_db, color=viz.COL_ACCENT, lw=1.1, ls="--",
+               label="exact Mie")
+    ax_db.set_xlabel(r"observation angle $\phi$ [deg]")
+    ax_db.set_ylabel(r"$10\log_{10}\,\sigma_{2D}$ [dB m]")
+    ax_db.set_xlim(0.0, 360.0)
+    ax_db.set_xticks(np.arange(0.0, 361.0, 45.0))
+    ax_db.grid(color=viz.COL_MUTED, lw=0.4, alpha=0.5)
+    ax_db.set_title("same curves, with the error on their own axis", fontsize=9)
+    ax_db.legend(loc="upper right", fontsize=7, framealpha=0.9)
+
+    ax_err = ax_db.twinx()
+    ax_err.fill_between(phis, 0.0, diff, color=viz.COL_ACCENT, alpha=0.20, lw=0)
+    ax_err.plot(phis, diff, color=viz.COL_ACCENT, lw=0.9)
+    ax_err.axhline(0.0, color=viz.COL_INK, lw=0.5)
+    ax_err.set_ylabel("difference, FIT minus Mie [dB]", fontsize=8)
+    spread = float(np.max(np.abs(diff))) or 1.0
+    ax_err.set_ylim(-1.35 * spread, 1.35 * spread)
+    ax_err.tick_params(labelsize=7)
+    ax_db.text(0.02, 0.03,
+               f"rms |diff| = {rms_db:.2f} dB\n"
+               f"max |diff| = {abs(worst_db):.2f} dB at {phis[worst]:.0f} deg",
+               transform=ax_db.transAxes, va="bottom", ha="left", fontsize=7.5,
+               color=viz.COL_INK,
+               bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=viz.COL_MUTED,
+                         alpha=0.85, lw=0.5))
+    fig.suptitle(f"Bistatic scattering width of a PEC cylinder, $ka$ = "
+                 f"{result.ka:g}, {result.ppw} cells per wavelength", fontsize=10)
+    sink.add_figure(
+        "rcs-pattern", "Bistatic RCS of the PEC cylinder against Mie", fig,
+        caption=(f"Left: polar plot of the scattering width, 0 deg along +x and "
+                 f"increasing anticlockwise, radial limits {lo:g} to {hi:g} dB "
+                 f"taken from the data so the forward lobe stays in frame. "
+                 f"Right: the same two curves on Cartesian axes with the "
+                 f"difference (FIT minus Mie) shaded on the right-hand axis; "
+                 f"rms {rms_db:.2f} dB, largest {abs(worst_db):.2f} dB at "
+                 f"{phis[worst]:.0f} deg. The error is the whole pipeline -- "
+                 f"staircase, dispersion, contour quadrature, absorber "
+                 f"leakage -- and is concentrated where the pattern is "
+                 f"shallowest (the nulls), as it must be: a fixed relative "
+                 f"error is a large dB error where sigma is small."))
+
+    # --- figure: the run itself, as an animation ---------------------------
+    to_centre = 0.5 * scatter.N_LAMBDA - scatter.PML_LAMBDA - scatter.SRC_INSET
+    offsets = np.linspace(RCS_ANIM_SPAN[0], RCS_ANIM_SPAN[1], RCS_ANIM_FRAMES)
+    delays = (to_centre + offsets) * scatter.LAM0 / C0
+    sweep = scatter.run_scatter(ka=ka, ppw=ppw, delays=delays)
+    delay_ns = (np.asarray(sweep.times, dtype=float) - sweep.setup.t0) * 1e9
+    gif = _rcs_animation_gif(sweep, delay_ns)
+    sink.add_attachment(
+        "rcs-animation", "rcs-animation.gif", gif,
+        title="Scattered |Ez| sweeping past the PEC cylinder",
+        caption=(f"{delay_ns.size} frames, {delay_ns[0]:.2f} to "
+                 f"{delay_ns[-1]:.2f} ns from the peak of the launched pulse. "
+                 f"One fixed colour scale for the whole animation, taken from "
+                 f"the largest |Ez scattered| anywhere in the sweep, so the "
+                 f"amplitude decay is real and not a re-normalisation. Dashed "
+                 f"circle: the ideal scatterer."))
+
+    contour_w, contour_h = result.contour_size_lambda
+    timings = dict(result.timings or {})
+    return {
+        "electrical size ka": f"{result.ka:.3f}",
+        "cells per wavelength": f"{result.ppw}",
+        "cylinder radius a": f"{result.a:.4f} m",
+        "radius in cells": f"{result.radius_cells:.2f}",
+        "wavenumber k": f"{result.k:.4f} 1/m",
+        "sigma @ 0 / 90 / 180 deg": " / ".join(
+            f"{_rcs_at(phis, result.sigma_2d, angle):.4f}"
+            for angle in (0.0, 90.0, 180.0)) + " m",
+        "sigma Mie @ 0 / 90 / 180 deg": " / ".join(
+            f"{_rcs_at(phis, result.sigma_mie, angle):.4f}"
+            for angle in (0.0, 90.0, 180.0)) + " m",
+        "sigma total, ours": f"{sigma_total_ours:.4f} m (mean over phi)",
+        "sigma total, Mie": f"{sigma_total_mie:.4f} m (mean over phi)",
+        "rms dB difference": f"{rms_db:.3f} dB",
+        "max dB difference": f"{abs(worst_db):.3f} dB at {phis[worst]:.0f} deg",
+        "pattern points": f"{phis.size}",
+        "time steps": f"{result.nsteps}",
+        "time step dt": f"{result.dt:.4e} s",
+        "contour size": f"{contour_w:.2f} x {contour_h:.2f} wavelengths",
+        "animation frames": f"{delay_ns.size} at {RCS_ANIM_FPS} fps, "
+                            f"{len(gif) / 1024.0:.0f} kB",
+        "time domain wall time": f"{timings.get('total', 0.0):.2f} s",
+        "wall time": f"{time.perf_counter() - t_start:.2f} s",
+    }
+
+
+# ---------------------------------------------------------------------------
 # registry
 # ---------------------------------------------------------------------------
 CAVITY = Study(
@@ -862,7 +1141,31 @@ SCATTER = Study(
     run=_run_scatter,
 )
 
-STUDIES: dict = {study.name: study for study in (CAVITY, MODES, DUCT, SCATTER)}
+RCS = Study(
+    name="rcs",
+    title="Bistatic RCS of a PEC cylinder against exact Mie",
+    blurb=("A PEC cylinder in a pulse beam, measured at every angle: the far "
+           "field on a contour around the body is integrated into a bistatic "
+           "scattering width and compared with the Mie series for the same "
+           "ka. Left panel of the figure is the polar pattern at a glance, "
+           "the right one the same two curves with the difference drawn on its "
+           "own axis; the second output is an animation of the scattered "
+           "field sweeping past the cylinder. The error reported is the error "
+           "of the whole pipeline, not of one step."),
+    params=(
+        Param("ka", "electrical size ka", "float", 3.0, lo=0.5, hi=6.0,
+              help="Circumference in wavelengths, 2 pi a / lambda; the pattern "
+                   "sharpens with it, and the staircase gets relatively "
+                   "smaller."),
+        Param("ppw", "cells per wavelength", "int", 20, lo=8, hi=32,
+              help="The domain is six wavelengths square, so the cell count "
+                   "and the run time follow from this; below about 12 the "
+                   "pattern is visibly dispersion-limited."),
+    ),
+    run=_run_rcs,
+)
+
+STUDIES: dict = {study.name: study for study in (CAVITY, MODES, DUCT, SCATTER, RCS)}
 """Registry of every study, keyed by :attr:`Study.name`."""
 
 
