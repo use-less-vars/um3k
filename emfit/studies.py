@@ -1156,7 +1156,14 @@ class MicrostripWave:
         beta_model: ``emfit.microstrip`` Hammerstad-Jensen value at the same
             frequency [rad/m].
         z0: ``V / I`` at the port station, ``V`` from the port gap and ``I``
-            from the truncated ground return [ohm].
+            from the truncated ground return, complex [ohm].  This is the
+            impedance of the port plane, not of the line: ``abs(z0)`` is its
+            modulus and ``z0.real`` its resistive part, and neither may be
+            quoted as the characteristic impedance without the phase beside
+            it.  The value is referred to the trace (forward) current -- the
+            return current is summed in the opposite sense, so the raw
+            ``V / I`` is negated -- which makes ``arg(z0)`` the excess phase of
+            the port impedance (about +17 deg at the default case).
         z0_model: Closed-form quasi-static impedance of the cross-section [ohm].
         eps_eff: Effective permittivity implied by ``beta``, i.e. by the
             one-wave fit and not by the two-station difference.
@@ -1192,7 +1199,10 @@ class MicrostripWave:
             f" n_warm={g['n_warm']}"
             f" beta={self.beta:.4f}rad/m beta_model={self.beta_model:.4f}rad/m"
             f" eps_eff={self.eps_eff:.5f} eps_eff_model={self.eps_eff_model:.5f}"
-            f" z0={abs(self.z0):.4f}ohm z0_model={self.z0_model:.4f}ohm"
+            f" |z0|={abs(self.z0):.4f}ohm"
+            f" arg_z0={np.degrees(np.angle(self.z0)):.4f}deg"
+            f" Re_z0={self.z0.real:.4f}ohm"
+            f" z0_model={self.z0_model:.4f}ohm"
             f" i_ground_full={abs(self.i_ground_full):.6e}A"
             f" i_ground_truncated={abs(self.i_ground_truncated):.6e}A"
             f" y_extent={self.y_extent * 1e3:.4f}mm")
@@ -1457,7 +1467,17 @@ def microstrip_wave(
     line = Microstrip(w=float(w), h=float(h), eps_r=float(eps_r))
     beta_model = float(line.beta(f0))
     eps_eff = (beta * C0 / (2.0 * np.pi * f0)) ** 2
-    z0 = complex(v_port / i_trunc) if i_trunc != 0.0 else complex(np.nan, np.nan)
+    # The minus sign is the reference-plane convention, not a result.  The port
+    # current is taken from the ground-plane return, and ``plate_current`` sums
+    # that return in its own sense, which is antiparallel to the trace current;
+    # the raw ratio ``V / I`` therefore carries a spurious 180 deg.  Negating it
+    # refers the impedance to the trace (forward) current, which is the
+    # convention every transmission-line reference uses, and turns the phase
+    # into the port's excess phase (about +17 deg here) instead of -163 deg.
+    # The magnitude is untouched by the sign, so every ``|S|`` and every
+    # tolerance is unaffected.
+    z0 = (-complex(v_port / i_trunc)
+          if i_trunc != 0.0 else complex(np.nan, np.nan))
 
     geometry = {
         "nx": nx, "ny": ny, "nz": nz, "cell": cell,
@@ -1548,12 +1568,19 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "|gamma|": f"{abs(result.gamma):.5f}",
         "fit residual": f"{result.fit_residual:.5f}",
         "beta (Hammerstad-Jensen)": f"{result.beta_model:.3f} rad/m",
-        "beta error": (f"{100.0 * (result.beta / result.beta_model - 1.0):.2f} %"
-                       if result.beta_model else "n/a"),
+        "beta, fit vs model": (f"{100.0 * (result.beta / result.beta_model - 1.0):.2f} %"
+                               " (diagnostic: the model is quasi-static, so "
+                               "this compares two different problems)"
+                               if result.beta_model else "n/a"),
         "eps_eff": f"{result.eps_eff:.5f}",
         "eps_eff (Hammerstad-Jensen)": f"{result.eps_eff_model:.5f}",
-        "Z0 = V/I at the port": f"{abs(result.z0):.3f} ohm",
-        "Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
+        "port Z, modulus": f"{abs(result.z0):.3f} ohm",
+        "port Z, phase": (f"{np.degrees(np.angle(result.z0)):.3f} deg "
+                          "(excess phase, trace-current reference)"),
+        "port Z, real part": f"{result.z0.real:.3f} ohm",
+        "line Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
+        "port modulus / model": f"{abs(result.z0) / result.z0_model:.4f}",
+        "port real part / model": f"{result.z0.real / result.z0_model:.4f}",
         "ground current, full domain": f"{abs(result.i_ground_full):.6e} A",
         "ground current, strip extent": f"{abs(result.i_ground_truncated):.6e} A",
         "full / strip current": f"{gain:.3f}",

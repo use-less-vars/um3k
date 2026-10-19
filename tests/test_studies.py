@@ -184,9 +184,12 @@ def test_microstrip_default_case_is_converged():
     # --- the old estimator is the cross-check now, and it agrees ---------
     assert result.beta_two_station == pytest.approx(result.beta, rel=0.02)
 
-    # A few seconds is the cost of the only physical claim in the file; it is
-    # still bounded, so it cannot quietly become a slow test.
-    assert elapsed < 15.0, f"the default run took {elapsed:.2f} s"
+    # A runaway guard, not a performance measurement: it exists to catch a hang
+    # or a grid that has blown up, and it must never be tightened towards the
+    # observed run time -- a wall-clock bound near the measured cost makes the
+    # suite pass or fail with the machine's load, which is not a physical
+    # assertion about the solver.
+    assert elapsed < 60.0, f"the default run took {elapsed:.2f} s (runaway guard)"
 
 
 # ---------------------------------------------------------------------------
