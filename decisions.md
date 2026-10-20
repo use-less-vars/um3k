@@ -130,14 +130,58 @@ run or test that pins it is named.
 - **Where the correction lives.** In this log, in the finding above, and in `emfit/pml.py`, which now records the magnetic half and both wall families.
 - **Parked, not investigated.** A `571` s timing anomaly in the scratch harness `.scratch/default_audit.py` is scratch-only: the library path does the same `2400`-step run in `15`-`32` s and the two monkeypatches cost about `0` per cent, so it is not a library issue and must not be re-investigated without new evidence.
 
+## The acceptance criterion rests on estimator spread, not on a propagated alpha
+
+- **Decision.** The revised `|S21|` criterion is argued from the spread among the estimators available on the
+  reference box: `0.01160` to `0.02164` dB/mm, a factor `1.86`, which over the `21.6` mm line is `|S21|` from
+  `0.972` to `0.948`. The `0.990`-`1.010` target window lies entirely outside that span, so what this instrument
+  resolves is `2.5` to `3` per cent in `|S21|`, and a one per cent target would be graded by which estimator was
+  chosen rather than by whether the solver is right. The criterion wording itself is unchanged: `|S21|`
+  consistent with a lossless model within the measurement uncertainty, the dominant mechanism attributed with its
+  magnitude, and the mechanism identified by name and by the part of the box responsible.
+- **Strongest argument against.** A span across estimators is not an error bar. It mixes a known systematic -- the
+  standing-wave bias of a single-exponential fit -- with statistical noise, and it is wider than any single
+  estimator's own one-sigma, so quoting it as "the uncertainty" could be read as buying room by adding a bias to
+  genuine precision.
+- **Why that argument does not win.** The span is the stronger statement exactly because it does not require
+  choosing an estimator first, which is the choice the criterion exists to avoid, and because the two groups in it
+  are not noise about a common value: the model-free rows sit together at `0.01160` and `0.01183` (`1.9` per cent
+  apart), the one-wave fits at `0.02145` and `0.02164`, and the gap between the two groups is that bias. A
+  propagated sigma would have to assume one estimator, then report the assumption as an uncertainty.
+- **Evidence.** Reference box `66 x 52 x 26` cells at `0.40` mm, `npml 10`, `w = 3.2` mm, `h = 1.6` mm,
+  `eps_r = 4.4`, `2400` steps with `600` warm-up: `alpha` rows `0.01160` (audited lateral leakage), `0.01183`
+  (station-plane ratio), `0.02145` (one-wave fit), `0.02164` dB/mm (two-wave fit);
+  `10^(-0.01160*21.6/20) = 0.972` and `10^(-0.02164*21.6/20) = 0.948`; `|gamma| = 0.0060` moves the raw envelope
+  `2.4` per cent peak to peak against a `3.0` per cent fall over the `9.60` mm measured span, while the two
+  half-span fits agree to `1.4e-3` in `ln|V|`. Sections `sec:msres-alpha` and `sec:ms-criterion`.
+
+## Every quoted attenuation names its box
+
+- **Decision.** `alpha = 0.0139 +- 0.0026` dB/mm is quoted only as the clearance/lid-sweep floor over `14.4` mm,
+  never as the reference box's attenuation. The reference box is `66 x 52 x 26` cells at `0.40` mm with
+  `npml 10`, `w = 3.2` mm, `h = 1.6` mm, `eps_r = 4.4`; on it the fitted `alpha` is `0.02145` dB/mm against an
+  audited leakage rate of `0.01160` dB/mm. Every attenuation quoted in the report states which box and which span
+  it came from.
+- **Strongest argument against.** Both are the same default geometry -- `0.4` mm cell, `npml 10`, `w/h = 2`, the
+  same lateral clearance -- so demanding a box name for each looks like pedantry over a `9.6` mm against `14.4` mm
+  difference in station span.
+- **Why that argument does not win.** They differ in exactly the quantity being quoted: the sweeps average over
+  `14.4` mm and `13` stations, this record fits over `9.60` mm and `9`, and the two values differ by a factor
+  `1.54` (`0.0139` against `0.02145`), larger than either uncertainty. A reader who meets `0.0139` on the same page
+  as the reference-box tables will take the floor for this box's answer, and it is not.
+- **Evidence.** Floor `0.0139 +- 0.0026` dB/mm and `|S21| = 0.977` over `14.4` mm from the clearance and lid
+  sweeps, in the decision "The measured attenuation is not ripple bias"; the reference-box rows in `tab:ms-z0`,
+  `tab:ms-alpha` and `tab:ms-acct` of `docs/report/sec_microstrip_res.tex`.
+
 ## Retracted claims
 
 One line each: what was claimed, what is true, and where the correction lives.
-The correction for all five lives here; the code defect behind the last one is
-fixed in `emfit/studies.py`.
+The correction for all six lives here; the code defect behind the studies.py claim
+is fixed in `emfit/studies.py`.
 
 - **2026-10-19. Claimed:** the station series contains a 6 per cent standing wave. **True:** the reflection coefficient is 0.0075, which bounds the standing wave at 0.86 deg; the observed 7.3 deg residual is unexplained and is not standing wave. Correction here and in the decision "The station fit, not the port ratio, is the Z0 measurement".
 - **2026-10-19. Claimed:** `beta` carries a 6.24 per cent error. **True:** it compared a fitted `beta` to a quasi-static model that should not agree with it; the fitted values agree with each other well inside the 0.0095 fit residual. Correction here and in the decision "Propagation constant from the two-wave fit".
 - **2026-10-19. Claimed:** the air capacitance per length is limited to 34.925 pF/m. **Withdrawn:** it extrapolated a family whose box shrinks with the mesh. The reference value is 37.677 pF/m at 12h clearance refined to h/16. Correction here and in the decision "Static air capacitance must be measured at the same box as eps_eff".
 - **2026-10-19. Claimed:** ground-current truncation costs about 2.5 per cent. **Withdrawn:** the measured ratio `i_full/i_trunc` is 1.001219, i.e. 0.12 per cent, with phase 0.0045 deg. Correction here; the ratio is printed by the microstrip study report table as `full / strip current`.
 - **2026-10-19. Claimed:** the modulus of `z0` printed under the name `Z0`. **True:** the modulus is `|z0|`, 9.62 per cent above the model, while `Re z0` is within 4.66 per cent. Correction here and in the code fix to `emfit/studies.py`.
+- **2026-10-20. Claimed:** the one-sigma band for `|S21|` is `0.960` to `0.994`, from `alpha = 0.0139 +- 0.0026` dB/mm over `L = 21.6` mm. **Withdrawn:** propagating the attenuation uncertainty alone gives `0.300 +- 0.056` dB, i.e. `|S21|` in `[0.960, 0.972]`; the `0.994` endpoint was a repeated-run spread of `|S21|` itself -- a different measurement of a different quantity -- and must never be quoted as a propagated one-sigma band. Correction here and in the decision "The acceptance criterion rests on estimator spread, not on a propagated alpha"; the band no longer appears in `sec:ms-criterion` of `docs/report/sec_microstrip.tex`.

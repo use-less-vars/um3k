@@ -37,6 +37,7 @@ temp/
 
 # KiCad machine-local state (the project file is the source of truth)
 *.kicad_prl
+*.kicad_sch.lck
 fp-info-cache
 *-backups/
 _autosave-*

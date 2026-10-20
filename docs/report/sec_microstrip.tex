@@ -1,0 +1,281 @@
+\section{The microstrip line: what a measurement of it can mean}
+\label{sec:microstrip}
+
+\noindent\emph{Status: draft -- the definitions, the lossless argument and the accounting identity below are
+settled and are what the measurement rests on; the numbers they produce are reported separately and are not
+quoted here.}
+
+A microstrip is the simplest printed transmission line and the hardest to measure: an open, mixed-dielectric
+guide whose ``mode'' is a convenience of the frequency range rather than an exact solution, driven at a port
+whose impedance is not the impedance a catalogue quotes. This section fixes what is being measured before any
+number is asserted. It sets out what the quasi-TEM assumption buys and costs, which of the several impedances
+called $Z_0$ a transmission-line study must name, why moving the reference plane cannot repair a magnitude,
+why a lossless solver can nonetheless return an attenuation, and how an attenuation is to be extracted from a
+record that is contaminated by a standing wave. It closes with the acceptance criterion this measurement is
+held to and with the identity that finally settles the question the estimators only bound.
+
+\subsection{The quasi-TEM assumption and what it costs}
+\label{sec:ms-quasithem}
+
+A grounded dielectric slab supports a TM mode with no cutoff. Its lowest TM branch has a purely imaginary
+transverse wavenumber at every frequency, so the transverse field of that mode solves Laplace's equation rather
+than a wave equation, at zero frequency as much as at one gigahertz; the mode exists, and is quasi-static, at
+arbitrarily low frequency. A strip printed on the slab inherits that property and loses its simplicity. The
+fundamental mode of a strip on a grounded slab is a hybrid mode whose longitudinal components are not zero:
+the strip edges carry a concentration of charge, because the tangential electric field must vanish on the
+conductor and the field must therefore turn the corner there, so $E_z$ is non-zero on the edge and $H_z$ is
+non-zero in the dielectric beneath it. Writing the mode as
+\begin{equation}
+  \mathbf{E}(x,y,z) = \left[\mathbf{e}_t(x,y) + e_z(x,y)\,\hat{\mathbf{z}}\right]e^{-\gamma z},
+  \qquad \gamma = \alpha + j\beta,
+  \label{eq:ms-hybrid}
+\end{equation}
+with $\mathbf{e}_t$ the transverse vector field and $e_z$ its longitudinal part, the quasi-TEM assumption is
+the statement that $|e_z| \ll |\mathbf{e}_t|$, which holds when the transverse dimensions are small against the
+guided wavelength and fails as the frequency rises. The assumption is therefore a statement about a range of
+frequencies. It is not a statement about the physics of a grounded slab, which has no TEM mode at all: a TEM
+mode requires two conductors and a single homogeneous dielectric between them, and the slab has one conductor
+plane, one strip and two dielectrics.
+
+What the assumption costs is a specific and non-transferable boundary-value problem. A quasi-static closed
+form for a microstrip -- the Hammerstad--Jensen pair of expressions for $\eps_{\mathrm{eff}}$ and $Z_0$, or any
+of its descendants -- is a fit to the numerical solution of Laplace's equation on a strip of zero thickness
+lying on a laterally infinite substrate of one permittivity with free space above, in a domain that radiates
+nothing because it is not bounded at all. The box in this solver is nothing of the kind. It is closed on every
+face, and the only faces that are not perfect conductors are the matched layers that terminate the line at
+both ends and that line the lateral and upper boundaries. What the solver launches is therefore the
+fundamental mode of a shielded, lossy-walled box that contains a strip: it has a discrete spectrum, its
+transverse profile is influenced by walls a finite distance away, and it is the object that must be measured,
+because it is the object that propagates. Hammerstad--Jensen is consequently used here as a diagnostic and not
+as an oracle. It answers whether the geometry, the effective permittivity scale and the impedance are of the
+right order, and whether a port-plane measurement is in the right units; it does not answer whether the mode
+the solver propagates is the open-line mode, because it solves a different problem. Disagreement with it is
+evidence about the box, not automatically an error in the solver, and agreement with it is not evidence that
+anything beyond the geometry is right.
+
+\subsection{Three impedances, and which one is meant}
+\label{sec:ms-z0}
+
+Three quantities are routinely called the characteristic impedance of the same line, and they are equal only
+under an assumption that a real measurement is testing. The first is the ratio of the line voltage to the line
+current at a plane,
+\begin{equation}
+  Z^{VI} = \frac{V}{I}, \qquad
+  V = -\int_{\text{strip}}^{\text{ground}} \mathbf{E}\cdot \dd\mathbf{l}, \qquad
+  I = \oint_{\text{strip}} \mathbf{H}\cdot \dd\mathbf{l},
+  \label{eq:ms-zdefs}
+\end{equation}
+with $V$ in volts, $I$ in amperes and $Z^{VI}$ in ohms. The second and third are built on the power $P$ in
+watts crossing the plane, $Z^{PI} = 2P/|I|^2$ and $Z^{PV} = |V|^2/2P$. For a single wave travelling in one
+direction they coincide exactly, since $P = \tfrac12\operatorname{Re}(VI^{*})$ and $V = Z_0 I$ give
+$Z^{VI} = Z^{PI} = Z^{PV} = Z_0$, the real characteristic impedance of the mode. With a reflected wave of
+coefficient $\Gamma$ present at the plane the three separate,
+\begin{equation}
+  Z^{VI} = Z_0\,\frac{1+\Gamma}{1-\Gamma}, \qquad
+  Z^{PI} = Z_0\,\frac{1-|\Gamma|^2}{|1-\Gamma|^2},
+  \label{eq:ms-zgamma}
+\end{equation}
+and the spread between them is not a nuisance to be averaged away but a measurement: it is the non-modal
+content of the field at that plane, reflection first and higher modes with it. A study that reports one number
+called $Z_0$ without saying which definition it used has reported a quantity whose disagreement with a model
+cannot be interpreted.
+
+The third quantity in play is the one a user's S-parameters are actually quoted on: the lumped impedance of
+the port plane, $Z_{\mathrm{plane}} = V/I$ evaluated where the source sits. It is complex, and its imaginary
+part is the reactance of the lumped source and of the near field it drives, not a property of the line. Writing
+$Z_{\mathrm{plane}} = R + jX = |Z_{\mathrm{plane}}|e^{j\phi}$ factorises the complex number into a modulus and a
+real part,
+\begin{equation}
+  |Z_{\mathrm{plane}}| = \frac{R}{\cos\phi}, \qquad \phi = \arctan\frac{X}{R},
+  \label{eq:ms-zplane}
+\end{equation}
+so the modulus is inflated by the source's own reactance and is shifted off the resistive value by the same
+angle. The modulus is therefore not the characteristic impedance, it is not the resistive load the line
+presents, and it must never be printed as though it were: the quantity to compare against a model is
+$\operatorname{Re} Z_{\mathrm{plane}}$, read at the same plane and with the same definition, and the phase is
+reported beside it as what it is -- a measure of how reactive the launch is, and hence of how far the port is
+from the pure travelling wave that \eqref{eq:ms-zgamma} needs.
+
+\subsection{De-embedding and the reference plane}
+\label{sec:ms-deembed}
+
+Moving a scattering parameter along a line of known propagation constant is an exact operation,
+\begin{equation}
+  S_{11}(z+d) = S_{11}(z)\,e^{-2\gamma d}, \qquad
+  S_{21}(z+d) = S_{21}(z)\,e^{-\gamma d}\ \text{at each end},
+  \label{eq:ms-deembed}
+\end{equation}
+with $d$ the shift in metres and $\gamma$ as in \eqref{eq:ms-hybrid}. Because $\gamma$ is complex, the shift
+scales the magnitude by $e^{-2\alpha d}$ and leaves it alone only when $\alpha = 0$. In a lossless model
+$\gamma = j\beta$ is purely imaginary, and then \eqref{eq:ms-deembed} changes the phase of every scattering
+parameter and nothing else. Two consequences follow, and both are used later. First, $|S_{11}|$ is identical at
+every reference plane of a lossless line, and so is $|S_{21}|$; a discrepancy in magnitude between a
+port-plane measurement and a model therefore cannot be relocated by de-embedding, and any attempt to explain
+one that way is an attempt to smuggle an attenuation into a bookkeeping step. Second, because the only
+magnitude-carrying part of the shift is the $\alpha$ under test, using de-embedding to close a magnitude gap
+would assume the answer. What de-embedding does own is the phase, and it owns it completely: reading a field
+quantity half a cell from where it is defined appears in \eqref{eq:ms-deembed} as a linear phase, which is why
+the phase of a port-plane impedance and the position of a station must be fixed before either is compared
+with anything.
+
+\subsection{Where the damping can come from in a lossless model}
+\label{sec:ms-lossless}
+
+The time-domain solver contains no mechanism for ohmic or dielectric loss, and the claim is checkable
+mechanism by mechanism rather than by assertion. The update is a plain leapfrog pair, and the only step in it
+that is not unitary is the multiplication of $\mathbf{e}$ and $\mathbf{h}$ by the matched-layer factors of
+\eqref{eq:pml-factor} immediately after their own updates. Those factors are $\exp(-\sigma_e\Delta t/\eps_0)$
+and $\exp(-\sigma_m\Delta t/\mu_0)$ with $\sigma_m = \sigma_e\mu_0/\eps_0$, so they are equal wherever the
+profile is non-zero, they lie in $(0,1]$, and they are exactly one wherever $\sigma_e$ vanishes -- and
+$\sigma_e$ is non-zero only inside the layers, so every multiplier applied in the physical interior is
+identically one. The material matrices that carry the substrate are built from a real relative permittivity
+and a real relative permeability and an interface rule for averaging across a material jump; the routine that
+assembles them has no conductivity argument at all, and the conductivity that exists elsewhere in the package
+belongs to the frequency-domain resonance helper, which no time-domain study calls. The strip is an ideal
+conductor: the edges that lie in it are flagged and the tangential electric field on them is set to zero after
+every update, with no surface impedance, no skin depth and no metal thickness anywhere in the model, so the
+conductor cannot dissipate by construction. Finally the discrete energy identity of
+Section~\ref{sec:energy} holds to round-off over a full run, which means the interior update moves energy
+between degrees of freedom and destroys none of it.
+
+The consequence is a sharp statement about what a decay can mean. Since no operator in the interior lowers the
+energy, the amplitude of the launched mode can fall only by transferring power out of it, and the only place in
+the box where power can finally leave is the matched layers; every other face is a perfect conductor. A decay
+of the guided mode with distance along the line is therefore a boundary sink, and the only candidate sinks are
+the matched layers. This does not yet say what the decay rate is, and it does not rule out a second
+possibility: power transferred out of the launched mode into another mode of the same closed box stays in the
+box, bounces between perfect conductors, and returns. In that case the station record does not decay at all,
+it oscillates, and the estimators of the next subsection are what turn the oscillation into a spurious
+attenuation. The two possibilities are distinguished by measurement, not by argument.
+
+\subsection{Five estimators of one attenuation}
+\label{sec:ms-estimators}
+
+The same record -- the complex line voltage at a set of station planes spaced along the line -- supports five
+distinct estimators of the attenuation, and they do not agree: on the default case they differ by a factor of
+order two. The first is a one-wave joint fit, which models every station phasor as one forward exponential,
+\begin{equation}
+  V_n = A\,e^{-\gamma z_n}, \qquad n = 1,\dots,N,
+  \label{eq:ms-onewave}
+\end{equation}
+and returns $\alpha$ and $\beta$ together by least squares, with $A$ in volts, $z_n$ in metres. The second is
+a two-wave joint fit, which adds the backward wave and so allows the record to contain a standing wave,
+\begin{equation}
+  V_n = A\,e^{-\gamma z_n} + B\,e^{+j\beta z_n},
+  \label{eq:ms-twowave}
+\end{equation}
+at the price of a non-linear search in $\beta$. The third is the endpoint ratio, $|S_{21}| = |V_N|/|V_1|$,
+which assumes one travelling wave and nothing else and is therefore exact when \eqref{eq:ms-onewave} holds and
+wrong in proportion to the reflected content when it does not. The fourth is the forward-subtracted linear
+fit: fit \eqref{eq:ms-twowave}, subtract the fitted backward wave, and then take an ordinary least-squares line
+through $\ln|V_n|$ against $z_n$ for the remaining forward amplitude. The fifth is the model-free end ratio of
+$|V|$, the ratio of the raw amplitudes at the two extreme planes of the record, with no fit, no phase model and
+no removed wave at all -- the number a laboratory would read off an instrument.
+
+That these five disagree is the point. Each is unbiased under a different assumption about what else is in the
+record, and a fit is not more trustworthy than a ratio merely because it uses more points. The one-wave fit is
+the estimator most exposed to the standing wave, because a single exponential has no way to represent a
+ripple: it must absorb one, and the only free parameter left to absorb it is the slope. Writing the record as
+a forward wave plus a reflection, $\ln|V(z)| = \ln|A| - \alpha z + \ln|1+\Gamma e^{2j\beta z}|$, the last
+term is periodic in $z$ with the ripple period, and over a window it contributes a bias whose size is set by
+the ripple amplitude and by how much of a period the window covers, not by the quality of the fitting. A short
+span, or a span that happens to cover a fraction of a period, biases the slope; no amount of care in the
+solver or in the fit removes it. This is why the disagreement is a property of the record and not of the
+estimator's competence, and why none of the five can be promoted to the answer on the strength of its own
+output. What is needed is an estimator that has no free parameter into which a ripple can vanish.
+
+\subsection{The acceptance criterion and its resolution}
+\label{sec:ms-criterion}
+
+The criterion this measurement was originally held to was an absolute one: $|S_{21}|$ within $1$ per cent of
+unity, that is within the interval $0.990$ to $1.010$. An absolute target is only a test if the measurement can
+resolve it, and this one cannot. The argument is not that the target is hard to hit; it is that the estimators
+available on this record disagree with each other by nearly twice the width of the target, and that the
+disagreement has a cause no estimator on this record can remove.
+
+The cause is the port reflection. At $|\Gamma| = 0.0060$ in amplitude a standing wave moves the raw envelope of
+the field by $\pm 1.2$ per cent, that is by $2.4$ per cent peak to peak, at the ripple period. Every model-free
+attenuation on this record is a ratio of the field at two stations, and each such ratio inherits that movement:
+the raw envelope falls $3.0$ per cent across the $9.60$ mm of measured line, so a single ratio is not good to one
+per cent, while the half-span fits, which average over several ripples, are individually good to
+$1.4\times 10^{-3}$ in $\ln|V|$. That is why the disagreement does not shrink when the fit is done more
+carefully: the two halves of the record agree with each other and disagree with the ratios.
+
+The floor of \eqref{eq:ms-criterion-number} is worth stating exactly, because it is easy to misread as a
+property of the box of Section~\ref{sec:msres-box}. It is not. The clearance and lid sweeps of the earlier study
+put a floor of
+\begin{equation}
+  \alpha_{\mathrm{dB}} = 0.0139 \pm 0.0026\ \text{dB/mm}
+  \label{eq:ms-criterion-number}
+\end{equation}
+over a $14.4$ mm span, where it corresponds to $|S_{21}| = 0.977$. The reference box is a different geometry over
+a different span, and its fitted attenuation is $0.02145$ dB/mm, not $0.0139$.
+
+The decisive statement is the spread among the estimators on the reference box itself. The five rows of
+Table~\ref{tab:ms-alpha} span $0.01160$ to $0.02164$ dB/mm, a factor of $1.86$, and the span is not noise about
+a common value: the two model-free rows sit together at $0.01160$ and $0.01183$, the two one-wave fits sit
+together at $0.02145$ and $0.02164$, and the gap between the two groups is exactly the standing-wave bias
+analysed in Section~\ref{sec:msres-alpha}. Charged over the $21.6$ mm of line between the port plane and the far
+plane, the span runs from
+\begin{equation}
+  |S_{21}| = 10^{-0.01160 \times 21.6/20} = 0.972
+  \quad\text{to}\quad
+  |S_{21}| = 10^{-0.02164 \times 21.6/20} = 0.948 .
+  \label{eq:ms-criterion-span}
+\end{equation}
+The interval a $1$ per cent target asks for, $0.990$ to $1.010$, lies entirely above that span, and no estimator
+on this record places $|S_{21}|$ inside it. The resolution of the record is therefore $2.5$ to $3$ per cent in
+$|S_{21}|$, and a target stated to one per cent would be graded by which estimator was chosen rather than by
+whether the solver is right.
+
+The criterion is therefore revised rather than waived, and the revision is stated as three requirements that
+must all hold. First, $|S_{21}|$ must be consistent with a lossless model within the stated measurement
+uncertainty, which is the estimator span of \eqref{eq:ms-criterion-span} and is a statement about what the record
+can resolve, not a permission to be wrong by any amount. Second, the attenuation that remains must be attributed
+to its dominant mechanism, with the attribution accounting for the magnitude and not merely for the sign. Third,
+the mechanism must be identified, by name and by the part of the box responsible, so that the shortfall from
+unity is a known numerical effect rather than an unexplained residual. A criterion in that form can fail: it fails if the
+measured $|S_{21}|$ leaves the span, or if no mechanism accounts for the number, or if the mechanism named is
+one the solver cannot produce. What it refuses to do is grade a solver against a tolerance narrower than the
+spread of its own measurement.
+
+\subsection{The accounting identity}
+\label{sec:ms-accounting}
+
+The estimator that has no free parameter is an energy balance, and it is available here only because the model
+is lossless. In a lossless box the discrete energy identity of Section~\ref{sec:energy} is exact, so over any
+window in which the field has reached a steady state every joule injected has left through a boundary, and the
+work removed by a boundary is not an estimate but an identity. For a wall family $i$ that removes work $W_i$
+(joules) during a window in which the run injects $U_{\mathrm{in}}$ (joules), and that runs along $L_i$ metres
+of the line, the per-unit-length rate is
+\begin{equation}
+  \alpha_i = \frac{W_i}{2\,U_{\mathrm{in}}\,L_i},
+  \label{eq:ms-accounting}
+\end{equation}
+with $\alpha_i$ in nepers per metre. The factor of two is the definition of an amplitude attenuation: a wave
+carrying power $P$ (watts) loses $2\alpha P$ per metre, so over the window
+$W_i = 2\alpha_i L_i \int P\,\dd t = 2\alpha_i L_i U_{\mathrm{in}}$, which is \eqref{eq:ms-accounting}
+rearranged. For reference, one neper per metre is $8.6859$ dB per metre, or $8.6859\times10^{-3}$ dB per
+millimetre.
+
+Three properties of \eqref{eq:ms-accounting} matter, and they are the reason it outranks the fits of
+Section~\ref{sec:ms-estimators}. It has no free parameter, so a standing-wave residual cannot be absorbed into
+it: a ripple moves energy back and forth inside the box and nets to nothing in $W_i$ over a full period, which
+is exactly the behaviour the slope of a fit cannot deliver. It makes no model of the mode, so it does not
+assume the field is quasi-TEM, single-mode, or anything else -- it counts joules, and joules are conserved by
+the scheme to round-off. And it is local in the sense that matters: it says which family of walls removed the
+power, so the attribution required by Section~\ref{sec:ms-criterion} is produced by the same computation that
+produces the rate. A rate from an identity is a stronger measurement than a rate from a fit, and the
+difference is not a matter of precision but of what each can represent.
+
+The identity has limits, and they should be stated with it. It needs a steady state, so the warm-up steps
+before the field has settled must be excluded from the window, and the injected power must be the power the
+box actually retains rather than the power the source nominally delivers. It returns one global rate for the
+run, not a rate per station, so it cannot show where along the line the loss accumulates. And it is a
+statement about boundaries, so it measures how much power left through which wall, not why the mode was not
+confined in the first place: the normalisation by $L_i$ is the only step that converts a boundary flux into a
+per-unit-length rate, and it is valid only for that part of the wall that the line actually runs alongside.
+Charging a wall that spans the whole box to a shorter measurement span gives an upper bound on the rate and
+must be reported as one. Within those limits, the accounting converts the question from ``what does the slope
+of this record say'' to ``where did the power go'', and the second question has an answer that does not depend
+on how the record was fitted.
