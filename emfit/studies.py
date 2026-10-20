@@ -38,6 +38,7 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+import warnings
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
@@ -47,7 +48,7 @@ from . import nearfield
 from . import scatter
 from . import viz  # selects the Agg backend before pyplot is imported anywhere
 from .abc import Mur1Boundary
-from .board import MicrostripBoard
+from .board import Load, MicrostripBoard
 from .eigen import analytic_box_modes, resonances
 from .evolve import FITStepper, RickerSource, cfl_dt
 from .grid import Grid
@@ -78,10 +79,13 @@ __all__ = [
     "Param",
     "Study",
     "FigureSink",
+    "LineReference",
     "MicrostripBoard",
     "MicrostripWave",
     "STUDIES",
+    "backward_wave_amplitude",
     "coerce",
+    "forward_wave_amplitude",
     "get",
     "line_s21",
     "microstrip_reference_board",
@@ -1198,6 +1202,102 @@ def line_s21(a1, x1, a2, x2, beta) -> tuple[complex, complex]:
     return deembed_transmission(raw, beta, d), raw
 
 
+def _wave_amplitude(v, i, x, gamma, zc, sign, indices) -> np.ndarray:
+    """Shared algebra of :func:`forward_wave_amplitude` and its mirror."""
+    v = np.asarray(v, dtype=complex)
+    i = np.asarray(i, dtype=complex)
+    x = np.asarray(x, dtype=float)
+    if not v.size == i.size == x.size:
+        raise ValueError(
+            f"v, i and x must be the same length, got {v.size}, {i.size} "
+            f"and {x.size}")
+    if indices is not None:
+        idx = np.asarray(indices, dtype=int)
+        v, i, x = v[idx], i[idx], x[idx]
+    return 0.5 * (v + complex(sign * zc) * i) * np.exp(complex(sign * gamma) * x)
+
+
+def forward_wave_amplitude(v, i, x, gamma, zc, indices=None) -> np.ndarray:
+    """The wave travelling towards ``+x``, de-embedded to ``x = 0``.
+
+    ``v`` and ``i`` are the gap voltage [V] and the trace current [A] at
+    position ``x`` [m]; ``gamma`` is the propagation constant [1/m] and ``zc``
+    the characteristic impedance [ohm] of the line they belong to.  With the
+    convention every fit in this package uses,
+
+        ``v(x) = A exp(-gamma x) + B exp(+gamma x)``
+        ``i(x) = (A exp(-gamma x) - B exp(+gamma x)) / zc``
+
+    where ``A`` travels towards ``+x`` and ``B`` back towards ``-x``, both
+    referred to ``x = 0`` -- the same origin for every station, which is what
+    makes two stations' amplitudes comparable.  Adding and subtracting give the
+    two waves on one plane,
+
+        ``A exp(-gamma x) = (v + zc i) / 2``
+        ``B exp(+gamma x) = (v - zc i) / 2``
+
+    so multiplying by ``exp(+gamma x)`` walks ``A`` back to the origin.  What
+    comes back is the amplitude ``A`` itself, not the local phasor.
+
+    Why one plane is enough
+    -----------------------
+    A ratio between two planes needs no fit once ``gamma`` and ``zc`` are known:
+    on a uniform line the split above is exact algebra, and the two unknowns of
+    a fit were only ever ``gamma`` and ``zc``.  Given them, one station's two
+    phasors determine its forward wave.
+
+    That is what makes this usable as a *normalisation*: with the same
+    ``gamma``, ``zc`` and station positions, the exponential factor at a
+    station is the same floating-point number in two runs, so a ratio of
+    amplitude ratios computed this way does not depend on the real part of
+    ``gamma`` at all -- the line's delay and loss divide out exactly instead of
+    being de-embedded by an approximation that has to be trusted.
+
+    Args:
+        v, i: Complex phasors of the gap voltage [V] and the trace current [A],
+            the current in the forward sense (the negative of the ground return
+            current, see :func:`emfit.ports.plate_current`).
+        x: Station positions [m], on the same axis the phasors were measured.
+        gamma: ``alpha + 1j beta`` [1/m], ``exp(-gamma x)`` forward.
+        zc: Characteristic impedance [ohm], complex; ``v / i`` of the forward
+            wave alone.
+        indices: Optional station indices to evaluate at -- negative values
+            count from the end -- instead of the whole array.
+
+    Returns:
+        ``(n,)`` (or ``len(indices)``) complex array of ``A``, i.e. each
+        station's forward wave referred to ``x = 0`` [V].
+
+    Raises:
+        ValueError: If ``v``, ``i`` and ``x`` are not the same length.
+    """
+    return _wave_amplitude(v, i, x, gamma, zc, 1.0, indices)
+
+
+def backward_wave_amplitude(v, i, x, gamma, zc, indices=None) -> np.ndarray:
+    """The wave travelling towards ``-x``, de-embedded to ``x = 0``.
+
+    The mirror of :func:`forward_wave_amplitude`, and literally the same
+    algebra with the sign of both ``gamma`` and ``zc`` flipped: ``B exp(+gamma
+    x)`` referred to the origin is ``(v - zc i) / 2 exp(-gamma x)``, with the
+    same units, conventions and station axis (see there for the model).
+
+    Args:
+        v, i: Complex phasors of the gap voltage [V] and the trace current [A].
+        x: Station positions [m].
+        gamma: ``alpha + 1j beta`` [1/m], ``exp(-gamma x)`` forward.
+        zc: Characteristic impedance [ohm], complex.
+        indices: Optional station indices to evaluate at.
+
+    Returns:
+        ``(n,)`` (or ``len(indices)``) complex array of ``B`` [V].
+
+    Raises:
+        ValueError: If ``v``, ``i`` and ``x`` are not the same length.
+    """
+    return _wave_amplitude(v, i, x, gamma, zc, -1.0, indices)
+
+
 @dataclass
 class MicrostripWave:
     """What one :func:`microstrip_wave` run measured, and on which mesh.
@@ -1284,6 +1384,10 @@ class MicrostripWave:
             plane it is referred to, without which the number means nothing.
             A line of stations sees the standing wave over several centimetres,
             so it can separate the two travelling waves; one port plane cannot.
+            ``None`` when that fit was refused too: a record whose phase
+            constant carries a standard error as large as the phase constant
+            has no impedance to quote, and the run says so once instead of
+            dying with a good record in hand.
         station_fit_lossy: ``station_fit`` repeated with the loss the line
             actually has: the propagation constant is
             ``loss_fit.alpha + j loss_fit.beta`` instead of a bare
@@ -1295,7 +1399,20 @@ class MicrostripWave:
             folded into its ``z0_sigma_total``, because an uncertainty budget
             that leaves out the dominant term is worse than no budget; when
             ``alpha`` has no error estimate the total falls back to the
-            ``beta`` and statistical terms alone.
+            ``beta`` and statistical terms alone.  ``None`` when that fit
+            could not be formed at all: :func:`emfit.ports.fit_station_impedance`
+            refuses when the phase constant it is handed carries a standard
+            error as large as the phase constant itself, which a strongly
+            reflecting line can do, so the run warns and carries on instead of
+            dying with a good record in hand.
+        station_fit_ok: Whether the station-impedance fits were formed at all
+            -- a flag, not a number.  ``True`` on every ordinary run;
+            ``False`` means one of them was refused, ``station_fit_lossy`` is
+            ``None`` rather than half filled (``station_fit`` too, when it was
+            the loss-free one that went), and the reason was raised as a
+            single ``RuntimeWarning`` at the time.  It says nothing about the
+            rest of the record: ``beta``, ``s21`` and the S-parameters are
+            measured before these fits and do not depend on them.
         gamma_port: ``station_fit.gamma_v`` moved from its reference plane to
             the port plane with :func:`emfit.ports.deembed_reflection`
             (dimensionless, complex).  With a real ``beta`` its magnitude is
@@ -1313,7 +1430,13 @@ class MicrostripWave:
             the de-embedding has unit modulus: this is a pure amplitude ratio
             and the factor only fixes its phase.  The solver has no loss model,
             so a departure from ``1`` is the two fits disagreeing, not
-            attenuation.
+            attenuation.  A run given a ``reference`` (:class:`LineReference`)
+            reports here the ratio of the forward amplitudes across the same
+            two planes divided by that of the load-free line -- the delay and
+            the loss of the line, and any error ``gamma`` and ``zc`` share
+            between the two runs, cancel by construction instead of being
+            de-embedded -- so the number is the load's transmission and needs
+            no ``beta`` to be right.
         s21_raw: The same ratio before the de-embedding, ``a2 / a1``.
         s21_planes: The two station planes it spans, ``(x1, x2)`` [m].
         power_z0: ``(n_stations,)`` impedance each station's own power and
@@ -1358,7 +1481,7 @@ class MicrostripWave:
     fit_residual: float
     beta_model: float
     z0: complex
-    station_fit: StationFit
+    station_fit: StationFit | None
     gamma_port: complex
     deembed_distance: float
     s21: complex
@@ -1373,9 +1496,10 @@ class MicrostripWave:
     eps_eff_model: float
     loss_fit: LineFit | None
     loss_fit_two: LineFit | None
-    station_fit_lossy: StationFit
+    station_fit_lossy: StationFit | None
     slice_ez: np.ndarray | None
     power_balance: dict | None = None
+    station_fit_ok: bool = True
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -1405,6 +1529,131 @@ class MicrostripWave:
             f" implied_length={self.power_balance['length'] * 1e3:.4f}mm")
 
 
+@dataclass(frozen=True)
+class LineReference:
+    """A load-free run's travelling-wave decomposition, kept for normalising.
+
+    :func:`microstrip_wave` reads ``s21`` from the forward amplitudes on two
+    planes, and a forward amplitude needs a ``gamma`` and a ``zc``
+    (:func:`forward_wave_amplitude`).  Taking those from a run of the *same*
+    line with nothing on it turns the line's removal from an approximation into
+    an identity: the loaded and the load-free ratio carry the same
+    ``exp(-gamma d)``, computed from the same ``gamma`` and the same station
+    positions, so dividing one by the other leaves only what the load did --
+    and it leaves it however wrong ``gamma`` and ``zc`` are, because both runs
+    were wrong by the same amount.  That is the whole point of this type: a
+    number a fit produced is trustworthy here only as a *shared* error, so
+    nothing about it is hard-coded and nothing has to be quoted.
+
+    Every length is SI metres, impedances ohm, ``gamma`` rad/m and 1/m, and the
+    phasors are the complex DFT coefficients of the run at ``geometry['f']``.
+
+    Attributes:
+        gamma: ``alpha + 1j beta`` [1/m], with ``exp(-gamma x)`` the forward
+            wave.
+        zc: Characteristic impedance [ohm], complex -- ``v / i`` of the forward
+            wave alone, which is what ``station_fit.z0`` measures.
+        station_x: ``(n,)`` station positions [m].
+        v_stations, i_stations: ``(n,)`` station gap voltages [V] and trace
+            currents [A], the phasors a :class:`MicrostripWave` carries.
+    """
+
+    gamma: complex
+    zc: complex
+    station_x: np.ndarray
+    v_stations: np.ndarray
+    i_stations: np.ndarray
+
+    @classmethod
+    def from_wave(cls, wave: MicrostripWave) -> LineReference:
+        """The reference a run of an unloaded line implies.
+
+        ``gamma`` is the run's own ``alpha`` -- ``0`` when the record cannot
+        support one, which is the honest value for a line with no loss model in
+        it -- plus ``1j`` times its ``beta``; ``zc`` is ``station_fit.z0``, the
+        impedance the station voltages and currents themselves imply rather
+        than the closed-form ``z0_model``.  The phasors are copied, so the
+        reference outlives the run it came from.
+
+        Args:
+            wave: A :class:`MicrostripWave` measured on a line with no load.
+
+        Returns:
+            A :class:`LineReference` over the same stations and planes.
+        """
+        alpha = 0.0
+        if wave.loss_fit is not None and wave.loss_fit.alpha is not None:
+            alpha = float(wave.loss_fit.alpha)
+        return cls(
+            gamma=complex(alpha, float(wave.beta)),
+            zc=complex(wave.station_fit.z0),
+            station_x=np.array(wave.station_x, dtype=float),
+            v_stations=np.array(wave.v_stations, dtype=complex),
+            i_stations=np.array(wave.i_stations, dtype=complex),
+        )
+
+    def forward_ratio(self, x1: float, x2: float) -> complex:
+        """``a+(x2) / a+(x1)`` on this reference [dimensionless].
+
+        ``x1`` and ``x2`` are the planes the caller wants normalised against
+        and must be this reference's own first and last station [m]: a ratio
+        taken on other planes is a ratio of a different piece of line, and
+        normalising a loaded run by it would silently divide out something that
+        was never in it.  A mismatch raises instead.
+
+        Args:
+            x1, x2: The two planes of the run being normalised [m].
+
+        Returns:
+            The complex forward-amplitude ratio across them.
+
+        Raises:
+            ValueError: If the planes are not this reference's own (closer than
+                a nanometre), or if it has no forward amplitude to divide by.
+        """
+        planes = (float(self.station_x[0]), float(self.station_x[-1]))
+        for want, got in zip((float(x1), float(x2)), planes):
+            if abs(want - got) > 1e-9:
+                raise ValueError(
+                    f"reference stations span {planes} m but the run's planes "
+                    f"are {(float(x1), float(x2))} m: s21 is normalised by a "
+                    f"ratio measured on the same two planes of the same mesh, "
+                    f"or not at all")
+        a = forward_wave_amplitude(self.v_stations, self.i_stations,
+                                   self.station_x, self.gamma, self.zc,
+                                   indices=[0, -1])
+        if a[0] == 0.0:
+            raise ValueError(
+                "the reference has no forward amplitude at its first station: "
+                "there is nothing to normalise by")
+        return complex(a[1] / a[0])
+
+
+def _blank_station_fit(reference_plane: float, beta: float,
+                       sigma_beta: float | None,
+                       n_stations: int) -> StationFit:
+    """A station fit that carries no number at all: every field is n/a.
+
+    A run too short to carry the drive (the mesh test takes eight steps)
+    leaves both series identically zero, so there is no mode to fit and
+    :func:`fit_station_impedance` refuses rather than inventing one.  The
+    port's ``z0`` already falls back to NaN in that case, and this keeps a
+    mesh-only run from raising as well.  The same object stands in for a fit
+    that was refused on a record that *did* carry a wave -- there the wave was
+    real and the fit was not -- so a report can say ``n/a`` on a row without
+    branching on every row.
+    """
+    nan = float(np.nan)
+    return StationFit(
+        z0=complex(nan, nan), z0_sigma_stat=None, z0_sigma_beta=None,
+        z0_sigma_total=None, phase_deg=nan, gamma_v=complex(nan, nan),
+        gamma_i=complex(nan, nan), mode_purity=nan, beta=float(beta),
+        sigma_beta=sigma_beta, reference_plane=float(reference_plane),
+        n_stations=int(n_stations), residual_v=nan, residual_i=nan,
+        residual_v_stations=np.full(int(n_stations), nan, dtype=complex),
+        residual_i_stations=np.full(int(n_stations), nan, dtype=complex))
+
+
 def microstrip_wave(
     *,
     h: float = MS_H,
@@ -1427,6 +1676,8 @@ def microstrip_wave(
     drive: float = 1.0,
     keep_slice: bool = False,
     audit: bool = False,
+    loads: tuple[Load, ...] = (),
+    reference: LineReference | None = None,
     sink: FigureSink = None,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
@@ -1544,6 +1795,17 @@ def microstrip_wave(
             ``nxn * nyn`` signals, which is nothing beside the field update on
             the mesh test but still wasted on a run that only wants numbers.
             When it is on and a ``sink`` is given, the plane is also drawn.
+        loads: Lumped loads placed on the strip's ``E_z`` edges; see
+            :func:`emfit.evolve.add_load` for what each of them is.
+        reference: A :class:`LineReference` -- a load-free run of the same line
+            -- to normalise ``s21`` against.  ``None`` (the default) keeps the
+            historical two-half-fit ratio.  When one is given, ``s21`` becomes
+            the loaded run's forward-amplitude ratio across the station span
+            divided by the reference's on the same planes, so the line's own
+            delay and attenuation divide out exactly and only the load is
+            left; ``s21_raw`` stays the loaded run's own ratio.  ``beta``,
+            ``station_fit`` and every other number are untouched: the reference
+            calibrates ``s21``, it does not re-derive the line.
         sink: Where to put the figure; ``None`` (the default) draws nothing.
 
     Returns:
@@ -1607,6 +1869,42 @@ def microstrip_wave(
     strip[cc.idx_ey(x_points[:, None], j_cells[None, :], k_strip)] = True
     pec |= strip
 
+    # --- lumped loads: a cut in the sheet, and the element across it ---------
+    # A ``series_r`` load frees the ``E_x`` edges of its node column, so the
+    # strip is really interrupted there and the two halves talk only through
+    # the element (and the fringing across the cut, which is part of the model).
+    # The ``E_y`` edges stay pinned at both node layers bounding the cut, so the
+    # end face of each half is still equipotential and the halves do not short
+    # to each other along the rails.
+    m_sigma = None
+    loads_used = []
+    if loads:
+        sigma = np.zeros(cc.n_edges, dtype=float)
+        eps = np.array(m_eps, dtype=float)
+        for load in loads:
+            ix_load = int(np.floor(float(load.position) / cell + 0.5))
+            if not ix_port < ix_load < nx:
+                raise ValueError(
+                    f"load at {load.position!r} m lands on node column "
+                    f"{ix_load}, outside the strip ({ix_port} < ix < {nx})")
+            if load.kind == "series_r":
+                edges = cc.idx_ex(np.array([ix_load]), j_points, k_strip).ravel()
+                pec[edges] = False
+                # One element spread over the ``len(edges)`` parallel paths.
+                sigma[edges] += 1.0 / (edges.size * float(load.value))
+            else:
+                # ``n_strip`` columns in parallel, each ``n_sub`` edges in
+                # series: C_edge = C * n_sub / n_strip reproduces C in total.
+                edges = np.concatenate(
+                    [column_path(cc, ix_load, int(j), 0, k_strip)
+                     for j in range(j0, j0 + n_strip)])
+                eps[edges] += float(load.value) * n_sub / n_strip
+            loads_used.append({"kind": load.kind, "value": float(load.value),
+                               "x": ix_load * cell, "column": ix_load,
+                               "n_edges": int(edges.size)})
+        m_sigma = sigma if np.any(sigma) else None
+        m_eps = eps
+
     # ``walls`` replaces ``axes``: name every face, and add zmax only when a
     # top layer was actually asked for.
     pml_walls = ("xmin", "xmax", "ymin", "ymax") + (("zmax",) if n_top else ())
@@ -1620,7 +1918,9 @@ def microstrip_wave(
             "lateral": ("ymin", "ymax") + (("zmax",) if n_top else ())})
     pml = PML(grid, thickness_cells=n_pml, order=2, target=1e-4,
               walls=pml_walls, cc=cc, audit=absorbed)
-    stepper = FITStepper(cc, m_eps, m_mu, dt=cfl_dt(grid), pec=pec, pml=pml)
+    stepper_kwargs = {} if m_sigma is None else {"m_sigma": m_sigma}
+    stepper = FITStepper(cc, m_eps, m_mu, dt=cfl_dt(grid), pec=pec, pml=pml,
+                         **stepper_kwargs)
     dt = float(stepper.dt)
 
     # --- the record and its DFT bin ----------------------------------------
@@ -1760,29 +2060,55 @@ def microstrip_wave(
     # beta +- sigma_beta rather than by a derivative.
     sigma_beta = sigma_beta_from_curvature(station_x, v_stations, beta)
 
-    def blank_station_fit() -> StationFit:
-        """The station fit of an empty record: every number is n/a.
+    # A diagnostic must not be able to take the run down with it.  By this
+    # point ``beta``, ``s21`` and every S-parameter are already measured, and a
+    # station-impedance fit is an addition on top of them; on a strongly
+    # reflecting line the phase constant's own standard error can come back as
+    # large as the phase constant itself, and ``fit_station_impedance`` refuses
+    # such a beta outright (``ValueError``) rather than quoting a number built
+    # from a trial at ``beta - sigma_beta < 0``.  Catch that refusal at both
+    # fit sites -- the loss-free one here, the loss-aware one below -- keep the
+    # degraded field empty instead of half filled, and say what happened once
+    # and not twice: a run that lost a diagnostic should not read like a run
+    # that failed.
+    station_fit_warned = False
 
-        A run too short to carry the drive (the mesh test takes eight steps)
-        leaves both series identically zero, so there is no mode to fit and
-        :func:`fit_station_impedance` refuses rather than inventing one.  The
-        port's ``z0`` already falls back to NaN in that case, and this keeps a
-        mesh-only run from raising as well.
-        """
-        nan = float(np.nan)
-        return StationFit(
-            z0=complex(nan, nan), z0_sigma_stat=None, z0_sigma_beta=None,
-            z0_sigma_total=None, phase_deg=nan, gamma_v=complex(nan, nan),
-            gamma_i=complex(nan, nan), mode_purity=nan, beta=beta,
-            sigma_beta=sigma_beta, reference_plane=float(station_x[0]),
-            n_stations=int(station_x.size), residual_v=nan, residual_i=nan,
-            residual_v_stations=np.full(station_x.size, nan, dtype=complex),
-            residual_i_stations=np.full(station_x.size, nan, dtype=complex))
+    def warn_station_fit_skipped(exc: BaseException, what: str) -> None:
+        """Warn -- once per run -- that a station-impedance fit was skipped."""
+        nonlocal station_fit_warned
+        if station_fit_warned:
+            return
+        station_fit_warned = True
+        warnings.warn(
+            f"The {what} station-impedance fit could not be formed on this "
+            f"run ({type(exc).__name__}: {exc}), so that diagnostic is "
+            "reported as unavailable (station_fit_ok is False).  It needs the "
+            "phase constant's own standard error to be smaller than the "
+            "phase constant, which a strongly reflecting line can put out of "
+            "reach; the fit is skipped rather than quoted.  This affects that "
+            "one diagnostic only: the S-parameters, beta, s21 and every other "
+            "number this run reports are unaffected.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
-    station_fit = (fit_station_impedance(station_x, v_stations, i_stations,
-                                        beta, sigma_beta)
-                   if np.any(v_stations) and np.any(i_stations)
-                   else blank_station_fit())
+    station_fit: StationFit | None = None
+    station_fit_ok = True
+    # The refusal, when there was one: the zc-without-a-reference path below
+    # quotes it, so a caller who hits that refusal sees why this record had no
+    # impedance long before it sees where the impedance was wanted.
+    station_fit_error: BaseException | None = None
+    if np.any(v_stations) and np.any(i_stations):
+        try:
+            station_fit = fit_station_impedance(station_x, v_stations,
+                                               i_stations, beta, sigma_beta)
+        except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
+            station_fit_error = exc
+            station_fit_ok = False
+            warn_station_fit_skipped(exc, "loss-free")
+    else:
+        station_fit = _blank_station_fit(station_x[0], beta, sigma_beta,
+                                         station_x.size)
 
     # --- the same fits with the decay free: loss, and its covariance -------
     # ``fit_beta`` holds the amplitude fixed in modulus, which is what a solver
@@ -1798,7 +2124,7 @@ def microstrip_wave(
         loss_fit = fit_line(station_x, v_stations, n_wave=1)
         loss_fit_two = fit_line(station_x, v_stations, n_wave=2)
 
-    def lossy_station_fit() -> StationFit:
+    def lossy_station_fit() -> StationFit | None:
         """``station_fit`` at ``alpha + j beta``, with ``alpha``'s wiggle in it.
 
         The propagation constant is the joint fit's, and the sensitivity to
@@ -1832,7 +2158,14 @@ def microstrip_wave(
                               + sigma_alpha_z0 * sigma_alpha_z0)) if terms else None
         return replace(fitted, z0_sigma_total=total)
 
-    station_fit_lossy = lossy_station_fit()
+    # The same refusal, guarded the same way -- and ``warn_station_fit_skipped``
+    # is shared, so a record that loses both fits still warns once.
+    try:
+        station_fit_lossy = lossy_station_fit()
+    except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
+        station_fit_lossy = None
+        station_fit_ok = False
+        warn_station_fit_skipped(exc, "loss-aware")
 
     line = Microstrip(w=float(w), h=float(h), eps_r=float(eps_r))
     beta_model = float(line.beta(f0))
@@ -1856,7 +2189,8 @@ def microstrip_wave(
     # same plane the lumped port drives, so nothing has to be interpolated.
     x_port = float(ix_port * cell)
     deembed_distance = float(station_x[0] - x_port)
-    gamma_measured = complex(station_fit.gamma_v)
+    gamma_measured = (complex(station_fit.gamma_v) if station_fit is not None
+                      else complex(np.nan, np.nan))
     gamma_port = (deembed_reflection(gamma_measured, beta, deembed_distance)
                   if np.isfinite(gamma_measured)
                   else complex(np.nan, np.nan))
@@ -1879,25 +2213,61 @@ def microstrip_wave(
     # reflection has to be projected out of the amplitude rather than carried
     # in it.  ``beta`` is real, so the de-embedding has unit modulus and this
     # stays a pure amplitude ratio; a run with no loss model should come back
-    # at 1, and any distance from it is the two fits disagreeing.
+    # at 1, and any distance from it is the two fits disagreeing.  A caller who
+    # supplies a ``reference`` gets the ratio of ratios instead, which is exact
+    # where these fits are not: see :class:`LineReference`.
     s21_planes = (float(station_x[0]), float(station_x[-1]))
     s21 = raw_s21 = complex(np.nan, np.nan)
-    half = (station_x.size + 1) // 2
-    if half >= 4 and np.any(v_stations):        # a two-wave fit needs four
-        a1 = fit_beta(station_x[:half] - s21_planes[0],
-                      v_stations[:half], n_wave=2).forward
-        a2 = fit_beta(station_x[-half:] - s21_planes[1],
-                      v_stations[-half:], n_wave=2).forward
-        if a1 != 0.0:
-            s21, raw_s21 = line_s21(a1, s21_planes[0], a2, s21_planes[1], beta)
+    if reference is not None:
+        # Ratio of ratios, and the only thing here that needs no trust in
+        # ``gamma``: the load-free run's wave crosses the same two planes
+        # through the same ``gamma`` and ``zc`` at the same station positions,
+        # so its ratio carries the same ``exp(-gamma d)`` -- the same floats --
+        # and dividing it out removes the line exactly, delay, attenuation and
+        # every error the two numbers are wrong by, because both runs are wrong
+        # by it identically.  What is left is what the load did.
+        if np.any(v_stations):
+            a1, a2 = forward_wave_amplitude(
+                v_stations, i_stations, station_x, reference.gamma,
+                reference.zc, indices=[0, -1])
+            reference_ratio = reference.forward_ratio(*s21_planes)
+            if a1 != 0.0:
+                raw_s21 = complex(a2) / complex(a1)
+                s21 = raw_s21 / reference_ratio
+    else:
+        half = (station_x.size + 1) // 2
+        if half >= 4 and np.any(v_stations):    # a two-wave fit needs four
+            a1 = fit_beta(station_x[:half] - s21_planes[0],
+                          v_stations[:half], n_wave=2).forward
+            a2 = fit_beta(station_x[-half:] - s21_planes[1],
+                          v_stations[-half:], n_wave=2).forward
+            if a1 != 0.0:
+                s21, raw_s21 = line_s21(a1, s21_planes[0], a2, s21_planes[1],
+                                        beta)
 
     # --- are the two phasors one mode?  The power-current check -------------
     # Cheap, assumption-free, and the only thing that can license a Poynting
     # vector later: for one travelling wave the power and the current at a
     # station imply the same impedance the fit does.  The port plane is checked
     # too, with the port current negated onto the forward sense like ``z0``.
-    z0_power, power_ratio = power_current_check(
-        v_stations, i_stations, station_fit.z0)
+    # ``zc`` for the power-current check: the fit's own z0 when there is one,
+    # the reference's when the fit was refused, and a refusal of our own when
+    # neither exists.  The reference is exactly the right substitute -- it is
+    # the same line, load-free, so its zc is the impedance this record's mode
+    # has -- and without one there is nothing to measure the ratio against.
+    if station_fit is not None:
+        zc = complex(station_fit.z0)
+    elif reference is not None:
+        zc = complex(reference.zc)
+    else:
+        raise ValueError(
+            "no station-impedance fit was formed on this record "
+            f"({type(station_fit_error).__name__}: {station_fit_error}), so "
+            "the power-current check has no zc to measure against.  Run it "
+            "with reference=..., which takes zc from a load-free run of the "
+            "same line; a record whose phase constant carries a standard "
+            "error as large as itself cannot supply one of its own.")
+    z0_power, power_ratio = power_current_check(v_stations, i_stations, zc)
     z0_power_port, power_ratio_port = power_current_check(
         np.array([v_port]), np.array([-i_trunc]), z0)
 
@@ -1984,6 +2354,9 @@ def microstrip_wave(
     # over the same settled record the DFT saw, split by wall family.  ``length``
     # is the span between the two transmisson planes, so the implied loss is a
     # bound over exactly the distance ``s21`` was de-embedded across.
+    if loads_used:
+        geometry["loads"] = tuple(loads_used)
+
     power_balance = None
     if absorbed is not None and absorbed.steps:
         fractions = absorbed.fractions()
@@ -2034,6 +2407,7 @@ def microstrip_wave(
         station_fit_lossy=station_fit_lossy,
         slice_ez=slice_ez,
         power_balance=power_balance,
+        station_fit_ok=station_fit_ok,
     )
 
 
@@ -2077,6 +2451,7 @@ def microstrip_wave_board(
     n_stations: int = MS_N_STATIONS,
     f_target: float = MS_F_TARGET,
     nsteps: int = MS_NSTEPS,
+    reference: LineReference | None = None,
     sink: FigureSink = None,
 ) -> MicrostripWave:
     """Run :func:`microstrip_wave` on a coupon that came out of a board file.
@@ -2109,7 +2484,15 @@ def microstrip_wave_board(
         n_stations: Number of probe stations along the line.
         f_target: Wanted drive frequency [Hz].
         nsteps: Leapfrog steps; the record is what is left after warm-up.
+        reference: A :class:`LineReference` of the same coupon with no load,
+            passed straight through to :func:`microstrip_wave`, which
+            normalises ``s21`` against it.  ``None`` (the default) reports the
+            un-normalised two-half-fit ratio.
         sink: Where to put the figure; ``None`` (the default) draws nothing.
+
+    The spec's ``loads`` are passed straight through: a
+    :class:`emfit.board.Load` carries its position in metres and its value in
+    SI, so the mesh quantises it exactly as :func:`microstrip_wave` would.
 
     Returns:
         A :class:`MicrostripWave`.
@@ -2136,6 +2519,8 @@ def microstrip_wave_board(
         n_stations=n_stations,
         f_target=f_target,
         nsteps=nsteps,
+        loads=spec.loads,
+        reference=reference,
         sink=sink,
     )
 
@@ -2152,7 +2537,13 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         sink=sink)
     g = result.geometry
     gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
-    sf = result.station_fit
+    # A record whose station fit was refused still has a report to write, and
+    # every row below reads its numbers off ``sf``: a blank fit says ``n/a`` on
+    # all of them through ``num()`` instead of raising nine-tenths of the way
+    # through a table.
+    sf = (result.station_fit if result.station_fit is not None
+          else _blank_station_fit(result.station_x[0], result.beta, None,
+                                  len(result.station_x)))
 
     def num(value, unit, spec=".4f"):
         """Format an optional number, or ``n/a`` when the fit could not give it."""
@@ -2502,7 +2893,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     # The station impedance the loss affects: with alpha in the propagation
     # constant the voltage and current waves no longer keep their relative
     # phase along the span, and the lossless fit has to absorb that somewhere.
-    if np.isfinite(lfl.z0.real) and np.isfinite(sf.z0.real):
+    if lfl is not None and np.isfinite(lfl.z0.real) and np.isfinite(sf.z0.real):
         lossy_z0_row = (
             f"{lfl.z0.real:.4f} ohm +- {num(lfl.z0_sigma_total, 'ohm', '.4f')}"
             f" against {sf.z0.real:.4f} ohm with the decay held fixed "
@@ -2512,6 +2903,16 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             "in whether alpha is free, so the difference is what the lossless "
             "model was hiding; the error is that fit's budget with the alpha "
             "term squared in")
+    elif not result.station_fit_ok and np.isfinite(sf.z0.real):
+        lossy_z0_row = (
+            "n/a: the loss-aware fit was refused on this record -- its "
+            "warning says why -- so the only station impedance quoted is the "
+            f"{sf.z0.real:.4f} ohm above, with the decay held fixed")
+    elif not result.station_fit_ok:
+        lossy_z0_row = (
+            "n/a: both station-impedance fits were refused on this record -- "
+            "its warning says why -- so there is no station impedance to "
+            "quote here at all")
     else:
         lossy_z0_row = "n/a: this record fitted no station impedance"
 

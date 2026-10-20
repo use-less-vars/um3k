@@ -47,7 +47,7 @@ from dataclasses import dataclass
 
 from .kicad import Board, Track
 
-__all__ = ["MM", "MicrostripBoard"]
+__all__ = ["Load", "MM", "MicrostripBoard"]
 
 #: One millimetre in metres -- the conversion this module exists to make.
 MM = 1e-3
@@ -62,6 +62,56 @@ TOL = 1e-12
 #: router need not land on the axis to the last bit; a track that is genuinely
 #: diagonal misses it by orders of magnitude more.
 AXIS_TOL = 1e-9
+
+
+#: The load kinds :class:`Load` understands.  ``series_r`` breaks the strip and
+#: puts a resistance in the break; ``shunt_c`` bridges the strip to the ground.
+LOAD_KINDS = ("series_r", "shunt_c")
+
+
+@dataclass(frozen=True)
+class Load:
+    """One lumped element sitting on the strip at ``position``.
+
+    **Every length is in metres, and ``value`` is SI** -- ohms for
+    ``series_r``, farads for ``shunt_c`` -- for the same reason
+    :class:`MicrostripBoard` keeps metres: nothing downstream converts.
+
+    A load is a circuit element and carries no geometry of its own.  It is
+    placed by ``position``, measured along the line from the ``xmin`` edge like
+    :attr:`MicrostripBoard.x_port`, and the mesh quantises that to the nearest
+    node column, so two positions inside one cell are the same load.
+
+    A ``series_r`` element genuinely interrupts the strip: the sheet is cut
+    across its whole width and the resistance is the only path from one half to
+    the other.  The capacitance of the cut itself (the fringing across the gap
+    plus the substrate under it) is therefore *part of the model*, not an error
+    term to be subtracted -- at the default ``0.4 mm`` cell it is a few hundred
+    ohms of reactance at a few gigahertz, which is not small.  ``value`` of
+    ``float("inf")`` gives a bare open cut.
+
+    Attributes:
+        position: Where the element sits along the line [m].
+        kind: One of :data:`LOAD_KINDS`.
+        value: Resistance [ohm] or capacitance [F], per ``kind``.
+    """
+
+    position: float
+    kind: str
+    value: float
+
+    def __post_init__(self) -> None:
+        if not self.position > 0.0:
+            raise ValueError(
+                f"position must be positive, got {self.position!r} "
+                "(all lengths are metres)")
+        if self.kind not in LOAD_KINDS:
+            raise ValueError(
+                f"kind must be one of {LOAD_KINDS}, got {self.kind!r}")
+        if not self.value > 0.0:
+            raise ValueError(
+                f"value must be positive, got {self.value!r} "
+                "(ohm for series_r, farad for shunt_c)")
 
 
 @dataclass(frozen=True)
@@ -89,6 +139,7 @@ class MicrostripBoard:
         supplied: Names of the fields the **caller** supplied rather than the
             file.  A number that did not come from the board is recorded here
             instead of being indistinguishable from one that did.
+        loads: Lumped elements on the strip, in the order they were written.
     """
 
     length: float
@@ -100,6 +151,7 @@ class MicrostripBoard:
     x_far: float
     name: str = ""
     supplied: tuple[str, ...] = ()
+    loads: tuple[Load, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in ("length", "width", "h", "eps_r", "w", "x_port", "x_far"):

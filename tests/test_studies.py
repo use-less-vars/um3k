@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 
 from emfit import studies
+from emfit.board import Load
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +122,7 @@ def test_microstrip_wave_smoke():
     assert np.isfinite(result.beta_two_wave) and result.beta_two_wave > 0.0
     assert np.isfinite(result.gamma)
     assert np.isfinite(result.fit_residual) and result.fit_residual >= 0.0
+    assert result.station_fit_ok is True
 
     # --- and the one-line summary is actually a line --------------------
     line = result.summary()
@@ -129,6 +131,44 @@ def test_microstrip_wave_smoke():
 
     # Cheap is the point: this must not become a slow test by accident.
     assert elapsed < 10.0, f"the tiny case took {elapsed:.2f} s"
+
+
+# ---------------------------------------------------------------------------
+# a refused station fit: the guard, not the physics
+# ---------------------------------------------------------------------------
+def test_microstrip_wave_refused_station_fit_is_flagged_not_quoted():
+    """A refused station fit is flagged and left out, which is all this pins.
+
+    The board below is the smoke board with an open circuit cut into the
+    strip and a record too short to resolve what comes back off it, so the
+    phase constant arrives carrying a standard error as large as itself and
+    the loss-aware station fit has nothing to divide by.  That is a property
+    of this deliberately under-resolved two-cell strip, not of the line, so
+    nothing about the numbers is asserted here -- only that the run finishes
+    and says so.
+    """
+    with pytest.warns(RuntimeWarning,
+                      match="loss-aware station-impedance fit"):
+        result = studies.microstrip_wave(
+            n_sub=1,
+            n_air=1,
+            n_strip=2,
+            n_clean=1,
+            n_pml=2,
+            n_top=0,          # plain PEC lid; n_top must equal n_pml
+            n_ref=1,
+            n_line=6,
+            x_first=6.4e-3,
+            x_last=11.2e-3,
+            n_stations=4,     # the two-wave fit needs four stations
+            nsteps=200,       # still under-resolved for this reflecting line
+            sink=None,
+            loads=(Load(position=8.0e-3, kind="series_r",
+                        value=float("inf")),),
+        )
+
+    assert result.station_fit_ok is False
+    assert result.station_fit_lossy is None
 
 
 # ---------------------------------------------------------------------------
@@ -328,4 +368,190 @@ def test_line_s21_de_embeds_the_delay_and_nothing_else():
         studies.line_s21(a1, x1, a2, x1, beta)
     with pytest.raises(ValueError):                     # nothing launched
         studies.line_s21(0.0, x1, a2, x1 + d, beta)
+
+
+
+# ---------------------------------------------------------------------------
+# one plane's algebra, and the ratio of two runs that makes s21 honest
+# ---------------------------------------------------------------------------
+# The default run's own numbers, used as the line every wave here travels on,
+# so the arithmetic is tested on a gamma and a zc that are not toys: ~232 rad/m
+# and a 4.6 deg phase in zc.
+GAMMA = complex(2.4697, 232.44695963784835)
+ZC = complex(50.54736386461998, 4.024590867955236)
+X = np.linspace(10.4e-3, 20.0e-3, 9)          # the default station span [m]
+
+
+def test_forward_wave_amplitude_undoes_a_travelling_wave_exactly():
+    """``v = A exp(-gamma x)``, ``i = v / zc`` must give ``A`` back at every x.
+
+    The split is exact algebra, not a fit, so the only error left is floating
+    point: every station must return the same ``A`` to a part in 1e12, and the
+    backward wave must be the rounding noise of ``zc * v / zc - v``.
+    """
+    a = 1.0e5
+    v = a * np.exp(-GAMMA * X)
+    i = v / ZC
+    fwd = studies.forward_wave_amplitude(v, i, X, GAMMA, ZC)
+    assert fwd.shape == X.shape
+    assert np.allclose(fwd, a, rtol=1e-12)
+    bwd = studies.backward_wave_amplitude(v, i, X, GAMMA, ZC)
+    assert np.all(np.abs(bwd) < 1e-12 * abs(a))
+
+    # the two are the same call with the sign of gamma and zc flipped: the
+    # forward wave seen through the mirror is the one going the other way
+    mirrored = studies.forward_wave_amplitude(v, -i, X, -GAMMA, ZC)
+    assert np.allclose(mirrored, bwd, rtol=1e-12, atol=0.0)
+
+
+def test_two_waves_are_separated_on_a_single_plane():
+    """A standing wave needs no span to be split: one plane holds both waves.
+
+    With ``v`` and ``i`` of ``A exp(-gamma x) + B exp(+gamma x)`` the forward
+    and backward calls return ``A`` and ``B`` themselves -- referred to
+    ``x = 0``, so they agree station to station even though the local phasors
+    rotate by tens of radians across the span.
+    """
+    a = 1.0e5
+    b = -0.37e5 + 0.11e5j
+    fwd_wave = a * np.exp(-GAMMA * X)
+    bwd_wave = b * np.exp(+GAMMA * X)
+    v = fwd_wave + bwd_wave
+    i = (fwd_wave - bwd_wave) / ZC
+
+    fwd = studies.forward_wave_amplitude(v, i, X, GAMMA, ZC)
+    bwd = studies.backward_wave_amplitude(v, i, X, GAMMA, ZC)
+    assert np.allclose(fwd, a, rtol=1e-12)
+    assert np.allclose(bwd, b, rtol=1e-12)
+
+    # and the reflection coefficient at the first plane is B/A, whichever
+    # station it is evaluated on
+    assert bwd[0] / fwd[0] == pytest.approx(b / a, rel=1e-12)
+    assert bwd[-1] / fwd[-1] == pytest.approx(b / a, rel=1e-12)
+
+    # an index picks stations out instead of returning the whole array
+    pair = studies.forward_wave_amplitude(v, i, X, GAMMA, ZC, indices=[0, -1])
+    assert pair.shape == (2,)
+    assert np.allclose(pair, (fwd[0], fwd[-1]), rtol=1e-15)
+
+    with pytest.raises(ValueError):        # v, i and x must agree in length
+        studies.forward_wave_amplitude(v[:-1], i, X, GAMMA, ZC)
+
+
+def _ratio_of_ratios(v_load, i_load, v_ref, i_ref, gamma=GAMMA, zc=ZC):
+    """``s21`` as :func:`microstrip_wave` computes it with a reference.
+
+    Written out here so the test can move ``gamma`` without rebuilding a run.
+    The two quotients are formed with the *same* expression
+    ``complex(a[1] / a[0])`` that :meth:`LineReference.forward_ratio` uses:
+    numpy's complex division and Python's are not the same algorithm in the
+    last bit, and only one of them can cancel here.
+    """
+    reference = studies.LineReference(gamma=gamma, zc=zc, station_x=X,
+                                      v_stations=v_ref, i_stations=i_ref)
+    a = studies.forward_wave_amplitude(v_load, i_load, X, gamma, zc,
+                                       indices=[0, -1])
+    return complex(a[1] / a[0]) / reference.forward_ratio(X[0], X[-1])
+
+
+def test_the_same_two_runs_give_a_ratio_of_one():
+    """Identical phasors must divide to ``1``, to the last bit that survives.
+
+    ``forward_ratio`` and the loaded ratio are then the same expression on the
+    same numbers, so their quotient is ``1`` in IEEE arithmetic.  It is
+    asserted to 1e-15 rather than bit-exactly only because the two quotients
+    are formed by different complex divisions (numpy's inside the array path,
+    Python's on the returned scalars), which may differ by an ulp.  Anything
+    larger means the two paths differ in more than rounding -- a different
+    plane, a different factor -- which is the bug the normalisation exists to
+    make impossible.
+    """
+    a = 1.0e5
+    b = -0.37e5 + 0.11e5j
+    fwd_wave = a * np.exp(-GAMMA * X)
+    bwd_wave = b * np.exp(+GAMMA * X)
+    v = fwd_wave + bwd_wave
+    i = (fwd_wave - bwd_wave) / ZC
+
+    ratio = _ratio_of_ratios(v, i, v, i)
+    assert abs(ratio - 1.0) <= 1e-15
+
+
+def _step_runs():
+    """A synthetic two-port: the forward wave steps down 1 -> 0.6 at the load.
+
+    Stations ``0..3`` carry amplitude ``A``, stations ``4..8`` carry ``0.6 A``,
+    each with ``i = a / zc``.  A uniform scale in front of the whole line would
+    be invisible here -- ``a+`` is de-embedded to ``x = 0`` and is a constant
+    for any travelling wave, so scaling the run cancels in the ratio -- but a
+    *step between the two planes* is exactly what a transmission coefficient
+    measures.
+    """
+    a = 1.0e5
+    amp = np.full(X.shape, a)
+    amp[4:] = 0.6 * a
+    wave = amp * np.exp(-GAMMA * X)
+    i_step = wave / ZC
+    fwd_wave = a * np.exp(-GAMMA * X)
+    bwd_wave = (-0.37e5 + 0.11e5j) * np.exp(+GAMMA * X)
+    v_ref, i_ref = fwd_wave + bwd_wave, (fwd_wave - bwd_wave) / ZC
+    return wave, i_step, v_ref, i_ref
+
+
+def test_a_step_in_the_forward_wave_is_measured_not_fitted():
+    """A discontinuity between the planes comes back as its own ratio.
+
+    Every station's ``a+`` is its own amplitude (the exponential cancels), so
+    the ratio of the two planes is ``0.6 / 1`` and nothing else: the loaded run
+    is compared with the reference run plane by plane, not fitted across the
+    step.  That is the property the whole path exists for.
+    """
+    v_load, i_load, v_ref, i_ref = _step_runs()
+    assert _ratio_of_ratios(v_load, i_load, v_ref, i_ref) == pytest.approx(
+        0.6, rel=1e-14)
+
+
+def test_the_ratio_of_ratios_does_not_care_what_alpha_it_was_told():
+    """The loss never enters, because it is the same factor in both runs.
+
+    If the true decay is ``alpha_true`` and the supplied ``alpha`` is
+    ``alpha_told``, both runs' ``a+`` carry ``exp((alpha_told - alpha_true) x)``
+    and so both ratios carry the identical factor ``exp((alpha_told -
+    alpha_true) d)``.  Feeding a different ``alpha`` therefore changes the
+    quotient by rounding alone.  This is the load-bearing assumption that lets
+    the loaded number be quoted without knowing ``alpha``, so it is pinned.
+    """
+    v_load, i_load, v_ref, i_ref = _step_runs()
+    # the real part of gamma is the damping: 0 here, the default run's alpha
+    # there.  The quotient must not know which of the two it was told.
+    lossless = _ratio_of_ratios(v_load, i_load, v_ref, i_ref,
+                                gamma=complex(0.0, GAMMA.imag))
+    lossy = _ratio_of_ratios(v_load, i_load, v_ref, i_ref,
+                             gamma=complex(2.4697030928, GAMMA.imag))
+    assert lossy == pytest.approx(lossless, rel=1e-14)
+    assert lossless == pytest.approx(0.6, rel=1e-14)
+
+
+def test_the_reference_only_answers_on_its_own_two_planes():
+    """A ratio measured on other planes is a ratio of another piece of line."""
+    a = 1.0e5
+    fwd_wave = a * np.exp(-GAMMA * X)
+    reference = studies.LineReference(gamma=GAMMA, zc=ZC, station_x=X,
+                                      v_stations=fwd_wave,
+                                      i_stations=fwd_wave / ZC)
+    # a run consistent with its own reference de-embeds to a constant, so its
+    # own ratio is 1 -- there is no decay left in it to measure
+    assert reference.forward_ratio(X[0], X[-1]) == pytest.approx(1.0, abs=1e-15)
+    with pytest.raises(ValueError):        # the wrong downstream plane
+        reference.forward_ratio(X[0], X[-2])
+    with pytest.raises(ValueError):        # the wrong upstream plane
+        reference.forward_ratio(X[1], X[-1])
+
+    # a reference with no forward wave has nothing to normalise by
+    silent = studies.LineReference(gamma=GAMMA, zc=ZC, station_x=X,
+                                   v_stations=np.zeros_like(X, dtype=complex),
+                                   i_stations=np.zeros_like(X, dtype=complex))
+    with pytest.raises(ValueError):
+        silent.forward_ratio(X[0], X[-1])
+
 

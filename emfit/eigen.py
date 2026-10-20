@@ -159,7 +159,9 @@ def resonances(grid, cc, m_eps, m_mu, pec=None, k=6, sigma=0.0,
             f"got {m_mu.size}")
 
     if sigma:
-        warnings.warn("resonances: sigma is ignored by the dense solver",
+        warnings.warn("resonances: sigma is ignored by the dense solver; the "
+                      "spectrum returned is the lossless one, and loss is "
+                      "modelled only by FITStepper(m_sigma=...)",
                       RuntimeWarning, stacklevel=2)
 
     free = _free_mask(cc, pec)

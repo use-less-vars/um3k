@@ -162,6 +162,16 @@ change to the data layout: it updates edges in place and introduces no new unkno
 Section~\ref{sec:res-pml} is as cheap, and for the same reason. It never enters the material tensor: it is a matched
 lossy medium applied as one multiplication per field update on the arrays the stepper already touches.
 
+One design rule of the study layer is not visible in the example and is worth stating, because it was learned
+the hard way in this gate. A station-impedance fit can be refused outright: it needs the phase constant's own
+standard error to be smaller than the phase constant, and a strongly reflecting line can put that out of reach.
+Until this gate such a refusal propagated out of the study and aborted a record whose S-parameters, phase
+constant and every other number had already been computed, so a diagnostic nobody had asked for destroyed a
+result that did not depend on it. It now leaves that one diagnostic unavailable, reports it as not formed, and
+warns once with the exception that caused it, while the record's primary numbers are untouched; the public flag
+\texttt{station\_fit\_ok} tells a caller which of the two states the record is in. The rule is worth carrying
+further than this one fit: a diagnostic must never be able to destroy a result that does not depend on it.
+
 \subsection{Testing}
 \label{sec:testing}
 

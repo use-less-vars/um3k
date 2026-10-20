@@ -2,24 +2,45 @@
 
 Grid equations (see :mod:`emfit.materials`)::
 
-    C e = -d/dt (m_mu h)                 Faraday
-    C~ h =  d/dt (m_eps e) + j ,  C~ = C.T   Ampere
+    C e = -d/dt (m_mu h)                      Faraday
+    C~ h =  d/dt (m_eps e) + m_sigma e + j ,  Ampere,  C~ = C.T
+
+``m_sigma`` is the diagonal of the conductance star: one non-negative entry
+per primal edge, in siemens.  It represents distributed material conductivity
+and, *equally*, a lumped circuit load -- a load is nothing but a conductance
+between two edges, so the stepper never has to learn what a board is.
 
 Staggered (Yee) leapfrog::
 
     h^{n+1/2} = h^{n-1/2} - dt * (1/m_mu) * (C e^n)
-    e^{n+1}   = e^n       + dt * (1/m_eps) * (C~ h^{n+1/2} - j)
+    e^{n+1}   = [ (m_eps/dt - m_sigma/2) e^n + (C~ h^{n+1/2} - j) ]
+                / (m_eps/dt + m_sigma/2)
     e^{n+1}[PEC] = 0
 
-and at the mixed state ``(e^n, h^{n-1/2})`` the quantity
+i.e. the Ampere law is discretised by the trapezoidal (Crank-Nicolson) rule
+in time, elementwise.  That is the difference between a scheme that is stable
+for any load and one that is not: the per-edge amplification factor is
+``(1 - a/2) / (1 + a/2)`` with ``a = dt m_sigma / m_eps``, whose magnitude is
+strictly below one for every ``m_sigma >= 0``, whereas an explicit
+``-dt m_sigma e^n`` term would need ``a < 2``.  For practical loads ``a`` is
+small anyway: a 50 ohm load spread over 8 parallel edges (``G = 2.5e-3`` S each)
+on a mesh with ``dx = 0.4`` mm gives ``dt m_sigma / (2 m_eps) = 0.06`` on a
+substrate edge (``m_eps = 1.558e-14`` F) and ``0.27`` on an air edge
+(``m_eps = 3.542e-15`` F).  That pair assumes ``A~/L = dx`` for the mesh, which
+holds when the transverse cell spacings equal ``dx``.  With ``m_sigma`` all zero
+the update reduces to the lossless line above *bit for bit*.
+
+At the mixed state ``(e^n, h^{n-1/2})`` and with ``m_sigma = 0`` the quantity
 
     U = 1/2 e.m_eps.e + 1/2 h.m_mu.h - (dt/2) (C e).h
 
 is an *exact* algebraic invariant: the two O(dt) and the two O(dt^2) terms of
 the change cancel pairwise.  The cross term is thus not an accuracy nicety --
-without it U would only be conserved to O(dt).
+without it U would only be conserved to O(dt).  With a nonzero ``m_sigma`` U is
+no longer invariant (the loads drain energy) and it is mere bookkeeping.
 
-All quantities are SI: ``e`` in V, ``h`` in A, ``j`` in A, ``U`` in J.
+All quantities are SI: ``e`` in V, ``h`` in A, ``j`` in A, ``m_sigma`` in S,
+``U`` in J.
 """
 
 from __future__ import annotations
@@ -68,6 +89,11 @@ class FITStepper:
         Provides ``C`` / ``C.T`` and the grid (used for the default ``dt``).
     m_eps, m_mu : array_like, shape (n_edges,) and (n_faces,)
         Diagonal material matrices from :func:`emfit.materials.material_matrices`.
+    m_sigma : array_like, shape (n_edges,), optional
+        Diagonal of the conductance star: a non-negative conductance [S] per
+        primal edge.  Both material conductivity and a lumped load are just a
+        conductance between two edges.  ``None`` or an all-zero vector leaves
+        the lossless update untouched, bit for bit.
     dt : float, optional
         Time step; defaults to :func:`cfl_dt` of the grid.
     pec : array_like, optional
@@ -94,7 +120,7 @@ class FITStepper:
     """
 
     def __init__(self, cc, m_eps, m_mu, dt: float | None = None, pec=None,
-                 pml=None):
+                 pml=None, m_sigma=None):
         self.cc = cc
         self.C = cc.curl()
         self.C_tilde = cc.curl_dual()
@@ -112,6 +138,23 @@ class FITStepper:
         self.inv_m_mu = 1.0 / self.m_mu
 
         self.dt = float(cfl_dt(cc.grid) if dt is None else dt)
+
+        # Lossy Ampere law, trapezoidal in time (see the module docstring).
+        self.m_sigma = None
+        self.loss_num = None
+        self.loss_den = None
+        if m_sigma is not None:
+            ms = np.asarray(m_sigma, dtype=float).ravel()
+            if ms.size != self.C.shape[1]:
+                raise ValueError(
+                    f"m_sigma must have {self.C.shape[1]} entries (primal "
+                    f"edges), got {ms.size}")
+            if np.any(ms):
+                self.m_sigma = ms
+                rate = self.m_eps / self.dt
+                half = 0.5 * ms
+                self.loss_num = rate - half
+                self.loss_den = 1.0 / (rate + half)
 
         self.pml = pml
         self.power_audit = getattr(pml, "_audit", None)
@@ -151,7 +194,10 @@ class FITStepper:
         ce = self.C_tilde @ self.h
         if j is not None:
             ce = ce - j
-        self.e += self.dt * (self.inv_m_eps * ce)
+        if self.loss_den is None:
+            self.e += self.dt * (self.inv_m_eps * ce)
+        else:
+            self.e = (self.e * self.loss_num + ce) * self.loss_den
         if self.pml is not None:
             self.pml.damp_e(self.e, self.dt)
         if self.pec_idx is not None:
@@ -266,7 +312,8 @@ class Leapfrog(FITStepper):
     def __init__(self, system, e0=None, h0=None, dt: float | None = None):
         dt_used = system.check_dt(system.dt if dt is None else dt)
         super().__init__(system.cc, system.M_eps.diag, system.M_mu.diag,
-                         dt=dt_used, pec=np.flatnonzero(system.pec))
+                         dt=dt_used, pec=np.flatnonzero(system.pec),
+                         m_sigma=system.M_sigma.diag)
         self.system = system
         self.j = np.zeros_like(self.e)
         if e0 is not None:

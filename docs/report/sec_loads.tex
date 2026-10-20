@@ -1,0 +1,192 @@
+\section{Lumped elements at a transverse cut}
+\label{sec:loads}
+
+\noindent\emph{Status: draft -- two element kinds are reported here, a series resistance and a shunt
+capacitance, both placed at a transverse cut across the strip of Section~\ref{sec:msres-box}. Every series
+figure is evaluated against a load-free run of the same line, and every shunt figure against the capacitance the
+mesh was asked to inject. The series branch passes the test it was registered against. The shunt branch does not
+pass, and is reported as an envelope that says how far it does get and no further.}
+
+\subsection{What a cut means numerically}
+\label{sec:loads-cut}
+
+A \texttt{series\_r} load of value \texttt{inf} is a bare open, and the way it is built has to be stated before
+any number is quoted. Nothing is assembled at the load position: the cut annihilates the perfectly conducting
+mask on one column of dual edges, so the strip stops there and the two halves of the line are joined by nothing at
+all. This is not a simplification of a component the solver cannot discretise. The cut \emph{is} the model, and
+the only thing standing between the two halves of the strip is the field of the cut itself.
+
+That field is not negligible. A column of edges whose conductor has been removed carries a capacitance of its own
+-- the capacitance of the gap across the strip -- and it carries it whether or not a user asked for one. The bare
+open therefore does not present a pure open circuit to the line: it presents that gap capacitance in parallel
+with whatever the load was meant to be, and a prediction that treats the cut as an ideal series element is wrong
+by that amount. What follows measures the term and finds where it stops being a small correction.
+
+\subsection{The series branch}
+\label{sec:loads-series}
+
+Three resistances are cut into the strip at $15.20$ mm and each is measured against a load-free run of the same
+line, so that the reference branch carries the cut's capacitance and the load branch differs from it in the load
+alone. The board and both of its reference numbers are named in the caption of
+Table~\ref{tab:loads-series}, and every figure below is read from that record rather than re-derived.
+
+\begin{table}[H]
+  \centering
+  \caption{The series branch on the reference board: $0.400$ mm cells, $n_{\mathrm{sub}} = 4$,
+  $n_{\mathrm{strip}} = 8$, the cut at $15.20$ mm, $2400$ steps, each resistance evaluated against a load-free
+  run of the same line. That run drives at $5.8278$ GHz and gives a station impedance
+  $Z_c = 50.547 + 4.025j\ \Ohm$, and the cut's capacitance from the mesh formula
+  $C_g = n_{\mathrm{strip}}\eps_0\eps_r\,\dd x = 1.2467\times10^{-13}$ F $= 0.1247$ pF, so that
+  $Z_g = 1/(j\omega C_g) = -219.061j\ \Ohm$. The fourth column is the textbook series formula evaluated with that
+  $Z_c$; the last is the deviation of the measurement from it. The pre-registered prediction for the
+  $100\ \Ohm$ point was a deviation of $7.1$ per cent.}
+  \label{tab:loads-series}
+  \begin{tabular}{@{}rrrrr@{}}
+    \toprule
+    $R$ [$\Ohm$] & $|s_{21}|$ measured & $\arg s_{21}$ [$^\circ$] & $2Z_c/(2Z_c+R)$ & deviation [pc] \\
+    \midrule
+     25 & 0.794825 & $+1.4852$  & 0.802640 & $-0.974$ \\
+     50 & 0.673329 & $+4.9999$  & 0.670249 & $+0.460$ \\
+    100 & 0.549464 & $+13.0870$ & 0.503909 & $+9.040$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The textbook formula holds to under one per cent at $25$ and $50\ \Ohm$, and it fails the $100\ \Ohm$ point by
+$9.04$ per cent. That failure was not a surprise found afterwards: the discriminator was registered at three
+resistances in advance, and the prediction for the third was a few per cent of deviation from the ideal series
+reading. The reason the formula fails is the one Section~\ref{sec:loads-cut} gave: it treats the cut as an ideal
+series impedance, whereas the one-cell cut also carries $C_g$, so the load the line actually meets is $R$ in
+parallel with $Z_g$.
+
+That reading is testable without appealing to the formula under test, by inverting the measured transmission
+coefficient for the impedance the line saw, $Z_l = 2Z_c(1/s_{21} - 1)$, and comparing that impedance with
+$R \parallel Z_g$ computed from the geometry alone.
+
+\begin{table}[H]
+  \centering
+  \caption{The same board and the same three resistances, with the load impedance inverted from the measured
+  transmission coefficient and compared with $R$ in parallel with the cut capacitance $Z_g = -219.061j\ \Ohm$ of
+  Table~\ref{tab:loads-series}. The columns are, left to right, the commanded $R$, the inverted $Z_l$,
+  $R \parallel Z_g$, their difference, its modulus, and the deviation of the measurement from
+  $2Z_c/(2Z_c + R \parallel Z_g)$; the largest phase difference against that corrected prediction, over the
+  three points, is $0.68^\circ$, and the corrected values themselves are $0.805632$, $0.682260$ and $0.544544$.}
+  \label{tab:loads-implied}
+  \small
+  \begin{tabular}{@{}rrrrrr@{}}
+    \toprule
+    $R$ [$\Ohm$] & $Z_l$ [$\Ohm$] & $R \parallel Z_g$ [$\Ohm$] & diff. [$\Ohm$] & $|$diff.$|$ [$\Ohm$] & corr. dev. [pc] \\
+    \midrule
+     25 & $26.3162 - 1.2222j$ & $24.6786 - 2.8164j$ & $+1.6377 + 1.5942j$ & 2.29 & $-1.34$ \\
+     50 & $49.5174 - 9.2259j$ & $47.5242 - 10.8472j$ & $+1.9932 + 1.6214j$ & 2.57 & $-1.31$ \\
+    100 & $81.4314 - 35.4408j$ & $82.7550 - 37.7771j$ & $-1.3235 + 2.3363j$ & 2.69 & $+0.90$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The corrected prediction is within $1.34$ per cent at $25\ \Ohm$, $1.31$ per cent at $50\ \Ohm$ and $0.90$ per
+cent at $100\ \Ohm$, against deviations of $0.97$, $0.46$ and $9.04$ per cent for the ideal series formula, and
+every phase agrees to within $0.68$ degrees. What is left over is a nearly constant offset rather than a
+residual that grows with the load: the real part of the difference in Table~\ref{tab:loads-implied} runs from
+$-1.32$ to $+1.99\ \Ohm$ and its imaginary part from $+1.59$ to $+2.34\ \Ohm$ across the three, which is the
+signature of a small fixed series term in the cut, not of an error in the capacitance. The capacitance the mesh
+formula predicts is therefore confirmed by measurement, and the confirmation is worth as much as the test it was
+registered against: at $50\ \Ohm$ the load and the line impedance are nearly equal, so the ideal and corrected
+formulas agree there almost exactly, and \emph{a single $50\ \Ohm$ probe would have appeared to confirm the
+textbook formula by cancellation}. That is why the discriminator was registered across three resistances and
+not one.
+
+One detail of the reference branch is a choice and is declared as one. It takes the attenuation for its
+propagation constant from the joint complex-$\gamma$ fit of the station series, $3.0436$ Np/m, and the
+normalisation of the ratio is built so that the choice of that attenuation is immaterial to what the ratio
+reports.
+
+\subsection{The shunt branch, and how far it gets}
+\label{sec:loads-shunt}
+
+A \texttt{shunt\_c} load is not a lumped capacitor and is not claimed to be one. It is a permittivity injection
+on a fixed patch of $E_z$ edges at the load column, and the capacitance a user commands is realised only through
+that injection. Table~\ref{tab:loads-shunt-cap} sweeps the command over a factor of forty on the same $0.400$ mm
+mesh and reports what comes back, together with the depth of the injection expressed as the injected per-edge
+capacitance divided by the cell's own.
+
+\begin{table}[H]
+  \centering
+  \caption{Commanded against recovered capacitance for the \texttt{shunt\_c} element on the $0.400$ mm mesh, and
+  the injection depth the command corresponds to. The cell's own capacitance is
+  $\eps_0\eps_r\,\dd x = 1.5583\times10^{-14}$ F at $\eps_r = 4.4$, and the depth row is the injected per-edge
+  capacitance divided by it, so it is dimensionless. The recovery is exact in bookkeeping and increasingly
+  overstated in field: at $1$ pF the recovered capacitance exceeds the commanded one by a quarter. The
+  parallel-plate harness of Section~\ref{sec:testing}, where the same element recovers $+0.31$ per cent at an
+  injection depth of $4.58$, is the positive control this table is read against.}
+  \label{tab:loads-shunt-cap}
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    Commanded $C$ [pF] & 0.05 & 0.1 & 0.2 & 0.5 & 1.0 & 2.0 \\
+    \midrule
+    Recovered $C$ [pF] & 0.049771 & 0.100214 & 0.203467 & 0.540617 & 1.250664 & 3.716293 \\
+    Ratio              & 0.9954   & 1.0021   & 1.0173   & 1.0812   & 1.2507   & 1.8581   \\
+    Injection depth    & 1.60     & 3.21     & 6.42     & 16.04    & 32.09    & 64.17    \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The edge bookkeeping is exact, and was checked against the arrays rather than assumed. The load column carries
+$32$ $E_z$ edges -- eight ground-to-strip columns of four series edges each -- the per-edge permittivity is raised
+by $C\,n_{\mathrm{sub}}/n_{\mathrm{strip}} = C/2$, and the series-parallel combination of eight columns of four
+series edges returns exactly $C$. The deviation in the table is therefore not a counting error. Nor is it a fixed
+parasitic: the recovered value exceeds the commanded one by $0.0035$ pF at $0.2$ pF and by $1.716$ pF at $2.0$ pF,
+where a fixed offset would give the same number twice. Nor is it a multiplicative factor, since the ratio spans
+$0.9954$ to $1.8581$.
+
+What a user actually sees is the loading itself, in Table~\ref{tab:loads-shunt-load}.
+
+\begin{table}[H]
+  \centering
+  \caption{The loading the \texttt{shunt\_c} element produces on the reference board of
+  Table~\ref{tab:loads-series}: measured transmission coefficient against the commanded capacitance, same board,
+  same step count, same load-free reference. The shallowest command moves the transmission by less than the
+  resolution of the measurement, and the deepest removes three quarters of it while rotating the phase by
+  $73^\circ$.}
+  \label{tab:loads-shunt-load}
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    Commanded $C$ [pF] & 0.05 & 0.1 & 0.2 & 0.5 & 1.0 & 2.0 \\
+    \midrule
+    $|s_{21}|$             & 1.000292 & 0.998486 & 0.988121 & 0.901756 & 0.656036 & 0.276753 \\
+    $\arg s_{21}$ [$^\circ$] & $-2.6513$ & $-5.3342$ & $-10.7653$ & $-26.9490$ & $-49.7584$ & $-73.4385$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The loading is monotone and smooth, and at the shallowest command the element is indistinguishable from nothing:
+$1.000292$ is three hundredths of a per cent above unity, which is the resolution of the measurement rather
+than a gain, and it is the only point in the table that reads above unity.
+
+The cause of the overstatement is identifiable; the mechanism is not closed, and this paragraph is the place
+where that distinction is kept. At $1$ pF the branch overstates the commanded capacitance by $25$ per cent
+(ratio $1.2507$) and does not recover it, and a sweep on one mesh cannot say why. On a fixed mesh the commanded
+capacitance, the injection depth and the perturbed phase advance per cell are all monotone functions of one
+another, so any of the three explains the column equally well; a curve fitted to this table would be a
+re-parameterisation of the sweep and not evidence about its cause. Refinement does not rescue the explanation
+either: across meshes the behaviour is not consistent with a phase-advance reading at all. What does survive as
+evidence is the positive control named in the caption of Table~\ref{tab:loads-shunt-cap}, where the same
+injection recovers $+0.31$ per cent at a depth within a factor of two of what this mesh gives at a matched
+depth. The structural difference between the two is the shape of the injection: in the harness it spans the whole
+cross-section and therefore changes the medium, whereas on the microstrip it spans only the strip footprint,
+inside the non-uniform fringing field of an $\eps_r = 4.4$ substrate, and perturbs the field distribution as well
+as the stored energy. No single scalar captures a difference in kind.
+
+The conclusion is therefore an envelope and not a validation. On this mesh the \texttt{shunt\_c} element
+recovers the commanded capacitance to a few tenths of a per cent only while the injection is shallow -- it is
+$0.46$ per cent low at $0.05$ pF and $0.21$ per cent high at $0.1$ pF, already $1.73$ per cent high at $0.2$ pF,
+which is $6.42$ cell capacitances per edge -- and by $1$ pF it overstates by a quarter. The cause is named and
+the mechanism is not closed, so \emph{the shunt branch is not claimed to be validated}. It is recorded here in the
+same way as the other open residual of this work, rather than presented as a success because the shallow points
+look good.
+
+The rule that follows is a rule for use. Command a \texttt{shunt\_c} element at or below a few times the cell's
+own capacitance and it does what it says to a fraction of a per cent. Command a larger one on a mesh this coarse
+and what is being set is the strength of an injection, not a capacitance: the element will load the line, the
+loading will be smooth and monotone as Table~\ref{tab:loads-shunt-load} shows, and the number a user asked for
+will not be the number the line meets.
