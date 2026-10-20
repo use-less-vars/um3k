@@ -180,7 +180,9 @@ rather than as a discrepancy: \emph{two model-free measurements agree with each 
 so the attenuation this box exhibits is a lateral boundary sink of $0.0116$ dB/mm and not conductor loss -- which
 it could not be in any case, since the solver contains no ohmic term. What that sink physically is, the
 accounting does not say: Section~\ref{sec:msres-verdict} names the two candidates it leaves and the measurement
-that would separate them. Over the $21.6$ mm of the line the sink costs $0.25$ dB, and $|S_{21}| = 0.972$.
+that would separate them. Over the $21.6$ mm of the line the sink costs $0.25$ dB, and $|S_{21}| = 0.972$;
+that magnitude belongs to this box rather than to the line, as the clearance test in
+Section~\ref{par:msres-mechanism} shows.
 
 The last row of Table~\ref{tab:ms-alpha} is the same work charged the other way, and it is printed to keep the
 arithmetic honest. The lateral walls run $26.40$ mm of line; charging all of their work to the $9.60$ mm station
@@ -212,17 +214,51 @@ Third, the mechanism must be identified by name and by the part of the box respo
 settled: the matched layer on $y_{\min}$, $y_{\max}$ and the top face removed $7.054$ per cent of the injected
 power in the settled window while the end walls took the remaining $92.946$, so the sink sits on the lateral and
 lid faces and nowhere else. The mechanism is \emph{not} settled by this record, and two candidates survive it.
-The guided mode of a $1.60$ mm substrate at $w/h = 2$ carries most of its energy in the air region above the
-strip, and that region terminates in a matched layer a few cells away, so power can leave as the discretised mode
-meeting an imperfect absorber. Alternatively, the substrate is $h = 0.031\,\lambda_0$ thick at $5.8278$ GHz, a
-thickness at which $\mathrm{TM}_0$ surface-wave excitation at the strip edge is a standard concern, and such a
-wave is likewise absorbed by the lateral walls. The accounting cannot separate the two by construction: both
-deposit their work in the same wall family, and both grow as the lateral walls are brought closer to the strip,
-so the clearance sweep the earlier study ran moves the rate without discriminating between them. What would
-discriminate is a substrate-thickness sweep, since $\mathrm{TM}_0$ radiation grows with $h/\lambda_0$ while the
-absorption of the discretised mode does not; that sweep belongs to the \texttt{Board} path, which this record
-does not use. The requirement is therefore met at the geometry -- a lateral boundary sink on the matched layer,
-not an ohmic term -- and the physical attribution is left open rather than filled in.
+The matched layer sits $4.80$ mm above the strip, which is $0.95$ of a lateral decay length, so the region above
+the strip is below cutoff vertically and there is no half-space in which a grounded-slab $\mathrm{TM}_0$ wave
+could exist; the candidates are therefore absorption of a slowly decaying lateral tail by the matched layer, and
+a propagating lateral component of the box-loaded mode that a wider box would not cure.
+\label{par:msres-mechanism}
+
+Both tests that follow use the \texttt{Board} path: a board object carrying the stack-up, the trace and the port
+is converted from millimetre drawing units to SI metres and run through the same solver, so the geometry can be
+widened without touching the mesh. Both tests were pre-registered: the predicted bands were written down before
+the solve. The substrate-thickness test did not discriminate. The audited lateral wall work is $0.011604$ dB/mm
+at $h = 1.60$ mm and $0.004322$ dB/mm at $h = 0.80$ mm with $w/h$ held at $2.000$, a ratio of $0.372$, that is
+$h$ to the $1.425$. Both candidates predict a fall with thickness, and $0.372$ lies between the $h$ and
+$h$-squared keys, so it separates neither. Only the audited wall work and the absorbed-work totals carry that
+scaling; the fitted attenuation and the station ratio are unusable at the thinner substrate, and that estimator
+disagreement is itself the reason the audit exists. What the test did establish is that the sink is not a
+material attenuation: it scales with the geometry as a boundary term, and it falls per unit stored power faster
+than the stored power falls.
+
+The clearance test is the one that discriminates. Widening the board from $20.80$ mm to $28.80$ mm, which puts
+$8.8$ mm of clean dielectric either side of the strip instead of $4.8$ mm and changes nothing else, took the
+audited lateral work from $1.33601$ Np/m to $0.60085$ Np/m, a ratio of $0.450$. The work on the edge cells where
+the walls meet fell to $0.471$ of its value and the work on the wall face cells to $0.435$, so the fall is a
+redistribution neither between field families nor between wall families; the end-wall work moved by $4.4$ per
+cent, and $\beta$ moved from $231.89$ rad/m to $232.14$ rad/m while $\varepsilon_{\mathrm{eff}}$ moved from
+$3.6043$ to $3.6123$, so the mode itself did not change. The pre-registered band for a propagating lateral
+component was $0.75$ to $1.05$ and is excluded by the audited work, while the band for a decaying tail was
+$0.21$ to $0.50$ and contains the result at its upper edge.
+
+The sink is therefore a boundary term whose magnitude is set by the clearance, so $0.011604$ dB/mm is a property
+of this box and not of the line, and the audited sink in the wide box is $0.00522$ dB/mm for the same strip. The total
+attenuation falls less than the sink does, and that difference is visible with a single estimator carried across
+the two boxes: the audited lateral work falls to $0.450$ of its value, while the plain station-to-station rate
+over the same $9.60$ mm falls from $1.36215$ Np/m to $0.91350$ Np/m, a ratio of $0.671$, and the fitted
+attenuation falls to $0.590$ of its reference-box value. Every estimator falls when the box is widened and none
+stays put, so the decay measured in the reference box is not an attenuation set by the line: a quantity fixed by
+the line would not move when the wall moves. What remains open is how the between-station decay divides. In the
+reference box the audited lateral work reproduces the endpoint rate to within $2$ per cent, a factor of $1.02$,
+so there the sink is the whole of the decay within the accuracy of that comparison. In the wide box the lateral
+bin accounts for only two thirds of it, a factor of $1.52$, which leaves $0.31$ Np/m of the between-station
+decay unaccounted for by that bin. Two readings survive one run: either the endpoint rate carries an error of
+order $0.2$ Np/m at a rate near $0.9$ Np/m, or there is a component of the decay that does not depend on the
+clearance and that the lateral bin does not capture, and nothing in this record decides between them. What a
+closed box cannot do is separate the two candidates that remain: matched-layer
+absorption of a decaying tail and a genuine radiation loss are both cured by moving the wall out, so the box
+cannot separate them, and doing so needs an open boundary or a clearance convergence study.
 
 So the criterion is met on the reference box in the form the record can grade it in: $|S_{21}|$ is consistent
 with a lossless material model, the shortfall is attributed to a sink whose magnitude the energy balance pays for

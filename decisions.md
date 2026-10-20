@@ -244,3 +244,115 @@ is fixed in `emfit/studies.py`.
 - **What is left, and what the next run tests.** The candidate pair is a matched-layer absorption of the box's
   slowly decaying lateral tail, against a propagating lateral component of the box-loaded mode that a wider box
   would not cure. That distinction is what matters to the product, and it is what the next run tests.
+
+## Correction: the 1.600 Np/m comparison mixed two estimators
+
+- **Supersedes part of** the entry "The substrate diagnostic, and a correction to a quoted floor" above, specifically its
+  use of the sweep's `1.600` Np/m as evidence against clearance.
+- **Withdrawn inference.** That entry said the clearance/lid floor of `0.0139 +- 0.0026` dB/mm was a box property rather
+  than an attenuation of the line, and offered as part of the reason that the sweep's `1.600` Np/m exceeds the reference
+  box's audited `1.33601` Np/m, which would be impossible if moving the walls out reduced the sink. That inference is
+  withdrawn: the two numbers are not the same estimator. `1.600` Np/m is a *fitted* attenuation from the `npml 6` sweep
+  boxes; `1.33601` Np/m is *audited wall work* from the reference box.
+- **The size of the mismatch.** In the reference box the fitted attenuation is `2.46970` Np/m against an audited
+  `1.33601` Np/m, a ratio of `1.849`, and that bias is exactly the `1.84` factor already known in this log. So a
+  sweep-box fitted floor of `1.600` Np/m corresponds, if the bias is roughly stable across boxes, to an audited wall rate
+  of order `0.87` Np/m, which is *below* the reference box's `1.33601` Np/m and therefore entirely consistent with
+  clearance reducing the sink. The ordering of a fitted number and an audited number carries no information, and the
+  earlier statement that the sweep data contradicted clearance was wrong.
+- **What survives.** `0.0139 +- 0.0026` dB/mm is a floor on *fitted* `alpha` over a `14.4` mm span in `npml 6` boxes and
+  must not be quoted as an attenuation of the line; the two audited values, `0.011604` dB/mm at `h = 1.6` mm and
+  `0.004322` dB/mm at `h = 0.8` mm, are the only lateral wall rates in this log.
+- **What does not survive.** Any claim that the sweep data itself rules out a decaying lateral tail. Whether the tail
+  picture holds is for the case C clearance audit to decide, and the mismatch above removes one of the arguments that
+  had been counted against it.
+
+## Case C: the clearance audit, and the lateral sink is a boundary term
+
+The clearance test was run on the Board path: case A's reference box with the board widened from 20.80 mm to
+28.80 mm, giving 8.8 mm of clean dielectric each side of the strip instead of 4.8 mm. Everything else identical:
+66 x 72 x 26 cells at 0.400 mm, `ny 72 = 2*10 + 8 + 2*22`, `n_clean 22`, `n_line 54`, matched layer ten cells,
+2400 steps with 600 to settle and 1800 accumulated, nine stations, 5.827786408 GHz, `L_box` 26.4 mm. Audited
+lateral wall work fell from `1.3360133447` Np/m to `0.6008499504301062` Np/m, a ratio of `0.44973`, and the
+lateral share of all absorbed work fell from `0.0705415046` to `0.03172487738270961`. The pre-registered tail
+band was `0.21` to `0.50` and the pre-registered distributed band was `0.75` to `1.05`: the measurement lands at
+`0.4497`, inside the tail band at its upper edge, and the falsifier at about `1.0` was not triggered. My own
+written prediction was `0.60` with a band of `0.40` to `0.80`, so the point prediction was too high and the
+interval contained the result.
+
+Four independent estimators were compared across the two boxes, each against itself and no other: the audit gives
+`0.4497`, the fitted attenuation `2.4697030928` to `1.4562321181785494` gives `0.5896`, the station full-span
+value `2.55126` to `1.5656912491269914` gives `0.6137`, and the plain station-to-station ratio `0.9870082` to
+`0.9912684` gives `0.6706` in terms of attenuation, `1.3621` Np/m to `0.9134` Np/m. All four fall, by between
+1.5 and 2.2, and the two candidates were separated by whether the fall would be present at all: a propagating
+lateral component of the box-loaded mode that a wider box would not cure predicted `0.75` to `1.05`, and is
+excluded by the audit and by the fitted attenuation at about two standard deviations, though the raw endpoint
+ratio alone would sit in the low part of the ambiguous band. The mode itself barely moved across the change:
+beta `231.88571529` to `232.1433122904987`, eps_eff `3.604312254` to `3.612324612863742`, and the ratio of
+magnetic to electric stored work `0.9538` to `0.9398`, so the fall in the sink is not a change of mode.
+
+## The corner-contamination hypothesis was wrong, and the field slice cannot adjudicate
+
+The audit's `AbsorbedWork` object keeps the absorbed work four ways, edges against faces for each wall group,
+which the earlier dumps had summed away. Re-running case C with the four bins recovered, and checking that edges
+plus faces reproduce the summed values exactly for both groups (difference `0.000e+00` in each, accumulated steps
+1800), gives: reference box edges `{end 1.347842e-06, lateral 8.611041e-08}` and faces
+`{end 1.256222e-06, lateral 1.115257e-07}`, stored work electric `1.433953e-06` and magnetic `1.367747e-06`;
+widened box edges `{end 1.4071048037713717e-06, lateral 4.056215064025947e-08}` and faces
+`{end 1.3119386370322637e-06, lateral 4.852546272792045e-08}`, electric `1.4476669544116312e-06` and magnetic
+`1.3604640997601842e-06`. The lateral edges fell to `0.4710` and the lateral faces to `0.4352`, a spread of
+eight per cent, while the end wall work rose by 4.4 per cent in both families. **The contamination hypothesis is
+withdrawn**: I had recorded that corner and end cells sharing the lateral bin would bias the ratio upward toward
+the distributed reading, and it does not, because the edge cells fall as fast as the face cells. There is no
+clearance-independent floor in that bin, and the `0.4497` needs no correction on that account.
+
+**The field slice does not support the number and must not be used as if it did.** The saved mid-plane `Ez`
+phasor at `x = 15.2` mm is not exponential in `y`: the local decay constant runs from about 1300 Np/m near 4 mm
+to about 185 Np/m near 10 mm, the amplitude flattens to a plateau of order `1e3` between 9.6 and 11.2 mm and
+then collapses between 11.6 and 14.0 mm to a zero at the outer edge at 14.4 mm, and the last point is on the
+zeroed matched-layer boundary so it carries no information at all. Taking the local decay constant near the
+wall, 4.2 to 5.4 mm of decay length, predicts a wall-flux ratio of `0.17` to `0.23`, against the audited
+`0.4497`, so the mid-plane electric field decays two to three times faster than the wall-integrated absorbed
+work does. The slice therefore measures a different quantity from the one the audit bins, and the honest
+position is that the field profile neither supports nor contradicts `0.4497`. No slice was saved for the
+reference box, so no direct field comparison between the two boxes exists either. The decay length implied by
+the work ratio itself, `exp(-2 kappa 4.0 mm) = 0.4497`, is `99.9` Np/m or `10.0` mm, which is twice the
+half-space value of `5.07` mm and twice the measured near-wall value; reconciling those three numbers is open,
+and until it is done the microscopic mechanism is not pinned down.
+
+**What case C establishes and what it does not.** It establishes that the lateral sink is a boundary term whose
+magnitude is set by the clearance: the same line, the same mode, 2.2 times less audited lateral absorption when
+the wall moves out 4.0 mm, in every field family and every estimator. The reference box's `0.0116` dB/mm is
+therefore a property of that box and not of the line, and a wider box reports `0.00522` dB/mm for the same
+geometry, which is worth saying to the user and in the report. It does not establish whether the residual sink is
+absorption of the slowly decaying lateral tail by the matched layer or a genuine radiation loss: a closed box has
+no half-space, so that distinction cannot be made inside it at all, and it would need either an open-boundary
+formulation or a third clearance point to show whether the fall converges.
+
+## The audit and the station ratio agree in the reference box and separate in the wide box
+
+In the reference box the two estimators furthest apart in construction agree: audited lateral wall work
+`1.33601` Np/m against a plain station-to-station rate of `1.36215` Np/m over the same `9.6` mm, `1.9` per cent,
+factor `1.02`. That is the model-free evidence the case rests on, joules counted on the walls against amplitudes
+differenced between stations sharing no constant, and it is what makes `0.011604` dB/mm an attribution rather
+than a name.
+
+In the wide box they separate: `0.60085` Np/m audited against `0.91350` Np/m from the endpoint ratio, a factor
+of `1.52`, so the lateral bin accounts for two thirds of the between-station decay and `0.31` Np/m, `34` per
+cent, is unexplained. The agreement is therefore a property of the reference box and not a validation of either
+estimator, so nothing measured in the wide box licenses an "attenuation of this line is X" statement. The ratio
+`0.450` survives because it compares one estimator across the change and does not need the wide-box decay to be
+fully accounted for.
+
+Two readings, and no adjudication from one run: the endpoint rate carries an error of order `0.2` Np/m at a rate
+near `0.9` Np/m, which is not implausible at `|S21| = 0.9913` over 2400 steps and nine stations; or a
+clearance-independent component of order `0.3` Np/m exists that the lateral bin does not see.
+
+Caution, recorded with no argument built on it: the wide-box fitted attenuation, `1.456` Np/m, sits near the
+`1.600` Np/m floor the npml-6 sweep showed for fitted values in small boxes. Different estimator, different box;
+noted only so that a future convergence study checks it deliberately.
+
+What settles it is two or three further clearances (`24.8`, `32.8`, `36.8` mm) quoting audited lateral work and
+the endpoint ratio side by side at each: if the gap holds near `1.5` while the audit falls toward zero, the
+residual is not a wall sink, and if both fall together then the wide-box between-station decay is being
+underestimated by the audit.
