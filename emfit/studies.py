@@ -1566,6 +1566,23 @@ class MicrostripWave:
             f" i_ground_full={abs(self.i_ground_full):.6e}A"
             f" i_ground_truncated={abs(self.i_ground_truncated):.6e}A"
             f" y_extent={self.y_extent * 1e3:.4f}mm")
+        # The same passivity bound the report table quotes, checked wherever a
+        # record is written out: a passive network cannot return more power
+        # than it was handed.  ``n/a`` fields above are formatted rather than
+        # raised, and a record that could not measure one of the two magnitudes
+        # has no sum to check.
+        gamma_sq = float(abs(self.gamma)) ** 2
+        s21_sq = float(abs(self.s21)) ** 2
+        if np.isfinite(gamma_sq) and np.isfinite(s21_sq):
+            bound_sum = gamma_sq + s21_sq
+            assert bound_sum <= 1.0 + 1e-9, (
+                "passivity bound violated between the station planes: "
+                f"|S11|^2 + |S21|^2 = {gamma_sq:.6f} + {s21_sq:.6f} = "
+                f"{bound_sum:.6f} is above 1, with |S11| = "
+                f"{abs(self.gamma):.6f} and |S21| = {abs(self.s21):.6f}; a "
+                "passive network cannot return more power than it was "
+                "handed, so a sum above 1 is a sign or a normalisation error "
+                "in the wave split and not a measured excess")
         # The audit, when it was asked for: appended rather than woven in so
         # the default line stays byte-identical.
         if self.power_balance is None:
@@ -2752,6 +2769,53 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         s21_row = "n/a: this record carried no stations to split"
         s21_unity_row = s21_row
 
+    # The passivity bound, and it is a bound and nothing more.  A passive
+    # network cannot return more power than it was handed, so
+    # ``|S11|^2 + |S21|^2 <= 1``.  The plain sum of squares is legitimate here
+    # because both magnitudes are read on one cross-section -- the two station
+    # planes -- and the split gives both of them the same ``zc``, so the
+    # per-plane power-wave weighting ``sqrt(Re zc)`` that the general form of
+    # this test carries is the same factor on both terms and cancels.  Planes
+    # on two different cross-sections would need that factor written out, which
+    # is why the same sum is not a valid test in that geometry.  What the row
+    # catches is a sign or a normalisation error in the wave split, which lifts
+    # the sum above 1; the surrounding matched layers only ever remove power
+    # the two planes never see again, so they push the sum down and a wide
+    # margin is the expected reading rather than a defect.
+    gamma_sq = float(abs(result.gamma)) ** 2
+    s21_sq = float(abs(result.s21)) ** 2
+    if np.isfinite(gamma_sq) and np.isfinite(s21_sq):
+        bound_sum = gamma_sq + s21_sq
+        assert bound_sum <= 1.0 + 1e-9, (
+            "passivity bound violated between the station planes: "
+            f"|S11|^2 + |S21|^2 = {gamma_sq:.6f} + {s21_sq:.6f} = "
+            f"{bound_sum:.6f} is above 1, with |S11| = "
+            f"{abs(result.gamma):.6f} and |S21| = {abs(result.s21):.6f}; a "
+            "passive network cannot return more power than it was handed, so "
+            "a sum above 1 is a sign or a normalisation error in the wave "
+            "split and not a measured excess")
+        passivity_row = (
+            f"{bound_sum:.6f} from |S11|^2 = {gamma_sq:.6f} plus |S21|^2 = "
+            f"{s21_sq:.6f}: a passive network must satisfy "
+            "|S11|^2 + |S21|^2 <= 1, and the bound is the whole of the claim "
+            "-- a lossless network sits at exactly 1, so this row is not a "
+            "losslessness check.  The plain sum is legitimate here because "
+            "both magnitudes are read on the same cross-section, at the two "
+            "station planes, and the split hands both of them the one zc "
+            "chosen for this record: the per-plane power-wave weighting "
+            "sqrt(Re zc) that the general form of the sum carries is then the "
+            "same factor on both terms and cancels, and two planes on "
+            "different cross-sections would need it written out.  The test is "
+            "one-sided: the surrounding matched layers absorb power the two "
+            "planes never see again, which lowers the sum, while a sign or a "
+            "normalisation error in the wave split is what lifts it above 1, "
+            "so a wide margin here is expected and not a defect")
+    else:
+        passivity_row = (
+            "n/a: this record has no finite |S11| or |S21| to add, so there "
+            "is no passivity bound to quote; the bound itself is "
+            "|S11|^2 + |S21|^2 <= 1 between the station planes")
+
     # --- loss: the joint fit's alpha, and what it predicts for |S21| -------
     # The unit the attenuation sweep is quoted in, and the only conversion in
     # the file: nepers per metre to decibels per millimetre.
@@ -3169,6 +3233,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "G1 (|S11| < -20 dB)": g1_row,
         "|S21| between station planes": s21_row,
         "G1 (|S21| within 1 % of unity)": s21_unity_row,
+        "passivity bound: |S11|^2 + |S21|^2 between the station planes": (
+            passivity_row),
         "|S21| from the fitted alpha": s21_loss_row,
         "|S21| implied by the absorbed work": s21_audit_row,
         "line Z0 with loss, real part": lossy_z0_row,
