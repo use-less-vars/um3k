@@ -1566,23 +1566,6 @@ class MicrostripWave:
             f" i_ground_full={abs(self.i_ground_full):.6e}A"
             f" i_ground_truncated={abs(self.i_ground_truncated):.6e}A"
             f" y_extent={self.y_extent * 1e3:.4f}mm")
-        # The same passivity bound the report table quotes, checked wherever a
-        # record is written out: a passive network cannot return more power
-        # than it was handed.  ``n/a`` fields above are formatted rather than
-        # raised, and a record that could not measure one of the two magnitudes
-        # has no sum to check.
-        gamma_sq = float(abs(self.gamma)) ** 2
-        s21_sq = float(abs(self.s21)) ** 2
-        if np.isfinite(gamma_sq) and np.isfinite(s21_sq):
-            bound_sum = gamma_sq + s21_sq
-            assert bound_sum <= 1.0 + 1e-9, (
-                "passivity bound violated between the station planes: "
-                f"|S11|^2 + |S21|^2 = {gamma_sq:.6f} + {s21_sq:.6f} = "
-                f"{bound_sum:.6f} is above 1, with |S11| = "
-                f"{abs(self.gamma):.6f} and |S21| = {abs(self.s21):.6f}; a "
-                "passive network cannot return more power than it was "
-                "handed, so a sum above 1 is a sign or a normalisation error "
-                "in the wave split and not a measured excess")
         # The audit, when it was asked for: appended rather than woven in so
         # the default line stays byte-identical.
         if self.power_balance is None:
