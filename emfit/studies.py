@@ -2610,11 +2610,26 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             value *= 1e-12
         loads = (Load(float(values.get("load_at_mm", 15.2)) * 1e-3,
                       load_kind, value),)
+    # The board this run will actually mesh.  ``w`` on its own does not move the
+    # strip -- the strip is ``n_strip`` cells wide -- so the width handed to the
+    # closed form below is the width the mesh contains, not a separate wish.
+    board_h = float(values.get("h_mm", MS_H * 1e3)) * 1e-3
+    board_eps = float(values.get("eps_r", MS_EPS_R))
+    strip_cells = int(values.get("strip_cells", MS_N_STRIP))
+    board_cell = board_h / MS_N_SUB
+    board_w = strip_cells * board_cell
+    board_changed = (not np.isclose(board_h * 1e3, MS_H * 1e3)
+                     or not np.isclose(board_eps, MS_EPS_R)
+                     or strip_cells != MS_N_STRIP)
     result = microstrip_wave(
         f_target=float(values["f0"]) * 1e9,
         nsteps=int(values["nsteps"]),
         n_pml=int(values["npml"]),
         n_top=int(values["npml"]),
+        h=board_h,
+        w=board_w,
+        eps_r=board_eps,
+        n_strip=strip_cells,
         keep_slice=True,
         audit=True,
         loads=loads,
@@ -3170,6 +3185,15 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                     f"{loads[0].position * 1e3:.2f} mm; |S21| between the "
                     "planes is measured through this element")
 
+    # The board this run meshed, named in the units the knobs are given in: a row
+    # only when a knob moved off its default, so the default report is unchanged.
+    board_row = ""
+    if board_changed:
+        board_row = (f"h = {board_h * 1e3:.2f} mm, eps_r = {board_eps:.2f}, "
+                     f"strip = {strip_cells} cells = {board_w * 1e3:.4f} mm wide "
+                     f"at cell = {board_cell * 1e3:.4f} mm; the closed-form "
+                     "curves are drawn for this same width")
+
     # Leave the pictures on disk: a benchmark's figures are part of its output.
     dump_figures(sink)
 
@@ -3269,6 +3293,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     }
     if loads:
         metrics["load"] = load_row
+    if board_changed:
+        metrics["board"] = board_row
     return metrics
 
 
@@ -3445,6 +3471,25 @@ MICROSTRIP = Study(
               help="In ohm for series_r, in picofarad for shunt_c "
                    "(converted to farad internally). Ignored when "
                    "load_kind is none."),
+        Param("eps_r", "Substrate permittivity", "float", MS_EPS_R,
+              lo=1.0, hi=16.0, unit="",
+              help="Relative permittivity of the board. Used directly as "
+                   "the substrate material; nothing is rounded."),
+        Param("h_mm", "Substrate thickness", "float", MS_H * 1e3,
+              lo=1.3, hi=3.2, unit="mm",
+              help="Sets the cell size: cell = h / n_sub, so every "
+                   "dimension, the timestep and the frequency bin move with "
+                   "it. Not snapped to a whole number of cells. The floor is "
+                   "not arbitrary: the two measurement planes sit at fixed "
+                   "distances while the line is a fixed number of cells, so a "
+                   "mesh finer than this cannot fit enough stations between "
+                   "them and the run refuses."),
+        Param("strip_cells", "Strip width in cells", "int", MS_N_STRIP,
+              lo=4, hi=24, unit="cells",
+              help="The strip is drawn this many cells wide. This is the "
+                   "quantity the simulation actually contains; the width in "
+                   "mm is strip_cells * cell and is reported in the board "
+                   "row."),
     ),
     run=_run_microstrip,
 )
