@@ -731,3 +731,83 @@ def test_metrics_refuse_an_impedance_when_a_load_has_no_reference(monkeypatch):
     assert "no eps_eff" in eps, eps
     assert not any(ch.isdigit() for ch in eps), eps
 
+
+@pytest.mark.slow
+def test_a_loaded_run_quotes_a_ratio_against_a_load_free_twin():
+    """The knob-driven reference path: the study builds the twin, unprompted.
+
+    A record with a load across the strip cannot measure its own line constant,
+    so the study runs a load-free twin on the identical mesh and hands it to the
+    loaded run as ``reference=``, which turns ``|S21|`` into a ratio of ratios
+    while the station-fit rows go on refusing.  That is what this test pins, and
+    it does it the way a caller would: the load is declared in the parameter
+    dict (``load_kind``/``load_value``), so every step -- twin, reference,
+    normalisation -- is the study's own.  ``f0`` is pinned because its default,
+    ``6.0`` GHz, is not the measured config; ``eps_r = 4.4``, ``h_mm = 1.6`` and
+    ``strip_cells = 8`` are the ``MS_*`` defaults and are not restated.
+
+    Not redundant with
+    ``test_metrics_refuse_an_impedance_when_a_load_has_no_reference``: that one
+    monkeypatches ``microstrip_wave`` to bolt a load onto a record with no
+    ``reference``, which is the direct-caller path -- someone calling the
+    low-level function has to run the twin himself, and the study's knobs cannot
+    reach that path at all.  It covers what the rows do when nothing normalises
+    the record; this one covers what they do when the study normalises it.  The
+    station-fit rows refuse on both; ``|S21|`` does not.
+
+    The tolerance is the discriminator.  The same record, same load, with no
+    ``reference=`` reads ``0.327195`` on this mesh -- and most of that is the
+    line's own loss, since the load-free twin transmits only ``0.541741`` --
+    while the same record handed the twin reads ``0.613960``.  The two differ
+    by nearly a factor of two, so the ``0.01`` window holds the referenced
+    number and rejects the unreferenced one; a looser bound would pass on
+    either and the test would stop covering the reference at all.  Of these two
+    figures only ``0.613960`` is machine-checked, by the assertion below;
+    ``0.327195`` is a measurement quoted for scale, and no test pins it, so it
+    must not be cited as if it were enforced.
+    """
+    from emfit import studies as S
+
+    values = {"nsteps": 300, "npml": 6, "f0": 5.827786,
+              "load_kind": "series_r", "load_value": 100.0}
+    metrics = S.MICROSTRIP.run(values, S.FigureSink())
+
+    # --- the numeric branch ran, and it is the referenced one -----------------
+    row = metrics["|S21| between station planes"]
+    assert "no impedance" not in row, row
+    assert S.NO_LOADED_IMPEDANCE not in row, row
+    # The referenced branch, not the load-free one: this wording only exists
+    # when the record was handed a twin to divide itself by.
+    assert "ratio of ratios" in row, row
+    s21 = float(row.split()[0])          # ValueError if the row went ``n/a``
+    assert abs(s21 - 0.613960) < 0.01, row
+    unity = metrics["G1 (|S21| within 1 % of unity)"]
+    assert "cannot say which is which" not in unity, unity
+    assert "per cent" in unity, unity
+    passivity = metrics[
+        "passivity bound: |S11|^2 + |S21|^2 between the station planes"]
+    assert "no passivity bound" not in passivity, passivity
+    assert "must satisfy" in passivity, passivity
+
+    # --- and the refusals survive beside it ----------------------------------
+    # Tighter than a substring: on a loaded record these rows are the constants
+    # themselves, so anything else here is a number smuggled past a refusal.
+    assert metrics["eps_eff"] == S.NO_LOADED_BETA, metrics["eps_eff"]
+    for key in ("line Z0 with loss, real part",
+                "line Z0 from stations, real part",
+                "port Z, modulus",
+                "power-current Z0 at stations"):
+        assert metrics[key] == S.NO_LOADED_IMPEDANCE, f"{key}: {metrics[key]!r}"
+
+    # --- the row that says a twin existed, and its absence without a load ----
+    assert "reference" in metrics, sorted(metrics)
+    assert "identical run with no load" in metrics["reference"], metrics["reference"]
+
+    # 128 steps, not 64: below about a hundred the load-free record is too short
+    # for the station fit to form at all (it refuses, sigma_beta against beta),
+    # and the point here is the row's absence, not the guard.  This is the second
+    # and last board run in this test.
+    free = S.MICROSTRIP.run({"nsteps": 128, "f0": 5.827786, "npml": 6,
+                             "load_kind": "none"}, S.FigureSink())
+    assert "reference" not in free, sorted(free)
+    assert "load" not in free, sorted(free)

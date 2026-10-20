@@ -100,19 +100,22 @@ KINDS = ("int", "float", "choice", "bool")
 
 
 NO_LOADED_IMPEDANCE = (
-    "n/a: no impedance is quoted on this record -- it carried a load and no "
-    "reference, and the station fit that would supply one assumes one onward "
-    "wave at the stations either side of the load, which is the continuity the "
-    "cut breaks")
-"""Refusal printed in place of a station impedance on a loaded, unreferenced
-record.  The magnitude of ``s21`` survives that record; the impedance does not."""
+    "n/a: no impedance is quoted on this record -- the only fit that would "
+    "supply one averages over stations on both sides of the cut a load makes, "
+    "so what it returned would be the load measured as part of the line.  "
+    "A load-free run of the same mesh supplies the reference impedance and the "
+    "load-free ratio; it does not supply a propagation constant for this "
+    "record")
+"""Refusal printed in place of a station impedance on a loaded record.  The
+magnitude of ``s21`` survives that record; the impedance does not."""
 
 NO_LOADED_BETA = (
-    "n/a: no eps_eff is quoted on this record -- it comes from this run's own "
-    "fitted beta, and a loaded record's beta is not the line's: that fit spans "
-    "the cut on the assumption of one onward wave at the stations either side "
-    "of it")
-"""Refusal printed in place of ``eps_eff`` on a loaded, unreferenced record."""
+    "n/a: no eps_eff is quoted on this record -- it comes from a fitted beta, "
+    "and a beta fitted here spans the cut the load makes, so it belongs to the "
+    "load and the line together rather than to the line alone.  A load-free "
+    "run of the same mesh supplies the reference impedance and the load-free "
+    "ratio; it does not supply a beta for this record")
+"""Refusal printed in place of ``eps_eff`` on a loaded record."""
 
 
 # ---------------------------------------------------------------------------
@@ -2621,6 +2624,26 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     board_changed = (not np.isclose(board_h * 1e3, MS_H * 1e3)
                      or not np.isclose(board_eps, MS_EPS_R)
                      or strip_cells != MS_N_STRIP)
+    # A loaded run cannot measure its own line constant: the cut breaks the
+    # one-onward-wave assumption the station fit rests on.  So it is given a
+    # load-free twin on the identical mesh, whose decomposition supplies the
+    # only two things the ratio needs -- ``gamma``/``zc`` for the split and the
+    # ratio ``a+(x2)/a+(x1)`` of the line itself.  The twin's figures are
+    # rendered into a throwaway sink: they are not this run's output, and
+    # ``dump_figures`` below only ever sees the real one.
+    reference = None
+    if loads:
+        twin = microstrip_wave(
+            f_target=float(values["f0"]) * 1e9,
+            nsteps=int(values["nsteps"]),
+            n_pml=int(values["npml"]),
+            n_top=int(values["npml"]),
+            h=board_h, w=board_w, eps_r=board_eps, n_strip=strip_cells,
+            keep_slice=False,
+            audit=False,
+            sink=FigureSink())
+        reference = LineReference.from_wave(twin)
+
     result = microstrip_wave(
         f_target=float(values["f0"]) * 1e9,
         nsteps=int(values["nsteps"]),
@@ -2633,6 +2656,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         keep_slice=True,
         audit=True,
         loads=loads,
+        reference=reference,
         sink=sink)
     g = result.geometry
     gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
@@ -2710,10 +2734,10 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         bound_row = "n/a: no station carried a current to compare"
 
     # |S21| needs two planes and the row has to say which two.  Each plane is
-    # split on its own station's phasors with the run's measured ``zc``, so no
-    # fit stands between them, and the de-embedding with the measured ``beta``
-    # can only move the phase: the magnitude is an amplitude ratio, decay and
-    # all.
+    # split on its own station's phasors, so no fit stands between them.  On a
+    # loaded record the ``zc`` and ``beta`` that split and de-embed come from
+    # the load-free twin (this record's own fit spans the cut), and the row
+    # prints the ratio of the two plane ratios.
     #
     # A load with no ``reference`` is the one case where the number must come
     # with a refusal attached: the split takes its ``zc`` from the record's own
@@ -2734,7 +2758,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                 f"{x1 * 1e3:.2f} mm and x = {x2 * 1e3:.2f} mm, "
                 f"{(x2 - x1) * 1e3:.2f} mm apart: one plane at each end, its "
                 "forward wave taken from the algebra that splits v and i with "
-                "the run's own zc, and the two divided, so no fit stands "
+                "this record's own zc, and the two divided, so no fit stands "
                 "between the planes and this magnitude is measured.  There is "
                 "no impedance to be read out of it.  This record carried "
                 "a load, the load sits between the two planes, and every "
@@ -2742,9 +2766,11 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                 "split took its zc from included -- assumes one onward "
                 "travelling wave at all the stations, which is the continuity "
                 "the cut breaks.  The load needs a normalisation this run did "
-                "not carry: run the same mesh with no load, hand that record "
-                "to reference=, and the line divides itself out of the delay "
-                "and the loss alike")
+                "not carry: a direct caller of microstrip_wave has to run the "
+                "same mesh with no load and hand that record to reference=, "
+                "and the line divides itself out of the delay and the loss "
+                "alike.  The microstrip study arranges that twin itself, so a "
+                "loaded study run does not land on this wording")
             s21_unity_row = (
                 f"{100.0 * departure:+.3f} % from unity is the load and the "
                 "line together, and this run cannot say which is which: some "
@@ -2758,14 +2784,19 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                 f"{abs(result.s21):.6f} = {s21_db:.3f} dB between x = "
                 f"{x1 * 1e3:.2f} mm and x = {x2 * 1e3:.2f} mm, "
                 f"{(x2 - x1) * 1e3:.2f} mm apart: one plane at each end, its "
-                "forward wave taken from the algebra that splits v and i with "
-                "the run's own measured zc, and the two divided.  No fit "
-                "stands between the planes -- a fit would average the field "
-                "over the stations it was handed, and a load reads as a "
-                "fraction of itself that way.  The measured beta, "
-                f"{result.beta:.3f} rad/m, is used only to take the line's own "
-                "delay exp(-1j beta d) back out, which is unit modulus, so the "
-                "decay in this number is real and not de-embedded")
+                "forward wave taken from the algebra that splits v and i, and "
+                "the two divided.  No fit stands between the planes -- a fit "
+                "would average the field over the stations it was handed, and "
+                "a load reads as a fraction of itself that way.  With a load "
+                "in the mesh this is a ratio of ratios: the plane ratio above "
+                "divided by the same plane ratio from an identical run with "
+                "no load, and the line's own delay and impedance -- its beta "
+                "and its zc -- are taken from that load-free twin, because "
+                "this record's own fit spans the cut.  The line divides "
+                "itself out either way (on a record that never carried a load "
+                "the twin is the record itself), and what survives the "
+                "division is the wave's own fate over this span, decay and "
+                "all")
             s21_unity_row = (
                 f"{100.0 * departure:+.3f} % from unity, "
                 + ("inside" if abs(departure) < s21_tolerance else "outside")
@@ -3099,7 +3130,11 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     # The station impedance the loss affects: with alpha in the propagation
     # constant the voltage and current waves no longer keep their relative
     # phase along the span, and the lossless fit has to absorb that somewhere.
-    if result.loaded_without_reference:
+    # A load present means the station fit spans the cut, so its beta and Z0 are
+    # not the line's whether or not a reference was supplied: the reference
+    # contributes ``zc`` and the load-free ratio and nothing else.  Every row
+    # that reads that fit is gated on the load, not on how the split was made.
+    if bool(g.get("loads")):
         lossy_z0_row = NO_LOADED_IMPEDANCE
     elif lfl is not None and np.isfinite(lfl.z0.real) and np.isfinite(sf.z0.real):
         lossy_z0_row = (
@@ -3127,7 +3162,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     # The seven rows that read an impedance off ``sf`` are gated the same way:
     # a refusal in the |S21| row contradicted two rows later by a number in ohm
     # is not a refusal, and the fit behind those rows is the one that row names.
-    if result.loaded_without_reference:
+    if bool(g.get("loads")):
         stations_z0_modulus = NO_LOADED_IMPEDANCE
         stations_z0_phase = NO_LOADED_IMPEDANCE
         stations_z0_real = NO_LOADED_IMPEDANCE
@@ -3152,7 +3187,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     # ``z0 = -v_port / i_trunc`` inside the port's own near field, so it is
     # weaker still.  The two ratios under ``port Z`` are that same refused
     # number divided by the closed form, so they go with it.
-    if result.loaded_without_reference:
+    if bool(g.get("loads")):
         port_z_modulus = port_z_phase = port_z_real = NO_LOADED_IMPEDANCE
         port_z_modulus_ratio = port_z_real_ratio = NO_LOADED_IMPEDANCE
         power_z0_stations = power_ratio_stations = NO_LOADED_IMPEDANCE
@@ -3221,7 +3256,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                                " (diagnostic: the model is quasi-static, so "
                                "this compares two different problems)"
                                if result.beta_model else "n/a"),
-        "eps_eff": (NO_LOADED_BETA if result.loaded_without_reference else (
+        "eps_eff": (NO_LOADED_BETA if bool(g.get("loads")) else (
             f"{result.eps_eff:.5f} (from this run's beta; the closed form it "
             f"is compared with is evaluated at w/h = {g['w'] * 1e3:.2f}/"
             f"{g['h'] * 1e3:.2f} mm = {g['w'] / g['h']:.3f} and eps_r = "
@@ -3293,6 +3328,13 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     }
     if loads:
         metrics["load"] = load_row
+        metrics["reference"] = (
+            "|S21| is a ratio against an identical run with no load: a record "
+            "with an element across the strip cannot measure its own "
+            "propagation constant or impedance, because the cut breaks the fit "
+            "those come from. The beta, eps_eff and station-impedance rows "
+            "above therefore still refuse; only the ratio and the reference "
+            "impedance are used.")
     if board_changed:
         metrics["board"] = board_row
     return metrics
