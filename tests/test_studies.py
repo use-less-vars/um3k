@@ -755,16 +755,16 @@ def test_a_loaded_run_quotes_a_ratio_against_a_load_free_twin():
     the record; this one covers what they do when the study normalises it.  The
     station-fit rows refuse on both; ``|S21|`` does not.
 
-    The tolerance is the discriminator.  The same record, same load, with no
-    ``reference=`` reads ``0.327195`` on this mesh -- and most of that is the
-    line's own loss, since the load-free twin transmits only ``0.541741`` --
-    while the same record handed the twin reads ``0.613960``.  The two differ
-    by nearly a factor of two, so the ``0.01`` window holds the referenced
-    number and rejects the unreferenced one; a looser bound would pass on
-    either and the test would stop covering the reference at all.  Of these two
-    figures only ``0.613960`` is machine-checked, by the assertion below;
-    ``0.327195`` is a measurement quoted for scale, and no test pins it, so it
-    must not be cited as if it were enforced.
+    The tolerance is the discriminator, and all three readings of this one
+    record are machine-checked: ``0.613960`` with the twin, ``0.327195`` with no
+    ``reference=``, and ``0.541741`` for the load-free twin itself, each to
+    ``0.01``.  The first two differ by nearly a factor of two, so the ``0.01``
+    window holds one and rejects the other; a looser bound would pass on either
+    and the test would stop covering the reference at all.  The fourth assertion
+    is the identity between them, ``0.327195 / 0.541741 = 0.603970`` reproducing
+    the referenced ``0.613960``, held to ``0.02`` because the residual is
+    ``1.6`` per cent -- the fit's own, not a free parameter, and still far
+    tighter than the ``1.88`` gap it separates.
     """
     from emfit import studies as S
 
@@ -803,11 +803,40 @@ def test_a_loaded_run_quotes_a_ratio_against_a_load_free_twin():
     assert "reference" in metrics, sorted(metrics)
     assert "identical run with no load" in metrics["reference"], metrics["reference"]
 
-    # 128 steps, not 64: below about a hundred the load-free record is too short
-    # for the station fit to form at all (it refuses, sigma_beta against beta),
-    # and the point here is the row's absence, not the guard.  This is the second
-    # and last board run in this test.
-    free = S.MICROSTRIP.run({"nsteps": 128, "f0": 5.827786, "npml": 6,
-                             "load_kind": "none"}, S.FigureSink())
-    assert "reference" not in free, sorted(free)
-    assert "load" not in free, sorted(free)
+    # --- the same record, read three ways -------------------------------------
+    # (b) The direct-caller path: the study has no knob that suppresses the twin,
+    # so an unreferenced loaded record can only be had by calling the bridge.
+    # Same board, same load, same mesh, same frequency; only the normalisation
+    # differs from the study run above.
+    unreferenced_wave = S.microstrip_wave_board(
+        dataclasses.replace(S.microstrip_reference_board(),
+                            loads=(Load(15.2e-3, "series_r", 100.0),)),
+        nsteps=300, f_target=5.827786e9)
+    assert unreferenced_wave.loaded_without_reference is True
+    unreferenced = abs(unreferenced_wave.s21)
+
+    # (c) The record with no load at all, on the identical mesh: the same run the
+    # study builds as its twin, so its ``|S21|`` pins the loss the ratio below
+    # divides out.  Third and last board run in this test, and the record the
+    # absence check is made on -- no load, so neither a ``load`` nor a
+    # ``reference`` row.
+    free_metrics = S.MICROSTRIP.run({"nsteps": 300, "npml": 6, "f0": 5.827786,
+                                     "load_kind": "none"}, S.FigureSink())
+    free = float(free_metrics["|S21| between station planes"].split()[0])
+    assert "reference" not in free_metrics, sorted(free_metrics)
+    assert "load" not in free_metrics, sorted(free_metrics)
+
+    # Each reading is named, so a shift in either is reported as that number
+    # rather than absorbed into the ratio.
+    assert abs(unreferenced - 0.327195) < 0.01, unreferenced
+    assert abs(free - 0.541741) < 0.01, free
+
+    # The identity the reference path *is*: the loaded reading divided by the
+    # twin's own reading -- plane ratio over plane ratio -- reproduces the
+    # referenced number, so the twin is being used on the same record, between
+    # the same stations, against the same zc.  A stale cache, a wrong plane or a
+    # wrong reference impedance would break it.  The residual today is 1.6 per
+    # cent, so the window is a deliberately generous 0.02, and it is still far
+    # tighter than the factor-of-1.88 gap between the referenced and
+    # unreferenced readings that it separates.
+    assert abs(s21 - unreferenced / free) < 0.02, (s21, unreferenced / free)
