@@ -47,6 +47,7 @@ from . import nearfield
 from . import scatter
 from . import viz  # selects the Agg backend before pyplot is imported anywhere
 from .abc import Mur1Boundary
+from .board import MicrostripBoard
 from .eigen import analytic_box_modes, resonances
 from .evolve import FITStepper, RickerSource, cfl_dt
 from .grid import Grid
@@ -77,12 +78,15 @@ __all__ = [
     "Param",
     "Study",
     "FigureSink",
+    "MicrostripBoard",
     "MicrostripWave",
     "STUDIES",
     "coerce",
     "get",
     "line_s21",
+    "microstrip_reference_board",
     "microstrip_wave",
+    "microstrip_wave_board",
 ]
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -1488,6 +1492,13 @@ def microstrip_wave(
     and the reported ``Z0`` and ``eps_eff`` are a different case, not a better
     one.
 
+    This function is also the fixture the parsed-board path is pinned to:
+    :func:`microstrip_reference_board` writes the cell counts above down as an
+    :class:`emfit.board.MicrostripBoard`, and :func:`microstrip_wave_board` is
+    the only route from a board file into this function.  A spec taken through
+    that route has to reproduce the numbers of this default run exactly -- the
+    spec adds bookkeeping (where each number came from), not physics.
+
     The port is a lumped current source on the ``E_z`` edges that span the
     substrate across the whole strip width at the port plane, ramped on over the
     warm-up so the record that is Fourier transformed holds a steady sine.  A
@@ -2023,6 +2034,109 @@ def microstrip_wave(
         station_fit_lossy=station_fit_lossy,
         slice_ez=slice_ez,
         power_balance=power_balance,
+    )
+
+
+def microstrip_reference_board() -> MicrostripBoard:
+    """The default cross-section of :func:`microstrip_wave` as a board spec.
+
+    Every number is one of the ``MS_*`` constants the default run uses, so the
+    spec and the mesh cannot drift apart: the cell size is ``MS_H / MS_N_SUB``
+    and the outline is the number of cells the run allocates on each axis.  The
+    result describes the historical ``62 x 44`` mesh at ``0.4 mm``, a port plane
+    ``MS_N_PML + MS_N_REF`` node layers in from the ``xmin`` wall, and a strip
+    that runs out into the far absorber.
+
+    Returns:
+        An :class:`emfit.board.MicrostripBoard` in metres.
+    """
+    cell = MS_H / MS_N_SUB
+    x_port = (MS_N_PML + MS_N_REF) * cell
+    x_far = (MS_N_PML + MS_N_REF + MS_N_LINE) * cell
+    return MicrostripBoard(
+        length=x_far,
+        width=(2 * MS_N_PML + MS_N_STRIP + 2 * MS_N_CLEAN) * cell,
+        h=MS_H,
+        eps_r=MS_EPS_R,
+        w=MS_W,
+        x_port=x_port,
+        x_far=x_far,
+        name="reference",
+    )
+
+
+def microstrip_wave_board(
+    spec: MicrostripBoard,
+    *,
+    n_sub: int = MS_N_SUB,
+    n_air: int = MS_N_AIR,
+    n_top: int = MS_N_TOP,
+    n_pml: int = MS_N_PML,
+    x_first: float = MS_X_FIRST,
+    x_last: float = MS_X_LAST,
+    n_stations: int = MS_N_STATIONS,
+    f_target: float = MS_F_TARGET,
+    nsteps: int = MS_NSTEPS,
+    sink: FigureSink = None,
+) -> MicrostripWave:
+    """Run :func:`microstrip_wave` on a coupon that came out of a board file.
+
+    This is the one bridge from a :class:`emfit.board.MicrostripBoard` to the
+    solver: the spec is asked for its integer cell counts
+    (:meth:`emfit.board.MicrostripBoard.to_cell_counts`, which is where a
+    geometry that does not land on the mesh is refused) and the resulting counts
+    and dimensions are handed straight to :func:`microstrip_wave`.  Nothing is
+    adjusted here -- a strip that stops short of the far wall, or a clearance
+    that is not a whole number of cells, raises there instead of being rounded
+    into something the caller did not ask for.
+
+    The knobs are the ones the spec does not determine: how finely ``h`` is
+    resolved (``n_sub``, which sets the cell size and hence every count), the air
+    and top-layer thicknesses, the absorber thickness, and the probe and record
+    settings.  A bigger coupon needs a different ``n_sub``, not a set of counts:
+    the counts follow from the spec.
+
+    Args:
+        spec: The coupon, in metres.
+        n_sub: Substrate cells across ``spec.h``; this sets the cell size.
+        n_air: Air cells between the strip and the layer at ``zmax``.
+        n_top: Matched-layer cells at ``zmax``; ``0`` puts a plain PEC lid there
+            instead, and a non-zero value must equal ``n_pml``.
+        n_pml: Matched-layer cells at each absorbing face, and the thickness
+            taken out of the port plane and out of the clearance before either
+            is counted in cells.
+        x_first, x_last: Wanted first and last probe station [m].
+        n_stations: Number of probe stations along the line.
+        f_target: Wanted drive frequency [Hz].
+        nsteps: Leapfrog steps; the record is what is left after warm-up.
+        sink: Where to put the figure; ``None`` (the default) draws nothing.
+
+    Returns:
+        A :class:`MicrostripWave`.
+
+    Raises:
+        ValueError: If the spec is not representable on the mesh, or for any
+            reason :func:`microstrip_wave` raises.
+    """
+    counts = spec.to_cell_counts(n_sub=n_sub, n_pml=n_pml)
+    return microstrip_wave(
+        h=spec.h,
+        w=spec.w,
+        eps_r=spec.eps_r,
+        n_sub=int(n_sub),
+        n_air=n_air,
+        n_top=n_top,
+        n_strip=counts["n_strip"],
+        n_clean=counts["n_clean"],
+        n_pml=n_pml,
+        n_ref=counts["n_ref"],
+        n_line=counts["n_line"],
+        x_first=x_first,
+        x_last=x_last,
+        n_stations=n_stations,
+        f_target=f_target,
+        nsteps=nsteps,
+        sink=sink,
     )
 
 
