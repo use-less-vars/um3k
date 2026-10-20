@@ -198,9 +198,10 @@ def _landing() -> bytes:
         for study in studies.STUDIES.values())
     body = (
         "<h1>emfit &mdash; finite-integration time-domain studies</h1>"
-        "<p class=\"lede\">Three self-contained electromagnetics experiments on a "
-        "Yee-type cell complex: pick one, adjust its handful of parameters and "
-        "run it; the numbers and the figures come back in the same page.</p>"
+        f"<p class=\"lede\">{len(studies.STUDIES)} self-contained electromagnetics "
+        "experiments on a Yee-type cell complex: pick one, adjust its handful of "
+        "parameters and run it; the numbers and the figures come back in the same "
+        "page.</p>"
         f"<div class=\"cards\">{cards}</div>")
     return _page("emfit studies", body)
 

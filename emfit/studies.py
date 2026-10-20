@@ -2699,6 +2699,9 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     # and the row says so instead of quoting one.
     s21_db = decibel(abs(result.s21))
     x1, x2 = result.s21_planes
+    # The tolerance the row below prints and the comparison it makes are
+    # one number, so the words cannot drift away from the test.
+    s21_tolerance = 0.01
     if s21_db is not None:
         departure = abs(result.s21) - 1.0
         if result.loaded_without_reference:
@@ -2741,8 +2744,9 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                 "decay in this number is real and not de-embedded")
             s21_unity_row = (
                 f"{100.0 * departure:+.3f} % from unity, "
-                + ("inside" if abs(departure) < 0.01 else "outside")
-                + " the 1 per cent a transmitting length is asked for.  The "
+                + ("inside" if abs(departure) < s21_tolerance else "outside")
+                + f" the {100.0 * s21_tolerance:.0f} per cent a transmitting "
+                "length is asked for.  The "
                 "difference is real and not noise: with no ohmic loss in the "
                 "solver, a decay this size is power leaving the guided mode "
                 "for the surrounding matched layers, and the row below that "
