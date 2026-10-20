@@ -179,8 +179,8 @@ $0.01183$ dB/mm -- $1.9$ per cent away -- and the one-wave fit is $0.02145$ dB/m
 rather than as a discrepancy: \emph{two model-free measurements agree with each other and the fit is the outlier},
 so the attenuation this box exhibits is a lateral boundary sink of $0.0116$ dB/mm and not conductor loss -- which
 it could not be in any case, since the solver contains no ohmic term. What that sink physically is, the
-accounting does not say: Section~\ref{sec:msres-verdict} names the two candidates it leaves and the measurement
-that would separate them. Over the $21.6$ mm of the line the sink costs $0.25$ dB, and $|S_{21}| = 0.972$;
+accounting does not say: Section~\ref{sec:msres-verdict} names the two candidates it leaves, and the clearance
+test it carries separates them. Over the $21.6$ mm of the line the sink costs $0.25$ dB, and $|S_{21}| = 0.972$;
 that magnitude belongs to this box rather than to the line, as the clearance test in
 Section~\ref{par:msres-mechanism} shows.
 
@@ -196,8 +196,8 @@ explanation.
 \label{sec:msres-verdict}
 
 Section~\ref{sec:ms-criterion} asks three things of a run, and the reference box can be graded against all three
-without choosing an estimator by taste. Two of them are met outright; the third is met as far as the record can
-carry it, and the paragraphs below say where it stops.
+without choosing an estimator by taste. Two of them are met outright; the third is met by identifying the
+mechanism, and the two qualifications that carries are stated where they arise.
 
 First, $|S_{21}|$ must be consistent with a lossless \emph{material} model within the stated uncertainty of the
 measurement. The direct ratio, $|S_{21}| = 0.987008$, is $1.299$ per cent below unity. The span the estimators
@@ -213,11 +213,12 @@ effect rather than a name attached to a residual. This requirement is met.
 Third, the mechanism must be identified by name and by the part of the box responsible for it. The part is
 settled: the matched layer on $y_{\min}$, $y_{\max}$ and the top face removed $7.054$ per cent of the injected
 power in the settled window while the end walls took the remaining $92.946$, so the sink sits on the lateral and
-lid faces and nowhere else. The mechanism is \emph{not} settled by this record, and two candidates survive it.
-The matched layer sits $4.80$ mm above the strip, which is $0.95$ of a lateral decay length, so the region above
-the strip is below cutoff vertically and there is no half-space in which a grounded-slab $\mathrm{TM}_0$ wave
-could exist; the candidates are therefore absorption of a slowly decaying lateral tail by the matched layer, and
-a propagating lateral component of the box-loaded mode that a wider box would not cure.
+lid faces and nowhere else. Two candidates were stated for the mechanism itself: absorption of a slowly decaying
+lateral tail by the matched layer, and a propagating lateral component of the box-loaded mode that a wider box
+would not cure. The clearance test below discriminates between them and selects the first. A second argument
+selects the same one without using the clearance at all: the matched layer sits $4.80$ mm above the strip, which
+is $0.95$ of a lateral decay length, so the region above the strip is below cutoff vertically and there is no
+half-space in which a grounded-slab $\mathrm{TM}_0$ wave could exist, whatever the lateral wall does.
 \label{par:msres-mechanism}
 
 Both tests that follow use the \texttt{Board} path: a board object carrying the stack-up, the trace and the port
@@ -240,14 +241,22 @@ redistribution neither between field families nor between wall families; the end
 cent, and $\beta$ moved from $231.89$ rad/m to $232.14$ rad/m while $\varepsilon_{\mathrm{eff}}$ moved from
 $3.6043$ to $3.6123$, so the mode itself did not change. The pre-registered band for a propagating lateral
 component was $0.75$ to $1.05$ and is excluded by the audited work, while the band for a decaying tail was
-$0.21$ to $0.50$ and contains the result at its upper edge.
+$0.21$ to $0.50$ and contains the result at its upper edge. The ratio therefore selects: $0.450$ is the fall a
+decaying tail predicts and not the fall a laterally propagating mode predicts, which would hold near unity as the
+wall moves, and the lid argument rules out the grounded-slab alternative independently. The sink is the decaying
+tail of the discretised mode absorbed at the lateral boundary, and the strip is not radiating that power. The
+margin is not generous -- $0.450$ sits at the upper edge of the band it satisfies, $1.11$ times inside it -- and
+what makes the reading firm is the second band rather than the first: the same number is $1.67$ times below the
+nearer edge of the band it excludes.
 
-The sink is therefore a boundary term whose magnitude is set by the clearance, so $0.011604$ dB/mm is a property
-of this box and not of the line, and the audited sink in the wide box is $0.00522$ dB/mm for the same strip. The total
+The magnitude of that sink is set by the clearance, so $0.011604$ dB/mm is a property of this box and not of the
+line, and the audited sink in the wide box is $0.00522$ dB/mm for the same strip. The total
 attenuation falls less than the sink does, and that difference is visible with a single estimator carried across
 the two boxes: the audited lateral work falls to $0.450$ of its value, while the plain station-to-station rate
 over the same $9.60$ mm falls from $1.36215$ Np/m to $0.91350$ Np/m, a ratio of $0.671$, and the fitted
-attenuation falls to $0.590$ of its reference-box value. Every estimator falls when the box is widened and none
+attenuation falls to $0.590$ of its reference-box value. Only the audited ratio selects: $0.671$ lies in the
+$0.50$ to $0.75$ gap between the two registered bands, where neither reading is favoured, so it is reported and
+not used. Every estimator falls when the box is widened and none
 stays put, so the decay measured in the reference box is not an attenuation set by the line: a quantity fixed by
 the line would not move when the wall moves. What remains open is how the between-station decay divides. In the
 reference box the audited lateral work reproduces the endpoint rate to within $2$ per cent, a factor of $1.02$,
@@ -256,14 +265,19 @@ bin accounts for only two thirds of it, a factor of $1.52$, which leaves $0.31$ 
 decay unaccounted for by that bin. Two readings survive one run: either the endpoint rate carries an error of
 order $0.2$ Np/m at a rate near $0.9$ Np/m, or there is a component of the decay that does not depend on the
 clearance and that the lateral bin does not capture, and nothing in this record decides between them. What a
-closed box cannot do is separate the two candidates that remain: matched-layer
-absorption of a decaying tail and a genuine radiation loss are both cured by moving the wall out, so the box
-cannot separate them, and doing so needs an open boundary or a clearance convergence study.
+closed box cannot do is separate layer absorption from radiation in general: a wider box cures both, so the test
+above separates the two candidates it was registered against and no further pair, and a demonstration that the
+strip radiates nothing at all would need an open boundary or a clearance convergence study.
 
 So the criterion is met on the reference box in the form the record can grade it in: $|S_{21}|$ is consistent
 with a lossless material model, the shortfall is attributed to a sink whose magnitude the energy balance pays for
-to $1.9$ per cent, and the sink is located in the box. The mechanism requirement is met at the level of the box
-and not at the level of the physics, and that is the qualification this outcome carries. A second qualification
+to $1.9$ per cent, and the sink is located in the box. The mechanism requirement is met in the sense the
+criterion asks for: the sink is a boundary artefact, the decaying tail of the discretised mode absorbed at the
+lateral layer, and not a power the strip radiates. Two qualifications travel with that. The first is the
+$0.31$ Np/m of wide-box between-station decay that the lateral bin does not account for, so the sink is
+identified while the decay of this geometry is not yet fully binned. The second is the generality of the claim:
+a closed box cannot separate layer absorption from radiation, so what is established is the sink of this box and
+not the radiation of the strip in every box. A third qualification
 is that it is met by the estimator with no free parameter. The one-wave fit reads $|S_{21}| = 0.976570$, $2.343$
 per cent below unity and $1.84$ times the absorbed rate, which fails the first requirement on its own. The criterion is
 therefore not something a run passes; it is something a particular \emph{measurement} passes, and the report says
@@ -282,6 +296,28 @@ $0.00597$ is the reflection actually measured at the reference plane, and it is 
 wherever a scattering parameter is meant. Both are consistent with ``about $-44$ dB'', the power-ratio bound
 above is insensitive to which is used, and no downstream number changes. But the $5.2$ per cent itself has no
 account in this record, so it is flagged as unreconciled rather than explained.
+
+\subsection{Two kinds of rate, and why they are not compared}
+\label{sec:msres-estimators}
+
+A fitted attenuation and an audited one are not two measurements of one quantity. A fit is a property of the
+window: its slope depends on which stations lie inside the window, on whether a backward wave is modelled, and on
+how much of a ripple period the window covers. The audited rate is a property of the geometry: it commits in
+advance to a power budget, divides the work a wall family removed by the length of wall that removed it, and
+never looks at an amplitude. Both are legitimate and neither refines the other; a discrepancy measures the
+distance between two estimators, and no conclusion about the box follows until both are computed the same way.
+
+The reference box shows that distance with no change of geometry. Its own record, over its own $9.60$ mm, gives a
+fitted rate of $0.02145$ dB/mm, which is $2.47$ Np/m, against an audited $1.33601$ Np/m: a factor of $1.84$ on
+one geometry and one window, so the factor is estimator difference and says nothing about clearance or mechanism.
+This work once read it the other way, as a fit that was right and an audit that was short; that took a ratio
+between estimators for a discrepancy against a truth, and it was wrong. The $1.600$ Np/m an earlier sweep reports
+for fitted values over $14.4$ mm is comparable with neither, its window and its geometry both differing.
+
+Comparisons that do hold are inside one estimator across boxes: audited lateral work falls to $0.450$, the fitted
+attenuation to $0.590$, the endpoint ratio to $0.671$, and only the first of the three selects. A fitted
+attenuation here is therefore a property of the window and the estimator and not of the line, which is why the
+criterion of Section~\ref{sec:ms-criterion} rests on audited work and the station ratio, not on a fit.
 
 \subsection{The record in pictures}
 \label{sec:msres-figs}

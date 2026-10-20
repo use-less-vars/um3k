@@ -356,3 +356,54 @@ What settles it is two or three further clearances (`24.8`, `32.8`, `36.8` mm) q
 the endpoint ratio side by side at each: if the gap holds near `1.5` while the audit falls toward zero, the
 residual is not a wall sink, and if both fall together then the wide-box between-station decay is being
 underestimated by the audit.
+
+## The clearance test selects: the sink is a boundary artefact, not radiation from the strip
+
+The clearance test settles the mechanism it was registered against, and it selects rather than only bounding.
+Audited lateral wall work fell from `1.33601` Np/m in the reference box to `0.60085` Np/m when the wall moved
+out `4.0` mm, a ratio of `0.450`. That ratio lies inside the pre-registered band for a decaying tail, `0.21` to
+`0.50`, and outside the pre-registered band for a propagating lateral component, `0.75` to `1.05`, so it selects
+the first: the sink is the decaying tail of the discretised mode absorbed by the lateral matched layer, and it is
+not radiation into a slab mode. The claim this supports is narrow and is the one that matters to a user -- the
+sink is a boundary artefact of the box, not a radiating property of the strip.
+
+The margin is thin and is recorded as thin. `0.450` sits at the upper edge of the band that contains it, `1.11`
+times inside it, and the endpoint ratio `0.671` falls in the `0.50` to `0.75` gap between the two bands, the range
+in which neither reading is favoured, so `0.671` selects nothing and is unused for selection. Only the audited
+number carries the claim. What makes the reading firm is the excluded band rather than the satisfied one: `0.450`
+is `1.67` times below the nearer edge of `0.75` to `1.05`.
+
+A second argument settles the same question without using the clearance at all. The matched layer sits `4.80` mm
+above the strip, which is `0.95` of the lateral decay length, so the region above the strip is below cutoff
+vertically and there is no half-space in which a grounded-slab TM0 wave could exist. That argument does not
+depend on where the lateral wall is, and it is what keeps the tail reading standing even though the reading of
+the ratio rests on a band edge.
+
+What this means for the product: the strip is not radiating a few per cent of its power. The `0.011604` dB/mm of
+the reference box is an artefact of that box's lateral boundary and not a loss of the line, so a wider box or a
+better matched layer reduces the figure without changing the line. What it does not mean is that the line is
+lossless in this record: the wide-box station rate is `0.91350` Np/m against an audited sink of `0.60085` Np/m
+there, and `0.31` Np/m, `34` per cent, is left over.
+
+That residual is open and is carried to G4, with two candidates, in this order.
+
+(a) A sink the audit does not bin. The audit sums the work the walls absorb, so an attribution error at a lateral
+or end wall would show up exactly here, as work missing from the lateral bin. The earlier perfectly-conducting-lid
+test already ruled out top-wall radiation as the missing term, which is why the lateral and end walls are where
+the remaining candidates are.
+
+(b) A floor in the wide-box station rate. The station window is fixed at `9.60` mm while the lateral tail extends
+when the wall moves out, so the endpoint ratio taken over that window may not fit the true mode. The test is to
+widen the window or to fit at stations further from the source, and it is cheap.
+
+This blocks broad-validity claims in G4 and does not block G3. The mechanism statement is about this box and this
+test; a statement of the form "the attenuation of this line is X" still needs the residual resolved, because
+`0.31` Np/m is a third of the wide-box decay. The limitation that remains is general only: a wider box cures both
+layer absorption and radiation, so the clearance test separates the two candidates it was registered against and
+no further pair.
+
+Recorded against the earlier entry of the clearance case: that entry states the closed box cannot make this
+distinction at all, and on that one point it is superseded, by the band selection and by the lid argument. The
+rest of it -- the audit-versus-station-ratio separation in the wide box and the open `0.31` Np/m -- stands and is
+what the G4 carry above is built on.
+
