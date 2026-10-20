@@ -2602,6 +2602,14 @@ def microstrip_wave_board(
 
 def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     """Study wrapper: one default wave run, reported as formatted strings."""
+    loads = ()
+    load_kind = values.get("load_kind", "none")
+    if load_kind != "none":
+        value = float(values.get("load_value", 100.0))
+        if load_kind == "shunt_c":
+            value *= 1e-12
+        loads = (Load(float(values.get("load_at_mm", 15.2)) * 1e-3,
+                      load_kind, value),)
     result = microstrip_wave(
         f_target=float(values["f0"]) * 1e9,
         nsteps=int(values["nsteps"]),
@@ -2609,6 +2617,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         n_top=int(values["npml"]),
         keep_slice=True,
         audit=True,
+        loads=loads,
         sink=sink)
     g = result.geometry
     gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
@@ -2902,7 +2911,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                      if lf.alpha_sigma is not None else None)
         sig_str = (f"{sigma_s21:.6f}" if sigma_s21 is not None else "n/a")
         departure = s21_loss - 1.0
-        within = abs(departure) < 0.01
+        within = abs(departure) < s21_tolerance
         s21_loss_row = (
             f"{s21_loss:.6f} = {num(loss_db, 'dB', '.3f')} "
             f"(+- {sig_str}) over the {span_length * 1e3:.2f} mm between the "
@@ -2910,7 +2919,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             f"alpha = {db_per_mm(lf.alpha):.5f} dB/mm: "
             f"{100.0 * departure:+.3f} % from unity, "
             + ("inside" if within else "outside")
-            + " the 1 per cent G1 asks for. "
+            + f" the {100.0 * s21_tolerance:.0f} per cent G1 asks for. "
             + ("It agrees with the |S21| between station planes quoted "
                "above, which is the check worth making: one number fitted to "
                "the field at every station and one a ratio of two planes, two "
@@ -3057,6 +3066,21 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             comparison = "No fitted alpha to compare it with"
         s21_audit_row = basis + per_length + comparison
 
+    # The absorbed-work audit bins only the matched layer's damping (pml.py);
+    # a lumped load removes work in the stepper (evolve.py), so on a loaded
+    # run the audit's total is injected-minus-load and its normalisation would
+    # charge the load to the absorber. Say so instead of quoting the number.
+    if g.get("loads"):
+        s21_audit_row = (
+            "not reported: the absorbed-work audit assumes every joule the "
+            "drive injects leaves through the matched layers, which is what "
+            "makes its total equal to the injected power. This run also "
+            "places a lumped load on the strip, and the load removes work "
+            "itself (in the stepper, not in the layer), so the audit total is "
+            "injected minus dissipated and this row would charge the load to "
+            "the absorber. Read |S21| between the planes directly, or remove "
+            "the load to restore this row.")
+
     # The station impedance the loss affects: with alpha in the propagation
     # constant the voltage and current waves no longer keep their relative
     # phase along the span, and the lossless fit has to absorb that somewhere.
@@ -3135,10 +3159,21 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             "with 1 through round-off.  The stations row above is the "
             "measurement; this one is an identity check")
 
+    # The load this run placed, named in the unit it was asked for: a row only
+    # when there is one, so the default report is unchanged.
+    load_row = ""
+    if loads:
+        series = loads[0].kind == "series_r"
+        load_row = (f"{'series R' if series else 'shunt C'} = "
+                    f"{float(values['load_value']):.2f} "
+                    f"{'ohm' if series else 'pF'} at "
+                    f"{loads[0].position * 1e3:.2f} mm; |S21| between the "
+                    "planes is measured through this element")
+
     # Leave the pictures on disk: a benchmark's figures are part of its output.
     dump_figures(sink)
 
-    return {
+    metrics = {
         "drive frequency": (f"{g['f'] / 1e9:.4f} GHz "
                             f"(asked {g['f_target'] / 1e9:.4f} GHz, snapped to a DFT bin)"),
         "mesh": f"{g['nx']} x {g['ny']} x {g['nz']} cells at {g['cell'] * 1e3:.4f} mm",
@@ -3232,6 +3267,9 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                            "has wrapped, read the fit"
                            if g["beta_ambiguous"] else "phase step below pi"),
     }
+    if loads:
+        metrics["load"] = load_row
+    return metrics
 
 
 # ---------------------------------------------------------------------------
@@ -3390,6 +3428,23 @@ MICROSTRIP = Study(
               help="Layer thickness at each absorbing face (both x ends and "
                    "both lateral ends); thicker absorbs more and costs more "
                    "cells."),
+        Param("load_kind", "Load", "choice", "none",
+              choices=("none", "series_r", "shunt_c"),
+              help="A lumped element placed across the strip at load_at_mm. "
+                   "none reproduces the published default record. series_r "
+                   "is a series resistance; shunt_c is a shunt "
+                   "capacitance."),
+        Param("load_at_mm", "Load position", "float", 15.2,
+              lo=10.4, hi=20.0, unit="mm",
+              help="Distance from the left edge of the line. Confined to "
+                   "the span between the two measurement planes "
+                   "(10.4-20.0 mm): a load outside them does not sit "
+                   "between the planes and would drop out of |S21|."),
+        Param("load_value", "Load value", "float", 100.0,
+              lo=0.01, hi=1.0e5, unit="",
+              help="In ohm for series_r, in picofarad for shunt_c "
+                   "(converted to farad internally). Ignored when "
+                   "load_kind is none."),
     ),
     run=_run_microstrip,
 )
