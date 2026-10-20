@@ -711,17 +711,29 @@ class BetaFit:
     span: float
 
 
-def _fit_design(z: np.ndarray, beta: float, n_wave: int) -> np.ndarray:
-    """Model matrix of one or two travelling waves at trial ``beta``."""
-    forward = np.exp(-1j * beta * z)
+def _fit_design(z: np.ndarray, beta: float, n_wave: int,
+                alpha: float = 0.0) -> np.ndarray:
+    """Model matrix of one or two travelling waves at trial ``beta``.
+
+    ``alpha`` is the attenuation constant [1/m] of the same travelling wave, i.e.
+    the complex propagation constant is taken as ``1j * beta + alpha``, matching
+    the ``beta = beta' - 1j * alpha`` convention written out in
+    :func:`deembed_reflection`.  Both waves decay *in their own direction of
+    travel*: the forward column is ``exp(-(alpha + 1j beta) z)`` and the
+    backward one ``exp(+(alpha + 1j beta) z)``, which at ``alpha = 0`` is the
+    conjugate pair used elsewhere in this module.  ``alpha`` defaults to zero so
+    that every existing caller gets the lossless design to the last bit.
+    """
+    forward = np.exp(-(alpha + 1j * beta) * z)
     if n_wave == 1:
         return forward[:, None]
-    return np.column_stack((forward, np.conj(forward)))
+    return np.column_stack((forward, np.exp((alpha + 1j * beta) * z)))
 
 
-def _fit_at(z: np.ndarray, v: np.ndarray, beta: float, n_wave: int):
+def _fit_at(z: np.ndarray, v: np.ndarray, beta: float, n_wave: int,
+            alpha: float = 0.0):
     """Least-squares amplitudes at fixed ``beta``; returns (residual, amps)."""
-    phi = _fit_design(z, beta, n_wave)
+    phi = _fit_design(z, beta, n_wave, alpha)
     amps, *_ = np.linalg.lstsq(phi, v, rcond=None)
     miss = float(np.linalg.norm(v - phi @ amps))
     scale = float(np.linalg.norm(v))
@@ -874,6 +886,294 @@ def fit_beta(z, v, n_wave=1) -> BetaFit:
     )
 
 
+@dataclass(frozen=True, eq=False)
+class LineFit:
+    """A travelling-wave fit that carries a loss as well as a phase constant.
+
+    All lengths are SI metres, ``alpha`` and ``beta`` are rad/m and 1/m, and the
+    amplitudes are referred to ``z`` exactly where :func:`fit_beta` refers them.
+
+    The model is the two-parameter version of the one in :func:`fit_beta`: the
+    propagation constant is complex, ``gamma_wave = alpha + 1j beta``, so that
+
+        ``v(z) = A exp(-(alpha + 1j beta) z)``                     (``n_wave=1``)
+        ``v(z) = A exp(-(alpha + 1j beta) z) + B exp(+(alpha + 1j beta) z)``
+
+    Each wave decays in its own direction of travel, which is what a passive
+    line does; ``alpha`` therefore carries a sign, and a fitted ``alpha`` below
+    zero says the stations saw a wave that *grows* along ``+z`` -- possible, but
+    on a passive line it is a symptom (a non-physical reference plane, a
+    contaminated station, energy entering the section) and not a loss.
+
+    Why a joint fit and not two fits
+    --------------------------------
+    ``beta`` can be fitted on its own (:func:`fit_beta`) because the amplitudes
+    are linear and the misfit is then a function of ``beta`` alone.  With
+    ``alpha`` in the model it is no longer a one-dimensional problem -- a loss
+    and a phase error lean on the same data -- so the fit is done jointly, on the
+    real parameter vector ``[Re A, Im A(, Re B, Im B), alpha, beta]``, by
+    Levenberg-Marquardt on the analytic Jacobian.  Doing it any other way would
+    quote an ``alpha`` whose uncertainty ignored the correlation with ``beta``,
+    which on a short station span is the whole of it.
+
+    Attributes:
+        alpha: Attenuation constant [1/m], positive for a decaying wave, or
+            ``None`` when the data cannot support one: see ``alpha_sigma`` and
+            the identifiability note below.  Convert to dB per length as
+            ``8.685889638 * alpha``.
+        beta: Phase constant [rad/m].  Always reported, unambiguously positive
+            (the forward wave), as in :func:`fit_beta`.
+        alpha_sigma: One standard deviation on ``alpha`` [1/m] from the
+            least-squares covariance of the joint fit, ``s**2 (J^T J)^-1`` with
+            ``s**2 = rss / (2N - p)``, ``N`` stations and ``p`` real parameters.
+            It is the *joint* (all parameters free at once) covariance at the
+            optimum, not the curvature of the cost profiled over ``alpha``
+            alone; the two agree only where the model is nearly linear, which is
+            the regime the identifiability rule below accepts.
+        beta_sigma: The same for ``beta`` [rad/m].
+        rho: Correlation coefficient of the ``alpha`` and ``beta`` estimators,
+            dimensionless in ``[-1, 1]``, or ``None`` when either sigma is zero
+            or missing (then there is nothing to correlate).  Near ``+-1`` the
+            two are the same measurement seen twice: the loss per metre and the
+            phase per metre are then trading off against each other over the
+            station span, and neither number should be quoted alone.
+        forward: Complex amplitude of the forward wave at ``z``.
+        backward: The same for the backward wave (zero at ``n_wave=1``).
+        gamma: ``backward / forward``, a reflection coefficient at ``z``; read
+            it with the same care as in :func:`fit_beta`.
+        residual: Relative RMS misfit ``||v - model|| / ||v||``.
+        n_stations: Number of stations the fit saw.
+        n_wave: One or two.
+        span: First to last station [m].
+        covariance: ``2 x 2`` block of the parameter covariance for
+            ``(alpha, beta)``, or ``None`` when there is no residual degree of
+            freedom or the normal matrix is singular.
+    """
+
+    alpha: float | None
+    beta: float
+    alpha_sigma: float | None
+    beta_sigma: float | None
+    rho: float | None
+    forward: complex
+    backward: complex
+    gamma: complex
+    residual: float
+    n_stations: int
+    n_wave: int
+    span: float
+    covariance: np.ndarray | None
+
+
+def fit_line(z, v, n_wave=1) -> LineFit:
+    """Fit a travelling wave with both a loss and a phase constant.
+
+    ``z`` are station positions [m] and ``v`` the complex voltages there [V] (or
+    the DFT coefficients at one frequency).  The model is the one described on
+    :class:`LineFit`: one or two waves of the form ``exp(-(alpha + 1j beta) z)``.
+
+    Reading ``alpha``
+    ----------------
+    ``alpha`` is in nepers per metre, so a line of length ``L`` attenuates by
+    ``exp(-alpha L)``: with ``|S21|`` the magnitude of the transmission, use
+    ``|S21| = exp(-alpha L)`` and ``alpha = -ln|S21| / L``.  In decibels per
+    length, ``8.685889638 * alpha``.  That equality is the reason to want the
+    joint fit at all: it turns a loss measured along the line into a prediction
+    for the transmission of the whole line, and lets the two be compared as an
+    independent check rather than one being defined as the other.
+
+    Is ``alpha`` identifiable?
+    -------------------------
+    Over a span ``L = z[-1] - z[0]`` the loss only moves the amplitude by
+    ``exp(-alpha L)``, which is indistinguishable from a change in ``|A|``; what
+    breaks the degeneracy is the *shape* of the decay across the stations, and
+    the reflection, if any.  So the estimator is only meaningful when its own
+    uncertainty is small against that scale.  The rule used here is
+    ``alpha_sigma * span < 1``: the fit must be able to see the decay it claims
+    over the distance it has.  When that fails, or when the covariance is
+    unavailable, ``alpha`` is reported as ``None`` -- a number that cannot be
+    supported by the data is not reported, because every caller would use it.
+
+    Honest limits.  The sigma is the least-squares covariance, which treats the
+    data-minus-model residual at each station as independent noise: it is an
+    internal error bar.  A model that is wrong the same way at every station
+    (dispersion, a second mode, stations drifting off the line) biases ``alpha``
+    and leaves no scatter to warn about it.  Noiseless data therefore give a
+    covariance at machine roundoff -- the arithmetic is exact, the physics need
+    not be -- so compare ``alpha`` against an independent measurement (``|S21|``
+    from the two port planes) before believing it.
+
+    Raises:
+        ValueError: If ``z`` and ``v`` differ in length, hold too few stations,
+            span no distance, hold non-finite values, are identically zero, or
+            if ``n_wave`` is not 1 or 2.
+    """
+    z = np.asarray(z, dtype=float).ravel()
+    v = np.asarray(v, dtype=complex).ravel()
+    if z.size != v.size:
+        raise ValueError(
+            f"z and v must hold the same number of stations, got {z.size} and "
+            f"{v.size}")
+    n_wave = int(n_wave)
+    if n_wave not in (1, 2):
+        raise ValueError(f"n_wave must be 1 or 2, got {n_wave}")
+    if z.size < n_wave + 2:
+        raise ValueError(
+            f"a {n_wave}-wave fit needs at least {n_wave + 2} stations to leave "
+            f"a residual to judge, got {z.size}")
+    if not np.all(np.isfinite(z)) or not np.all(np.isfinite(v)):
+        raise ValueError("z and v must be finite")
+    if not np.any(v):
+        raise ValueError(
+            "the station voltages are all zero: no wave and no loss can be fitted")
+
+    order = np.argsort(z, kind="stable")
+    z, v = z[order], v[order]
+    span = float(z[-1] - z[0])
+    if span <= 0.0:
+        raise ValueError(
+            "all stations sit at the same place: no phase can be measured "
+            "across a zero span")
+    if float(np.min(np.diff(z))) <= 0.0:
+        raise ValueError("two stations coincide: the spacing is zero")
+
+    # Start from the lossless fit, which is well defined on its own, and take
+    # alpha = 0 there: the loss is the small parameter of the correction.
+    beta = float(fit_beta(z, v, n_wave).beta)
+    amps, *_ = np.linalg.lstsq(_fit_design(z, beta, n_wave), v, rcond=None)
+    p = np.array([amps[0].real, amps[0].imag]
+                 + ([amps[1].real, amps[1].imag] if n_wave == 2 else [])
+                 + [0.0, beta], dtype=float)
+
+    def unpack(q: np.ndarray):
+        a = complex(q[0], q[1])
+        b = complex(q[2], q[3]) if n_wave == 2 else complex(0.0, 0.0)
+        return a, b, float(q[-2]), float(q[-1])
+
+    def model_and_jacobian(q: np.ndarray):
+        """Model and its real Jacobian on the stacked ``[Re v; Im v]``."""
+        a, b, alpha, beta = unpack(q)
+        e1 = np.exp(-(alpha + 1j * beta) * z)
+        model = a * e1
+        # d/dalpha and, since d/dbeta = 1j d/dalpha, one column serves both.
+        d_alpha = -z * a * e1
+        cols = [np.concatenate((e1.real, e1.imag)),          # d/d Re A
+                np.concatenate((-e1.imag, e1.real))]         # d/d Im A
+        if n_wave == 2:
+            e2 = np.exp((alpha + 1j * beta) * z)
+            model = model + b * e2
+            d_alpha = d_alpha + z * b * e2
+            cols += [np.concatenate((e2.real, e2.imag)),     # d/d Re B
+                     np.concatenate((-e2.imag, e2.real))]    # d/d Im B
+        cols += [np.concatenate((d_alpha.real, d_alpha.imag)),   # d/d alpha
+                 np.concatenate((-d_alpha.imag, d_alpha.real))]  # d/d beta
+        return model, np.column_stack(cols)
+
+    def misfit(q: np.ndarray):
+        # ``model - v`` rather than ``v - model``: the Jacobian below is the
+        # derivative of the model, and the two have to agree in sign for the
+        # normal equations to point downhill.
+        model, jac = model_and_jacobian(q)
+        miss = model - v
+        return np.concatenate((miss.real, miss.imag)), jac
+
+    r, jac = misfit(p)
+    cost = float(r @ r)
+    damping = 1e-6
+    for _ in range(200):
+        jtj = jac.T @ jac
+        grad = jac.T @ r
+        diag = np.diag(jtj).copy()
+        diag[~(diag > 0.0)] = 1.0
+        accepted = False
+        for _ in range(40):
+            try:
+                step = np.linalg.solve(jtj + damping * np.diag(diag), -grad)
+            except np.linalg.LinAlgError:      # pragma: no cover - singular start
+                damping *= 10.0
+                continue
+            trial = p + step
+            shrink = 0
+            while trial[-1] <= 0.0 and shrink < 60:
+                step = 0.5 * step              # a negative beta is not a candidate
+                trial = p + step
+                shrink += 1
+            if trial[-1] <= 0.0:               # pragma: no cover - degenerate
+                damping *= 10.0
+                continue
+            trial_r, trial_jac = misfit(trial)
+            trial_cost = float(trial_r @ trial_r)
+            if np.isfinite(trial_cost) and trial_cost < cost:
+                improvement = cost - trial_cost
+                p, r, jac, cost = trial, trial_r, trial_jac, trial_cost
+                damping = max(damping * 0.3, 1e-12)
+                accepted = True
+                stalled = (improvement <= 1e-18 * cost
+                           or float(np.max(np.abs(step))) <= 1e-15 * (
+                               1.0 + float(np.max(np.abs(p)))))
+                break                          # recompute at the new point
+            damping *= 10.0
+            if damping > 1e12:                 # pragma: no cover - stuck
+                break
+        if not accepted or stalled:
+            break
+
+    a, b, alpha, beta = unpack(p)
+    model, jac = model_and_jacobian(p)
+    miss = v - model
+    rss = float(np.sum(np.abs(miss) ** 2))
+    scale = float(np.linalg.norm(v))
+    residual = float(np.sqrt(rss) / scale) if scale > 0.0 else np.inf
+
+    # Parameter covariance.  s**2 uses the residual degrees of freedom of the
+    # real problem, 2N values against p real parameters.
+    n_params = jac.shape[1]
+    dof = 2 * z.size - n_params
+    alpha_sigma = beta_sigma = rho = None
+    covariance = None
+    if dof > 0:
+        try:
+            full = (rss / dof) * np.linalg.inv(jac.T @ jac)
+        except np.linalg.LinAlgError:          # pragma: no cover - singular design
+            full = None
+        if full is not None and np.all(np.isfinite(full)):
+            idx = [n_params - 2, n_params - 1]
+            covariance = full[np.ix_(idx, idx)]
+            var_alpha, var_beta = float(covariance[0, 0]), float(covariance[1, 1])
+            if var_alpha >= 0.0:
+                alpha_sigma = float(np.sqrt(var_alpha))
+            if var_beta >= 0.0:
+                beta_sigma = float(np.sqrt(var_beta))
+            if alpha_sigma and beta_sigma:
+                rho = float(covariance[0, 1] / (alpha_sigma * beta_sigma))
+                rho = float(np.clip(rho, -1.0, 1.0))
+
+    # Identifiability: report a loss only when the data can see it decay.
+    loss = float(alpha)
+    if (not np.isfinite(loss) or alpha_sigma is None
+            or not np.isfinite(alpha_sigma) or alpha_sigma * span >= 1.0):
+        loss = None
+    forward = complex(a)
+    backward = complex(b)
+    gamma = (backward / forward) if forward != 0.0 else complex(0.0, 0.0)
+
+    return LineFit(
+        alpha=loss,
+        beta=float(beta),
+        alpha_sigma=alpha_sigma,
+        beta_sigma=beta_sigma,
+        rho=rho,
+        forward=forward,
+        backward=backward,
+        gamma=gamma,
+        residual=residual,
+        n_stations=int(z.size),
+        n_wave=n_wave,
+        span=span,
+        covariance=covariance,
+    )
+
+
 def suggest_probe_spacing(beta_max, fraction=0.25) -> float:
     """A probe spacing that keeps the split well conditioned up to ``beta_max``.
 
@@ -982,14 +1282,15 @@ class StationFit:
     residual_i_stations: np.ndarray
 
 
-def _two_wave_fit(u: np.ndarray, series: np.ndarray, beta: float):
+def _two_wave_fit(u: np.ndarray, series: np.ndarray, beta: float,
+                  alpha: float = 0.0):
     """Two-wave least squares of one series at fixed ``beta``.
 
     Returns ``(amps, rss, relative_rms, model)`` with the amplitudes ordered
     forward then backward, exactly as :func:`fit_beta` orders them, so the two
     can be read side by side.
     """
-    phi = _fit_design(u, beta, 2)
+    phi = _fit_design(u, beta, 2, alpha)
     amps, *_ = np.linalg.lstsq(phi, series, rcond=None)
     model = phi @ amps
     miss = series - model
@@ -998,7 +1299,8 @@ def _two_wave_fit(u: np.ndarray, series: np.ndarray, beta: float):
     return amps, rss, (float(np.sqrt(rss)) / scale if scale > 0.0 else np.inf), model
 
 
-def _amplitude_covariance(u: np.ndarray, rss: float, beta: float):
+def _amplitude_covariance(u: np.ndarray, rss: float, beta: float,
+                          alpha: float = 0.0):
     """Real covariance of the two complex amplitudes of a two-wave fit.
 
     The complex fit ``v = Phi a`` is written as a real one by stacking the real
@@ -1013,7 +1315,7 @@ def _amplitude_covariance(u: np.ndarray, rss: float, beta: float):
     Returns the ``4 x 4`` real covariance, or ``None`` if there is no residual
     degree of freedom left or the design is singular.
     """
-    phi = _fit_design(u, beta, 2)
+    phi = _fit_design(u, beta, 2, alpha)
     m = np.block([[phi.real, -phi.imag], [phi.imag, phi.real]])
     dof = 2 * u.size - 2 * phi.shape[1]
     if dof <= 0:
@@ -1024,13 +1326,17 @@ def _amplitude_covariance(u: np.ndarray, rss: float, beta: float):
         return None
 
 
-def fit_station_impedance(x, v, i, beta, sigma_beta=None) -> StationFit:
+def fit_station_impedance(x, v, i, beta, sigma_beta=None,
+                          alpha=0.0) -> StationFit:
     """Fit ``z0`` to the voltages and currents measured at several stations.
 
     ``x`` are station positions [m], ``v`` the complex voltage at each [V],
     ``i`` the complex current at each [A] **flowing in the direction of the
     forward voltage wave**, and ``beta`` the phase constant [rad/m], normally
-    the one :func:`fit_beta` returns for ``v`` itself.
+    the one :func:`fit_beta` returns for ``v`` itself.  ``alpha`` is the
+    attenuation constant [1/m] the same wave fits, normally
+    ``fit_line(...).alpha``; it defaults to zero, which is the lossless model
+    this function used before a loss was available.
 
     Why fit both sides instead of dividing at one station
     ----------------------------------------------------
@@ -1101,8 +1407,9 @@ def fit_station_impedance(x, v, i, beta, sigma_beta=None) -> StationFit:
     plane = float(x[0])
     u = x - plane
 
-    amp_v, rss_v, res_v, model_v = _two_wave_fit(u, v, beta)
-    amp_i, rss_i, res_i, model_i = _two_wave_fit(u, i, beta)
+    alpha = float(alpha)
+    amp_v, rss_v, res_v, model_v = _two_wave_fit(u, v, beta, alpha)
+    amp_i, rss_i, res_i, model_i = _two_wave_fit(u, i, beta, alpha)
     if amp_v[0] == 0.0 or amp_i[0] == 0.0:
         raise ValueError("a fitted forward amplitude is zero: no impedance exists")
 
@@ -1111,8 +1418,8 @@ def fit_station_impedance(x, v, i, beta, sigma_beta=None) -> StationFit:
     gamma_i = complex(amp_i[1] / amp_i[0])
 
     # Statistical part: delta method on z0 = A_V / A_I.
-    cov_v = _amplitude_covariance(u, rss_v, beta)
-    cov_i = _amplitude_covariance(u, rss_i, beta)
+    cov_v = _amplitude_covariance(u, rss_v, beta, alpha)
+    cov_i = _amplitude_covariance(u, rss_i, beta, alpha)
     sigma_stat = None
     if cov_v is not None and cov_i is not None:
         # d z0 for unit d Re/Im aV and d Re/Im aI, each a 2 x 2 real block.
@@ -1138,10 +1445,10 @@ def fit_station_impedance(x, v, i, beta, sigma_beta=None) -> StationFit:
         if sigma_beta == 0.0:
             sigma_z0_beta = 0.0
         else:
-            up = _two_wave_fit(u, v, beta + sigma_beta)[0][0] \
-                / _two_wave_fit(u, i, beta + sigma_beta)[0][0]
-            down = _two_wave_fit(u, v, beta - sigma_beta)[0][0] \
-                / _two_wave_fit(u, i, beta - sigma_beta)[0][0]
+            up = _two_wave_fit(u, v, beta + sigma_beta, alpha)[0][0] \
+                / _two_wave_fit(u, i, beta + sigma_beta, alpha)[0][0]
+            down = _two_wave_fit(u, v, beta - sigma_beta, alpha)[0][0] \
+                / _two_wave_fit(u, i, beta - sigma_beta, alpha)[0][0]
             sigma_z0_beta = float(abs(up - down) / 2.0)
 
     total = None

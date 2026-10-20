@@ -38,7 +38,7 @@ from __future__ import annotations
 import os
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
 import numpy as np
@@ -56,6 +56,7 @@ from .operators import CellComplex
 from .pml import PML, cells_for_wavelength
 from .ports import (
     DftAccumulator,
+    LineFit,
     LumpedPort,
     StationFit,
     column_path,
@@ -63,6 +64,7 @@ from .ports import (
     deembed_transmission,
     edge_path_voltage,
     fit_beta,
+    fit_line,
     fit_station_impedance,
     plate_current,
     power_current_check,
@@ -237,6 +239,36 @@ class FigureSink:
                 handle.write(attachment["data"])
             paths.append(path)
         return paths
+
+
+def dump_figures(sink, directory="study-out", prefix="fig_g1_") -> list[str]:
+    """Write every figure of one run as ``<directory>/<prefix><slug>.png``.
+
+    The study itself never touches the filesystem, so the dump has to live
+    somewhere a caller can reach; putting it here means a benchmark run leaves
+    its pictures on disk as a side-effect of running instead of needing a
+    second script that reproduces the run to get them back.
+
+    A file that already exists is **not** overwritten.  ``study-out`` is shared
+    between studies -- the box sweep left ``fig_g1_s21_convergence.png`` there
+    -- so a colliding name is skipped and reported rather than silently
+    replaced with a different quantity that happens to share a slug.
+
+    Returns the paths actually written, so a caller can print the byte total.
+    """
+    if sink is None:
+        return []
+    directory = os.fspath(directory)
+    os.makedirs(directory, exist_ok=True)
+    paths = []
+    for fig in sink.figures:
+        path = os.path.join(directory, f"{prefix}{fig['slug']}.png")
+        if os.path.exists(path):
+            continue
+        with open(path, "wb") as handle:
+            handle.write(fig["png"])
+        paths.append(path)
+    return paths
 
 
 @dataclass(frozen=True)
@@ -1096,6 +1128,11 @@ MS_N_PML = 6
 MS_X_FIRST, MS_X_LAST = 10.4e-3, 20.0e-3
 #: Probe stations along the line.
 MS_N_STATIONS = 9
+#: How far the phase constant may move between the two halves of one averaging
+#: window before the record is called unsettled [relative].  A record whose
+#: ``beta`` is still moving by more than this has not finished filling, and no
+#: decay read off it is a measurement.
+MS_SETTLE_TOL = 0.01
 #: Substrate cells across ``h``; this fixes the cell size of the whole mesh.
 #: Four cells over 1.6 mm is a 0.4 mm cell: the historical reference mesh.
 MS_N_SUB = 4
@@ -1173,6 +1210,8 @@ class MicrostripWave:
             the warm-up split of the record.
         station_x: ``(n_stations,)`` x positions of the voltage probes [m].
         v_stations: ``(n_stations,)`` complex gap voltages at those stations [V].
+        i_stations: ``(n_stations,)`` complex trace currents at those stations
+            [A], in the same (forward) sense as ``z0``.
         v_port: Complex gap voltage on the port plane [V].
         i_ground_full: Complex return current summed over **every** ``y``
             column of the ground plane at the port station [A].
@@ -1194,6 +1233,15 @@ class MicrostripWave:
             exp(-j beta z) + B exp(+j beta z)`` [rad/m].  Its distance from
             ``beta`` is the size of the standing wave the one-wave model had to
             swallow.
+        beta_first_half, beta_second_half: The one-wave phase constant refitted
+            on the first and on the second half of the transformed record, each
+            half accumulated separately out of the same run [rad/m].  A record
+            that still carries a transient, or a mode whose amplitude is still
+            climbing, hands the two halves different ``beta``.  The halves are
+            not on the DFT bins of the whole record, so each carries its own
+            leakage -- but the leakage factor is common to every station, so it
+            moves neither ``beta`` nor any station ratio.  ``nan`` when the
+            record was too short to split.
         gamma: ``B / A`` of that two-wave fit, the reflection coefficient at
             ``z = 0`` (dimensionless, complex).  ``abs(gamma)`` is the
             standing-wave diagnostic.
@@ -1201,6 +1249,18 @@ class MicrostripWave:
             ``||v - model|| / ||v||`` (dimensionless).  Large means the phasors
             are not one travelling wave -- a standing wave, or a record too
             short for the transient to have left the line.
+        loss_fit: :func:`emfit.ports.fit_line` on the same stations -- the same
+            one-wave model as :func:`fit_beta`, except that the decay is free
+            too, ``v(z) = A exp(-(alpha + j beta) z)`` with ``alpha`` in Np/m,
+            and with the joint covariance of ``(alpha, beta)`` beside it.
+            ``None`` when the record holds nothing to fit.  Its ``alpha`` is
+            ``None`` in turn when the record cannot support one (the standard
+            error reaching across the whole span), which is a refusal to
+            quote, not a zero.
+        loss_fit_two: The same fit with a backward wave allowed.  Its ``alpha``
+            and ``beta`` are read off a standing wave rather than through it;
+            the pair of them against ``loss_fit`` is this study's loss
+            analogue of ``beta`` against ``beta_two_wave``.
         beta_model: ``emfit.microstrip`` Hammerstad-Jensen value at the same
             frequency [rad/m].
         z0: ``V / I`` at the port station, ``V`` from the port gap and ``I``
@@ -1220,6 +1280,18 @@ class MicrostripWave:
             plane it is referred to, without which the number means nothing.
             A line of stations sees the standing wave over several centimetres,
             so it can separate the two travelling waves; one port plane cannot.
+        station_fit_lossy: ``station_fit`` repeated with the loss the line
+            actually has: the propagation constant is
+            ``loss_fit.alpha + j loss_fit.beta`` instead of a bare
+            ``j beta``, and ``sigma_beta`` is ``loss_fit.beta_sigma``.  On a
+            lossy line the voltage and current waves no longer stay in step
+            along the span, so the pair of them carries information the
+            lossless fit throws away.  The sensitivity to ``alpha`` -- a
+            central difference over ``loss_fit.alpha +- alpha_sigma`` -- is
+            folded into its ``z0_sigma_total``, because an uncertainty budget
+            that leaves out the dominant term is worse than no budget; when
+            ``alpha`` has no error estimate the total falls back to the
+            ``beta`` and statistical terms alone.
         gamma_port: ``station_fit.gamma_v`` moved from its reference plane to
             the port plane with :func:`emfit.ports.deembed_reflection`
             (dimensionless, complex).  With a real ``beta`` its magnitude is
@@ -1250,11 +1322,21 @@ class MicrostripWave:
         eps_eff: Effective permittivity implied by ``beta``, i.e. by the
             one-wave fit and not by the two-station difference.
         eps_eff_model: Closed-form effective permittivity of the cross-section.
+        slice_ez: ``(nxn, nyn)`` complex phasor of ``E_z`` on the mid-plane
+            ``z = k_mid * cell``, the node layer halfway up the substrate,
+            from the average of the two ``E_z`` cells that straddle it.  Only
+            filled when the run was asked for it (``keep_slice=True``);
+            otherwise ``None``, because the map costs one DFT accumulator over
+            the whole plane and a run that will not draw it should not pay.
+            The transverse node pairs are **not** averaged here -- this is the
+            raw accumulator, and :func:`emfit.viz.plot_field_slice` does the
+            co-location when it draws.
     """
 
     geometry: dict
     station_x: np.ndarray
     v_stations: np.ndarray
+    i_stations: np.ndarray
     v_port: complex
     i_ground_full: complex
     i_ground_truncated: complex
@@ -1262,6 +1344,8 @@ class MicrostripWave:
     beta_two_station: float
     beta: float
     beta_two_wave: float
+    beta_first_half: float
+    beta_second_half: float
     gamma: complex
     fit_residual: float
     beta_model: float
@@ -1279,6 +1363,10 @@ class MicrostripWave:
     z0_model: float
     eps_eff: float
     eps_eff_model: float
+    loss_fit: LineFit | None
+    loss_fit_two: LineFit | None
+    station_fit_lossy: StationFit
+    slice_ez: np.ndarray | None
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -1320,6 +1408,7 @@ def microstrip_wave(
     nsteps: int = MS_NSTEPS,
     n_warm: int = None,
     drive: float = 1.0,
+    keep_slice: bool = False,
     sink: FigureSink = None,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
@@ -1424,6 +1513,12 @@ def microstrip_wave(
             are Fourier transformed, so this is the record length.
         n_warm: Warm-up steps, ``nsteps // 4`` by default.
         drive: Source amplitude [A].
+        keep_slice: Accumulate the phasor of ``E_z`` over the whole mid-plane
+            of the substrate as the run goes, and return it in
+            ``slice_ez``.  Off by default: it is one DFT accumulator over
+            ``nxn * nyn`` signals, which is nothing beside the field update on
+            the mesh test but still wasted on a run that only wants numbers.
+            When it is on and a ``sink`` is given, the plane is also drawn.
         sink: Where to put the figure; ``None`` (the default) draws nothing.
 
     Returns:
@@ -1519,8 +1614,28 @@ def microstrip_wave(
     port_edges = np.unique(np.concatenate(
         [column_path(cc, ix_port, int(j), 0, k_strip) for j in range(j0, j1 + 1)]))
 
+    # --- the mid-plane map, when one was asked for -------------------------
+    # ``E_z`` does not live on a node layer: the edge of a cell stops one
+    # ``z`` cell short of the next one, so the field at the node layer between
+    # two cells is not stored anywhere.  Their mean is that field to second
+    # order, and ``k_mid = n_sub // 2`` is halfway up the substrate -- where a
+    # microstrip's field is, neither grazing the ground plane nor gathered
+    # under the strip edge.  The whole plane is accumulated at once, through a
+    # second :class:`DftAccumulator` sharing ``f0`` and ``dt`` with the probe
+    # one, so the map is at the same phase reference as every other phasor.
+    k_mid = n_sub // 2
+    slice_acc = DftAccumulator([f0], dt) if keep_slice else None
+    slice_signals = (np.zeros(cc.nxn * cc.nyn, dtype=float)
+                     if keep_slice else None)
+
     # --- the time loop -----------------------------------------------------
     acc = DftAccumulator([f0], dt)
+    # The same record split in two, for the settledness check after the loop.
+    # A DFT sum is linear in its samples and both accumulators take their phase
+    # from the step index ``n``, so the second half is exactly ``spec`` minus
+    # the first: one extra accumulator, not a second run.
+    n_split = n_warm + n_acc // 2
+    half_acc = DftAccumulator([f0], dt)
     current = np.zeros(cc.n_edges, dtype=float)
     n_currents = n_stations + 3        # station currents start here in signals
     signals = np.zeros(n_currents + n_stations, dtype=float)
@@ -1550,8 +1665,18 @@ def microstrip_wave(
                 plate_current(stepper.h, cc, int(ix) - 1, 0, y_extent=y_half)
                 + plate_current(stepper.h, cc, int(ix), 0, y_extent=y_half))
         acc.add(signals, n)
+        if n < n_split:
+            half_acc.add(signals, n)
+        if slice_acc is not None:
+            ez = stepper.e[cc.off_ez:cc.off_ez + cc.n_ez].reshape(
+                cc.nxn, cc.nyn, cc.nz)
+            slice_signals[:] = 0.5 * (ez[:, :, k_mid - 1] + ez[:, :, k_mid]).ravel()
+            slice_acc.add(slice_signals, n)
 
     spec = acc.spectrum[0]
+    spec_early = half_acc.spectrum[0]
+    spec_late = (spec - spec_early if half_acc.n_samples
+                 else np.zeros_like(spec))
     v_stations = np.asarray(spec[:n_stations], dtype=complex)
     v_port = complex(spec[n_stations])
     i_full = complex(spec[n_stations + 1])
@@ -1573,6 +1698,23 @@ def microstrip_wave(
     fit_one = fit_beta(station_x, v_stations, n_wave=1)
     fit_two = fit_beta(station_x, v_stations, n_wave=2)
     beta = float(fit_one.beta)
+
+    # --- has the record settled? -------------------------------------------
+    # Nothing in a single phase constant says whether the waveform it was read
+    # off had stopped changing: a record that is still filling, or still
+    # climbing in amplitude, fits perfectly well and gives a ``beta`` that
+    # depends on where the averaging window was opened.  Refitting the first
+    # and the second half of the same window costs one accumulator and answers
+    # exactly that question, so every run states it.
+    def half_beta(samples):
+        """One-wave ``beta`` on one half of the record, ``nan`` if empty."""
+        if samples.size < n_stations or not np.any(samples):
+            return float(np.nan)
+        return float(fit_beta(station_x, samples[:n_stations],
+                              n_wave=1).beta)
+
+    beta_first_half = half_beta(spec_early)
+    beta_second_half = half_beta(spec_late)
 
     # --- line impedance from the stations, with its uncertainty ------------
     # ``beta``'s own uncertainty comes from the curvature of the one-wave
@@ -1604,6 +1746,56 @@ def microstrip_wave(
                                         beta, sigma_beta)
                    if np.any(v_stations) and np.any(i_stations)
                    else blank_station_fit())
+
+    # --- the same fits with the decay free: loss, and its covariance -------
+    # ``fit_beta`` holds the amplitude fixed in modulus, which is what a solver
+    # with no loss model in it deserves.  The line does decay all the same --
+    # the strip is a thin PEC sheet on a real mesh, and the grid disperses --
+    # and pushing the decay into the fit is the only way to see it without a
+    # second run.  Everything below is an *addition*: the lossless numbers
+    # above are computed first and are not disturbed by any of it.
+    slice_ez = (slice_acc.spectrum[0].reshape(cc.nxn, cc.nyn)
+                if slice_acc is not None and slice_acc.n_samples else None)
+    loss_fit = loss_fit_two = None
+    if np.any(v_stations):
+        loss_fit = fit_line(station_x, v_stations, n_wave=1)
+        loss_fit_two = fit_line(station_x, v_stations, n_wave=2)
+
+    def lossy_station_fit() -> StationFit:
+        """``station_fit`` at ``alpha + j beta``, with ``alpha``'s wiggle in it.
+
+        The propagation constant is the joint fit's, and the sensitivity to
+        ``alpha`` is a central difference over ``alpha +- alpha_sigma`` on the
+        whole refit -- the same treatment ``z0_sigma_beta`` gets, for the same
+        reason: a linearisation of a quantity built from two ratios is not
+        the thing itself.  ``z0_sigma_total`` is rebuilt because
+        :class:`StationFit` has no slot for a fourth term and an incomplete
+        budget must not be reported as if it were the whole of one.
+        """
+        if loss_fit is None or not np.any(i_stations):
+            return station_fit          # nothing to fit: the lossless answer stays
+        alpha_hat = 0.0 if loss_fit.alpha is None else float(loss_fit.alpha)
+        fitted = fit_station_impedance(station_x, v_stations, i_stations,
+                                       loss_fit.beta, loss_fit.beta_sigma,
+                                       alpha=alpha_hat)
+        sigma_alpha = loss_fit.alpha_sigma
+        if loss_fit.alpha is None or sigma_alpha is None:
+            return fitted
+        step = float(sigma_alpha)
+        z_plus = fit_station_impedance(station_x, v_stations, i_stations,
+                                       loss_fit.beta, loss_fit.beta_sigma,
+                                       alpha=alpha_hat + step).z0
+        z_minus = fit_station_impedance(station_x, v_stations, i_stations,
+                                        loss_fit.beta, loss_fit.beta_sigma,
+                                        alpha=alpha_hat - step).z0
+        sigma_alpha_z0 = 0.5 * abs(z_plus - z_minus)
+        terms = [t for t in (fitted.z0_sigma_stat, fitted.z0_sigma_beta)
+                 if t is not None]
+        total = float(np.sqrt(sum(t * t for t in terms)
+                              + sigma_alpha_z0 * sigma_alpha_z0)) if terms else None
+        return replace(fitted, z0_sigma_total=total)
+
+    station_fit_lossy = lossy_station_fit()
 
     line = Microstrip(w=float(w), h=float(h), eps_r=float(eps_r))
     beta_model = float(line.beta(f0))
@@ -1679,6 +1871,7 @@ def microstrip_wave(
         "n_sub": n_sub, "n_air": n_air, "n_top": n_top, "n_strip": n_strip,
         "n_clean": n_clean, "n_pml": n_pml, "n_ref": n_ref, "n_line": n_line,
         "ix_port": ix_port, "ix_far": nx, "k_strip": k_strip,
+        "k_mid": k_mid, "z_mid": k_mid * cell, "keep_slice": bool(keep_slice),
         "j_strip": (j0, j1), "j_centre": j_centre, "y_extent": y_half,
         "station_cells": [int(v) for v in js],
         "f": f0, "f_target": float(f_target), "dt": dt,
@@ -1715,10 +1908,45 @@ def microstrip_wave(
                      f"{dt:.3e} s. The dotted ramp is the closed-form phase "
                      "slope at the same frequency."))
 
+    # --- the mid-plane map, drawn from the phasor ---------------------------
+    # ``plot_field_slice`` wants a whole edge vector and a component block in
+    # it, so the plane is written back into two ``E_z`` cells of an otherwise
+    # empty vector and drawn through the ordinary slice routine: the same
+    # co-location, the same PEC outline, one picture per run rather than a
+    # private copy of the plotting code.  The phasor is complex and a colour
+    # map is not, so the real part is what is drawn -- the field at the phase
+    # the accumulated record starts on.
+    if sink is not None and slice_ez is not None:
+        ez_block = np.zeros((cc.nxn, cc.nyn, cc.nz), dtype=complex)
+        ez_block[:, :, max(k_mid - 1, 0)] = slice_ez
+        ez_block[:, :, k_mid] = slice_ez
+        vec = np.zeros(cc.n_edges, dtype=float)
+        vec[cc.off_ez:cc.off_ez + cc.n_ez] = np.real(ez_block).ravel()
+        z_mid = k_mid * cell
+        fig_s, ax_s = viz.plot_field_slice(
+            grid, vec, "EZ", axis="z", index=max(k_mid - 1, 0),
+            title=rf"$\mathrm{{Re}}\,E_z$ at $z = {z_mid * 1e3:.2f}$ mm")
+        ax_s.axvline(ix_port * cell, color=viz.COL_INK, lw=0.8, ls="--")
+        ax_s.axhline(j0 * cell, color=viz.COL_INK, lw=0.8, ls="--")
+        ax_s.axhline(j1 * cell, color=viz.COL_INK, lw=0.8, ls="--")
+        sink.add_figure(
+            "midplane-ez", "Mid-plane E_z of the driven microstrip", fig_s,
+            caption=(f"Real part of the {f0 / 1e9:.3f} GHz phasor of $E_z$ on "
+                     f"the node layer $z = {z_mid * 1e3:.2f}$ mm, halfway up "
+                     f"the {float(h) * 1e3:.2f} mm substrate, from the mean of "
+                     f"the two cells that straddle it on the "
+                     f"{'x'.join(str(n) for n in (nx, ny, nz))}-cell mesh of "
+                     f"{cell * 1e3:.1f} mm cells. Dashed: the port plane and "
+                     "the two strip edges. Phase referred to the first "
+                     "accumulated step; the backward wave (|gamma| = "
+                     f"{abs(fit_two.gamma):.4f}) is why the pattern is not a "
+                     "plain moving wave."))
+
     return MicrostripWave(
         geometry=geometry,
         station_x=station_x,
         v_stations=v_stations,
+        i_stations=i_stations,
         v_port=v_port,
         i_ground_full=i_full,
         i_ground_truncated=i_trunc,
@@ -1726,6 +1954,8 @@ def microstrip_wave(
         beta_two_station=float(beta_two_station),
         beta=beta,
         beta_two_wave=float(fit_two.beta),
+        beta_first_half=beta_first_half,
+        beta_second_half=beta_second_half,
         gamma=complex(fit_two.gamma),
         fit_residual=float(fit_one.residual),
         beta_model=beta_model,
@@ -1743,6 +1973,10 @@ def microstrip_wave(
         z0_model=float(line.z0),
         eps_eff=float(eps_eff),
         eps_eff_model=float(line.eps_eff),
+        loss_fit=loss_fit,
+        loss_fit_two=loss_fit_two,
+        station_fit_lossy=station_fit_lossy,
+        slice_ez=slice_ez,
     )
 
 
@@ -1752,6 +1986,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         f_target=float(values["f0"]) * 1e9,
         nsteps=int(values["nsteps"]),
         n_pml=int(values["npml"]),
+        keep_slice=True,
         sink=sink)
     g = result.geometry
     gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
@@ -1852,6 +2087,139 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         s21_row = "n/a: this record did not carry two fits worth of stations"
         s21_unity_row = s21_row
 
+    # --- loss: the joint fit's alpha, and what it predicts for |S21| -------
+    # The unit the attenuation sweep is quoted in, and the only conversion in
+    # the file: nepers per metre to decibels per millimetre.
+    def db_per_mm(alpha_np_per_m):
+        return 20.0 * np.log10(np.e) * float(alpha_np_per_m) / 1e3
+
+    lf = result.loss_fit
+    lf2 = result.loss_fit_two
+    lfl = result.station_fit_lossy
+
+    # --- is the record settled? -------------------------------------------
+    # Every alpha below is read off an averaging window, and a window can only
+    # be believed if it agrees with itself: the phase constant refitted on the
+    # two halves of the same record is that self-check, and it is stated before
+    # the number it protects.  Nothing else in the report can see this -- a
+    # record still filling fits perfectly well, it just fits a different line
+    # depending on where the window was opened.
+    drift = (abs(result.beta_first_half - result.beta_second_half)
+             / abs(result.beta)
+             if np.isfinite(result.beta_first_half)
+             and np.isfinite(result.beta_second_half) and result.beta
+             else float("nan"))
+    settled = bool(np.isfinite(drift) and drift <= MS_SETTLE_TOL)
+
+    def alpha_row(fit, label):
+        """One attenuation row out of one joint fit."""
+        if fit is None:
+            return "n/a: this record carried no stations to fit"
+        if fit.alpha is None:
+            return ("n/a: the joint fit refused an alpha -- its standard error "
+                    "reaches across the whole span, so a decay that small "
+                    "cannot be told from a straight line")
+        alpha_db = db_per_mm(fit.alpha)
+        sigma = (db_per_mm(fit.alpha_sigma)
+                 if fit.alpha_sigma is not None else None)
+        plus = num(sigma, "", ".5f") if sigma is not None else "n/a"
+        used = ("one travelling wave" if label == "one-wave"
+                else "a backward wave allowed")
+        return (f"{alpha_db:.5f} +- {plus} dB/mm ({fit.alpha:.4f} Np/m, "
+                f"beta = {fit.beta:.3f} +- "
+                f"{num(fit.beta_sigma, '', '.3f')} rad/m, same fit): "
+                f"{label} model, {used}, over "
+                f"{fit.span * 1e3:.2f} mm of line.  In a solver with no loss "
+                "model this is not copper: it is power the guided mode gives "
+                "up to the surrounding matched layers plus the grid's own "
+                "numeric dispersion"
+                + ("" if settled else ".  UNSETTLED: the two halves of this "
+                   "record disagreed on beta (see the row above), so this "
+                   "alpha is an upper bound on any decay, not a measurement "
+                   "of it"))
+
+    if not np.isfinite(drift):
+        settledness_row = ("n/a: this record was too short to split into two "
+                           "halves worth fitting")
+    else:
+        settledness_row = (
+            f"beta = {result.beta_first_half:.3f} rad/m over the first half of "
+            f"the transformed record and {result.beta_second_half:.3f} rad/m "
+            f"over the second, {100.0 * drift:.3f} % apart against the "
+            f"{100.0 * MS_SETTLE_TOL:.1f} % this study allows: "
+            + ("settled, so a window is a fair sample of the steady state"
+               if settled else
+               "NOT settled -- the waveform was still changing across the "
+               "window, so the alpha rows below bound whatever decay is "
+               "there and do not measure it"))
+
+    alpha_one_row = alpha_row(lf, "one-wave")
+    alpha_two_row = alpha_row(lf2, "two-wave")
+    if lf is None or lf.alpha is None or lf.beta_sigma is None:
+        alpha_cov_row = "n/a: no joint covariance to report"
+    elif lf.rho is None:
+        alpha_cov_row = (f"sigma_beta = {lf.beta_sigma:.4f} rad/m on its own; "
+                         "the joint fit returned no correlation")
+    else:
+        alpha_cov_row = (
+            f"rho(alpha, beta) = {lf.rho:+.4f}, from the 2 x 2 block of "
+            f"s^2 (D^T D)^-1 on those two parameters alone with "
+            f"{2 * lf.n_stations} measurements in it. "
+            + ("The two are nearly orthogonal, so the decay costs the phase "
+               "constant almost nothing to measure"
+               if abs(lf.rho) < 0.5 else
+               "They are not orthogonal: on this span a decay and a phase "
+               "slope trade against each other, and each quoted error is "
+               "larger than it would be with the other fixed"))
+
+    # The same attenuation, stated as the transmission it implies across the
+    # station span -- the number G1 asks about, from a different measurement
+    # than the two half fits, which is the point of putting the two rows side
+    # by side.
+    if lf is None or lf.alpha is None:
+        s21_loss_row = "n/a: no fitted decay to exponentiate"
+    else:
+        span_length = float(lf.span)
+        s21_loss = float(np.exp(-lf.alpha * span_length))
+        loss_db = decibel(s21_loss)
+        sigma_s21 = (s21_loss * lf.alpha_sigma * span_length
+                     if lf.alpha_sigma is not None else None)
+        sig_str = (f"{sigma_s21:.6f}" if sigma_s21 is not None else "n/a")
+        departure = s21_loss - 1.0
+        within = abs(departure) < 0.01
+        s21_loss_row = (
+            f"{s21_loss:.6f} = {num(loss_db, 'dB', '.3f')} "
+            f"(+- {sig_str}) over the {span_length * 1e3:.2f} mm between the "
+            f"first and last station, from exp(-alpha L) with "
+            f"alpha = {db_per_mm(lf.alpha):.5f} dB/mm: "
+            f"{100.0 * departure:+.3f} % from unity, "
+            + ("inside" if within else "outside")
+            + " the 1 per cent G1 asks for. "
+            + ("It agrees with the two half fits above, which is the check "
+               "worth making: two different measurements of one decay"
+               if abs(departure - (abs(result.s21) - 1.0)) < 0.01 else
+               "It does not agree with the two half fits above, so one of "
+               "the two is reading something that is not attenuation"))
+
+    # The station impedance the loss affects: with alpha in the propagation
+    # constant the voltage and current waves no longer keep their relative
+    # phase along the span, and the lossless fit has to absorb that somewhere.
+    if np.isfinite(lfl.z0.real) and np.isfinite(sf.z0.real):
+        lossy_z0_row = (
+            f"{lfl.z0.real:.4f} ohm +- {num(lfl.z0_sigma_total, 'ohm', '.4f')}"
+            f" against {sf.z0.real:.4f} ohm with the decay held fixed "
+            f"({lfl.z0.real - sf.z0.real:+.4f} ohm), "
+            f"{100.0 * (lfl.z0.real / result.z0_model - 1.0):+.3f} % from the "
+            f"{result.z0_model:.3f} ohm closed form.  The two fits differ only "
+            "in whether alpha is free, so the difference is what the lossless "
+            "model was hiding; the error is that fit's budget with the alpha "
+            "term squared in")
+    else:
+        lossy_z0_row = "n/a: this record fitted no station impedance"
+
+    # Leave the pictures on disk: a benchmark's figures are part of its output.
+    dump_figures(sink)
+
     return {
         "drive frequency": (f"{g['f'] / 1e9:.4f} GHz "
                             f"(asked {g['f_target'] / 1e9:.4f} GHz, snapped to a DFT bin)"),
@@ -1867,6 +2235,10 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "beta (two stations)": f"{result.beta_two_station:.3f} rad/m",
         "|gamma|": f"{abs(result.gamma):.5f}",
         "fit residual": f"{result.fit_residual:.5f}",
+        "beta drift (two averaging windows)": settledness_row,
+        "alpha (joint fit, one wave)": alpha_one_row,
+        "alpha (joint fit, two waves)": alpha_two_row,
+        "alpha and beta together": alpha_cov_row,
         "beta (Hammerstad-Jensen)": f"{result.beta_model:.3f} rad/m",
         "beta, fit vs model": (f"{100.0 * (result.beta / result.beta_model - 1.0):.2f} %"
                                " (diagnostic: the model is quasi-static, so "
@@ -1929,6 +2301,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "G1 (|S11| < -20 dB)": g1_row,
         "|S21| between station planes": s21_row,
         "G1 (|S21| within 1 % of unity)": s21_unity_row,
+        "|S21| from the fitted alpha": s21_loss_row,
+        "line Z0 with loss, real part": lossy_z0_row,
         "ground current, full domain": f"{abs(result.i_ground_full):.6e} A",
         "ground current, strip extent": f"{abs(result.i_ground_truncated):.6e} A",
         "full / strip current": f"{gain:.3f}",

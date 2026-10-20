@@ -153,6 +153,11 @@ def test_microstrip_default_case_is_converged():
     * ``eps_eff`` follows from ``beta``, so it is pinned to 3.624 -- the value
       the fitted phase constant implies -- and not to the closed-form 3.344,
       which this mesh does not reproduce.
+    * ``beta`` is also refitted on each half of the record, and the two halves
+      must agree with each other (within ``MS_SETTLE_TOL``) and with the
+      whole-record fit: 232.79 and 232.10 rad/m here, 0.30 per cent apart.  A
+      record that is still filling fails this one while every other number
+      above still looks perfectly reasonable.
 
     The tolerances are wide enough for a compiler's rounding and tight enough
     that a truncated record, or a two-station ``beta`` on a wrapped span,
@@ -184,12 +189,70 @@ def test_microstrip_default_case_is_converged():
     # --- the old estimator is the cross-check now, and it agrees ---------
     assert result.beta_two_station == pytest.approx(result.beta, rel=0.02)
 
+    # --- the record has finished filling, and this is the test of it ------
+    # A window can only be believed if it agrees with itself, so the phase
+    # constant is refitted on the two halves of the same record.
+    assert np.isfinite(result.beta_first_half)
+    assert np.isfinite(result.beta_second_half)
+    drift = (abs(result.beta_first_half - result.beta_second_half)
+             / abs(result.beta))
+    assert drift <= studies.MS_SETTLE_TOL, (
+        f"the default record is not settled: {result.beta_first_half:.3f} and "
+        f"{result.beta_second_half:.3f} rad/m over its two halves, "
+        f"{100.0 * drift:.3f} % apart")
+    # Each half must also land on the whole-record fit, not merely on the
+    # other: two halves agreeing on the wrong line is still the wrong line.
+    assert result.beta_first_half == pytest.approx(result.beta, rel=0.02)
+    assert result.beta_second_half == pytest.approx(result.beta, rel=0.02)
+
     # A runaway guard, not a performance measurement: it exists to catch a hang
     # or a grid that has blown up, and it must never be tightened towards the
     # observed run time -- a wall-clock bound near the measured cost makes the
     # suite pass or fail with the machine's load, which is not a physical
     # assertion about the solver.
     assert elapsed < 60.0, f"the default run took {elapsed:.2f} s (runaway guard)"
+
+
+# ---------------------------------------------------------------------------
+# a record that is still filling must say so
+# ---------------------------------------------------------------------------
+def test_microstrip_unsettled_record_is_labelled_not_reported():
+    """A record still filling is labelled on the rows it would otherwise poison.
+
+    The default record is settled -- 0.30 per cent between its halves -- so the
+    claim that a short one is *caught* needs a run of its own: 300 steps on the
+    same mesh, whose first half still carries the drive transient (132.9 rad/m
+    against 233.4 over the second, 48.9 per cent apart).  What is pinned is not
+    those numbers but the wording they produce, because the number a reader
+    would take for a measurement is the attenuation: the settledness row must
+    say NOT settled and name the tolerance it was judged against, both alpha
+    rows must carry ``UNSETTLED`` and call themselves an upper bound, and the
+    settledness row must come before the alphas it protects.
+    """
+    t_start = time.perf_counter()
+    study = studies.get("microstrip")
+    metrics = study.run(studies.coerce(study, {"nsteps": "300"}),
+                        studies.FigureSink())
+    elapsed = time.perf_counter() - t_start
+
+    # --- the verdict, and the bar it was judged against -------------------
+    settledness = metrics["beta drift (two averaging windows)"]
+    assert "NOT settled" in settledness
+    assert f"{100.0 * studies.MS_SETTLE_TOL:.1f} %" in settledness
+
+    # --- and the alphas it protects carry the warning themselves ----------
+    for key in ("alpha (joint fit, one wave)", "alpha (joint fit, two waves)"):
+        row = metrics[key]
+        assert "UNSETTLED" in row, f"{key} hid an unsettled record: {row!r}"
+        assert "upper bound" in row, f"{key} did not qualify the number: {row!r}"
+
+    # --- the warning has to come before what it warns about --------------
+    keys = list(metrics)
+    assert (keys.index("beta drift (two averaging windows)")
+            < keys.index("alpha (joint fit, one wave)"))
+
+    # Cheap on purpose: this is a labelling test, not a physics one.
+    assert elapsed < 60.0, f"the short study took {elapsed:.2f} s"
 
 
 # ---------------------------------------------------------------------------
