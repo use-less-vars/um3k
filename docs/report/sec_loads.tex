@@ -116,7 +116,10 @@ three runs of three line lengths.
   $n_{\mathrm{strip}} = 8$ cells across the strip, six matched-layer cells on every face, $300$ steps, the drive
   snapped to $5.827786$ GHz, and a $100\ \Ohm$ series resistance at $15.20$ mm along a $30$ mm line. All three
   rows are the same record: the first is the load-free twin on the identical mesh, the second is the loaded run
-  handed that twin as its reference, the third is the same loaded run with no reference given.}
+  handed that twin as its reference, the third is the same loaded run with no reference given. All three are
+  $300$-step readings of one record, and what they demonstrate is that the normalisation is self-consistent, not
+  what the load transmits: record length is not converged at $300$ steps, and Table~\ref{tab:loads-length}
+  measures how far from converged the readings are.}
   \label{tab:loads-ratio}
   \begin{tabular}{@{}lr@{}}
     \toprule
@@ -129,14 +132,59 @@ three runs of three line lengths.
   \end{tabular}
 \end{table}
 
-The three rows above are $300$-step readings on the eight-cell strip, and they are quoted for the ratio rather than
-for the value of the load: Table~\ref{tab:loads-series} reports the same $100\ \Ohm$ element at $2400$ steps as
-$0.549464$, and that is the figure to quote for the load itself. The coarse run appears here only because the
-identity needs three readings of one record, and three $2400$-step runs would not be the same measurement made
-three ways.
+The record length is the one variable that separates these readings from the ones quoted for the load, and it has
+to be measured rather than assumed away. The mesh is fixed in every row of Table~\ref{tab:loads-length} -- the
+same $0.400$ mm cell, the same six matched-layer cells on every face, the same $100\ \Ohm$ series element at
+$15.20$ mm -- and what changes is $n_{\mathrm{steps}}$, of which the transform uses $0.75\,n_{\mathrm{steps}}$
+samples. Between $300$ and $9600$ steps the loaded reading moves from $0.613960$ to $0.556575$, while the
+load-free twin moves from $0.541741$ to $0.989576$. From $2400$ steps upward the loaded series is monotonically
+increasing, with a step that shrinks from $1.128$ to $0.164$ per cent per doubling of the record length, which
+puts its limit near $0.5567$ and puts the $2400$-step figure about $1.3$ per cent below that limit. The twin's
+step shrinks more slowly, $0.650$ to $0.196$ per cent, and at $9600$ steps it is still creeping up, so the twin is
+not converged either. The consequence has to be stated plainly: the denominator of the ratio is itself a function
+of record length, so the division cancels a factor that is $O(1)$ different at $300$ steps, and the identity
+quoted below therefore holds while both of its terms are still unsettled. For this element the value to quote is
+the converged loaded reading, about $0.5567$; the $0.549464$ of Table~\ref{tab:loads-series} is a $2400$-step
+reading of the same element, $1.3$ per cent below that limit, and it is not a converged number.
 
-The reference path is an identity between the first and third rows. Dividing the unreferenced reading by the twin's
-own reading reproduces the referenced one,
+\begin{table}[H]
+  \centering
+  \caption{The $100\ \Ohm$ series element against record length, on one shared mesh: cell $0.400$ mm
+  ($n_{\mathrm{sub}} = 4$), $n_{\mathrm{strip}} = 8$, $\eps_r = 4.4$, $h = 1.60$ mm, six matched-layer cells on
+  every face, the cut at $15.20$ mm, the drive asked at $5.827786$ GHz. The loaded column is the reference-given
+  reading, and the twin column is the same run with the load removed, on the identical mesh and at the identical
+  step count. The $300$-step loaded and twin entries are the rows of Table~\ref{tab:loads-ratio}, and the
+  $2400$-step entry is the $100\ \Ohm$ point of Table~\ref{tab:loads-series}. A dash marks a twin that was not
+  run at that length.}
+  \label{tab:loads-length}
+  \begin{tabular}{@{}rrr@{}}
+    \toprule
+    $n_{\mathrm{steps}}$ & loaded, reference given & load-free twin \\
+    \midrule
+     300 & $0.613960$ & $0.541741$ \\
+     600 & $0.517615$ & --- \\
+    1200 & $0.543970$ & --- \\
+    2400 & $0.549464$ & $0.981263$ \\
+    4800 & $0.555663$ & $0.987637$ \\
+    9600 & $0.556575$ & $0.989576$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The same readings can be checked against the physics the element is supposed to show. With the measured
+$Z_c = 50.547 + 4.025j\ \Ohm$ of Table~\ref{tab:loads-series}, a $100\ \Ohm$ series element gives
+$|2Z_c/(2Z_c + 100)| = 0.503908$, which is exactly the predicted column printed in that table; the measured
+deviation from it is $+9.040$ per cent at $2400$ steps, $+10.272$ per cent at $4800$ steps and $+10.453$ per cent
+at $9600$ steps, and the limit near $0.5567$ corresponds to about $+10.5$ per cent. The deviation therefore
+converges \emph{away} from the ideal, and the $9.040$ per cent printed in Table~\ref{tab:loads-series} is an
+understatement of the model's bias by roughly $1.4$ percentage points. That column is left as it stands.
+
+The drive frequency is not the explanation: the metrics row that reports the actual drive frequency reads
+$5.8278$ GHz at $300$, $600$, $4800$ and $9600$ steps alike, so the DFT-bin snap did not move the excitation, and
+record length is the only variable that moved.
+
+The reference path is an identity between the first and third rows, and the table is quoted as a check rather than
+as a measurement. Dividing the unreferenced reading by the twin's own reading reproduces the referenced one,
 \[
   \frac{0.327195}{0.541741} = 0.603970,
 \]
@@ -145,13 +193,17 @@ fit and the estimator, not agreement: the division is exact only if the twin sup
 without error, and what is left over is the fit's own scatter carried through the ratio. As a residual it is the
 check the table exists for -- a stale reference, a different pair of stations or a different reference impedance
 breaks the identity by far more than a per cent -- but it is not a statement that the two numbers agree, and it is
-not quoted as one.
+not quoted as one. What the check certifies is that the three readings come from one record and one mesh, worked
+three ways; both of the numbers it divides are themselves unsettled in record length, so an identity that holds
+between two moving readings is a statement about the arithmetic and not about the line.
 
-The point of the table is the size of the third row. On this mesh most of an unreferenced $|s_{21}|$ is the line's
-own loss: the load-free twin transmits only $0.541741$. A transmission coefficient quoted without the twin is
-therefore mostly a measurement of the mesh rather than of the load, and dividing by the twin is what makes the
-number about the load. That division is the ratio of ratios, and the percentage the study quotes for a load cannot
-be read as a property of that load until the division has been made.
+The third row is what an unreferenced reading of a loaded record looks like: $0.327195$, with no normalisation at
+all, so it carries whatever the record itself contributes. On this record that contribution is large -- the
+load-free twin reads $0.541741$ at $300$ steps -- and Table~\ref{tab:loads-length} shows that most of that
+$0.541741$ is record length rather than line loss, since the same twin reaches $0.989576$ at $9600$ steps. Dividing
+by the twin is still what the arithmetic requires before the reading can be called a transmission coefficient, but
+on a $300$-step record it divides out a number that is itself unsettled, which is why the result above is quoted as
+a consistency check.
 
 \subsection{The shunt branch, and how far it gets}
 \label{sec:loads-shunt}

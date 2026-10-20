@@ -764,7 +764,13 @@ def test_a_loaded_run_quotes_a_ratio_against_a_load_free_twin():
     is the identity between them, ``0.327195 / 0.541741 = 0.603970`` reproducing
     the referenced ``0.613960``, held to ``0.02`` because the residual is
     ``1.6`` per cent -- the fit's own, not a free parameter, and still far
-    tighter than the ``1.88`` gap it separates.
+    tighter than the ``1.88`` gap it separates.  These are ``300``-step readings,
+    and they are a consistency check rather than a measurement of what the load
+    transmits: the twin reads ``0.541741`` here because the record is too short,
+    not because the line loses half its power, and the same twin reaches
+    ``0.989576`` at ``9600`` steps.  What this test rules out is a reference that
+    is stale, wrongly paired or wrongly normalised -- a wrong reference breaks the
+    identity far more than ``1.6`` per cent.
     """
     from emfit import studies as S
 
