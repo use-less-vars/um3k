@@ -185,3 +185,62 @@ is fixed in `emfit/studies.py`.
 - **2026-10-19. Claimed:** ground-current truncation costs about 2.5 per cent. **Withdrawn:** the measured ratio `i_full/i_trunc` is 1.001219, i.e. 0.12 per cent, with phase 0.0045 deg. Correction here; the ratio is printed by the microstrip study report table as `full / strip current`.
 - **2026-10-19. Claimed:** the modulus of `z0` printed under the name `Z0`. **True:** the modulus is `|z0|`, 9.62 per cent above the model, while `Re z0` is within 4.66 per cent. Correction here and in the code fix to `emfit/studies.py`.
 - **2026-10-20. Claimed:** the one-sigma band for `|S21|` is `0.960` to `0.994`, from `alpha = 0.0139 +- 0.0026` dB/mm over `L = 21.6` mm. **Withdrawn:** propagating the attenuation uncertainty alone gives `0.300 +- 0.056` dB, i.e. `|S21|` in `[0.960, 0.972]`; the `0.994` endpoint was a repeated-run spread of `|S21|` itself -- a different measurement of a different quantity -- and must never be quoted as a propagated one-sigma band. Correction here and in the decision "The acceptance criterion rests on estimator spread, not on a propagated alpha"; the band no longer appears in `sec:ms-criterion` of `docs/report/sec_microstrip.tex`.
+
+## The Board path and its gate
+
+- **What was built.** `emfit/board.py` adds a frozen `MicrostripBoard` in SI metres, with `from_kicad` and
+  `to_cell_counts`. The `Board` dataclass already existed in `emfit/kicad.py` in millimetres, and `raster.py` and
+  `copper.py` already used it, but `studies.py` referenced it nowhere, so this was a thin adapter rather than a
+  parse or raster milestone.
+- **Route taken.** Route (a), the hybrid: `Board` sets `microstrip_wave`'s geometry and every estimator, port and
+  audit code is shared.
+- **Route rejected.** Route (b), rebuilding on `raster.Coupon`, because `Coupon` carries no PML, ports or stations,
+  the raster lands `z` nodes on copper, and a `35` um thin sheet changes the strip from the zero-thickness sheet the
+  reference record was taken on; (b) could only agree to `2.5`-`3` per cent.
+- **Why there is no `copper_t`.** `MicrostripBoard` has no `copper_t` field because the solver has no ohmic term, so
+  the field would advertise a loss model that does not exist. `x_port` is `8.65` mm, not `8.8` mm, because the
+  uniform `3.0` mm run begins there. `microstrip_wave` is now documented as the fixture that pins the `Board` path.
+  Committed `6518288`.
+- **Gate result.** The `Board`-driven reference board reproduces the hand-built record to round-off: `alpha_fit`
+  `2.469703`, lateral `1.33601` Np/m, `lateral_fraction` `0.0705415`, lateral work `1.976361e-07` J, `implied_s21`
+  `0.9640843`, `beta` `231.88572`, `eps_eff` `3.60431`, `|gamma|` `0.0062819`, fit residual `0.0078130`, with `f`,
+  cell size, `nx/ny/nz`, stations and step counts all identical. One dump field does not match: station `|S21|`
+  `0.9869798` in the old dump against `0.9870082` now, a difference of `2.8e-5` that comes from an aggregation step
+  in the old dump that cannot be reconstructed; it is not a solver disagreement.
+
+## The substrate diagnostic, and a correction to a quoted floor
+
+- **Runs.** Both on the `Board` path, two geometries, both audited. Case A, `h = 1.6` mm and `w = 3.2` mm: lateral
+  wall sink `1.33601` Np/m, which is `0.011604` dB/mm. Case B, `h = 0.8` mm and `w = 1.6` mm so that `w/h` stays at
+  `2` and the mode does not change: `0.49758` Np/m, which is `0.004322` dB/mm.
+- **Confirmed.** The ratio is `0.37244` against a pre-registered `0.35` with a band of `0.15` to `0.60`: the
+  prediction is confirmed and the pre-registered falsifier, a ratio near `1.0`, did not fire.
+- **Scaling.** The sink scales as `h^1.425`, the lateral work as `h^3.15` and the total absorbed work as `h^1.73`;
+  the lateral walls absorb `8.88` times less work when `h` halves while the stored power falls only `3.31` times.
+- **The estimators are not usable here.** The fitted `alpha` and the station-based estimator: their half-span ratios
+  in case B are `1.7439` and `0.05599`, a spread of `1.688` that dwarfs any signal, and the port impedance moved
+  from `51.310` to `45.949` ohm, so those estimators are not comparing like with like. Only the audit and the work
+  totals carry the scaling.
+- **Correction.** The entry above quoting `alpha = 0.0139 +- 0.0026` dB/mm as the clearance/lid floor over `14.4` mm
+  does not survive this. Both audited rates, `0.011604` at `h = 1.6` mm and `0.004322` at `h = 0.8` mm, lie below it,
+  and the sweep's `1.600` Np/m exceeds the reference box's audited `1.33601` Np/m, which is impossible if moving the
+  walls out reduces the sink. That number belongs to the sweep boxes -- `npml 6`, a `14.4` mm span, `13` stations,
+  unaudited, and fitted `alpha`, which carries the known factor of about `1.84` over the audited wall work. It is a
+  box property, not an attenuation of the line, and it must not be quoted as one again. The two audited values
+  supersede it.
+
+## The mechanism question, and a correction to the tail argument
+
+- **Withdrawn: the naive tail test.** The guided mode's air-region tail would fall as `exp(-k_y y)` with
+  `k_y = sqrt(beta^2 - k0^2) = 197.11` rad/m, a decay length of `5.07` mm or `3.2h`, which predicts a `44`-fold fall
+  in the wall flux between `4.8` mm and `14.4` mm clearance. That form is not valid in this box, because the lid
+  sits only `12` air cells, `4.8` mm, above the strip, which is `0.95` of a decay length, and the vertical
+  wavenumber `pi` over twice the gap, `327` rad/m, already exceeds `k_y`, so the region above the strip is below
+  cutoff vertically and the field is box-loaded. The lateral decay constant of the box-loaded field is a different,
+  smaller number, so the `44`-fold prediction is model-dependent at the factor-of-few level and cannot rule
+  anything out.
+- **Withdrawn: TM0.** Following from the same fact, there is no true TM0 surface wave in this box either: a
+  grounded-slab surface wave extends far into the half-space above it, and here there is no half-space.
+- **What is left, and what the next run tests.** The candidate pair is a matched-layer absorption of the box's
+  slowly decaying lateral tail, against a propagating lateral component of the box-loaded mode that a wider box
+  would not cure. That distinction is what matters to the product, and it is what the next run tests.
