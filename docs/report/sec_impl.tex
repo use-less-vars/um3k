@@ -15,9 +15,13 @@ first.
 
 The package is pure Python on top of \texttt{numpy} and \texttt{scipy}. There is no compiled extension and no
 generated code, and the only dependency beyond those two is \texttt{matplotlib}, which is imported by the
-plotting module alone and never by the solver. The whole of \texttt{emfit} is about $6.4$ thousand lines,
+plotting module alone and never by the solver. The whole of \texttt{emfit} is about $14.2$ thousand lines,
 distributed as in Table~\ref{tab:modules}; the $24$ test modules add a further $8.7$ thousand lines and the two
 example scripts another four hundred, which is a fair reflection of where the effort went.
+
+One module is large enough to be worth naming. \texttt{ports.py} is $1\,818$ lines, about one eighth of the
+package, and it carries the whole of the wave-port layer: probe voltages, the running DFT, the split of two probe
+signals into forward and backward waves, the fits for $\beta$ and $Z_0$, and the Touchstone reader and writer.
 
 \subsection{The module map}
 \label{sec:modules}
@@ -36,24 +40,31 @@ Each module owns exactly one of the objects of Section~\ref{sec:theory}, and the
     \midrule
     \texttt{grid.py}       & 254  & node coordinates, widths, dual widths, areas, volumes & \eqref{eq:stars} \\
     \texttt{operators.py}  & 326  & index maps, $\Gmat$, $\Cmat$, $\Smat$, duals, PEC mask & \eqref{eq:identities}, \eqref{eq:pec} \\
-    \texttt{materials.py}  & 266  & the diagonal stars $\Em$, $\Mm$, $\Ms$, constants & \eqref{eq:stars} \\
-    \texttt{evolve.py}     & 276  & leapfrog step, sources, CFL bound, energy & \eqref{eq:leapfrog-h}--\eqref{eq:invariant} \\
+    \texttt{materials.py}  & 403  & the diagonal stars $\Em$, $\Mm$, $\Ms$, constants & \eqref{eq:stars} \\
+    \texttt{evolve.py}     & 326  & leapfrog step, sources, CFL bound, energy & \eqref{eq:leapfrog-h}--\eqref{eq:invariant} \\
     \texttt{maxwell.py}    & 103  & curl--curl assembly, PEC constraints & \eqref{eq:rcurl} \\
-    \texttt{eigen.py}      & 261  & resonances, static cut, residual screen, analytic box & \eqref{eq:geneig-f}, \eqref{eq:cut} \\
+    \texttt{eigen.py}      & 263  & resonances, static cut, residual screen, analytic box & \eqref{eq:geneig-f}, \eqref{eq:cut} \\
     \texttt{abc.py}        & 348  & Mur planes, neighbour map, coefficient $K$ & \eqref{eq:mur} \\
-    \texttt{pml.py}        & 461  & conductivity profile, damping multipliers, layer fit & \eqref{eq:pml-match}, \eqref{eq:pml-profile} \\
+    \texttt{pml.py}        & 808  & conductivity profile, damping multipliers, layer fit & \eqref{eq:pml-match}, \eqref{eq:pml-profile} \\
     \texttt{scatter.py}    & 565  & staircase PEC cylinder, background subtraction & --- \\
     \texttt{nearfield.py}  & 922  & DFT accumulator, contour integral, far field, RCS & \eqref{eq:sigma2d} \\
     \texttt{mie.py}        & 295  & analytic two-dimensional PEC cylinder series & --- \\
-    \texttt{studies.py}    & 1182 & the named runs behind every front end & --- \\
+    \texttt{kicad.py}      & 771  & board file reader: layers, nets, tracks, vias, zones & --- \\
+    \texttt{board.py}      & 442  & the millimetre-to-metre bridge from board to spec & --- \\
+    \texttt{raster.py}     & 550  & stackup to grid: z nodes on copper, dielectric $\eps$ & --- \\
+    \texttt{copper.py}     & 485  & tracks, zones and vias as a PEC edge mask & --- \\
+    \texttt{quasistatic.py} & 352 & 2-D Laplace cross-section: capacitance, $Z_0$ & --- \\
+    \texttt{microstrip.py} & 429  & Hammerstad--Jensen $Z_0$ and $\eps_\mathrm{eff}$ & --- \\
+    \texttt{ports.py}      & 1818 & probe voltage, DFT, two-wave split, Touchstone & --- \\
+    \texttt{studies.py}    & 3592 & the named runs behind every front end & --- \\
     \texttt{viz.py}        & 352  & spectrum, field slice, energy panels & --- \\
-    \texttt{webapp.py}     & 431  & routes, forms, rendered figures & --- \\
-    \texttt{cli.py}        & 191  & argument parsing, table output & --- \\
+    \texttt{webapp.py}     & 465  & routes, forms, rendered figures & --- \\
+    \texttt{cli.py}        & 196  & argument parsing, table output & --- \\
     \texttt{\_env.py}      & 70   & thread pinning before \texttt{numpy} & --- \\
-    \texttt{\_\_init\_\_.py} & 41 & version and submodule imports & --- \\
+    \texttt{\_\_init\_\_.py} & 50 & version and submodule imports & --- \\
     \texttt{\_\_main\_\_.py} & 13 & \texttt{python -m} entry point & --- \\
     \midrule
-    total                  & 6357 &                                                      & \\
+    total                  & 14198 &                                                      & \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -193,8 +204,11 @@ equals time to last byte: the viewer does not stream.
 No browser binary exists in this container, so the animation is checked by parsing the served page. It carries exactly
 one PNG \texttt{data:} URI and exactly one GIF \texttt{data:} URI, and base64-decoding the second yields a
 \texttt{GIF89a} stream of $280\,689$ bytes, $244\times208$ pixels and $24$ frames -- \texttt{RCS\_ANIM\_FRAMES} --
-byte-identical to the file the command line writes. What is verified is that the page carries a well-formed
-multi-frame GIF, which is what makes a browser animate it, not that a person watched it play.
+byte-identical to the file the command line writes. What the suite establishes is therefore narrow: the page
+carries a well-formed multi-frame GIF, which is what a browser needs in order to animate it, and nothing follows
+from that about a decoder. The transport has since been confirmed a second time, by eye rather than by decode:
+the page was loaded from the default \texttt{127.0.0.1:8010} in a browser and the frames were seen to advance.
+That is one observation and not a test, but the animation has been seen to play.
 
 The same figure is written to disk: \texttt{FigureSink.save\_to} puts \texttt{rcs-animation.gif} beside
 \texttt{rcs-pattern.png}, so \texttt{python -m emfit run rcs --out} \emph{dir} produces both.
