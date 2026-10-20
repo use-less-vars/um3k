@@ -31,7 +31,7 @@ import json
 import sys
 import traceback
 
-from . import __version__, studies
+from . import DEFAULT_PORT, __version__, studies
 
 __all__ = ["build_parser", "main"]
 
@@ -140,7 +140,10 @@ def _cmd_serve(args) -> int:
     try:
         serve(host=args.host, port=args.port)
     except OSError as exc:                     # port in use, no such interface
-        print(f"cannot bind {args.host}:{args.port}: {exc}", file=sys.stderr)
+        print(f"cannot bind {args.host}:{args.port}: {exc}\n"
+              f"the port may already be held, or the interface may not exist; "
+              f"--port N moves it, --port 0 asks the OS for a free one",
+              file=sys.stderr)
         return EXIT_RUNTIME
     return 0
 
@@ -179,8 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", metavar="HOST", default="127.0.0.1",
                          help="interface to bind (default: 127.0.0.1; keep it "
                               "on loopback, the server has no authentication)")
-    p_serve.add_argument("--port", metavar="PORT", type=int, default=8000,
-                         help="port to bind (default: 8000; 0 picks a free one)")
+    p_serve.add_argument("--port", metavar="PORT", type=int, default=DEFAULT_PORT,
+                         help=f"port to bind (default: {DEFAULT_PORT}; 8000 is "
+                              "left to whatever else is already on this "
+                              "machine; 0 picks a free one)")
     p_serve.set_defaults(func=_cmd_serve)
     return parser
 

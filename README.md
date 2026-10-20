@@ -76,7 +76,7 @@ python -m pytest                          # 71 tests, ~10-20 s
 python -m emfit list                      # the five packaged studies
 python -m emfit run scatter --out docs/figures
 python -m emfit run rcs --out docs/figures
-python -m emfit serve                     # browser UI on http://127.0.0.1:8000
+python -m emfit serve                     # browser UI on http://127.0.0.1:8010
 python examples/cavity_resonance.py       # prints the mode table, writes three PNGs
 python examples/abc_duct.py               # Mur duct: prints the end reflections, one PNG
 ```
@@ -92,8 +92,10 @@ python -m emfit run duct --set termination=pml --out /tmp/duct
 ```
 
 `python -m emfit serve` starts a local, single-user browser front end on
-`http://127.0.0.1:8000`: pick a study, edit its parameters, and read the figures and
-metrics in the page. Values are validated by `emfit.studies.coerce`, the one place
+`http://127.0.0.1:8010` -- not 8000, which is the first port every local tool
+reaches for and is usually already held; `--port N` moves it and `--port 0` asks
+the OS for a free one. Pick a study, edit its parameters, and read the figures
+and metrics in the page. Values are validated by `emfit.studies.coerce`, the one place
 where strings become typed values, so a bad or out-of-range value is reported and
 nothing runs -- from either front end. Measured runtimes: `scatter` 1.4 s (writes
 `scatter-snapshot.png` and `scatter-sequence.png`), `rcs` 11.2 s of which 1.57 s is the

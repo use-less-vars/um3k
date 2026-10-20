@@ -38,7 +38,7 @@ import traceback
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, studies
+from . import DEFAULT_PORT, __version__, studies
 
 __all__ = ["make_server", "serve", "Handler"]
 
@@ -389,7 +389,8 @@ class Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 # server lifecycle
 # ---------------------------------------------------------------------------
-def make_server(host: str = "127.0.0.1", port: int = 8000) -> ThreadingHTTPServer:
+def make_server(host: str = "127.0.0.1",
+                port: int = DEFAULT_PORT) -> ThreadingHTTPServer:
     """Bind and return a server; ``port=0`` lets the OS pick (read it back).
 
     The returned object has ``.server_address`` (host, port) and the usual
@@ -401,7 +402,7 @@ def make_server(host: str = "127.0.0.1", port: int = 8000) -> ThreadingHTTPServe
     return httpd
 
 
-def serve(host: str = "127.0.0.1", port: int = 8000, on_ready=None):
+def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT, on_ready=None):
     """Serve the web UI until interrupted; returns the server object.
 
     Args:

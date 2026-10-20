@@ -39,3 +39,12 @@ _pin_threads()
 del _pin_threads
 
 __version__ = "0.1.0.dev0"
+
+DEFAULT_PORT = 8010
+"""Port that ``python -m emfit serve`` binds when no ``--port`` is given.
+
+Deliberately not 8000: that is the first port a local tool reaches for, so it is
+routinely already held by an unrelated development server, and this front end is
+a single-user convenience that should start rather than negotiate.  ``--port N``
+moves it, and ``--port 0`` asks the OS for a free one.
+"""

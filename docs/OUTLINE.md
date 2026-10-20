@@ -49,7 +49,8 @@ dense, stopping at 3000 free edges.
   closed form is known: `abs(a)` flat to `0.4 %` against `0.25 sqrt(2/(pi k))` and the phase ramp recovering `k x0`
   and `k y0` to `1.6e-3` with the right signs (`tests/test_nearfield.py`, 5 tests).
 - One study registry, two front ends (`emfit/studies.py`, `emfit/cli.py`, `emfit/__main__.py`, `emfit/webapp.py`):
-  `python -m emfit list`, `run <study>`, and `serve` on `http://127.0.0.1:8000`. Values are validated by
+  `python -m emfit list`, `run <study>`, and `serve` on `http://127.0.0.1:8010` (`--port N`,
+  since 8000 is usually taken). Values are validated by
   `emfit.studies.coerce`, and the web app runs one study at a time behind a lock (`tests/test_webapp.py`, 7 tests).
 - 71 tests in ~10-20 s, every number locked by an explicit tolerance.
 - 5 studies and 2 example scripts, writing eight figures into `docs/figures/`.
@@ -116,7 +117,7 @@ dense, stopping at 3000 free edges.
    emfit/studies.py ....... registry: cavity, modes, duct, scatter, rcs; coerce; FigureSink
      |
      +--> emfit/cli.py + emfit/__main__.py .... python -m emfit list | run <study>
-     +--> emfit/webapp.py ..................... python -m emfit serve, 127.0.0.1:8000
+     +--> emfit/webapp.py ..................... python -m emfit serve, 127.0.0.1:8010
      +--> emfit/viz.py ........................ PNG figures
 ```
 
@@ -388,7 +389,7 @@ python -m emfit run duct --out docs/figures             # Mur vs PML vs PEC, ~3 
 python -m emfit run duct --set termination=pml --out /tmp/duct_pml   # the -79.09 dB run
 python -m emfit run scatter --out docs/figures          # 2-D PEC cylinder, ~1.4 s
 python -m emfit run rcs --out docs/figures              # bistatic RCS vs Mie, ~11.2 s (1.57 s of it time domain)
-python -m emfit serve                                   # http://127.0.0.1:8000, one study at a time
+python -m emfit serve                                   # http://127.0.0.1:8010, one study at a time
 python examples/cavity_resonance.py                     # mode table + 3 PNGs
 python examples/abc_duct.py                             # Mur vs PEC duct, the 4th PNG
 ```
