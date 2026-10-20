@@ -174,12 +174,13 @@ injected energy and each share is a share of the injected power.
 \end{table}
 
 The lateral rate is $1.3360$ Np/m, which is $0.01160$ dB/mm. Set against it, the direct station-plane ratio is
-$0.01183$ dB/mm -- $1.9$ per cent away -- and the one-wave fit is $0.02145$ dB/mm, $1.84$ times the leaked rate
+$0.01183$ dB/mm -- $1.9$ per cent away -- and the one-wave fit is $0.02145$ dB/mm, $1.84$ times the absorbed rate
 ($1.85$ times for the two-wave value). That ordering is the result of this section and it is stated as a finding
 rather than as a discrepancy: \emph{two model-free measurements agree with each other and the fit is the outlier},
-so the attenuation this box exhibits is lateral leakage into the matched layers and not conductor loss -- which it
-could not be in any case, since the solver contains no ohmic term. Over the $21.6$ mm of the line that rate is
-$0.25$ dB, and $|S_{21}| = 0.972$.
+so the attenuation this box exhibits is a lateral boundary sink of $0.0116$ dB/mm and not conductor loss -- which
+it could not be in any case, since the solver contains no ohmic term. What that sink physically is, the
+accounting does not say: Section~\ref{sec:msres-verdict} names the two candidates it leaves and the measurement
+that would separate them. Over the $21.6$ mm of the line the sink costs $0.25$ dB, and $|S_{21}| = 0.972$.
 
 The last row of Table~\ref{tab:ms-alpha} is the same work charged the other way, and it is printed to keep the
 arithmetic honest. The lateral walls run $26.40$ mm of line; charging all of their work to the $9.60$ mm station
@@ -193,10 +194,12 @@ explanation.
 \label{sec:msres-verdict}
 
 Section~\ref{sec:ms-criterion} asks three things of a run, and the reference box can be graded against all three
-without choosing an estimator by taste.
+without choosing an estimator by taste. Two of them are met outright; the third is met as far as the record can
+carry it, and the paragraphs below say where it stops.
 
-First, $|S_{21}|$ must be consistent with a lossless model within the stated uncertainty of the measurement. The
-direct ratio, $|S_{21}| = 0.987008$, is $1.299$ per cent below unity. The span the estimators produce over the
+First, $|S_{21}|$ must be consistent with a lossless \emph{material} model within the stated uncertainty of the
+measurement. The direct ratio, $|S_{21}| = 0.987008$, is $1.299$ per cent below unity. The span the estimators
+produce over the
 same $9.60$ mm runs from $0.9764$ to $0.9873$, so $0.987008$ sits at the lossless end of that span, and $1.3$ per
 cent is inside the $2.5$ to $3$ per cent this record can resolve. This requirement is met.
 
@@ -205,15 +208,28 @@ $0.01183$ dB/mm; the lateral-wall accounting, which counts joules and never look
 predicts $0.01160$ dB/mm. The two agree to $1.9$ per cent, which is an attribution that pays for the whole of the
 effect rather than a name attached to a residual. This requirement is met.
 
-Third, the mechanism must be identified by name and by the part of the box responsible. It is: the matched layer
-on $y_{\min}$, $y_{\max}$ and the top face, which removed $7.054$ per cent of the injected power in the settled
-window while the end walls took the remaining $92.946$. The guided mode of a $1.60$ mm substrate at $w/h = 2$ has
-most of its energy in the air region above the strip, and that region terminates in a matched layer a few cells
-away; the leakage is that geometry, not a numerical accident. This requirement is met.
+Third, the mechanism must be identified by name and by the part of the box responsible for it. The part is
+settled: the matched layer on $y_{\min}$, $y_{\max}$ and the top face removed $7.054$ per cent of the injected
+power in the settled window while the end walls took the remaining $92.946$, so the sink sits on the lateral and
+lid faces and nowhere else. The mechanism is \emph{not} settled by this record, and two candidates survive it.
+The guided mode of a $1.60$ mm substrate at $w/h = 2$ carries most of its energy in the air region above the
+strip, and that region terminates in a matched layer a few cells away, so power can leave as the discretised mode
+meeting an imperfect absorber. Alternatively, the substrate is $h = 0.031\,\lambda_0$ thick at $5.8278$ GHz, a
+thickness at which $\mathrm{TM}_0$ surface-wave excitation at the strip edge is a standard concern, and such a
+wave is likewise absorbed by the lateral walls. The accounting cannot separate the two by construction: both
+deposit their work in the same wall family, and both grow as the lateral walls are brought closer to the strip,
+so the clearance sweep the earlier study ran moves the rate without discriminating between them. What would
+discriminate is a substrate-thickness sweep, since $\mathrm{TM}_0$ radiation grows with $h/\lambda_0$ while the
+absorption of the discretised mode does not; that sweep belongs to the \texttt{Board} path, which this record
+does not use. The requirement is therefore met at the geometry -- a lateral boundary sink on the matched layer,
+not an ohmic term -- and the physical attribution is left open rather than filled in.
 
-So the criterion is met on the reference box, with the mechanism identified -- and the honest qualification is
-that it is met by the estimator with no free parameter. The one-wave fit reads $|S_{21}| = 0.976570$, $2.343$ per
-cent below unity and $1.84$ times the leaked rate, which fails the first requirement on its own. The criterion is
+So the criterion is met on the reference box in the form the record can grade it in: $|S_{21}|$ is consistent
+with a lossless material model, the shortfall is attributed to a sink whose magnitude the energy balance pays for
+to $1.9$ per cent, and the sink is located in the box. The mechanism requirement is met at the level of the box
+and not at the level of the physics, and that is the qualification this outcome carries. A second qualification
+is that it is met by the estimator with no free parameter. The one-wave fit reads $|S_{21}| = 0.976570$, $2.343$
+per cent below unity and $1.84$ times the absorbed rate, which fails the first requirement on its own. The criterion is
 therefore not something a run passes; it is something a particular \emph{measurement} passes, and the report says
 which.
 
@@ -262,5 +278,5 @@ The two figures are the record itself rather than a summary of it, and they are 
 in one respect only: the phase panel's slope and the magnitude panel's fall are the two quantities
 Table~\ref{tab:ms-alpha} disagrees with itself about, and both are visible by eye. What they do not show, and
 what the accounting table does, is where the power went -- a picture of the line cannot distinguish a mode that
-decayed from a mode that leaked sideways, because both look like a falling envelope on the axis the stations sit
-on.
+decayed in place from one that lost power to the lateral walls, because both look like a falling envelope on the
+axis the stations sit on.

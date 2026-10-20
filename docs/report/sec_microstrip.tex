@@ -229,15 +229,17 @@ $|S_{21}|$, and a target stated to one per cent would be graded by which estimat
 whether the solver is right.
 
 The criterion is therefore revised rather than waived, and the revision is stated as three requirements that
-must all hold. First, $|S_{21}|$ must be consistent with a lossless model within the stated measurement
-uncertainty, which is the estimator span of \eqref{eq:ms-criterion-span} and is a statement about what the record
-can resolve, not a permission to be wrong by any amount. Second, the attenuation that remains must be attributed
-to its dominant mechanism, with the attribution accounting for the magnitude and not merely for the sign. Third,
-the mechanism must be identified, by name and by the part of the box responsible, so that the shortfall from
-unity is a known numerical effect rather than an unexplained residual. A criterion in that form can fail: it fails if the
+must all hold. First, $|S_{21}|$ must be consistent with a lossless \emph{material} model within the stated
+measurement uncertainty, which is the estimator span of \eqref{eq:ms-criterion-span} and is a statement about
+what the record can resolve, not a permission to be wrong by any amount. Second, the attenuation that remains
+must be attributed to its dominant mechanism, with the attribution accounting for the magnitude and not merely
+for the sign. Third, the mechanism must be identified, by name and by the part of the box responsible, so that
+the shortfall from unity is a known numerical effect rather than an unexplained residual; and where the record
+cannot settle which of several physical mechanisms it is, the criterion requires that the candidates be named
+and the measurement that would separate them be stated. A criterion in that form can fail: it fails if the
 measured $|S_{21}|$ leaves the span, or if no mechanism accounts for the number, or if the mechanism named is
-one the solver cannot produce. What it refuses to do is grade a solver against a tolerance narrower than the
-spread of its own measurement.
+one the solver cannot produce, or if the candidates left open are not bounded. What it refuses to do is grade a
+solver against a tolerance narrower than the spread of its own measurement.
 
 \subsection{The accounting identity}
 \label{sec:ms-accounting}

@@ -33,3 +33,6 @@ packages = ["emfit"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "slow: runs a multi-thousand-step time loop, minutes under a loaded container; deselect with -m 'not slow'",
+]

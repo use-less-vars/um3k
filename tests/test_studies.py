@@ -134,6 +134,7 @@ def test_microstrip_wave_smoke():
 # ---------------------------------------------------------------------------
 # the default case: the only physical claim in this file
 # ---------------------------------------------------------------------------
+@pytest.mark.slow
 def test_microstrip_default_case_is_converged():
     """The default run measures the line, not the transient.
 
@@ -216,6 +217,7 @@ def test_microstrip_default_case_is_converged():
 # ---------------------------------------------------------------------------
 # a record that is still filling must say so
 # ---------------------------------------------------------------------------
+@pytest.mark.slow
 def test_microstrip_unsettled_record_is_labelled_not_reported():
     """A record still filling is labelled on the rows it would otherwise poison.
 
