@@ -16,7 +16,7 @@ first.
 The package is pure Python on top of \texttt{numpy} and \texttt{scipy}. There is no compiled extension and no
 generated code, and the only dependency beyond those two is \texttt{matplotlib}, which is imported by the
 plotting module alone and never by the solver. The whole of \texttt{emfit} is about $6.4$ thousand lines,
-distributed as in Table~\ref{tab:modules}; the ten test modules add a further $2.4$ thousand lines and the two
+distributed as in Table~\ref{tab:modules}; the $24$ test modules add a further $8.7$ thousand lines and the two
 example scripts another four hundred, which is a fair reflection of where the effort went.
 
 \subsection{The module map}
@@ -172,16 +172,49 @@ warns once with the exception that caused it, while the record's primary numbers
 \texttt{station\_fit\_ok} tells a caller which of the two states the record is in. The rule is worth carrying
 further than this one fit: a diagnostic must never be able to destroy a result that does not depend on it.
 
+\subsection{The browser front end}
+\label{sec:webapp}
+
+\texttt{python -m emfit serve} starts a viewer. It binds \texttt{127.0.0.1:8010} by default -- the port is
+\texttt{DEFAULT\_PORT} in \texttt{emfit/\_\_init\_\_.py}, moved by \texttt{--port}, the interface by \texttt{--host}
+-- and prints the address. The landing page lists the studies; a form at \texttt{/s/} plus the study's name POSTs its
+fields to \texttt{/run/} plus the same name, so the scattering study sends \texttt{ka=3.0\&ppw=20}. The server is
+\texttt{http.server}, single-threaded behind a module lock: one request at a time, no authentication, loopback only.
+
+Cold start is import-bound: spawn to a 200 on the landing page took $0.536$~s, the socket listening by $0.520$~s,
+almost all of it importing \texttt{numpy} and \texttt{matplotlib} with \texttt{\_\_pycache\_\_} and the matplotlib
+font cache warm. A second run gave $0.52$~s within noise.
+
+A run costs the study plus a render. Launch to a complete results page carrying its plot took $5.414$~s for a
+$656\,469$-byte body, against the study's own $4.95$~s, $0.74$~s of it the time-domain loop: $0.5$~s of start-up,
+$4.9$~s of sweep, $0.05$~s of rendering. The page is built whole before the headers are written, so time to first byte
+equals time to last byte: the viewer does not stream.
+
+No browser binary exists in this container, so the animation is checked by parsing the served page. It carries exactly
+one PNG \texttt{data:} URI and exactly one GIF \texttt{data:} URI, and base64-decoding the second yields a
+\texttt{GIF89a} stream of $280\,689$ bytes, $244\times208$ pixels and $24$ frames -- \texttt{RCS\_ANIM\_FRAMES} --
+byte-identical to the file the command line writes. What is verified is that the page carries a well-formed
+multi-frame GIF, which is what makes a browser animate it, not that a person watched it play.
+
+The same figure is written to disk: \texttt{FigureSink.save\_to} puts \texttt{rcs-animation.gif} beside
+\texttt{rcs-pattern.png}, so \texttt{python -m emfit run rcs --out} \emph{dir} produces both.
+
+The defect this exposed is worth recording. The page passed only \texttt{sink.figures} to the renderer, so a study
+carrying an attachment had it dropped in the browser while the command line wrote it to disk: the run looked complete
+and was not.
+
 \subsection{Testing}
 \label{sec:testing}
 
-The suite is seventy-one \texttt{pytest} tests in ten modules and takes $10$--$20$~s to run, of which the
-cavity module accounts for roughly half. That imbalance is deliberate, and is worth stating plainly: the algebra
-and the conservation laws are cheap to check, and a dense eigenvalue solve on a $14\times10\times7$ grid is not.
+The suite is $336$ \texttt{pytest} tests in $24$ modules. The fast selection, \texttt{-m 'not slow'}, runs $327$
+of them in under $20$~s and deselects the other $9$ as slow. Three tests account for most of that time: the dense
+eigenvalue solve on a $14\times10\times7$ grid at about $3$~s, the Mie bistatic pattern at $2.5$~s, and a short
+board run at $2$~s. The imbalance is deliberate, and is worth stating plainly: the algebra and the conservation
+laws are cheap to check, and a dense eigenvalue solve on a grid of that size is not.
 
 \begin{table}[H]
   \centering
-  \caption{The ten test modules, what each one is allowed to claim, and how many tests it holds.}
+  \caption{The $24$ test modules, what each one is allowed to claim, and how many tests it holds.}
   \label{tab:tests}
   \begin{tabular}{@{}l p{8.8cm} r@{}}
     \toprule
@@ -190,15 +223,29 @@ and the conservation laws are cheap to check, and a dense eigenvalue solve on a 
     \texttt{test\_operators} & $\Cmat\Gmat=0$, $\Smat\Cmat=0$, shapes, transposes, signs, metric independence & 15 \\
     \texttt{test\_energy}    & star values and units, exact conservation, CFL sharpness, wave speed & 6 \\
     \texttt{test\_abc}       & Mur absorption against the PEC control, $K\to0$ oracle, neighbour map & 5 \\
-    \texttt{test\_pml}       & $\sigma_{\max}$ closed form, profile shape, multipliers, layer fit, below Mur & 7 \\
+    \texttt{test\_pml}       & $\sigma_{\max}$ closed form, profile shape, multipliers, layer fit, below Mur & 11 \\
     \texttt{test\_periodic}  & seam identified with index zero, wrapped dual metric, dispersion & 9 \\
     \texttt{test\_cavity}    & spectrum against analytic values, null-space count, order of convergence & 9 \\
     \texttt{test\_scatter}   & staircase area, zero-radius control, forward-scattered energy & 3 \\
     \texttt{test\_nearfield} & DFT accumulator, Kirchhoff amplitude against a point source, RCS against Mie & 5 \\
     \texttt{test\_mie}       & truncation, losslessness, optical theorem, pinned pattern, large-$ka$ limit & 5 \\
-    \texttt{test\_webapp}    & routing, form rendering, validation error, a real study and its figure & 7 \\
+    \texttt{test\_webapp}    & routing, form rendering, validation error, a real study and its figure & 11 \\
+    \texttt{test\_quasistatic} & Laplace $C'$ against closed forms, convergence, $Z_0$ & 10 \\
+    \texttt{test\_microstrip} & limits, monotonicity, thickness, loss shape, literature anchors & 31 \\
+    \texttt{test\_ports}     & probe voltage, DFT, two-wave split, station fit, Touchstone & 26 \\
+    \texttt{test\_ports\_fit} & a synthetic phasor returns its own $\beta$ and $\alpha$ & 6 \\
+    \texttt{test\_port\_parallel\_plate} & a real TEM line: match, $Z_0$, Fresnel step, Touchstone & 4 \\
+    \texttt{test\_evolve\_loads} & a load is a conductance in $\Ms$: resistor, capacitor, power & 6 \\
+    \texttt{test\_pml\_audit} & absorber audit: magnetic share, power balance, silence & 2 \\
+    \texttt{test\_materials} & the diagonal Hodge stars, seam-free callables, interfaces & 28 \\
+    \texttt{test\_raster}    & stackup in metres: layer heights, $\eps_r$, CFL step, foils & 16 \\
+    \texttt{test\_kicad}     & parser and every count on the real eight-layer coupon & 68 \\
+    \texttt{test\_copper}    & tracks, zones, vias as a PEC mask, counted by hand & 27 \\
+    \texttt{test\_board}     & the millimetre-to-metre bridge, coupon and synthetic & 8 \\
+    \texttt{test\_studies}   & registration and coercion, plus the wave study's ratios & 18 \\
+    \texttt{test\_cli}       & the served port: one default, overridable, shared & 7 \\
     \midrule
-    \textbf{total} & & 71 \\
+    \textbf{total} & & 336 \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -220,7 +267,7 @@ against the dispersion relation \eqref{eq:phase} on a grid ten cells per nominal
 measurement reported in Section~\ref{sec:results}.
 
 The cavity module is the expensive one and is the reason the suite is not instantaneous. A $14\times10\times7$
-grid is large enough that a dense symmetric solve takes a few seconds -- about five in this container, and
+grid is large enough that a dense symmetric solve takes a few seconds -- about three in this container, and
 plausibly more on a slower machine -- and small enough that its answer can be
 compared with a fine-grid reference computed from the same code. What it establishes is the order of convergence,
 the magnitude of the error on the two grids used in the report, the count of rejected static modes, and the

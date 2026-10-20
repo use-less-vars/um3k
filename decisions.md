@@ -8,6 +8,13 @@ run or test that pins it is named.
 
 ---
 
+## Attachments reach the browser as `data:` URIs, not through a media route
+
+- **Decision.** The results page inlines every figure a study produces, PNG and animated GIF alike, as a `data:` URI produced by `emfit/webapp.py`; there is no route that serves a figure file and no WebSocket, so a result is one response and the browser fetches nothing afterwards.
+- **Strongest argument against.** A 280 689-byte animation is 374 KB once base64-encoded, which is 57 per cent of the 656 469-byte response, is re-encoded on every request and carries no cache validator; a `/media/<id>` route or a socket would send the bytes once and let the browser stream them.
+- **Why that argument does not win.** The viewer shows a completed run one page at a time, on loopback, with no authentication and a single module lock, so a media route would need per-run state to resolve an id and a socket would need the run to be produced incrementally. It is not: the only encoder available in this container is `matplotlib.animation.PillowWriter`, because there is no ffmpeg, and it writes a complete GIF before anything can be served. There is nothing to stream, and the measured cost of inlining is 0.05 s of rendering against a 4.95 s study.
+- **Evidence.** `tests/test_webapp.py::test_real_rcs_run_serves_the_full_animation` (marked `slow`) posts to `/run/rcs` and parses the served page: one GIF `data:` URI, a PNG `data:` URI, `GIF89a` on decode, and `n_frames == RCS_ANIM_FRAMES`. The measured run behind those numbers gave 280 689 bytes, 244x208 px, exactly one PNG and one GIF `data:` URI, and GIF bytes identical to the file `python -m emfit run rcs --out` writes. No browser binary exists in this container, so the animation is verified by decode and not by watching it play.
+
 ## Factorisation of the port impedance: report a complex Z0, never the modulus
 
 - **Decision.** The port impedance is `z0 = complex(v_port / i_trunc)` and is reported as a complex number, on the complex plane and in polar form, with modulus and phase labelled as modulus and phase. No quantity is ever labelled `Z0` when it is the modulus alone.

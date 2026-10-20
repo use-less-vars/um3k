@@ -12,19 +12,28 @@ becomes a 404, an exception that escapes as a 500 instead of a validation
 error, and a results page that loses its figure.
 
 Runtime: one real study run (``modes`` at defaults, ~1.1 s with the pinned
-thread count) plus six page renders -- about 2 s for the whole file.
+thread count) plus a dozen page renders -- about 2 s for the whole file.  The
+attachment tests hand the sink a two-frame GIF instead of running the ``rcs``
+sweep: what they check is the transport (bytes in, ``data:`` URI out, bytes back
+out again), not the 24-frame animation, which costs tens of seconds and is not
+this file's subject.
 """
 
 from __future__ import annotations
 
+import base64
+import dataclasses
+import io
+import re
 import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 
 import pytest
+from PIL import Image
 
-from emfit import webapp
+from emfit import studies, webapp
 
 
 @pytest.fixture()
@@ -63,6 +72,21 @@ def _request(url: str, data: dict = None):
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
+
+
+def _synthetic_animation(frames: int = 2, size: int = 16) -> bytes:
+    """A tiny multi-frame GIF -- what a study attaches when it animates a field.
+
+    ``RGB``, not palette images: Pillow writes a *one-frame* GIF for a ``P``
+    image that carries no palette of its own, and the second frame is the whole
+    point of this fixture.
+    """
+    images = [Image.new("RGB", (size, size), (index * 40, 0, 0))
+              for index in range(frames)]
+    buffer = io.BytesIO()
+    images[0].save(buffer, format="GIF", save_all=True,
+                   append_images=images[1:], duration=100, loop=0)
+    return buffer.getvalue()
 
 
 def test_landing_lists_every_study(base_url):
@@ -158,6 +182,111 @@ def test_unknown_path_is_404(base_url):
     status, body = _request(base_url + "/nope")
     assert status == 404
     assert b"<html" in body.lower()
+
+
+def test_results_page_inlines_an_attachment():
+    """A non-PNG output becomes an inline ``data:`` image, with its text.
+
+    Catches the regression this change exists to prevent: ``rcs`` renders a
+    24-frame animation of the scattered field, and before attachments reached
+    the page the web UI dropped it -- only the CLI wrote the GIF to disk -- so
+    "run it in the browser" showed every number except the one thing that has
+    to be seen moving.  The title and caption must travel with the bytes, and
+    escaped: a figure caption is authored as HTML in :mod:`emfit.studies`, but
+    an attachment caption is plain text, so ``&`` or ``<`` in it must not be
+    able to inject markup into the page.
+    """
+    sink = studies.FigureSink()
+    sink.add_attachment(
+        "rcs-animation", "rcs-animation.gif", _synthetic_animation(),
+        title="Scattered |Ez| & friends",
+        caption="2 frames & rising <b>")
+    page = webapp._results_page(studies.get("modes"), {}, {"cells": "120"},
+                                sink.figures, sink.attachments).decode()
+    assert "data:image/gif;base64," in page
+    assert "Scattered |Ez| &amp; friends" in page
+    assert "2 frames &amp; rising &lt;b&gt;" in page
+    assert "rcs-animation.gif" in page
+
+
+def test_results_page_without_attachments_has_no_animation():
+    """The default keeps every figure-only call site exactly as it was.
+
+    ``attachments`` is a trailing parameter with a default, so a caller that
+    passes only ``figures`` -- which is what the page did before this feature
+    and what most of the suite still does -- must not grow a stray ``<img>`` or
+    a broken ``data:`` URI.  Catches the default being made required (a
+    ``TypeError`` in one front end) or an empty figure list still emitting the
+    animation block.
+    """
+    page = webapp._results_page(studies.get("modes"), {}, {"cells": "120"},
+                                []).decode()
+    assert "data:image/gif" not in page
+    assert "This run produced no figures." in page
+
+
+def test_post_run_serves_a_playable_animation(base_url, monkeypatch):
+    """Over HTTP, a run's animation arrives as a decodable multi-frame GIF.
+
+    The unit tests above prove the HTML; this proves the transport, end to end
+    through a real server, real routing, real ``coerce`` and a real 200.  It
+    would catch a page that links the animation by URL instead of inlining it
+    (nothing serves that URL, and the GIF is never on disk for the web UI), and
+    a ``data:`` URI whose base64 is truncated or mis-padded -- both of which
+    still look like an ``<img>`` in the response text and only fail in a
+    browser, which no assertion on the HTML would notice.  Hence the decode and
+    the frame count rather than a substring check.
+
+    The sweep itself is stubbed: the real ``rcs`` run renders 24 frames and
+    takes tens of seconds, and what is under test here is the last millimetre --
+    ``sink.attachments`` reaching ``_results_page`` -- while the study's own
+    metadata, parameters and form stay the real ones.
+    """
+    def run(values, sink):
+        sink.add_attachment("rcs-animation", "rcs-animation.gif",
+                            _synthetic_animation(),
+                            title="Scattered |Ez| sweeping past the PEC cylinder",
+                            caption="2 frames")
+        return {"cells per wavelength": str(values["ppw"])}
+
+    monkeypatch.setitem(studies.STUDIES, "rcs",
+                        dataclasses.replace(studies.RCS, run=run))
+
+    status, body = _request(base_url + "/run/rcs", {"ka": "3.0", "ppw": "20"})
+    assert status == 200
+    match = re.search(r'src="data:image/gif;base64,([A-Za-z0-9+/=]+)"',
+                      body.decode())
+    assert match is not None, "the results page carries no animation"
+    gif = base64.b64decode(match.group(1))
+    assert gif.startswith(b"GIF89a")
+    with Image.open(io.BytesIO(gif)) as image:
+        assert image.n_frames > 1, "the animation is a single still frame"
+
+
+@pytest.mark.slow
+def test_real_rcs_run_serves_the_full_animation(base_url):
+    """The real ``rcs`` sweep -- unstubbed -- arrives complete through the web UI.
+
+    Every other attachment test above replaces the study's ``run``; this one
+    submits ``/run/rcs`` to the production study, so it is the only place that
+    proves the *real* 24-frame animation survives the round trip: base64 that
+    decodes but stops after the first frame, or a page that carries the figure
+    but drops the attachment, passes everything else here and fails only in a
+    browser.  The frame count is compared with ``studies.RCS_ANIM_FRAMES``
+    rather than a literal 24, so changing the sweep's length keeps this honest
+    instead of quietly making the assertion meaningless.
+    """
+    status, body = _request(base_url + "/run/rcs", {"ka": "3.0", "ppw": "20"})
+    assert status == 200
+    text = body.decode()
+    assert text.count("data:image/gif;base64,") == 1, "expected one animation"
+    assert "data:image/png;base64," in text, "the results page lost its figure"
+    match = re.search(r'src="data:image/gif;base64,([A-Za-z0-9+/=]+)"', text)
+    assert match is not None, "the results page carries no animation"
+    gif = base64.b64decode(match.group(1))
+    assert gif.startswith(b"GIF89a")
+    with Image.open(io.BytesIO(gif)) as image:
+        assert image.n_frames == studies.RCS_ANIM_FRAMES
 
 
 def test_favicon_returns_no_content(base_url):

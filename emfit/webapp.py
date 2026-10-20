@@ -3,8 +3,10 @@
 Run it with ``python -m emfit serve`` and open the URL it prints.  The server is
 deliberately tiny: :mod:`http.server` from the standard library, one request at
 a time (a module lock serialises studies), every page rendered as a single
-self-contained HTML document with the PNGs inlined as ``data:`` URIs -- so there
-is no static-file route, no temp directory and nothing to leak between runs.
+self-contained HTML document: the study's PNG figures *and* any animated
+attachment it produced (today the 24-frame ``rcs-animation.gif``) are inlined as
+``data:`` URIs -- so there is no static-file route, no temp directory and
+nothing to leak between runs.
 
 **This is a local, single-user tool.**  It has no authentication, no CSRF
 protection, no sandboxing and no resource limits: a submitted parameter set
@@ -238,13 +240,41 @@ def _figure_html(figure) -> str:
             f"the PNG.</span></figcaption></figure>")
 
 
-def _results_page(study, values, metrics, figures) -> bytes:
-    """Metrics table, then the figures, then a prefilled 'run again' form."""
+def _attachment_html(attachment) -> str:
+    """One non-PNG output -- today the ``rcs`` animation -- as a ``data:`` image.
+
+    A figure is PNG by contract and :func:`_figure_html` embeds it as such; an
+    attachment is any other media type, so it cannot go through that path.  The
+    only attachment is a GIF, which the browser animates straight out of the
+    ``data:`` URI, so the page stays one self-contained document with no media
+    route behind it.  Unlike a figure's caption -- authored as HTML in
+    :mod:`emfit.studies` -- an attachment's caption is plain text, so it is
+    escaped here along with the title and the file name.
+    """
+    encoded = base64.b64encode(attachment["data"]).decode("ascii")
+    title = _esc(attachment["title"])
+    return (f"<figure><h2>{title}</h2>"
+            f"<img alt=\"{title}\" "
+            f"src=\"data:image/gif;base64,{encoded}\">"
+            f"<figcaption>{_esc(attachment['caption'])} "
+            f"<span class=\"hint\">The animation plays here; right-click it "
+            f"and save it to keep {_esc(attachment['filename'])}.</span>"
+            f"</figcaption></figure>")
+
+
+def _results_page(study, values, metrics, figures, attachments=()) -> bytes:
+    """Metrics table, then the figures, then any animation, then the form.
+
+    ``attachments`` defaults to none, so the callers that only have figures
+    (and every test that predates them) keep working unchanged.
+    """
     rows = "".join(f"<tr><th>{_esc(key)}</th><td>{_esc(value)}</td></tr>"
                    for key, value in metrics.items())
     figures_html = "".join(_figure_html(figure) for figure in figures)
     if not figures_html:
         figures_html = "<p class=\"lede\">This run produced no figures.</p>"
+    attachments_html = "".join(_attachment_html(attachment)
+                                for attachment in attachments)
     body = (
         "<p class=\"crumb\"><a href=\"/\">&larr; all studies</a></p>"
         f"<h1>{_esc(study.title)}</h1>"
@@ -252,6 +282,7 @@ def _results_page(study, values, metrics, figures) -> bytes:
         f"parameters below.</p>"
         f"<table class=\"metrics\">{rows}</table>"
         f"{figures_html}"
+        f"{attachments_html}"
         f"<h2>Run again</h2>{_form_html(study, values, submit='Run again')}"
         "<p class=\"crumb\"><a href=\"/\">&larr; back to all studies</a></p>")
     return _page(f"{study.name} &middot; emfit", body)
@@ -332,7 +363,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:                      # noqa: BLE001 - the server must live
             return self._send(500, _error_page(study, values,
                                                traceback.format_exc()))
-        return self._send(200, _results_page(study, values, metrics, sink.figures))
+        return self._send(200, _results_page(study, values, metrics,
+                                             sink.figures, sink.attachments))
 
     def do_GET(self) -> None:
         parts = urllib.parse.urlsplit(self.path)
