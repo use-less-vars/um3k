@@ -17,6 +17,14 @@ the still ``figures`` and, separately, the ``attachments`` -- the ``rcs``
 study's GIF animation -- because a script reads that key to find the pictures
 and an animation in it is a picture that will not render.  One cheap rcs run
 covers it.
+
+The read side of ``board`` is pinned here too: the coupon's stackup and outline,
+the microstrip spec ``from_kicad`` derives from them, a board that has neither a
+stackup nor an outline (a report, not a failure), and the cell counts the coupon
+cannot be cut into.  The boards are the fixtures -- a test that built one would
+test the builder -- so each test asserts what the file states before what the
+code derived from it: when a derived number moves, the assertions above it still
+say whether the file changed or the derivation did.
 """
 
 import inspect
@@ -27,6 +35,10 @@ import pytest
 
 import emfit
 from emfit import cli, webapp
+
+ROOT = Path(__file__).resolve().parent.parent
+COUPON = ROOT / "kicad_support_project" / "kicad_support_project.kicad_pcb"
+ROTATED = ROOT / "temp" / "rot" / "t.kicad_pcb"
 
 
 def _parse(*extra):
@@ -112,3 +124,92 @@ def test_json_files_the_animation_under_attachments_not_figures(capsys, tmp_path
     assert figures == set(pngs), written["figures"]
     assert set(gifs) <= attachments, written["attachments"]
     assert not set(gifs) & figures, written["figures"]
+
+
+# ---------------------------------------------------------------------------
+# board: what the file states, and then what was derived from it
+# ---------------------------------------------------------------------------
+def _board_json(capsys, *extra):
+    """Run ``board <extra> --json`` and parse the one object it printed."""
+    code = cli.main(["board", *[str(item) for item in extra], "--json"])
+    assert code == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_board_json_reads_the_coupon_then_derives_the_spec(capsys):
+    """The coupon, in the order the command works: file first, spec second.
+
+    ``--json`` is asked for because the object is the contract a script reads;
+    the numbers below are the same ones the human report prints, and the order
+    they are asserted in is the point.  A moved outline is a changed board; a
+    moved ``x_far`` with the outline where it was is a changed derivation.
+    """
+    report = _board_json(capsys, COUPON, "--net", "RF_IN")
+    entries = {entry["name"]: entry for entry in report["stackup"]}
+
+    # what the file states
+    assert report["outline_mm"] == pytest.approx([0.0, 0.0, 70.0, 20.0], abs=1e-9)
+    assert entries["F.Cu"]["kind"] == "copper"
+    assert entries["F.Cu"]["thickness_mm"] == pytest.approx(0.035, abs=1e-9)
+    assert entries["dielectric 1"]["thickness_mm"] == pytest.approx(1.51, abs=1e-9)
+    assert entries["dielectric 1"]["eps_r"] == pytest.approx(4.4, abs=1e-9)
+    assert report["thickness_mm"] == pytest.approx(1.6, abs=1e-9)
+    assert report["copper_layers"] == 2
+
+    # and what from_kicad derived from it
+    spec = report["spec"]
+    assert spec["w"] == pytest.approx(3.0, abs=1e-9)
+    assert spec["h"] == pytest.approx(1.6, abs=1e-9)
+    assert spec["x_port"] == pytest.approx(8.65, abs=1e-9)
+    assert spec["x_far"] == pytest.approx(32.22, abs=1e-9)
+    assert spec["supplied"] == []
+
+
+def test_board_reads_a_board_with_no_stackup_and_no_outline(capsys):
+    """A thin board file is a report, not a failure: exit 0 and say what is not there.
+
+    ``temp/rot/t.kicad_pcb`` declares no ``(stackup ...)`` block, draws no
+    ``Edge.Cuts`` and carries no track, so three of the report's rows have
+    nothing to measure.  The command's job is to say which -- and to keep its
+    exit code for the one thing that really is a wrong request, a path it cannot
+    read at all.
+    """
+    report = _board_json(capsys, ROTATED)
+    assert report["stackup"] == []
+    assert report["outline_mm"] is None
+    assert report["thickness_mm"] == pytest.approx(1.6, abs=1e-9)
+    assert report["nets"] == []
+
+    code = cli.main(["board", str(ROTATED)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "stackup: none" in out
+    assert "no Edge.Cuts" in out
+    assert "no net carries a track" in out
+
+
+def test_board_says_which_meshes_the_coupon_cannot_be(capsys):
+    """The representability block, on a board no substrate cell count can hold.
+
+    ``RF_IN`` is a 29.8 mm feed line on a 70 mm outline, so the strip stops well
+    short of the far wall; every ``n_sub`` the command tries is refused for that
+    one reason, and the refusal -- not a count -- is what a reader needs.  The
+    closed-form line is printed above it and is labelled a reference: this is the
+    number to compare a solve against, not the number the solve is fitted to.
+    """
+    report = _board_json(capsys, COUPON, "--net", "RF_IN")
+    meshes = report["meshes"]
+    assert [row["n_sub"] for row in meshes] == [2, 4, 6, 8]
+    refusals = [row["error"] for row in meshes if "error" in row]
+    assert refusals, meshes
+    assert all("far absorber at the x wall" in message for message in refusals)
+    assert not [row for row in meshes if "counts" in row], meshes
+
+    code = cli.main(["board", str(COUPON), "--net", "RF_IN"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "no microstrip spec" not in out
+    assert out.count("refused --") == len(refusals)
+    assert "far absorber at the x wall" in out
+    assert "35 um copper" in out
+    assert "a reference, not a target" in out
