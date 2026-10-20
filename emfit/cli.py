@@ -19,9 +19,14 @@ Exit codes, because scripts want to tell the cases apart:
   stderr so the failure is reproducible.
 
 ``--json`` prints exactly one JSON object (``study``, ``values``, ``metrics``,
-``figures``) and nothing else on stdout, so it can be piped straight into
-``json.load``.  Figures are only written when ``--out`` is given: a run with no
-``--out`` still renders them (the studies always do) but leaves your disk alone.
+``figures``, ``attachments``) and nothing else on stdout, so it can be piped
+straight into ``json.load``.  ``figures`` holds the still PNG images and
+``attachments`` everything a run wrote beside them -- the ``rcs`` study's GIF
+animation -- because a file is a figure only when it is a ``.png``;
+:meth:`emfit.studies.FigureSink.save_to` returns both in one flat list, so the
+splitting happens here.  Files are only written when ``--out`` is given: a run
+with no ``--out`` still renders them (the studies always do) but leaves your
+disk alone.
 """
 
 from __future__ import annotations
@@ -61,6 +66,21 @@ def _table(rows, header=None, indent: str = "  ") -> str:
     lines = [f"{indent}{str(header[0]):<{width}}  {header[1]}"] if header else []
     lines += [f"{indent}{str(left):<{width}}  {right}" for left, right in rows]
     return "\n".join(lines)
+
+
+def _split_written(paths):
+    """Split the files a run wrote into ``(figures, attachments)``.
+
+    :meth:`emfit.studies.FigureSink.save_to` returns one flat list -- the PNG
+    figures first, then the attachments under their own file names -- and says
+    nothing about which is which, so the extension is what decides: a ``.png``
+    is a figure and anything else (the ``rcs`` study's GIF) is an attachment.
+    A GIF filed under ``figures`` would be a lie about the field a script reads
+    to find the pictures.
+    """
+    figures = [path for path in paths if path.lower().endswith(".png")]
+    attachments = [path for path in paths if not path.lower().endswith(".png")]
+    return figures, attachments
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +134,12 @@ def _cmd_run(args) -> int:
         traceback.print_exc()
         return EXIT_RUNTIME
 
+    figures, attachments = _split_written(paths)
+
     if args.json:
         print(json.dumps({"study": study.name, "values": values,
-                          "metrics": metrics, "figures": paths}))
+                          "metrics": metrics,
+                          "figures": figures, "attachments": attachments}))
         return 0
 
     print(f"{study.name}: {study.title}")
@@ -124,11 +147,15 @@ def _cmd_run(args) -> int:
     print()
     print(_table(metrics.items(), ("metric", "value")))
     print()
-    if paths:
-        print(f"figures ({len(paths)}):")
-        for path in paths:
+    if figures:
+        print(f"figures ({len(figures)}):")
+        for path in figures:
             print(f"  {path}")
-    else:
+    if attachments:
+        print(f"attachments ({len(attachments)}):")
+        for path in attachments:
+            print(f"  {path}")
+    if not paths:
         print("no files written (add --out DIR to save the figures)")
     return 0
 

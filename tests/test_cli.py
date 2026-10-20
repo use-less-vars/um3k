@@ -11,9 +11,17 @@ never asked for.
 
 Nothing here binds a socket: the http-level tests in ``test_webapp.py`` are the
 place for that, and they use ``port=0`` for exactly the reason above.
+
+The other thing pinned here is ``run --json``'s file contract: the object names
+the still ``figures`` and, separately, the ``attachments`` -- the ``rcs``
+study's GIF animation -- because a script reads that key to find the pictures
+and an animation in it is a picture that will not render.  One cheap rcs run
+covers it.
 """
 
 import inspect
+import json
+from pathlib import Path
 
 import pytest
 
@@ -61,3 +69,46 @@ def test_help_quotes_the_default(capsys):
 @pytest.mark.parametrize("func", [webapp.make_server, webapp.serve])
 def test_server_defaults_come_from_the_same_constant(func):
     assert inspect.signature(func).parameters["port"].default == emfit.DEFAULT_PORT
+
+
+# ---------------------------------------------------------------------------
+# the key a script reads: which file --json calls a figure
+# ---------------------------------------------------------------------------
+def _run_json(capsys, out_dir, *extra):
+    """Run ``run <extra> --out <out_dir> --json`` and parse what it printed.
+
+    Read back the way a script reads it -- one object on stdout, ``json.loads``,
+    nothing else -- because that is the contract the key is part of.
+    """
+    code = cli.main(["run", *extra, "--out", str(out_dir), "--json"])
+    assert code == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_json_files_the_animation_under_attachments_not_figures(capsys, tmp_path):
+    """The one study that writes a GIF: it is an attachment, not a figure.
+
+    ``FigureSink.save_to`` returns every file it wrote in one flat list, so the
+    CLI is the only place left that knows what kind each one is.  The rcs run
+    writes ``rcs-pattern.png`` and ``rcs-animation.gif``, and the GIF used to
+    arrive under ``figures``: a script that embeds that list put an animation
+    where a still belongs, and one that counts figures counted two.
+
+    The cheap end of the study is 8 cells per wavelength at ka = 0.5; the time
+    domain is a tenth of a second there and the 24-frame GIF is most of the
+    rest, so the run is a few seconds and this is not a ``slow`` test.
+    """
+    written = _run_json(capsys, tmp_path, "rcs", "--set", "ka=0.5",
+                        "--set", "ppw=8")
+
+    on_disk = sorted(path.name for path in tmp_path.iterdir())
+    pngs = [name for name in on_disk if name.endswith(".png")]
+    gifs = [name for name in on_disk if name.endswith(".gif")]
+    assert pngs and gifs, f"the run wrote {on_disk}, so nothing below is tested"
+
+    figures = {Path(path).name for path in written["figures"]}
+    attachments = {Path(path).name for path in written["attachments"]}
+
+    assert figures == set(pngs), written["figures"]
+    assert set(gifs) <= attachments, written["attachments"]
+    assert not set(gifs) & figures, written["figures"]
