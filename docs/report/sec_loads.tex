@@ -101,6 +101,58 @@ propagation constant from the joint complex-$\gamma$ fit of the station series, 
 normalisation of the ratio is built so that the choice of that attenuation is immaterial to what the ratio
 reports.
 
+\subsection{What the reference divides out}
+\label{sec:loads-ratio}
+
+The series resistances above were each measured against a load-free run, and the size of that correction is easy
+to underestimate: a loaded record cannot be normalised against itself. On the record named in the caption of
+Table~\ref{tab:loads-ratio} one loaded run is quoted three ways: with the load-free twin supplied as its reference,
+with no reference at all, and as the twin itself on the identical mesh. The three readings below are one record, not
+three runs of three line lengths.
+
+\begin{table}[H]
+  \centering
+  \caption{The reference measurement on a microstrip record: $\eps_r = 4.4$, $h = 1.60$ mm,
+  $n_{\mathrm{strip}} = 8$ cells across the strip, six matched-layer cells on every face, $300$ steps, the drive
+  snapped to $5.827786$ GHz, and a $100\ \Ohm$ series resistance at $15.20$ mm along a $30$ mm line. All three
+  rows are the same record: the first is the load-free twin on the identical mesh, the second is the loaded run
+  handed that twin as its reference, the third is the same loaded run with no reference given.}
+  \label{tab:loads-ratio}
+  \begin{tabular}{@{}lr@{}}
+    \toprule
+    reading of the same record & $|s_{21}|$ between the station planes \\
+    \midrule
+    load-free twin             & $0.541741$ \\
+    loaded, reference given    & $0.613960$ \\
+    loaded, no reference given & $0.327195$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The three rows above are $300$-step readings on the eight-cell strip, and they are quoted for the ratio rather than
+for the value of the load: Table~\ref{tab:loads-series} reports the same $100\ \Ohm$ element at $2400$ steps as
+$0.549464$, and that is the figure to quote for the load itself. The coarse run appears here only because the
+identity needs three readings of one record, and three $2400$-step runs would not be the same measurement made
+three ways.
+
+The reference path is an identity between the first and third rows. Dividing the unreferenced reading by the twin's
+own reading reproduces the referenced one,
+\[
+  \frac{0.327195}{0.541741} = 0.603970,
+\]
+which reproduces $0.613960$ to within $1.627$ per cent. That $1.627$ per cent is a residual difference between the
+fit and the estimator, not agreement: the division is exact only if the twin supplies the line's delay and impedance
+without error, and what is left over is the fit's own scatter carried through the ratio. As a residual it is the
+check the table exists for -- a stale reference, a different pair of stations or a different reference impedance
+breaks the identity by far more than a per cent -- but it is not a statement that the two numbers agree, and it is
+not quoted as one.
+
+The point of the table is the size of the third row. On this mesh most of an unreferenced $|s_{21}|$ is the line's
+own loss: the load-free twin transmits only $0.541741$. A transmission coefficient quoted without the twin is
+therefore mostly a measurement of the mesh rather than of the load, and dividing by the twin is what makes the
+number about the load. That division is the ratio of ratios, and the percentage the study quotes for a load cannot
+be read as a property of that load until the division has been made.
+
 \subsection{The shunt branch, and how far it gets}
 \label{sec:loads-shunt}
 
