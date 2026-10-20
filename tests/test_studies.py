@@ -713,7 +713,16 @@ def test_metrics_refuse_an_impedance_when_a_load_has_no_reference(monkeypatch):
     # same thing -- and say it without a figure in it.
     for key in ("line Z0 from stations, real part",
                 "line Z0, sigma total",
-                "line Z0 with loss, real part"):
+                "line Z0 with loss, real part",
+                "port Z, modulus",
+                "port Z, phase",
+                "port Z, real part",
+                "port modulus / model",
+                "port real part / model",
+                "power-current Z0 at stations",
+                "power-current ratio at stations",
+                "power-current Z0 at the port plane",
+                "power-current ratio at the port plane"):
         row = metrics[key]
         assert "no impedance" in row, f"{key}: {row!r}"
         assert "ohm" not in row, f"{key}: {row!r}"

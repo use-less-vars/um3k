@@ -3053,6 +3053,37 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         stations_z0_sigma_beta = num(sf.z0_sigma_beta, "ohm")
         stations_z0_sigma_total = num(sf.z0_sigma_total, "ohm")
 
+    # The port impedance and the power-current rows are gated for the same
+    # reason, on their own physics: ``2P/|I|**2`` equals ``Re(V I*) / |I|**2``,
+    # which is the characteristic impedance only for a single travelling wave.
+    # On a loaded line P is the net power and |I| a superposition amplitude, so
+    # the ratio is a standing-wave-contaminated estimate that resembles a line
+    # property without being one -- and the port-plane version divides by
+    # ``z0 = -v_port / i_trunc`` inside the port's own near field, so it is
+    # weaker still.  The two ratios under ``port Z`` are that same refused
+    # number divided by the closed form, so they go with it.
+    if result.loaded_without_reference:
+        port_z_modulus = port_z_phase = port_z_real = NO_LOADED_IMPEDANCE
+        port_z_modulus_ratio = port_z_real_ratio = NO_LOADED_IMPEDANCE
+        power_z0_stations = power_ratio_stations = NO_LOADED_IMPEDANCE
+        power_z0_port = power_ratio_port = NO_LOADED_IMPEDANCE
+    else:
+        port_z_modulus = f"{abs(result.z0):.3f} ohm"
+        port_z_phase = (f"{np.degrees(np.angle(result.z0)):.3f} deg "
+                        "(excess phase, trace-current reference)")
+        port_z_real = f"{result.z0.real:.3f} ohm"
+        port_z_modulus_ratio = f"{abs(result.z0) / result.z0_model:.4f}"
+        port_z_real_ratio = f"{result.z0.real / result.z0_model:.4f}"
+        power_z0_stations = power_z0_row
+        power_ratio_stations = power_ratio_row
+        power_z0_port = num(result.power_z0_port, "ohm")
+        power_ratio_port = (
+            num(result.power_ratio_port, "", ".6f")
+            + " -- 1 by construction: z0 at that plane *is* V/I on it, so "
+            "the two phasors are one number and this row can only disagree "
+            "with 1 through round-off.  The stations row above is the "
+            "measurement; this one is an identity check")
+
     # Leave the pictures on disk: a benchmark's figures are part of its output.
     dump_figures(sink)
 
@@ -3090,13 +3121,12 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             f"{result.eps_eff_model:.5f} (closed form at w/h = "
             f"{g['w'] * 1e3:.2f}/{g['h'] * 1e3:.2f} mm = {g['w'] / g['h']:.3f} "
             f"and eps_r = {g['eps_r']:g})"),
-        "port Z, modulus": f"{abs(result.z0):.3f} ohm",
-        "port Z, phase": (f"{np.degrees(np.angle(result.z0)):.3f} deg "
-                          "(excess phase, trace-current reference)"),
-        "port Z, real part": f"{result.z0.real:.3f} ohm",
+        "port Z, modulus": port_z_modulus,
+        "port Z, phase": port_z_phase,
+        "port Z, real part": port_z_real,
         "line Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
-        "port modulus / model": f"{abs(result.z0) / result.z0_model:.4f}",
-        "port real part / model": f"{result.z0.real / result.z0_model:.4f}",
+        "port modulus / model": port_z_modulus_ratio,
+        "port real part / model": port_z_real_ratio,
         "line Z0 from stations, modulus": stations_z0_modulus,
         "line Z0 from stations, phase": stations_z0_phase,
         "line Z0 from stations, real part": stations_z0_real,
@@ -3112,15 +3142,10 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                                       + ")")
                                    if sf.sigma_beta is not None and sf.beta
                                    else ""),
-        "power-current Z0 at stations": power_z0_row,
-        "power-current ratio at stations": power_ratio_row,
-        "power-current Z0 at the port plane": num(result.power_z0_port, "ohm"),
-        "power-current ratio at the port plane": (
-            num(result.power_ratio_port, "", ".6f")
-            + " -- 1 by construction: z0 at that plane *is* V/I on it, so "
-            "the two phasors are one number and this row can only disagree "
-            "with 1 through round-off.  The stations row above is the "
-            "measurement; this one is an identity check"),
+        "power-current Z0 at stations": power_z0_stations,
+        "power-current ratio at stations": power_ratio_stations,
+        "power-current Z0 at the port plane": power_z0_port,
+        "power-current ratio at the port plane": power_ratio_port,
         "|S11| at the measured plane": (
             f"{gamma_abs:.5f} = {num(s11_measured_db, 'dB', '.2f')} at x = "
             f"{sf.reference_plane * 1e3:.2f} mm, the first station, because "
