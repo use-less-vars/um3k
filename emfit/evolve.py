@@ -114,6 +114,9 @@ class FITStepper:
         self.dt = float(cfl_dt(cc.grid) if dt is None else dt)
 
         self.pml = pml
+        self.power_audit = getattr(pml, "_audit", None)
+        if self.power_audit is not None:
+            self.power_audit.bind_materials(self.m_eps, self.m_mu)
         self.pec_idx = self._index_array(pec, self.C.shape[1])
         if self.pec_idx is not None:
             self.free = np.ones(self.C.shape[1], dtype=bool)

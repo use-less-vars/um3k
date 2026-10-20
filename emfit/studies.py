@@ -53,7 +53,7 @@ from .grid import Grid
 from .materials import C0, material_matrices
 from .microstrip import Microstrip
 from .operators import CellComplex
-from .pml import PML, cells_for_wavelength
+from .pml import PML, AbsorbedWork, cells_for_wavelength
 from .ports import (
     DftAccumulator,
     LineFit,
@@ -1331,6 +1331,10 @@ class MicrostripWave:
             The transverse node pairs are **not** averaged here -- this is the
             raw accumulator, and :func:`emfit.viz.plot_field_slice` does the
             co-location when it draws.
+        power_balance: What the matched layers removed during the settled part
+            of the record, binned by which family of walls removed it.  Only
+            filled when the run was asked for it (``audit=True``), otherwise
+            ``None``.  See :class:`emfit.pml.AbsorbedWork` for what is counted.
     """
 
     geometry: dict
@@ -1367,11 +1371,12 @@ class MicrostripWave:
     loss_fit_two: LineFit | None
     station_fit_lossy: StationFit
     slice_ez: np.ndarray | None
+    power_balance: dict | None = None
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
         g = self.geometry
-        return (
+        line = (
             f"microstrip f={g['f'] / 1e9:.4f}GHz"
             f" f_target={g['f_target'] / 1e9:.4f}GHz"
             f" cells={g['nx']}x{g['ny']}x{g['nz']}"
@@ -1386,6 +1391,14 @@ class MicrostripWave:
             f" i_ground_full={abs(self.i_ground_full):.6e}A"
             f" i_ground_truncated={abs(self.i_ground_truncated):.6e}A"
             f" y_extent={self.y_extent * 1e3:.4f}mm")
+        # The audit, when it was asked for: appended rather than woven in so
+        # the default line stays byte-identical.
+        if self.power_balance is None:
+            return line
+        return line + (
+            f" lateral_work_fraction={self.power_balance['lateral_fraction']:.6f}"
+            f" implied_s21={self.power_balance['implied_s21']:.6f}"
+            f" implied_length={self.power_balance['length'] * 1e3:.4f}mm")
 
 
 def microstrip_wave(
@@ -1409,6 +1422,7 @@ def microstrip_wave(
     n_warm: int = None,
     drive: float = 1.0,
     keep_slice: bool = False,
+    audit: bool = False,
     sink: FigureSink = None,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
@@ -1585,8 +1599,16 @@ def microstrip_wave(
     # ``walls`` replaces ``axes``: name every face, and add zmax only when a
     # top layer was actually asked for.
     pml_walls = ("xmin", "xmax", "ymin", "ymax") + (("zmax",) if n_top else ())
+    # Optional energy audit: bin the work the matched layers remove by which
+    # family of walls removed it.  ``None`` everywhere below when it is off, so
+    # the stepping path stays byte-identical.
+    absorbed = None
+    if audit:
+        absorbed = AbsorbedWork(groups={
+            "end": ("xmin", "xmax"),
+            "lateral": ("ymin", "ymax") + (("zmax",) if n_top else ())})
     pml = PML(grid, thickness_cells=n_pml, order=2, target=1e-4,
-              walls=pml_walls, cc=cc)
+              walls=pml_walls, cc=cc, audit=absorbed)
     stepper = FITStepper(cc, m_eps, m_mu, dt=cfl_dt(grid), pec=pec, pml=pml)
     dt = float(stepper.dt)
 
@@ -1640,6 +1662,10 @@ def microstrip_wave(
     n_currents = n_stations + 3        # station currents start here in signals
     signals = np.zeros(n_currents + n_stations, dtype=float)
     for n in range(nsteps):
+        if absorbed is not None and n == n_warm:
+            # Warm-up work is not part of the settled record: bin only the
+            # steps the DFT also sees.
+            absorbed.reset()
         current[:] = 0.0
         ramp = min(1.0, (n + 1) / max(n_warm, 1))
         current[port_edges] = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt)
@@ -1876,6 +1902,7 @@ def microstrip_wave(
         "station_cells": [int(v) for v in js],
         "f": f0, "f_target": float(f_target), "dt": dt,
         "nsteps": nsteps, "n_warm": n_warm, "n_acc": n_acc,
+        "audit": bool(audit),
         "n_edges": cc.n_edges, "n_faces": cc.n_faces,
         "beta_ambiguous": bool(abs(beta) * d_probe > np.pi),
     }
@@ -1942,6 +1969,24 @@ def microstrip_wave(
                      f"{abs(fit_two.gamma):.4f}) is why the pattern is not a "
                      "plain moving wave."))
 
+    # The audit's bookkeeping, when it was asked for: energy the layer removed
+    # over the same settled record the DFT saw, split by wall family.  ``length``
+    # is the span between the two transmisson planes, so the implied loss is a
+    # bound over exactly the distance ``s21`` was de-embedded across.
+    power_balance = None
+    if absorbed is not None and absorbed.steps:
+        fractions = absorbed.fractions()
+        lateral_fraction = float(fractions.get("lateral", 0.0))
+        power_balance = {
+            "work": {name: absorbed.total(name) for name in absorbed.work["e"]},
+            "steps": int(absorbed.steps),
+            "length": float(s21_planes[1] - s21_planes[0]),
+            "fractions": fractions,
+            "lateral_fraction": lateral_fraction,
+            "end_fraction": float(fractions.get("end", 0.0)),
+            "implied_s21": float(np.sqrt(max(0.0, 1.0 - lateral_fraction))),
+        }
+
     return MicrostripWave(
         geometry=geometry,
         station_x=station_x,
@@ -1977,6 +2022,7 @@ def microstrip_wave(
         loss_fit_two=loss_fit_two,
         station_fit_lossy=station_fit_lossy,
         slice_ez=slice_ez,
+        power_balance=power_balance,
     )
 
 
@@ -1986,7 +2032,9 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         f_target=float(values["f0"]) * 1e9,
         nsteps=int(values["nsteps"]),
         n_pml=int(values["npml"]),
+        n_top=int(values["npml"]),
         keep_slice=True,
+        audit=True,
         sink=sink)
     g = result.geometry
     gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
@@ -2201,6 +2249,142 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                "It does not agree with the two half fits above, so one of "
                "the two is reading something that is not attenuation"))
 
+    # The same transmission from the other side: not a fit to the field at all,
+    # but a bookkeeping of the energy the matched layers removed.  The box has
+    # no other exit -- every face that is not an absorber is PEC -- so the work
+    # the layer did is a closed account of where the injected power went, split
+    # by which family of walls took it.  Whatever the lateral walls took is
+    # power the guided mode lost sideways, and two different numbers can be
+    # made of that, so both are stated:
+    #
+    #  * charged to the station span -- all of the lateral work, as if those
+    #    walls ran only between the two transmission planes.  They do not: they
+    #    run the whole box, ``length / span`` times as far, so this charges too
+    #    much work to the span and is an upper bound on the loss over it;
+    #  * per unit length of line -- the lateral work *rate* per metre of wall,
+    #    divided by ``2 P``, which is the definition of an attenuation
+    #    constant.  That is the one an alpha can be compared against, and it is
+    #    the one this row believes.
+    pb = result.power_balance
+    if pb is None:
+        s21_audit_row = ("n/a: this run did not ask for the absorbed-work "
+                         "audit (``audit=True``)")
+    else:
+        audit_length = float(pb["length"])
+        implied = float(pb["implied_s21"])
+        lateral_fraction = float(pb["lateral_fraction"])
+        lateral_pct = 100.0 * lateral_fraction
+        end_pct = 100.0 * float(pb["end_fraction"])
+        implied_loss = 100.0 * (1.0 - implied)
+        tops = " plus the top" if g["n_top"] else ""
+        # The accounting's own resolution, in units of the lateral fraction:
+        # ``implied = sqrt(1 - f)`` is ``1 - f/2`` near unity and is printed to
+        # six decimals, so a fraction below this cannot move a digit of it.
+        audit_resolution = 2e-6
+        basis = (
+            f"Charged to the station span (an upper bound): "
+            f"{implied:.6f} = {num(decibel(implied), 'dB', '.3f')}, "
+            f"{implied_loss:.3f} % below unity over the "
+            f"{audit_length * 1e3:.2f} mm between the first and last station "
+            f"plane. Basis: the work the matched layers removed during the "
+            f"{pb['steps']} settled (post-warm-up) steps, split by wall "
+            f"family -- {lateral_pct:.3f} % of it at the lateral walls "
+            f"(ymin, ymax{tops}) and {end_pct:.3f} % at the end walls (xmin, "
+            f"xmax), the box having no other exit because every remaining "
+            f"face is PEC. Normalisation: every joule is measured against "
+            f"the total removed work in that window, and in the steady state "
+            f"every joule injected is absorbed, so that total is the injected "
+            f"power and the lateral share is the share of the injected power "
+            f"lost sideways -- a statement about steady state only, which is "
+            f"why the warm-up steps are excluded from it. This is an "
+            f"accounting bound over the travelled length "
+            f"{audit_length * 1e3:.2f} mm, not a fitted exponential: the "
+            f"lateral walls run the whole box length and all their work is "
+            f"charged to this shorter span, so the loss it implies is if "
+            f"anything an over-estimate. ")
+        # The attenuation constant itself.  ``alpha = (power lost per unit
+        # length) / (2 P)``: the lateral walls are the only leak along the
+        # line, they run the whole box, and both work totals cover the same
+        # steps, so the window length cancels out of the ratio.
+        wall_length = float(g["length"])
+        lateral_work = float(pb["work"].get("lateral", 0.0))
+        total_work = float(sum(pb["work"].values()))
+        alpha_leak = (lateral_work / (2.0 * total_work * wall_length)
+                      if total_work > 0.0 else float("nan"))
+        leak_loss = 1.0 - float(np.exp(-alpha_leak * audit_length))
+        per_length = (
+            f"Per unit length of line it is {alpha_leak:.4f} Np/m = "
+            f"{db_per_mm(alpha_leak):.5f} dB/mm: the lateral walls removed "
+            f"{lateral_work:.6e} J in the same {pb['steps']} steps in which "
+            f"the run put {total_work:.6e} J into the box, and they run "
+            f"{wall_length * 1e3:.2f} mm of line, so the work per metre is "
+            f"2 * alpha * P. Over the {audit_length * 1e3:.2f} mm of the "
+            f"station span that rate is exp(-alpha L) = "
+            f"{float(np.exp(-alpha_leak * audit_length)):.6f}, "
+            f"{100.0 * leak_loss:.3f} % below unity. That is the number to "
+            f"set a fitted alpha against; the {implied_loss:.3f} % above "
+            f"charges every metre of wall to a span "
+            f"{wall_length / audit_length:.2f} times shorter and so reads "
+            f"{implied_loss / (100.0 * leak_loss):.2f} times too large. ")
+        if lateral_fraction < audit_resolution:
+            comparison = (
+                f"The lateral share is below the resolution of the "
+                f"accounting ({audit_resolution:.0e} of the removed work), so "
+                f"this row says the line does not measurably attenuate over "
+                f"that span and there is no loss here to set against the "
+                f"exp(-alpha L) row above; a fitted alpha that disagrees is "
+                f"reading something other than attenuation")
+        elif lf is not None and lf.alpha is not None:
+            # Compare losses, not magnitudes: near unity a ratio of |S21| is
+            # 1.0 to every digit the fit can resolve, while the losses behind
+            # it differ by tens of per cent.
+            fitted_loss = 1.0 - float(np.exp(-lf.alpha * float(lf.span)))
+            two_alpha = (lf2.alpha if lf2 is not None and lf2.alpha is not None
+                         else None)
+            two_bit = (
+                "" if two_alpha is None else
+                f" (the two-wave alpha, {db_per_mm(two_alpha):.5f} dB/mm, "
+                f"{100.0 * (1.0 - float(np.exp(-two_alpha * float(lf2.span)))):.3f} "
+                f"% over the same span, "
+                f"{(1.0 - float(np.exp(-two_alpha * float(lf2.span)))) / leak_loss:.2f} "
+                "times the leaked rate)")
+            comparison = (
+                f"In loss, not magnitude: the per-unit-length rate above puts "
+                f"{100.0 * leak_loss:.3f} % below unity over the "
+                f"{audit_length * 1e3:.2f} mm, against "
+                f"{100.0 * fitted_loss:.3f} % from exp(-alpha L) above, so "
+                f"the fitted decay reads {fitted_loss / leak_loss:.2f} times "
+                f"the rate the lateral walls actually removed{two_bit}. ")
+            measured = (float(abs(result.s21))
+                        if np.isfinite(result.s21) else None)
+            if measured is not None and 0.0 < measured < 1.0:
+                measured_loss = 1.0 - measured
+                alpha_measured = -float(np.log(measured)) / audit_length
+                comparison += (
+                    f"The direct measurement sides with the accounting, not "
+                    f"with the fit: the station-plane |S21| row is "
+                    f"{100.0 * measured_loss:.3f} % below unity, an effective "
+                    f"{alpha_measured:.4f} Np/m = "
+                    f"{db_per_mm(alpha_measured):.5f} dB/mm, "
+                    f"{abs(100.0 * (leak_loss / measured_loss - 1.0)):.1f} % "
+                    f"from the leaked rate. This row therefore believes the "
+                    f"per-unit-length rate: of the three it is the only one "
+                    f"that both counts joules and agrees with the amplitude "
+                    f"ratio, whereas a decay "
+                    f"{fitted_loss / leak_loss:.2f} times faster would have "
+                    f"to be paid for by lateral work this account does not "
+                    f"see -- and it sees {lateral_pct:.3f} % of the injected "
+                    f"power, with the end walls taking the rest. ")
+            else:
+                comparison += (
+                    "This row believes the per-unit-length rate: it is the "
+                    "only one here that turns work into an attenuation "
+                    "constant rather than charging a whole wall to part of "
+                    "the line. ")
+        else:
+            comparison = "No fitted alpha to compare it with"
+        s21_audit_row = basis + per_length + comparison
+
     # The station impedance the loss affects: with alpha in the propagation
     # constant the voltage and current waves no longer keep their relative
     # phase along the span, and the lossless fit has to absorb that somewhere.
@@ -2244,8 +2428,16 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                                " (diagnostic: the model is quasi-static, so "
                                "this compares two different problems)"
                                if result.beta_model else "n/a"),
-        "eps_eff": f"{result.eps_eff:.5f}",
-        "eps_eff (Hammerstad-Jensen)": f"{result.eps_eff_model:.5f}",
+        "eps_eff": (
+            f"{result.eps_eff:.5f} (from this run's beta; the closed form it "
+            f"is compared with is evaluated at w/h = {g['w'] * 1e3:.2f}/"
+            f"{g['h'] * 1e3:.2f} mm = {g['w'] / g['h']:.3f} and eps_r = "
+            f"{g['eps_r']:g}, and eps_eff falls as w/h rises at fixed h, so a "
+            "thinner substrate at fixed w raises it and lowers Z0)"),
+        "eps_eff (Hammerstad-Jensen)": (
+            f"{result.eps_eff_model:.5f} (closed form at w/h = "
+            f"{g['w'] * 1e3:.2f}/{g['h'] * 1e3:.2f} mm = {g['w'] / g['h']:.3f} "
+            f"and eps_r = {g['eps_r']:g})"),
         "port Z, modulus": f"{abs(result.z0):.3f} ohm",
         "port Z, phase": (f"{np.degrees(np.angle(result.z0)):.3f} deg "
                           "(excess phase, trace-current reference)"),
@@ -2302,6 +2494,7 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "|S21| between station planes": s21_row,
         "G1 (|S21| within 1 % of unity)": s21_unity_row,
         "|S21| from the fitted alpha": s21_loss_row,
+        "|S21| implied by the absorbed work": s21_audit_row,
         "line Z0 with loss, real part": lossy_z0_row,
         "ground current, full domain": f"{abs(result.i_ground_full):.6e} A",
         "ground current, strip extent": f"{abs(result.i_ground_truncated):.6e} A",

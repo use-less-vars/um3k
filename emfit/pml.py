@@ -112,7 +112,7 @@ import numpy as np
 from .materials import EPS0, ETA0, MU0
 from .operators import CellComplex
 
-__all__ = ["PML", "AXES", "cells_for_wavelength"]
+__all__ = ["PML", "AbsorbedWork", "AXES", "cells_for_wavelength"]
 
 #: the three index axes, in the order the flat edge/face vectors use
 AXES = ("x", "y", "z")
@@ -206,6 +206,197 @@ def _blocks(cc, kind: str):
 
 
 # ----------------------------------------------------------------------
+# where the absorbed energy went
+# ----------------------------------------------------------------------
+class AbsorbedWork:
+    """Opt-in accounting of the energy a :class:`PML` removes, by wall group.
+
+    A matched layer that is doing its job removes a little of the guided field
+    every step.  This class adds those removals up and bins them, so a run can
+    say *where* the power it loses actually goes -- the termination at the far
+    end of a line, or the lateral walls it was never meant to touch -- instead
+    of only that a fitted decay exists.
+
+    What is counted
+    ---------------
+    The damping is a multiplicative decay of the already-updated field,
+    ``e <- f e``, so the electric energy it takes out of one entry in a step is
+    exactly
+
+        w = 1/2 m_eps e^2 (1 - f^2)      [J]
+
+    with ``m_eps`` the same diagonal material matrix the stepper uses (so the
+    sum over entries is the change in ``1/2 e.m_eps.e``, not a density).  The
+    faces get the identical expression with ``m_mu`` and the ``h`` multiplier.
+    Nothing is divided by ``f`` and the field is read *before* the multiplier
+    is applied, so the count is exact in the discrete quadratic form and cannot
+    be distorted by a small ``f``.
+
+    At a corner a cell carries the *sum* of two 1-D layers, and one product
+    ``1 - f^2`` cannot be attributed to either of them.  It is split by rate,
+    ``sigma_wall / sigma_total``, which is exact in the continuum limit and
+    keeps the bins summing to the total removed work to round-off either way.
+
+    How it is binned
+    ----------------
+    ``groups`` maps a name to the walls that group owns, e.g.
+    ``{"end": ("xmin", "xmax"), "lateral": ("ymin", "ymax", "zmax")}``.
+    ``None`` (default) makes one group per axis the layer is open on.  A wall
+    the layer does not open contributes exactly zero, which is how a group that
+    is switched off reads: not "nearly nothing" but ``0.0``.
+
+    Cost, and why it is off by default
+    ----------------------------------
+    With no audit attached ``damp_e``/``damp_h`` take no extra branch, allocate
+    nothing and are bit-identical to the layer without this class.  With one
+    attached, each ``damp_*`` costs one gather and one dot product per group
+    over the entries of that group -- a few thousand doubles on a small grid.
+    The weight vectors are built once per ``dt`` and reused, so no per-step
+    preparation is done in the time loop.
+
+    Reset it to accumulate a window rather than the whole run: ``active``
+    turned off records nothing, and :meth:`reset` zeroes the bins, which is how
+    a caller accumulates only the settled part of a record.
+
+    Attributes
+    ----------
+    work : dict
+        ``{kind: {group: joules}}`` with ``kind`` in ``("e", "h")``.
+    steps : int
+        Number of ``dt`` intervals recorded (zero while inactive).
+    active : bool
+        Whether :meth:`record` accumulates.
+    """
+
+    def __init__(self, groups=None, active: bool = True):
+        self.groups = (None if groups is None else
+                       {str(name): _wall_names(walls)
+                        for name, walls in dict(groups).items()})
+        if self.groups is not None and not self.groups:
+            raise ValueError("groups is empty: no group would be counted")
+        self.active = bool(active)
+        self.steps = 0
+        self.work = {"e": {}, "h": {}}
+        self._pml = None
+        self._m = {"e": None, "h": None}
+        self._dt = None
+        self._weights = None
+
+    # ------------------------------------------------------------------
+    def attach(self, pml) -> "AbsorbedWork":
+        """Bind to ``pml`` and finish the bounds of the bins.
+
+        Called by the layer itself, so a caller only has to hand the object to
+        ``PML(audit=...)``.  With no ``groups`` given the bins become one per
+        axis the layer actually opens.
+        """
+        self._pml = pml
+        if self.groups is None:
+            self.groups = {axis: pml.walls_for(axis) for axis in pml.axes}
+        self.reset()
+        return self
+
+    def bind_materials(self, m_eps, m_mu) -> "AbsorbedWork":
+        """Bind the diagonal material matrices the weights are built from.
+
+        They live on the stepper, not on the layer, so this cannot happen at
+        construction: the field the layer damps is the one the stepper's own
+        ``m_eps``/``m_mu`` priced.
+        """
+        self._m = {"e": np.asarray(m_eps, dtype=float).ravel(),
+                   "h": np.asarray(m_mu, dtype=float).ravel()}
+        self._weights = None
+        return self
+
+    def reset(self) -> "AbsorbedWork":
+        """Zero the bins and the step count, keeping the bindings."""
+        names = () if self.groups is None else tuple(self.groups)
+        self.work = {"e": dict.fromkeys(names, 0.0),
+                     "h": dict.fromkeys(names, 0.0)}
+        self.steps = 0
+        return self
+
+    # ------------------------------------------------------------------
+    def _build(self, dt: float) -> None:
+        """Weight vectors: joules removed per unit field squared, per entry."""
+        pml = self._pml
+        if pml is None:
+            raise RuntimeError("the audit is not attached to a PML yet")
+        if self._m["e"] is None or self._m["h"] is None:
+            raise RuntimeError(
+                "the audit has no material matrices: call bind_materials() "
+                "with the stepper's m_eps and m_mu (FITStepper does this)")
+        f_e, f_h = pml.multipliers(dt)
+        weights = {"e": {}, "h": {}}
+        # ``sigma_e`` is ``sigma`` on the edges; ``sigma_m`` is the same profile
+        # on the faces scaled by ``mu0/eps0``, while ``sigma_for_walls`` returns
+        # the unscaled profile, so the face share has to undo that factor.
+        for kind, f, sigma, sampling, scale in (
+                ("e", f_e, pml.sigma_e, "e", 1.0),
+                ("h", f_h, pml.sigma_m, "f", MU0 / EPS0)):
+            m = self._m[kind]
+            if m.size != f.size:
+                raise ValueError(
+                    f"m_{'eps' if kind == 'e' else 'mu'} has {m.size} entries, "
+                    f"the layer's {kind} multiplier has {f.size}")
+            live = sigma > 0.0
+            base = 0.5 * m * (1.0 - f * f)
+            for name, walls in self.groups.items():
+                share = np.zeros(sigma.size, dtype=float)
+                np.divide(scale * pml.sigma_for_walls(walls, kind=sampling),
+                          sigma, out=share, where=live)
+                w = base * share
+                idx = np.flatnonzero(w)
+                weights[kind][name] = (idx, w[idx])
+        self._weights = weights
+        self._dt = float(dt)
+
+    def record(self, kind: str, field, dt: float, pml) -> None:
+        """Accumulate the work ``pml`` is about to remove from ``field``.
+
+        Called from ``damp_e``/``damp_h`` *before* the multiplier is applied;
+        the layer's own ``multipliers(dt)`` call has already cached ``f``, so
+        the weights only have to be rebuilt when ``dt`` changes.
+        """
+        if not self.active:
+            return
+        if self._pml is None:
+            self.attach(pml)
+        if self._weights is None or float(dt) != self._dt:
+            self._build(float(dt))
+        field = np.asarray(field, dtype=float)
+        bins = self.work[kind]
+        for name, (idx, w) in self._weights[kind].items():
+            values = field[idx]
+            bins[name] = bins.get(name, 0.0) + float(w @ (values * values))
+        if kind == "e":
+            self.steps += 1
+
+    # ------------------------------------------------------------------
+    def total(self, name: str) -> float:
+        """Joules removed by one group, both fields together."""
+        return float(self.work["e"].get(name, 0.0)
+                     + self.work["h"].get(name, 0.0))
+
+    def total_work(self) -> float:
+        """Joules removed by the whole layer, all groups together."""
+        return float(sum(self.total(name) for name in self.work["e"]))
+
+    def fractions(self) -> dict:
+        """``{group: share of the removed work}``; all zeros if none removed."""
+        total = self.total_work()
+        names = tuple(self.work["e"])
+        if total <= 0.0:
+            return dict.fromkeys(names, 0.0)
+        return {name: self.total(name) / total for name in names}
+
+    def __repr__(self):  # pragma: no cover - cosmetic
+        parts = ", ".join(f"{name}: {self.total(name):.4g} J"
+                          for name in self.work["e"])
+        return f"AbsorbedWork(steps={self.steps}, {parts})"
+
+
+# ----------------------------------------------------------------------
 # the layer
 # ----------------------------------------------------------------------
 class PML:
@@ -244,6 +435,12 @@ class PML:
         replaced, see ``walls``) when ``walls`` is given.
     cc : emfit.operators.CellComplex, optional
         Cell complex of ``grid``, built on demand if omitted.
+    audit : emfit.pml.AbsorbedWork, optional
+        Opt-in accounting of the energy the layer removes, binned by wall
+        group (default ``None``: no bookkeeping, and the damping loop is
+        unchanged to the bit).  See :class:`AbsorbedWork`; the stepper binds
+        the material matrices for it, so this needs nothing else from the
+        caller.
     walls : sequence of str, optional
         Which of the six walls get a layer, a subset of ``("xmin", "xmax",
         "ymin", "ymax", "zmin", "zmax")`` -- the same spelling
@@ -276,7 +473,8 @@ class PML:
     """
 
     def __init__(self, grid, thickness_cells: int = 20, order: int = 2,
-                 target: float = 1e-4, axes=("x", "y"), cc=None, walls=None):
+                 target: float = 1e-4, axes=("x", "y"), cc=None, walls=None,
+                 audit=None):
         self.grid = grid
         self.cc = CellComplex(grid) if cc is None else cc
         self.thickness_cells = int(thickness_cells)
@@ -342,6 +540,11 @@ class PML:
         self._last_dt = None
         self._multipliers = None
 
+        # Off by default: ``None`` leaves the damping loop exactly as it was.
+        self._audit = audit
+        if audit is not None:
+            audit.attach(self)
+
     # ------------------------------------------------------------------
     # the 1-D profile and the two samplings
     # ------------------------------------------------------------------
@@ -389,22 +592,29 @@ class PML:
             return np.where(position <= mid, values, 0.0)
         return np.where(position > mid, values, 0.0)
 
-    def _sigma_block(self, axis: str, along_mid: bool) -> np.ndarray:
-        """Sum of the active 1-D profiles on one edge/face block."""
+    def _sigma_block(self, axis: str, along_mid: bool, walls=None) -> np.ndarray:
+        """Sum of the active 1-D profiles on one edge/face block.
+
+        ``walls`` (default ``None``) restricts the sum to those walls, which is
+        what :meth:`sigma_for_walls` needs to price one wall group against the
+        others; ``None`` is the total layer conductivity, bit for bit.
+        """
         coords = _coordinates(self.grid, axis, along_mid)
         total = np.zeros(coords[0].shape, dtype=float)
         for name, pos in zip(AXES, coords):
-            walls = self.walls_for(name)
-            if not walls:
+            ends = self.walls_for(name)
+            if walls is not None:
+                ends = tuple(w for w in ends if w in walls)
+            if not ends:
                 continue
-            total = total + self._wall_profile(name, pos, walls)
+            total = total + self._wall_profile(name, pos, ends)
         return total.ravel()
 
-    def _sigma(self, kind: str, along_mid: bool) -> np.ndarray:
+    def _sigma(self, kind: str, along_mid: bool, walls=None) -> np.ndarray:
         n = self.cc.n_edges if kind == "e" else self.cc.n_faces
         out = np.zeros(n, dtype=float)
         for axis, off, count in _blocks(self.cc, kind):
-            values = self._sigma_block(axis, along_mid)
+            values = self._sigma_block(axis, along_mid, walls)
             if values.size != count:
                 raise RuntimeError(          # pragma: no cover - layout guard
                     f"{kind}-block {axis}: sampled {values.size} values, "
@@ -419,6 +629,32 @@ class PML:
     def _sigma_faces(self) -> np.ndarray:
         """``sigma_e`` sampled on the primal faces (faces are at nodes along)."""
         return self._sigma("f", along_mid=False)
+
+    def sigma_for_walls(self, walls, kind: str = "e") -> np.ndarray:
+        """``sigma_e`` of just ``walls``, sampled like ``sigma_e``/``sigma_m``.
+
+        ``kind="e"`` samples the primal edges, ``"f"`` the primal faces with
+        their own staggering -- the same two samplings the layer itself uses,
+        so a set of wall groups sums to ``sigma_e`` (or to
+        ``sigma_m * eps0 / mu0``) exactly.
+
+        A wall this layer does not open contributes nothing, which is what lets
+        a caller ask for a group that is switched off and get exactly zero
+        rather than an error.
+        """
+        names = _wall_names(walls)
+        if kind not in ("e", "f"):
+            raise ValueError(f"kind must be 'e' or 'f', got {kind!r}")
+        n = self.cc.n_edges if kind == "e" else self.cc.n_faces
+        out = np.zeros(n, dtype=float)
+        for axis, off, count in _blocks(self.cc, kind):
+            values = self._sigma_block(axis, kind == "e", names)
+            if values.size != count:
+                raise RuntimeError(          # pragma: no cover - layout guard
+                    f"{kind}-block {axis}: sampled {values.size} values, "
+                    f"expected {count}")
+            out[off:off + count] = values
+        return out
 
     # ------------------------------------------------------------------
     # multipliers
@@ -479,7 +715,10 @@ class PML:
     # ------------------------------------------------------------------
     def damp_e(self, e, dt: float = None, inplace: bool = True):
         """Apply the edge multiplier to ``e`` (``e`` at time ``n+1``)."""
-        f = self.multipliers(self._dt(dt))[0]
+        dt = self._dt(dt)
+        f = self.multipliers(dt)[0]
+        if self._audit is not None:
+            self._audit.record("e", e, dt, self)
         if not inplace:
             return np.asarray(e, dtype=float) * f
         e *= f
@@ -487,7 +726,10 @@ class PML:
 
     def damp_h(self, h, dt: float = None, inplace: bool = True):
         """Apply the face multiplier to ``h`` (``h`` at time ``n+1/2``)."""
-        f = self.multipliers(self._dt(dt))[1]
+        dt = self._dt(dt)
+        f = self.multipliers(dt)[1]
+        if self._audit is not None:
+            self._audit.record("h", h, dt, self)
         if not inplace:
             return np.asarray(h, dtype=float) * f
         h *= f
