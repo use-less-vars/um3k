@@ -99,6 +99,22 @@ KINDS = ("int", "float", "choice", "bool")
 """Accepted values of :attr:`Param.kind`."""
 
 
+NO_LOADED_IMPEDANCE = (
+    "n/a: no impedance is quoted on this record -- it carried a load and no "
+    "reference, and the station fit that would supply one assumes one onward "
+    "wave at the stations either side of the load, which is the continuity the "
+    "cut breaks")
+"""Refusal printed in place of a station impedance on a loaded, unreferenced
+record.  The magnitude of ``s21`` survives that record; the impedance does not."""
+
+NO_LOADED_BETA = (
+    "n/a: no eps_eff is quoted on this record -- it comes from this run's own "
+    "fitted beta, and a loaded record's beta is not the line's: that fit spans "
+    "the cut on the assumption of one onward wave at the stations either side "
+    "of it")
+"""Refusal printed in place of ``eps_eff`` on a loaded, unreferenced record."""
+
+
 # ---------------------------------------------------------------------------
 # declaration
 # ---------------------------------------------------------------------------
@@ -1410,9 +1426,23 @@ class MicrostripWave:
             ``False`` means one of them was refused, ``station_fit_lossy`` is
             ``None`` rather than half filled (``station_fit`` too, when it was
             the loss-free one that went), and the reason was raised as a
-            single ``RuntimeWarning`` at the time.  It says nothing about the
-            rest of the record: ``beta``, ``s21`` and the S-parameters are
-            measured before these fits and do not depend on them.
+            single ``RuntimeWarning`` at the time.  ``beta`` does not depend on
+            them, but ``s21`` does take the ``zc`` its split needs from the
+            loss-free fit's ``z0``: when that fit is missing the ``zc`` comes
+            from the ``reference`` instead, and a run with neither refuses
+            rather than quoting a split it cannot make.
+        loaded_without_reference: ``True`` when this record carried a lumped
+            load but no ``reference`` to normalise ``s21`` against -- a flag,
+            not a number.  A loaded record's own two-wave fit is not a
+            description of the line, because the stations straddle the cut and
+            the fit assumes the continuity the load breaks, so its ``Zc`` is
+            not the impedance the mode has and ``Zc`` has to come from a
+            load-free run on the same mesh.  The magnitude of ``s21`` is still
+            reported, since it needs only ``zc`` and the two station phasors,
+            but the metrics recover no impedance from it and say why, and on
+            this path that magnitude reads about 3 per cent low (0.533392
+            against 0.549464 on the 100 ohm series load), so a default-path
+            load is a magnitude record and never an impedance.
         gamma_port: ``station_fit.gamma_v`` moved from its reference plane to
             the port plane with :func:`emfit.ports.deembed_reflection`
             (dimensionless, complex).  With a real ``beta`` its magnitude is
@@ -1422,15 +1452,19 @@ class MicrostripWave:
             ``station_x[0] - ix_port * cell`` [m].
         s21: Transmission coefficient from the first station plane to the
             last, de-embedded with :func:`emfit.ports.deembed_transmission`
-            (dimensionless, complex).  The two halves of the station span are
-            fitted separately, two waves each and the stations of a half
-            shifted onto that half's own plane, so the fitted forward
-            amplitude is the travelling wave *at* the plane and the ratio of
-            the two is what crossed the gap between them.  ``beta`` is real, so
-            the de-embedding has unit modulus: this is a pure amplitude ratio
-            and the factor only fixes its phase.  The solver has no loss model,
-            so a departure from ``1`` is the two fits disagreeing, not
-            attenuation.  A run given a ``reference`` (:class:`LineReference`)
+            (dimensionless, complex).  No fit stands in it: the forward wave is
+            taken from the algebra that splits ``v`` and ``i`` with the run's
+            own measured ``zc``, on one plane at each end of the span, so the
+            cut between them is measured rather than averaged into a fit's
+            model.  ``beta`` is real, so the de-embedding has unit modulus:
+            this is the amplitude ratio across the span and the factor only
+            fixes its phase.  The solver has no loss model, so on a load-free
+            record a departure from ``1`` is power leaving the guided mode for
+            the matched layers, which the metrics measure a second way as
+            ``exp(-alpha L)``.  On a loaded record with no ``reference`` the
+            magnitude stands but nothing may be recovered from it: see
+            ``loaded_without_reference``.  A run given a ``reference``
+            (:class:`LineReference`)
             reports here the ratio of the forward amplitudes across the same
             two planes divided by that of the load-free line -- the delay and
             the loss of the line, and any error ``gamma`` and ``zc`` share
@@ -1500,10 +1534,23 @@ class MicrostripWave:
     slice_ez: np.ndarray | None
     power_balance: dict | None = None
     station_fit_ok: bool = True
+    loaded_without_reference: bool = False
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
         g = self.geometry
+        # A loaded record with no reference has no line constant to quote: its
+        # beta and its station fit span the cut, so they carry the load as well
+        # as the line.  These fields say ``n/a`` here rather than smuggle a
+        # number past a report that states the refusal in words.
+        if self.loaded_without_reference:
+            eps_eff_txt = "n/a"
+            z0_modulus = z0_phase = z0_real = "n/a"
+        else:
+            eps_eff_txt = f"{self.eps_eff:.5f}"
+            z0_modulus = f"{abs(self.z0):.4f}ohm"
+            z0_phase = f"{np.degrees(np.angle(self.z0)):.4f}deg"
+            z0_real = f"{self.z0.real:.4f}ohm"
         line = (
             f"microstrip f={g['f'] / 1e9:.4f}GHz"
             f" f_target={g['f_target'] / 1e9:.4f}GHz"
@@ -1511,10 +1558,10 @@ class MicrostripWave:
             f" cell={g['cell'] * 1e3:.4f}mm nsteps={g['nsteps']}"
             f" n_warm={g['n_warm']}"
             f" beta={self.beta:.4f}rad/m beta_model={self.beta_model:.4f}rad/m"
-            f" eps_eff={self.eps_eff:.5f} eps_eff_model={self.eps_eff_model:.5f}"
-            f" |z0|={abs(self.z0):.4f}ohm"
-            f" arg_z0={np.degrees(np.angle(self.z0)):.4f}deg"
-            f" Re_z0={self.z0.real:.4f}ohm"
+            f" eps_eff={eps_eff_txt} eps_eff_model={self.eps_eff_model:.5f}"
+            f" |z0|={z0_modulus}"
+            f" arg_z0={z0_phase}"
+            f" Re_z0={z0_real}"
             f" z0_model={self.z0_model:.4f}ohm"
             f" i_ground_full={abs(self.i_ground_full):.6e}A"
             f" i_ground_truncated={abs(self.i_ground_truncated):.6e}A"
@@ -1798,8 +1845,12 @@ def microstrip_wave(
         loads: Lumped loads placed on the strip's ``E_z`` edges; see
             :func:`emfit.evolve.add_load` for what each of them is.
         reference: A :class:`LineReference` -- a load-free run of the same line
-            -- to normalise ``s21`` against.  ``None`` (the default) keeps the
-            historical two-half-fit ratio.  When one is given, ``s21`` becomes
+            -- to normalise ``s21`` against.  ``None`` (the default) reports the
+            run's own ratio across the station span, one plane at each end and
+            no fit between them, which is the whole of what a load-free record
+            needs; a loaded record without one reports that ratio as a
+            magnitude and recovers no impedance from it (see
+            ``loaded_without_reference``).  When one is given, ``s21`` becomes
             the loaded run's forward-amplitude ratio across the station span
             divided by the reference's on the same planes, so the line's own
             delay and attenuation divide out exactly and only the load is
@@ -2060,13 +2111,16 @@ def microstrip_wave(
     # beta +- sigma_beta rather than by a derivative.
     sigma_beta = sigma_beta_from_curvature(station_x, v_stations, beta)
 
-    # A diagnostic must not be able to take the run down with it.  By this
-    # point ``beta``, ``s21`` and every S-parameter are already measured, and a
-    # station-impedance fit is an addition on top of them; on a strongly
-    # reflecting line the phase constant's own standard error can come back as
-    # large as the phase constant itself, and ``fit_station_impedance`` refuses
-    # such a beta outright (``ValueError``) rather than quoting a number built
-    # from a trial at ``beta - sigma_beta < 0``.  Catch that refusal at both
+    # A diagnostic must not be able to take the run down with it.  ``beta`` is
+    # already measured by this point, and a station-impedance fit is an
+    # addition on top of it -- except that the transmission split below takes
+    # its ``zc`` from this fit, so a record that loses it falls back to a
+    # ``reference`` and, with neither, refuses where the split is made.  On a
+    # strongly reflecting line the phase constant's own standard error can come
+    # back as large as the phase constant itself, and
+    # ``fit_station_impedance`` refuses such a beta outright (``ValueError``)
+    # rather than quoting a number built from a trial at
+    # ``beta - sigma_beta < 0``.  Catch that refusal at both
     # fit sites -- the loss-free one here, the loss-aware one below -- keep the
     # degraded field empty instead of half filled, and say what happened once
     # and not twice: a run that lost a diagnostic should not read like a run
@@ -2085,9 +2139,11 @@ def microstrip_wave(
             "reported as unavailable (station_fit_ok is False).  It needs the "
             "phase constant's own standard error to be smaller than the "
             "phase constant, which a strongly reflecting line can put out of "
-            "reach; the fit is skipped rather than quoted.  This affects that "
-            "one diagnostic only: the S-parameters, beta, s21 and every other "
-            "number this run reports are unaffected.",
+            "reach; the fit is skipped rather than quoted.  This touches that "
+            "one diagnostic and one thing besides: the zc the transmission "
+            "split needs, which now comes from reference=... when one was "
+            "given and otherwise stops the run with this same reason.  Every "
+            "other number -- beta, the phases, the powers -- is unaffected.",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -2204,19 +2260,49 @@ def microstrip_wave(
             f"{abs(gamma_port)!r} against {abs(gamma_measured)!r}")
 
     # --- |S21|: what crossed the station span ------------------------------
-    # A transmission coefficient needs two planes and a wave that crosses the
-    # gap between them, so the stations are split in half and each half is
-    # fitted on its own, shifted onto that half's plane: the fit's forward
-    # amplitude is then the travelling wave *at* the plane, and the ratio of
-    # the two amplitudes is what arrived at the far plane for what left the
-    # near one.  Two waves per half and not one, because the termination's
-    # reflection has to be projected out of the amplitude rather than carried
-    # in it.  ``beta`` is real, so the de-embedding has unit modulus and this
-    # stays a pure amplitude ratio; a run with no loss model should come back
-    # at 1, and any distance from it is the two fits disagreeing.  A caller who
-    # supplies a ``reference`` gets the ratio of ratios instead, which is exact
-    # where these fits are not: see :class:`LineReference`.
+    # A transmission coefficient needs two planes, and one station on each is
+    # enough: on a uniform line the split into two travelling waves is exact
+    # algebra, so the only unknowns a fit over a span could ever supply are
+    # ``gamma`` and ``zc``.  Each of the two planes is therefore split on its
+    # own -- see :func:`forward_wave_amplitude` -- and the ratio of the two
+    # forward amplitudes is what arrived at the far plane for what left the
+    # near one.  Two waves and not one, because the termination's reflection
+    # has to be projected out of the amplitude rather than carried in it.
+    #
+    # No fit is the point.  A fit averages the field over the stations it is
+    # given, so a discontinuity reads as a smeared step and a load sitting
+    # between two stations reads as a fraction of itself; split on one plane,
+    # the cut is measured rather than fitted.  ``gamma = 1j * beta`` with
+    # ``beta`` real makes the propagation factor a pure rotation, so the
+    # amplitude ratio carries the whole of the decay and the de-embedding
+    # carries the delay only.  A caller who supplies a ``reference`` gets the
+    # ratio of ratios instead, which removes ``beta`` and ``zc`` with it: see
+    # :class:`LineReference`.
+    #
+    # ``zc`` for that split: the fit's own z0 when there is one, the
+    # reference's when the fit was refused, and a refusal of our own when
+    # neither exists.  The reference is exactly the right substitute -- it is
+    # the same line, load-free, so its zc is the impedance this record's mode
+    # has -- and without one there is nothing to measure the amplitude against.
+    # The power-current check below takes the same number, for the same reason.
+    if station_fit is not None:
+        zc = complex(station_fit.z0)
+    elif reference is not None:
+        zc = complex(reference.zc)
+    else:
+        raise ValueError(
+            "no station-impedance fit was formed on this record "
+            f"({type(station_fit_error).__name__}: {station_fit_error}), so "
+            "neither the split nor the power-current check has a zc to "
+            "measure against.  Run it with reference=..., which takes zc "
+            "from a load-free run of the same line; a record whose phase "
+            "constant carries a standard error as large as itself cannot "
+            "supply one of its own.")
     s21_planes = (float(station_x[0]), float(station_x[-1]))
+    # A load with no reference: the metrics report the magnitude of ``s21`` and
+    # derive no impedance from it, because the record's own station fit believes
+    # in a continuity the cut breaks.  See the field of that name.
+    loaded_without_reference = bool(loads_used) and reference is None
     s21 = raw_s21 = complex(np.nan, np.nan)
     if reference is not None:
         # Ratio of ratios, and the only thing here that needs no trust in
@@ -2234,39 +2320,26 @@ def microstrip_wave(
             if a1 != 0.0:
                 raw_s21 = complex(a2) / complex(a1)
                 s21 = raw_s21 / reference_ratio
-    else:
-        half = (station_x.size + 1) // 2
-        if half >= 4 and np.any(v_stations):    # a two-wave fit needs four
-            a1 = fit_beta(station_x[:half] - s21_planes[0],
-                          v_stations[:half], n_wave=2).forward
-            a2 = fit_beta(station_x[-half:] - s21_planes[1],
-                          v_stations[-half:], n_wave=2).forward
-            if a1 != 0.0:
-                s21, raw_s21 = line_s21(a1, s21_planes[0], a2, s21_planes[1],
-                                        beta)
+    elif np.any(v_stations):
+        # One plane at each end, the run's own measured ``zc`` chosen above and
+        # its own measured ``beta`` for the delay, and no fit anywhere.  The
+        # split is taken on each station's own phasors -- ``gamma = 0``, so
+        # nothing is propagated yet -- which leaves the whole of the decay in
+        # the ratio; :func:`line_s21` then takes the line's own delay out of it
+        # with the measured ``beta``.
+        a1, a2 = forward_wave_amplitude(
+            v_stations, i_stations, station_x, 0j, zc, indices=[0, -1])
+        if a1 != 0.0:
+            s21, raw_s21 = line_s21(a1, s21_planes[0], a2, s21_planes[1],
+                                    beta)
 
     # --- are the two phasors one mode?  The power-current check -------------
     # Cheap, assumption-free, and the only thing that can license a Poynting
     # vector later: for one travelling wave the power and the current at a
     # station imply the same impedance the fit does.  The port plane is checked
     # too, with the port current negated onto the forward sense like ``z0``.
-    # ``zc`` for the power-current check: the fit's own z0 when there is one,
-    # the reference's when the fit was refused, and a refusal of our own when
-    # neither exists.  The reference is exactly the right substitute -- it is
-    # the same line, load-free, so its zc is the impedance this record's mode
-    # has -- and without one there is nothing to measure the ratio against.
-    if station_fit is not None:
-        zc = complex(station_fit.z0)
-    elif reference is not None:
-        zc = complex(reference.zc)
-    else:
-        raise ValueError(
-            "no station-impedance fit was formed on this record "
-            f"({type(station_fit_error).__name__}: {station_fit_error}), so "
-            "the power-current check has no zc to measure against.  Run it "
-            "with reference=..., which takes zc from a load-free run of the "
-            "same line; a record whose phase constant carries a standard "
-            "error as large as itself cannot supply one of its own.")
+    # ``zc`` was chosen above, where the split needed it: one property of the
+    # mode serves both, and it is the same number the split used.
     z0_power, power_ratio = power_current_check(v_stations, i_stations, zc)
     z0_power_port, power_ratio_port = power_current_check(
         np.array([v_port]), np.array([-i_trunc]), z0)
@@ -2408,6 +2481,7 @@ def microstrip_wave(
         slice_ez=slice_ez,
         power_balance=power_balance,
         station_fit_ok=station_fit_ok,
+        loaded_without_reference=loaded_without_reference,
     )
 
 
@@ -2487,7 +2561,8 @@ def microstrip_wave_board(
         reference: A :class:`LineReference` of the same coupon with no load,
             passed straight through to :func:`microstrip_wave`, which
             normalises ``s21`` against it.  ``None`` (the default) reports the
-            un-normalised two-half-fit ratio.
+            un-normalised station-plane ratio, which for a loaded record is a
+            magnitude with no impedance behind it.
         sink: Where to put the figure; ``None`` (the default) draws nothing.
 
     The spec's ``loads`` are passed straight through: a
@@ -2610,34 +2685,71 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     else:
         bound_row = "n/a: no station carried a current to compare"
 
-    # |S21| needs two planes and the row has to say which two.  ``beta`` is
-    # real, so the number is a pure amplitude ratio; only its phase moved in
-    # the de-embedding, and a run with no loss model should read 1.
+    # |S21| needs two planes and the row has to say which two.  Each plane is
+    # split on its own station's phasors with the run's measured ``zc``, so no
+    # fit stands between them, and the de-embedding with the measured ``beta``
+    # can only move the phase: the magnitude is an amplitude ratio, decay and
+    # all.
+    #
+    # A load with no ``reference`` is the one case where the number must come
+    # with a refusal attached: the split takes its ``zc`` from the record's own
+    # station fit, and that fit believes in one onward wave at every station,
+    # which is exactly what the cut breaks.  The magnitude is still a
+    # measurement of the two planes; an impedance read out of its phase is not,
+    # and the row says so instead of quoting one.
     s21_db = decibel(abs(result.s21))
     x1, x2 = result.s21_planes
     if s21_db is not None:
         departure = abs(result.s21) - 1.0
-        s21_row = (
-            f"{abs(result.s21):.6f} = {s21_db:.3f} dB between x = "
-            f"{x1 * 1e3:.2f} mm and x = {x2 * 1e3:.2f} mm, "
-            f"{(x2 - x1) * 1e3:.2f} mm apart: the forward amplitudes of two "
-            "half fits, two waves each and the stations shifted onto that "
-            "half's own plane, divided and then de-embedded with the one-wave "
-            f"beta, {result.beta:.3f} rad/m.  It is a pure amplitude ratio: "
-            "beta is real, so the factor has unit modulus and all it takes out "
-            "is the line's own delay exp(-1j beta d)")
-        s21_unity_row = (
-            f"{100.0 * departure:+.3f} % from unity, "
-            + ("inside" if abs(departure) < 0.01 else "outside")
-            + " the 1 per cent a transmitting length is asked for.  The "
-            "difference is real and not fit noise: the raw |V| envelope falls "
-            "3.0 % across the span, further than this only because the "
-            "standing wave |gamma| puts on it rides along, and each half fit "
-            "is good to 1.4e-3.  With no ohmic loss in the solver, a decay "
-            "this size is power leaving the guided mode for the surrounding "
-            "matched layers, and this is the only row where that shows")
+        if result.loaded_without_reference:
+            s21_row = (
+                f"{abs(result.s21):.6f} = {s21_db:.3f} dB between x = "
+                f"{x1 * 1e3:.2f} mm and x = {x2 * 1e3:.2f} mm, "
+                f"{(x2 - x1) * 1e3:.2f} mm apart: one plane at each end, its "
+                "forward wave taken from the algebra that splits v and i with "
+                "the run's own zc, and the two divided, so no fit stands "
+                "between the planes and this magnitude is measured.  There is "
+                "no impedance to be read out of it.  This record carried "
+                "a load, the load sits between the two planes, and every "
+                "station-impedance fit on the record -- the one whose z0 the "
+                "split took its zc from included -- assumes one onward "
+                "travelling wave at all the stations, which is the continuity "
+                "the cut breaks.  The load needs a normalisation this run did "
+                "not carry: run the same mesh with no load, hand that record "
+                "to reference=, and the line divides itself out of the delay "
+                "and the loss alike")
+            s21_unity_row = (
+                f"{100.0 * departure:+.3f} % from unity is the load and the "
+                "line together, and this run cannot say which is which: some "
+                "of it is power the load took, some is power the surrounding "
+                "matched layers took, and separating the two takes the "
+                "load-free reference.  The exp(-alpha L) row below is fitted "
+                "across the same span with the load inside it, so it inherits "
+                "the same doubt")
+        else:
+            s21_row = (
+                f"{abs(result.s21):.6f} = {s21_db:.3f} dB between x = "
+                f"{x1 * 1e3:.2f} mm and x = {x2 * 1e3:.2f} mm, "
+                f"{(x2 - x1) * 1e3:.2f} mm apart: one plane at each end, its "
+                "forward wave taken from the algebra that splits v and i with "
+                "the run's own measured zc, and the two divided.  No fit "
+                "stands between the planes -- a fit would average the field "
+                "over the stations it was handed, and a load reads as a "
+                "fraction of itself that way.  The measured beta, "
+                f"{result.beta:.3f} rad/m, is used only to take the line's own "
+                "delay exp(-1j beta d) back out, which is unit modulus, so the "
+                "decay in this number is real and not de-embedded")
+            s21_unity_row = (
+                f"{100.0 * departure:+.3f} % from unity, "
+                + ("inside" if abs(departure) < 0.01 else "outside")
+                + " the 1 per cent a transmitting length is asked for.  The "
+                "difference is real and not noise: with no ohmic loss in the "
+                "solver, a decay this size is power leaving the guided mode "
+                "for the surrounding matched layers, and the row below that "
+                "exponentiates the fitted alpha states the same decay from a "
+                "different measurement")
     else:
-        s21_row = "n/a: this record did not carry two fits worth of stations"
+        s21_row = "n/a: this record carried no stations to split"
         s21_unity_row = s21_row
 
     # --- loss: the joint fit's alpha, and what it predicts for |S21| -------
@@ -2727,8 +2839,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
 
     # The same attenuation, stated as the transmission it implies across the
     # station span -- the number G1 asks about, from a different measurement
-    # than the two half fits, which is the point of putting the two rows side
-    # by side.
+    # than the station-plane ratio, which is the point of putting the two rows
+    # side by side.
     if lf is None or lf.alpha is None:
         s21_loss_row = "n/a: no fitted decay to exponentiate"
     else:
@@ -2748,11 +2860,15 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             f"{100.0 * departure:+.3f} % from unity, "
             + ("inside" if within else "outside")
             + " the 1 per cent G1 asks for. "
-            + ("It agrees with the two half fits above, which is the check "
-               "worth making: two different measurements of one decay"
+            + ("It agrees with the |S21| between station planes quoted "
+               "above, which is the check worth making: one number fitted to "
+               "the field at every station and one a ratio of two planes, two "
+               "measurements of one decay"
                if abs(departure - (abs(result.s21) - 1.0)) < 0.01 else
-               "It does not agree with the two half fits above, so one of "
-               "the two is reading something that is not attenuation"))
+               "It does not agree with the |S21| between station planes quoted "
+               "above, so one of the two is reading something that is not "
+               "attenuation; the |S21| implied by the absorbed work, below, "
+               "is the third measurement and says which"))
 
     # The same transmission from the other side: not a fit to the field at all,
     # but a bookkeeping of the energy the matched layers removed.  The box has
@@ -2893,7 +3009,9 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     # The station impedance the loss affects: with alpha in the propagation
     # constant the voltage and current waves no longer keep their relative
     # phase along the span, and the lossless fit has to absorb that somewhere.
-    if lfl is not None and np.isfinite(lfl.z0.real) and np.isfinite(sf.z0.real):
+    if result.loaded_without_reference:
+        lossy_z0_row = NO_LOADED_IMPEDANCE
+    elif lfl is not None and np.isfinite(lfl.z0.real) and np.isfinite(sf.z0.real):
         lossy_z0_row = (
             f"{lfl.z0.real:.4f} ohm +- {num(lfl.z0_sigma_total, 'ohm', '.4f')}"
             f" against {sf.z0.real:.4f} ohm with the decay held fixed "
@@ -2915,6 +3033,25 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             "quote here at all")
     else:
         lossy_z0_row = "n/a: this record fitted no station impedance"
+
+    # The seven rows that read an impedance off ``sf`` are gated the same way:
+    # a refusal in the |S21| row contradicted two rows later by a number in ohm
+    # is not a refusal, and the fit behind those rows is the one that row names.
+    if result.loaded_without_reference:
+        stations_z0_modulus = NO_LOADED_IMPEDANCE
+        stations_z0_phase = NO_LOADED_IMPEDANCE
+        stations_z0_real = NO_LOADED_IMPEDANCE
+        stations_z0_sigma_stat = NO_LOADED_IMPEDANCE
+        stations_z0_sigma_beta = NO_LOADED_IMPEDANCE
+        stations_z0_sigma_total = NO_LOADED_IMPEDANCE
+    else:
+        stations_z0_modulus = num(abs(sf.z0), "ohm")
+        stations_z0_phase = (num(sf.phase_deg, "deg")
+                             + " (two-wave fit, forward current)")
+        stations_z0_real = num(sf.z0.real, "ohm")
+        stations_z0_sigma_stat = num(sf.z0_sigma_stat, "ohm")
+        stations_z0_sigma_beta = num(sf.z0_sigma_beta, "ohm")
+        stations_z0_sigma_total = num(sf.z0_sigma_total, "ohm")
 
     # Leave the pictures on disk: a benchmark's figures are part of its output.
     dump_figures(sink)
@@ -2943,12 +3080,12 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                                " (diagnostic: the model is quasi-static, so "
                                "this compares two different problems)"
                                if result.beta_model else "n/a"),
-        "eps_eff": (
+        "eps_eff": (NO_LOADED_BETA if result.loaded_without_reference else (
             f"{result.eps_eff:.5f} (from this run's beta; the closed form it "
             f"is compared with is evaluated at w/h = {g['w'] * 1e3:.2f}/"
             f"{g['h'] * 1e3:.2f} mm = {g['w'] / g['h']:.3f} and eps_r = "
             f"{g['eps_r']:g}, and eps_eff falls as w/h rises at fixed h, so a "
-            "thinner substrate at fixed w raises it and lowers Z0)"),
+            "thinner substrate at fixed w raises it and lowers Z0)")),
         "eps_eff (Hammerstad-Jensen)": (
             f"{result.eps_eff_model:.5f} (closed form at w/h = "
             f"{g['w'] * 1e3:.2f}/{g['h'] * 1e3:.2f} mm = {g['w'] / g['h']:.3f} "
@@ -2960,13 +3097,12 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "line Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
         "port modulus / model": f"{abs(result.z0) / result.z0_model:.4f}",
         "port real part / model": f"{result.z0.real / result.z0_model:.4f}",
-        "line Z0 from stations, modulus": num(abs(sf.z0), "ohm"),
-        "line Z0 from stations, phase": (num(sf.phase_deg, "deg")
-                                         + " (two-wave fit, forward current)"),
-        "line Z0 from stations, real part": num(sf.z0.real, "ohm"),
-        "line Z0, sigma (statistical)": num(sf.z0_sigma_stat, "ohm"),
-        "line Z0, sigma (beta)": num(sf.z0_sigma_beta, "ohm"),
-        "line Z0, sigma total": num(sf.z0_sigma_total, "ohm"),
+        "line Z0 from stations, modulus": stations_z0_modulus,
+        "line Z0 from stations, phase": stations_z0_phase,
+        "line Z0 from stations, real part": stations_z0_real,
+        "line Z0, sigma (statistical)": stations_z0_sigma_stat,
+        "line Z0, sigma (beta)": stations_z0_sigma_beta,
+        "line Z0, sigma total": stations_z0_sigma_total,
         "line mode purity": (num(sf.mode_purity, "", ".3e")
                              + " as |gamma_I + gamma_V|; 0 is a pure mode"),
         "line Z0, reference plane": num(sf.reference_plane * 1e3, "mm"),

@@ -23,6 +23,7 @@ Only two kinds of claim are made here, and both are cheap:
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 import numpy as np
@@ -554,4 +555,170 @@ def test_the_reference_only_answers_on_its_own_two_planes():
     with pytest.raises(ValueError):
         silent.forward_ratio(X[0], X[-1])
 
+
+
+
+# ---------------------------------------------------------------------------
+# |S21| across the station planes, and what a load with no reference may not say
+# ---------------------------------------------------------------------------
+# The numbers these tests hold the code to were measured on the default mesh
+# (24.8 mm of line, 0.4 mm cells, six matched-layer cells, 2400 steps, a
+# 5.827786 GHz bin) with the same code: they are a regression fence around a
+# published set of values, not a tolerance chosen for comfort.  A board run is
+# what they cost, which is why every one of them is a slow test.
+SEAM_STEPS = 2400
+
+
+# The guard below asserts about row *wording* and quotes no measured number, so
+# what it has to show is that a loaded, unreferenced record refuses to publish
+# an impedance -- not that the mesh converged.  A coarse mesh is therefore the
+# honest choice, and the only thing the mesh must buy is a station fit that
+# succeeds: if it did not, the rows would collapse to the "n/a: this record
+# carried no stations to split" fallback and the test would be vacuous.
+GUARD_STEPS = 400
+
+
+# Three records carry the whole fence, because a board run is what each one
+# costs and the rest of the table is interpolated between these ends:
+#
+# * series 100 ohm is the largest departure the reference path shows from the
+#   closed form (+9.040 per cent), so it is the record that moves first if the
+#   normalisation is disturbed at all.
+# * shunt 1.0 pF is the most reactive load of those measured, so its ``|S21|``
+#   is the largest departure from unity on a passive load, and it is the one
+#   record taken with no reference -- the guard's case.
+# * the 25 and 50 ohm series loads and the 0.2 and 0.5 pF shunts are interior
+#   points of the same form; the published control table holds them, and three
+#   more board runs here would only re-derive the curve the two ends already
+#   fix.
+#
+# One fixture per record, and each test asks for only the records it needs.
+# The rule: a single test costs **at most two board runs**, because one
+# 2400-step board is the largest unit a blocking budget can hold and a fixture
+# that built all three records at once would make every test that touched it
+# cost three -- unschedulable alone, which is the same thing as untested.  That
+# is why the reference-path test builds its own reference out of ``free_wave``
+# (two runs: free, then loaded) and why the free test shares nothing at all.
+#
+# The trade, stated so nobody optimises it back into one fixture: a run that
+# selects both the free test and the reference-path test requests
+# ``free_wave`` twice, and module scope *caches* it, so the full-suite cost is
+# still exactly three board runs.  Only a test run alone pays less, which is
+# the whole point of splitting them.
+@pytest.fixture(scope="module")
+def free_wave():
+    """The load-free record: one board run, and the reference for a load."""
+    return studies.microstrip_wave_board(
+        studies.microstrip_reference_board(), nsteps=SEAM_STEPS)
+
+
+@pytest.fixture(scope="module")
+def series100_wave(free_wave):
+    """Series 100 ohm on the reference path: one run, on top of the free."""
+    reference = studies.LineReference.from_wave(free_wave)
+    return studies.microstrip_wave_board(
+        dataclasses.replace(
+            studies.microstrip_reference_board(),
+            loads=(Load(15.2e-3, "series_r", 100.0),)),
+        nsteps=SEAM_STEPS, reference=reference)
+
+
+@pytest.fixture(scope="module")
+def shunt1_wave():
+    """Shunt 1.0 pF on the default path (no reference): one board run."""
+    return studies.microstrip_wave_board(
+        dataclasses.replace(
+            studies.microstrip_reference_board(),
+            loads=(Load(15.2e-3, "shunt_c", 1.0e-12),)),
+        nsteps=SEAM_STEPS)
+
+
+@pytest.mark.slow
+def test_free_run_s21_is_the_power_the_matched_layers_took(free_wave):
+    """No load, so the departure from unity is the absorber and nothing else.
+
+    Measured 0.981263 at +0.333 degrees over the 9.60 mm between the planes;
+    the one-sided fence is 1 per cent, which is what a transmitting length is
+    asked for, and it is wide enough to hold a rebuilt mesh.
+    """
+    wave = free_wave
+    assert wave.loaded_without_reference is False
+    assert abs(abs(wave.s21) - 0.981263) < 0.01
+    assert abs(wave.s21) <= 1.0
+
+
+@pytest.mark.slow
+def test_reference_path_still_reports_the_published_series_hundred(
+        series100_wave):
+    """The normalised route is untouched, deviation and all.
+
+    0.549464 against the textbook 0.503909 is +9.040 per cent, and that is the
+    number the report quotes; if it moves, the reference path was disturbed.
+    """
+    wave = series100_wave
+    textbook = 0.503909
+    assert abs(abs(wave.s21) - 0.549464) < 0.001
+    deviation_pc = 100.0 * (abs(wave.s21) / textbook - 1.0)
+    assert abs(deviation_pc - 9.040) < 0.1
+
+
+@pytest.mark.slow
+def test_a_load_with_no_reference_may_not_exceed_unity(shunt1_wave):
+    """A passive load cannot make the transmitted wave larger than the incident.
+
+    Each plane is split on its own phasors and the two forward amplitudes
+    divided, so this is a ratio of two measurements of one wave and its
+    magnitude is the decay between them.  Measured 0.623117 on the 1.0 pF shunt
+    -- the most reactive load, and the one taken with no reference, so it is
+    both the largest departure from unity and the guard's own record.
+    """
+    wave = shunt1_wave
+    assert wave.loaded_without_reference is True
+    assert abs(wave.s21) <= 1.0
+
+
+@pytest.mark.slow
+def test_metrics_refuse_an_impedance_when_a_load_has_no_reference(monkeypatch):
+    """The guard: the magnitude stands, an impedance read out of it may not.
+
+    A loaded record's own station fit assumes one onward wave at every station,
+    which is the continuity the load breaks, so its ``z0`` is not the line's
+    ``zc`` and nothing recovered from ``s21`` through it means anything.  The
+    row has to say that rather than quote a number.
+    """
+    from emfit import studies as S
+
+    real = S.microstrip_wave
+
+    def loaded(**kwargs):
+        kwargs["loads"] = (Load(15.2e-3, "series_r", 100.0),)
+        return real(**kwargs)
+
+    monkeypatch.setattr(S, "microstrip_wave", loaded)
+    metrics = S.MICROSTRIP.run(
+        {"nsteps": GUARD_STEPS, "f0": 5.827786, "npml": 6}, S.FigureSink())
+    row = metrics["|S21| between station planes"]
+    # Not the no-stations fallback: on a coarse mesh the fit still has to land,
+    # or every assertion below would pass on row text that means nothing.
+    assert "no stations" not in row, row
+    assert "no impedance" in row
+    assert "reference=" in row
+    assert "ohm" not in row
+    unity = metrics["G1 (|S21| within 1 % of unity)"]
+    assert "cannot say which is which" in unity
+    assert "ohm" not in unity
+
+    # A refusal two rows up contradicted by a number here is not a refusal, so
+    # every row that would read an impedance off the same fit has to say the
+    # same thing -- and say it without a figure in it.
+    for key in ("line Z0 from stations, real part",
+                "line Z0, sigma total",
+                "line Z0 with loss, real part"):
+        row = metrics[key]
+        assert "no impedance" in row, f"{key}: {row!r}"
+        assert "ohm" not in row, f"{key}: {row!r}"
+        assert not any(ch.isdigit() for ch in row), f"{key}: {row!r}"
+    eps = metrics["eps_eff"]
+    assert "no eps_eff" in eps, eps
+    assert not any(ch.isdigit() for ch in eps), eps
 
