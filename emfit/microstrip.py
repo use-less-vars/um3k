@@ -59,7 +59,9 @@ __all__ = [
     "ETA0",
     "MU0",
     "Microstrip",
+    "corrected_transmission",
     "eps_eff",
+    "ideal_transmission",
     "width_for_z0",
     "z0_eps_eff",
 ]
@@ -251,6 +253,40 @@ def width_for_z0(
         if hi - lo <= 1e-12 * hi:
             break
     return 0.5 * (lo + hi) * h
+
+
+# ---------------------------------------------------------------------------
+# the two load models the report quotes
+# ---------------------------------------------------------------------------
+def ideal_transmission(zc: complex, r: float) -> complex:
+    """Transmission past a series load ``r`` in a line of impedance ``zc``.
+
+    ``2 zc / (2 zc + r)`` is the textbook series-element formula, and it is the
+    model the report quotes as the ideal prediction for a series resistance at
+    the cut: the model, not a measurement, so ``zc`` and ``r`` come from
+    elsewhere and nothing here is a number the mesh produced.  Record length
+    does not enter it, and neither does frequency: the same arguments give the
+    same answer on any record.
+    """
+    return 2.0 * zc / (2.0 * zc + r)
+
+
+def corrected_transmission(
+    zc: complex, r: float, cg: float, f: float
+) -> complex:
+    """The same series load with the cut's capacitance across it.
+
+    The load the line sees is ``r || 1/(j 2 pi f cg)`` -- the series resistance
+    in parallel with the capacitance of the cut -- and the transmission is
+    ``2 zc / (2 zc + that)``.  This is the model the report quotes as the
+    corrected prediction: ``cg`` is the capacitance the mesh formula predicts
+    for the cut and ``zc`` the impedance the load-free station measured, and
+    the formula itself is algebra.  Record length does not enter it, so for
+    fixed arguments its magnitude is a constant and cannot drift with the
+    length of the record it is compared against.
+    """
+    zg = 1.0 / (1j * 2.0 * math.pi * f * cg)
+    return 2.0 * zc / (2.0 * zc + r * zg / (r + zg))
 
 
 # ---------------------------------------------------------------------------

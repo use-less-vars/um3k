@@ -771,6 +771,18 @@ def test_a_loaded_run_quotes_a_ratio_against_a_load_free_twin():
     ``0.989576`` at ``9600`` steps.  What this test rules out is a reference that
     is stale, wrongly paired or wrongly normalised -- a wrong reference breaks the
     identity far more than ``1.6`` per cent.
+
+    The same config at ``9600`` steps (``npml = 6``, the ``0.400`` mm cell, the
+    transform using ``7200`` samples) gives the same three readings and the same
+    division: ``0.544853`` with no reference, ``0.989576`` for the load-free twin
+    and ``0.556575`` with the twin supplied, so ``0.544853 / 0.989576 = 0.550593``
+    reproduces ``0.556575`` to ``1.075`` per cent.  That triple is not reachable
+    from the study, which always supplies a twin when a load is present; it is
+    quoted from a direct ``microstrip_wave(..., reference=None)`` run and is
+    recorded here rather than asserted.  Over the two lengths the terms of the
+    division climbed ``66.52`` and ``82.67`` per cent while the referenced reading
+    fell ``9.35`` per cent, which is why the residual is quoted for the arithmetic
+    and not as evidence of convergence.
     """
     from emfit import studies as S
 

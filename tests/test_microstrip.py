@@ -36,6 +36,7 @@ which kind of claim broke:
 
 from __future__ import annotations
 
+import inspect
 import math
 
 import numpy as np
@@ -50,7 +51,9 @@ from emfit.microstrip import (
     ETA0,
     MU0,
     Microstrip,
+    corrected_transmission,
     eps_eff,
+    ideal_transmission,
     width_for_z0,
     z0_eps_eff,
 )
@@ -580,3 +583,66 @@ def test_oracle_sees_the_eps_eff_trend():
     assert a[1] < b[1]
     assert z0_eps_eff(0.5, 4.4)[0] > z0_eps_eff(2.0, 4.4)[0]
     assert eps_eff(0.5, 4.4) < eps_eff(2.0, 4.4)
+
+
+# ---------------------------------------------------------------------------
+# the two load models the report quotes
+# ---------------------------------------------------------------------------
+#: The station impedance the series branch measured on the reference board, the
+#: drive frequency and the capacitance the mesh formula predicts for its cut, all
+#: as the report's series-load table quotes them.  These are inputs to the models
+#: under test, never outputs of them.
+LOAD_ZC = 50.54736386461998 + 4.024590867955236j
+LOAD_F = 5.827786e9
+LOAD_CG = 1.2466696446336e-13
+
+
+def test_the_series_load_models_reproduce_the_quoted_numbers():
+    """The two formulas give the magnitudes the report prints, to six places.
+
+    ``ideal_transmission`` is the textbook series formula and
+    ``corrected_transmission`` is the same with the cut's capacitance in
+    parallel with the resistance; the report quotes 0.503909 and 0.544544 for
+    the 100 ohm point, and 0.805632 and 0.682260 for the corrected prediction at
+    25 and 50 ohm.  A change that moved any of these would silently restate
+    every deviation the report carries, so they are pinned to the digit rather
+    than to a tolerance.
+    """
+    assert round(abs(ideal_transmission(LOAD_ZC, 100.0)), 6) == 0.503909
+    assert (
+        round(abs(corrected_transmission(LOAD_ZC, 100.0, LOAD_CG, LOAD_F)), 6)
+        == 0.544544
+    )
+    assert (
+        round(abs(corrected_transmission(LOAD_ZC, 25.0, LOAD_CG, LOAD_F)), 6)
+        == 0.805632
+    )
+    assert (
+        round(abs(corrected_transmission(LOAD_ZC, 50.0, LOAD_CG, LOAD_F)), 6)
+        == 0.682260
+    )
+
+
+def test_the_corrected_prediction_cannot_depend_on_record_length():
+    """The prediction is a constant, so the deviation column inherits the drift.
+
+    The measured ``|S21|`` moves with record length -- 0.549464 at 2400 steps,
+    0.555663 at 4800, 0.556575 at 9600 -- while the predicted magnitude it is
+    divided by is the same 0.544544 at every one of those record lengths,
+    because record length does not enter the formula.  The
+    report's deviation column is measurement over prediction, so all of that
+    drift lands in the column and none of it can be attributed to the model.
+    That has to be a property of the arguments and not an accident of how they
+    were accumulated, so this test pins both halves of it: repeating the call is
+    bit-identical, and the parameter list is exactly ``(zc, r, cg, f)`` -- with
+    no ``nsteps`` and no ``s21`` for anyone to add later, which is the guard
+    against someone making the prediction track the measurement it is supposed
+    to test.
+    """
+    first = corrected_transmission(LOAD_ZC, 100.0, LOAD_CG, LOAD_F)
+    second = corrected_transmission(LOAD_ZC, 100.0, LOAD_CG, LOAD_F)
+    assert first == second
+    assert abs(first) == abs(second)
+    params = tuple(inspect.signature(corrected_transmission).parameters)
+    assert params == ("zc", "r", "cg", "f")
+
