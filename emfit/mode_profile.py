@@ -15,21 +15,39 @@ actually needs:
 
 Normalisation
 -------------
-The strip is held at exactly ``1 V`` and the ground plane at exactly ``0 V``,
-so the potential *difference* across the gap is ``1 V`` by construction and
-``phi`` is already the normalised potential.  The edge field is
-``e = -G phi``, i.e. ``E . dl`` in **volts per edge** -- not ``V/m``; the edge
-lengths are already folded in, which is what an FDTD field update wants and
-what makes the energy identity below dimensionally clean.  Dividing by
-``cell`` recovers ``E`` in ``V/m``.
+The returned field carries exactly ``1 W`` of modal power through the
+**projection window** -- the clipped ``201 x 77`` node plane that
+:meth:`ModeProfile.plane_window` copies into an FDTD grid -- because that is the
+domain the excitation is ever measured against::
 
-The same choice makes the normalisation *checkable* rather than assumed: the
-vertical z-edges of one strip column telescope,
+    0.5 / eta_eff * (sum e_y^2 + sum e_z^2) = 1 W     on those slices only.
 
-    sum_{k < n_sub} e_z[i, k] = -(phi[i, n_sub] - phi[i, 0]) = -1 V,
+``e^2`` is ``|E|^2 cell^2 = |E_t|^2 dA`` and ``e / eta_eff`` is ``H . dl``, so
+that sum *is* the Poynting flux and the normalisation integral *is* the
+projection integral.  It has to be: ``0.5 Re(V conj(I)) = P`` holds identically
+for any excitation coefficient, so if the normalisation domain and the
+projection domain differ, the difference enters as a pure scale bias on the
+projected mode.  Normalising on the window makes the reported ``v_mode`` /
+``i_mode`` the voltage and current a unit-power projection actually sees, which
+is stronger than normalising over some box and rescaling afterwards.
 
-exactly (to roundoff), which is asserted in
-:func:`microstrip_mode_profile` and again in the test suite.
+Internally the potential solve still holds the strip at exactly ``1 V`` and the
+ground plane at ``0 V`` -- that is what makes ``C'`` a capacitance and the
+algebraic checks exact -- and only the last step rescales the whole field by
+one scalar ``sqrt(1 W / P_window)``.  The edge field is ``e = -G phi``, i.e.
+``E . dl`` in **volts per edge**, not ``V/m``; the edge lengths are already
+folded in, which is what an FDTD field update wants and what makes the energy
+identity below dimensionally clean.  Dividing by ``cell`` recovers ``E`` in
+``V/m``.
+
+A single positive scalar leaves the normalisation *checkable* rather than
+assumed: the vertical z-edges of one strip column still telescope,
+
+    sum_{k < n_sub} e_z[i, k] = -(phi[i, n_sub] - phi[i, 0]) = -v_mode,
+
+exactly (to roundoff), where ``v_mode`` is the voltage that unit power implies
+on this geometry.  That is asserted in :func:`microstrip_mode_profile` and
+again, column by column, in the test suite.
 
 Staggering -- which array lives where
 -------------------------------------
@@ -82,8 +100,8 @@ Limitations
   refinement, is what moves them (see the measured plateau in
   :func:`microstrip_mode_profile`).  The converged box is far wider than an
   FDTD plane, and what falls outside that plane is the modal power the PML
-  absorbs: 0.86 % beyond ``|y| = 8.5 mm``, 0.78 % above ``z = 7.6 mm`` and
-  1.15 % in total, on the converged profile.
+  absorbs: 0.57 % beyond ``|y| = 10 mm``, 0.78 % above ``z = 7.6 mm`` and
+  1.16 % in total (measured on the converged profile, corner counted once).
 """
 
 from __future__ import annotations
@@ -137,6 +155,11 @@ _FDTD_CELL = 1.0e-4
 #: algebraic, not discretisation errors, so this is as tight as a double
 #: allows and says nothing about how accurate the *physics* is.
 _RTOL = 1.0e-12
+
+#: Modal power the returned field is normalised to, in watts, integrated over the
+#: **projection window** (the clipped ``_FDTD_NYN x _FDTD_NZN`` plane) -- see
+#: :func:`microstrip_mode_profile`.
+_POWER_W = 1.0
 
 
 class SelfConsistencyError(RuntimeError):
@@ -204,7 +227,7 @@ class PlaneWindow:
 
 @dataclass(frozen=True)
 class ModeProfile:
-    """Transverse mode profile of one microstrip cross-section at ``1 V``.
+    """Transverse mode profile of one microstrip cross-section at unit power.
 
     Field arrays (see the module docstring for the lattice positions)::
 
@@ -222,6 +245,25 @@ class ModeProfile:
         z0           sqrt(eps_eff) / (C0 * c_prime), ohm
         eta_eff      sqrt(MU0 / (EPS0 * eps_eff)), ohm
 
+    Normalisation of the *fields*, in the terms a port projection needs::
+
+        power           1 W, the normalisation target
+        v_mode          volts the strip sits at under unit power, V
+        i_mode          amps that unit power implies at that voltage, A
+        power_full_box  power the whole wide box carries at the same scale, W
+
+    **The field arrays are normalised to unit modal power over the projection
+    window, not to 1 V.**  ``0.5 Re(v_mode conj(i_mode)) = power`` exactly, and
+    so does the discrete ``0.5/eta_eff * sum(e_y^2 + e_z^2)`` over the edges
+    :meth:`plane_window` selects for the default ``201 x 77`` plane.  The ``1 V``
+    convention survives only as these diagnostics: the solve *is* done at 1 V
+    and ``c_prime``, ``eps_eff``, ``z0`` are that solve's numbers, but the
+    returned field is unit-power, so ``v_mode`` is the voltage that 1 W implies
+    -- 9.9558 V on the converged section, because 1 V on this line is only
+    ``0.5 / Z0``= 9.98 mW, and the missing tail makes it 0.58 % *higher* than the
+    all-box ``sqrt(2 power Z0) = 10.0088 V``.  Scale the fields by ``1 / v_mode``
+    to recover the 1 V normalisation.
+
     Geometry, in metres / integer cells::
 
         cell, h, w, eps_r, n_sub, n_strip, n_clean, n_air
@@ -237,6 +279,10 @@ class ModeProfile:
     c_prime_air: float
     eps_eff: float
     z0: float
+    power: float
+    v_mode: float
+    i_mode: float
+    power_full_box: float
     cell: float
     h: float
     w: float
@@ -316,9 +362,10 @@ class ModeProfile:
         mode is copied, and :attr:`PlaneWindow.clipped` says how much was left
         outside.  On the converged default profile that is 115 y-cells of
         dielectric on each side and 140 z-cells of air on top, which carried
-        1.1466 % of the modal power (``.scratch/mp_study.py``: 0.8646 % beyond
-        ``|y| > 8.5 mm``, 0.7805 % above ``z > 7.6 mm``).  A silent truncation
-        would hide that, so it is reported instead.
+        1.1649 % of the modal power (``.scratch/mp_split.py``: 0.5720 % from the
+        y-clip alone, 0.7805 % above ``z = 7.6 mm``, 0.1876 % in the corner the
+        two share).  A silent truncation would hide that, so it is reported
+        instead.
 
         Raises
         ------
@@ -448,6 +495,40 @@ def _require_close(label: str, got: float, want: float, rtol: float = _RTOL):
         )
 
 
+def _projection_slices(
+    e_y_shape: tuple, e_z_shape: tuple, iy_shift: int, k_shift: int
+) -> tuple:
+    """Source slices of the profile that land inside the projection window.
+
+    Returns ``(e_y y, e_y z, e_z y, e_z z)`` -- the four *source* slices of
+    :class:`PlaneWindow`, for the default ``_FDTD_NYN x _FDTD_NZN`` plane.  Both
+    the power normalisation and :meth:`ModeProfile.plane_window` go through
+    :func:`_fit`, so the domain the profile is normalised over and the domain the
+    projection integrates over cannot drift apart; that equality is the whole
+    point of the normalisation (``tests/test_mode_profile.py`` asserts it).
+    """
+    yc, zn = e_y_shape
+    yn, zc = e_z_shape
+    return (
+        _fit("e_y/h_z, y", iy_shift, yc, _FDTD_NYN - 1)[0],
+        _fit("e_y/h_z, z", k_shift, zn, _FDTD_NZN)[0],
+        _fit("e_z/h_y, y", iy_shift, yn, _FDTD_NYN)[0],
+        _fit("e_z/h_y, z", k_shift, zc, _FDTD_NZN - 1)[0],
+    )
+
+
+def _modal_power(e_y, e_z, eta_eff: float) -> float:
+    """``0.5 / eta_eff * sum(e_y^2 + e_z^2)`` over the edges handed in, in W.
+
+    ``e`` is ``E . dl`` in volts, so ``e^2 = |E|^2 cell^2`` is exactly the flux
+    element ``|E_t|^2 dA`` of the edge -- no cell size and no interpolation, and
+    the same quadrature the projection uses.  Both families enter because they
+    are the two components of one transverse vector: for the forward wave
+    ``h = x_hat x e / eta_eff``, ``(e x h) . x_hat = (e_y^2 + e_z^2) / eta_eff``.
+    """
+    return 0.5 * float(np.sum(np.square(e_y)) + np.sum(np.square(e_z))) / eta_eff
+
+
 # ----------------------------------------------------------------------
 # the profile
 # ----------------------------------------------------------------------
@@ -498,7 +579,7 @@ def microstrip_mode_profile(
         that is not a whole number of cells.
     SelfConsistencyError
         If ``check`` and the edge field does not reproduce the solve's own
-        ``C'``, ``Z0`` and ``eps_eff``, or the vertical ``1 V`` drop.
+        ``C'``, ``Z0`` and ``eps_eff``, or the vertical drop against ``v_mode``.
 
     Notes
     -----
@@ -512,6 +593,26 @@ def microstrip_mode_profile(
     :meth:`ModeProfile.plane_window`.  Both counts are quoted in *cells* because
     the bias is a function of how many cells of clean space surround the strip,
     not of how finely that space is meshed.
+
+    Normalisation: the returned arrays carry ``power = 1 W`` of modal power over
+    the **projection window**, the ``201 x 77`` (``_FDTD_NYN x _FDTD_NZN``) node
+    plane that :meth:`ModeProfile.plane_window` copies into an FDTD grid -- not
+    over the converged box.  The two are not the same domain: 1.164852 % of this
+    profile's modal power lies outside the FDTD plane (0.571953 % from the
+    ``|y| > 10 mm`` clip, 0.780454 % above ``z = 7.6 mm``, 0.187555 % in the
+    corner both cut).  That clip is a constant lateral truncation, identical at
+    every station, so it biases the *level* of an excitation -- by
+    ``sqrt(P_window / P_box) = 0.994159``, i.e. 0.584 % in amplitude and 1.165 %
+    in power -- and cannot contribute to a decay along ``x``.  Normalising on the
+    window removes the bias by construction instead of leaving it to be argued
+    away.
+
+    The ``1 V`` strip of the potential solve is therefore *reported*, not
+    imposed: ``v_mode`` is the voltage that unit power implies on this geometry,
+    ``i_mode = power / (0.5 v_mode)`` the current that goes with it, and
+    ``power_full_box`` the power the same fields would carry through the whole
+    converged box (``power_full_box = 1.01178580 W`` here: exactly the 1.164852 %
+    the clip removed).
     """
     grid, cell, n_strip = _section(h, w, n_sub, n_clean, n_air)
     fixed = _conductors(grid, n_clean, n_strip, int(n_sub))
@@ -542,13 +643,39 @@ def microstrip_mode_profile(
     z0 = float(np.sqrt(eps_eff) / (C0 * c_prime))
     eta_eff = float(np.sqrt(MU0 / (EPS0 * eps_eff)))
 
+    # --- unit modal power over the projection window -----------------------
+    # The normalisation integral *is* the projection integral: 0.5 Re(V conj(I))
+    # = P holds identically for any superposition coefficient, so if the two
+    # domains differ, the clip enters as a pure scale bias on the projected
+    # mode.  Measuring the power on the clipped window removes that by
+    # construction, which is stronger than normalising over some box and
+    # rescaling afterwards.
+    iy_shift = _FDTD_NYN // 2 - (int(n_clean) + n_strip // 2)
+    k_shift = _FDTD_K_STRIP - int(n_sub)
+    win = _projection_slices(e_y.shape, e_z.shape, iy_shift, k_shift)
+    p_full = _modal_power(e_y, e_z, eta_eff)
+    p_win = _modal_power(e_y[win[0], win[1]], e_z[win[2], win[3]], eta_eff)
+    if not p_win > 0.0:                     # pragma: no cover - structural
+        raise ValueError(
+            f"the projection window carries no power ({p_win!r} W): the profile "
+            f"(e_y {e_y.shape}, e_z {e_z.shape}) does not overlap the "
+            f"{_FDTD_NYN} x {_FDTD_NZN} node plane"
+        )
+    scale = float(np.sqrt(_POWER_W / p_win))
+    e = e * scale
+    e_y = e_y * scale
+    e_z = e_z * scale
+    phi_flat = np.asarray(phi_flat, dtype=float) * scale
+    v_mode = float(scale * v_scale)         # volts that 1 W implies here
+    i_mode = float(_POWER_W / (0.5 * v_mode))
+
     if check:
         # 1. The field carries the energy the solve produced.  Two different
         #    sums (edge-wise vs K) of the same quadratic form, so this catches
         #    any layout mistake in the reshapes above.
         _require_close(
             "sum(m e^2) / (V^2 L) vs phi^T K phi / (V^2 L)",
-            float(np.sum(m * e ** 2)) / (v_scale ** 2 * length),
+            float(np.sum(m * e ** 2)) / (v_mode ** 2 * length),
             c_prime,
         )
         # 2. ... and the profile's C' is the quasi-static module's C'.
@@ -561,12 +688,21 @@ def microstrip_mode_profile(
         z0_ref, eps_ref = z0_eps_eff(grid, substrate, fixed)
         _require_close("eps_eff vs quasistatic.z0_eps_eff", eps_eff, float(eps_ref))
         _require_close("Z0 vs quasistatic.z0_eps_eff", z0, float(z0_ref))
-        # 4. The normalisation the whole profile rests on: the z-edges of any
-        #    strip column telescope to the applied 1 V, and no other column
-        #    does (that one is left to the tests -- the potential off the strip
-        #    is whatever the box makes it).
+        # 4. The field still knows what voltage it is at: the z-edges of any strip
+        #    column telescope to ``v_mode``, the voltage unit power implies, and
+        #    no other column does (that one is left to the tests -- the potential
+        #    off the strip is whatever the box makes it).  Scaling to unit power
+        #    moved every one of these by the same factor, so the identity is as
+        #    exact as it was at 1 V.
         drop = -float(np.sum(e_z[n_clean + n_strip // 2, : int(n_sub)]))
-        _require_close("vertical drop over one strip column vs 1 V", drop, v_scale)
+        _require_close("vertical drop over one strip column vs v_mode", drop, v_mode)
+        # 5. ... and the power is the power the projection will see: the domain
+        #    this integral uses is the domain plane_window() copies into.
+        _require_close(
+            "0.5 Re(v_mode conj(i_mode)) vs unit power",
+            0.5 * v_mode * i_mode,
+            _POWER_W,
+        )
 
     # --- companion H: local plane wave h = (1/eta) x_hat x e --------------
     h_z = e_y / eta_eff                    # FZ, collocated with e_y
@@ -583,6 +719,10 @@ def microstrip_mode_profile(
         c_prime_air=float(c_air),
         eps_eff=float(eps_eff),
         z0=z0,
+        power=_POWER_W,
+        v_mode=v_mode,
+        i_mode=i_mode,
+        power_full_box=float(p_full * scale ** 2),
         cell=float(cell),
         h=float(h),
         w=float(w),

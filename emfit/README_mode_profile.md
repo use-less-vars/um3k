@@ -83,11 +83,30 @@ clipped:
 * the destination slices fill the plane **exactly** (200 y-cells / 201 y-nodes,
   77 z-nodes / 76 z-cells), and the strip lands on `k = 16`, `iy = 100`;
 * **98.208 %** of `sum e_y^2` is retained, and the placed strip column still
-  telescopes to 1 V bit-for-bit -- no renormalisation is needed;
-* **1.1466 % of the modal power is invisible to the FDTD plane** (0.8646 %
-  beyond `|y| > 8.5 mm`, 0.7805 % above `z > 7.6 mm`, from a `0.5/eta * int
-  |E_t|^2 dA` integral on the converged profile). That number is the price of the
-  plane size, and is stated here so nobody has to rediscover it.
+  telescopes to `v_mode` bit-for-bit -- no renormalisation is needed;
+* **1.164852 % of the modal power is invisible to the FDTD plane** (from a
+  `0.5/eta * int |E_t|^2 dA` integral on the converged profile). The projection
+  window is the **full 201-node plane, `|y| = 10 mm`**; the `8.5 mm` width that
+  appears in older notes was the *PML-interior* width, **not** the projection
+  domain, and is not the boundary this number refers to.
+
+  Of the 1.164852 % outside the projection plane, 0.571953 % lies beyond the
+  lateral `|y| = 10 mm` boundary, 0.780454 % above the z ceiling, and 0.187555 %
+  in the corner counted by both; the decomposition satisfies inclusion-exclusion
+  to all printed digits. Most of the invisible modal power leaves through the
+  ceiling, not the sides.
+
+  1.164852 % of the modal power lies outside the FDTD box. This is a constant
+  lateral truncation, identical at every station, so it biases the LEVEL of a
+  projection and cannot contribute to a decay along x; the observed decay is
+  separately accounted for by the lateral PML flux that sx_station measures. It
+  is therefore not in the decay budget at all, and with unit-power normalisation
+  over the projection window it does not bias the level either.
+
+  For the record: the earlier 1.1466 % figure was computed on a **different
+  window** (a clip at `|y| = 8.5 mm`) and must never be quoted alongside the
+  projection numbers -- two numbers for one quantity is how a bookkeeping
+  artefact starts.
 
 `PlaneWindow` exposes the audit trail as `clipped`, `dropped`, `full_coverage`
 and `report()`; only a placement with *no* overlap at all (or a mismatched cell
@@ -95,9 +114,10 @@ size, or `k_strip < n_sub`) still raises `ValueError`.
 
 ## Tests
 
-`tests/test_mode_profile.py`, 11 tests, all passing in ~17 s: the edge field as
-the exact gradient of `phi`; the 1 V telescoping over all five strip columns
-(roundoff) and the per-cent fringing bound off the strip; `e_z < 0` over the whole
+`tests/test_mode_profile.py`, 12 tests, all passing in ~17 s: the edge field as
+the exact gradient of `phi`; the `v_mode` telescoping over all five strip columns
+(roundoff) and the per-cent fringing bound off the strip; the normalisation
+domain (unit power on the projection window, 1.01178580 W on the wide box); `e_z < 0` over the whole
 strip footprint; verticality under the strip; `h = e/eta` bit for bit; and the
 placement both ways -- clipped (98.208 % retained, 740 dropped) and unclipped
 (pure offset, `nothing clipped`), plus the three rejections.

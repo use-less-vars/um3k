@@ -131,8 +131,8 @@ def test_vertical_drop_over_every_strip_column_is_one_volt():
     assert drops.shape == (p.n_strip + 1,), (
         f"expected {p.n_strip + 1} strip columns, got {drops.shape}"
     )
-    assert np.allclose(drops, 1.0, rtol=0.0, atol=1e-12), (
-        f"strip-column drops {drops!r} V should all be 1 V "
+    assert np.allclose(drops, p.v_mode, rtol=0.0, atol=1e-12), (
+        f"strip-column drops {drops!r} V should all be v_mode = {p.v_mode!r} V "
         f"(spread {np.ptp(drops):.3e} V over {drops.size} columns); n_sub="
         f"{p.n_sub}, cell={p.cell:.4g} m"
     )
@@ -142,7 +142,7 @@ def test_vertical_drop_over_every_strip_column_is_one_volt():
     # Fringing potential, not a defect: one node into the wall the measured drop
     # is 1.630e-2 V, i.e. 1.63 % of the applied volt.  The band is per-cent
     # because the coarse section puts the strip edge one 0.4 mm cell from here.
-    assert off_drop < 5.0e-2, (
+    assert off_drop < 5.0e-2 * p.v_mode, (
         f"a column {off} node inside the clean wall drops {off_drop:.3e} V = "
         f"{100 * off_drop:.2f} % of the applied 1 V; the fringing potential must "
         "stay a small fraction of it (pinned 1.63 %)"
@@ -164,8 +164,9 @@ def test_placed_profile_keeps_its_normalisation():
 
     col = 100                                     # default plane centre
     drop = -plane_ez[col, : p.n_sub].sum()
-    assert abs(drop - 1.0) <= 1e-12, (
-        f"placed profile drops {drop!r} V at plane node {col}, expected 1 V "
+    assert abs(drop - p.v_mode) <= 1e-12, (
+        f"placed profile drops {drop!r} V at plane node {col}, expected "
+        f"v_mode = {p.v_mode!r} V "
         f"(shifts iy {w.iy_shift}, k {w.k_shift})"
     )
 
@@ -173,6 +174,47 @@ def test_placed_profile_keeps_its_normalisation():
 # ---------------------------------------------------------------------------
 # 3. the sign and the direction of the gap field
 # ---------------------------------------------------------------------------
+def test_normalisation_domain_is_the_projection_window():
+    """Unit power is measured on the clipped plane, not on the wide box.
+
+    ``0.5 Re(v_mode conj(i_mode)) = 1 W`` and the discrete Poynting sum over the
+    very slices :meth:`ModeProfile.plane_window` copies is 1 W to roundoff --
+    that is the domain the port mode is ever measured on.  The whole box carries
+    1.01178580 W at the same scale, i.e. 1.164852 % more, so a re-normalisation
+    over the wide box would put the window 1.165 % (0.584 % in amplitude) low
+    and fail here.  This is what pins the *domain* of the normalisation.
+    """
+    p = _converged()
+    assert abs(0.5 * p.v_mode * p.i_mode - 1.0) <= 1e-12, (
+        f"0.5 v_mode i_mode = {0.5 * p.v_mode * p.i_mode!r} W, expected 1 W "
+        f"(v_mode {p.v_mode!r} V, i_mode {p.i_mode!r} A)"
+    )
+
+    w = p.plane_window()
+    (sy, sz) = w.ycell_znode[0]
+    (sny, snz) = w.ynode_zcell[0]
+    p_win = 0.5 * (np.sum(p.e_y[sy, sz] ** 2) + np.sum(p.e_z[sny, snz] ** 2))
+    p_win /= p.eta_eff
+    assert abs(p_win - 1.0) <= 1e-12, (
+        f"the plane_window slices carry {p_win!r} W, expected 1 W: the "
+        f"normalisation domain is not the projection domain ({w.report()})"
+    )
+
+    p_box = 0.5 * (np.sum(p.e_y ** 2) + np.sum(p.e_z ** 2)) / p.eta_eff
+    assert abs(p_box - p.power_full_box) <= 1e-12 * p.power_full_box, (
+        f"recomputed whole-box power {p_box!r} W != power_full_box "
+        f"{p.power_full_box!r} W (same integral, so roundoff only)"
+    )
+    assert p_box > 1.0, (
+        f"the whole box carries {p_box!r} W <= 1 W: unit power cannot have been "
+        "normalised on the clipped window"
+    )
+    assert abs(p_box - 1.01178580) < 1e-8, (
+        f"power_full_box = {p_box!r} W, pinned at 1.01178580 W = 1 / (1 - "
+        "0.01164852), i.e. the 1.164852 % the clip removed"
+    )
+
+
 def test_gap_field_points_up_everywhere_under_the_strip():
     """``e_z < 0`` for every gap cell under the strip: ``E`` runs strip to ground.
 
@@ -191,9 +233,10 @@ def test_gap_field_points_up_everywhere_under_the_strip():
     )
     # 4 coarse cells in the gap, uniform enough that no cell may carry less than
     # a quarter of the 1 V total: |e_z| > 0.25 / 4 V = 0.0625 V.
-    assert worst < -0.25 / p.n_sub, (
+    assert worst < -0.25 * p.v_mode / p.n_sub, (
         f"the weakest gap cell carries only {worst!r} V; with {p.n_sub} cells "
-        f"sharing 1 V no cell should be below -{1.0 / p.n_sub:.4g} V"
+        f"sharing v_mode = {p.v_mode!r} V no cell should be below "
+        f"-{0.25 * p.v_mode / p.n_sub:.4g} V"
     )
 
 
