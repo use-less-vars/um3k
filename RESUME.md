@@ -1,5 +1,60 @@
 # RESUME -- session state
 
+## Checkpoint 2026-10-21 -- the anchor was never at the tone, and the board is running
+
+HEAD is `6d7d4d2` on `master` ("Broadband single-span subsection; record the
+anchor snap and the window control"), parent `020b935`.  The working tree is
+clean apart from `Intro.txt` (` M`, not ours and never staged).  The new
+subsection `sec:msres-broadband` sits at 403-578 of
+`docs/report/sec_microstrip_res.tex`, which is now 612 lines: the eleven-bin
+curve, the refusals, and the test that separates a boundary sink from a port
+sink.  `decisions.md` is 1146 lines and section 59 is new.  Nothing in either
+quotes a board S-parameter.
+
+Section 59 carries two findings.  The first: the record-level scalars are not
+read at the tone.  The accumulator is built at `studies.py` 2407 with the
+frequency snapped at 2375, f0 = round(f_target*span)/span and span = n_acc*dt;
+for a 2400-step record at dt 0.7626 ps the spacing is 0.5464 GHz, so a
+5.830 GHz target lands on 6.010 GHz.  The printed beta 239.4598 with eps_eff
+3.61420 inverts to 6.0102 GHz, while the cw tone returns beta 232.4470 at
+5.8278 GHz.  Phase velocity agrees to 0.1 per cent, so the solve is right and
+the label is wrong; gate2 never tests this.
+
+The second: PULSE_WINDOW cannot move the record-level scalars at all, because
+the weight is applied only to the array handed to the bin transform
+(`studies.py` 2758-2815).  Last turn's byte-identical agreement was therefore
+structural, not evidential.  The valid control is the same bin under both
+weights, where the Hann variant returns |S21| 1.24903, |S11| 0.05479,
+passivity 1.563072, residual 0.06883 against flat 0.99017, 0.00431, 0.980464,
+0.00612.  The corroboration now in section 59: interpolating the eleven flat
+bins to 6.010 GHz gives beta 239.38 against the printed 239.4598, residual
+0.00663 against 0.00662, |S21| 0.99003 against 0.99000, |S11| 0.00449 against
+0.00456.
+
+The board run is going.  The 05:58:47 attempt was launched without setsid or
+nohup and died when its exec session's container went away; it is preserved
+byte for byte as `.scratch/m2/board_run_dead_0558.log`, 785 bytes.  The
+relaunch is 07:02:02 UTC as PID 2038, verified alive at 99.6 per cent of one
+core with RSS 2.83 GB from `/proc/2038/stat` utime and stime, +498 ticks in
+5 s:
+
+    setsid nohup bash -c 'PYTHONPATH=/workspace python3 -u .scratch/m2/board_run.py > .scratch/m2/board_run2.log 2>&1; echo EXIT=$? >> /workspace/.scratch/m2/board_run2.log'
+
+Geometry is the lid run's, unchanged: 322x200x76 cells at 0.1 mm, nsteps 9600,
+n_sub 16, n_air 48, n_top 12, n_pml 12, n_stations 9, net RF_IN, pad J1.1,
+w 3.0 mm, x_port 8.7 mm, x_far 32.2 mm.  Pulse first, then the cw anchor;
+figures to `.scratch/m2/figs_board`.  The log stays at 785 bytes until the
+pulse returns -- the study prints nothing mid-solve -- so liveness has to be
+read from `/proc`, never from the byte count.
+
+The next action is a classification, stated as a test.  When the pulse
+returns, read the per-bin passivity curve: flat, every bin sunk by roughly the
+same fraction, names the boundary as the sink, exonerates the port and makes
+the lid the fix; threshold-and-rise, flat below some frequency and falling
+above it, names the port as the sink, and that is a design note only.  The
+falsification read stands: nothing here is quotable as a board S-parameter
+until passivity lands within 2 per cent of unity.
+
 ## Broadband sweep: built, gated, and the window was the fault
 
 The pulse path is committed: one broadband record, transformed bin by bin, with
