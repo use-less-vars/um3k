@@ -400,6 +400,183 @@ the patch resonance, has not been attempted. A convergence study of the coupon -
 $0.200$ and $0.100$ mm cells -- would separate the bias from the refinement, at an order of magnitude more work
 than the run reported here.
 
+\subsection{One record instead of a sweep: passivity measured bin by bin}
+\label{sec:msres-broadband}
+
+Every number above was bought one frequency at a time. A tone run solves one problem at one frequency, so a band
+of twenty-five tones is twenty-five solves: on the default box -- the reference box's $w$, $h$ and $\eps_r$ on the
+smaller $62\times44\times22$ mesh -- twenty-five advances of the grid, one per frequency. A broadband record is
+that same grid advanced once, plus twenty-five transforms of an array the advance has already accumulated, so the
+cost that matters is counted in solves and not in time: a wall-clock second is not a property of the method, since
+it moves with whatever else the machine is doing, while the number of times the grid must be advanced does not.
+The drive is a Ricker wavelet -- the second derivative of a Gaussian, and so zero-mean by construction -- centred
+on $5.830$ GHz and covering $2$ to $12$ GHz. The zero mean is not decoration: a wavelet carrying a DC component
+would charge the line and place power at a frequency the guards below refuse, from where it would leak into the
+lowest bins that would otherwise pass; the record it leaves is $2400$ steps of $0.7626$ ps, $1.830$ ns in all,
+and what is transformed afterwards is that accumulated time series. One discrete Fourier transform of it gives a complex phasor at each of
+the $25$ bins the band is cut into, $0.4167$ GHz apart, and from that phasor alone the estimators of the preceding
+subsections run unchanged: a one-wave fit for $\beta$ across the nine stations, a station-impedance fit for
+$\gamma$ and hence for $|S_{11}|$, and the two magnitudes whose sum makes the passivity. The pulse path invents no
+second estimator. It changes where the phasor came from, and that is what the guards below are for.
+
+A tone run cannot fail in the way the next paragraph describes, because its drive is the frequency that was asked
+for and every station carries a phasor at it. A bin of a pulse record can be empty, and three things make it so.
+The first is the drive itself: if the weighted excitation spectrum is more than $20$ dB below its own peak at this
+frequency, the phasor in the bin is the sweep's own leakage rather than a measurement, and the bin is refused on
+that ground. The second is the phase the probe span has to resolve: $\beta L$ across the $9.60$ mm of stations
+must reach $2\pi/5 = 1.257$ rad, and a bin below that floor is refused because the phase advance between
+neighbouring stations is then a fraction of the scatter in the unwrapped phase, and a slope fitted through it is a
+slope fitted to noise. The third is the branch: $\beta L$ must stay below $\pi$, because past it the one-wave fit
+can no longer tell $+\beta$ from $\beta - 2\pi/L$, and the phase constant it returns is one of several. Each of the
+three is a refusal and not a repair -- nothing extrapolates a $\beta$ up to the floor, unwraps past the ceiling, or
+assumes a drive that is not there -- and a refused bin keeps its row. That row carries the frequency, the $\beta L$
+computed on the way to the decision, and the reason in words, so a reader who wants to know why the band stops
+where it does counts refusals instead of inferring them from a gap.
+
+Passivity is tested one bin at a time. For every used bin the quantity $|S_{11}|^2 + |S_{21}|^2$ is formed from
+that bin's own two magnitudes and is required not to exceed unity beyond the $10^{-6}$ the arithmetic of a double
+needs. The test is not applied to the band average, and the reason is that an average is exactly the operation that
+would hide the fault the test exists to find: a single bin above unity means the estimator has returned a magnitude
+a passive structure cannot return, and averaging that bin against ten compliant ones reports a number that is close
+to right and hides the one that is not. Nor is the offending value clamped. Nothing is set to $1$; the number is
+printed as computed and the row is flagged, so a bin that fails is visible as a failure at the frequency where it
+happened. The test is also narrower than the accounting of Section~\ref{sec:msres-accounting}, and is meant to be.
+The ledger there is three-way -- injected, reflected and transmitted, with the matched layer's absorbed work closing
+the budget -- because the audit keeps that work over the settled steps. A bin has no such term: the work is
+accumulated in time and is not resolved in frequency, so the bin gets two terms and no absorbed one, and what it
+tests is the consistency of two magnitudes rather than a budget. A bin that passes has not thereby been audited and
+a bin that fails has not thereby been diagnosed; what a failure establishes is that the two per-bin numbers cannot
+both be quoted.
+
+The bin path is checked against the tone path on the default box, and the comparison is of a bin against a tone
+at a different frequency, because a pulse record has no bin at exactly $5.8278$ GHz. The nearest used bin is
+$5.7500$ GHz, $1.3$ per cent below the tone, and at the few per cent precision being asked about it is the
+comparison available. Three deltas follow. $|S_{21}|$ is $0.99017$ in the bin against $0.98126$ at the tone,
+$+0.91$ per cent; the passivity is $0.980464$ against $0.962932$, $+1.82$ per cent; $\eps_{\mathrm{eff}}$ is
+$3.60970$ against $3.62178$, $-0.33$ per cent. All three lie inside the $\pm5$ per cent this check asks for, and
+they are not three independent numbers: $|S_{11}|$ enters squared at $0.004$ and contributes $2\times10^{-5}$ to a
+passivity near unity, so the passivity delta is the $|S_{21}|$ delta seen through a square, and the largest of the
+three figures is the smallest effect counted twice. The bin path reproduces the tone path where the two overlap,
+which is what licenses eleven bins of one record in place of eleven runs.
+
+The first transform weighted the record with a Hann taper before binning, and the attempt is reported because the
+failure is the informative part. It produced twelve used bins, $|S_{21}|$ between $1.232$ and $1.250$, passivity
+from $1.525$ to $1.565$, and twelve of the twenty-five bins flagged: a passive line returning twenty-five per cent
+more amplitude than it was driven with, and up to fifty-seven per cent more power. The taper also promoted a bin
+the flat record refuses, $3.25$ GHz appearing among the twelve at $\beta = 134.242$ rad/m, $\beta L = 1.289$ rad,
+past the $1.257$ rad floor. The mechanism is not the width of a kernel, and it is worth being exact about that, because the width is the
+explanation that suggests itself and it is the wrong one: a rectangular record of the same length carries a main
+lobe of the same width as a tapered one, so the taper moves the sidelobes and not the resolution. What a taper
+changes is the amplitude weighting of the thing being transformed, and a weighting is neutral only for a signal
+that fills the record evenly. This one does not. The packet sits in the middle of the record with near-zero field
+either side of it, so a Hann curve multiplies the front of the packet by one factor and its back by another, and
+what comes out of the transform is a weighted copy of the transient rather than one mode of the line. Nor was
+there anything to suppress. The record is already closed: the excitation's value at the start of it is about
+$10^{-17}$ of its peak, and by the end the packet is through the absorbing layer, so the ends already match, and a
+window applied to them smooths a discontinuity that is not there while distorting a signal that is.
+
+The evidence is a comparison at one frequency. Both variants are transformed at the same bin, $5.7500$ GHz, from
+the same record, by the same estimator; the only thing that differs between them is the weight. With no weight
+that bin returns $|S_{21}| = 0.99017$, a fitted $|S_{11}|$ of $0.00431$, a passivity of $0.980464$ and a one-wave
+residual of $0.00612$. With the Hann weight it returns $|S_{21}| = 1.24903$, $|S_{11}| = 0.05479$, a passivity of
+$1.563072$ and a residual of $0.06883$: the fitted reflection thirteen times larger, the residual eleven times
+larger, and a passive line reporting a quarter more amplitude than it was driven with. One variable changed, at
+one frequency, and only the per-bin magnitudes moved with it.
+
+It is worth saying why the record-level scalars printed alongside such a run do not appear in that comparison. They
+agree between the two variants because the single-frequency accumulator that produces them is never weighted: the
+window is applied to the array handed to the bin transform and to nothing else, so their agreement is structural
+and carries no information about the window. Only the bins can speak to it, and the comparison above is theirs.
+
+Flat weighting restored the eleven bins and
+agreement with the tone to $1.82$ per cent at worst, and every number in this subsection is from the flat record.
+
+Eleven of the twenty-five bins survive, and how many survive is set by the probe span rather than by the band that
+was asked for. The bracket is $\beta L \in [2\pi/5, \pi]$, so with $\beta = \omega/v_p$ the window is
+\begin{equation}
+  f_{\mathrm{lo}} = \frac{v_p}{5L}, \qquad f_{\mathrm{hi}} = \frac{v_p}{2L},
+\end{equation}
+and their ratio is $5/2$ exactly: a factor of two and a half, independent of the line, of the mesh and of the band
+requested. The phase velocity that fixes where this window sits is measured on the record rather than assumed,
+$v_p = \omega/\beta = 1.57529\times10^{8}$ m/s at the $5.8278$ GHz tone, which is $0.52546$ of $c$ and reproduces
+$\eps_{\mathrm{eff}} = 3.621$ from the same two numbers; the nearest used bin, at $5.7500$ GHz, returns $3.60970$,
+and the two agree to a third of a per cent. With $L = 9.60$ mm it puts the window at $3.2819$ to $8.2046$ GHz,
+and the eleven used bins occupy $3.67$ to $7.83$ GHz of it; the ends are set by the $0.4167$ GHz grid
+rather than by the bracket, which is why the used bins span $2.14:1$ and not $2.50:1$. The fourteen that fall
+outside do so for the two reasons already given: four below the floor, at $2.00$, $2.42$, $2.83$ and $3.25$ GHz
+with $\beta L = 0.763$, $0.921$, $1.079$ and $1.238$ rad, and ten at and above the ceiling, from $8.25$ to
+$12.00$ GHz with $\beta L$ running from $3.168$ to $4.665$ rad. The window slides; it does not widen. A longer span
+moves $f_{\mathrm{lo}}$ and $f_{\mathrm{hi}}$ down together and keeps $2.5:1$; a shorter one moves both up and
+keeps $2.5:1$. A band is therefore bought by moving the window to where the drive is and never by stretching it,
+and a second span of a different length would recover the upper octave at the price of a coarser lower one, which
+is arithmetic and not a measurement.
+
+\begin{table}[H]
+  \centering
+  \caption{The eleven bins of one broadband record that survive the three guards, on the default box, whose $w$,
+  $h$ and $\eps_r$ are those of the reference box of Section~\ref{sec:msres-box} and whose mesh is the smaller
+  $62\times44\times22$ cells of $0.400$ mm: $2400$ steps with the whole record transformed, nine stations over a probe span of $9.60$ mm, and a
+  drive covering $2$ to $12$ GHz in $25$ bins. Passivity is $|S_{11}|^2+|S_{21}|^2$ of the row's own two
+  magnitudes, tested bin by bin and never averaged across the band; the residual is that of the one-wave fit the
+  row's $\beta$ comes from.}
+  \label{tab:ms-broadband}
+  \small
+  \begin{tabular}{@{}rrrrrrr@{}}
+    \toprule
+    $f$ [GHz] & $\beta$ [rad/m] & $\eps_{\mathrm{eff}}$ & $|S_{11}|$ & $|S_{21}|$ & passivity & residual \\
+    \midrule
+    $3.67$ & $145.448$ & $3.58226$ & $0.00414$ & $0.98878$ & $0.977703$ & $0.00359$ \\
+    $4.08$ & $162.035$ & $3.58484$ & $0.00410$ & $0.98945$ & $0.979034$ & $0.00399$ \\
+    $4.50$ & $178.682$ & $3.58938$ & $0.00407$ & $0.98994$ & $0.979997$ & $0.00440$ \\
+    $4.92$ & $195.391$ & $3.59541$ & $0.00407$ & $0.99022$ & $0.980561$ & $0.00487$ \\
+    $5.33$ & $212.155$ & $3.60239$ & $0.00414$ & $0.99030$ & $0.980713$ & $0.00543$ \\
+    $5.75$ & $228.962$ & $3.60970$ & $0.00431$ & $0.99017$ & $0.980464$ & $0.00612$ \\
+    $6.17$ & $245.795$ & $3.61682$ & $0.00459$ & $0.98986$ & $0.979848$ & $0.00695$ \\
+    $6.58$ & $262.639$ & $3.62335$ & $0.00499$ & $0.98939$ & $0.978920$ & $0.00792$ \\
+    $7.00$ & $279.483$ & $3.62908$ & $0.00548$ & $0.98880$ & $0.977751$ & $0.00899$ \\
+    $7.42$ & $296.321$ & $3.63404$ & $0.00603$ & $0.98812$ & $0.976422$ & $0.01011$ \\
+    $7.83$ & $313.158$ & $3.63845$ & $0.00655$ & $0.98741$ & $0.975014$ & $0.01120$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Read down the passivity column and the curve is flat: $0.9750$ to $0.9807$, a peak-to-peak spread of $0.58$ per
+cent, every entry below unity, and nothing in the band failing the test. The spread is what an estimator whose
+$|S_{11}|$ runs from $0.0041$ to $0.0066$ across the band would show, and it is the whole of the frequency
+dependence that column has. The column beside it is not flat. $\eps_{\mathrm{eff}}$ runs from $3.582$ at
+$3.67$ GHz to $3.638$ at $7.83$ GHz, a monotone rise of $1.6$ per cent; $|S_{11}|$ rises with it, from $0.00407$
+to $0.00655$, which is $-47.8$ to $-43.7$ dB, a factor of $1.6$; and the fit residual rises by a factor of $3.1$,
+from $0.0036$ to $0.0112$, fastest at the top of the window where $\beta L$ approaches the ceiling. That flatness is itself the finding, and it has a shape that can be read. A deficit present at every frequency
+in the band, and the same size at every frequency, is energy leaving through something the wave meets everywhere:
+a boundary of the computational domain. The absorbing layer and the lid are such boundaries, their loading is
+broadband by construction, and they do not switch on. The other shape a passivity curve can take is a threshold
+-- near unity at the bottom of the band and growing toward its top until it crosses -- and that shape names a
+different sink, because a leaky wave launched at the port does not radiate until the guided mode's phase velocity
+exceeds that of the surrounding medium, after which it carries away more the further above threshold it runs. The
+two shapes are therefore a test, and it is the first test to apply to any curve of this kind: a frequency-flat
+deficit names a boundary, a threshold that rises names the port. This record gives the first shape, and that is
+what licenses the claim that the missing one to two per cent here is not the port.
+
+It does not license that claim for the imported board, whose curve is measured and not yet read. The same
+criterion applies to it bin by bin and without averaging, and it is the board's curve and not this one that
+decides what the board's sink is. A flat deficit there would name a boundary, and the boundary to raise is the
+lid, since the absorbing layer above the strip is the nearest boundary the field meets; a deficit that grows
+toward the top of the band would name the port, and no amount of lid would then help. That measurement decides
+the question and is not reported in this subsection.
+
+A second observation is worth keeping separate from that identification, because it answers a different question.
+$\eps_{\mathrm{eff}}$ also rises across the window, and a rise of that size can belong to the line, whose
+effective permittivity does drift upward with frequency, or to the fit's own drift as $\beta L$ approaches the
+ceiling and the one-wave residual grows by a factor of three. Separating those two is a question about the
+estimator, not about where the energy went, and it does not touch what the passivity column says.
+What is established here is narrower and worth stating narrowly: one solve reproduces
+the tone path's value at one frequency to $0.91$ per cent in $|S_{21}|$ and $0.33$ per cent in
+$\eps_{\mathrm{eff}}$, and returns eleven bins whose passivity is below unity everywhere in the band. No broadband
+S-parameter is quoted here -- not $|S_{11}|$ against frequency, not $|S_{21}|$ against frequency, not
+$\eps_{\mathrm{eff}}$ against frequency as a property of the line -- because the thing that would license them, an
+independent measurement of the same band on a geometry that does not share this record's assumptions, has not been
+made.
+
 \subsection{The record in pictures}
 \label{sec:msres-figs}
 

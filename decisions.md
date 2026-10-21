@@ -1106,3 +1106,41 @@ beta proportional to f, keeping both guard constants fixed, and taking no
 account of the drive_db guard clipping the band edges, so that each span's
 usable set would be re-measured rather than predicted.
 
+
+## 59. The pulse anchor is not at the frequency the logs imply, and the record-level scalars cannot test a window
+
+Both facts below were verified from the logs and from the code on 2026-10-21,
+and both are recorded as open items rather than as resolved.
+
+The first is the anchor.  On a pulse run the record-level scalars -- beta,
+eps_eff, |gamma|, |S21| and the fit residual -- come from a single-frequency
+DftAccumulator built at studies.py 2407 with the frequency that studies.py
+2375 snaps from the target: f0 = round(f_target*span)/span, with span =
+n_acc*dt.  For a 2400-step record at dt = 0.7626 ps the grid spacing is
+0.5464 GHz, so a target of 5.830 GHz snaps to 6.010 GHz.  The printed pair
+beta = 239.4598 rad/m with eps_eff = 3.61420 is self-consistent only at
+6.010 GHz; at the 5.8278 GHz the log line invites comparison with, the cw
+tone returns beta = 232.4470.  The phase velocity is the same to 0.1 per
+cent in both cases (1.5769e8 against 1.57529e8 m/s), so this is a labelling
+and snapping defect rather than a wrong solve -- but a 3 per cent snap is
+large enough that the record-level beta must never be quoted as a property
+of the line at the target frequency.  Gate2 does not test it, because the
+gate compares the 5.75 GHz bin against the cw tone and never the
+record-level beta against anything.  Open item: snap in a way that reports
+the offset, or print f0 explicitly beside the record-level scalars, or both.
+
+The second is what follows from the first.  PULSE_WINDOW cannot affect the
+record-level scalars: the weight is applied only to the array handed to the
+bin transform (studies.py 2758-2815) and the record-level accumulator
+carries no weight at all.  The previous turn used the byte-identical
+record-level scalars as the control that isolated the Hann fault; that
+control is structural and proves nothing.  The valid control is the same
+bin at the same frequency under the two weights, and it does isolate the
+fault: at 5.7500 GHz the Hann bin returns |S21| = 1.24903, |S11| = 0.05479,
+passivity 1.563072 and residual 0.06883, against the flat bin's 0.99017,
+0.00431, 0.980464 and 0.00612.  The report at sec:msres-broadband now
+carries the bin-against-bin comparison and says of the record-level scalars
+only that their agreement is structural, and this entry records the
+correction so that the weaker claim is not repeated.
+
+The same anchor is corroborated from the bins: interpolating the eleven rows of the flat run to 6.010 GHz returns beta = 239.38 rad/m against the printed 239.4598, a fit residual of 0.00663 against 0.00662, |S21| = 0.99003 against 0.99000 and |S11| = 0.00449 against 0.00456 -- three to four digits on four quantities computed independently of the record-level accumulator.
