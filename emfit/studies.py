@@ -3852,7 +3852,10 @@ MICROSTRIP_BOARD = Study(
                    "n_sub values that do fit this coupon, and the ceiling is "
                    "32 because that is the finest the refusal will ever "
                    "name."),
-        Param("n_air", "Air cells", "int", MS_N_AIR, lo=1, hi=40,
+        # The ceiling is 64, not 40: at h = 1.6 mm a 0.1 mm cell needs 48
+        # air cells for the top PML face to sit 3h above the strip, and a face
+        # any closer absorbs the mode (measured: passivity sum 0.753 at 12).
+        Param("n_air", "Air cells", "int", MS_N_AIR, lo=1, hi=64,
               unit="cells",
               help="Cells between the strip and the lid at zmax."),
         Param("n_top", "Lid absorber cells", "int", MS_N_TOP, lo=0, hi=12,
