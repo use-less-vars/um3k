@@ -1000,3 +1000,109 @@ in the output; a pulse run names its band, its bin count and its pulse
 frequency instead, and the summary line does the same.  The full suite, 388
 tests, still passes: the fix cost no test.
 
+## 57. A window is a statement about its input, and neither claim was true
+
+Third member of one family: the wrong-pair tolerance, the vacuous-pass
+test, and now the taper.  The shape is the same in all three -- a
+convention applied because it is conventional, whose precondition nobody
+wrote down, returning a number that looks plausible and is not.  The first
+two were caught by tests that were written to fail; this one by a gate
+that was written to fail.  The pattern is now specific enough to be a rule
+rather than a war story.
+
+A window makes two claims at once: that the record has a truncation
+discontinuity worth suppressing, and that the signal fills the record, so
+that multiplying by the taper changes the spectrum by an amount that is
+known and harmless.  Neither claim held here.  The record is a closed
+transient -- a Ricker evaluated at t = 0 is about 1e-17 of its peak, and
+the packet is through the PML before the record ends -- so there was
+nothing to suppress.  And a transient that occupies the front part of the
+record is precisely the case where a taper is not amplitude-neutral: it
+multiplies the packet by a curve that is still moving underneath it, so it
+imposes a slow amplitude ramp across the very waveform it is supposed to
+be preserving.
+
+> A window function is only valid where the record has a truncation discontinuity, and is only amplitude-neutral for a signal that fills the record. Apply neither condition blindly to a transient.
+
+The measurement, kept short because section 56 carries it: at the bins,
+the one-wave residual went from 0.0066 to 0.065 and the fitted reflection
+from 0.0046 to 0.11, so the windowed phasors had stopped being one mode.
+The bin nearest the tone read |S21| 1.24903 under the taper, 0.99017 flat,
+and 0.98126 for the cw twin.
+
+The method, as a rule in three parts: prove the two paths identical
+before theorising about the difference; probe by monkeypatching a
+throwaway script, so the source under test stays byte-identical and its
+tests stay valid; and require a control that can tell a surgical probe
+from a global one -- here the aggregate scalars coming back bit-identical
+between the two window variants, which is what turned a coincidence into
+an attribution.
+
+The guard inherited the fault, and that is the uncomfortable part.
+Feeding the bin sum and the drive_db guard through one weight is the right
+design and stays: a guard taken through a different weight would be
+judging one measurement by another one's leakage.  But it means the guard
+is only as trustworthy as the estimator feeding it, and a fault in the
+estimator moves the guard's own verdict -- the two builds did not agree on
+which bins were usable, twelve against eleven.  So, as a design rule: a
+shared estimator is a shared failure mode, and it must be validated before
+it is shared.
+
+Which closes on the question to ask of every operation that takes data
+it did not create: what does this assume about its input, and is that
+assumption checked anywhere?  If it is not checked, it is not a
+convention, it is a hypothesis.
+
+## 58. One span buys a factor of two and a half, and no more
+
+The result first.  With the two guards as they stand, a probe span S
+brackets the usable band between f_lo = v_ph/(5S) and f_hi = v_ph/(2S), so
+the ratio is 5/2 exactly and independent of S.  The consequence follows in
+one sentence: changing the probe span slides that 2.5:1 window across the
+spectrum, it never widens it, so the usable bandwidth of a single run is
+set by the guards and not by how long a probe span the geometry permits.
+
+The measurement it reproduces, kept short: on the coupon, S = 9.6 mm
+gives f_lo 3.2819 and f_hi 8.2046 GHz, and the run refused 3.25 GHz at
+beta*span 1.238 rad, 0.019 under the 1.2566 floor, and 8.25 GHz at
+3.159 rad, 0.017 past pi.  One caveat, stated honestly: the fitted beta
+implied by that bottom row is 128.92 rad/m against 129.63 rad/m nominal,
+0.55 per cent below, which is the loaded line's measured dispersion, while
+the ceiling matches to three digits.
+
+The span table, as prose and then as a list.  Each floor buys its
+ceiling by the same factor of 2.5, so asking for a lower band and asking
+for a higher one are the same request made twice: a longer span is not a
+wider sweep, it is a lower sweep.
+
+  - f_lo 3.0 GHz needs S = 10.5 mm and buys a top at 7.50 GHz
+  - f_lo 2.5 GHz needs S = 12.6 mm and buys a top at 6.25 GHz
+  - f_lo 2.0 GHz needs S = 15.8 mm and buys a top at 5.00 GHz
+
+The two ends trade one for one.
+
+The wish, answered directly.  Three to eight gigahertz is 2.667:1; the
+guards give 2.5:1; so that sweep cannot be had from one station spacing
+whatever span is chosen.  At the span that just reaches 3.0 GHz the top
+stops at 7.50 GHz.  This is geometry and arithmetic, not a defect, and it
+is the kind of limit worth knowing before a run is commissioned rather
+than after it refuses fourteen bins.
+
+The crop.  The board's strip runs from 8.7 mm to 32.2 mm, so 23.5 mm is
+available along the line, less 1.2 mm of far-end PML for each thickness of
+margin kept clear: 22.3 mm would open at 1.41 GHz and close at 3.53 GHz,
+while 20.0 mm opens at 1.58 and closes at 3.94.  If the answer is more
+bandwidth, the lever is the floor constant and not the span.  Relaxing
+2*pi/5 to 2*pi/10 makes the ratio 5:1, bought with roughly double the
+relative error in beta, because beta is then read off a smaller phase
+difference across the same stations.  That is the trade, written plainly
+and not yet recommended.
+
+The recommendation, as arithmetic rather than a measurement: two spans,
+15.8 mm and 6.6 mm, would cover 1.99 to 4.99 GHz and 4.77 to 11.93 GHz,
+with a 0.21 GHz overlap, both inside the 23.5 mm the board offers.  Mark
+it for what it is -- an arithmetic proposal from measured beta, assuming
+beta proportional to f, keeping both guard constants fixed, and taking no
+account of the drive_db guard clipping the band edges, so that each span's
+usable set would be re-measured rather than predicted.
+
