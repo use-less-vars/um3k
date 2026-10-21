@@ -2528,6 +2528,7 @@ def microstrip_wave_board(
     n_stations: int = MS_N_STATIONS,
     f_target: float = MS_F_TARGET,
     nsteps: int = MS_NSTEPS,
+    audit: bool = False,
     reference: LineReference | None = None,
     sink: FigureSink = None,
 ) -> MicrostripWave:
@@ -2561,6 +2562,9 @@ def microstrip_wave_board(
         n_stations: Number of probe stations along the line.
         f_target: Wanted drive frequency [Hz].
         nsteps: Leapfrog steps; the record is what is left after warm-up.
+        audit: Whether to build the absorbed-work accounting; ``False`` (the
+            default) skips it because it costs substantially more than the
+            solve itself.
         reference: A :class:`LineReference` of the same coupon with no load,
             passed straight through to :func:`microstrip_wave`, which
             normalises ``s21`` against it.  ``None`` (the default) reports the
@@ -2597,6 +2601,7 @@ def microstrip_wave_board(
         n_stations=n_stations,
         f_target=f_target,
         nsteps=nsteps,
+        audit=audit,
         loads=spec.loads,
         reference=reference,
         sink=sink,

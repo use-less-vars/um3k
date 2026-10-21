@@ -568,3 +568,15 @@ def test_the_snapped_span_stays_inside_the_copper(support) -> None:
         for value in (snapped.x_port, snapped.x_far):
             assert value / cell == pytest.approx(round(value / cell), abs=1e-9)
 
+
+def test_the_board_path_carries_the_absorbed_work_audit_when_asked() -> None:
+    # 300 steps for the same reason as the round-trip test above: this pins the
+    # passthrough, not the numbers.  The two calls differ only in the flag, and
+    # the record only carries ``power_balance`` when the audit was asked for.
+    default = microstrip_wave_board(microstrip_reference_board(), nsteps=300)
+    audited = microstrip_wave_board(microstrip_reference_board(), nsteps=300,
+                                    audit=True)
+
+    assert default.power_balance is None
+    assert audited.power_balance is not None
+
