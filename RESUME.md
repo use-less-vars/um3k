@@ -1,5 +1,60 @@
 # RESUME -- session state
 
+## Checkpoint 2026-10-21 — milestone 1, falsification read
+
+Read this before trusting any earlier line in this file. For each claim this session made, what is actually
+true, and where the correction lives in `decisions.md`.
+
+| claimed | true | correction |
+| --- | --- | --- |
+| "the audited board-path run closes both gaps" | it closes eleven rows and leaves exactly one open | §49 tail |
+| "both gaps are only because `audit=False`" | false; the audit changes nothing about the station `|S21|` | §49 tail |
+| "`570` s is the cost of the audit" | it is the cost of one route; the study route costs `17`-`31.79` s | §50 |
+| "the published `31.79` s clock is unaudited" | it is an audited clock, and it is the study route's | §50 |
+| "the suite is green at `9763897` with `373 passed`" | green (`EXIT=0`, `[100%]`) but the counts line was suppressed by a doubled `-q`; countable re-run in `/tmp/suite2.log` | below |
+
+**The audited reference-box run** (PID 2712, `wall_s = 600.6859359579998`, `66 x 52 x 26` at `0.40` mm,
+`npml 10`, `2400` steps, `600` warm-up / `1800` accounted, `f 5.827786408` GHz, `n_edges 280840`,
+`n_faces 274196`) reproduces, against the published digits: lateral sink `1.3360133447381923` (`1.33601`,
+`2.5e-06`), `alpha_fit 2.469703092775746` (`2.469703`, `3.8e-08`), lateral work `1.9763611915240925e-07` J
+(`1.976361e-07` J), fractions `0.07054150460217655` / `0.9294584953978235` (`7.054` / `92.946` per cent),
+`implied_s21 0.9640842781613148` (`0.9640843`), `eps_eff 3.604312254366848` (`1.0e-10`), `beta
+231.8857152867915` (`1.4e-11`), `|z0| 53.14411383477105` (`2.1e-06`), `Re z0 50.952340670283945`
+(`6.7e-06`), `|gamma| 0.006281926302682181` (`4.2e-06`), `fit_residual 0.007812967007589234` (`4.2e-06`).
+
+**The one row that does not close, and the audit does not touch it.** Station `|S21| = 0.9861098351994007`,
+byte-identical audited and unaudited, `9.1e-04` below the `0.9870082` this log records for the same box at
+lines 216-218 (old dump `0.9869798`). It sits inside the `7.8e-3` fit residual and four orders of magnitude
+above the round-off every other row achieves. It is not the mesh, the stackup, the port or the audit — the
+same run puts everything else on the published digits. Left open on purpose, named, not absorbed into a
+tolerance.
+
+**Five clocks, one box** (`66 x 52 x 26` at `0.40` mm, `npml 10`, `2400` steps, `600/1800`):
+`9.763592199` s direct with `audit=False`; `17` s study path with `audit=True` including `import emfit`;
+`31.792227651982103` s as actually published, from `.scratch/study_dump.txt` line 1, whose line 47 is the
+absorbed-work row; and `570.3019553209888`, `784.1913794020074`, `600.6859359579998` s for three direct
+`audit=True` calls that return bit-identical numbers. Both routes build the same
+`AbsorbedWork(groups={"end", "lateral"})` (`emfit/studies.py:1968-1974`) and call it on every step
+(`emfit/pml.py:720-721`, `:731-732`, guard `if self._audit is not None`, from `emfit/evolve.py:193`,
+`:202`); the only economy is `_build` cached per `dt` (`emfit/pml.py:364`), leaving four gathers and four
+weighted dots per step (`emfit/pml.py:369-371`). **The `35`-fold gap is an open item, not a hardware
+explanation.** Never quote `570`/`600`/`784` as the cost of the audit.
+
+**Decided, not deferred:** no audited test is added to the suite — `17` s at best to `600.69` s at worst for
+identical output, against a `302.22` s suite. The audited row is recorded with its number and its route
+named. Deferred to milestone 2 by the same ruling as `--port-pad`: CLI pad into the study path.
+
+**Hazard worth keeping.** `.scratch/` is gitignored and `.scratch/study_run.py:11` writes
+`open(".scratch/study_dump.txt", "w")` with a cwd-relative path, so re-running it from the repo root would
+overwrite the evidence file with nothing visible in `git status`. Run such scripts from `/tmp/retime`.
+
+**State.** History `master ffbb4a4` -> `a1cafd8` -> `6e65897` -> `d555b4d` -> `9763897` -> `329258e` on
+`wip/ports`. `Intro.txt` is modified in the working tree and is **not ours**: never stage, edit or revert it.
+`git stash drop` is not available through this tool's surface (only push and pop), so the stale `stash@{0}`
+has to be dropped by hand. Merge with `git checkout master && git merge --ff-only wip/ports`; `wip/seam2` is
+never merged.
+
+
 Branch: `wip/ports`, on top of *"ports: a port plane can be placed on a pad"*, which sits on the pad-placement commit, which sits on master's decisions commit (`ffbb4a4`). No HEAD hash is written on this line on purpose: hashes here have gone stale twice. Describe the position by its subject and confirm it with `git log -1 --oneline`.
 Base: master @ `ffbb4a4`. master already carries the ten delivered commits (tip `62d1684`) plus `ffbb4a4`, the decisions entry; `wip/ports` adds the port work on top, so master fast-forwards.
 Working tree right now: clean apart from `Intro.txt`. The arc refusal and the `port` key in `board --json` are **committed** (`ec88551`), as is the crop (`4ed5045`); no work of ours is outstanding in the tree. `Intro.txt` is modified and is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
