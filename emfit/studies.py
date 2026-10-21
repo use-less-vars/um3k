@@ -2032,6 +2032,90 @@ def _bin_row(metric: BinMetric) -> str:
             f"fit residual = {metric.residual:.4f}")
 
 
+#: Environment variable that turns the per-bin debug dump on.  Unset (the
+#: default) means :func:`_dump_bins` is never called, no file is written and no
+#: number anywhere changes; it is read once, at the end of the broadband sweep.
+BIN_DUMP_ENV = "EMFIT_BIN_DUMP"
+
+
+def _dump_bins(path, *, freqs, spectra, station_x, n_stations, x_port, bins,
+               reference=None) -> str:
+    """Write the per-bin record an off-line S-parameter recompute needs.
+
+    Opt-in only: :func:`microstrip_wave` calls this when ``EMFIT_BIN_DUMP``
+    names a file, and never otherwise.  Nothing here feeds a number back into
+    the run: ``z0`` is re-derived from the phasors it is about to store, by the
+    same :func:`fit_station_impedance` call the bin itself made, so a reader
+    can re-fit the stored record and land on the same complex value the report
+    quoted instead of having to trust the run it came from.
+
+    Why every station and not just the two ends: ``z0`` is a two-wave fit over
+    all of them, and ``beta``, ``gamma_v``, ``|S11|`` and ``S21`` are all
+    functions of it.  A dump holding only the planes would recompute nothing.
+
+    The arrays are the ones ``_bin_metrics`` saw, so ``i`` is the *forward-*-
+    oriented current: ``spec[n_stations + 3:]`` is already negated before it
+    lands here, else the sign convention would have to be re-guessed.
+
+    Args:
+        path: The ``.npz`` to write; ``numpy`` appends the suffix if absent.
+        freqs: ``(n_bins,)`` frequencies the bins were summed at [Hz].
+        spectra: ``(n_bins, n_signals)`` weighted phasor vectors.
+        station_x: ``(n_stations,)`` station positions [m].
+        n_stations: Number of stations, i.e. the width of the voltage block.
+        x_port: The port plane [m], for the de-embedded ``|S11|``.
+        bins: The run's :class:`BinMetric` instances, same order as ``freqs``.
+        reference: The :class:`LineReference` the bins normalised against, if
+            any: its ``gamma``/``zc``/phasors are stored too, because the
+            amplitude-normalised ``S21`` cannot be recomputed without them.
+
+    Returns:
+        The path written, as ``numpy`` resolved it.
+    """
+    n = int(n_stations)
+    offset = n + 3
+    f = np.asarray(freqs, dtype=float)
+    v = np.empty((f.size, n), dtype=complex)
+    i = np.empty((f.size, n), dtype=complex)
+    z0 = np.full(f.size, complex(np.nan, np.nan), dtype=complex)
+    x = np.asarray(station_x, dtype=float)
+    for k in range(f.size):
+        spec = np.asarray(spectra[k], dtype=complex)
+        v[k] = spec[:n]
+        i[k] = -spec[offset:offset + n]
+        if bins[k].refusal is None:
+            try:
+                beta_k = float(fit_beta(x, v[k], n_wave=1).beta)
+                sigma_k = sigma_beta_from_curvature(x, v[k], beta_k)
+                z0[k] = complex(fit_station_impedance(
+                    x, v[k], i[k], beta_k, sigma_k).z0)
+            except (ValueError, RuntimeError, np.linalg.LinAlgError):
+                pass
+    payload = {
+        "f": f, "station_x": x, "x_port": float(x_port), "v": v, "i": i,
+        "z0": z0,
+        "beta": np.array([b.beta for b in bins]),
+        "s11_measured": np.array([b.s11_measured for b in bins]),
+        "s11_port": np.array([b.s11_port for b in bins]),
+        "s21": np.array([b.s21 for b in bins]),
+        "s21_power": np.array([b.s21_power for b in bins]),
+        "passivity": np.array([b.passivity for b in bins]),
+        "passivity_power": np.array([b.passivity_power for b in bins]),
+        "refused": np.array([b.refusal is not None for b in bins]),
+        "reference_used": np.array([reference is not None]),
+    }
+    if reference is not None:
+        payload.update(
+            reference_gamma=complex(reference.gamma),
+            reference_zc=complex(reference.zc),
+            reference_x=np.asarray(reference.station_x, dtype=float),
+            reference_v=np.asarray(reference.v_stations, dtype=complex),
+            reference_i=np.asarray(reference.i_stations, dtype=complex),
+        )
+    written = np.savez(path, **payload)
+    return str(written)
+
+
 def _broadband_rows(bins, sink, *, span: float, nsteps: int) -> dict:
     """The broadband report: one row per bin, the summaries, and the figure.
 
@@ -2864,6 +2948,13 @@ def microstrip_wave(
                          n_stations=n_stations, x_port=x_port,
                          reference=reference, drive_db=float(db))
             for k, (f, db) in enumerate(zip(freqs, drive_db)))
+        # Debug dump, off unless asked for by name: it reads the record and
+        # writes a file, and changes nothing that is reported.
+        dump_path = os.environ.get(BIN_DUMP_ENV, "")
+        if dump_path:
+            _dump_bins(dump_path, freqs=freqs, spectra=spectra,
+                       station_x=station_x, n_stations=n_stations,
+                       x_port=x_port, bins=bins, reference=reference)
 
     geometry = {
         "nx": nx, "ny": ny, "nz": nz, "cell": cell,
