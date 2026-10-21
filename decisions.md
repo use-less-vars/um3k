@@ -508,3 +508,63 @@ The same bound is deliberately not asserted in `MicrostripWave.summary()`: that 
 - **Strongest argument against.** The `2400`-step reading is the measured one and a limit is an extrapolation, so naming the limit beside it puts a model in the same sentence as a record; the convention everywhere else in this report is to quote what the run produced and state the box it was measured in, and a column that is still moving by well under a tenth of a point per doubling looks as though it has already arrived.
 - **Why that argument does not win.** The sweep says both what the settled tail is and what the early records are not, and it says it three ways. At `300` steps this run reports `0.613960` against a limit of about `0.5567`, ten per cent above it, and at `600` steps it dips to `0.517615` before climbing again, so the two shortest records bracket the limit from either side and neither of them is a conservative estimate of it. From `1200` steps up the approach is monotone, and its steps are small next to the distance still to travel -- `+1.090` per cent at `1200` -> `2400` and `+1.230` per cent at `2400` -> `4800`, the step growing slightly rather than shrinking, both under two per cent of the `10.45` per cent level. That is the sense in which the tail is converging, and it is why an interval-by-interval test would reject a sequence that is behaving. The load-free twin's transmitted magnitude climbed from `0.541741` at `300` steps to `0.989576` at `9600` and was still gaining `0.196` per cent per doubling there, on its way to a limit near `0.9905`; the low first reading had already been written down as line loss when most of it was start-up transient. In that same sweep a ratio held to `1.627` per cent at `300` steps and to `1.075` per cent at `9600` while its two terms climbed `66.5` and `82.7` per cent, so a stable ratio is not evidence of convergence -- it hides exactly this drift, because both readings are short by the same factor and the factor cancels. The sharpest case is the deviation column added here: the prediction it is formed against is constant by construction, a closed form with no record-length argument in it at all, and the column still drifted `1.3` percentage points between `2400` and `9600` steps, so what a column that looks stable across record lengths reports is the estimator, not the physics. The general rule: settle the approach into a monotone run first, then read the finite-step value as a lower bound and each step as a shrinking fraction of what is left; a record short of that point bounds nothing, and the limit is named wherever the finite-step value is quoted -- the box, not the number, is what makes either readable.
 
+---
+
+## A board is read by the run that dominates its net, not by its launch pad
+
+- **Decision.** `python -m emfit board PATH [--net NAME] [--eps-r EPS] [--json]` reads the file with `emfit.kicad.load_board` and converts it with `MicrostripBoard.from_kicad(net=..., taper="dominant")`, so the reported cross-section is the one carried by the run that holds the most of the net's length. The launch taper is never averaged into the width and the pad's geometry is not the line.
+- **Strongest argument against.** The taper is part of the same net and sits on every real launch, so the command quotes a number for a fragment of the board and calls it the line's width; a reader who takes `w` off that output builds a model of a cross-section that stops where the launch begins.
+- **Why that argument does not win.** A width is what everything downstream must divide: the cell has to divide `w`, and `eps_eff` and `Z0` are functions of `w/h` alone, so an averaged or minimum width describes a cross-section that exists nowhere on the board, and a taper has no single `w` at all. The launch is not discarded from the record, it is placed: `x_port` is the abscissa where the uniform run starts, so the taper's length is quoted as the distance the port sits inboard of the file's own edge.
+- **Evidence.** `kicad_support_project/kicad_support_project.kicad_pcb`, net `RF_IN`: `h = 1.600` mm, `w = 3.000` mm, `eps_r = 4.4`, `x_port = 8.65` mm, `x_far = 32.22` mm, outline `70 x 20` mm. The reference study's own trace is `3.200` mm wide on the same `1.600` mm substrate, so the imported line is `6.25` per cent narrower.
+
+---
+
+## A layout whose width the cell does not divide is measured on a refined box, and the confound is stated
+
+- **Decision.** The imported coupon is run in the default record's own physical box but at a cell of `0.200` mm rather than `0.400` mm, because a `3.000` mm trace is `7.5` cells at the published cell and no mesh can be built from a fractional strip. The two records are then compared on the *bias of the estimator against its own closed form*, never on the absolute `eps_eff`, and every quoted difference carries the statement that the width and the cell moved together.
+- **Strongest argument against.** Refining the cell at a fixed physical box moves two inputs at once, so the difference between the two records is a width effect, a mesh effect and their interaction added up, and a comparison that changes two variables measures none of them; the honest answer to "the published cell does not divide this width" is to report that the geometry cannot be run on that mesh and stop.
+- **Why that argument does not win.** Stopping reports nothing, and what the milestone claims -- that the layout is read, the stack-up becomes the right material, and the width becomes the right `w/h` -- is a statement about the cross-section, not about the grid. The claim survives the confound in the direction that is not additive: the estimator's bias against closed form is `+8.31` per cent on the default box (`62 x 44 x 22`) and `+7.80` per cent on the coupon in `eps_eff`, `+4.07` and `+3.82` per cent in `beta`, so the import adds nothing the grid does not already own, and that is the whole of what is claimed. Where the confound cannot be removed it is bounded instead: the width alone moves `eps_eff` by `-0.55` per cent in closed form (`3.34394` to `3.32545`) against `-1.02` per cent measured, so about half the shift is the refinement. Quoting the `beta` change as the *predictor* of the `eps_eff` change would not be a test, because `eps_eff` is `beta` squared by construction and the two are one measurement.
+- **Evidence.** Default box `62 x 44 x 22` cells at `0.400` mm, `npml 6`, `2400` steps: `eps_eff 3.621781` against closed form `3.343938`, `beta 232.446960` against `223.353067` rad/m. Coupon at `0.200` mm, `124 x 87 x 44`, `npml 12`, `4800` steps, `120.27` s, settledness `|gamma| = 0.007979`: `h 1.600` mm, `w 3.000` mm, `eps_eff 3.584698` against `3.325455`, `beta 231.253918` against `222.734924` rad/m, `alpha 3.1381 +- 0.0863` Np/m; three independent `beta` readings on the one record (`231.2539` joint fit, `231.2277` two-station, `231.1273` two-wave) agree to `0.06` per cent, and the two half-span values differ by `0.64` rad/m. `|z0| = 57.0252` ohm is recorded and explicitly NOT quoted as a validation: width and cell both move it, and closed form predicts `+3.9` per cent where the run shows `+6.9`.
+
+---
+
+## The mesh builder's refusal is a contract, and a deferral records it rather than relaxing it
+
+- **Decision.** `MicrostripBoard.to_cell_counts` keeps its refusal -- a `ValueError` raised first when `abs(self.x_far - self.length) > TOL * self.length` (the strip must *be* the far wall), then when any of `w / cell`, `clearance / cell - n_pml`, `x_port / cell - n_pml` or `(x_far - x_port) / cell` is not an exact integer, `cell = h / n_sub` -- the `board` command reports that refusal as the box's limitation, and no wall or width is rounded to make a board fit. Relaxing it would change what a `Board` means to every caller of `to_cell_counts`, which belongs to the contract decision that owns it and not to the import.
+- **Strongest argument against.** A tool that refuses a real layout file has not done the milestone: the file is a real board, the gate is arithmetic we wrote ourselves, and rounding a wall outward is what every mesher does by default and costs at most half a cell.
+- **Why that argument does not win.** What may not be rounded is the width: `w` sets `eps_eff`, `Z0` and the strip's own cell count, so a board whose width is not a whole number of cells cannot be built at that cell at all, and the only honest answers are "refuse" and "choose another cell" -- both of which the tool now states. Moving a wall silently by up to half a cell would put an unrecorded geometry change beneath numbers that are then compared at the `5` per cent level, and the refusal is itself a measurement: it is what says the published `0.400` mm mesh cannot carry a `3.000` mm trace.
+- **Evidence.** `emfit/board.py:341-417`, `MicrostripBoard.to_cell_counts`:
+
+```
+379|         if abs(self.x_far - self.length) > TOL * self.length:
+380|             raise ValueError(
+381|                 f"the strip ends at x_far = {self.x_far * 1e3:.6f} mm but the "
+382|                 f"outline is {self.length * 1e3:.6f} mm long: the model terminates "
+383|                 f"the strip in the far absorber at the x wall, so a strip that "
+384|                 f"stops short of that boundary cannot be represented (and neither "
+385|                 f"can one that runs past it). Crop the outline to the strip, or "
+386|                 f"extend the net to the board edge.")
+387| 
+388|         cell = self.h / n_sub
+389|         dims = (
+390|             ("n_strip", self.w, 0, "the strip width"),
+391|             ("n_clean", self.clearance, n_pml,
+392|              "the clearance beside the strip, less the lateral absorber"),
+393|             ("n_ref", self.x_port, n_pml,
+394|              "the port plane, less the absorber behind it"),
+395|             ("n_line", self.x_far - self.x_port, 0,
+396|              "the port plane to the far plane"),
+397|         )
+398|         wanted = {name: run / cell - cut for name, run, cut, _ in dims}
+399|         bad = [dim for dim in dims if not _integral(wanted[dim[0]])]
+400|         if bad:
+...
+412|             raise ValueError(
+413|                 f"the mesh is cubic, so every dimension of the model has to be an "
+414|                 f"integral number of cells, and at cell = h / n_sub = "
+415|                 f"{self.h * 1e3:.6f} mm / {n_sub} = {cell * 1e3:.6f} mm these do "
+416|                 f"not fit:\n" + "\n".join(rows)
+417|                 + f"\n{advice}; otherwise the geometry or n_sub has to change.")
+```
+
+and `emfit/board.py:271-287`, the `taper=` mechanics: the widths are accumulated as `widths[key] = widths.get(key, 0.0) + track.length()` per distinct rounded width, `taper="raise"` (the signature default, `emfit/board.py:192`) raises when `len(widths) > 1`, and `taper="dominant"` takes `w_mm = max(widths, key=lambda width: widths[width])` -- the width carried by the greatest total track length -- then `strip = [track for track in along if round(track.width, 9) == w_mm]` and `x_port`/`x_far` from the extreme `x` of those segments only. `emfit/cli.py:280-281` passes `taper="dominant"` explicitly.
