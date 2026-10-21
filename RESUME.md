@@ -78,6 +78,40 @@ and it is not a second run.  `dump written: None` in the solve log is **cosmetic
 4. Nothing else.  Do not launch another solve, and do not run pytest while the docs are
    the only open item.
 
+### Poynting provenance: sound, but not reproducible from master alone
+
+The quotable figure `|S21|_poynting = 0.984519` -- `-0.1355` dB over the `9.60` mm line,
+section 68 -- is **sound**, but a reader who clones `master` cannot reproduce it.  Four
+reasons, and every one of them is load-bearing: (1) the driver that produced it,
+`.scratch/m2/board_run_cw_poynting.py`, is outside version control; (2) the phasor
+record it wrote, `.scratch/.../plane_record.npz`, is also outside version control, and
+that record is what the cross-section check consumes; (3) the smoke harness
+`.scratch/host/m3a-smoke/run.sh` is likewise outside version control; (4) `.scratch/` is
+not committed at all, so none of the three survives a clone.
+
+For a holder of the tree the number is at least fully specified.  Production mesh
+`322 x 200 x 76` (200 y-nodes, 76 z-cells, strip on `k = 16` at `iy = 100`); nine
+stations spanning `9.6` mm; record length `1339` samples; `POY_SMOKE=1785`, which keeps
+the production mesh and re-snaps `f0` to `7.834216` GHz; `EMFIT_PLANE_CAPTURE=1` and
+`EMFIT_BIN_DUMP=<abs>/plane_record.npz`.  It must run on the **HOST** with
+`.venv/bin/python3` (3.12.3), never in the container, because the production mesh
+exhausts the container's memory (exit 137).  From the repo root, tee'd so it can be
+watched:
+
+```
+POY_SMOKE=1785 EMFIT_BIN_DUMP=<abs>/plane_record.npz EMFIT_PLANE_CAPTURE=1 PYTHONUNBUFFERED=1 python3 -u .scratch/m2/board_run_cw_poynting.py 7.8333 2>&1 | tee solve.out
+```
+
+**Recommendation.**  The harness and the driver should move into the repository: the
+instrument that produces a quotable number has to be reachable from the trunk, otherwise
+every future reader is asked to take the number on trust.  The record itself should
+**not** be committed -- it is about 8.8 MB of derived output -- but the code that
+regenerates it should.  This is a recommendation only; nothing is moved in this commit,
+pending a ruling.
+
+Until that move happens, `0.984519` should be quoted with its provenance attached, never
+as a bare number.
+
 ## Working tree -- what must not be staged
 
 - The section-67 work and the Poynting instrument (`emfit/ports.py`, `emfit/studies.py`,
