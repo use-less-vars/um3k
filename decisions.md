@@ -656,9 +656,72 @@ and `emfit/board.py:271-287`, the `taper=` mechanics: the widths are accumulated
 `|z0| 53.14411383477105` against `53.144` (`2.1e-06`); `Re z0 50.952340670283945` against `50.952`
 (`6.7e-06`); `alpha_fit 2.469703092775746` against `2.469703` (`3.8e-08`);
 `|gamma| 0.006281926302682181` against `0.0062819` (`4.2e-06`); `fit_residual 0.007812967007589234` against
-`0.007813` (`4.2e-06`). Two rows do not close in that run, and both are `audit = False`: the station `|S21|`
-`0.9861098351994007` against `0.9870082` (`9.1e-04`, inside the `7.8e-3` fit residual), and the lateral sink,
-absent because the absorbed-work accounting is precisely what `audit` switches on. The audited run of the
-same fixture through the same path returns `alpha_audit 1.3360133447381923` Np/m and
-`abs_s21 0.9870082381045727`, which is what closes both rows.
+`0.007813` (`4.2e-06`). The lateral sink is absent from that run because the absorbed-work accounting is
+exactly what `audit` switches on; run again through the same board path with `audit=True`, the fixture
+returns `alpha_audit 1.3360133447381923` Np/m against the published `1.33601` (`2.5e-06`), lateral work
+`1.9763611915240925e-07` J against the published `1.976361e-07` J, `fractions` `lateral 0.07054150460217655`
+and `end 0.9294584953978235` against `7.054` and `92.946` per cent, and `implied_s21 0.9640842781613148`
+against `0.9640843`. Those rows close.
+
+One row does not close, and the audit does not touch it: the station `|S21|` is `0.9861098351994007` audited
+and `0.9861098351994007` unaudited, `9.1e-04` below the `0.9870082` this log records for the same box. The
+gap is inside the `7.8e-3` fit residual but four orders of magnitude above the round-off every other row
+achieves, so it is named as an open discrepancy rather than absorbed into a tolerance. It is not the mesh,
+the stackup, the port or the audit -- the same run puts `eps_eff`, `beta`, `z0`, `alpha_fit`, `|gamma|` and
+the lateral sink on the published digits. It is left open with that statement rather than explained away,
+and it is the one thing a reader checking this acceptance should re-derive first.
+
+---
+
+## The absorbed-work audit is opt-in, and its clock names its route
+
+- **Decision.** `audit` is a keyword-only flag defaulting to `False` on both `microstrip_wave` and, since
+  `d555b4d`, `microstrip_wave_board`. The study path is the one place that turns it on, `audit=True` for the
+  real run and `audit=False` for its twin (`emfit/studies.py:2662` and `:2648`), so every absorbed-work number
+  in the report comes from an audited run, and a reader who wants that row must ask for three things: the
+  flag, which entry point produced the number, and the wall clock of the run that produced it. A clock is
+  never quoted as "the cost of the audit" on its own. No audited case is added to the test suite: the
+  cheapest audited route measured here is `17` s and the dearest `600.69` s for bit-identical output, against
+  a `302.22` s suite, so the audited row is recorded here with its number and its route rather than asserted
+  by `pytest`.
+- **Strongest argument against.** An acceptance that does not run under `pytest` is not an acceptance, and
+  the claim the audit exists to support -- that the sink is lateral matched-layer leakage at `1.3360` Np/m --
+  is precisely the claim `d555b4d` had to thread the flag through to reach, so leaving it out means the
+  automated check of the board path never exercises the accounting code at all.
+- **Why that argument does not win.** A test whose duration depends on which entry point it happens to use,
+  by a factor of `35`, grades the plumbing and not the solver: the same self-check either fits the suite or
+  does not, for reasons that have nothing to do with the physics, and a `600` s case behind a marker nobody
+  runs is a comment. The route dependence is a defect in its own right and is carried below as an open item;
+  once a direct `audit=True` costs what a study run costs, the audited case is `17` s and can be added
+  deliberately, with its cost known. What is not deferred is the evidence: the board path was run audited,
+  and the lateral sink, the wall fractions, the implied `|S21|` and the work in joules all reproduce.
+- **Evidence, five clocks on one box** (`66 x 52 x 26` at `0.40` mm, `npml 10`, `2400` steps, `600` warm-up,
+  `1800` accounted):
+  (1) `9.763592199` s, a direct call with `audit=False`;
+  (2) `17` s, the study path with `audit=True`, whole `python3` process including `import emfit`
+  (`START=1792548557`, `END=1792548574`, `/tmp/study_retime.log`; an upper bound on the solve alone, because
+  the script died on a cwd-relative dump write before printing its own `WALL` line);
+  (3) `31.792227651982103` s, the clock recorded in `.scratch/study_dump.txt` line 1 by that same study
+  script on 2026-10-20 01:31, whose line 47 is the absorbed-work row -- i.e. the published clock is an
+  audited clock, and it is the study route's clock;
+  (4) `570.3019553209888`, `784.1913794020074` and `600.6859359579998` s, three direct calls with
+  `audit=True` in three different scripts, all returning bit-identical numbers (lateral work
+  `1.9763611915240925e-07` J, total removed work `2.8017e-06` J, lateral sink `1.3360133447381923` Np/m).
+  The `571` s anomaly parked in the entry "Retraction: the lateral PML is not excluded, it is the sink" is
+  the first sighting of (4), not a scratch artefact: three scripts agree to within a factor of `1.4`.
+- **Open item, stated as one.** The audit is not sampled. `emfit/pml.py:720-721` and `:731-732` call
+  `record("e", ...)` and `record("h", ...)` on every step under the sole guard `if self._audit is not None`,
+  from `FITStepper.step` (`emfit/evolve.py:193`, `:202`); the only economy is that `_build` caches the wall
+  index sets per `dt` (`emfit/pml.py:364`), leaving four fixed-index gathers and four weighted dot products
+  per step (`emfit/pml.py:369-371`). Both routes construct the same `AbsorbedWork(groups={"end", "lateral"})`
+  at `emfit/studies.py:1968-1974`, so they are supposed to cost the same per step -- and measured against the
+  reference box they are `35` times apart (`17` s against `600.69` s) for bit-identical output. The mechanism
+  is not established. It is recorded as an open item with four measurements attached and is not to be
+  explained by hardware, contention or "scratch": `31.79` s and `17` s are the same route differing by
+  contention, and `570`/`600`/`784` s are a different route. Until it is settled, quote neither number as
+  the cost of the audit.
+- **A hazard that cost nothing but could.** `.scratch/` is in `.gitignore` and `.scratch/study_run.py` writes
+  its dump with a cwd-relative path (`open(".scratch/study_dump.txt", "w")`, line 11), so re-running that
+  script from the repo root would silently overwrite the evidence file with `git status` showing nothing at
+  all. The retiming above was therefore run from `/tmp/retime`, where the write failed loudly instead.
 
