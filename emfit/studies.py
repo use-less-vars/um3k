@@ -52,6 +52,7 @@ from .board import Load, MicrostripBoard
 from .eigen import analytic_box_modes, resonances
 from .evolve import FITStepper, RickerSource, cfl_dt
 from .grid import Grid
+from .kicad import load_board
 from .materials import C0, material_matrices
 from .microstrip import Microstrip
 from .operators import CellComplex
@@ -95,7 +96,7 @@ __all__ = [
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
-KINDS = ("int", "float", "choice", "bool")
+KINDS = ("int", "float", "choice", "bool", "str")
 """Accepted values of :attr:`Param.kind`."""
 
 
@@ -128,7 +129,7 @@ class Param:
     Args:
         key: Identifier used by ``--set key=value`` and by the form field name.
         label: Short human label for the UI.
-        kind: ``'int'``, ``'float'``, ``'choice'`` or ``'bool'``.
+        kind: ``'int'``, ``'float'``, ``'choice'``, ``'bool'`` or ``'str'``.
         default: Value used when the front end does not supply one.
         choices: Allowed values, required for ``kind='choice'``.
         lo: Lower bound (inclusive) for numeric kinds; ``None`` = unbounded.
@@ -159,6 +160,15 @@ class Param:
                 raise ValueError(
                     f"param {self.key!r}: default {self.default!r} is not one of "
                     f"{', '.join(map(str, self.choices))}")
+        if self.kind == "str":
+            if not isinstance(self.default, str):
+                raise ValueError(
+                    f"param {self.key!r}: a str param's default must be text, "
+                    f"got {self.default!r}")
+            if self.choices or self.lo is not None or self.hi is not None:
+                raise ValueError(
+                    f"param {self.key!r}: a str param is free text, so it "
+                    "takes no choices and no bounds")
         if self.kind in ("int", "float"):
             if self.lo is not None and self.default < self.lo:
                 raise ValueError(f"param {self.key!r}: default below lo")
@@ -171,6 +181,8 @@ class Param:
             span = "|".join(map(str, self.choices))
         elif self.kind == "bool":
             span = "true|false"
+        elif self.kind == "str":
+            span = "text"
         else:
             span = f"{self.lo if self.lo is not None else '-'}.." \
                    f"{self.hi if self.hi is not None else '-'}"
@@ -346,6 +358,9 @@ def _coerce_one(param: Param, value):
     if value is None or (isinstance(value, str) and not value.strip()):
         return param.default                     # untouched form field
 
+    if param.kind == "str":
+        return str(value)                       # free text, taken as written
+
     if param.kind == "choice":
         candidate = str(value).strip()
         if candidate not in param.choices:
@@ -390,6 +405,10 @@ def coerce(study: Study, submitted: Mapping[str, Any] = None) -> dict:
       string counts as missing -- that is what an untouched form field sends);
     * ``choice`` values must be one of :attr:`Param.choices`;
     * ``bool`` accepts ``true/false``, ``yes/no``, ``on/off``, ``1/0``;
+    * ``str`` is taken as given: a path or a net name reaches the study
+      exactly as it was typed, and an empty string is a legal value (it means
+      "nothing named" to a parameter that offers one), so only the
+      whitespace-only check above turns one into the default;
     * ``int`` accepts ``'10'`` and ``10`` alike and rejects ``'10.5'``;
     * out-of-range numerics are **rejected**, not clamped: silently turning a
       request for 40 cells into 14 would hide a mistake, so the error names the
@@ -2528,6 +2547,7 @@ def microstrip_wave_board(
     n_stations: int = MS_N_STATIONS,
     f_target: float = MS_F_TARGET,
     nsteps: int = MS_NSTEPS,
+    keep_slice: bool = False,
     audit: bool = False,
     reference: LineReference | None = None,
     sink: FigureSink = None,
@@ -2562,6 +2582,10 @@ def microstrip_wave_board(
         n_stations: Number of probe stations along the line.
         f_target: Wanted drive frequency [Hz].
         nsteps: Leapfrog steps; the record is what is left after warm-up.
+        keep_slice: Whether to accumulate the mid-plane phasor block, which is
+            what the ``midplane-ez`` figure is drawn from; it is a separate
+            accumulation through the time loop, so a run that wants no picture
+            should leave it off.
         audit: Whether to build the absorbed-work accounting; ``False`` (the
             default) skips it because it costs substantially more than the
             solve itself.
@@ -2601,6 +2625,7 @@ def microstrip_wave_board(
         n_stations=n_stations,
         f_target=f_target,
         nsteps=nsteps,
+        keep_slice=keep_slice,
         audit=audit,
         loads=spec.loads,
         reference=reference,
@@ -3345,6 +3370,224 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     return metrics
 
 
+def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
+    """Study wrapper: one coupon read out of a board file, as formatted strings."""
+    path = str(values.get("board", "")).strip()
+    if not path:
+        raise ValueError(
+            "board: no board file given; name the file to read with "
+            "--set board=<path>.kicad_pcb.  A board study has no default "
+            "geometry: the file is the input, and every number below is read "
+            "out of it")
+    net = str(values.get("net", "")).strip()
+    if not net:
+        raise ValueError(
+            "net: no net named; give the copper net that carries the strip "
+            "with --set net=<name>.  A board file usually carries several "
+            "nets and nothing here picks one for you")
+    port_pad = None
+    pad_text = str(values.get("port_pad", "")).strip()
+    if pad_text:
+        reference, dot, number = pad_text.rpartition(".")
+        if not dot or not reference or not number:
+            raise ValueError(
+                f"port_pad: {pad_text!r} is not in REF.NUM form: give the "
+                "footprint reference and the pad number separated by a dot, "
+                "e.g. port_pad=J1.1 (pad 1 of footprint J1)")
+        port_pad = (reference, number)
+
+    n_sub = int(values.get("n_sub", MS_N_SUB))
+    n_air = int(values.get("n_air", MS_N_AIR))
+    n_top = int(values.get("n_top", MS_N_TOP))
+    npml = int(values.get("npml", MS_N_PML))
+    n_stations = int(values.get("n_stations", MS_N_STATIONS))
+    eps_r = float(values.get("eps_r", 0.0))
+
+    # The file is read here and not in the CLI: this study owns every number it
+    # reports, and ``MicrostripBoard.from_kicad`` is the one bridge from a
+    # parsed board to a mesh.  ``taper='dominant'`` is asked for deliberately
+    # -- a tapering line would otherwise be refused and the commonest coupon
+    # there is would show nothing -- and a named pad takes the choice of port
+    # plane away from that rule.
+    board = load_board(path)
+    try:
+        spec = MicrostripBoard.from_kicad(
+            board, net=net, eps_r=(eps_r if eps_r > 0.0 else None),
+            taper="dominant", port_pad=port_pad)
+    except ValueError as exc:            # no such net, no run along x, no stackup
+        raise ValueError(f"board {path}: {exc}") from None
+    if bool(values.get("crop", True)):
+        # The box ends where the strip does: the outline supplied the lateral
+        # clearance and the far wall, and it is the strip's propagation
+        # constant the record reports.  ``n_sub`` is handed in so that cropping
+        # also lands the two ``x`` planes on cell boundaries, which is what
+        # ``to_cell_counts`` is going to ask of them anyway.
+        spec = spec.cropped_to_strip(n_sub=n_sub)
+
+    # The stations are placed on the strip this file draws, not at the fixed
+    # 10.4/20.0 mm of the typed-in default line: on a coupon those two numbers
+    # are wherever the board happens to put the copper.
+    span = spec.x_far - spec.x_port
+    result = microstrip_wave_board(
+        spec,
+        n_sub=n_sub,
+        n_air=n_air,
+        n_top=n_top,
+        n_pml=npml,
+        x_first=spec.x_port + 0.2 * span,
+        x_last=spec.x_port + 0.8 * span,
+        n_stations=n_stations,
+        f_target=float(values["f0"]) * 1e9,
+        nsteps=int(values["nsteps"]),
+        keep_slice=True,
+        sink=sink)
+    g = result.geometry
+    # A record whose station fit was refused still has a report to write, and
+    # every row below reads its numbers off ``sf``: a blank fit says ``n/a`` on
+    # all of them through ``num()`` instead of raising nine-tenths of the way
+    # through a table.
+    sf = (result.station_fit if result.station_fit is not None
+          else _blank_station_fit(result.station_x[0], result.beta, None,
+                                  len(result.station_x)))
+
+    def num(value, unit, fmt=".4f"):
+        """Format an optional number, or ``n/a`` when the fit could not give it."""
+        if value is None or not np.isfinite(value):
+            return "n/a"
+        return f"{value:{fmt}} {unit}".strip()
+
+    def decibel(magnitude):
+        """``20 log10`` of a magnitude, or ``None`` when no magnitude exists."""
+        if magnitude is None or not np.isfinite(magnitude) or magnitude <= 0.0:
+            return None
+        return 20.0 * np.log10(magnitude)
+
+    # Which plane the wave was launched from, said as the fact it is: a pad the
+    # file declares, or a rule applied to the track the file draws.
+    if spec.port is None:
+        launch = (
+            f"taper='dominant' at the run extremes: no pad was named, so the "
+            f"port plane is the end of the {spec.w * 1e3:.3f} mm run of net "
+            f"{spec.name!r} that the model drives from (x = "
+            f"{spec.x_port * 1e3:.3f} mm), with the far plane at the other "
+            f"end (x = {spec.x_far * 1e3:.3f} mm).  The width is the one that "
+            "covers the most of the net, which is the strip and not the taper "
+            "either side of it; name a pad with port_pad=REF.NUM to launch "
+            "from it instead")
+    else:
+        port = spec.port
+        launch = (
+            f"pad {port.reference}.{port.number} on net {port.net!r}, at x = "
+            f"{port.position * 1e3:.3f} mm, y = {port.y * 1e3:.3f} mm on the "
+            f"{port.side} copper: the pad decides which end of the run is the "
+            "port plane -- the end it sits nearest to -- and not how wide the "
+            f"strip is, so the line is still the {spec.w * 1e3:.3f} mm run "
+            "that covers the most of the net")
+
+    gamma_abs = abs(sf.gamma_v)
+    s11_measured_db = decibel(gamma_abs)
+    s11_port_db = decibel(abs(result.gamma_port))
+    # ``1.0 - 1e-9``, not ``1.0``: a numerically total reflection otherwise
+    # comes out as a finite VSWR of 9.0e15, which is a float artefact printed
+    # as though it had been measured.
+    vswr = ((1.0 + gamma_abs) / (1.0 - gamma_abs)
+            if gamma_abs < 1.0 - 1e-9 else float("inf"))
+    vswr_text = f"{vswr:.4f}" if np.isfinite(vswr) else "unbounded"
+    s21_db = decibel(abs(result.s21))
+    x1, x2 = result.s21_planes
+
+    # The passivity bound.  It is a bound and nothing more: a passive network
+    # cannot return more power than it was handed, so |S11|^2 + |S21|^2 <= 1
+    # between the two station planes.  The plain sum is legitimate because both
+    # magnitudes are read on one cross-section, so the per-plane power-wave
+    # weighting sqrt(Re zc) is the same factor on both terms and cancels.
+    gamma_sq = float(abs(result.gamma)) ** 2
+    s21_sq = float(abs(result.s21)) ** 2
+    if np.isfinite(gamma_sq) and np.isfinite(s21_sq):
+        passivity_row = (
+            f"{gamma_sq + s21_sq:.6f} from |S11|^2 = {gamma_sq:.6f} plus "
+            f"|S21|^2 = {s21_sq:.6f}: a passive network must satisfy "
+            "|S11|^2 + |S21|^2 <= 1, and that is the whole of the claim -- a "
+            "lossless network sits at exactly 1, so this is not a losslessness "
+            "check.  The surrounding matched layers only ever remove power "
+            "the two planes never see again, which lowers the sum, so a wide "
+            "margin is the expected reading and not a defect")
+    else:
+        passivity_row = (
+            "n/a: this record has no finite |S11| or |S21| to add, so there is "
+            "no passivity bound to quote; the bound itself is "
+            "|S11|^2 + |S21|^2 <= 1 between the station planes")
+
+    gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
+
+    return {
+        "board": f"{path} (net {spec.name!r})",
+        "launch": launch,
+        "line, from the board": (
+            f"{spec.w * 1e3:.3f} mm strip on {spec.h * 1e3:.3f} mm of eps_r = "
+            f"{spec.eps_r:g} (w/h = {spec.w / spec.h:.3f}); port plane at "
+            f"{spec.x_port * 1e3:.3f} mm, far plane at "
+            f"{spec.x_far * 1e3:.3f} mm, outline {spec.length * 1e3:.3f} x "
+            f"{spec.width * 1e3:.3f} mm"),
+        "supplied by the caller": (
+            ", ".join(spec.supplied) if spec.supplied
+            else "nothing: every number above came out of the file"),
+        "drive frequency": (
+            f"{g['f'] / 1e9:.4f} GHz (asked {g['f_target'] / 1e9:.4f} GHz, "
+            "snapped to a DFT bin)"),
+        "mesh": (f"{g['nx']} x {g['ny']} x {g['nz']} cells at "
+                 f"{g['cell'] * 1e3:.4f} mm"),
+        "counts, from the spec": (
+            f"n_strip = {g['n_strip']}, n_clean = {g['n_clean']}, "
+            f"n_ref = {g['n_ref']}, n_line = {g['n_line']}"),
+        "box": (f"{g['length'] * 1e3:.2f} x {g['width'] * 1e3:.2f} x "
+                f"{g['height'] * 1e3:.2f} mm, {g['nsteps']} steps "
+                f"({g['n_acc']} transformed)"),
+        "stations": (f"{len(result.station_x)} from "
+                     f"{result.station_x[0] * 1e3:.2f} to "
+                     f"{result.station_x[-1] * 1e3:.2f} mm"),
+        "beta (one-wave fit)": f"{result.beta:.3f} rad/m",
+        "beta (Hammerstad-Jensen)": f"{result.beta_model:.3f} rad/m",
+        "|gamma|": f"{abs(result.gamma):.5f}",
+        "fit residual": f"{result.fit_residual:.5f}",
+        "eps_eff": f"{result.eps_eff:.5f} (from this run's beta)",
+        "eps_eff (Hammerstad-Jensen)": f"{result.eps_eff_model:.5f}",
+        "line Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
+        "line Z0 from stations": num(abs(sf.z0), "ohm"),
+        "|S11| at the measured plane": (
+            f"{gamma_abs:.5f} = {num(s11_measured_db, 'dB', '.2f')} at x = "
+            f"{sf.reference_plane * 1e3:.2f} mm, the first station: that is "
+            "the plane the station fit refers its reflection to, because a "
+            "lumped source's own plane is defined by the gap it drives and "
+            "not by a coordinate"),
+        "|S11| at the port plane": (
+            f"{abs(result.gamma_port):.5f} = {num(s11_port_db, 'dB', '.2f')} "
+            f"after exp(-2j beta d) with d = "
+            f"{result.deembed_distance * 1e3:.2f} mm: the same reflection "
+            "moved onto the plane an instrument at the pad would see, and beta "
+            "is real here, so the move changes phase and nothing else"),
+        "|S11| as VSWR": (
+            f"{vswr_text} : 1 from (1 + |gamma|) / (1 - |gamma|) with "
+            f"|gamma| = {gamma_abs:.5f}: a reflection at this level is easier "
+            "to read as a mismatch than as a decibel"),
+        "|S21| between station planes": (
+            f"{abs(result.s21):.6f} = {num(s21_db, 'dB', '.3f')} between x = "
+            f"{x1 * 1e3:.2f} mm and x = {x2 * 1e3:.2f} mm, "
+            f"{(x2 - x1) * 1e3:.2f} mm apart: one plane at each end, each split "
+            "into its forward wave and the two divided, so no fit stands "
+            "between the planes"),
+        "passivity bound: |S11|^2 + |S21|^2 between the station planes": (
+            passivity_row),
+        "ground current, full domain": f"{abs(result.i_ground_full):.6e} A",
+        "ground current, strip extent": (
+            f"{abs(result.i_ground_truncated):.6e} A"),
+        "full / strip current": f"{gain:.3f}",
+        "beta ambiguity": ("total span phase > pi: the two-station difference "
+                           "has wrapped, read the fit"
+                           if g["beta_ambiguous"] else "phase step below pi"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # registry
 # ---------------------------------------------------------------------------
@@ -3546,8 +3789,101 @@ MICROSTRIP = Study(
     run=_run_microstrip,
 )
 
+MICROSTRIP_BOARD = Study(
+    name="microstrip_board",
+    title="Microstrip from a board file: the coupon as the layout draws it",
+    blurb=(
+        "The same run as microstrip, on the coupon a board file actually "
+        "contains: one net is picked out of a .kicad_pcb, the substrate "
+        "thickness and permittivity are read from the stackup, the port plane "
+        "from a pad if one is named, and the box is cropped to the strip. "
+        "Every dimension below is a number read out of the file, so the "
+        "report says which ones came from the file and which the caller had "
+        "to supply: a board without a stackup has no h and no eps_r, and "
+        "those two are the only numbers a coupon cannot be simulated "
+        "without. A net that tapers is driven from the widest run of it "
+        "(taper='dominant'), which is the strip and not the launch, because a "
+        "tapered net would otherwise be refused and the commonest coupon "
+        "there is would show nothing; naming a pad with port_pad=REF.NUM "
+        "takes the choice of port plane away from that rule. beta, eps_eff, "
+        "Z0, |S11| and |S21| are measured between stations at 20% and 80% of "
+        "the strip, not at the typed-in geometry's 10.4/20.0 mm, and the "
+        "same warnings apply: a record too short for the transient to reach "
+        "the far absorber lies about beta, so read the fit residual first. "
+        "The stations sit between 20% and 80% of the strip and not at its two "
+        "ends because the ends are exactly where the board's copper stops "
+        "being a uniform line -- the pad's launch fan-out at one, the "
+        "terminating absorber at the other -- and the fit assumes everything "
+        "between its two planes is the line the file draws."),
+    params=(
+        Param("board", "Board file", "str", "",
+              help="Path to the .kicad_pcb to read. This study has no "
+                   "default geometry: the file is the input."),
+        Param("net", "Net", "str", "",
+              help="Name of the copper net that carries the strip, exactly "
+                   "as the board spells it (net names are case-sensitive). "
+                   "Nothing picks a net for you."),
+        Param("port_pad", "Port pad", "str", "",
+              help="Optional REF.NUM, e.g. J1.1: the pad the wave is "
+                   "launched from. Empty means no pad is named and the port "
+                   "plane is the end of the widest run of the net."),
+        Param("eps_r", "Substrate permittivity", "float", 0.0,
+              lo=0.0, hi=16.0, unit="",
+              help="0 reads the value from the board stackup and is what a "
+                   "coupon normally wants; anything else overrides the "
+                   "stackup and is reported as supplied by the caller."),
+        Param("crop", "Crop the box to the strip", "bool", True,
+              help="End the box where the strip does, keeping the outline's "
+                   "lateral clearance. Off keeps the whole outline, which "
+                   "costs cells the strip does not use."),
+        # The ceiling is 32, not 24, because 32 is the largest value
+        # ``to_cell_counts`` can name: its search for a fitting mesh is
+        # ``range(1, 33)`` (board.py:631), so a coupon whose only fitting mesh is
+        # 32 would otherwise be told to pass a value this study refuses -- the
+        # same contradiction the nsteps cap was. A finer cell is the only way to
+        # reduce the discretisation error of a mesh that has to be integral, so
+        # the ceiling has to reach past the coarsest useful mesh.
+        Param("n_sub", "Substrate cells", "int", MS_N_SUB, lo=1, hi=32,
+              unit="cells",
+              help="Cells across the substrate. Sets the cell size, so every "
+                   "dimension and the timestep move with it. A board's strip "
+                   "is whatever the layout drew, so it is rarely a whole "
+                   "number of cells at the default: the refusal names the "
+                   "n_sub values that do fit this coupon, and the ceiling is "
+                   "32 because that is the finest the refusal will ever "
+                   "name."),
+        Param("n_air", "Air cells", "int", MS_N_AIR, lo=1, hi=40,
+              unit="cells",
+              help="Cells between the strip and the lid at zmax."),
+        Param("n_top", "Lid absorber cells", "int", MS_N_TOP, lo=0, hi=12,
+              unit="cells",
+              help="0 leaves the lid a plain PEC and builds no absorber "
+                   "there; a non-zero value opens it."),
+        Param("npml", "Matched-layer cells", "int", MS_N_PML, lo=2, hi=12,
+              unit="cells",
+              help="Layer thickness at each absorbing face, both x ends and "
+                   "both lateral ends; thicker absorbs more and costs more "
+                   "cells."),
+        Param("nsteps", "Leapfrog steps", "int", MS_NSTEPS, lo=64,
+              hi=20000,
+              help="The first quarter is warm-up; the rest is Fourier "
+                   "transformed. The record also has to be long enough for "
+                   "the launched transient to leave the line."),
+        Param("f0", "Drive frequency", "float", MS_F_TARGET / 1e9,
+              lo=1.0, hi=20.0, unit="GHz",
+              help="Wanted tone; the run uses the nearest DFT bin of the "
+                   "record and reports both."),
+        Param("n_stations", "Measurement stations", "int", MS_N_STATIONS,
+              lo=2, hi=21, unit="cells",
+              help="Samples of the gap voltage along the strip, spread over "
+                   "20-80% of it."),
+    ),
+    run=_run_microstrip_board,
+)
+
 STUDIES: dict = {study.name: study
-                 for study in (CAVITY, MODES, DUCT, SCATTER, RCS, MICROSTRIP)}
+                 for study in (CAVITY, MODES, DUCT, SCATTER, RCS, MICROSTRIP,
+                               MICROSTRIP_BOARD)}
 """Registry of every study, keyed by :attr:`Study.name`."""
 
 

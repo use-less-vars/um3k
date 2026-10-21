@@ -173,6 +173,40 @@ def test_a_deep_record_warns_on_stderr_and_a_normal_one_does_not(
     assert "warning" not in loud.out, loud.out
 
 
+def test_microstrip_board_reaches_the_cli_through_set(capsys, monkeypatch):
+    """The board study is runnable from the CLI with its three text knobs.
+
+    A text knob is the piece of ``--set`` the catalogue did not exercise before:
+    a path has a ``/`` in it, a net name has no number in it, and a pad has a
+    dot, so none of the three is the numeric or boolean parse every other study
+    goes through.  They have to arrive at the study unchanged and come back in
+    ``values``, because ``--json`` is what a script reads to record what it ran.
+
+    The solve is stubbed: the coupon file is opened by the real study and the
+    real ``coerce`` still types every value, so a text knob that stopped being
+    free text would fail here rather than pass.
+    """
+    def run(values, sink):
+        return {"board": values["board"], "net": values["net"],
+                "port_pad": values["port_pad"]}
+
+    monkeypatch.setitem(studies.STUDIES, "microstrip_board",
+                        dataclasses.replace(studies.MICROSTRIP_BOARD, run=run))
+
+    code = cli.main(["run", "microstrip_board",
+                     "--set", f"board={COUPON}",
+                     "--set", "net=RF_IN",
+                     "--set", "port_pad=J1.1",
+                     "--json"])
+    assert code == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["values"]["board"] == str(COUPON)
+    assert printed["values"]["net"] == "RF_IN"
+    assert printed["values"]["port_pad"] == "J1.1"
+    assert printed["metrics"] == {"board": str(COUPON), "net": "RF_IN",
+                                 "port_pad": "J1.1"}
+
+
 # ---------------------------------------------------------------------------
 # board: what the file states, and then what was derived from it
 # ---------------------------------------------------------------------------

@@ -164,6 +164,14 @@ def _control(form_key: str, param, value) -> str:
         return (f"<input type=\"hidden\" name=\"{name}\" value=\"false\">"
                 f"<input type=\"checkbox\" id=\"{ident}\" name=\"{name}\" "
                 f"value=\"true\"{checked}>")
+    if param.kind == "str":
+        # A text field, and deliberately not ``required``: an empty string is a
+        # legal value for a ``str`` parameter here (port_pad empty means "no
+        # pad named"), and the study that needs one raises its own message
+        # naming the flag rather than the browser refusing the submit.
+        must = " required" if str(param.default) else ""
+        return (f"<input type=\"text\" id=\"{ident}\" name=\"{name}\" "
+                f"value=\"{_fmt_value(param, value)}\"{must}>")
     bounds = ""
     if param.lo is not None:
         bounds += f" min=\"{_esc(param.lo)}\""

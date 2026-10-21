@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -56,6 +57,126 @@ def test_microstrip_study_is_registered():
 
     # ... and it is present alongside the pre-existing studies, not instead.
     assert {"cavity", "modes", "duct", "scatter", "rcs"} <= set(studies.STUDIES)
+
+
+ROOT = Path(__file__).resolve().parent.parent
+COUPON = ROOT / "kicad_support_project" / "kicad_support_project.kicad_pcb"
+
+
+def test_microstrip_board_study_is_registered():
+    """``microstrip_board`` is a registry key whose knobs are all typed.
+
+    Its three text knobs are the whole input -- the board file, the net and the
+    optional pad -- because this study has no default geometry: everything else
+    it needs is in the file.  Two things are pinned here and nothing else: the
+    exact set of keys with their kinds, since every front end builds a form from
+    it, and that each numeric knob's default sits inside its own bounds, since a
+    default outside them would make the study unrunnable with no argument given.
+    """
+    assert "microstrip_board" in studies.STUDIES
+
+    study = studies.get("microstrip_board")
+    assert study is studies.MICROSTRIP_BOARD
+    assert study.name == "microstrip_board"
+    assert callable(study.run)
+    assert study.title and study.blurb
+
+    assert {param.key: param.kind for param in study.params} == {
+        "board": "str",
+        "net": "str",
+        "port_pad": "str",
+        "eps_r": "float",
+        "crop": "bool",
+        "n_sub": "int",
+        "n_air": "int",
+        "n_top": "int",
+        "npml": "int",
+        "nsteps": "int",
+        "f0": "float",
+        "n_stations": "int",
+    }
+
+    for param in study.params:
+        if param.kind in ("int", "float"):
+            assert param.lo is not None and param.hi is not None, param.key
+            assert param.lo <= param.default <= param.hi, (
+                param.key, param.lo, param.default, param.hi)
+
+
+def test_a_str_param_is_free_text():
+    """A ``str`` knob takes a path or a net name as typed, and nothing else.
+
+    The path reaches the study byte for byte -- no stripping, no normalising --
+    because it is handed straight to a file reader; and an empty string is a
+    legal *value*, not a missing one, because ``port_pad`` means "no pad
+    named" that way.  The two refusals are the ones that would otherwise be a
+    silently ignored keyword: a non-text default and bounds on free text.
+    """
+    param = studies.Param("board", "Board file", "str", "")
+    assert param.kind == "str"
+    assert "str: text" in str(param)
+
+    study = studies.Study(
+        name="one_text_knob",
+        title="t",
+        blurb="b",
+        params=(param,),
+        run=lambda values, sink: {"row": "x"},
+    )
+    assert studies.coerce(study, {})["board"] == ""
+    # An untouched form field sends whitespace, and that is the default, not
+    # a path of three spaces.
+    assert studies.coerce(study, {"board": "   "})["board"] == ""
+    assert studies.coerce(study, {"board": "a/b.kicad_pcb"})["board"] == \
+        "a/b.kicad_pcb"
+
+    with pytest.raises(ValueError, match="default must be text"):
+        studies.Param("board", "Board file", "str", 3)
+    with pytest.raises(ValueError, match="takes no choices and no bounds"):
+        studies.Param("board", "Board file", "str", "", lo=1)
+
+
+def test_microstrip_board_coerces_its_text_knobs():
+    """``port_pad`` may be named or left empty; ``n_sub`` is still bounded.
+
+    An empty pad is the ordinary case -- the port plane then comes from the end
+    of the widest run of the net -- so it must coerce instead of being refused
+    for being empty, and a named one must survive as text.  The numeric bound
+    is checked on this study because it is the one that carries a mesh: 99
+    substrate cells is above the declared ceiling of 24 and must be said so
+    rather than clamped.
+    """
+    study = studies.get("microstrip_board")
+
+    named = studies.coerce(study, {"board": str(COUPON), "net": "RF_IN",
+                                   "port_pad": "J1.1"})
+    assert named["port_pad"] == "J1.1"
+    assert named["board"] == str(COUPON)
+    assert named["net"] == "RF_IN"
+
+    unnamed = studies.coerce(study, {"board": str(COUPON), "net": "RF_IN",
+                                     "port_pad": ""})
+    assert unnamed["port_pad"] == ""
+
+    with pytest.raises(ValueError, match="above the maximum"):
+        studies.coerce(study, {"board": str(COUPON), "net": "RF_IN",
+                               "n_sub": 99})
+
+
+def test_microstrip_board_refuses_a_pad_the_board_does_not_declare():
+    """A pad that is not on the board stops the run before any solve.
+
+    ``port_pad`` is free text, so the mistake can only be caught by the board
+    reader -- and it must be caught there: the message lists the pads the file
+    does declare, which is the only way a caller learns the right name.  The
+    coupon has no J9, so this raises inside ``from_kicad`` and costs a file
+    parse rather than a run.
+    """
+    study = studies.get("microstrip_board")
+    values = studies.coerce(study, {"board": str(COUPON), "net": "RF_IN",
+                                    "port_pad": "J9.7"})
+    with pytest.raises(ValueError, match="the pads it declares"):
+        study.run(values, studies.FigureSink())
 
 
 # ---------------------------------------------------------------------------
