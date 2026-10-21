@@ -319,6 +319,87 @@ attenuation to $0.590$, the endpoint ratio to $0.671$, and only the first of the
 attenuation here is therefore a property of the window and the estimator and not of the line, which is why the
 criterion of Section~\ref{sec:ms-criterion} rests on audited work and the station ratio, not on a fit.
 
+\subsection{The same line imported from a layout}
+\label{sec:msres-import}
+
+Every number so far is measured on a geometry written down by hand. The same measurement can be asked of a
+geometry read out of a layout file, and the question it answers is a different one: not whether the solver can
+measure a line, which the preceding subsections settle, but whether the file it is handed describes the line the
+measurement assumes. The coupon that ships with the package is a $70\times20$ mm board carrying one microstrip
+net; read as a board it gives a substrate $1.600$ mm thick with $\eps_r = 4.4$, a port plane at $8.65$ mm, a far
+end at $32.22$ mm, and a strip $3.000$ mm wide.
+
+The width is itself a result, and it is not the $3.20$ mm of the reference box. The net is drawn in more than one
+width, and the reader adopts neither the pad at the port nor the first width it meets: it takes the width
+carrying the greatest summed track length, which is the $3.000$ mm run. The artwork reader and the board reader
+agree on that run segment for segment -- $58$ segments totalling $59.640$ mm, of which the $3.0$ mm aperture
+carries $47.14$ mm in $4$ segments -- once KiCad's sign convention for $y$ in Gerber is undone.
+
+That cross-section cannot be measured on the reference box's mesh. A $3.00$ mm strip at $0.400$ mm cells is
+$7.5$ cells wide, and the mesh builder refuses a box whose width it cannot divide rather than rounding it: a
+strip eight cells wide and a strip seven cells wide are two different lines, and the width entering the
+calculation would no longer be the width that was read. The coupon was therefore measured on the same physical
+box refined by a factor of two in every direction -- $0.200$ mm cells, $124\times87\times44$, $4800$ steps,
+$120.27$ s -- and that refinement is a confound carried through every comparison below
+(Table~\ref{tab:ms-import}).
+
+\begin{table}[H]
+  \centering
+  \caption{The imported cross-section beside the reference box. The two measurement columns differ in geometry and
+  in cell size at once, so the values are not the comparison; the bias rows against each geometry's own closed
+  form are. $\beta$ is the one-wave fit in both columns.}
+  \label{tab:ms-import}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    & reference box & imported coupon & closed, $w=3.20$ & closed, $w=3.00$ \\
+    \midrule
+    cell size / mm & $0.400$ & $0.200$ & -- & -- \\
+    cells & $66\times52\times26$ & $124\times87\times44$ & -- & -- \\
+    $\eps_{\mathrm{eff}}$ & $3.60431$ & $3.58470$ & $3.343938$ & $3.325455$ \\
+    bias in $\eps_{\mathrm{eff}}$ / \% & $7.79$ & $7.80$ & -- & -- \\
+    $\beta$ / rad\,m$^{-1}$ & $231.886$ & $231.254$ & $223.353$ & $222.735$ \\
+    bias in $\beta$ / \% & $3.82$ & $3.82$ & -- & -- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The two $\eps_{\mathrm{eff}}$ values differ by $0.54$ per cent, which is less than the residual of the phase fit
+either is derived from -- about $1$ per cent in both records -- and an order of magnitude less than the $7.8$ per
+cent by which both sit above closed form. Read as two records of one line, it says the import changes nothing
+measurable; read as a validation of the import, it says nothing at all, because the boxes differ in cell size as
+well as in width and the mesh bias is the larger of the two effects.
+
+What the comparison does support is narrower. Strips $3.20$ and $3.00$ mm wide differ by $6.25$ per cent, and
+closed form says that narrowing lowers $\eps_{\mathrm{eff}}$ by $0.55$ per cent; the two measured values fall by
+$0.54$ per cent, reproducing the closed-form ratio to $0.01$ percentage points. The width the file describes is
+therefore the width that was measured, and the change it produced is the change geometry predicts -- but this is
+not a check on the solver, since both records carry the same bias, and separating bias from geometry would need
+one mesh at both widths, which we have not run.
+
+The phase constant behaves the same way, and is worth stating with its uncertainty because the uncertainty is the
+point. $231.254$ against the published $231.886 \pm 0.134$ is $0.27$ per cent, and the doubled box's three
+estimators -- one-wave fit, two-station fit, two-way fit -- agree among themselves to $0.06$ per cent ($231.254$,
+$231.228$, $231.127$), so the record resolves itself. It does not resolve $0.63$ rad/m, which is $4.7$ times the
+published uncertainty: the two numbers are consistent, and the coupon is not a second measurement at the
+published precision.
+
+The impedance is not compared at all. The port-plane modulus moves from $53.144$ to $57.03\,\si{\ohm}$, $7.3$ per
+cent, while the phase moves $0.2$ degrees; the impedance the reference box yields disagrees with itself by $4.3$
+per cent across the three readings of Section~\ref{sec:msres-z0}, so a move of that size is not separable from
+the estimator, and no $Z_0$ is quoted for the coupon.
+
+What the import establishes is therefore narrow and is worth stating narrowly: a layout file is read to a
+cross-section, and that cross-section, measured on a mesh fine enough to represent it, reproduces the bias the
+hand-written box carries against Hammerstad--Jensen to half a point in $\eps_{\mathrm{eff}}$ and a hundredth of a
+point in $\beta$. The acceptance target of Section~\ref{sec:outlook} asks for the line's $Z_0$ within $5$ per cent
+of that closed form, and on the reference box the three readings land at $+4.7$, $+5.1$ and $+9.2$ per cent of it,
+so the band falls inside the estimator's own spread and the target cannot be scored as written. What the record
+does resolve is the mode underneath it, and that is $7.8$ per cent from closed form in $\eps_{\mathrm{eff}}$ and
+$3.8$ per cent in $\beta$, the first of them three points outside a $5$ per cent band. The target's other half,
+the patch resonance, has not been attempted. A convergence study of the coupon -- the same $3.00$ mm strip at
+$0.200$ and $0.100$ mm cells -- would separate the bias from the refinement, at an order of magnitude more work
+than the run reported here.
+
 \subsection{The record in pictures}
 \label{sec:msres-figs}
 
