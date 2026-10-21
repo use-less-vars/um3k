@@ -2,8 +2,8 @@
 \label{sec:outlook}
 
 \noindent\emph{Status: draft -- the milestone list and the acceptance criteria are transcribed from the roadmap
-that governs the work; the open problems are stated as problems. M0 is complete, M1, M2 and M5 are in
-progress, and the three remaining milestones are planned and not started.}
+that governs the work; the open problems are stated as problems. M0 is complete, M1, M2, M4 and M5 are in
+progress, and the two remaining milestones are planned and not started.}
 
 What remains is not a refinement of what is finished. The cavity solver of Sections~\ref{sec:eigen}
 and~\ref{sec:results} is accurate and its energy is exact, and a wave can now be let out of the domain: the
@@ -20,7 +20,7 @@ milestone is done when its number is reproduced by the test suite, not when the 
 \begin{table}[H]
   \centering
   \caption{The roadmap. Status, deliverable and acceptance criterion for each milestone, in dependency order
-  rather than order of value. M0 is complete; M1, M2 and M5 are in progress.}
+  rather than order of value. M0 is complete; M1, M2, M4 and M5 are in progress.}
   \label{tab:milestones}
   \begin{tabular}{@{}lp{1.8cm}p{5.6cm}p{5.6cm}@{}}
     \toprule
@@ -40,8 +40,11 @@ milestone is done when its number is reproduced by the test suite, not when the 
     M3 & planned & two-dimensional modal port eigenproblem, mode overlaps, de-embedding & WR-90 waveguide,
     TE$_{10}$ at \SI{6.557}{\giga\hertz}: $|S_{11}|<-30$\,dB, $|S_{21}|=1.000\pm0.001$, phase within
     \SI{1}{\degree} \\
-    M4 & planned & KiCad s-expression reader, staircase voxelisation, stack-up to material parameters & microstrip
-    $Z_0$ within $5$\,\% of Hammerstad--Jensen; patch resonance within $3$\,\% of $c/(2L\sqrt{\eps_{\mathrm{eff}}})$ \\
+    M4 & in progress & KiCad s-expression and artwork readers, board model mapped to a run, staircase
+    voxelisation, stack-up to material parameters & microstrip $Z_0$ within $5$\,\% of Hammerstad--Jensen;
+    patch resonance within $3$\,\% of $c/(2L\sqrt{\eps_{\mathrm{eff}}})$. Not scored: an imported coupon
+    carries the reference box's $+7.8$\,\% $\eps_{\mathrm{eff}}$ bias to half a point while the estimator
+    spreads $4.3$\,\%, so the band sits inside it (Section~\ref{sec:msres-import}); the patch is unattempted \\
     M5 & in progress & gradient null-space deflation followed by a matrix-free eigensolver beyond the dense
     threshold & $10^5$ free edges, six modes in under five minutes, within $0.1$\,\% of a dense solve \\
     M6 & planned & $\mathbf{A}$--$V$ magnetoquasistatics with eddy currents; parareal time integration & aluminium
@@ -59,7 +62,11 @@ which the power of a driven antenna is measured, which does not exist. M5 is the
 gate to every engineering-sized geometry: the dense solver of Section~\ref{sec:eigen} refuses more than $3000$
 free edges, which is a cavity of a few wavelengths and no more, and nothing about a printed antenna fits inside
 that budget. The other four are independent of each other, which is why they can be reordered as time and
-interest allow.
+interest allow. One of those four has now been carried past the point where the reader can be blamed: M4
+reads a layout file correctly -- the artwork and the board file agree segment for segment -- and the
+cross-section it reads still sits $7.8$\,\% above closed form in $\eps_{\mathrm{eff}}$, which is the reference
+box's own bias and not a new one (Section~\ref{sec:msres-import}). Its impedance target therefore waits on the
+spread of the estimator and on the dispersion question below, and its patch half has not been started.
 
 \subsection{Open problems}
 
