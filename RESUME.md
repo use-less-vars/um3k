@@ -112,6 +112,32 @@ pending a ruling.
 Until that move happens, `0.984519` should be quoted with its provenance attached, never
 as a bare number.
 
+### The section-70 branch regression suite is owed, and cannot be re-run
+The four synthetic branch re-verifications of section 70 -- nominal PASS, drop
+`plane_Hy` -> `MISSING(1)`, double `sx` -> ratio off by 2, `plane_capture='kwarg'`
+-> artefacts exit 2 -- could **not** be repeated for the M3a harness change: the
+`/tmp/m3a` scratch directory no longer exists, because every execution gets a fresh
+container and scratch state does not survive between calls.  The `[a]`-`[e]` branch
+text changes are covered only by the live reuse path (which prints `[a] NO, skipped
+...` and then the full magnitude evaluation, exit 19) and by the refusal path
+(exit 15, no `non-zero exit` wording anywhere in its stdout).  The `--reuse-record`
+clobber, reuse and verdict plumbing is executed; the synthetic-fixture regression
+suite is not, and **that regression debt is owed**.
+
+A partial stand-in now exists: `.scratch/host/m3a-proof/exitcode_proof.txt` forces
+exit codes 2, 10, 12, 15 (both ABSENT and STALE reasons), 16, 17, 19 and the
+preflight-only 0, from a COPY of `run.sh` so the real run directory is never
+touched.  Not forced: 11, 13, 14, and **18**.  Exit 18 is unforced because the
+`plane_capture='kwarg'` fixture is now caught EARLIER, by the artefacts key/shape
+check at exit 17, rather than reaching the analysis gate -- so section 70's
+recorded mapping (`plane_capture='kwarg'` -> artefacts -> 18) does not describe
+the current script.  Likewise a record missing `plane_Hy` is now refused at the
+reuse probe with exit 15 and never reaches the artefacts check at all.  Both are
+behavioural corrections to section 70, not defects, but they mean the documented
+branch map cannot be trusted until it is re-derived from a durable fixture set.
+Standing requirement: future regression fixtures must live in the repo under
+version control, not in `/tmp`.
+
 ## Working tree -- what must not be staged
 
 - The section-67 work and the Poynting instrument (`emfit/ports.py`, `emfit/studies.py`,
