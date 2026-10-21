@@ -15,8 +15,8 @@ first.
 
 The package is pure Python on top of \texttt{numpy} and \texttt{scipy}. There is no compiled extension and no
 generated code, and the only dependency beyond those two is \texttt{matplotlib}, which is imported by the
-plotting module alone and never by the solver. The whole of \texttt{emfit} is about $14.2$ thousand lines,
-distributed as in Table~\ref{tab:modules}; the $24$ test modules add a further $8.7$ thousand lines and the two
+plotting module alone and never by the solver. The whole of \texttt{emfit} is about $14.9$ thousand lines,
+distributed as in Table~\ref{tab:modules}; the $25$ test modules add a further $9.2$ thousand lines and the two
 example scripts another four hundred, which is a fair reflection of where the effort went.
 
 One module is large enough to be worth naming. \texttt{ports.py} is $1\,818$ lines, about one eighth of the
@@ -50,6 +50,7 @@ Each module owns exactly one of the objects of Section~\ref{sec:theory}, and the
     \texttt{nearfield.py}  & 922  & DFT accumulator, contour integral, far field, RCS & \eqref{eq:sigma2d} \\
     \texttt{mie.py}        & 295  & analytic two-dimensional PEC cylinder series & --- \\
     \texttt{kicad.py}      & 771  & board file reader: layers, nets, tracks, vias, zones & --- \\
+    \texttt{gerber.py}     & 364  & RS-274X Gerber reader: apertures, line segments, flashes and G36/G37 regions in mm; a draw with an undefined aperture is refused; arcs counted, never flattened & --- \\
     \texttt{board.py}      & 442  & the millimetre-to-metre bridge from board to spec & --- \\
     \texttt{raster.py}     & 550  & stackup to grid: z nodes on copper, dielectric $\eps$ & --- \\
     \texttt{copper.py}     & 485  & tracks, zones and vias as a PEC edge mask & --- \\
@@ -59,12 +60,12 @@ Each module owns exactly one of the objects of Section~\ref{sec:theory}, and the
     \texttt{studies.py}    & 3592 & the named runs behind every front end & --- \\
     \texttt{viz.py}        & 352  & spectrum, field slice, energy panels & --- \\
     \texttt{webapp.py}     & 465  & routes, forms, rendered figures & --- \\
-    \texttt{cli.py}        & 196  & argument parsing, table output & --- \\
+    \texttt{cli.py}        & 532  & argument parsing, table output & --- \\
     \texttt{\_env.py}      & 70   & thread pinning before \texttt{numpy} & --- \\
     \texttt{\_\_init\_\_.py} & 50 & version and submodule imports & --- \\
     \texttt{\_\_main\_\_.py} & 13 & \texttt{python -m} entry point & --- \\
     \midrule
-    total                  & 14198 &                                                      & \\
+    total                  & 14898 &                                                      & \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -220,7 +221,7 @@ and was not.
 \subsection{Testing}
 \label{sec:testing}
 
-The suite is $336$ \texttt{pytest} tests in $24$ modules. The fast selection, \texttt{-m 'not slow'}, runs $327$
+The suite is $348$ \texttt{pytest} tests in $25$ modules. The fast selection, \texttt{-m 'not slow'}, runs $339$
 of them in under $20$~s and deselects the other $9$ as slow. Three tests account for most of that time: the dense
 eigenvalue solve on a $14\times10\times7$ grid at about $3$~s, the Mie bistatic pattern at $2.5$~s, and a short
 board run at $2$~s. The imbalance is deliberate, and is worth stating plainly: the algebra and the conservation
@@ -228,7 +229,7 @@ laws are cheap to check, and a dense eigenvalue solve on a grid of that size is 
 
 \begin{table}[H]
   \centering
-  \caption{The $24$ test modules, what each one is allowed to claim, and how many tests it holds.}
+  \caption{The $25$ test modules, what each one is allowed to claim, and how many tests it holds.}
   \label{tab:tests}
   \begin{tabular}{@{}l p{8.8cm} r@{}}
     \toprule
@@ -256,10 +257,11 @@ laws are cheap to check, and a dense eigenvalue solve on a grid of that size is 
     \texttt{test\_kicad}     & parser and every count on the real eight-layer coupon & 68 \\
     \texttt{test\_copper}    & tracks, zones, vias as a PEC mask, counted by hand & 27 \\
     \texttt{test\_board}     & the millimetre-to-metre bridge, coupon and synthetic & 8 \\
+    \texttt{test\_gerber}    & apertures, segments, flashes and regions in millimetres, and the refusal & 8 \\
     \texttt{test\_studies}   & registration and coercion, plus the wave study's ratios & 18 \\
-    \texttt{test\_cli}       & the served port: one default, overridable, shared & 7 \\
+    \texttt{test\_cli}       & the served port: one default, overridable, shared & 11 \\
     \midrule
-    \textbf{total} & & 336 \\
+    \textbf{total} & & 348 \\
     \bottomrule
   \end{tabular}
 \end{table}
