@@ -357,6 +357,14 @@ def _cmd_board(args) -> int:
                 "clearance": spec.clearance * 1e3,
                 "w_over_h": spec.w_over_h,
                 "supplied": list(spec.supplied),
+                "port": None if spec.port is None else {
+                    "position_mm": spec.port.position * 1e3,
+                    "y_mm": spec.port.y * 1e3,
+                    "net": spec.port.net,
+                    "reference": spec.port.reference,
+                    "number": spec.port.number,
+                    "side": spec.port.side,
+                },
             }
             payload["meshes"] = meshes
         if refusal is not None:

@@ -306,4 +306,3 @@ def test_port_validates_its_own_numbers() -> None:
     with pytest.raises(ValueError, match="side must be"):
         Port(position=1e-3, y=0.0, net="x", reference="J1", number="1",
              side="left")
-

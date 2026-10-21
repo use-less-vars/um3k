@@ -504,10 +504,13 @@ class Zone:
     """A copper pour or keepout outline.
 
     ``outline`` is an ``(n, 2)`` array of millimetre vertices taken from the
-    first ``polygon`` in the file; additional islands are not modelled, and an
-    arc inside the outline contributes its two endpoints only.  ``layers``
-    holds every layer the zone is applied to, so a single-layer pour and a
-    multi-layer plane share one representation.
+    ``xy`` children of the first ``polygon`` in the file; additional islands are
+    not modelled, and an ``arc`` inside that polygon contributes no vertex at
+    all, because only ``xy`` children are read.  Nothing is lost by that: a zone
+    is recorded, not modelled, so no geometry of one reaches a spec and the
+    missing curve cannot reach a number.  ``layers`` holds every layer the zone
+    is applied to, so a single-layer pour and a multi-layer plane share one
+    representation.
 
     ``has_fill`` is the honest answer to "was this zone ever poured": it is
     ``True`` only when the file carries ``filled_polygon`` or ``fill_segments``
@@ -972,7 +975,7 @@ def load_board(path) -> Board:
     if root is None:
         raise ValueError(f"{path}: no (kicad_pcb ...) form found")
     copper_layers, layer_names = _parse_layers(root[1:])
-    return Board(
+    board = Board(
         version=_int(root, "version", None),
         generator=_str(root, "generator"),
         thickness=_parse_thickness(root),
@@ -986,3 +989,23 @@ def load_board(path) -> Board:
         zones=[_parse_zone(f) for f in _kids(root, "zone")],
         edge_bbox=_edge_bbox(forms),
     )
+    arcs = _kids(root, "arc")
+    if arcs:
+        where = []
+        for form in arcs:
+            code = _int(form, "net", 0)
+            name = board.net_name(code)
+            net = f"net {name!r}" if name else f"net code {code}"
+            where.append(f"{_str(form, 'layer')!r} on {net}")
+        raise ValueError(
+            f"{path} states {len(arcs)} board-level (arc ...) form(s) -- "
+            f"{', '.join(where)}. This reader builds Board.tracks from "
+            "(segment ...) forms alone, so a curved track would not appear in "
+            "it: the strip width and the port and far planes derived from that "
+            "net would be read off the remaining straight segments alone and "
+            "would not be a measurement of the line. Nothing here flattens an "
+            "arc, because the model downstream is one straight run -- pass a "
+            "file whose curved line is already cut into straight "
+            "(segment ...) runs"
+        )
+    return board

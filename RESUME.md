@@ -1,9 +1,8 @@
 # RESUME -- session state
 
-Branch: `wip/ports`, HEAD `531c56c`.
+Branch: `wip/ports`, on top of *"ports: a port plane can be placed on a pad"*, which sits on the pad-placement commit, which sits on master's decisions commit (`ffbb4a4`). No HEAD hash is written on this line on purpose: hashes here have gone stale twice. Describe the position by its subject and confirm it with `git log -1 --oneline`.
 Base: master @ `ffbb4a4`. master already carries the ten delivered commits (tip `62d1684`) plus `ffbb4a4`, the decisions entry; `wip/ports` adds the port work on top, so master fast-forwards.
-Confirm HEAD with `git log -1 --oneline`.
-Working tree once the work below lands: only `Intro.txt` is modified, and it is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
+Working tree right now: the arc refusal and the `port` key in `board --json` are **uncommitted** -- `emfit/kicad.py`, `emfit/cli.py`, `tests/test_kicad.py`, `tests/test_cli.py`, `tests/test_board.py`. `Intro.txt` is also modified and is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
 
 ## To land the work
 
@@ -87,21 +86,67 @@ sections. Two entries were added:
   drill 1.7, net GND. The gerbers and the Excellon file live in
   `kicad_support_project/gerbers/`, not beside the board file; F_Cu is `.gtl`, B_Cu is `.gbl`.
 
-## Outstanding: steps 2-4 of the port work
+## What `wip/ports` adds: the port on a pad (`558a67a`)
 
-- Step 2, a port on a pad carrying its net, with the reference and loaded sequences expressed
-  in the same form. This is the next piece of code.
-- Step 3, an arc parser -- but only after checking whether any pad or trace in the fixture is
-  an arc. The fixture pads are roundrect and circle and the CMEX board has zero arcs, so this
-  may be dead weight; check before writing it.
+- `emfit/board.py` gains `Port` -- `position` (where the plane crosses the line, from the
+  outline's `xmin`), `y` (recorded, not used: the strip is modelled centred whatever the copper
+  does), `net`, `reference`, `number`, `side`, each validated in `__post_init__` -- and
+  `MicrostripBoard.port`; `from_kicad(..., port_pad=("J1", "1"))` places the port on that pad.
+  `emfit/kicad.py` gains `Board.pad_at(reference, number)`, which refuses a reference or pad
+  number that names more than one pad instead of resolving one by position.
+- With the port on J1.1 the coupon's spec becomes the 2.0 mm run: `w 2.0` mm, `x_port 4.5` mm,
+  `x_far 7.0` mm, `length 70` mm, `width 20` mm (`tests/test_board.py:227`). No command passes
+  `port_pad` yet -- see the last bullet here.
+- The port numbers now have a second importer behind them. The plotted `F_Cu` layer
+  (`kicad_support_project/gerbers/kicad_support_project-F_Cu.gtl`) carries
+  `Segment(x0=4.5, y0=-10.0, x1=7.0, y1=-10.0, width=2.0)` -- the 2.0 mm stroke from
+  x = 4.500 mm to x = 7.000 mm on the through line -- and the same layer flashes the roundrect
+  at (4.5, -10.0) mm, with y negated against the board frame, which is the coupon's J1.1 at
+  (4.5, 10). Agreement is to `1e-6` mm after that sign flip, and it is a fact about the strip
+  the port launches onto, not a fitted number.
+- `spec.port` is now a key of the `board --json` object (`emfit/cli.py:360`): `null` when no pad
+  names a port, otherwise `position_mm`, `y_mm`, `net`, `reference`, `number`, `side`. There is
+  deliberately no CLI option that sets `port_pad`, so **no command can produce a port-bearing
+  spec** -- `_cmd_board` calls `from_kicad` without it. That is the next gap;
+  `tests/test_cli.py:168` pins the `null` so the key cannot quietly disappear.
+
+## Importer step 3 is closed as a refusal: there are no arcs to support
+
+- Counted before writing anything. Both board files have zero arc constructs: the coupon has 0
+  `(arc`, 0 `(gr_arc`, 0 `(fp_arc` and not one occurrence of the substring `arc`;
+  `CMEX.kicad_pcb` has the same three zeros, its single `arc` substring sitting inside a
+  property value (a distributor URL). Form census, coupon: 4 `gr_line` (all Edge.Cuts), 66
+  `fp_line`, 58 `segment`, 12 `pad`, 3 `footprint`, 2 `zone`, 0 `via`. CMEX: 891 `fp_line`,
+  583 `segment`, 81 `via`, 388 `pad`, 81 `footprint`, 12 `gr_rect`, 4 `zone`. The second
+  importer agrees from the artwork side: `GerberLayer.arcs` reads `arcs 0` on all seven files
+  in `gerbers/`.
+- An arc parser would have been dead weight, but skipping the check was not the same as leaving
+  it harmless: `Board.tracks` is built from `(segment ...)` forms alone
+  (`emfit/kicad.py:986`), so a board-level copper arc used to vanish without a word and the
+  strip would have been measured off whatever straight segments remained. It is now refused
+  (`emfit/kicad.py:992`) by count, layer and net, with the note that the caller has to cut a
+  curved line into straight runs because the model downstream is one straight run. Pinned by
+  `tests/test_kicad.py:648`, which carries its own positive control (the same file minus the
+  arc loads and yields exactly one track).
+- `Zone`'s docstring was wrong about the same shape and now matches `_parse_zone`: an arc inside
+  a zone polygon contributes no vertex at all -- only `xy` children are read
+  (`emfit/kicad.py:897`) -- not "its two endpoints only", and nothing is lost by that because a
+  zone is recorded, not modelled.
+
+## Outstanding: step 4 of the port work, and the crop it needs
+
 - Step 4, S-parameters and a field slice on the imported coupon board. Acceptance: the imported
   coupon reproduces the hand-built study within the fit residual, and a port on an SMA pad runs
   end to end.
-- Step 4 is blocked by the solver legitimately refusing the coupon, not by a bug. The coupon's
-  `RF_IN` net stops at x = 32.22 mm on a 70 mm outline, so `to_cell_counts` refuses it and
-  `tests/test_board.py:184` asserts that refusal. The refusal message states the remedy --
-  crop the outline to the strip, or extend the net to the board edge -- so running the coupon
-  end to end is a deliberate choice to make and to report, not a repair.
+- It is blocked by the solver legitimately refusing the coupon, not by a bug, and with the port
+  on J1.1 the refusal is sharper: the pad-derived spec has `x_far` = 7.0 mm inside a 70 mm
+  outline, so `to_cell_counts` refuses it on its first check
+  (`abs(x_far - length) > TOL * length`). The dominant-width `RF_IN` spec (x_far = 32.22 mm) is
+  refused the same way, and `tests/test_board.py:184` asserts that refusal.
+- Making a run possible therefore means cropping the outline to the strip. That crop is a
+  deliberate, recorded choice to make and to report, not a repair: it changes the box, and the
+  line modelled is the 2.0 mm run the port sits on, not the 29.8 mm feed. `supplied` is where a
+  caller-supplied length has to be declared if the crop is not to be silent.
 
 ## Still true after step 1
 
@@ -118,10 +163,13 @@ sections. Two entries were added:
 
 ## Verified this session
 
-- Fast selection `-m 'not slow'` on `wip/ports`: 346 passed, 9 deselected, 0 failures /
-  0 errors / 0 skipped, 22.21 s (junit `/tmp/ports_fast.xml`, 346 testcases). 355 tests are
-  collected now, against 348 before this commit.
-- `tests/test_kicad.py tests/test_board.py tests/test_gerber.py`: 91 passed in 9.69 s.
+- Fast selection, run **without** an extra `-q`: `pyproject.toml` already sets `addopts =
+  "-q"`, so a second `-q` makes it `-qq` and suppresses pytest's summary line entirely.
+  `python3 -m pytest tests/ -m "not slow"` -> `356 passed, 9 deselected in 20.58s`, exit 0;
+  365 collected. `python3 -m pytest tests/test_kicad.py tests/test_board.py` ->
+  `92 passed in 12.25s`, exit 0 (80 tests in `test_kicad.py`, 12 in `test_board.py`). The two
+  new tests are the arc refusal (`tests/test_kicad.py:648`) and the `port` key
+  (`tests/test_cli.py:168`).
 - The full-suite figures below are from `62d1684` and were not re-run after `531c56c`: 348
   tests, 0 failures / 0 errors / 0 skipped, 284.024 s (junit `/tmp/full.xml`).
 - Report build: exit 0, 64 pages, 0 undefined references or citations, 2 Overfull and 16
@@ -175,9 +223,10 @@ sections. Two entries were added:
 
 - `emfit/cli.py:324-328`: a path that cannot be read prints `cannot read {path}: {exc}` on
   stderr and returns `EXIT_USAGE` (2); every other outcome is 0.
-- `emfit/cli.py:414-418`: a readable board the solver cannot represent prints
+- `emfit/cli.py:425`: a readable board the solver cannot represent prints
   `no microstrip spec: {refusal}` and returns 0 -- "A board the solver cannot represent is not
-  an error" (`emfit/cli.py:317-322`).
+  an error" (`emfit/cli.py:317-322`); under `--json` the same sentence goes to stderr
+  (`emfit/cli.py:373`) so stdout stays one JSON object.
 - `emfit/board.py:379-386`: `abs(self.x_far - self.length) > TOL * self.length` raises "the
   strip ends at x_far = ... mm but the outline is ... mm long ... Crop the outline to the
   strip, or extend the net to the board edge."

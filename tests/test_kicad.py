@@ -645,6 +645,54 @@ def test_missing_kicad_pcb_form_raises(tmp_path: Path) -> None:
         load_board(path)
 
 
+def test_a_board_level_arc_is_refused_not_dropped(tmp_path: Path) -> None:
+    """A curved line is refused by name instead of quietly losing its arc.
+
+    ``Board.tracks`` is built from ``(segment ...)`` forms alone, so a line drawn
+    as a board-level ``(arc ...)`` used to vanish: the strip came out as whatever
+    straight pieces happened to remain, and its width and its far plane were
+    measured from those.  The refusal has to name the layer and the net, because
+    a reader cannot fix a file that is only reported as broken, and the same
+    file without the arc has to still load -- which is what says the refusal is
+    about the arc and not about the fixture.  An ``arc`` inside a zone polygon is
+    a different form and stays legal.
+    """
+    plain = """(kicad_pcb (version 20221018) (generator pcbnew)
+  (net 0 "")
+  (net 1 "RF_IN")
+  (footprint "Test:Thing" (layer "F.Cu") (at 8.65 10)
+    (property "Reference" "J1")
+    (pad "1" smd roundrect (at 0 0) (size 2 2)
+         (layers "F.Cu") (net 1 "RF_IN"))
+  )
+  (segment (start 8.65 10) (end 38.45 10) (width 3) (layer "F.Cu") (net 1))
+  (zone (net 1) (net_name "RF_IN") (layer "F.Cu") (min_thickness 0.2)
+    (polygon (pts (xy 0 0) (arc (start 0 0) (mid 5 -3) (end 10 0))
+                  (xy 10 0) (xy 10 10)))
+  )
+)
+"""
+    arc = ('  (arc (start 8.65 10) (mid 20 14) (end 38.45 10) (width 3)\n'
+           '    (layer "F.Cu") (net 1))\n')
+    flat_path = tmp_path / "flat.kicad_pcb"
+    flat_path.write_text(plain, encoding="utf-8")
+    curved_path = tmp_path / "curved.kicad_pcb"
+    curved_path.write_text(plain.replace("\n)\n", "\n" + arc + ")\n"),
+                          encoding="utf-8")
+
+    flat = load_board(flat_path)
+    assert len(flat.tracks) == 1
+    assert flat.tracks[0].net == 1
+    assert flat.zones[0].outline.shape == (3, 2)
+
+    with pytest.raises(ValueError) as excinfo:
+        load_board(curved_path)
+    message = str(excinfo.value)
+    assert "1 board-level" in message, message
+    assert "net 'RF_IN'" in message, message
+    assert "'F.Cu'" in message, message
+
+
 # ---------------------------------------------------------------------------
 # pads in board coordinates, against the two importers that can contradict them
 # ---------------------------------------------------------------------------
@@ -1000,4 +1048,3 @@ def test_pad_at_reads_the_far_connector_too(coupon: Board) -> None:
     pad = coupon.pad_at("J2", "1")
 
     assert pad.position == (pytest.approx(65.5), pytest.approx(10.0))
-

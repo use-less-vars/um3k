@@ -165,6 +165,22 @@ def test_board_json_reads_the_coupon_then_derives_the_spec(capsys):
     assert spec["supplied"] == []
 
 
+def test_board_json_has_a_port_key_and_it_is_null(capsys):
+    """``spec.port`` is a key on every spec, and here it is null.
+
+    ``from_kicad`` takes the port from its ``port_pad`` argument, and ``board``
+    has no option that supplies one, so nothing on this run names a pad and the
+    port cannot be anything but ``None``.  The key is still there: an object
+    that grows a key only once some later command learns to fill it in makes the
+    absent port and the unknown port look the same to a script, and they are
+    not the same answer.
+    """
+    report = _board_json(capsys, COUPON, "--net", "RF_IN")
+    spec = report["spec"]
+    assert "port" in spec
+    assert spec["port"] is None
+
+
 def test_board_reads_a_board_with_no_stackup_and_no_outline(capsys):
     """A thin board file is a report, not a failure: exit 0 and say what is not there.
 
