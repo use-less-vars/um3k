@@ -1822,6 +1822,14 @@ class BinMetric:
             run's own ``zc`` -- or, when a reference was supplied, normalised by
             the load-free line exactly as the tone path does [dimensionless].
         passivity: ``|S11|^2 + |S21|^2`` of the two rows above [dimensionless].
+        s21_power: The same span measured as a *net power* ratio instead of an
+            amplitude ratio, ``sqrt(P(x2) / P(x1))`` with ``P`` the station's
+            own ``0.5 Re(V conj(I))`` -- no single ``zc`` is assumed, so an
+            impedance step along the span no longer shows up as loss or gain
+            [dimensionless].  It is equal to ``|S21|`` only when the span is
+            reflectionless, which is why it is quoted beside, not instead of,
+            ``s21``.
+        passivity_power: ``|S11|^2 + |S21_power|^2`` [dimensionless].
         eps_eff: Effective permittivity implied by ``beta`` [dimensionless].
         residual: Relative RMS misfit of the one-wave fit [dimensionless].
         refusal: Why this bin quotes nothing, or ``None`` when it does.
@@ -1834,9 +1842,24 @@ class BinMetric:
     s11_port: float = float("nan")
     s21: float = float("nan")
     passivity: float = float("nan")
+    s21_power: float = float("nan")
+    passivity_power: float = float("nan")
     eps_eff: float = float("nan")
     residual: float = float("nan")
     refusal: str | None = None
+
+
+def _station_power(v, i):
+    """The power each station's own voltage and current carry [W].
+
+    ``0.5 Re(V conj(I))`` is the same algebra ``power_current_check`` uses to
+    imply a per-station impedance, and it needs no assumed ``zc``: a pure
+    impedance step in a lossless wave leaves it unchanged, which is exactly
+    the effect a single-``zc`` amplitude ratio cannot tell apart from loss.
+    """
+    v = np.asarray(v, dtype=complex)
+    i = np.asarray(i, dtype=complex)
+    return 0.5 * np.real(v * np.conj(i))
 
 
 def _bin_metrics(spec, *, f, station_x, n_stations, x_port, reference,
@@ -1948,10 +1971,24 @@ def _bin_metrics(spec, *, f, station_x, n_stations, x_port, reference,
                                         indices=[0, -1])
         if a1 != 0.0:
             s21 = float(abs(line_s21(a1, x1, a2, x2, beta)[0]))
+    # The same span on the power the stations themselves carry.  This branch
+    # deliberately does not touch ``s21`` above: the amplitude row stays exactly
+    # what it was, so the two can be compared line for line.
+    s21_power = float("nan")
+    p1 = _station_power(v_stations[0], i_stations[0])
+    p2 = _station_power(v_stations[-1], i_stations[-1])
+    if p1 > 0.0 and p2 > 0.0:
+        s21_power = float(np.sqrt(float(p2) / float(p1)))
+        if reference is not None:
+            span_ratio = complex(reference.forward_ratio(x1, x2))
+            if span_ratio != 0.0:
+                s21_power = float(s21_power / abs(span_ratio))
     return BinMetric(
         f=float(f), beta=beta, sigma_beta=sigma_beta,
         s11_measured=s11_measured, s11_port=s11_port, s21=s21,
         passivity=float(s11_measured ** 2 + s21 ** 2),
+        s21_power=s21_power,
+        passivity_power=float(s11_measured ** 2 + s21_power ** 2),
         eps_eff=float((beta * C0 / (2.0 * np.pi * f)) ** 2),
         residual=residual)
 
@@ -1978,6 +2015,9 @@ def _bin_row(metric: BinMetric) -> str:
             f"{db(metric.s11_port)} (port plane), "
             f"|S21| = {db(metric.s21)}, "
             f"{flag}passivity = |S11|^2 + |S21|^2 = {passivity:.6f}, "
+            f"power-normalised: |S21| = {db(metric.s21_power)}, "
+            f"passivity = |S11|^2 + |S21_power|^2 = "
+            f"{metric.passivity_power:.6f}, "
             f"fit residual = {metric.residual:.4f}")
 
 
