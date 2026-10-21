@@ -1994,13 +1994,24 @@ def _bin_metrics(spec, *, f, station_x, n_stations, x_port, reference,
 
 
 def _bin_row(metric: BinMetric) -> str:
-    """One bin as a report row: the numbers, or the refusal and its frequency."""
+    """One bin as a report row: the numbers, or the refusal and its frequency.
+
+    The two S21 columns are linear amplitudes marked ``(lin)``: this is the
+    quantity the passivity budget is built from, and a decibel figure at one
+    decimal is a 1.16 per cent step, coarse enough to print two bins that
+    differ in transmission as the same row.  S11 stays in decibels, where a
+    null is the interesting end of the scale and a tenth of a decibel is fine.
+    """
     if metric.refusal is not None:
         return f"REFUSED at {metric.f / 1e9:.2f} GHz: {metric.refusal}"
 
     def db(magnitude: float) -> str:
         """``20 log10`` of a magnitude, floored so a null cannot eat the row."""
-        return f"{20.0 * np.log10(max(float(magnitude), 1e-30)):.1f} dB"
+        return f"{20.0 * np.log10(max(float(magnitude), 1e-30)):.2f} dB"
+
+    def lin(magnitude: float) -> str:
+        """A magnitude as a linear amplitude, so neighbouring bins differ."""
+        return f"{float(magnitude):.4f} (lin)"
 
     passivity = metric.passivity
     # A passivity above one is a bug, not a number to be tidied away: the run
@@ -2013,9 +2024,9 @@ def _bin_row(metric: BinMetric) -> str:
             f"eps_eff = {metric.eps_eff:.4f}, "
             f"|S11| = {db(metric.s11_measured)} (measured plane) / "
             f"{db(metric.s11_port)} (port plane), "
-            f"|S21| = {db(metric.s21)}, "
+            f"|S21| = {lin(metric.s21)}, "
             f"{flag}passivity = |S11|^2 + |S21|^2 = {passivity:.6f}, "
-            f"power-normalised: |S21| = {db(metric.s21_power)}, "
+            f"power-normalised: |S21| = {lin(metric.s21_power)}, "
             f"passivity = |S11|^2 + |S21_power|^2 = "
             f"{metric.passivity_power:.6f}, "
             f"fit residual = {metric.residual:.4f}")
