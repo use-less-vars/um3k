@@ -817,3 +817,92 @@ No attempt is made to reconcile this with the earlier direct coupon measurement,
 
 The passivity clause as first written was necessary and not sufficient. It said a sum above 1 would convict -- true, that is gain from somewhere -- and it was then read as if 0.753 sat comfortably inside. On a model with no material loss it does not: 1 is the expected value, and a sum well below it names an unaccounted sink. 0.753 meant a quarter of the power was leaving through something that was not the two stations, and the sink was the boundary: the top PML's inner face sat 1.2 mm above the strip, 0.75 substrate heights, where a microstrip's field is still substantial. The standard list now reads three ways. Passivity above 1 is a bug. Passivity near 1 is what a lossless material expects. Passivity far below 1 is an unaccounted sink, and it has to be named before any number from the run is quoted. A bound is only a test if both of its sides are tests.
 
+## The lid, moved: most of the deficit, and a remainder that did not move
+
+The falsification read left one sentence of diagnosis -- the top matched layer
+sat 1.2 mm above the strip, three quarters of a substrate height, where the
+mode's tail is still worth absorbing, so the boundary was taking the mode and
+not the tail.  A diagnosis that cannot be tested by moving one parameter is
+not a diagnosis.  This one could be tested: same board, same pad J1.1 on the
+same net, same 0.1000 mm cell, same 4800 steps, same nine stations, and n_air
+raised from 12 to 48 so that the inner face of the top layer went from 0.75 to
+3.0 substrate heights above the copper.  The box went from 4.00 to 7.60 mm
+tall, the mesh from 322x200x40 to 322x200x76, and the wall clock from 720 s to
+about 1380 s.  Everything else is identical, which is what makes the pair a
+measurement rather than a second opinion.
+
+                                      lid 0.75h        lid 3.0h
+    passivity |S11|^2 + |S21|^2       0.753059         0.904486
+    |S21| over the 14.10 mm           -1.234 dB        -0.437 dB
+    |S21| per length                  0.0875 dB/mm     0.0310 dB/mm
+    eps_eff, run / closed form        3.79848/3.32545  3.51062/3.32545
+    excess over the closed form       +14.2 per cent   +5.57 per cent
+    beta, fit / Hammerstad-Jensen     238.050/222.735  228.852/222.735
+    |gamma|                           0.02055          0.01711
+    fit residual                      0.05007          0.02561
+    |S11| at both planes              -33.90 dB        -35.64 dB
+    Z0, stations / Hammerstad-Jensen  53.6803/50.617   53.0576/50.617
+    ground current, full / strip      1.000            1.001
+
+The lid was a cause.  The passivity deficit fell from 24.7 per cent of the
+power to 9.55 per cent, and it fell where the diagnosis said it would: the
+guided-wave loss, which is the same deficit read along the line, fell from
+0.0875 to 0.0310 dB/mm, the fit residual halved, and eps_eff walked from 14.2
+per cent above the closed form to 5.57 per cent above it.  Every criterion
+that asked for a number to move toward the lossless, closed-form limit was
+answered in the direction it asked for.
+
+The lid was less than the cause.  Quadrupling the clearance bought a factor
+2.6 in the sink -- 0.387 of it survived -- and no evanescent tail behaves like
+that.  A tail decays exponentially in the distance it is decaying over; four
+times the distance should not stop at a factor 2.6.  So the deficit is a
+mixture of two terms: one that still responds to clearance and one that does
+not respond at all.  Two points on one axis cannot separate them, and this is
+the honest shape of the result -- not "the lid was it" but "the lid was three
+fifths of it, and the rest has a different address".
+
+The dissipation is the same quantity read the other way.  0.0310 dB/mm over
+the 14.10 mm between the planes is 3.7 per cent of the power, and the material
+is lossless, so nothing heated: that power left through a boundary.  The
+lateral-leakage reference this is judged against, 0.0116 dB/mm at gate 2, was
+measured with roughly 5.5 substrate heights of clearance, so a pad port at 3.0
+heights still losing 2.7 times as much per millimetre is losing it to
+something that is neither the lid nor the material -- a lumped gap source
+radiates into the substrate's parallel-plate continuum, and a leaky wave of
+that kind is a loss per unit length by construction, which is exactly the
+shape the station fit reports.
+
+Which criteria were met, in the terms they were set in.  Passivity within 2
+per cent of 1: not met, 9.55 per cent short.  |S21| per millimetre within a
+factor 2 of 0.0116: not met, at 2.7 times, against 7.5 times before.  eps_eff
+moving toward the closed form as the lid rises: met, 3.79848 to 3.51062 with
+3.32545 underneath.  One of three -- and the two that failed failed for the
+same reason, which is the reason this section exists: the run still has an
+unaccounted sink, so its S-parameters are not quotable under the amended
+standard.  What is quotable is narrower and real: a pad-named port on an
+imported board runs end to end and yields S-parameters and figures; the lid
+term's size and sign are now measured rather than argued; and the remainder
+has a name and a shape to test.
+
+The next test has to break the correlation, and there is one that does it
+cheaply.  Push the lid to 6.0 substrate heights with the lateral extent
+untouched.  If the deficit keeps falling, the remainder is still the boundary,
+and the answer is a taller box and a larger bill.  If it flattens, the flat
+part is the source and the lateral walls, and no lid will ever remove it --
+which is a fact about lumped launches on lossless boards, worth knowing before
+a spectrum is quoted rather than after.  One run, 1.6 times the cells, about
+35 to 40 minutes.  That is cheap enough that not running it first would be a
+choice rather than a constraint.
+
+The last place the one-sided reading survived was the tool's own output.  The
+row this run printed ended "so a wide margin is the expected reading and not a
+defect" -- the sentence this section exists to refute.  Both microstrip rows
+now name three readings: above 1 is a bug, near 1 is what a model with no
+material loss should return, and well below 1 is power that left through
+something the two planes do not see, whose sink has to be found before any
+number from that run is quoted.  The typed-line microstrip study carried the
+same claim and got the same correction, and the part of its wording that was
+true -- why the plain sum is legitimate when both magnitudes are read on one
+cross-section, the sqrt(Re zc) weighting cancelling -- was kept, because what
+was wrong was the test, not the arithmetic.
+

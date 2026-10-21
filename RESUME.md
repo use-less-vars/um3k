@@ -1,5 +1,61 @@
 # RESUME -- session state
 
+## Checkpoint 2026-10-21 -- the lid, moved: 0.753 to 0.904, and still no quote
+
+The pad-port run's sink was diagnosed as the top matched layer sitting 0.75
+substrate heights above the strip, and the test was to raise it to 3.0 heights
+and change nothing else.  It ran: 322x200x76 at 0.1000 mm, 4800 steps, about
+1380 s.  Passivity went 0.753059 to 0.904486, |S21| per millimetre 0.0875 to
+0.0310, eps_eff 3.79848 to 3.51062 against a closed form of 3.32545.  The lid
+was a cause and three fifths of the deficit; a factor 4 in clearance bought a
+factor 2.6, which no evanescent tail does, so a second term of about 9.5 per
+cent of the power remains and is not the lid.  It is not quotable: two of the
+three acceptance criteria failed (passivity 9.55 per cent short of 1, |S21|
+2.7 times the gate-2 leakage instead of within 2), while the eps_eff criterion
+passed.  decisions.md section 55 has the table and the argument.  The three
+numbers from the first run -- 0.753, 0.0875 dB/mm, 3.798 -- remain unquotable
+and are now joined by their replacements; nothing in this project quotes a
+pad-port S-parameter until a run has no unaccounted sink.
+
+The next experiment is one run at 6.0 substrate heights of lid with the
+lateral extent untouched, about 35 to 40 minutes.  If the deficit keeps
+falling the remainder is the boundary; if it flattens, the remainder is the
+lumped source and the walls.  Until that runs, the milestone's quotable claim
+is the mechanics -- a pad-named port on an imported KiCad board, end to end,
+with S-parameters and two figures -- and not the numbers.
+
+## The sweep, as a proposal -- not built
+
+The band is the next milestone, and there are two ways to spend the wall clock
+on it.  A frequency loop is what the study path already does, because f0 is
+snapped to a DFT bin and everything after it -- the station fit, beta, the
+S-parameters, the power budget -- is computed at that one bin, so a loop is a
+loop rather than a change.  The price is one full run per point: at this
+clearance that is 4800 steps over 3.7 million cells, about 1380 s, so nine
+points come to roughly 3.5 hours and twenty to 7.7 hours, and every point
+carries its own fit residual and its own passivity sum to inspect.  A pulse is
+the other route: one run whose source is broadband instead of a CW ramp, with
+the station records kept in time and transformed at every bin.  Its cost is
+set by the lowest frequency to be resolved rather than by the number of
+points -- 4800 steps covers one period at 5.83 GHz, so a 1 GHz floor is about
+six periods and lands near 9000 to 10000 steps, call it 35 to 45 minutes for
+the whole spectrum -- plus the records themselves, two components at nine
+stations over the full time history, and a port that absorbs over the band and
+not at one frequency.  What the path does not have today is any of that: no
+choice of excitation, no wideband launch, and no metric computed at more than
+one bin.
+
+The argument for the pulse is not only the factor of five in wall clock.  The
+per-bin power budget turns the whole spectrum into a test at every frequency,
+and the sink becomes a function of frequency, which is the measurement that
+separates the two candidates named in section 55: a boundary term is flat in
+frequency, a leaky wave grows with it.  The proposal is therefore: build the
+pulse path, keep the single-frequency run at 5.8278 GHz as its validation case
+-- two independent routes to the same bin have to agree before either is
+believed -- and quote a spectrum only after the passivity sum has been read at
+every bin it produces.  None of this is built, and the frequency loop stays in
+the record as the honest cost of not building it.
+
 ## Checkpoint 2026-10-21 -- milestone 2, falsification read
 
 Checkpoint -- milestone 2 complete on `wip/m2`. The branch sits four commits above `master` (`8518f72`): `d69bde2` the `--port-pad` flag, `49bca14` the `nsteps` ceiling turned into a stated cost, `4eee73f` the `microstrip_board` study plus the `str` parameter kind, and a docs commit carrying this checkpoint and section 54 of `decisions.md`. Land it with `git checkout master && git merge --ff-only wip/m2`.
