@@ -47,7 +47,7 @@ from dataclasses import dataclass
 
 from .kicad import Board, Track
 
-__all__ = ["Load", "MM", "MicrostripBoard"]
+__all__ = ["Load", "MM", "MicrostripBoard", "Port"]
 
 #: One millimetre in metres -- the conversion this module exists to make.
 MM = 1e-3
@@ -115,6 +115,64 @@ class Load:
 
 
 @dataclass(frozen=True)
+class Port:
+    """The plane where an instrument would be connected to the strip.
+
+    A port is a geometric plane, not a circuit element: the cross-section
+    through the strip at which a probe or a connector launches the wave.  It is
+    located on a pad, because that is the copper the instrument is soldered to,
+    so its position is a fact read off the board rather than a number chosen to
+    make the model come out.
+
+    **``position`` is in metres and uses the same datum as
+    :attr:`MicrostripBoard.x_port`** -- measured along the line from the
+    ``xmin`` edge of the outline.
+
+    ``y`` is recorded and deliberately not used.  It is here because a caller
+    may want to check that the strip really does run under the pad the port
+    claims to launch from, and that check needs the pad's coordinate across the
+    line.  :class:`MicrostripBoard` models the strip centred on the outline
+    whatever the copper does, though, so ``y`` is a fact about the launch and
+    not a parameter of the line.
+
+    Attributes:
+        position: Where the port plane crosses the line, from the ``xmin`` edge
+            [m].
+        y: The pad's coordinate across the line [m]; recorded, not used.
+        net: Name of the net the port launches onto.
+        reference: Footprint reference of the pad, e.g. ``'J1'``.
+        number: Pad number of the pad, e.g. ``'1'``.
+        side: ``'front'`` or ``'back'`` -- the copper face the pad is on.
+    """
+
+    position: float
+    y: float
+    net: str
+    reference: str
+    number: str
+    side: str
+
+    def __post_init__(self) -> None:
+        if not self.position > 0.0:
+            raise ValueError(
+                f"position must be positive, got {self.position!r} "
+                "(all lengths are metres)")
+        if not self.net:
+            raise ValueError(
+                "net must be a net name, got an empty string: a port launches "
+                "onto a named net")
+        if not self.reference:
+            raise ValueError(
+                "reference must be a footprint reference, got an empty string")
+        if not self.number:
+            raise ValueError(
+                "number must be a pad number, got an empty string")
+        if self.side not in ("front", "back"):
+            raise ValueError(
+                f"side must be 'front' or 'back', got {self.side!r}")
+
+
+@dataclass(frozen=True)
 class MicrostripBoard:
     """One microstrip coupon: a rectangular outline with a strip across it.
 
@@ -140,6 +198,9 @@ class MicrostripBoard:
             file.  A number that did not come from the board is recorded here
             instead of being indistinguishable from one that did.
         loads: Lumped elements on the strip, in the order they were written.
+        port: The plane an instrument would be connected at, when the caller
+            named a pad to launch from; ``None`` for a spec that carries no
+            launch.
     """
 
     length: float
@@ -152,6 +213,7 @@ class MicrostripBoard:
     name: str = ""
     supplied: tuple[str, ...] = ()
     loads: tuple[Load, ...] = ()
+    port: Port | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("length", "width", "h", "eps_r", "w", "x_port", "x_far"):
@@ -190,6 +252,7 @@ class MicrostripBoard:
         net: str,
         eps_r: float | None = None,
         taper: str = "raise",
+        port_pad: tuple[str, str] | None = None,
     ) -> "MicrostripBoard":
         """Read a coupon out of a parsed board, from **one named net**.
 
@@ -220,6 +283,20 @@ class MicrostripBoard:
         that covers the most track length and uses the extreme ``x`` of the
         segments that carry it.
 
+        ``port_pad`` places the port on a pad instead of at the extreme ``x`` of
+        the net.  The pad is looked up by the file's own identifiers (see
+        :meth:`emfit.kicad.Board.pad_at`), so an absent or repeated pad number
+        raises there rather than being guessed at here; after that the line has
+        to start where the pad is, which changes both ``w`` and ``x_port``.  The
+        width is read off the copper *at the port plane*, and ``x_far`` becomes
+        the end of the run of that width which begins at the port.  On this
+        repository's coupon that shortens the modelled line from 23.57 mm to
+        2.5 mm: the line at the connector is 2.0 mm wide, the 3.0 mm run does not
+        begin until 8.65 mm, and one uniform strip can only start where it is
+        uniform.  Because the width comes from the port plane, ``taper`` has no
+        effect on the width when ``port_pad`` is given -- it only has to be one
+        of the two accepted modes.
+
         Args:
             board: A :class:`emfit.kicad.Board`; its lengths are millimetres.
             net: Name of the net that carries the strip.
@@ -227,6 +304,9 @@ class MicrostripBoard:
                 one (or to override it).  ``None`` means "read it from the
                 file", which raises if the file has nothing to read.
             taper: ``'raise'`` (the default) or ``'dominant'``.
+            port_pad: ``(reference, number)`` of the pad an instrument would be
+                connected to, or ``None`` -- the default -- to take the two
+                extreme ``x`` of the net's own track as the port and far planes.
 
         Returns:
             A :class:`MicrostripBoard` in metres.
@@ -268,23 +348,99 @@ class MicrostripBoard:
                 f"and its port and far planes can only come from a segment that "
                 f"does (the others are diagonal or run along y)")
 
-        widths: dict[float, float] = {}
-        for track in along:
-            key = round(track.width, 9)
-            widths[key] = widths.get(key, 0.0) + track.length()
-        if len(widths) > 1 and taper == "raise":
-            listing = ", ".join(
-                f"{width:g} mm over {run:.3f} mm"
-                for width, run in sorted(widths.items()))
-            raise ValueError(
-                f"net {net!r} carries {len(widths)} distinct track widths "
-                f"({listing}): a line that tapers is not one uniform strip, and "
-                f"taking one of those widths unasked would be a guess. Pass "
-                f"taper='dominant' to use the width that covers the most length.")
-        w_mm = max(widths, key=lambda width: widths[width])
-        strip = [track for track in along if round(track.width, 9) == w_mm]
-        x_port = min(min(track.start[0], track.end[0]) for track in strip) * MM
-        x_far = max(max(track.start[0], track.end[0]) for track in strip) * MM
+        port: Port | None = None
+        if port_pad is None:
+            widths: dict[float, float] = {}
+            for track in along:
+                key = round(track.width, 9)
+                widths[key] = widths.get(key, 0.0) + track.length()
+            if len(widths) > 1 and taper == "raise":
+                listing = ", ".join(
+                    f"{width:g} mm over {run:.3f} mm"
+                    for width, run in sorted(widths.items()))
+                raise ValueError(
+                    f"net {net!r} carries {len(widths)} distinct track widths "
+                    f"({listing}): a line that tapers is not one uniform strip, and "
+                    f"taking one of those widths unasked would be a guess. Pass "
+                    f"taper='dominant' to use the width that covers the most length.")
+            w_mm = max(widths, key=lambda width: widths[width])
+            strip = [track for track in along if round(track.width, 9) == w_mm]
+            x_port = min(min(track.start[0], track.end[0]) for track in strip) * MM
+            x_far = max(max(track.start[0], track.end[0]) for track in strip) * MM
+        else:
+            reference, number = port_pad
+            pad = board.pad_at(reference, number)
+            if pad.net_name != net:
+                raise ValueError(
+                    f"pad {pad.reference}.{pad.number} is on net "
+                    f"{pad.net_name!r}, not on {net!r}: a port launches onto the "
+                    f"line the spec models, so the pad has to sit on that net")
+
+            # The line has to begin where the instrument is attached, and the
+            # width it has there is the width of the copper at that plane -- not
+            # the widest run anywhere on the net.
+            x_pad_mm = pad.position[0]
+            at_plane = [track for track in tracks if _reaches(track, x_pad_mm)]
+            if not at_plane:
+                raise ValueError(
+                    f"pad {pad.reference}.{pad.number} sits at x = "
+                    f"{x_pad_mm:.6f} mm, where no segment of net {net!r} ends: a "
+                    f"port is where the instrument meets the line, so the line "
+                    f"has to begin at the port plane")
+            widths_at_port: dict[float, float] = {}
+            for track in at_plane:
+                key = round(track.width, 9)
+                widths_at_port[key] = widths_at_port.get(key, 0.0) + track.length()
+            if len(widths_at_port) > 1:
+                listing = ", ".join(
+                    f"{width:g} mm over {span:.3f} mm"
+                    for width, span in sorted(widths_at_port.items()))
+                raise ValueError(
+                    f"the segments of net {net!r} that meet the port pad at x = "
+                    f"{x_pad_mm:.6f} mm disagree about their width ({listing}): a "
+                    f"port is one plane across one uniform strip, so the line it "
+                    f"launches onto has to have a single width there")
+            w_mm = next(iter(widths_at_port))
+            x_port = x_pad_mm * MM
+
+            # Walk the run of that width starting at the port plane and stop
+            # where it stops being that width: that is the far plane.
+            same_width = [track for track in along
+                          if round(track.width, 9) == w_mm]
+            x_far_mm = x_pad_mm
+            while True:
+                following = [track for track in same_width
+                             if abs(min(track.start[0], track.end[0]) - x_far_mm)
+                             <= TOL * max(1.0, abs(x_far_mm))]
+                if not following:
+                    break
+                if len(following) > 1:
+                    raise ValueError(
+                        f"net {net!r} branches at x = {x_far_mm:.6f} mm into "
+                        f"{len(following)} segments of width {w_mm:g} mm: a branch "
+                        f"is not a strip, so the line that starts at the port has "
+                        f"no single far plane")
+                x_far_mm = max(following[0].start[0], following[0].end[0])
+            x_far = x_far_mm * MM
+            if x_far <= x_port:
+                behind_mm = min(
+                    x_pad_mm,
+                    *(min(track.start[0], track.end[0]) for track in at_plane))
+                raise ValueError(
+                    f"the port at {pad.reference}.{pad.number} sits at x = "
+                    f"{x_pad_mm:.6f} mm, and the {w_mm:g} mm run of net {net!r} at "
+                    f"that plane only extends back to {behind_mm:.6f} mm: this "
+                    f"model runs the line from the port plane towards the far "
+                    f"wall, so a port on the far end of a line cannot be placed "
+                    f"without reversing the line")
+            port = Port(
+                position=x_port,
+                y=pad.position[1] * MM,
+                net=pad.net_name,
+                reference=pad.reference,
+                number=pad.number,
+                side=pad.side,
+            )
 
         stackup_h = board.stackup_thickness()
         if stackup_h is not None:
@@ -333,6 +489,7 @@ class MicrostripBoard:
             x_far=x_far,
             name=net,
             supplied=tuple(supplied),
+            port=port,
         )
 
     # ------------------------------------------------------------------
@@ -423,6 +580,14 @@ class MicrostripBoard:
             "n_line": int(round(wanted["n_line"])),
             "cell": cell,
         }
+
+
+def _reaches(track: Track, x_mm: float) -> bool:
+    """Whether ``track`` has an end at ``x_mm`` (millimetres, relative tolerance)."""
+    low = min(track.start[0], track.end[0])
+    high = max(track.start[0], track.end[0])
+    tolerance = TOL * max(1.0, abs(x_mm))
+    return abs(low - x_mm) <= tolerance or abs(high - x_mm) <= tolerance
 
 
 def _net_code(board: Board, name: str) -> int:

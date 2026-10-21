@@ -113,7 +113,7 @@ sections. Two entries were added:
   coordinates differ by a sign on one axis; `emfit/gerber.py:330-333` applies no sign flip in
   `read_gerber`. The pad oracle crosses that boundary on purpose and agrees to 1e-6 mm.
 - `from_kicad` still ignores y (the strip is modelled centred and straight), `taper="dominant"`
-  still collapses 27 track widths silently, `h` still counts mask and foil (1.6 mm against a
+  still collapses 28 track widths silently, `h` still counts mask and foil (1.6 mm against a
   1.51 mm core), and there is still no copper loss.
 
 ## Verified this session

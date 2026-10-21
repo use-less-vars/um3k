@@ -603,6 +603,50 @@ class Board:
                 )
         return placed
 
+    def pad_at(self, reference: str, number: str) -> PlacedPad:
+        """The one pad called ``number`` of the footprint called ``reference``.
+
+        ``reference`` and ``number`` are the file's own identifiers, compared as
+        text -- a footprint reference such as ``J1`` and a pad number such as
+        ``1``, not a position -- and the pad comes back placed like every other
+        one from :meth:`pads_in_board_frame`, in board millimetres.
+
+        A pad number that appears more than once inside one footprint is refused
+        rather than disambiguated by position.  "Pad 2 of J1" is a different
+        question on a two-leg part and on a four-leg one, and the file does not
+        say which leg an instrument would be connected to, so picking the
+        nearest one would be a guess dressed as an answer.
+
+        Raises
+        ------
+        ValueError
+            If no pad matches the pair, or if more than one does.  The first
+            message lists every pad the board declares; the second gives the
+            board-frame position of each candidate.
+        """
+        wanted = str(number)
+        placed = self.pads_in_board_frame()
+        matches = [pad for pad in placed
+                   if pad.reference == reference and str(pad.number) == wanted]
+        if not matches:
+            known = ", ".join(
+                sorted({f"{pad.reference}.{pad.number}" for pad in placed})) \
+                or "none"
+            raise ValueError(
+                f"no pad {reference}.{wanted} on this board; the pads it declares "
+                f"are {known}")
+        if len(matches) > 1:
+            listing = "; ".join(
+                f"({pad.position[0]:g}, {pad.position[1]:g}) mm"
+                for pad in matches)
+            raise ValueError(
+                f"{len(matches)} pads are called {reference}.{wanted}: {listing}. "
+                f"A pad number that appears more than once inside one footprint "
+                f"cannot name a single port -- the file does not say which of "
+                f"them an instrument would be connected to, so this is refused "
+                f"instead of being resolved by position")
+        return matches[0]
+
     def net_name(self, code: int) -> str:
         """Name of net ``code``, or ``""`` if the board never declares it."""
         for net in self.nets:

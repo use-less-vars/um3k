@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from emfit.board import MicrostripBoard
+from emfit.board import MicrostripBoard, Port
 from emfit.kicad import load_board
 from emfit.studies import (
     MS_EPS_R,
@@ -219,3 +219,91 @@ def test_the_board_path_reaches_the_default_run() -> None:
     assert abs(result.gamma) < 0.02
     assert result.fit_residual < 0.05
     assert 1.0 < result.eps_eff < MS_EPS_R
+
+
+# ---------------------------------------------------------------------------
+# a port on a named pad
+# ---------------------------------------------------------------------------
+def test_from_kicad_places_the_port_on_the_connector_pad(support) -> None:
+    """Reading the port off J1.1 shortens the line to the 2.0 mm run at 4.5 mm.
+
+    Kills taking the dominant 3.0 mm width, and pins the coupon's published
+    numbers so they cannot drift.
+    """
+    spec = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1"))
+
+    assert spec.w == pytest.approx(0.002)
+    assert spec.x_port == pytest.approx(0.0045)
+    assert spec.x_far == pytest.approx(0.007)
+    assert spec.length == pytest.approx(0.07)
+    assert spec.width == pytest.approx(0.02)
+    assert spec.h == pytest.approx(0.0016)
+    assert spec.eps_r == pytest.approx(4.4)
+
+    assert spec.port is not None
+    assert spec.port.side == "front"
+    assert spec.port.y == pytest.approx(0.01)
+    assert spec.port.net == "RF_IN"
+    assert spec.port.reference == "J1"
+    assert spec.port.number == "1"
+
+    # Without the port pad the same net reads exactly as it did before: the port
+    # comes from the extreme x of the run that carries the dominant width.
+    whole = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, taper="dominant")
+    assert whole.w == pytest.approx(0.003)
+    assert whole.x_port == pytest.approx(0.00865)
+    assert whole.x_far == pytest.approx(0.03222)
+    assert whole.port is None
+
+    # A port says where the *launch* is; it says nothing about where the board
+    # ends.  x_far is 7.0 mm inside a 70 mm outline, so the mesh still refuses
+    # the line -- this exists so that a port cannot be read as a fix for that.
+    with pytest.raises(ValueError, match="7.000000") as caught:
+        spec.to_cell_counts(n_sub=8, n_pml=12)
+    assert "70.000000" in str(caught.value)
+
+
+def test_from_kicad_refuses_a_port_pad_on_another_net(support) -> None:
+    """A pad on RF_OUT cannot launch an RF_IN line.
+
+    Kills matching the pad by reference and number only, which would port the
+    wrong end of the coupon.
+    """
+    with pytest.raises(ValueError, match="RF_IN") as caught:
+        MicrostripBoard.from_kicad(
+            support, net="RF_IN", eps_r=4.4, port_pad=("R1", "2"))
+
+    assert "RF_OUT" in str(caught.value)
+
+
+def test_from_kicad_refuses_a_port_on_the_far_end(support) -> None:
+    """J2.1 sits at the down-stream end, so the line would have to run backwards.
+
+    Kills an empty line (x_far == x_port) or a negative one, instead of saying
+    that the model runs from the port towards the far wall.
+    """
+    with pytest.raises(ValueError, match="65.500000") as caught:
+        MicrostripBoard.from_kicad(
+            support, net="RF_OUT", eps_r=4.4, port_pad=("J2", "1"))
+
+    assert "63.000000" in str(caught.value)
+
+
+def test_port_validates_its_own_numbers() -> None:
+    """A port carries metres, a net and a side, and refuses the rest.
+
+    Kills a frozen dataclass that accepts a zero position, an unnamed net or an
+    invented side.
+    """
+    with pytest.raises(ValueError, match="all lengths are metres"):
+        Port(position=0.0, y=0.0, net="x", reference="J1", number="1",
+             side="front")
+    with pytest.raises(ValueError, match="net must be"):
+        Port(position=1e-3, y=0.0, net="", reference="J1", number="1",
+             side="front")
+    with pytest.raises(ValueError, match="side must be"):
+        Port(position=1e-3, y=0.0, net="x", reference="J1", number="1",
+             side="left")
+

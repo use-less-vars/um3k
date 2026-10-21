@@ -952,3 +952,52 @@ def test_flipped_footprint_follows_the_documented_rule(tmp_path: Path) -> None:
     assert pads["1"].copper_layers == ("B.Cu",)
     # The same arithmetic as the front: local (1, 0) at +90 -> (0, -1).
     assert pads["1"].position == (pytest.approx(10.0), pytest.approx(9.0))
+
+
+# ---------------------------------------------------------------------------
+# naming one pad, for a port
+# ---------------------------------------------------------------------------
+def test_pad_at_finds_the_connector_pad_in_board_frame(coupon: Board) -> None:
+    """``pad_at`` returns the file's own pad, placed and unrotated.
+
+    Kills a footprint-local position, a lost drill and a guessed side.
+    """
+    pad = coupon.pad_at("J1", "1")
+
+    assert pad.position == (pytest.approx(4.5), pytest.approx(10.0))
+    assert pad.net_name == "RF_IN"
+    assert pad.side == "front"
+    assert pad.shape == "roundrect"
+    assert pad.size == (pytest.approx(2.3), pytest.approx(2.3))
+    assert pad.drill == pytest.approx(1.5)
+
+
+def test_pad_at_refuses_a_pad_number_that_appears_four_times(coupon: Board) -> None:
+    """A number that names four legs is refused, not resolved by position.
+
+    Kills returning the first match, or the nearest one to a caller's guess.
+    """
+    with pytest.raises(ValueError, match="4 pads") as caught:
+        coupon.pad_at("J1", "2")
+
+    assert "J1.2" in str(caught.value)
+
+
+def test_pad_at_lists_the_pads_when_the_pair_is_absent(coupon: Board) -> None:
+    """An absent reference.number names what the board does declare.
+
+    Kills a bare "not found" that leaves the caller to guess at the edit.
+    """
+    with pytest.raises(ValueError, match="R1.2"):
+        coupon.pad_at("J9", "1")
+
+
+def test_pad_at_reads_the_far_connector_too(coupon: Board) -> None:
+    """The down-stream connector is placed by the same lookup.
+
+    Kills an answer pinned to the first footprint, or to the only one.
+    """
+    pad = coupon.pad_at("J2", "1")
+
+    assert pad.position == (pytest.approx(65.5), pytest.approx(10.0))
+
