@@ -2209,6 +2209,7 @@ def microstrip_wave(
     n_stations: int = MS_N_STATIONS,
     f_target: float = MS_F_TARGET,
     nsteps: int = MS_NSTEPS,
+    dt_scale: float = 1.0,
     n_warm: int = None,
     drive: float = 1.0,
     keep_slice: bool = False,
@@ -2329,6 +2330,10 @@ def microstrip_wave(
         f_target: Wanted drive frequency [Hz].
         nsteps: Leapfrog steps; the first ``n_warm`` are warm-up and the rest
             are Fourier transformed, so this is the record length.
+        dt_scale: Multiplier on the mesh's CFL time step; ``1.0`` (the default)
+            is the step this study has always taken.  A smaller value steps the
+            same mesh more finely and changes nothing else -- the cell size,
+            and so every spatial error, stays exactly as it was.
         n_warm: Warm-up steps, ``nsteps // 4`` by default.
         drive: Source amplitude [A].
         keep_slice: Accumulate the phasor of ``E_z`` over the whole mid-plane
@@ -2385,6 +2390,9 @@ def microstrip_wave(
         raise ValueError(f"excite must be 'cw' or 'pulse', got {excite!r}")
     band_lo, band_hi = float(band_lo), float(band_hi)
     n_bins, f_pulse = int(n_bins), float(f_pulse)
+    dt_scale = float(dt_scale)
+    if not (dt_scale > 0.0):
+        raise ValueError(f"dt_scale must be positive, got {dt_scale!r}")
     if band_lo <= 0.0:
         raise ValueError(f"band_lo must be positive, got {band_lo!r} Hz")
     if band_hi <= band_lo:
@@ -2492,8 +2500,8 @@ def microstrip_wave(
     pml = PML(grid, thickness_cells=n_pml, order=2, target=1e-4,
               walls=pml_walls, cc=cc, audit=absorbed)
     stepper_kwargs = {} if m_sigma is None else {"m_sigma": m_sigma}
-    stepper = FITStepper(cc, m_eps, m_mu, dt=cfl_dt(grid), pec=pec, pml=pml,
-                         **stepper_kwargs)
+    stepper = FITStepper(cc, m_eps, m_mu, dt=float(cfl_dt(grid)) * dt_scale,
+                         pec=pec, pml=pml, **stepper_kwargs)
     dt = float(stepper.dt)
 
     # --- the record and its DFT bin ----------------------------------------
@@ -3144,6 +3152,7 @@ def microstrip_wave_board(
     n_stations: int = MS_N_STATIONS,
     f_target: float = MS_F_TARGET,
     nsteps: int = MS_NSTEPS,
+    dt_scale: float = 1.0,
     keep_slice: bool = False,
     audit: bool = False,
     reference: LineReference | None = None,
@@ -3184,6 +3193,8 @@ def microstrip_wave_board(
         n_stations: Number of probe stations along the line.
         f_target: Wanted drive frequency [Hz].
         nsteps: Leapfrog steps; the record is what is left after warm-up.
+        dt_scale: Multiplier on the mesh's CFL time step, passed straight
+            through to :func:`microstrip_wave`; ``1.0`` is that run's own step.
         keep_slice: Whether to accumulate the mid-plane phasor block, which is
             what the ``midplane-ez`` figure is drawn from; it is a separate
             accumulation through the time loop, so a run that wants no picture
@@ -3236,6 +3247,7 @@ def microstrip_wave_board(
         n_stations=n_stations,
         f_target=f_target,
         nsteps=nsteps,
+        dt_scale=dt_scale,
         keep_slice=keep_slice,
         audit=audit,
         loads=spec.loads,

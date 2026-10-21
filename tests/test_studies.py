@@ -261,6 +261,44 @@ def test_microstrip_wave_smoke():
 
 
 # ---------------------------------------------------------------------------
+# a finer time step on the same mesh
+# ---------------------------------------------------------------------------
+def test_microstrip_wave_dt_scale_steps_the_same_mesh_more_finely():
+    """``dt_scale`` multiplies the CFL step and leaves every cell alone."""
+    knobs = dict(
+        n_sub=1,
+        n_air=1,
+        n_strip=2,
+        n_clean=1,
+        n_pml=2,
+        n_top=0,          # plain PEC lid here; n_top must equal n_pml otherwise
+        n_ref=1,
+        n_line=6,
+        x_first=6.4e-3,
+        x_last=11.2e-3,
+        n_stations=4,     # the two-wave fit needs four stations
+        nsteps=300,       # the shortest record that returns a result at all
+        sink=None,
+    )
+    full = studies.microstrip_wave(dt_scale=1.0, **knobs)
+    half = studies.microstrip_wave(dt_scale=0.5, **knobs)
+
+    # --- the step is scaled exactly, not approximately -------------------
+    assert half.geometry["dt"] > 0.0
+    assert half.geometry["dt"] == 0.5 * full.geometry["dt"]
+
+    # --- and the mesh the step is taken on is untouched ------------------
+    for key in ("nx", "ny", "nz", "cell", "nsteps", "n_warm", "n_acc",
+                "n_edges", "f"):
+        assert half.geometry[key] == full.geometry[key], key
+
+    # --- a step that is not a step is refused before anything is built ---
+    for bad in (0.0, -1.0):
+        with pytest.raises(ValueError):
+            studies.microstrip_wave(dt_scale=bad, **knobs)
+
+
+# ---------------------------------------------------------------------------
 # a refused station fit: the guard, not the physics
 # ---------------------------------------------------------------------------
 def test_microstrip_wave_refused_station_fit_is_flagged_not_quoted():
