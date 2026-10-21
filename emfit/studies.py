@@ -56,6 +56,7 @@ from .kicad import load_board
 from .materials import C0, material_matrices
 from .microstrip import Microstrip
 from .operators import CellComplex
+from .plane_phasor import PLANE_CONVENTION
 from .pml import PML, AbsorbedWork, cells_for_wavelength
 from .ports import (
     DftAccumulator,
@@ -2046,7 +2047,7 @@ BIN_DUMP_ENV = "EMFIT_BIN_DUMP"
 
 
 def _dump_bins(path, *, freqs, spectra, station_x, n_stations, x_port, bins,
-               reference=None, poynting=None) -> str:
+               reference=None, poynting=None, planes=None) -> str:
     """Write the per-bin record an off-line S-parameter recompute needs.
 
     Opt-in only: :func:`microstrip_wave` calls this when ``EMFIT_BIN_DUMP``
@@ -2117,6 +2118,23 @@ def _dump_bins(path, *, freqs, spectra, station_x, n_stations, x_port, bins,
         payload.update(
             sx_station=np.asarray(poynting["sx_station"], dtype=float),
             sx_station_sub=np.asarray(poynting["sx_station_sub"], dtype=float),
+        )
+    if planes is not None:
+        # Opt-in cross-section record: the four single-tone phasor blocks and
+        # the convention they were summed under.  A separate ``if`` from the
+        # Poynting one, so neither key set depends on the other flag, and a
+        # flag-off dump keeps exactly the payload it had.
+        payload.update(
+            plane_Ey=np.asarray(planes["plane_Ey"], dtype=complex),
+            plane_Ez=np.asarray(planes["plane_Ez"], dtype=complex),
+            plane_Hy=np.asarray(planes["plane_Hy"], dtype=complex),
+            plane_Hz=np.asarray(planes["plane_Hz"], dtype=complex),
+            plane_station_cells=np.asarray(planes["station_cells"], dtype=int),
+            plane_station_x=np.asarray(planes["station_x"], dtype=float),
+            plane_f=float(planes["f"]),
+            plane_dt=float(planes["dt"]),
+            plane_n_samples=int(planes["n_samples"]),
+            plane_convention=PLANE_CONVENTION,
         )
     if reference is not None:
         payload.update(
@@ -2237,6 +2255,7 @@ def microstrip_wave(
     n_bins: int = MS_N_BINS,
     f_pulse: float = MS_F_PULSE_GHZ * 1e9,
     poynting: bool = False,
+    plane_capture: bool = False,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -2384,6 +2403,13 @@ def microstrip_wave(
             ``band_hi`` above it.
         n_bins: How many frequencies the sweep reports; at least 2.
         f_pulse: Centre frequency of the Ricker excitation [Hz].
+        plane_capture: Accumulate the single-tone phasors of ``E_y``, ``E_z``,
+            ``H_y`` and ``H_z`` over every station cross-section, so the flux
+            can be re-derived in the phasor domain as a cross-check on the
+            time-domain one (see :mod:`emfit.plane_phasor`).  Off by default,
+            and read only by the ``EMFIT_BIN_DUMP`` record: nothing in this
+            function's own numbers changes, and with the flag off none of the
+            four plane blocks is even allocated.
 
     Returns:
         A :class:`MicrostripWave`.
@@ -2575,6 +2601,21 @@ def microstrip_wave(
     sx_station_sub_second_sum = np.zeros(n_stations) if poynting else None
     z_sub = slice(0, n_sub) if poynting else None
 
+    # --- the transverse-plane phasors, off unless asked for ----------------
+    # Four blocks, one station plane each: ``E_y`` and ``H_z`` on the
+    # ``(n_y, n_zn)`` grid, ``E_z`` and ``H_y`` on the ``(n_y+1, n_z)`` one.
+    # They are stacked in the same complex128 the DFT uses and summed with the
+    # same ``exp(-2j pi f n dt)`` the probe accumulator applies, so the planes
+    # and the station voltages are one phasor set and may be divided.  A
+    # default-coupon plane set is 0.58 MB; the run pays nothing when the flag
+    # is off.
+    plane_ey = plane_ez = plane_hy = plane_hz = None
+    if plane_capture:
+        plane_ey = np.zeros((n_stations, cc.ny, cc.nzn), dtype=np.complex128)
+        plane_ez = np.zeros((n_stations, cc.nyn, cc.nz), dtype=np.complex128)
+        plane_hy = np.zeros((n_stations, cc.nyn, cc.nz), dtype=np.complex128)
+        plane_hz = np.zeros((n_stations, cc.ny, cc.nzn), dtype=np.complex128)
+
     # --- the time loop -----------------------------------------------------
     acc = DftAccumulator([f0], dt)
     # The same record split in two, for the settledness check after the loop.
@@ -2633,6 +2674,36 @@ def microstrip_wave(
                 plate_current(stepper.h, cc, int(ix) - 1, 0, y_extent=y_half)
                 + plate_current(stepper.h, cc, int(ix), 0, y_extent=y_half))
         acc.add(signals, n)
+        if plane_ey is not None:
+            # The phase is the accumulator's own expression, on the step index:
+            # not a re-derivation, the same line ``DftAccumulator.add`` runs.
+            w = np.exp(-2.0j * np.pi * f0 * n * dt)
+            # The reshapes are the ones ``station_poynting`` takes, so the
+            # station slice is the same slice -- that is the one thing this
+            # capture is allowed to share with the time-domain route.
+            pl_ey = stepper.e[cc.off_ey:cc.off_ey + cc.n_ey].reshape(
+                cc.nxn, cc.ny, cc.nzn)
+            pl_ez = stepper.e[cc.off_ez:cc.off_ez + cc.n_ez].reshape(
+                cc.nxn, cc.nyn, cc.nz)
+            pl_fz = stepper.h[cc.off_fz:cc.off_fz + cc.n_fz].reshape(
+                cc.nx, cc.ny, cc.nzn)
+            pl_fy = stepper.h[cc.off_fy:cc.off_fy + cc.n_fy].reshape(
+                cc.nx, cc.nyn, cc.nz)
+            for i, ix in enumerate(js):
+                ix = int(ix)
+                # ``E`` sits on the node layer, ``H`` on x *cells*: average the
+                # two cells that straddle the station, as the time-domain
+                # helper does, or the ratio would carry half a cell of phase.
+                if 0 < ix < cc.nx:
+                    straddle = (ix - 1, ix)
+                elif ix == 0:
+                    straddle = (0,)
+                else:
+                    straddle = (cc.nx - 1,)
+                plane_ey[i] += w * pl_ey[ix]
+                plane_ez[i] += w * pl_ez[ix]
+                plane_hz[i] += w * np.mean(pl_fz[list(straddle), :, :], axis=0)
+                plane_hy[i] += w * np.mean(pl_fy[list(straddle), :, :], axis=0)
         if poynting:
             for i, ix in enumerate(js):
                 sx = station_poynting(stepper.e, stepper.h, cc, ix=int(ix))
@@ -3030,13 +3101,22 @@ def microstrip_wave(
         # writes a file, and changes nothing that is reported.
         dump_path = os.environ.get(BIN_DUMP_ENV, "")
         if dump_path:
+            planes = None
+            if plane_ey is not None:
+                planes = {
+                    "plane_Ey": plane_ey, "plane_Ez": plane_ez,
+                    "plane_Hy": plane_hy, "plane_Hz": plane_hz,
+                    "station_cells": js, "station_x": station_x,
+                    "f": f0, "dt": dt, "n_samples": n_acc,
+                }
             _dump_bins(
                 dump_path, freqs=freqs, spectra=spectra,
                 station_x=station_x, n_stations=n_stations,
                 x_port=x_port, bins=bins, reference=reference,
                 poynting=(None if sx_station is None else
                           {"sx_station": sx_station,
-                           "sx_station_sub": sx_station_sub}))
+                           "sx_station_sub": sx_station_sub}),
+                planes=planes)
 
     geometry = {
         "nx": nx, "ny": ny, "nz": nz, "cell": cell,
@@ -3244,6 +3324,7 @@ def microstrip_wave_board(
     n_bins: int = MS_N_BINS,
     f_pulse: float = MS_F_PULSE_GHZ * 1e9,
     poynting: bool = False,
+    plane_capture: bool = False,
 ) -> MicrostripWave:
     """Run :func:`microstrip_wave` on a coupon that came out of a board file.
 
@@ -3299,6 +3380,9 @@ def microstrip_wave_board(
             through.
         f_pulse: Centre frequency of the Ricker excitation [Hz], passed
             straight through.
+        plane_capture: Whether to accumulate the station cross-section phasor
+            planes the phasor-domain flux cross-check is read from, passed
+            straight through to :func:`microstrip_wave`.
 
     The spec's ``loads`` are passed straight through: a
     :class:`emfit.board.Load` carries its position in metres and its value in
@@ -3341,6 +3425,7 @@ def microstrip_wave_board(
         n_bins=n_bins,
         f_pulse=f_pulse,
         poynting=poynting,
+        plane_capture=plane_capture,
     )
 
 
