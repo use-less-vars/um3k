@@ -725,3 +725,73 @@ and it is the one thing a reader checking this acceptance should re-derive first
   script from the repo root would silently overwrite the evidence file with `git status` showing nothing at
   all. The retiming above was therefore run from `/tmp/retime`, where the write failed loudly instead.
 
+---
+
+## git is not in the image, so landing is an operator action
+
+- **Decision.** Every merge and every stash drop is performed by the operator. This is not a workaround with an
+  expiry date; it is the shape of the system until the container image gains a git binary or a git-capable
+  tool is exposed to it. The agent commits to `wip/ports` at every coherent point and the operator lands in
+  batches. "Merge when convenient" is therefore not a temporary concession but the permanent arrangement.
+- **Evidence, verified rather than assumed.** `shutil.which('git')` returns `None`; `/usr/bin/git`,
+  `/bin/git`, `/usr/local/bin/git`, `/usr/lib/git-core/git` and `/opt/git/bin/git` are all absent;
+  `/usr/lib/git-core` and `/usr/share/git-core` do not exist; the only `/usr/**/git` hit within three levels
+  is `/usr/share/nodejs/@npmcli/git`, an npm JavaScript package. `find_spec` returns `None` for `dulwich`,
+  `pygit2`, `GitPython` and the `git` package. The tool surface offers `commit, init, clone, branch_create,
+  checkout, stage, unstage, worktree_add, worktree_remove, stash_push, stash_pop`: there is no `merge`, no
+  `reset`, no `update-ref`, and the dispatcher rejects `merge` as an invalid literal. `branch_create` cannot
+  force-move an existing ref -- `fatal: a branch named 'master' already exists`.
+- **What this retires.** The container-slot hypothesis carried since the first dispatch. Freeing a slot could
+  never have helped, because there is nothing in the image to free it for. A future session that finds
+  itself waiting for a slot before a merge is waiting for something that does not exist.
+- **The refusal that was kept, and why.** A fast-forward has no merge commit and both trees are identical, so
+  it is only a ref move, and that much is expressible by writing `.git/refs/heads/master` directly. The write
+  was pre-flighted rather than performed, and the pre-flight found `master` already at `68404dd` with `HEAD`
+  on `refs/heads/master`: the operator had landed it. Nothing was written. The general lesson is the
+  pre-flight, not the write: a ref write is expressible but is not a merge -- it leaves no `Fast-forward`
+  reflog line -- so it stays a last resort, and it must be checked against the refs as they actually are, not
+  as the previous inspection assumed they were.
+- **What not to ask for.** Not "add a merge verb" to this tool. The correct request is "git is absent from the
+  container image", which is a different and larger one.
+- **Landing, as performed.** `git checkout master && git merge --ff-only wip/ports` took `master` from
+  `ffbb4a4` to `68404dd`; `merge_base --is-ancestor ffbb4a4 master` confirms a true fast-forward, and the log
+  from `68404dd` back to `ffbb4a4` is linear. `git stash drop` emptied the stash list ("No stashes.").
+
+---
+
+## A test command that cannot print its count is not a verification
+
+- **The incident.** The suite was launched as `python3 -m pytest -q` while `pyproject.toml` already sets
+  `addopts = "-q"`. pytest reads that as `-qq`, which suppresses the summary line outright. The run printed
+  five dot lines, `[100%]` and `EXIT=0` -- and no counts line, so a green result carried no evidence of how
+  many tests passed or how long it took.
+- **Why it is the same class of defect as the vacuous pass.** Both are green for the wrong reason. A vacuous
+  pass proves nothing about the code; an uncounted suite proves nothing about the suite. `EXIT=0` on its own
+  is not a number, and this log has already been burned once by treating a plausible-looking result as a
+  verification.
+- **Rule.** Never pass `-q` on the command line of this project; `addopts` supplies it. Any run that is going
+  to be quoted must print its own summary line, and the quoting session should grep for ` passed in ` rather
+  than for the exit code. The countable re-run of this suite is `380 passed in 350.12s (0:05:50)` at
+  `f23e78e`, and that is the figure of record. The uncounted `EXIT=0` was never entered anywhere.
+
+---
+
+## Milestone 2: ports on pads, in this order
+
+- **Why this is the milestone that matters.** Milestone 1 makes a `.kicad_pcb` become a geometry the solver
+  meshes. Milestone 2 makes the result a tool: a user places a port on a pad in an imported board and reads
+  S-parameters back.
+- **Order.** (1) The `--port-pad` flag and the non-null branch of the `port` key in `board --json`, which is
+  currently untested -- smallest job, unblocks the rest. (2) A CLI path from a pad into a microstrip study:
+  register `microstrip_wave_board` and lift the `nsteps` cap that blocks a `0.1` mm cell, or provide an
+  explicit override that warns about the cost. (3) A port on the coupon's `J1.1` pad, run end to end,
+  reporting S-parameters and a field slice. (4) The acceptance: a port on a pad in an imported board yields
+  S-parameters, with the reference/loaded sequence expressed in the interface.
+- **Carried, not chased.** The station `|S21|` discrepancy (`0.9861098` against `0.9870082`, `9.1e-04` low,
+  byte-identical with the audit off) stays named in section 49 and is not pursued in this milestone. The one
+  diagnostic that would settle it is a re-run of the exact historical configuration; it is a curiosity, not a
+  gate. The `35`-fold audit-route clock gap likewise stays an open item: never quote `600` s as the cost of
+  the audit.
+- **Landing during this milestone.** The agent commits to `wip/ports` and reports the landing command; it
+  cannot land anything itself, per the section above, and will not wait on a merge to keep working.
+
