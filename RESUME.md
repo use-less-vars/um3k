@@ -1,20 +1,20 @@
 # RESUME -- session state
 
-Branch: wip/seam2
-Base: master @ 7964ffe. wip/seam2 is 10 commits ahead of master and fast-forwards cleanly: the 9 commits described below, plus the commit that adds this file.
+Branch: `wip/ports`, HEAD `531c56c`.
+Base: master @ `ffbb4a4`. master already carries the ten delivered commits (tip `62d1684`) plus `ffbb4a4`, the decisions entry; `wip/ports` adds the port work on top, so master fast-forwards.
 Confirm HEAD with `git log -1 --oneline`.
-Working tree once that commit lands: only `Intro.txt` is modified, and it is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
+Working tree once the work below lands: only `Intro.txt` is modified, and it is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
 
 ## To land the work
 
 ```
 git checkout master
-git merge --ff-only wip/seam2
+git merge --ff-only wip/ports
 ```
 
-There is no `merge` and no `branch -f` in the agent's tool surface, so these two lines are yours to run.
+`wip/seam2` (`62d1684`) is already an ancestor of master, so do not merge it again. There is no `merge` and no `branch -f` in the agent's tool surface, so these two lines are yours to run.
 
-## What these 9 commits establish
+## What the ten commits on master establish
 
 Code (4 commits):
 
@@ -38,12 +38,92 @@ Report (5 commits):
 - `3b25817` `sec_intro.tex` 158 -> 165, "Layout import, in part." item: the port is a
   geometric plane, not a driven one, so no impedance is measured through it.
 
-Each report commit also commits the rebuilt `docs/report/main.pdf` (it is tracked).
+The ninth commit adds this file; the tenth is `ffbb4a4` on `decisions.md`. Every report commit
+also commits the rebuilt `docs/report/main.pdf` (it is tracked).
+
+## Decisions added at `ffbb4a4`
+
+`decisions.md` is at the repo root (not under `docs/`); it is now 588 lines and 46 `##`
+sections. Two entries were added:
+
+- "KiCad is the model; Gerber is the ground truth." A layout is read as a model and the plotted
+  artwork is what the model is checked against -- every importer oracle is artwork, not a
+  re-read of the board file. The strongest argument against is recorded in the entry (the
+  artwork is a superset of the model, so a wrong model can still agree) and it loses because a
+  model error that survives an artwork oracle is a modelling choice, not an import error.
+- "The eps_eff bias is systematic; its decomposition is the open question, and it is
+  deliberately not being chased." +7.79 % on the reference box against +7.80 % on the coupon;
+  three candidates are named and none is selected; the estimator spread is 4.3 %, so the bias
+  is not an estimator artefact; +7.20 % is a trap (coupon measured against the reference
+  closed form) and must not be quoted as the bias. The 62x44x22 box at 0.400 mm reads
+  3.621781 = +8.31 % and is not the published record.
+
+## What `wip/ports` adds: step 1 of 4 (`531c56c`)
+
+- `emfit/kicad.py` 843 -> 944 lines, `tests/test_kicad.py` 640 -> 954 lines, 68 -> 75 tests.
+  `Board.pads_in_board_frame()` returns `PlacedPad` records -- board-frame centre, size,
+  rotation, net, copper layers, drill -- built from the footprint placement and the pad's
+  footprint-local geometry. `LayerError` is raised for a pad on a layer the board does not
+  have; `_footprint_side` and `_pad_copper_layers` are the helpers.
+- `Board.pads` is unchanged and still footprint-local, so nothing that reads it moved.
+  `emfit/gerber.py` and `tests/test_gerber.py` were not touched.
+- The transform is x' = px + x*cos(t) + y*sin(t), y' = py + y*cos(t) - x*sin(t).
+- The sign of the rotation is proved, not assumed. J1 sits at (4.5, 10, 90); its silkscreen
+  chevron is footprint-local (-4.1, 0.5) -> (-3.6, 0) -> (-4.1, -0.5) and appears in
+  `F_Silkscreen.gto` at (5.0, 14.1) -> (4.5, 13.6) -> (4.0, 14.1), i.e. with y negated. The
+  opposite sign puts the chevron near y = 5.9, where there is nothing. The chevron is the only
+  handedness oracle in the repository: every pad in the fixture is 90-degree-symmetric, so no
+  pad can distinguish the two signs.
+- Two oracles, exact rather than fitted, `PLACEMENT_TOL = 1e-6` mm (4.6 format resolution):
+  12 placed F.Cu pads coincide one-for-one with the 12 `D03` flashes in `gerbers/*.gtl` (both
+  directions consumed, so neither a missing pad nor an extra flash can pass), and the 10
+  through-hole pads coincide one-for-one with the 10 plated holes in the Excellon drill file
+  (T1C1.500 x2 at (4.5, -10) and (65.5, -10); T2C1.700 x8 at +/-2.54 / +/-3.04 around x = 4.5
+  and x = 65.5).
+- Fixture facts the port work needs: `kicad_support_project/kicad_support_project.kicad_pcb`
+  is 70x20 mm, 2 copper layers, 58 track segments, 12 pads -- J1 5 pads at (4.5, 10, 90),
+  R1 two SMD lands 0.54x0.64 roundrect with no drill, J2 5 pads at (65.5, 10, 270). Pad "1" of
+  each SMA is 2.3x2.3 roundrect, drill 1.5, net RF_IN / RF_OUT; the four legs are 2.5 circles,
+  drill 1.7, net GND. The gerbers and the Excellon file live in
+  `kicad_support_project/gerbers/`, not beside the board file; F_Cu is `.gtl`, B_Cu is `.gbl`.
+
+## Outstanding: steps 2-4 of the port work
+
+- Step 2, a port on a pad carrying its net, with the reference and loaded sequences expressed
+  in the same form. This is the next piece of code.
+- Step 3, an arc parser -- but only after checking whether any pad or trace in the fixture is
+  an arc. The fixture pads are roundrect and circle and the CMEX board has zero arcs, so this
+  may be dead weight; check before writing it.
+- Step 4, S-parameters and a field slice on the imported coupon board. Acceptance: the imported
+  coupon reproduces the hand-built study within the fit residual, and a port on an SMA pad runs
+  end to end.
+- Step 4 is blocked by the solver legitimately refusing the coupon, not by a bug. The coupon's
+  `RF_IN` net stops at x = 32.22 mm on a 70 mm outline, so `to_cell_counts` refuses it and
+  `tests/test_board.py:184` asserts that refusal. The refusal message states the remedy --
+  crop the outline to the strip, or extend the net to the board edge -- so running the coupon
+  end to end is a deliberate choice to make and to report, not a repair.
+
+## Still true after step 1
+
+- The back pour is measurable but not modelled: `gerbers/*.gbl` holds 3 `G36` regions
+  (613/59/60 vertices), 10 flashes and 0 segments, bounding box (0.5005, -19.4995, 69.4995,
+  -0.5005) against the Edge.Cuts box (0, 0, 70, 20) -- a uniform 0.5005 mm inset, consistent
+  with `POUR_CLEARANCE = 0.5 +/- 0.01` in `tests/test_gerber.py`.
+- KiCad writes Gerber with y negated relative to the board file, so board and artwork
+  coordinates differ by a sign on one axis; `emfit/gerber.py:330-333` applies no sign flip in
+  `read_gerber`. The pad oracle crosses that boundary on purpose and agrees to 1e-6 mm.
+- `from_kicad` still ignores y (the strip is modelled centred and straight), `taper="dominant"`
+  still collapses 27 track widths silently, `h` still counts mask and foil (1.6 mm against a
+  1.51 mm core), and there is still no copper loss.
 
 ## Verified this session
 
-- Full suite: 348 tests, 0 failures / 0 errors / 0 skipped, 284.024 s (junit `/tmp/full.xml`).
-- Fast selection `-m 'not slow'`: 339 passed, 9 deselected.
+- Fast selection `-m 'not slow'` on `wip/ports`: 346 passed, 9 deselected, 0 failures /
+  0 errors / 0 skipped, 22.21 s (junit `/tmp/ports_fast.xml`, 346 testcases). 355 tests are
+  collected now, against 348 before this commit.
+- `tests/test_kicad.py tests/test_board.py tests/test_gerber.py`: 91 passed in 9.69 s.
+- The full-suite figures below are from `62d1684` and were not re-run after `531c56c`: 348
+  tests, 0 failures / 0 errors / 0 skipped, 284.024 s (junit `/tmp/full.xml`).
 - Report build: exit 0, 64 pages, 0 undefined references or citations, 2 Overfull and 16
   Underfull box warnings. Overfull: `sec_eigen:93`, `sec_impl:100`. Underfull: `sec_impl` 48-48
   plus 15 in `sec_outlook` (29-29, 29-31, 33-36, 36-37 x3, 38-40, 40-40 x2, 40-43 x3, 43-44,
@@ -88,7 +168,7 @@ Each report commit also commits the rebuilt `docs/report/main.pdf` (it is tracke
   cross-section measured on a doubled box".
 - Do not mix closed-form variants: the report quotes 48.686 ohm, and that run's own internal
   figure is 48.0987 ohm.
-- `docs/decisions.md:527` records a different default box, 62x44x22 at 0.400 mm (eps_eff
+- `decisions.md:527` records a different default box, 62x44x22 at 0.400 mm (eps_eff
   3.621781, beta 232.446960). It is not the reference box; do not blend the two.
 
 ## The mesh-refusal contract
@@ -111,22 +191,3 @@ Each report commit also commits the rebuilt `docs/report/main.pdf` (it is tracke
 - `emfit/board.py:241-251`, `:264-269`, `:275-283`: a `taper` other than `'raise'` or
   `'dominant'`, a net with no track segment, a net whose segments do not run along x, or more
   than one width under `taper='raise'` are each refused with the net named.
-
-## Outstanding: ports were not started
-
-- Dispatch item 3 is not started: no code was written for it.
-- Blockers, verified against the tree:
-  - `emfit/kicad.py` has no arc parser, and `emfit/gerber.py:19-38` counts arcs without
-    flattening them (I/J are not retained), so an arc-shaped launch cannot be represented.
-  - Pads keep footprint-local coordinates (`emfit/kicad.py:316-321`, `:354-358`) and there is
-    no transform helper; `Board.pads` (`emfit/kicad.py:429-431`) only flattens them.
-  - The back pour is measurable but not modelled: reading `kicad_support_project-B_Cu.gbl` gives
-    3 `G36` regions (613/59/60 vertices), 10 flashes, 0 segments, with bounding box
-    (0.5005, -19.4995, 69.4995, -0.5005) against the Edge.Cuts box (0, 0, 70, 20) -- a uniform
-    0.5005 mm inset on all four sides, consistent with `POUR_CLEARANCE = 0.5 +/- 0.01` in
-    `tests/test_gerber.py`.
-  - KiCad writes Gerber with `y` negated relative to the board file (`tests/test_gerber.py:20-24`;
-    the extent comparison therefore takes `abs(y)`, `tests/test_gerber.py:295-313`), so artwork
-    and board coordinates differ by a sign on one axis. `emfit/gerber.py:330-333` deliberately
-    applies no sign flip in `read_gerber`.
-- These are why port work is next, and why the report says the patch half "has not been started."
