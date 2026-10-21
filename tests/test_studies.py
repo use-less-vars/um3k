@@ -94,6 +94,11 @@ def test_microstrip_board_study_is_registered():
         "nsteps": "int",
         "f0": "float",
         "n_stations": "int",
+        "excite": "choice",
+        "band_lo": "float",
+        "band_hi": "float",
+        "n_bins": "int",
+        "f_pulse": "float",
     }
 
     for param in study.params:

@@ -906,3 +906,97 @@ true -- why the plain sum is legitimate when both magnitudes are read on one
 cross-section, the sqrt(Re zc) weighting cancelling -- was kept, because what
 was wrong was the test, not the arithmetic.
 
+## 56. The broadband sweep read the window, and the window was the fault
+
+The gate existed to test one thing: whether the pulse path, reading one bin at
+a time off a broadband record, returns the number the cw twin already returns
+at the tone's own frequency.  Two independent routes to one bin have to agree
+before either is believed.  It failed on the first attempt, and not at the
+edges.  The sweep ran, and every bin that survived the guards came back
+non-passive: passivity 1.524749 to 1.564827 across the usable band, |S21|
+1.24903 at the bin nearest the tone, 27 per cent above the twin and 1.8 dB of
+gain out of a line with no loss in it, with 12 of the 25 bins carrying the
+"BUG: passivity exceeds 1" flag.  A non-passive S-pair is not a lossy line.
+It is a broken measurement, and the sweep, as it stood, was not quotable at
+any frequency.
+
+The elimination had to start from what could not be the cause.  The two
+post-processing blocks -- the cw path and the pulse path -- are byte-identical
+argument for argument, so nothing downstream of the record could explain a
+difference between them.  What was left was the time weighting, and the
+support for that reading came off the same record: the whole-record scalars
+were clean.  |S21| 0.99000, |gamma| 0.00456, fit residual 0.00662, all read
+off the aggregate rather than per bin.  A record that integrates to a sane
+answer and differentiates into a non-passive one localises the fault to the
+per-bin phasors, and clears the solve, the reference and the de-embedding in
+one step.
+
+The experiment was a swap, not a rewrite.  A throwaway script monkeypatched
+the single np.hanning call and re-ran both variants over the same record, the
+source untouched.  What makes that decisive rather than suggestive is that
+the whole-record scalars came back byte-identical between the two variants:
+the only thing that changed between the runs was the weight, so the difference
+in the per-bin numbers cannot be assigned to the solve, the record, the port
+or the de-embedding, because none of them moved.  An experiment in which
+something else also moves is an experiment that suggests.
+
+With a flat weight the same bin that was the worst under a taper becomes the
+agreement the gate was asking for.  The bin nearest the tone reads |S21|
+0.99017 against the cw twin's 0.98126, 0.91 per cent high; passivity 0.980464
+against 0.962932, 1.82 per cent high; eps_eff 3.60970 against 3.62178, 0.33
+per cent low; and no bin is flagged.  Agreement inside one per cent on the
+quantity that matters, and a passivity that is below one everywhere.
+
+The mechanism is not subtle once the record is looked at as a record.  A taper
+is not amplitude-neutral for a transient that does not fill it: it multiplies
+the packet by a curve that is still moving underneath the packet, and the
+per-bin phasors stop being one mode.  The fit says so without being asked
+twice -- the one-wave residual at the bins goes from 0.0066 to 0.065 and the
+fitted reflection from 0.0046 to 0.11, an order of magnitude in both, which is
+what a fit reporting that the thing it is fitting is no longer a single mode
+looks like.  And the record did not need tapering in the first place.  A
+Ricker evaluated at t = 0 is about 1e-17 of its own peak, and the packet has
+left through the PML before the record ends, so there is no truncation
+discontinuity for a window to hide.  The window was solving a problem this
+pulse does not have, and charging the answer for it.
+
+One consequence deserves its own paragraph, because it outlives this bug.  The
+guards are tests on the fitted beta, so a corrupted beta does not merely
+perturb the numbers, it moves the guards' own verdict on which numbers are
+allowed to exist.  The tapered build and the flat build did not agree on which
+bins are usable -- twelve against eleven -- and the passivity blow-up in the
+tapered build was concentrated exactly where its amplitude distortion is
+worst.  A guard is only as trustworthy as the estimator feeding it.  That is
+why the weight now multiplies the bins and the guard through the same object:
+a guard taken through a different weight than the measurement would be
+judging one measurement by another one's leakage.
+
+The usable window is what it is, and it is worth stating flatly rather than
+apologising for.  At a probe span of 9.6 mm and eps_eff about 3.6, the
+beta*span floor of 2*pi/5 refuses 3.25 GHz by 0.019 rad and everything below
+it, and the pi branch limit refuses 8.25 GHz and everything above it.  Eleven
+of the twenty-five spec'd bins are measurable; the other fourteen are refused
+with their reasons printed on the row.  This is geometry, not a defect: a
+longer probe span moves both edges out, and nothing about the fix changes it.
+
+What the surviving curve shows is deliberately not quoted as a result.
+Across 3.67 to 7.83 GHz passivity stays between 0.975014 and 0.980713, flat
+within about half a per cent and lowest at the top of the window, while
+eps_eff rises smoothly from 3.58226 to 3.63845 and |S11| rises from 0.00414 to
+0.00655 -- all three monotone in frequency and none of them dramatic.  Flat
+passivity across a band means the deficit on this coupon does not grow with
+frequency, which is exactly the thing to watch for on the board: a deficit
+that rises toward the port side names the port, a deficit that stays flat
+names a boundary.  No broadband S-parameter is quoted yet.  This is a coupon
+and not the board, and the sweep is now a measurement rather than a proposal.
+
+What landed in code is small and named.  PULSE_WINDOW is a module constant
+with a "hann" branch kept on purpose, so the failure can be re-demonstrated
+without reverting anything.  One weight object multiplies the record before
+the bin sum and the drive before the guard, so the two cannot drift apart.
+The report rows no longer call the tone accumulator's snapped bin "the drive
+frequency" on a pulse run, which was the last place the old reading survived
+in the output; a pulse run names its band, its bin count and its pulse
+frequency instead, and the summary line does the same.  The full suite, 388
+tests, still passes: the fix cost no test.
+

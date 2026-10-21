@@ -50,7 +50,7 @@ from . import viz  # selects the Agg backend before pyplot is imported anywhere
 from .abc import Mur1Boundary
 from .board import Load, MicrostripBoard
 from .eigen import analytic_box_modes, resonances
-from .evolve import FITStepper, RickerSource, cfl_dt
+from .evolve import FITStepper, RickerSource, cfl_dt, ricker
 from .grid import Grid
 from .kicad import load_board
 from .materials import C0, material_matrices
@@ -1199,6 +1199,27 @@ MS_N_REF = 2
 MS_N_LINE = 54
 #: Nominal port impedance carried by the :class:`LumpedPort` [ohm].
 MS_Z0_NOMINAL = 50.0
+#: Excitation of the default run: ``"cw"`` is the historical single tone, and
+#: ``"pulse"`` the Ricker wavelet the broadband sweep is read off.  The default
+#: is the tone, so every number this study has ever quoted stays as it was.
+MS_EXCITE = "cw"
+#: Lower edge of the broadband sweep [GHz].  A pulse run reports its bins
+#: between here and ``MS_BAND_HI_GHZ``; a tone run never looks at either.
+MS_BAND_LO_GHZ = 2.0
+#: Upper edge of the broadband sweep [GHz].
+MS_BAND_HI_GHZ = 12.0
+#: How many frequencies the broadband sweep reports.
+MS_N_BINS = 25
+#: Centre frequency of the broadband pulse [GHz].  A Ricker's spectrum peaks at
+#: its own ``fmax`` and falls to nothing by ``2.5 fmax``, so this is where the
+#: drive has energy and where the band has to sit to be measurable.
+MS_F_PULSE_GHZ = 5.83
+#: The weight the broadband sweep multiplies the kept record by before summing
+#: a bin, and measures its own drive spectrum through: ``"rect"`` or
+#: ``"hann"``.  Flat is a deliberate choice here and not the default by
+#: omission; the sweep in :func:`microstrip_wave` says why, and quotes what
+#: tapering measured.
+PULSE_WINDOW = "rect"
 
 
 def line_s21(a1, x1, a2, x2, beta) -> tuple[complex, complex]:
@@ -1336,6 +1357,24 @@ def backward_wave_amplitude(v, i, x, gamma, zc, indices=None) -> np.ndarray:
     return _wave_amplitude(v, i, x, gamma, zc, -1.0, indices)
 
 
+def _drive_frequency_text(g: dict) -> str:
+    """The frequency, or band, a report row may name for this run -- honestly.
+
+    A tone run has one frequency and may name it.  A pulse run does not: its
+    numbers are read one bin at a time off a broadband record, and ``g['f']`` is
+    only the snapped bin of the tone accumulator that shares that record -- a
+    frequency no bin of the sweep was read at, so quoting it as the run's
+    frequency would be a lie about what was measured.  The band, the bin count
+    and ``f_pulse`` are what such a run can honestly report.
+    """
+    if g.get("excite") == "pulse":
+        return (f"broadband {g['band_lo'] / 1e9:.4f}..{g['band_hi'] / 1e9:.4f}"
+                f" GHz in {g['n_bins']} bins, pulse peaked at "
+                f"{g['f_pulse'] / 1e9:.4f} GHz")
+    return (f"{g['f'] / 1e9:.4f} GHz (asked {g['f_target'] / 1e9:.4f} GHz, "
+            "snapped to a DFT bin)")
+
+
 @dataclass
 class MicrostripWave:
     """What one :func:`microstrip_wave` run measured, and on which mesh.
@@ -1347,9 +1386,12 @@ class MicrostripWave:
 
     Attributes:
         geometry: Everything the mesh build decided -- cell counts, cell size,
-            the strip and port indices, the station cells, ``dt``, the drive
-            frequency actually used (a DFT bin, which is not ``f_target``) and
-            the warm-up split of the record.
+            the strip and port indices, the station cells, ``dt``, the tone
+            accumulator's frequency (a DFT bin, which is not ``f_target``: on a
+            tone run that is the drive frequency, on a pulse run it is
+            neither the drive nor any bin of the sweep, so a report names the
+            band instead -- see :func:`_drive_frequency_text`) and the warm-up
+            split of the record.
         station_x: ``(n_stations,)`` x positions of the voltage probes [m].
         v_stations: ``(n_stations,)`` complex gap voltages at those stations [V].
         i_stations: ``(n_stations,)`` complex trace currents at those stations
@@ -1518,6 +1560,13 @@ class MicrostripWave:
             of the record, binned by which family of walls removed it.  Only
             filled when the run was asked for it (``audit=True``), otherwise
             ``None``.  See :class:`emfit.pml.AbsorbedWork` for what is counted.
+        bins: One :class:`BinMetric` per frequency of the broadband sweep, in
+            ascending frequency order, or ``()`` when the record was the
+            single-tone drive.  A bin carries its own refusal rather than
+            raising, so one unusable frequency does not cost the other
+            twenty-four theirs: see :func:`_bin_metrics` for what each field
+            means and for why the post-processing is a deliberate copy of the
+            tone path's rather than a sharing of it.
     """
 
     geometry: dict
@@ -1557,6 +1606,7 @@ class MicrostripWave:
     power_balance: dict | None = None
     station_fit_ok: bool = True
     loaded_without_reference: bool = False
+    bins: tuple = ()
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -1573,8 +1623,18 @@ class MicrostripWave:
             z0_modulus = f"{abs(self.z0):.4f}ohm"
             z0_phase = f"{np.degrees(np.angle(self.z0)):.4f}deg"
             z0_real = f"{self.z0.real:.4f}ohm"
+        if g.get("excite") == "pulse":
+            # A pulse run has no single frequency to put after ``f=``: ``g['f']``
+            # is the tone accumulator's bin, not the frequency of the run, and
+            # naming it here would smuggle that number out as if it were.  The
+            # band, the bin count and the pulse's own peak are what it can say.
+            f_txt = (f"f=broadband band={g['band_lo'] / 1e9:.4f}-"
+                     f"{g['band_hi'] / 1e9:.4f}GHz n_bins={g['n_bins']}"
+                     f" f_pulse={g['f_pulse'] / 1e9:.4f}GHz")
+        else:
+            f_txt = f"f={g['f'] / 1e9:.4f}GHz"
         line = (
-            f"microstrip f={g['f'] / 1e9:.4f}GHz"
+            f"microstrip {f_txt}"
             f" f_target={g['f_target'] / 1e9:.4f}GHz"
             f" cells={g['nx']}x{g['ny']}x{g['nz']}"
             f" cell={g['cell'] * 1e3:.4f}mm nsteps={g['nsteps']}"
@@ -1723,6 +1783,279 @@ def _blank_station_fit(reference_plane: float, beta: float,
         residual_i_stations=np.full(int(n_stations), nan, dtype=complex))
 
 
+#: Least phase a bin may accumulate across the station span before its
+#: ``beta`` is a fit and not noise [rad].  Two fifths of a turn is the floor
+#: below which the curvature that ``sigma_beta_from_curvature`` reads is the
+#: curvature of the misfit and not of a wave.
+_BIN_SPAN_PHASE_MIN = 2.0 * np.pi / 5.0
+#: How far below its own peak the weighted drive spectrum may be at a bin
+#: before that bin is measuring the sweep's own leakage rather than the drive
+#: [dB].  The weight is ``PULSE_WINDOW``, the same one the bins are read with.
+_BIN_DRIVE_DB = -20.0
+#: How far above one a bin's passivity may sit before it is a bug and not noise
+#: [dimensionless].  Nothing is clamped: the row says BUG and quotes the number.
+_BIN_PASSIVITY_SLACK = 1e-6
+
+
+@dataclass(frozen=True)
+class BinMetric:
+    """What one frequency of the broadband sweep measured -- or why it did not.
+
+    One instance per bin, in ascending frequency order.  Every number is the
+    bin's own: nothing here is an average over the band, because an average of
+    a bounded quantity is exactly what hides the bins that break the bound.
+    ``refusal`` is the reason there is no number, and it is a string rather
+    than an exception because one unusable frequency must not cost the rest
+    their rows.
+
+    Attributes:
+        f: The frequency this bin was evaluated at [Hz].  It is *not* a DFT
+            bin of the record: the phasors are summed directly at ``f``.
+        beta: One-wave phase constant from the same station fit the tone path
+            uses [rad/m].
+        sigma_beta: Its standard error from the misfit curvature [rad/m], or
+            ``None`` when no fit was made.
+        s11_measured: ``|gamma_v|`` of the station fit, i.e. ``|S11|`` at the
+            first station's own plane [dimensionless].
+        s11_port: The same moved to the port plane [dimensionless].
+        s21: ``|S21|`` across the station span, measured on two planes with the
+            run's own ``zc`` -- or, when a reference was supplied, normalised by
+            the load-free line exactly as the tone path does [dimensionless].
+        passivity: ``|S11|^2 + |S21|^2`` of the two rows above [dimensionless].
+        eps_eff: Effective permittivity implied by ``beta`` [dimensionless].
+        residual: Relative RMS misfit of the one-wave fit [dimensionless].
+        refusal: Why this bin quotes nothing, or ``None`` when it does.
+    """
+
+    f: float
+    beta: float = float("nan")
+    sigma_beta: float | None = None
+    s11_measured: float = float("nan")
+    s11_port: float = float("nan")
+    s21: float = float("nan")
+    passivity: float = float("nan")
+    eps_eff: float = float("nan")
+    residual: float = float("nan")
+    refusal: str | None = None
+
+
+def _bin_metrics(spec, *, f, station_x, n_stations, x_port, reference,
+                 drive_db) -> BinMetric:
+    """Read one broadband bin off one weighted phasor vector.
+
+    The weight is ``PULSE_WINDOW``, flat by default: see the sweep in
+    :func:`microstrip_wave` for why, and for what tapering cost.
+
+    This deliberately duplicates about thirty lines of the tone path above:
+    the station voltages and currents sliced out of ``spec``, the one-wave fit
+    of ``beta``, its curvature standard error, the station-impedance fit, the
+    ``zc`` choice, the de-embedding of the reflection and the two-plane split
+    of ``s21``.  It is a copy because the tone path is what 388 tests certify,
+    line by line and number by number, and routing it through a shared helper
+    would mean editing the code those tests pin in order to add a feature that
+    they do not cover.  A copy can be wrong in a way the original is not; a
+    refactor cannot be *checked* against the numbers the original already
+    produced.  So the original stays byte for byte and this repeats what it
+    does, at frequencies the original never sees.
+
+    Everything that can go wrong at one frequency is a refusal, never an
+    exception: a bin where the drive has no energy, where the phase across the
+    span is too small to fit, where it passes ``pi`` and the one-wave branch is
+    ambiguous, or where no impedance fit could be formed, says so in words and
+    leaves the other bins alone.
+
+    Args:
+        spec: The phasor of the whole signal vector at this frequency, in the
+            layout the time loop fills: ``n_stations`` station voltages, the
+            port voltage, the full and truncated ground currents, then the
+            station currents.  It is the same layout :func:`microstrip_wave`
+            accumulates, so the slices below are the ones it takes.
+        f: The frequency this phasor was summed at [Hz].
+        station_x: ``(n_stations,)`` station positions [m].
+        n_stations: How many stations the record carries.
+        x_port: The port plane [m].
+        reference: A :class:`LineReference` of the same line with no load, or
+            ``None``.  Its ``gamma`` and ``zc`` split and normalise ``s21``
+            exactly as they do on the tone path.
+        drive_db: How far the windowed drive spectrum is below its own peak at
+            this frequency [dB]; the guard below reads it, nothing guesses it.
+
+    Returns:
+        The bin's :class:`BinMetric`, with ``refusal`` set when there is no
+        number to quote.
+    """
+    if not np.isfinite(drive_db) or drive_db < _BIN_DRIVE_DB:
+        return BinMetric(f=float(f), refusal=(
+            "the drive has no energy here: the weighted excitation spectrum is "
+            f"{drive_db:.1f} dB below its own peak at this frequency, so what "
+            "is left is the sweep's own leakage and not a measurement"))
+    n_currents = int(n_stations) + 3
+    v_stations = np.asarray(spec[:n_stations], dtype=complex)
+    i_stations = -np.asarray(spec[n_currents:n_currents + n_stations],
+                             dtype=complex)
+    if not np.any(v_stations):
+        return BinMetric(f=float(f), refusal=(
+            "the record carries no voltage at this frequency"))
+    d_probe = float(station_x[-1] - station_x[0])
+    fit_one = fit_beta(station_x, v_stations, n_wave=1)
+    beta = float(fit_one.beta)
+    residual = float(fit_one.residual)
+    span_phase = beta * d_probe
+    if span_phase < _BIN_SPAN_PHASE_MIN:
+        return BinMetric(f=float(f), beta=beta, residual=residual, refusal=(
+            f"beta * span = {span_phase:.3f} rad is below the "
+            f"{_BIN_SPAN_PHASE_MIN:.3f} rad floor: the phase across the "
+            "stations is too small for a phase constant to be read off it"))
+    if span_phase > np.pi:
+        return BinMetric(f=float(f), beta=beta, residual=residual, refusal=(
+            f"beta * span = {span_phase:.3f} rad passes pi, so the one-wave "
+            "fit's branch is ambiguous at this frequency"))
+    sigma_beta = sigma_beta_from_curvature(station_x, v_stations, beta)
+    station_fit = None
+    if np.any(i_stations):
+        try:
+            station_fit = fit_station_impedance(station_x, v_stations,
+                                                i_stations, beta, sigma_beta)
+        except (ValueError, RuntimeError, np.linalg.LinAlgError):
+            station_fit = None
+    if station_fit is None:
+        # ``s21`` could still be formed against a reference, but ``S11`` and the
+        # passivity built from it could not, and half a row is worse than none:
+        # a passivity without its reflection is a number that looks fine.
+        return BinMetric(f=float(f), beta=beta, sigma_beta=sigma_beta,
+                         residual=residual, refusal=(
+                             "no station-impedance fit could be formed at this "
+                             "frequency" + ("" if reference is None else
+                                            ", and a reference supplies zc "
+                                            "but no reflection")))
+    x1, x2 = float(station_x[0]), float(station_x[-1])
+    gamma_measured = complex(station_fit.gamma_v)
+    gamma_port = deembed_reflection(gamma_measured, beta,
+                                    float(x1 - x_port))
+    s11_measured = float(abs(gamma_measured))
+    s11_port = float(abs(gamma_port))
+    s21 = float("nan")
+    if reference is not None:
+        a1, a2 = forward_wave_amplitude(v_stations, i_stations, station_x,
+                                        reference.gamma, reference.zc,
+                                        indices=[0, -1])
+        ratio = reference.forward_ratio(x1, x2)
+        if a1 != 0.0 and ratio != 0.0:
+            s21 = float(abs((complex(a2) / complex(a1)) / ratio))
+    else:
+        a1, a2 = forward_wave_amplitude(v_stations, i_stations, station_x, 0j,
+                                        complex(station_fit.z0),
+                                        indices=[0, -1])
+        if a1 != 0.0:
+            s21 = float(abs(line_s21(a1, x1, a2, x2, beta)[0]))
+    return BinMetric(
+        f=float(f), beta=beta, sigma_beta=sigma_beta,
+        s11_measured=s11_measured, s11_port=s11_port, s21=s21,
+        passivity=float(s11_measured ** 2 + s21 ** 2),
+        eps_eff=float((beta * C0 / (2.0 * np.pi * f)) ** 2),
+        residual=residual)
+
+
+def _bin_row(metric: BinMetric) -> str:
+    """One bin as a report row: the numbers, or the refusal and its frequency."""
+    if metric.refusal is not None:
+        return f"REFUSED at {metric.f / 1e9:.2f} GHz: {metric.refusal}"
+
+    def db(magnitude: float) -> str:
+        """``20 log10`` of a magnitude, floored so a null cannot eat the row."""
+        return f"{20.0 * np.log10(max(float(magnitude), 1e-30)):.1f} dB"
+
+    passivity = metric.passivity
+    # A passivity above one is a bug, not a number to be tidied away: the run
+    # measured more power leaving the span than entered it.  Clamping it here
+    # would hide exactly the thing the broadband sweep was built to catch.
+    flag = ("BUG: passivity exceeds 1, not clamped: "
+            if np.isfinite(passivity)
+            and passivity > 1.0 + _BIN_PASSIVITY_SLACK else "")
+    return (f"beta = {metric.beta:.2f} rad/m, "
+            f"eps_eff = {metric.eps_eff:.4f}, "
+            f"|S11| = {db(metric.s11_measured)} (measured plane) / "
+            f"{db(metric.s11_port)} (port plane), "
+            f"|S21| = {db(metric.s21)}, "
+            f"{flag}passivity = |S11|^2 + |S21|^2 = {passivity:.6f}, "
+            f"fit residual = {metric.residual:.4f}")
+
+
+def _broadband_rows(bins, sink, *, span: float, nsteps: int) -> dict:
+    """The broadband report: one row per bin, the summaries, and the figure.
+
+    Rows come in frequency order and are named by the frequency they were
+    evaluated at, ``bin 07 @ 4.92 GHz``, so a reader can find a bin in the
+    figure without counting.  The summaries say how many bins were used and how
+    many refused, what the record's frequency resolution is -- one over the
+    span, which is the floor under any spacing of the bins -- and, in words,
+    that nothing here is averaged across the band.
+
+    Args:
+        bins: The run's :class:`BinMetric` instances, ascending in frequency.
+        sink: Where the passivity figure goes, or ``None``.
+        span: The record's duration [s], which sets the resolution.
+        nsteps: How many steps the record holds, for the caption.
+
+    Returns:
+        A ``dict[str, str]`` of rows, in the order they should be read.
+    """
+    rows = {}
+    used = []
+    for k, metric in enumerate(bins):
+        rows[f"bin {k:02d} @ {metric.f / 1e9:.2f} GHz"] = _bin_row(metric)
+        if metric.refusal is None:
+            used.append(metric)
+    refused = len(bins) - len(used)
+    rows["bins used / refused"] = (
+        f"{len(used)} / {refused} of {len(bins)}")
+    resolution = 1.0 / float(span) if span > 0.0 else float("nan")
+    rows["bin resolution (1/span)"] = (
+        f"{resolution / 1e9:.4f} GHz (span = {span:.4e} s over {nsteps} steps)")
+    rows["passivity across the band"] = (
+        "no passivity number is averaged across the bins: each bin's "
+        "passivity is its own row, because an average of a bounded quantity "
+        "hides the bins that break the bound. A bin above 1 beyond the noise "
+        "floor is printed as a bug and left unclamped.")
+
+    if sink is not None:
+        fig, ax = plt.subplots(figsize=(6.4, 3.4), constrained_layout=True)
+        if used:
+            fx = np.array([m.f for m in used]) / 1e9
+            fy = np.array([m.passivity for m in used], dtype=float)
+            ax.plot(fx, fy, "o-", color=viz.COL_PRIMARY, lw=1.0, ms=3.5,
+                    label="$|S_{11}|^2 + |S_{21}|^2$")
+            floor = min(float(np.nanmin(fy)), 1.0)
+            ceiling = max(float(np.nanmax(fy)), 1.0)
+        else:
+            floor, ceiling = 0.0, 1.05
+        ax.axhline(1.0, color=viz.COL_INK, ls="--", lw=0.9,
+                   label="lossless (1.0)")
+        if refused:
+            rx = np.array([m.f for m in bins if m.refusal is not None]) / 1e9
+            ax.plot(rx, np.full(rx.size, floor), "x", color=viz.COL_INK,
+                    ms=5.0, ls="none", label="refused")
+        pad = 0.08 * max(ceiling - floor, 0.05)
+        ax.set_ylim(floor - pad, ceiling + pad)
+        ax.set_xlabel("f [GHz]")
+        ax.set_ylabel("passivity")
+        ax.set_title("passivity against frequency, one bin at a time")
+        ax.legend(loc="best", fontsize=7)
+        sink.add_figure(
+            "passivity-vs-frequency",
+            "Passivity of the line bin by bin across the band", fig,
+            caption=(
+                f"$|S_{{11}}|^2 + |S_{{21}}|^2$ at {len(bins)} frequencies "
+                f"spread evenly over the band, each read off one flat-weighted "
+                f"record of {nsteps} steps of "
+                f"the same pulse. The dashed line is 1.0, which a lossless "
+                f"two-port cannot cross. Refused bins are marked on the floor "
+                f"and carry the reason in their row. The record is "
+                f"{span:.4e} s long, so no two bins closer than "
+                f"{resolution / 1e9:.4f} GHz are independent."))
+    return rows
+
+
 def microstrip_wave(
     *,
     h: float = MS_H,
@@ -1748,6 +2081,11 @@ def microstrip_wave(
     loads: tuple[Load, ...] = (),
     reference: LineReference | None = None,
     sink: FigureSink = None,
+    excite: str = MS_EXCITE,
+    band_lo: float = MS_BAND_LO_GHZ * 1e9,
+    band_hi: float = MS_BAND_HI_GHZ * 1e9,
+    n_bins: int = MS_N_BINS,
+    f_pulse: float = MS_F_PULSE_GHZ * 1e9,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -1880,6 +2218,17 @@ def microstrip_wave(
             ``station_fit`` and every other number are untouched: the reference
             calibrates ``s21``, it does not re-derive the line.
         sink: Where to put the figure; ``None`` (the default) draws nothing.
+        excite: ``"cw"`` (the default) drives the single tone this study has
+            always used -- the warm-up ramp and the one DFT bin -- and
+            ``"pulse"`` drives a Ricker wavelet centred on ``f_pulse`` so the
+            whole band can be read off the one record.  A pulse run has no
+            tone to ramp on, so it has no warm-up (``n_warm`` is forced to 0),
+            and it is the only kind that fills ``bins``.
+        band_lo, band_hi: Edges of the broadband sweep [Hz].  Read only when
+            ``excite == "pulse"``; ``band_lo`` must be positive and
+            ``band_hi`` above it.
+        n_bins: How many frequencies the sweep reports; at least 2.
+        f_pulse: Centre frequency of the Ricker excitation [Hz].
 
     Returns:
         A :class:`MicrostripWave`.
@@ -1893,6 +2242,22 @@ def microstrip_wave(
     n_top = int(n_top)
     n_clean, n_pml, n_ref, n_line = int(n_clean), int(n_pml), int(n_ref), int(n_line)
     n_stations, nsteps = int(n_stations), int(nsteps)
+    # The excitation is a choice between two runs, not a slider on one: "cw"
+    # is the tone every number this study has quoted was taken at, "pulse" is
+    # the waveform the broadband sweep is read off.  Anything else is refused
+    # here rather than quietly run as a tone.
+    if excite not in ("cw", "pulse"):
+        raise ValueError(f"excite must be 'cw' or 'pulse', got {excite!r}")
+    band_lo, band_hi = float(band_lo), float(band_hi)
+    n_bins, f_pulse = int(n_bins), float(f_pulse)
+    if band_lo <= 0.0:
+        raise ValueError(f"band_lo must be positive, got {band_lo!r} Hz")
+    if band_hi <= band_lo:
+        raise ValueError(
+            f"band_hi must be above band_lo, got {band_hi!r} Hz against "
+            f"{band_lo!r} Hz")
+    if n_bins < 2:
+        raise ValueError(f"n_bins must be at least 2, got {n_bins}")
     if n_sub < 1 or n_air < 1 or n_strip < 1 or n_clean < 1 or n_pml < 1:
         raise ValueError(
             "n_sub, n_air, n_strip, n_clean and n_pml must all be at least 1")
@@ -1997,6 +2362,10 @@ def microstrip_wave(
     dt = float(stepper.dt)
 
     # --- the record and its DFT bin ----------------------------------------
+    # A pulse run has nothing to discard: the wavelet is the whole record, not
+    # a tone that has to settle first, so there is no warm-up window to open.
+    if excite == "pulse":
+        n_warm = 0
     n_warm = nsteps // 4 if n_warm is None else int(n_warm)
     n_acc = nsteps - n_warm
     if n_acc < 1:
@@ -2045,14 +2414,31 @@ def microstrip_wave(
     current = np.zeros(cc.n_edges, dtype=float)
     n_currents = n_stations + 3        # station currents start here in signals
     signals = np.zeros(n_currents + n_stations, dtype=float)
+    # A pulse run has no single bin to accumulate: the broadband sweep sums the
+    # record at every frequency of the band, so the record itself has to be
+    # kept.  A block, not one more :class:`DftAccumulator`, because every one
+    # of those sums wants exactly the same steps -- and the drive beside it,
+    # which is the only honest answer to what the source put into each bin.
+    history = (np.zeros((nsteps, signals.size), dtype=float)
+               if excite == "pulse" else None)
+    drive_trace = np.zeros(nsteps) if excite == "pulse" else None
     for n in range(nsteps):
         if absorbed is not None and n == n_warm:
             # Warm-up work is not part of the settled record: bin only the
             # steps the DFT also sees.
             absorbed.reset()
         current[:] = 0.0
-        ramp = min(1.0, (n + 1) / max(n_warm, 1))
-        current[port_edges] = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt)
+        if excite == "pulse":
+            # The wavelet, not a tone.  ``t0 = 2 / f_pulse`` puts the peak well
+            # past the start of the record: a Ricker evaluated at ``t = 0``
+            # with that centre is ~1e-17 of its peak, so nothing is launched
+            # at step 0 and the record is the whole of a clean pulse.
+            drive_now = float(drive) * float(
+                ricker(n * dt, 2.0 / f_pulse, f_pulse))
+            current[port_edges] = drive_now
+        else:
+            ramp = min(1.0, (n + 1) / max(n_warm, 1))
+            current[port_edges] = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt)
         stepper.step(current)
         if n < n_warm:
             continue
@@ -2075,6 +2461,9 @@ def microstrip_wave(
                 plate_current(stepper.h, cc, int(ix) - 1, 0, y_extent=y_half)
                 + plate_current(stepper.h, cc, int(ix), 0, y_extent=y_half))
         acc.add(signals, n)
+        if history is not None:
+            history[n] = signals
+            drive_trace[n] = drive_now
         if n < n_split:
             half_acc.add(signals, n)
         if slice_acc is not None:
@@ -2366,6 +2755,65 @@ def microstrip_wave(
     z0_power_port, power_ratio_port = power_current_check(
         np.array([v_port]), np.array([-i_trunc]), z0)
 
+    # --- the broadband sweep: one weighted sum per frequency ----------------
+    # The tone path above reads one phasor at one bin.  A pulse has no such bin
+    # -- it is broadband by construction -- so each frequency of the band is
+    # summed straight off the kept record, at that frequency and no other.  The
+    # drive's spectrum, taken through the same weight, is what says whether a
+    # frequency is measuring the pulse or the sweep's own leakage
+    # (``_bin_metrics`` reads that and refuses the bin).  Nothing here runs on a
+    # tone: ``bins`` is empty unless the pulse was asked for.
+    bins: tuple = ()
+    if excite == "pulse":
+        freqs = np.linspace(band_lo, band_hi, n_bins)
+        # One ``weight``, used twice on purpose: it multiplies the record before
+        # the bin phasor sum, and it multiplies the drive trace before the
+        # guard that refuses a bin, so a bin's numbers and the test of whether
+        # the drive reached that bin come off one estimator.  A guard taken
+        # through a different weight would be judging one measurement by
+        # another one's leakage.
+        #
+        # ``"rect"`` is the deliberate choice, not the default by omission.  A
+        # taper exists to hide a truncation discontinuity, and this record has
+        # none: it is a closed transient, the Ricker is ~1e-17 of its peak at
+        # t = 0, and the packet is through the PML before the record ends.
+        #
+        # The cost of tapering anyway was measured on the default coupon
+        # (2..12 GHz, 25 bins, 2400 steps) against the cw twin at 5.83 GHz: the
+        # bin nearest that tone read |S21| = 1.24903 through a Hann weight,
+        # 0.99017 flat and 0.98126 for the cw twin; passivity 1.563072, 0.980464
+        # and 0.962932; one-wave residual 0.065, 0.0066 and 0.0095; and the bins
+        # flagged "BUG: passivity exceeds 1" 12, 0 and 0.  The mechanism is that
+        # a taper is not amplitude-neutral for a transient that does not fill
+        # the record -- it multiplies the packet by a curve that is still moving
+        # under it -- so the per-bin phasors stop being one mode, and the fits
+        # that read beta, zc and S21 off them are then reading the taper.
+        if PULSE_WINDOW == "rect":
+            weight = np.ones(nsteps)
+        elif PULSE_WINDOW == "hann":
+            weight = np.hanning(nsteps)
+        else:
+            raise ValueError(
+                f"PULSE_WINDOW must be 'rect' or 'hann', not {PULSE_WINDOW!r}")
+        n_index = np.arange(nsteps, dtype=float)
+        drive_sum = np.exp(
+            -2j * np.pi * np.outer(freqs, dt * n_index)) @ (drive_trace * weight)
+        drive_peak = float(np.max(np.abs(drive_sum)))
+        if drive_peak > 0.0:
+            drive_db = 20.0 * np.log10(
+                np.maximum(np.abs(drive_sum) / drive_peak, 1e-300))
+        else:
+            drive_db = np.full(freqs.size, -np.inf)
+        spectra = np.empty((freqs.size, history.shape[1]), dtype=complex)
+        for k, f in enumerate(freqs):
+            spectra[k] = (np.exp(-2j * np.pi * f * dt * n_index)
+                          @ (history * weight[:, None]))
+        bins = tuple(
+            _bin_metrics(spectra[k], f=float(f), station_x=station_x,
+                         n_stations=n_stations, x_port=x_port,
+                         reference=reference, drive_db=float(db))
+            for k, (f, db) in enumerate(zip(freqs, drive_db)))
+
     geometry = {
         "nx": nx, "ny": ny, "nz": nz, "cell": cell,
         "length": nx * cell, "width": ny * cell, "height": nz * cell,
@@ -2381,9 +2829,13 @@ def microstrip_wave(
         "audit": bool(audit),
         "n_edges": cc.n_edges, "n_faces": cc.n_faces,
         "beta_ambiguous": bool(abs(beta) * d_probe > np.pi),
+        "excite": excite, "band_lo": band_lo, "band_hi": band_hi,
+        "n_bins": n_bins, "f_pulse": f_pulse,
     }
 
     if sink is not None:
+        drove = (f"driven at {f0 / 1e9:.3f} GHz" if excite != "pulse"
+                 else f"driven broadband, phasors shown at {f0 / 1e9:.3f} GHz")
         fig, (ax_mag, ax_phase) = plt.subplots(1, 2, figsize=(9.2, 3.2),
                                               constrained_layout=True)
         ax_mag.plot(station_x * 1e3,
@@ -2407,7 +2859,9 @@ def microstrip_wave(
             "line-phasors", "Probe voltage magnitude and phase along the line", fig,
             caption=(f"{n_stations} stations from "
                      f"{station_x[0] * 1e3:.2f} to {station_x[-1] * 1e3:.2f} mm, "
-                     f"driven at {f0 / 1e9:.3f} GHz, {nsteps} steps of "
+                     # For a pulse run the drive is not at ``f0``: the phasors
+                     # plotted are ``f0``'s, but the record itself is broadband.
+                     f"{drove}, {nsteps} steps of "
                      f"{dt:.3e} s. The dotted ramp is the closed-form phase "
                      "slope at the same frequency."))
 
@@ -2504,6 +2958,7 @@ def microstrip_wave(
         power_balance=power_balance,
         station_fit_ok=station_fit_ok,
         loaded_without_reference=loaded_without_reference,
+        bins=bins,
     )
 
 
@@ -2551,6 +3006,11 @@ def microstrip_wave_board(
     audit: bool = False,
     reference: LineReference | None = None,
     sink: FigureSink = None,
+    excite: str = MS_EXCITE,
+    band_lo: float = MS_BAND_LO_GHZ * 1e9,
+    band_hi: float = MS_BAND_HI_GHZ * 1e9,
+    n_bins: int = MS_N_BINS,
+    f_pulse: float = MS_F_PULSE_GHZ * 1e9,
 ) -> MicrostripWave:
     """Run :func:`microstrip_wave` on a coupon that came out of a board file.
 
@@ -2595,6 +3055,15 @@ def microstrip_wave_board(
             un-normalised station-plane ratio, which for a loaded record is a
             magnitude with no impedance behind it.
         sink: Where to put the figure; ``None`` (the default) draws nothing.
+        excite: Passed straight through to :func:`microstrip_wave`: ``"cw"``
+            is the single tone, ``"pulse"`` the broadband run whose bins the
+            sweep is read off.
+        band_lo, band_hi: Edges of the broadband sweep [Hz], passed straight
+            through.
+        n_bins: How many frequencies the sweep reports, passed straight
+            through.
+        f_pulse: Centre frequency of the Ricker excitation [Hz], passed
+            straight through.
 
     The spec's ``loads`` are passed straight through: a
     :class:`emfit.board.Load` carries its position in metres and its value in
@@ -2630,6 +3099,11 @@ def microstrip_wave_board(
         loads=spec.loads,
         reference=reference,
         sink=sink,
+        excite=excite,
+        band_lo=band_lo,
+        band_hi=band_hi,
+        n_bins=n_bins,
+        f_pulse=f_pulse,
     )
 
 
@@ -2654,6 +3128,15 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     board_changed = (not np.isclose(board_h * 1e3, MS_H * 1e3)
                      or not np.isclose(board_eps, MS_EPS_R)
                      or strip_cells != MS_N_STRIP)
+    # The excitation, in the units the knobs are given in: the three frequencies
+    # arrive in GHz and are hertz from here on, which is what the solver reads.
+    # ``cw`` is the single tone, and the default, so the report of a run that
+    # says nothing about this is the one it always was.
+    excite = str(values.get("excite", MS_EXCITE))
+    band_lo = float(values.get("band_lo", MS_BAND_LO_GHZ)) * 1e9
+    band_hi = float(values.get("band_hi", MS_BAND_HI_GHZ)) * 1e9
+    n_bins = int(values.get("n_bins", MS_N_BINS))
+    f_pulse = float(values.get("f_pulse", MS_F_PULSE_GHZ)) * 1e9
     # A loaded run cannot measure its own line constant: the cut breaks the
     # one-onward-wave assumption the station fit rests on.  So it is given a
     # load-free twin on the identical mesh, whose decomposition supplies the
@@ -2669,6 +3152,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             n_pml=int(values["npml"]),
             n_top=int(values["npml"]),
             h=board_h, w=board_w, eps_r=board_eps, n_strip=strip_cells,
+            excite=excite, band_lo=band_lo, band_hi=band_hi,
+            n_bins=n_bins, f_pulse=f_pulse,
             keep_slice=False,
             audit=False,
             sink=FigureSink())
@@ -2683,6 +3168,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         w=board_w,
         eps_r=board_eps,
         n_strip=strip_cells,
+        excite=excite, band_lo=band_lo, band_hi=band_hi,
+        n_bins=n_bins, f_pulse=f_pulse,
         keep_slice=True,
         audit=True,
         loads=loads,
@@ -3260,12 +3747,22 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
                      f"at cell = {board_cell * 1e3:.4f} mm; the closed-form "
                      "curves are drawn for this same width")
 
+    # The broadband report, when a pulse was run: one row per frequency, the
+    # summaries, and the passivity figure.  It is built here, before
+    # ``dump_figures``, because that figure is part of this run's output and a
+    # figure added after the dump would never reach the disk; the rows are
+    # merged into the report below.  A tone run carries no bins, so this is
+    # empty and the report is byte for byte the one it always was.
+    bin_rows = (_broadband_rows(result.bins, sink,
+                                span=float(g["n_acc"]) * float(g["dt"]),
+                                nsteps=int(g["nsteps"]))
+                if result.bins else {})
+
     # Leave the pictures on disk: a benchmark's figures are part of its output.
     dump_figures(sink)
 
     metrics = {
-        "drive frequency": (f"{g['f'] / 1e9:.4f} GHz "
-                            f"(asked {g['f_target'] / 1e9:.4f} GHz, snapped to a DFT bin)"),
+        "drive frequency": _drive_frequency_text(g),
         "mesh": f"{g['nx']} x {g['ny']} x {g['nz']} cells at {g['cell'] * 1e3:.4f} mm",
         "box": (f"{g['length'] * 1e3:.2f} x {g['width'] * 1e3:.2f} x "
                 f"{g['height'] * 1e3:.2f} mm, {g['nsteps']} steps "
@@ -3368,6 +3865,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             "impedance are used.")
     if board_changed:
         metrics["board"] = board_row
+    if result.bins:
+        metrics.update(bin_rows)
     return metrics
 
 
@@ -3403,6 +3902,15 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
     npml = int(values.get("npml", MS_N_PML))
     n_stations = int(values.get("n_stations", MS_N_STATIONS))
     eps_r = float(values.get("eps_r", 0.0))
+    # The excitation, in the units the knobs are given in: the three frequencies
+    # arrive in GHz and are hertz from here on, which is what the solver reads.
+    # ``cw`` is the single tone, and the default, so this path reports exactly
+    # what it always did unless the pulse was asked for by name.
+    excite = str(values.get("excite", MS_EXCITE))
+    band_lo = float(values.get("band_lo", MS_BAND_LO_GHZ)) * 1e9
+    band_hi = float(values.get("band_hi", MS_BAND_HI_GHZ)) * 1e9
+    n_bins = int(values.get("n_bins", MS_N_BINS))
+    f_pulse = float(values.get("f_pulse", MS_F_PULSE_GHZ)) * 1e9
 
     # The file is read here and not in the CLI: this study owns every number it
     # reports, and ``MicrostripBoard.from_kicad`` is the one bridge from a
@@ -3440,6 +3948,8 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
         n_stations=n_stations,
         f_target=float(values["f0"]) * 1e9,
         nsteps=int(values["nsteps"]),
+        excite=excite, band_lo=band_lo, band_hi=band_hi,
+        n_bins=n_bins, f_pulse=f_pulse,
         keep_slice=True,
         sink=sink)
     g = result.geometry
@@ -3530,7 +4040,7 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
 
     gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
 
-    return {
+    metrics = {
         "board": f"{path} (net {spec.name!r})",
         "launch": launch,
         "line, from the board": (
@@ -3542,9 +4052,7 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "supplied by the caller": (
             ", ".join(spec.supplied) if spec.supplied
             else "nothing: every number above came out of the file"),
-        "drive frequency": (
-            f"{g['f'] / 1e9:.4f} GHz (asked {g['f_target'] / 1e9:.4f} GHz, "
-            "snapped to a DFT bin)"),
+        "drive frequency": _drive_frequency_text(g),
         "mesh": (f"{g['nx']} x {g['ny']} x {g['nz']} cells at "
                  f"{g['cell'] * 1e3:.4f} mm"),
         "counts, from the spec": (
@@ -3596,6 +4104,14 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
                            "has wrapped, read the fit"
                            if g["beta_ambiguous"] else "phase step below pi"),
     }
+    # The broadband rows, when a pulse was asked for: one per frequency, plus
+    # the summaries.  A tone run carries no bins, so the report of one is the
+    # dict above and nothing else.
+    if result.bins:
+        metrics.update(_broadband_rows(
+            result.bins, sink, span=float(g["n_acc"]) * float(g["dt"]),
+            nsteps=int(g["nsteps"])))
+    return metrics
 
 
 # ---------------------------------------------------------------------------
@@ -3795,6 +4311,30 @@ MICROSTRIP = Study(
                    "quantity the simulation actually contains; the width in "
                    "mm is strip_cells * cell and is reported in the board "
                    "row."),
+        # The broadband knobs.  Every one of them is ignored by a tone run --
+        # the default -- so a reader who does not want a sweep loses nothing:
+        # the report below is unchanged unless excite says pulse.
+        Param("excite", "Excitation", "choice", MS_EXCITE,
+              choices=("cw", "pulse"),
+              help="cw is the single tone every row of the default report is "
+                   "measured on; pulse drives a Ricker wavelet instead and the "
+                   "band below is then reported one frequency at a time."),
+        Param("band_lo", "Band start", "float", MS_BAND_LO_GHZ,
+              lo=0.1, hi=40.0, unit="GHz",
+              help="Lowest frequency of the broadband sweep. Read only when "
+                   "excite is pulse."),
+        Param("band_hi", "Band stop", "float", MS_BAND_HI_GHZ,
+              lo=0.1, hi=40.0, unit="GHz",
+              help="Highest frequency of the broadband sweep; it has to be "
+                   "above band_lo and is read only when excite is pulse."),
+        Param("n_bins", "Sweep frequencies", "int", MS_N_BINS, lo=3, hi=200,
+              help="How many frequencies the sweep reports, spread evenly over "
+                   "the band. Each is its own row: no number is averaged "
+                   "across the sweep."),
+        Param("f_pulse", "Pulse centre", "float", MS_F_PULSE_GHZ,
+              lo=0.1, hi=40.0, unit="GHz",
+              help="Centre frequency of the Ricker wavelet the pulse run is "
+                   "driven with. Read only when excite is pulse."),
     ),
     run=_run_microstrip,
 )
@@ -3890,6 +4430,30 @@ MICROSTRIP_BOARD = Study(
               lo=2, hi=21, unit="cells",
               help="Samples of the gap voltage along the strip, spread over "
                    "20-80% of it."),
+        # The broadband knobs.  Every one of them is ignored by a tone run --
+        # the default -- so a reader who does not want a sweep loses nothing:
+        # the report below is unchanged unless excite says pulse.
+        Param("excite", "Excitation", "choice", MS_EXCITE,
+              choices=("cw", "pulse"),
+              help="cw is the single tone every row of the default report is "
+                   "measured on; pulse drives a Ricker wavelet instead and the "
+                   "band below is then reported one frequency at a time."),
+        Param("band_lo", "Band start", "float", MS_BAND_LO_GHZ,
+              lo=0.1, hi=40.0, unit="GHz",
+              help="Lowest frequency of the broadband sweep. Read only when "
+                   "excite is pulse."),
+        Param("band_hi", "Band stop", "float", MS_BAND_HI_GHZ,
+              lo=0.1, hi=40.0, unit="GHz",
+              help="Highest frequency of the broadband sweep; it has to be "
+                   "above band_lo and is read only when excite is pulse."),
+        Param("n_bins", "Sweep frequencies", "int", MS_N_BINS, lo=3, hi=200,
+              help="How many frequencies the sweep reports, spread evenly over "
+                   "the band. Each is its own row: no number is averaged "
+                   "across the sweep."),
+        Param("f_pulse", "Pulse centre", "float", MS_F_PULSE_GHZ,
+              lo=0.1, hi=40.0, unit="GHz",
+              help="Centre frequency of the Ricker wavelet the pulse run is "
+                   "driven with. Read only when excite is pulse."),
     ),
     run=_run_microstrip_board,
 )

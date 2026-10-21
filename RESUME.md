@@ -1,5 +1,39 @@
 # RESUME -- session state
 
+## Broadband sweep: built, gated, and the window was the fault
+
+The pulse path is committed: one broadband record, transformed bin by bin, with
+the per-bin power budget as the test at every frequency, and the cw run at
+5.8278 GHz kept as its validation case.  The first gate attempt failed -- every
+bin that survived the guards came back non-passive, passivity 1.524749 to
+1.564827, |S21| 1.24903 at the bin nearest the tone, 12 of 25 bins flagged as
+a passivity bug -- and the cause was the Hann time weighting.  With a flat
+weight the bin nearest the tone agrees with the cw twin: |S21| 0.99017 against
+0.98126, passivity 0.980464 against 0.962932, eps_eff 3.60970 against 3.62178,
+0 BUG rows.  Gate 2 passes.  Eleven of the twenty-five spec'd bins are usable
+and fourteen are refused with their reason printed on the row, by the
+beta*span floor at the bottom and the pi branch limit at the top; that split
+is the probe span and eps_eff, not the fix.  decisions.md section 56 has the
+argument.  No broadband S-parameter is quotable yet: this is the coupon, not
+the board.
+
+The insight worth carrying: a taper on a closed transient is not
+amplitude-neutral -- it multiplies the packet by a curve that is still moving
+underneath it -- so the per-bin phasors stop being one mode, and the guards,
+which are tests on the fitted beta, moved their own verdict with it (twelve
+usable bins tapered against eleven flat).  The whole-record scalars were clean
+throughout (|S21| 0.99000, |gamma| 0.00456, residual 0.00662), which is what
+localised the fault to the per-bin read and cleared the solve, the reference
+and the de-embedding in one step.
+
+The next action is the board run at the lid geometry, nsteps=9600, broadband:
+one run for the whole spectrum instead of a frequency loop.  What it is
+expected to settle is whether the board's remaining deficit is flat across the
+band or rises with it -- flat names a boundary, rising names the port.  That
+is the experiment the proposal section below asked for, now runnable.
+Section 55's numbers stay unquotable, and no pad-port S-parameter is quoted
+until a run has no unaccounted sink.
+
 ## Checkpoint 2026-10-21 -- the lid, moved: 0.753 to 0.904, and still no quote
 
 The pad-port run's sink was diagnosed as the top matched layer sitting 0.75
