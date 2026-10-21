@@ -137,9 +137,12 @@ sections. Two entries were added:
 
 - Step 4, S-parameters and a field slice on the imported coupon board. Acceptance: the imported
   coupon reproduces the hand-built study within the fit residual, and a port on an SMA pad runs
-  end to end.
-- It is blocked by the solver legitimately refusing the coupon, not by a bug, and with the port
-  on J1.1 the refusal is sharper: the pad-derived spec has `x_far` = 7.0 mm inside a 70 mm
+  end to end -- but that first clause is arithmetically impossible for the imported coupon (see
+  "The imported coupon is meshable but not measurable").
+- It is not blocked by the solver: on the cropped port spec the mesh is built and the solve
+  runs, and only the station fit declines (see "The imported coupon is meshable but not
+  measurable"). Before the crop the refusal was sharper, and with the port on J1.1 it was
+  sharper again: the pad-derived spec has `x_far` = 7.0 mm inside a 70 mm
   outline, so `to_cell_counts` refuses it on its first check
   (`abs(x_far - length) > TOL * length`). The dominant-width `RF_IN` spec (x_far = 32.22 mm) is
   refused the same way, and `tests/test_board.py:184` asserts that refusal.
@@ -266,3 +269,12 @@ sections. Two entries were added:
   `n_pml 12`, `0.1` mm cell, `n_strip 20`, `n_clean 78`, `n_ref 33`, `n_line 25`. That is the spec
   the end-to-end run uses.
 
+## The imported coupon is meshable but not measurable
+
+- The port path was driven end to end through the API by `.scratch/run_port_coupon.py` (scratch, uncommitted; do not commit it, do not delete it). Its input was `MicrostripBoard.from_kicad(support, net='RF_IN', eps_r=4.4, port_pad=('J1', '1')).cropped_to_strip()`. It printed `x_port 0.0045000000000000005`, `x_far 0.007`, `length 0.007`, `w 0.002`, `supplied ('eps_r', 'length')`, `Port(position=0.0045000000000000005, y=0.01, net='RF_IN', reference='J1', number='1', side='front')`; then the counts `{'n_strip': 20, 'n_clean': 78, 'n_ref': 33, 'n_line': 25, 'cell': 0.0001}`; then a `70 x 200 x 52` mesh at a `0.1` mm cell with `nsteps 9600`, about `288` s of CPU, single-threaded.
+- It then refused, and the refusal is right. `RuntimeWarning` at `emfit/studies.py:2167`: `sigma_beta (317.77195698611627) must be smaller than beta (282.2292282696173)`; then `ValueError: no station-impedance fit was formed on this record ... Run it with reference=...`.
+- The geometry is why, not the code: the modelled line is `4.5` mm to `7.0` mm, so `2.5` mm, and the fitted stations span `5.0` to `6.5` mm, which is `0.067` of a guided wavelength at `beta 282` rad/m (a `22.3` mm wavelength). Nine stations across a tenth of a wavelength cannot pin a phase constant better than it is large, and `reference=` does not rescue it because it asks for a load-free run of the same `25` cells.
+- So acceptance 2 of step 4 -- a port on an SMA pad runs end to end -- lands as: the port is placed, the spec is cropped and declared, the mesh is built, `9600` steps run, and the analysis declines to quote a beta. The chain is complete and the line is a tenth of a wavelength long.
+- Acceptance 1 -- the imported coupon reproduces the hand-built study -- is arithmetically impossible and was never true of the published box. The arithmetic is in the section above and comes to a `17.4` mm substrate against the import's `width 0.02` m, and `21.6` mm of line against the import's `23.57` mm. The published coupon numbers stand for a hand-built box. No published number is changed and none is called wrong.
+- The width that could be measured in principle, the dominant `w 3.0` mm run, needs `n_sub 160`, which is a `3222 x 2000 x 196` mesh and about `1.26e9` cells: not runnable here either. So the imported coupon has no measurable configuration at any mesh this code can build, and the `3.0` mm study stays hand-built.
+- Open gap: the CLI has no path from a pad to a study. `microstrip_wave_board` is a function and is unregistered; the registered microstrip study takes only `nsteps, f0, npml, load_kind, load_at_mm, load_value, eps_r, h_mm, strip_cells`, and `nsteps` is capped at `4000`, below the `9600` a `0.1` mm cell needs. That is why step 4 is a scratch script and not a command.
