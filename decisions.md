@@ -1144,3 +1144,72 @@ only that their agreement is structural, and this entry records the
 correction so that the weaker claim is not repeated.
 
 The same anchor is corroborated from the bins: interpolating the eleven rows of the flat run to 6.010 GHz returns beta = 239.38 rad/m against the printed 239.4598, a fit residual of 0.00663 against 0.00662, |S21| = 0.99003 against 0.99000 and |S11| = 0.00449 against 0.00456 -- three to four digits on four quantities computed independently of the record-level accumulator.
+
+## 60. The passivity column is not a power ratio, and the defect does not explain the excess
+
+The defect first, because it is two lines.  The row's "passivity" is
+`s11_measured**2 + s21**2`, computed at studies.py 1989, and `s21` is not a
+power ratio: it comes out of `forward_wave_amplitude` at studies.py 1969-1973,
+which is handed one fitted complex impedance, `complex(station_fit.z0)`, for all
+nine stations and returns the ratio of forward-wave VOLTAGE AMPLITUDES.
+Squaring that ratio is a power ratio only when the two measurement planes carry
+the same wave impedance, which on a line whose fitted impedance drifts across
+the span they do not.  The `|S11|` in the same row is fitted from that same
+single-zc fit, so the row is not an independent energy audit either: it is one
+fitted impedance, squared twice and added.  The coupon's 0.9750..0.9807 is the
+same amplitude quantity and carries the same caveat; the Hann bin's 1.563072 is
+the same square and is not a fifty-seven per cent power excess.
+
+The second point governs.  This defect is small.  An exact analytic test of the
+shipped formula, a lossless flux-conserving forward wave across a 1.07
+impedance step, returns 1.000572 -- 0.06 per cent -- when zc is the first
+station's impedance, 0.999961 through a real nine-station fit, and exactly
+1.000000 when zc is the geometric mean.  The naive per-quantity ratios, 0.9667
+for |v| and 1.0344 for |i|, are not what the code computes; quoting them as if
+they were is what made the defect look large enough to be an explanation.
+
+What it leaves unexplained is therefore still unexplained.  The imported board's
+eleven usable bins show |S21| growing monotonically from 1.0084 to 1.0448, 0.8
+to 4.5 per cent, while the fitted |S11| stays between -49.7 and -34.3 dB.  A
+passive line returning forward amplitude that grows with frequency, with almost
+nothing reflected, is physically impossible, and an impedance step inside the
+span cannot manufacture it: 0.06 per cent is the whole of what the
+normalisation can do.  The excess is genuinely present in the quantity
+measured, and it must be diagnosed rather than renamed.  The coupon's curve,
+measured by the same code, is flat and slightly below one, so the mechanism is
+geometry-specific and not a property of the fit alone.  Over the lower five
+bins the excess tracks f^2 to within 2 per cent, drifting some 20 per cent above
+that by 7.83 GHz; that is recorded because it is the one measured regularity in
+the excess, and because no attenuation law produces a gain in the first place.
+
+The classification is withdrawn.  The test proposed earlier -- passivity flat
+in frequency names a boundary sink, passivity rising with a threshold names a
+port sink -- was an inference from a column that is not a power ratio.  It is
+void as stated and must not be used as an argument in either direction, for the
+coupon or for the board.
+
+What was added is a diagnostic and nothing else.  `BinMetric` carries two new
+fields, `s21_power` = sqrt(P(x2)/P(x1)) built from each station's own
+0.5 Re(V conj I) through the helper `_station_power`, and `passivity_power` =
+|S11|^2 + |S21_power|^2.  They print in `_bin_row` on a separate
+`power-normalised:` line AFTER the untouched amplitude line, so the two are
+comparable row for row; the amplitude `s21` and `passivity` are byte-identical
+to what shipped, and the suite stands at 390 tests, the 388 that shipped plus
+two that pin this (a 1.07 step returns exactly 1.0 in the power column and
+1.000572 in the amplitude one).
+
+Its discriminating power is bounded, and the bound should be stated before the
+number is read.  The power column differs from the amplitude column only in so
+far as the two planes' own impedances differ, since sqrt(P2/P1) is
+|v_last/v_first| times sqrt(z0_first/z0_last) while the amplitude column is
+nearly blind to a step in the first place.  So the column answers "is the growth
+a power growth" only if the two planes really do differ, and a null result there
+is weak evidence, not proof.  What the column does settle, cheaply and bin by
+bin, is whether the excess survives a change of normalisation at all.
+
+The rules that follow.  No board S-parameter is quoted until the
+power-normalised column has been read off a re-run: not |S11| against
+frequency, not |S21|, not eps_eff as a property of the line.  And a ratio of
+amplitudes is never again discussed as a statement about where power went; if a
+sentence needs an energy reading, it has to name the quantity that delivers
+one.
