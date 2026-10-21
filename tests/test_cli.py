@@ -29,6 +29,7 @@ say whether the file changed or the derivation did.
 
 import inspect
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -168,9 +169,9 @@ def test_board_json_reads_the_coupon_then_derives_the_spec(capsys):
 def test_board_json_has_a_port_key_and_it_is_null(capsys):
     """``spec.port`` is a key on every spec, and here it is null.
 
-    ``from_kicad`` takes the port from its ``port_pad`` argument, and ``board``
-    has no option that supplies one, so nothing on this run names a pad and the
-    port cannot be anything but ``None``.  The key is still there: an object
+    ``from_kicad`` takes the port from its ``port_pad`` argument, and this run
+    passes no ``--port-pad``, so nothing on this run names a pad and the port
+    cannot be anything but ``None``.  The key is still there: an object
     that grows a key only once some later command learns to fill it in makes the
     absent port and the unknown port look the same to a script, and they are
     not the same answer.
@@ -179,6 +180,43 @@ def test_board_json_has_a_port_key_and_it_is_null(capsys):
     spec = report["spec"]
     assert "port" in spec
     assert spec["port"] is None
+
+
+def test_board_json_fills_the_port_key_when_a_pad_is_named(capsys):
+    """``--port-pad`` makes ``spec.port`` an object, and says which pad it is.
+
+    The null case above is only half the key's contract.  ``J1.1`` is the pad the
+    coupon's ``RF_IN`` track leaves from, so the port is at the extreme the taper
+    rule would have picked anyway; the point is that it is now a stated pad and
+    not a rule, and that the object carries the reference and number back.
+    """
+    report = _board_json(capsys, COUPON, "--net", "RF_IN",
+                         "--port-pad", "J1.1")
+    spec = report["spec"]
+    port = spec["port"]
+    assert isinstance(port, dict)
+    assert port["reference"] == "J1"
+    assert port["number"] == "1"
+    assert port["net"] == "RF_IN"
+    assert math.isfinite(port["position_mm"])
+    assert math.isfinite(port["y_mm"])
+    assert port["position_mm"] == pytest.approx(spec["x_port"], abs=1e-9)
+    assert port["position_mm"] == pytest.approx(8.65, abs=1e-6)
+    # The flag is what fills the key in: without it the same run is null again.
+    assert _board_json(capsys, COUPON, "--net", "RF_IN")["spec"]["port"] is None
+
+
+def test_board_refuses_a_port_pad_with_no_net(capsys):
+    """``--port-pad`` without ``--net`` is a usage error, not a skipped flag.
+
+    The pad is where the strip starts and the strip is the net, so naming the
+    pad and not the net is half a request; printing the board report with no
+    spec would be the flag silently dropped.
+    """
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["board", str(COUPON), "--port-pad", "J1.1"])
+    assert raised.value.code == 2
+    assert "--net" in capsys.readouterr().err
 
 
 def test_board_reads_a_board_with_no_stackup_and_no_outline(capsys):

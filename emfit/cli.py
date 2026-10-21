@@ -266,7 +266,22 @@ def _net_rows(nets) -> list:
     return rows
 
 
-def _board_spec(board, net: str, eps_r):
+def _port_pad(text: str) -> tuple:
+    """``--port-pad REF.NUM``: the footprint reference and the pad number.
+
+    ``argparse`` type function, so a malformed value is a usage error (exit 2)
+    naming the form, rather than a report that quietly lost the port.
+    """
+    reference, dot, number = text.rpartition(".")
+    if not dot or not reference or not number:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not in REF.NUM form: give the footprint reference and "
+            "the pad number separated by a dot, e.g. --port-pad J1.1 "
+            "(pad 1 of footprint J1)")
+    return reference, number
+
+
+def _board_spec(board, net: str, eps_r, port_pad=None):
     """``(spec, refusal)``: the coupon as a spec, or why there is none.
 
     ``taper='dominant'`` is asked for deliberately.
@@ -274,11 +289,13 @@ def _board_spec(board, net: str, eps_r):
     a tapering line unless it is told which rule to use, and a report that
     stopped there would show nothing for the commonest coupon there is;
     ``'dominant'`` takes the width covering the most track length, which is the
-    strip and not the taper either side of it.
+    strip and not the taper either side of it.  ``port_pad``, when given, is the
+    ``(reference, number)`` of the pad to launch from; the taper rule then has
+    no effect on where the port sits.
     """
     try:
         spec = MicrostripBoard.from_kicad(board, net=net, eps_r=eps_r,
-                                          taper="dominant")
+                                          taper="dominant", port_pad=port_pad)
     except ValueError as exc:                 # no such net, no track, no stackup
         return None, str(exc)
     return spec, None
@@ -318,9 +335,15 @@ def _cmd_board(args) -> int:
     outline and the nets are the report, and a net
     :meth:`~emfit.board.MicrostripBoard.from_kicad` refuses is printed as
     ``no microstrip spec:`` with the exact message beside it, exit code ``0``.
-    Only a path that cannot be read -- no such file, or no ``(kicad_pcb ...)``
-    form in it -- is a wrong request, and that is ``2``.
+    A wrong request is ``2``: a path that cannot be read -- no such file, or no
+    ``(kicad_pcb ...)`` form in it -- or ``--port-pad`` without the ``--net``
+    whose strip the port is placed on.
     """
+    if args.port_pad is not None and not args.net:
+        print("emfit board: error: --port-pad needs --net: the net is the strip "
+              "the port is placed on", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
+
     try:
         board = load_board(args.path)
     except (OSError, ValueError) as exc:       # no such file, not a board file
@@ -331,7 +354,7 @@ def _cmd_board(args) -> int:
     n_pml = int(studies.MS_N_PML)
     spec, refusal, meshes = None, None, []
     if args.net:
-        spec, refusal = _board_spec(board, args.net, args.eps_r)
+        spec, refusal = _board_spec(board, args.net, args.eps_r, args.port_pad)
         if spec is not None:
             meshes = _mesh_rows(spec, n_pml)
 
@@ -424,7 +447,9 @@ def _cmd_board(args) -> int:
         if spec is None:
             print(f"no microstrip spec: {refusal}")
             return 0
-        print(f"microstrip spec (net {spec.name!r}, taper='dominant'):")
+        launch = ("taper='dominant'" if spec.port is None
+                  else f"port on {spec.port.reference}.{spec.port.number}")
+        print(f"microstrip spec (net {spec.name!r}, {launch}):")
         print(_table([
             ("h", _mm(spec.h)),
             ("w", _mm(spec.w)),
@@ -518,6 +543,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_board.add_argument("--eps-r", metavar="EPS", type=float, default=None,
                          help="substrate relative permittivity to use instead of "
                               "the stackup's (a board with no stackup needs one)")
+    p_board.add_argument("--port-pad", metavar="REF.NUM", type=_port_pad,
+                         default=None,
+                         help="place the port on this pad -- footprint reference "
+                              "and pad number, e.g. J1.1 -- instead of at the "
+                              "extremes of the net's own track")
     p_board.add_argument("--json", action="store_true",
                          help="print one JSON object instead of the tables")
     p_board.set_defaults(func=_cmd_board)
