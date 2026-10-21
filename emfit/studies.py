@@ -2677,7 +2677,9 @@ def microstrip_wave(
         if plane_ey is not None:
             # The phase is the accumulator's own expression, on the step index:
             # not a re-derivation, the same line ``DftAccumulator.add`` runs.
-            w = np.exp(-2.0j * np.pi * f0 * n * dt)
+            # Not called ``w``: that is the strip width, and it is read again
+            # after this loop to build the closed-form line.
+            phase = np.exp(-2.0j * np.pi * f0 * n * dt)
             # The reshapes are the ones ``station_poynting`` takes, so the
             # station slice is the same slice -- that is the one thing this
             # capture is allowed to share with the time-domain route.
@@ -2700,10 +2702,11 @@ def microstrip_wave(
                     straddle = (0,)
                 else:
                     straddle = (cc.nx - 1,)
-                plane_ey[i] += w * pl_ey[ix]
-                plane_ez[i] += w * pl_ez[ix]
-                plane_hz[i] += w * np.mean(pl_fz[list(straddle), :, :], axis=0)
-                plane_hy[i] += w * np.mean(pl_fy[list(straddle), :, :], axis=0)
+                plane_ey[i] += phase * pl_ey[ix]
+                plane_ez[i] += phase * pl_ez[ix]
+                plane_hz[i] += phase * np.mean(pl_fz[list(straddle), :, :], axis=0)
+                plane_hy[i] += phase * np.mean(
+                    pl_fy[list(straddle), :, :], axis=0)
         if poynting:
             for i, ix in enumerate(js):
                 sx = station_poynting(stepper.e, stepper.h, cc, ix=int(ix))
@@ -3117,6 +3120,31 @@ def microstrip_wave(
                           {"sx_station": sx_station,
                            "sx_station_sub": sx_station_sub}),
                 planes=planes)
+
+    # --- the cross-section record: either drive, and on its own -------------
+    # ``plane_capture`` accumulates the blocks on the loop a tone and a pulse
+    # both run, so a tone holds them too -- and could not reach a file, because
+    # the dump above belongs to the broadband sweep and a tone has no sweep.
+    # Written here, separately, and only where that dump did not already carry
+    # it: a pulse keeps the one file it always wrote, blocks and all, and a run
+    # that did not ask for the blocks writes nothing at all this way.
+    plane_path = os.environ.get(BIN_DUMP_ENV, "")
+    if plane_path and excite != "pulse" and plane_ey is not None:
+        # A tone has no bins to store: the sweep half of the record is empty,
+        # and the blocks and the scalars that formed them are the whole of it.
+        _dump_bins(
+            plane_path, freqs=np.empty(0), spectra=np.empty((0, spec.size)),
+            station_x=station_x, n_stations=n_stations, x_port=x_port,
+            bins=(), reference=reference,
+            poynting=(None if sx_station is None else
+                      {"sx_station": sx_station,
+                       "sx_station_sub": sx_station_sub}),
+            planes={
+                "plane_Ey": plane_ey, "plane_Ez": plane_ez,
+                "plane_Hy": plane_hy, "plane_Hz": plane_hz,
+                "station_cells": js, "station_x": station_x,
+                "f": f0, "dt": dt, "n_samples": n_acc,
+            })
 
     geometry = {
         "nx": nx, "ny": ny, "nz": nz, "cell": cell,
