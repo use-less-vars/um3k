@@ -2,7 +2,7 @@
 
 Branch: `wip/ports`, on top of *"ports: a port plane can be placed on a pad"*, which sits on the pad-placement commit, which sits on master's decisions commit (`ffbb4a4`). No HEAD hash is written on this line on purpose: hashes here have gone stale twice. Describe the position by its subject and confirm it with `git log -1 --oneline`.
 Base: master @ `ffbb4a4`. master already carries the ten delivered commits (tip `62d1684`) plus `ffbb4a4`, the decisions entry; `wip/ports` adds the port work on top, so master fast-forwards.
-Working tree right now: the arc refusal and the `port` key in `board --json` are **uncommitted** -- `emfit/kicad.py`, `emfit/cli.py`, `tests/test_kicad.py`, `tests/test_cli.py`, `tests/test_board.py`. `Intro.txt` is also modified and is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
+Working tree right now: clean apart from `Intro.txt`. The arc refusal and the `port` key in `board --json` are **committed** (`ec88551`), as is the crop (`4ed5045`); no work of ours is outstanding in the tree. `Intro.txt` is modified and is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
 
 ## To land the work
 
@@ -133,7 +133,7 @@ sections. Two entries were added:
   (`emfit/kicad.py:897`) -- not "its two endpoints only", and nothing is lost by that because a
   zone is recorded, not modelled.
 
-## Outstanding: step 4 of the port work, and the crop it needs
+## Outstanding: step 4 of the port work, whose crop now exists
 
 - Step 4, S-parameters and a field slice on the imported coupon board. Acceptance: the imported
   coupon reproduces the hand-built study within the fit residual, and a port on an SMA pad runs
@@ -143,10 +143,12 @@ sections. Two entries were added:
   outline, so `to_cell_counts` refuses it on its first check
   (`abs(x_far - length) > TOL * length`). The dominant-width `RF_IN` spec (x_far = 32.22 mm) is
   refused the same way, and `tests/test_board.py:184` asserts that refusal.
-- Making a run possible therefore means cropping the outline to the strip. That crop is a
-  deliberate, recorded choice to make and to report, not a repair: it changes the box, and the
-  line modelled is the 2.0 mm run the port sits on, not the 29.8 mm feed. `supplied` is where a
-  caller-supplied length has to be declared if the crop is not to be silent.
+- The crop now exists: `MicrostripBoard.cropped_to_strip` (`emfit/board.py:498`, commit
+  `4ed5045`) moves the box to `x_far` and declares `'length'` in `supplied`, and it is recorded
+  in `decisions.md` section 48, "The outline is cropped to the strip by the caller, and the crop
+  declares itself". The cropped port spec then meshes at `n_sub 16`, `n_pml 12`: `n_strip 20`,
+  `n_clean 78`, `n_ref 33`, `n_line 25`. It is not a repair but a recorded choice: it changes the
+  box, and the line modelled is the 2.0 mm run the port sits on, not the 29.8 mm feed.
 
 ## Still true after step 1
 
