@@ -467,6 +467,96 @@ def plate_current(h, cc, ix, iz, y_extent=None) -> float:
     faces = np.asarray(cc.idx_fy(ix, np.arange(j0, j1), iz), dtype=int)
     return float(h[faces].sum())
 
+def station_poynting(e, h, cc, ix, *, z_ey=None, z_ez=None) -> float:
+    r"""Time-instantaneous x-directed Poynting flux through one cross-section [W].
+
+    ``P_x = int (E_y H_z - E_z H_y) dy dz`` on the staggered FIT mesh.  ONE time
+    sample (the caller accumulates); NOT a phasor and NOT ``0.5 Re(V conj I)``.
+
+    Staggering: after :meth:`FITStepper.step` ``e`` is at ``t^n`` and ``h`` at
+    ``t^{n-1/2}``, so the product carries a fixed ``exp(+j omega dt / 2)``
+    (about 3e-3 rad at the default step).  Interpolating ``h`` forward would
+    remove it silently -- a modelling choice this helper does not make.
+
+    Measures: ``e = E . dl`` (primal length), ``h = H . dl`` (dual length,
+    ``m_mu = mu0 * A_f / L_dual``).  The areas come from the grid:
+    :meth:`Grid.widths` for the ``E`` edge and :meth:`Grid.dual_widths` for the
+    ``H`` edge.
+
+        ``E_y H_z``: ``dy_j`` (primal) times ``dzt_k`` (dual), ``j`` over ``y``
+        cells, ``k`` over ``z`` point layers.
+        ``E_z H_y``: ``dz_k`` (primal) times ``dyt_j`` (dual), ``j`` over ``y``
+        point layers, ``k`` over ``z`` cells.
+
+    ``E`` sits on the node layer ``ix`` and ``h`` on ``x`` *cells*, so the two
+    cells ``ix - 1`` and ``ix`` that straddle the station are averaged -- the
+    same second-order interpolation :func:`plate_current` gets in the study.
+
+    Args:
+        e: The flat edge vector, ``E . dl``, length ``cc.n_edges``.
+        h: The flat face vector, ``H . dl``, length ``cc.n_faces``.
+        cc: The :class:`CellComplex` both vectors live on.
+        ix: The ``x`` node layer the cross-section is taken on.
+        z_ey: ``z`` point-layer slice for the ``E_y H_z`` term; ``None`` is the
+            whole stack (``0 .. cc.nzn``).
+        z_ez: ``z`` cell slice for the ``E_z H_y`` term; ``None`` is the whole
+            stack (``0 .. cc.nz``).
+
+    Returns:
+        The flux in watts, positive along ``+x``.
+
+    Raises:
+        ValueError: If ``e`` / ``h`` is not a flat vector of the right length,
+            or ``ix`` is not a whole index.
+        IndexError: If ``ix`` is outside the node layers of the ``x`` axis.
+
+    Examples:
+    --------
+    The flux crossing a station plane of the default wave run, one step at a
+    time -- the caller means it, so the caller divides by the sample count::
+
+        sx = station_poynting(stepper.e, stepper.h, cc, ix=int(js[0]))
+    """
+    e = np.asarray(e, dtype=float)
+    h = np.asarray(h, dtype=float)
+    if e.ndim != 1 or e.size != cc.n_edges:
+        raise ValueError(
+            f"e must be the flat edge vector of length {cc.n_edges} "
+            f"(n_edges), got shape {e.shape}")
+    if h.ndim != 1 or h.size != cc.n_faces:
+        raise ValueError(
+            f"h must be the flat face vector of length {cc.n_faces} "
+            f"(n_faces), got shape {h.shape}")
+    ix = _node_index("ix", ix, cc.nxn)
+    wy = cc.grid.widths("y")
+    wz = cc.grid.widths("z")
+    dwy = cc.grid.dual_widths("y")
+    dwz = cc.grid.dual_widths("z")
+    if 0 < ix < cc.nx:
+        cells = (ix - 1, ix)
+    elif ix == 0:
+        cells = (0,)
+    else:
+        cells = (cc.nx - 1,)
+    ey = e[cc.off_ey:cc.off_ey + cc.n_ey].reshape(cc.nxn, cc.ny, cc.nzn)
+    ez = e[cc.off_ez:cc.off_ez + cc.n_ez].reshape(cc.nxn, cc.nyn, cc.nz)
+    fz = h[cc.off_fz:cc.off_fz + cc.n_fz].reshape(cc.nx, cc.ny, cc.nzn)
+    fy = h[cc.off_fy:cc.off_fy + cc.n_fy].reshape(cc.nx, cc.nyn, cc.nz)
+    if z_ey is None:
+        z_ey = slice(0, cc.nzn)
+    if z_ez is None:
+        z_ez = slice(0, cc.nz)
+    hz = np.mean(fz[list(cells), :, :], axis=0)
+    ey_l = ey[ix][:, z_ey] / wy[:, None]
+    hz_l = hz[:, z_ey] / dwz[z_ey][None, :]
+    px1 = float(np.sum(ey_l * hz_l * (wy[:, None] * dwz[z_ey][None, :])))
+    hy = np.mean(fy[list(cells), :, :], axis=0)
+    ez_l = ez[ix][:, z_ez] / wz[z_ez][None, :]
+    hy_l = hy[:, z_ez] / dwy[:, None]
+    px2 = float(np.sum(ez_l * hy_l * (dwy[:, None] * wz[z_ez][None, :])))
+    return px1 - px2
+
+
 
 # ---------------------------------------------------------------------------
 # time to frequency

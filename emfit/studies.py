@@ -72,6 +72,7 @@ from .ports import (
     plate_current,
     power_current_check,
     sigma_beta_from_curvature,
+    station_poynting,
 )
 
 import matplotlib.pyplot as plt  # noqa: E402  (after the backend is fixed)
@@ -1607,6 +1608,12 @@ class MicrostripWave:
     station_fit_ok: bool = True
     loaded_without_reference: bool = False
     bins: tuple = ()
+    sx_station: np.ndarray | None = None
+    sx_station_sub: np.ndarray | None = None
+    sx_station_first_half: np.ndarray | None = None
+    sx_station_second_half: np.ndarray | None = None
+    sx_station_sub_first_half: np.ndarray | None = None
+    sx_station_sub_second_half: np.ndarray | None = None
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -2039,7 +2046,7 @@ BIN_DUMP_ENV = "EMFIT_BIN_DUMP"
 
 
 def _dump_bins(path, *, freqs, spectra, station_x, n_stations, x_port, bins,
-               reference=None) -> str:
+               reference=None, poynting=None) -> str:
     """Write the per-bin record an off-line S-parameter recompute needs.
 
     Opt-in only: :func:`microstrip_wave` calls this when ``EMFIT_BIN_DUMP``
@@ -2104,6 +2111,13 @@ def _dump_bins(path, *, freqs, spectra, station_x, n_stations, x_port, bins,
         "refused": np.array([b.refusal is not None for b in bins]),
         "reference_used": np.array([reference is not None]),
     }
+    if poynting is not None:
+        # Opt-in diagnostic: the keys exist only when the run was asked for
+        # the Poynting record, so a flag-off dump is byte-for-byte unchanged.
+        payload.update(
+            sx_station=np.asarray(poynting["sx_station"], dtype=float),
+            sx_station_sub=np.asarray(poynting["sx_station_sub"], dtype=float),
+        )
     if reference is not None:
         payload.update(
             reference_gamma=complex(reference.gamma),
@@ -2222,6 +2236,7 @@ def microstrip_wave(
     band_hi: float = MS_BAND_HI_GHZ * 1e9,
     n_bins: int = MS_N_BINS,
     f_pulse: float = MS_F_PULSE_GHZ * 1e9,
+    poynting: bool = False,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -2546,6 +2561,20 @@ def microstrip_wave(
     slice_signals = (np.zeros(cc.nxn * cc.nyn, dtype=float)
                      if keep_slice else None)
 
+    # --- the Poynting diagnostic, off unless asked for ---------------------
+    # A time-domain product, so its mean over the settled record is the DC
+    # power crossing each station plane -- not a phasor and not
+    # ``0.5 Re(V conj I)``.  Nothing here feeds a fit: the sums are read only
+    # at the end, and with the flag off (the default) none of them is even
+    # allocated, so the record is bit-identical to the run without the flag.
+    sx_station_sum = np.zeros(n_stations) if poynting else None
+    sx_station_sub_sum = np.zeros(n_stations) if poynting else None
+    sx_station_first_sum = np.zeros(n_stations) if poynting else None
+    sx_station_sub_first_sum = np.zeros(n_stations) if poynting else None
+    sx_station_second_sum = np.zeros(n_stations) if poynting else None
+    sx_station_sub_second_sum = np.zeros(n_stations) if poynting else None
+    z_sub = slice(0, n_sub) if poynting else None
+
     # --- the time loop -----------------------------------------------------
     acc = DftAccumulator([f0], dt)
     # The same record split in two, for the settledness check after the loop.
@@ -2604,6 +2633,19 @@ def microstrip_wave(
                 plate_current(stepper.h, cc, int(ix) - 1, 0, y_extent=y_half)
                 + plate_current(stepper.h, cc, int(ix), 0, y_extent=y_half))
         acc.add(signals, n)
+        if poynting:
+            for i, ix in enumerate(js):
+                sx = station_poynting(stepper.e, stepper.h, cc, ix=int(ix))
+                sx_sub = station_poynting(stepper.e, stepper.h, cc,
+                                          ix=int(ix), z_ey=z_sub, z_ez=z_sub)
+                sx_station_sum[i] += sx
+                sx_station_sub_sum[i] += sx_sub
+                if n < n_split:
+                    sx_station_first_sum[i] += sx
+                    sx_station_sub_first_sum[i] += sx_sub
+                else:
+                    sx_station_second_sum[i] += sx
+                    sx_station_sub_second_sum[i] += sx_sub
         if history is not None:
             history[n] = signals
             drive_trace[n] = drive_now
@@ -2614,6 +2656,34 @@ def microstrip_wave(
                 cc.nxn, cc.nyn, cc.nz)
             slice_signals[:] = 0.5 * (ez[:, :, k_mid - 1] + ez[:, :, k_mid]).ravel()
             slice_acc.add(slice_signals, n)
+
+    # Mean of the instantaneous flux over the settled record, on the same
+    # window and the same halves the DFT and the settledness check use, so
+    # the readings are directly comparable.
+    if poynting:
+        n_first = int(n_split - n_warm)
+        n_second = int(n_acc - n_first)
+        sx_station = sx_station_sum / n_acc
+        sx_station_sub = sx_station_sub_sum / n_acc
+        if n_first > 0:
+            sx_station_first_half = sx_station_first_sum / n_first
+            sx_station_sub_first_half = sx_station_sub_first_sum / n_first
+        else:
+            sx_station_first_half = np.full(n_stations, np.nan)
+            sx_station_sub_first_half = np.full(n_stations, np.nan)
+        if n_second > 0:
+            sx_station_second_half = sx_station_second_sum / n_second
+            sx_station_sub_second_half = sx_station_sub_second_sum / n_second
+        else:
+            sx_station_second_half = np.full(n_stations, np.nan)
+            sx_station_sub_second_half = np.full(n_stations, np.nan)
+    else:
+        sx_station = None
+        sx_station_sub = None
+        sx_station_first_half = None
+        sx_station_second_half = None
+        sx_station_sub_first_half = None
+        sx_station_sub_second_half = None
 
     spec = acc.spectrum[0]
     spec_early = half_acc.spectrum[0]
@@ -2960,9 +3030,13 @@ def microstrip_wave(
         # writes a file, and changes nothing that is reported.
         dump_path = os.environ.get(BIN_DUMP_ENV, "")
         if dump_path:
-            _dump_bins(dump_path, freqs=freqs, spectra=spectra,
-                       station_x=station_x, n_stations=n_stations,
-                       x_port=x_port, bins=bins, reference=reference)
+            _dump_bins(
+                dump_path, freqs=freqs, spectra=spectra,
+                station_x=station_x, n_stations=n_stations,
+                x_port=x_port, bins=bins, reference=reference,
+                poynting=(None if sx_station is None else
+                          {"sx_station": sx_station,
+                           "sx_station_sub": sx_station_sub}))
 
     geometry = {
         "nx": nx, "ny": ny, "nz": nz, "cell": cell,
@@ -2981,6 +3055,7 @@ def microstrip_wave(
         "beta_ambiguous": bool(abs(beta) * d_probe > np.pi),
         "excite": excite, "band_lo": band_lo, "band_hi": band_hi,
         "n_bins": n_bins, "f_pulse": f_pulse,
+        "poynting": bool(poynting),
     }
 
     if sink is not None:
@@ -3109,6 +3184,12 @@ def microstrip_wave(
         station_fit_ok=station_fit_ok,
         loaded_without_reference=loaded_without_reference,
         bins=bins,
+        sx_station=sx_station,
+        sx_station_sub=sx_station_sub,
+        sx_station_first_half=sx_station_first_half,
+        sx_station_second_half=sx_station_second_half,
+        sx_station_sub_first_half=sx_station_sub_first_half,
+        sx_station_sub_second_half=sx_station_sub_second_half,
     )
 
 
@@ -3162,6 +3243,7 @@ def microstrip_wave_board(
     band_hi: float = MS_BAND_HI_GHZ * 1e9,
     n_bins: int = MS_N_BINS,
     f_pulse: float = MS_F_PULSE_GHZ * 1e9,
+    poynting: bool = False,
 ) -> MicrostripWave:
     """Run :func:`microstrip_wave` on a coupon that came out of a board file.
 
@@ -3258,6 +3340,7 @@ def microstrip_wave_board(
         band_hi=band_hi,
         n_bins=n_bins,
         f_pulse=f_pulse,
+        poynting=poynting,
     )
 
 
