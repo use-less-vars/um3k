@@ -43,7 +43,7 @@ by the caller).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .kicad import Board, Track
 
@@ -491,6 +491,44 @@ class MicrostripBoard:
             supplied=tuple(supplied),
             port=port,
         )
+
+    # ------------------------------------------------------------------
+    # cropping the outline to the line
+    # ------------------------------------------------------------------
+    def cropped_to_strip(self) -> "MicrostripBoard":
+        """This same line in a box that ends where the strip does.
+
+        The crop sets ``length`` to ``x_far`` and changes nothing else -- the
+        width, the substrate, the two ``x`` planes, the loads and the port are
+        carried over untouched.  It is the **box** that moves, not the line: the
+        geometry the study models is the strip, and the outline only ever
+        supplied the lateral clearance and the far wall.
+
+        ``'length'`` is appended to :attr:`supplied` (once), because the number
+        now in that field is this method's and not the file's: the outline the
+        board draws is longer than the spec.  A spec that already ends at
+        ``x_far`` comes back unchanged, declaration included -- a caller
+        comparing ``supplied`` against what it passed would otherwise be told it
+        had given a number it never gave.
+
+        **The trade is real.**  After the call, ``length`` is no longer the
+        board's outline: the modelled geometry is the strip alone, so a caller
+        that goes on to compare ``length`` with the ``Edge.Cuts`` bounding box is
+        comparing a crop to a board, not taking two measurements of one thing.
+        Nor does cropping make the numbers divide: it lands the far plane on the
+        wall, which is what :meth:`to_cell_counts` asks for first, and that
+        method still gets the final word -- a cropped spec whose strip width,
+        clearance or port plane is not a whole number of cells refuses exactly as
+        it did before.
+
+        Returns:
+            A :class:`MicrostripBoard` whose ``length`` is its ``x_far``.
+        """
+        if abs(self.x_far - self.length) <= TOL * self.length:
+            return self
+        supplied = (self.supplied if "length" in self.supplied
+                    else self.supplied + ("length",))
+        return replace(self, length=self.x_far, supplied=supplied)
 
     # ------------------------------------------------------------------
     # to the study's cell counts

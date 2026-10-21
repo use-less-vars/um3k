@@ -306,3 +306,136 @@ def test_port_validates_its_own_numbers() -> None:
     with pytest.raises(ValueError, match="side must be"):
         Port(position=1e-3, y=0.0, net="x", reference="J1", number="1",
              side="left")
+
+
+# ---------------------------------------------------------------------------
+# cropping the outline to the line
+# ---------------------------------------------------------------------------
+def test_cropped_to_strip_lands_the_far_plane_on_the_wall(support) -> None:
+    """The crop moves the far wall to the strip and leaves the line alone.
+
+    Kills a crop that rescales the geometry -- changing the box must not change
+    the strip -- and kills a ``length`` that is quietly replaced without being
+    declared: after the call that number is the caller's, not the outline's.
+    """
+    whole = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1"))
+    assert whole.length == pytest.approx(0.07)
+    assert "length" not in whole.supplied
+
+    cropped = whole.cropped_to_strip()
+
+    assert cropped.length == pytest.approx(0.007)
+    assert cropped.length == pytest.approx(cropped.x_far)
+    assert cropped.supplied == ("eps_r", "length")
+
+    # The line is the same line: only the box was cropped.
+    assert cropped.w == pytest.approx(whole.w) == pytest.approx(0.002)
+    assert cropped.x_port == pytest.approx(whole.x_port) == pytest.approx(0.0045)
+    assert cropped.x_far == pytest.approx(whole.x_far) == pytest.approx(0.007)
+    assert cropped.width == pytest.approx(0.02)
+    assert cropped.h == pytest.approx(0.0016)
+    assert cropped.eps_r == pytest.approx(4.4)
+    assert cropped.name == whole.name
+    assert cropped.loads == whole.loads
+    assert cropped.port == whole.port
+    assert cropped.port is not None
+    assert cropped.port.reference == "J1"
+    assert cropped.port.position == pytest.approx(0.0045)
+
+
+def test_cropped_to_strip_is_idempotent_and_declares_only_what_it_did(
+        support) -> None:
+    """Cropping a crop changes nothing, and a spec already ending at its far
+    wall is not told it supplied a length.
+
+    Kills a second crop that appends ``'length'`` again or drifts the geometry,
+    and kills a declaration that fires when nothing was supplied: there
+    ``supplied`` has to be the identical tuple.
+    """
+    whole = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1"))
+    once = whole.cropped_to_strip()
+    twice = once.cropped_to_strip()
+
+    assert twice == once
+    assert twice.supplied == once.supplied
+    assert twice.supplied.count("length") == 1
+
+    # The dominant spec runs 23.57 mm inside the same 70 mm outline, so the same
+    # crop moves the wall by a different amount.
+    dominant = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, taper="dominant")
+    assert dominant.x_far == pytest.approx(0.03222)
+    assert dominant.length == pytest.approx(0.07)
+    assert dominant.cropped_to_strip().length == pytest.approx(0.03222)
+
+    # Written directly, already ending at its own far wall: the crop supplied
+    # nothing, so it may declare nothing.
+    already = MicrostripBoard(length=0.03, width=0.02, h=0.0016, eps_r=4.4,
+                              w=0.003, x_port=0.00865, x_far=0.03)
+    assert already.supplied == ()
+    assert already.cropped_to_strip().supplied == already.supplied
+    assert already.cropped_to_strip().length == pytest.approx(already.length)
+
+
+def test_the_cropped_port_coupon_meshes_at_sixteen_substrate_cells(support) -> None:
+    """The cropped 2.0 mm coupon, meshed by the real method.
+
+    Kills trusting the arithmetic instead of running it: the crop lands the far
+    plane on the wall, which is the condition ``to_cell_counts`` checks first,
+    so 0.1 mm cells hold 20 strip cells, 78 clean cells, 33 cells of port plane
+    and a 25-cell line.  It does not relax the mesh, though -- at 0.2 mm the
+    4.5 mm port plane is 22.5 cells and the 2.5 mm line is 12.5, so the cropped
+    coupon refuses exactly as the uncropped one did.
+    """
+    cropped = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1")
+    ).cropped_to_strip()
+
+    assert cropped.to_cell_counts(n_sub=16, n_pml=12) == {
+        "n_strip": 20, "n_clean": 78, "n_ref": 33, "n_line": 25,
+        "cell": pytest.approx(0.0001)}
+
+    with pytest.raises(
+            ValueError, match="n_ref = 4.500000 mm / 0.200000 mm") as caught:
+        cropped.to_cell_counts(n_sub=8, n_pml=12)
+    assert "n_line = 2.500000 mm / 0.200000 mm" in str(caught.value)
+    assert "n_sub = 16, 32 would fit every dimension" in str(caught.value)
+
+
+def test_even_the_cropped_dominant_coupon_needs_a_finer_mesh(support) -> None:
+    """23.57 mm of line over a 1.6 mm substrate does not divide at 32 cells.
+
+    Kills reading the crop as a fix for the mesh: the far plane is on the wall
+    now, but ``n_line`` is ``0.02357 * n_sub / 0.0016`` -- 2357 * n_sub / 160 --
+    so a whole number of cells is only reached when 160 divides ``n_sub``.  The
+    first fit is therefore a 0.01 mm mesh: 300 strip cells, 838 clean, 853 of
+    port plane and 2357 of line.
+    """
+    cropped = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, taper="dominant").cropped_to_strip()
+
+    with pytest.raises(
+            ValueError,
+            match="no n_sub in 1..32 fits every dimension") as caught:
+        cropped.to_cell_counts(n_sub=32, n_pml=12)
+    assert "n_line = 23.570000 mm / 0.050000 mm = 471.400000 cells" \
+        in str(caught.value)
+
+    # Worked out here rather than quoted from the message: every dimension has
+    # to be a whole number of cells, and 160 is the first ``n_sub`` that is.
+    dims = (("n_strip", cropped.w, 0),
+            ("n_clean", cropped.clearance, 12),
+            ("n_ref", cropped.x_port, 12),
+            ("n_line", cropped.x_far - cropped.x_port, 0))
+    fits = [n_sub for n_sub in range(1, 201)
+            if all(abs(run / (cropped.h / n_sub) - cut
+                       - round(run / (cropped.h / n_sub) - cut)) <= 1e-9
+                   for _, run, cut in dims)]
+    assert fits[0] == 160
+
+    counts = cropped.to_cell_counts(n_sub=160, n_pml=12)
+    assert counts["cell"] == pytest.approx(1e-5)
+    assert (counts["n_strip"], counts["n_clean"], counts["n_ref"],
+            counts["n_line"]) == (300, 838, 853, 2357)
