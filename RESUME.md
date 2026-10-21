@@ -11,7 +11,7 @@ true, and where the correction lives in `decisions.md`.
 | "both gaps are only because `audit=False`" | false; the audit changes nothing about the station `|S21|` | §49 tail |
 | "`570` s is the cost of the audit" | it is the cost of one route; the study route costs `17`-`31.79` s | §50 |
 | "the published `31.79` s clock is unaudited" | it is an audited clock, and it is the study route's | §50 |
-| "the suite is green at `9763897` with `373 passed`" | green (`EXIT=0`, `[100%]`) but the counts line was suppressed by a doubled `-q`; countable re-run in `/tmp/suite2.log` | below |
+| "the suite is green at `9763897` with `373 passed`" | `380 passed in 350.12s (0:05:50)` at `f23e78e` with `EXIT=0`; the first run also reached `[100%]` with `EXIT=0` but printed no counts line, because `-q` on the command line stacked on `addopts = "-q"` to make `-qq` | below |
 
 **The audited reference-box run** (PID 2712, `wall_s = 600.6859359579998`, `66 x 52 x 26` at `0.40` mm,
 `npml 10`, `2400` steps, `600` warm-up / `1800` accounted, `f 5.827786408` GHz, `n_edges 280840`,
