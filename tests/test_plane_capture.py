@@ -37,12 +37,14 @@ BLOCKS = {
     "plane_Hy": lambda ny, nz: (9, ny + 1, nz),
 }
 
-#: The whole plane key set: the four blocks, where they were taken, and the
-#: scalars that formed the sum.  Named exactly, so a renamed key fails here.
+#: The whole plane key set: the four blocks, where they were taken, the
+#: scalars that formed the sum, and the channel that asked for it.  Named
+#: exactly, so a renamed key fails here.
 PLANE_KEYS = frozenset({
     "plane_Ey", "plane_Ez", "plane_Hy", "plane_Hz",
     "plane_station_cells", "plane_station_x",
     "plane_f", "plane_dt", "plane_n_samples", "plane_convention",
+    "plane_capture",
 })
 
 #: Short runs: a tone needs a couple of hundred steps to hand back a fitted
@@ -52,10 +54,23 @@ PLANE_KEYS = frozenset({
 NSTEPS = {"cw": 200, "pulse": 900}
 
 
-def _run(monkeypatch, tmp_path, excite, plane_capture):
-    """Run one short study; return ``(result, path, payload or None)``."""
+#: Sentinel for "the caller said nothing about ``EMFIT_PLANE_CAPTURE``".
+_UNSET = object()
+
+
+def _run(monkeypatch, tmp_path, excite, plane_capture, env=_UNSET):
+    """Run one short study; return ``(result, path, payload or None)``.
+
+    ``env`` is the value ``EMFIT_PLANE_CAPTURE`` has for the run: the sentinel
+    (the default) means the variable is not set at all, so a test that does not
+    mention it sees exactly what a clean environment sees.
+    """
     path = tmp_path / f"{excite}-{plane_capture}.npz"
     monkeypatch.setenv(studies.BIN_DUMP_ENV, str(path))
+    if env is _UNSET:
+        monkeypatch.delenv(studies.PLANE_CAPTURE_ENV, raising=False)
+    else:
+        monkeypatch.setenv(studies.PLANE_CAPTURE_ENV, env)
     result = studies.microstrip_wave(excite=excite,
                                      plane_capture=plane_capture,
                                      nsteps=NSTEPS[excite])
@@ -169,3 +184,71 @@ def test_the_flag_on_writes_every_block_on_both_drives(
     assert np.asarray(payload["plane_station_cells"]).tolist() == (
         geometry["station_cells"])
     assert np.asarray(payload["plane_station_x"]).shape == (9,)
+
+
+# --------------------------------------------------------------------------- #
+# which channel decided it: the keyword, the environment, or nothing at all
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("env, flag, captured", [
+    ("0", True, True),      # an explicit yes outranks an environment that says no
+    ("1", False, False),    # and an explicit no outranks one that says yes
+])
+def test_an_explicit_flag_beats_the_environment(
+        monkeypatch, tmp_path, env, flag, captured):
+    """The keyword is the answer whenever the caller gave one."""
+    _, path, payload = _run(monkeypatch, tmp_path, "cw", flag, env=env)
+    if not captured:
+        assert payload is None
+        assert not path.exists()
+        return
+    assert payload is not None
+    assert str(payload["plane_capture"]) == "kwarg"
+    assert np.any(payload["plane_Ey"] != 0.0)
+
+
+def test_the_environment_can_ask_for_the_capture(monkeypatch, tmp_path):
+    """``plane_capture=None`` plus ``EMFIT_PLANE_CAPTURE=1`` captures too.
+
+    The record has to be the same one the keyword produces, key for key and
+    shape for shape, and it has to say which channel asked for it.
+    """
+    result, _, payload = _run(monkeypatch, tmp_path, "cw", None, env="1")
+    assert payload is not None
+    assert str(payload["plane_capture"]) == "env"
+
+    plane_keys = {name for name in payload if name.startswith("plane_")}
+    assert plane_keys == set(PLANE_KEYS)
+    base = _empty_sweep_baseline(tmp_path, result)
+    _assert_same_payload(_base_of(payload), base, what="env-driven tone payload")
+
+    ny, nz = result.geometry["ny"], result.geometry["nz"]
+    for name, shape in BLOCKS.items():
+        assert payload[name].shape == shape(ny, nz), name
+        assert payload[name].dtype == np.complex128, name
+
+
+def test_nothing_asked_for_the_capture(monkeypatch, tmp_path):
+    """``plane_capture=None`` with the variable unset is the frozen run."""
+    _, path, payload = _run(monkeypatch, tmp_path, "cw", None)
+    assert payload is None
+    assert not path.exists()
+
+
+def test_the_channel_names_are_the_three_that_can_fire(monkeypatch):
+    """``"kwarg"``, ``"env"`` and ``"off"``, and nothing else is truthy."""
+    monkeypatch.delenv(studies.PLANE_CAPTURE_ENV, raising=False)
+    assert studies._resolve_plane_capture(None) == (False, "off")
+    assert studies._resolve_plane_capture(True) == (True, "kwarg")
+    assert studies._resolve_plane_capture(False) == (False, "kwarg")
+
+    monkeypatch.setenv(studies.PLANE_CAPTURE_ENV, "YES")
+    assert studies._resolve_plane_capture(None) == (True, "env")
+    monkeypatch.setenv(studies.PLANE_CAPTURE_ENV, "true")
+    assert studies._resolve_plane_capture(None) == (True, "env")
+    monkeypatch.setenv(studies.PLANE_CAPTURE_ENV, "0")
+    assert studies._resolve_plane_capture(None) == (False, "off")
+    monkeypatch.setenv(studies.PLANE_CAPTURE_ENV, "")
+    assert studies._resolve_plane_capture(None) == (False, "off")
+    # An explicit flag is never read off the variable, even a truthy one.
+    monkeypatch.setenv(studies.PLANE_CAPTURE_ENV, "1")
+    assert studies._resolve_plane_capture(False) == (False, "kwarg")

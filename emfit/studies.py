@@ -2045,6 +2045,31 @@ def _bin_row(metric: BinMetric) -> str:
 #: number anywhere changes; it is read once, at the end of the broadband sweep.
 BIN_DUMP_ENV = "EMFIT_BIN_DUMP"
 
+#: Environment variable the plane-capture flag is read from when the caller
+#: leaves ``plane_capture=None``.  Only ``"1"``, ``"true"`` and ``"yes"``
+#: (case-insensitive) turn the capture on; unset, ``"0"`` or anything else
+#: leaves it off, which is the frozen behaviour of every run that mentions
+#: neither knob.
+PLANE_CAPTURE_ENV = "EMFIT_PLANE_CAPTURE"
+
+
+def _resolve_plane_capture(plane_capture: bool | None) -> tuple[bool, str]:
+    """Decide whether to capture the planes, and say what decided it.
+
+    An explicit ``True``/``False`` from the caller always wins, whatever the
+    environment says, and is reported as ``"kwarg"``.  ``None`` defers to
+    :data:`PLANE_CAPTURE_ENV`: that branch is reported as ``"env"`` when it
+    turns capture on, and ``"off"`` when nothing asked for it at all.  The
+    channel goes into the ``EMFIT_BIN_DUMP`` record as ``plane_capture``, so a
+    reader of the file can tell an explicit request from an inherited one.
+    """
+    if plane_capture is not None:
+        return bool(plane_capture), "kwarg"
+    if os.environ.get(PLANE_CAPTURE_ENV, "").strip().lower() in (
+            "1", "true", "yes"):
+        return True, "env"
+    return False, "off"
+
 
 def _dump_bins(path, *, freqs, spectra, station_x, n_stations, x_port, bins,
                reference=None, poynting=None, planes=None) -> str:
@@ -2135,6 +2160,7 @@ def _dump_bins(path, *, freqs, spectra, station_x, n_stations, x_port, bins,
             plane_dt=float(planes["dt"]),
             plane_n_samples=int(planes["n_samples"]),
             plane_convention=PLANE_CONVENTION,
+            plane_capture=str(planes.get("capture", "off")),
         )
     if reference is not None:
         payload.update(
@@ -2255,7 +2281,7 @@ def microstrip_wave(
     n_bins: int = MS_N_BINS,
     f_pulse: float = MS_F_PULSE_GHZ * 1e9,
     poynting: bool = False,
-    plane_capture: bool = False,
+    plane_capture: bool | None = None,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -2406,10 +2432,14 @@ def microstrip_wave(
         plane_capture: Accumulate the single-tone phasors of ``E_y``, ``E_z``,
             ``H_y`` and ``H_z`` over every station cross-section, so the flux
             can be re-derived in the phasor domain as a cross-check on the
-            time-domain one (see :mod:`emfit.plane_phasor`).  Off by default,
-            and read only by the ``EMFIT_BIN_DUMP`` record: nothing in this
-            function's own numbers changes, and with the flag off none of the
-            four plane blocks is even allocated.
+            time-domain one (see :mod:`emfit.plane_phasor`).  Read only by the
+            ``EMFIT_BIN_DUMP`` record: nothing in this function's own numbers
+            changes, and with the flag off none of the four plane blocks is
+            even allocated.  ``True``/``False`` here always wins; ``None``
+            (the default) defers to :data:`PLANE_CAPTURE_ENV`, which is off
+            unless it says ``"1"``, ``"true"`` or ``"yes"``.  Whichever
+            channel decided it -- ``"kwarg"``, ``"env"`` or ``"off"`` -- is
+            written into the record as ``plane_capture``.
 
     Returns:
         A :class:`MicrostripWave`.
@@ -2419,6 +2449,13 @@ def microstrip_wave(
             probe, if fewer than four stations survive, or if warm-up leaves no
             record to transform.
     """
+    # --- the plane-capture channel ------------------------------------------
+    # One decision, made once: an explicit flag beats the environment, and the
+    # channel that decided it travels into the dump record.  ``None`` is the
+    # default so a caller that says nothing gets whatever ``EMFIT_PLANE_CAPTURE``
+    # says -- unset, that is the same off every earlier run had.
+    plane_capture, plane_capture_source = _resolve_plane_capture(plane_capture)
+
     n_sub, n_air, n_strip = int(n_sub), int(n_air), int(n_strip)
     n_top = int(n_top)
     n_clean, n_pml, n_ref, n_line = int(n_clean), int(n_pml), int(n_ref), int(n_line)
@@ -3111,6 +3148,7 @@ def microstrip_wave(
                     "plane_Hy": plane_hy, "plane_Hz": plane_hz,
                     "station_cells": js, "station_x": station_x,
                     "f": f0, "dt": dt, "n_samples": n_acc,
+                    "capture": plane_capture_source,
                 }
             _dump_bins(
                 dump_path, freqs=freqs, spectra=spectra,
@@ -3144,6 +3182,7 @@ def microstrip_wave(
                 "plane_Hy": plane_hy, "plane_Hz": plane_hz,
                 "station_cells": js, "station_x": station_x,
                 "f": f0, "dt": dt, "n_samples": n_acc,
+                "capture": plane_capture_source,
             })
 
     geometry = {
@@ -3352,7 +3391,7 @@ def microstrip_wave_board(
     n_bins: int = MS_N_BINS,
     f_pulse: float = MS_F_PULSE_GHZ * 1e9,
     poynting: bool = False,
-    plane_capture: bool = False,
+    plane_capture: bool | None = None,
 ) -> MicrostripWave:
     """Run :func:`microstrip_wave` on a coupon that came out of a board file.
 
@@ -3410,7 +3449,9 @@ def microstrip_wave_board(
             straight through.
         plane_capture: Whether to accumulate the station cross-section phasor
             planes the phasor-domain flux cross-check is read from, passed
-            straight through to :func:`microstrip_wave`.
+            straight through to :func:`microstrip_wave`.  ``None`` (the
+            default) leaves the decision to ``EMFIT_PLANE_CAPTURE`` there, so a
+            caller that says nothing is not silently asking for off.
 
     The spec's ``loads`` are passed straight through: a
     :class:`emfit.board.Load` carries its position in metres and its value in
