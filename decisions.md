@@ -605,3 +605,60 @@ and `emfit/board.py:271-287`, the `taper=` mechanics: the widths are accumulated
 - **Why that argument does not win.** Because a crop performed inside the mesher answers a file's number with a mesh's, and `supplied` exists in this class for no other purpose than to make that substitution visible. `length` is where the length of the outline arrives from `Edge.Cuts`; a mesher that quietly replaces it returns a spec whose field still carries a file's name and now holds the mesher's edit, and the report -- which states the geometry it modelled -- would then be stating the crop under the file's heading. Every downstream reading of `length` as "the board is this long" would be wrong in the one way nothing here is arranged to catch, because the wrong number is plausible. Keeping the crop in a caller-invoked method keeps three things where they belong: the judgement with the caller, since a box cut to the line models the strip alone and whether that is the right study for this board is a modelling choice; the arithmetic in `to_cell_counts`, which stays a pure function of the spec handed to it and therefore still refuses a spec that does not divide, cropped or not; and the record in `supplied`, the same field that already says `h` was summed from the stack-up and `eps_r` picked out of a core (`emfit/board.py:456-491`). The "just works" version is not refused because it is convenient, but because its convenience is bought by making the tool's own edit indistinguishable from the file's content.
 - **Evidence.** Four tests added in `4ed5045` hold the method, and they are arranged around the declaration as much as around the arithmetic. `tests/test_board.py:314`, `test_cropped_to_strip_lands_the_far_plane_on_the_wall`: the cropped spec's `length` is its `x_far`, and `'length'` is in `supplied`. `tests/test_board.py:347`, `test_cropped_to_strip_is_idempotent_and_declares_only_what_it_did`: `once == twice` and `once.supplied == twice.supplied`, and a spec that already ended at `x_far` comes back with its `supplied` untouched (`tests/test_board.py:378-379`) -- the no-duplicate, no-false-declaration half. `tests/test_board.py:382`, `test_the_cropped_port_coupon_meshes_at_sixteen_substrate_cells`: the cropped port-bearing coupon -- `net='RF_IN'`, `port_pad=('J1','1')` -- divides at `n_sub 16`, `n_pml 12`, giving `n_strip 20`, `n_clean 78`, `n_ref 33`, `n_line 25` at a `0.1` mm cell, so the crop is what makes the end-to-end run reachable at all. `tests/test_board.py:407`, `test_even_the_cropped_dominant_coupon_needs_a_finer_mesh`: the same crop on the dominant-width spec still refuses, because cropping lands the far plane on the wall and touches no width -- `x_port 0.00865` to `x_far 0.03222` is `23.57` mm of line, a whole number of cells only when `n_sub` is a multiple of `160` (`n_line = 2357 * n_sub / 160`), which is why that test's assertion is the refusal and not a mesh. `tests/test_board.py` went from 12 tests to 16, and the fast suite from `356 passed, 9 deselected` to `360 passed, 9 deselected`.
 
+---
+
+## Two boards, two jobs: the reference box is the acceptance test and the coupon is not
+
+- **Decision.** The KiCad fixture is split in two, because the two boards answer two different questions and
+  only one of them can be answered by comparing against the published record.
+  `kicad_support_project/reference_box.kicad_pcb` is the reference geometry exactly -- `66 x 52 x 26` cells at
+  `0.40` mm, `npml 10`, `w = 3.2` mm, `h = 1.6` mm, `eps_r = 4.4`, the published `2400`-step run -- and
+  reproducing the published columns through `MicrostripBoard.from_kicad` and the `Board` path is the
+  milestone-1 acceptance. `kicad_support_project/coupon.kicad_pcb` is the real board and its only job is to
+  show that the importer reads real KiCad output; its oracle is the physical measurement of that board, not
+  the published microstrip record. The coupon is therefore graded on what can be read back out of KiCad
+  without a bench -- outline, stackup, declared thicknesses, track width, cell counts -- and the study it
+  drives is recorded as a prediction with no pass/fail attached. A disagreement between the coupon's study
+  number and the published reference record is not evidence about the importer, the study, or the milestone.
+- **Strongest argument against.** Two fixtures with two oracles is a weaker test than one fixture that has to
+  satisfy both. It lets a fixture be shaped until it passes, and it surrenders the one comparison that would
+  catch a systematic error in the importer itself -- a real board against a published record -- because the
+  reference box is emitted by a script written by the same hand that wrote the importer, so agreement there
+  proves consistency and not correctness.
+- **Why that argument does not win.** The comparison it surrenders was never available to be surrendered. The
+  coupon's substrate is `20` mm wide against the `17.4` mm between the reference line's lateral walls: two
+  different cross-sections, hence two different electromagnetic problems, and no tolerance makes one into the
+  other. Held together as one fixture, the only way to get a green light was to widen the tolerance until the
+  coupon passed at a number it could not reach for reasons having nothing to do with the code -- which is the
+  classic shape of a test that is then either deleted or ignored. Split, each comparison sits at the
+  resolution it actually has: the reference box is graded against the published columns at the record's own
+  fit residual, and the coupon is graded against the bench, which is where a real board belongs and which is
+  not in this repository. The shaped-until-it-passes objection is answerable by reading rather than by
+  trusting: the fixture is `2105` bytes of plain text standing next to the script that emits it, both
+  committed, and its read-back is asserted field by field by `tests/test_reference_box.py`.
+- **Evidence.** The reference fixture, emitted by `kicad_support_project/generate_reference_box.py` and
+  committed with it: `26.4 x 20.8` mm outline, one `3.2` mm track on net `RF_IN` running `x = 4.8` to
+  `26.4` mm at `y = 10.4` mm, and one stackup entry -- a `1.6` mm core, `eps_r = 4.4`, and nothing else,
+  because `from_kicad` sums every declared thickness and the `0.035` mm foils would make `h = 1.67` mm and a
+  cell of `0.4175` mm that does not divide the run. There is no pad in the file, so `x_port` and `x_far` come
+  from the run extremes rather than from a terminal and `supplied == ()`. Read-back: `length 0.0264`,
+  `width 0.0208`, `h 0.0016`, `eps_r 4.4`, `w 0.0032`, `x_port 0.0048`, `x_far 0.0264`, counts `n_strip 8`,
+  `n_clean 12`, `n_ref 2`, `n_line 54`, `cell 0.0004`, i.e. `nx 66`, `ny 52`, `nz 26` -- all three counts the
+  published box names. Two of those identities are exact and are worth naming, because they are what makes
+  the fixture an acceptance rather than a coincidence: `nx * cell == x_far` exactly, `x_port` cancelling out
+  of `n_pml + n_ref + n_line`, and `ny * cell == width` exactly, since the clearance is `width/2 - w/2`.
+  `nz` is *not* board-controlled -- `nz = n_sub + n_air + n_top`, with only `cell = h / n_sub` derived from
+  the board -- so a stackup edit moves `cell` and `nz` together, and the published `26` is a consequence of
+  the `1.6` mm core at `0.4` mm rather than a field anyone sets.
+
+**Reproduction, unaudited** (`wall_s 9.763592199`): `eps_eff 3.604312254366848` against the published
+`3.604312254`, a difference of `1.0e-10`; `beta 231.8857152867915` against `231.88571529` (`1.4e-11`);
+`|z0| 53.14411383477105` against `53.144` (`2.1e-06`); `Re z0 50.952340670283945` against `50.952`
+(`6.7e-06`); `alpha_fit 2.469703092775746` against `2.469703` (`3.8e-08`);
+`|gamma| 0.006281926302682181` against `0.0062819` (`4.2e-06`); `fit_residual 0.007812967007589234` against
+`0.007813` (`4.2e-06`). Two rows do not close in that run, and both are `audit = False`: the station `|S21|`
+`0.9861098351994007` against `0.9870082` (`9.1e-04`, inside the `7.8e-3` fit residual), and the lateral sink,
+absent because the absorbed-work accounting is precisely what `audit` switches on. The audited run of the
+same fixture through the same path returns `alpha_audit 1.3360133447381923` Np/m and
+`abs_s21 0.9870082381045727`, which is what closes both rows.
+
