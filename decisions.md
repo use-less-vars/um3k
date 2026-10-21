@@ -1232,3 +1232,66 @@ What remains is a shorter list, and none of it is the amplitude normalisation. T
 
 The rule this adds is the one the last three sections keep re-teaching: a passivity excess is not reportable until it has been put through the power-normalised column and through the print-precision bound, in that order, and both nulls and survivals have to be quoted with the resolution they were read at.
 
+## 63. The Im(z_c) hypothesis is refuted; the board excess is a flux-profile ripple
+
+**The ruling under test.** Four points were on record:
+
+1. **Gain, not sink.** The imported board reports |S21|^2 > 1 and a passivity figure > 1 at every accepted bin. Whatever the cause, the board behaves like a source, which the coupon never did.
+2. **The hypothesis: complex characteristic impedance.** Fit z_c as complex with Im(z_c) > 0. The argument was that the de-embedding phase correction mishandles reactive power when z_c is taken as complex, so the corrected power ratio is inflated. Falsifiable prediction: re-doing the de-embedding with a real z_c makes the excess go away.
+3. **Print precision is a resolution limit, not an explanation.** The old 0.1 dB print grid is the same class of defect as the vacuous-pass test and the wrong-pair tolerance: it bounds what the log can show, it does not create a 1.7–9.7 % excess.
+4. **Ground-current truncation is too small.** Truncating the ground plane's return current accounts for 0.086 % — an order of magnitude below even the smallest excess.
+
+**The experiment (one solve, EXIT=0).** `EMFIT_BIN_DUMP` (commit `7dc60f9`) makes the pulse path write every per-station quantity it already computes, so the S-parameters can be recomposed offline. One solve, `board_run_pw_dump.log` (7915 B), `EXIT=0`, `PULSE returned in 3249.6 s`; wall 3251 s against a 3100 s baseline (+4.8 %, from wait-loop contention on the single core). Geometry unchanged (322x200x76, nsteps 9600, n_warm 0, 25 bins requested, 11 accepted, 14 refused).
+
+**Determinism is exact:** max|diff| = 0.000000e+00 on both passivity columns across all 11 accepted bins, and the whole-record line is identical digit for digit (`beta=237.7477 eps_eff=3.56270 |z0|=54.0778 arg_z0=16.4346deg`). The dump reproduces the production numbers, so everything below is the production result re-examined, not a new variant.
+
+The dump `board_run_pw.npz` (13010 B) holds `f`, `station_x` (9 stations), `v` and `i` complex128 (25x9), per-bin `z0` complex128, and the assembled `s11_measured s11_port s21 s21_power passivity passivity_power` vectors plus `refused` and `reference_used = False`. `z0` is NaN at exactly the 14 refused bins and finite at all 11 accepted ones. Per-bin z_c is 53.05+2.75j ... 53.46+3.16j, i.e. arg +2.96deg ... +3.39deg — far better conditioned than the whole-record 16.4346deg, which is itself the first sign that the whole-record fit is not the quantity the per-bin de-embedding uses.
+
+Note for reproducibility: `board_run2.log` predates both the `(lin)` print and the power columns, so current code cannot regenerate it byte for byte.
+
+**Three-way recompute: the hypothesis fails.** `tri_compare.py` recomposes passivity three ways from the same dump — (i) the production convention (complex z_c as fitted), (ii) z_c forced real (magnitude kept), (iii) |z_c| used as a real impedance — and round-trips to 0.00e+00 against the stored values. P_amp is the amplitude-de-embedded passivity, P_pw the z_c-free local-power-ratio column:
+
+| f (GHz) | \|S11\|^2 | \|S21\|^2 amp | \|S21\|^2 pw | P_amp (i) | P_amp (ii) real z_c | P_amp (iii) abs z_c | P_pw (all three) | delta (i - ii) |
+|---|---|---|---|---|---|---|---|---|
+| 3.6667 | 0.0000 | 1.0168 | 1.0188 | 1.0168 | 1.0177 | 1.0178 | 1.0189 | -0.0010 |
+| 4.0833 | 0.0000 | 1.0210 | 1.0223 | 1.0210 | 1.0216 | 1.0216 | 1.0223 | -0.0006 |
+| 4.5000 | 0.0000 | 1.0254 | 1.0259 | 1.0254 | 1.0257 | 1.0257 | 1.0259 | -0.0003 |
+| 4.9167 | 0.0000 | 1.0302 | 1.0303 | 1.0302 | 1.0303 | 1.0303 | 1.0304 | -0.0001 |
+| 5.3333 | 0.0001 | 1.0357 | 1.0359 | 1.0358 | 1.0359 | 1.0359 | 1.0360 | -0.0001 |
+| 5.7500 | 0.0002 | 1.0422 | 1.0430 | 1.0424 | 1.0427 | 1.0427 | 1.0432 | -0.0003 |
+| 6.1667 | 0.0003 | 1.0499 | 1.0518 | 1.0501 | 1.0509 | 1.0509 | 1.0521 | -0.0008 |
+| 6.5833 | 0.0004 | 1.0588 | 1.0620 | 1.0592 | 1.0604 | 1.0604 | 1.0623 | -0.0012 |
+| 7.0000 | 0.0004 | 1.0689 | 1.0732 | 1.0693 | 1.0710 | 1.0709 | 1.0736 | -0.0017 |
+| 7.4167 | 0.0003 | 1.0799 | 1.0849 | 1.0802 | 1.0822 | 1.0822 | 1.0852 | -0.0020 |
+| 7.8333 | 0.0002 | 1.0913 | 1.0965 | 1.0915 | 1.0937 | 1.0936 | 1.0968 | -0.0021 |
+
+Three facts kill the hypothesis:
+
+- **Magnitude.** Forcing z_c real moves passivity by at most 0.0021 — an order of magnitude smaller than the excess it was supposed to explain.
+- **Sign.** delta is negative at 11/11 bins: the real-z_c column sits *above* the production one. Real z_c makes the excess slightly *worse*: 1.68 % -> 1.77 % at 3.6667 GHz, 9.15 % -> 9.37 % at 7.8333 GHz.
+- **Shape.** delta/f^2 is U-shaped, spanning -7.4e-5 to -3.5e-6 (factor 21; least squares delta = -2.8e-5 f^2), while the excess itself scales as excess/f^2 = 1.25e-3 -> 1.49e-3 (19 % drift, also U-shaped but with a different amplitude). Two different shapes with two different amplitudes are two different effects.
+
+There is also a structural reason, independent of these numbers: with real beta the de-embedding factors are pure phase (|e^{j beta d}| = 1), and |S11| = |B/A| carries no z_c at all. The only z_c-dependent quantity is the amplitude split |a2/a1|, and that split *improves* when z_c is made real. Meanwhile the column that contains the entire excess, `|S21_power|^2 = P2/P1 = Re(v2 conj i2) / Re(v1 conj i1)`, is identical under all three z_c conventions (1.0189 -> 1.0968). No choice of z_c convention can reach it, because z_c does not appear in it.
+
+**Where the excess actually lives.** `station_profile.py` reads the same dump and builds the local power profile P(x) across the 9 stations; it reproduces the stored `s21_power^2` from P9/P1 to 2.2e-16, so the profile is the production metric decomposed.
+
+- P2/P1 exceeds the mean of steps 2–8 by +0.42 % to +2.48 % at 11/11 bins: the rise starts at the port.
+- But the first step carries only 31.86 % (3.67 GHz) to 39.06 % (5.75 GHz) of the total excess, against 12.5 % for a uniform rise. So the first step is over-represented by a factor of ~2.5–3, and the rest is spread across the whole run.
+- Decisively: **P9/P2 = 1.0128 ... 1.0610 and P9/P3 = 1.0090 ... 1.0379, both still greater than 1.** Re-referencing to station 2 or 3 does not cure the excess — it removes only about a third. Launch localisation is dead as the sole explanation, and the "use station 2/3 as the upstream reference" test (A-test) is answered by these numbers and should be skipped.
+- P_k is monotone at 8/11 bins. At 7.0, 7.4167 and 7.8333 GHz the last step turns over (P9/P8 = 0.999808 / 0.999644 / 0.999597), i.e. a maximum of P(x) sits near station 8 (x ~ 18.8–20 mm).
+- arg(v) - arg(i) is small and positive everywhere and drifts down along x: from +4.73deg at station 1 to +2.60deg at station 9 at 3.67 GHz, and from +6.83deg to +3.08deg at 7.83 GHz (drift -0.18 to -3.75deg).
+- The per-step excess decays geometrically, factor ~0.66 per step, an e-fold length of 2.5–3 mm.
+- (gain - 1)/f^2 = 1.548e-4 (minimum, at 4.9167 GHz) to 1.888e-4 (maximum, at 7.8333 GHz), max/min = 1.220, U-shaped: not a clean single f^2 law either.
+
+**Reading.** The profile is quantitatively self-consistent with **one small standing wave on the line**: a node near the port, an antinode near station 8 once f exceeds ~6.8 GHz, node-to-antinode = 8.6 mm = lambda/4 giving lambda ~ 34 mm at 6.8 GHz, hence eps_eff ~ 1.28 — a plausible microstrip value — and an implied VSWR rising from 1.018 to 1.097 across the band. It also predicts no turnover of P(x) below ~6.8 GHz, and the observed bracket for the turnover is exactly between 6.58 and 7.0 GHz.
+
+This reading is self-consistent but **not proved**. What is proved is the negative: the excess is a spatially distributed rise of the local power flux, it is present in the z_c-free column, and no z_c convention touches it.
+
+**Consequences.**
+
+- **The two-term model is revised.** Term 2 ("gain = extraction") is not de-embedding phase. It is a flux-profile term: the metric is a ratio of local Re(v conj i) at two planes, one of which sits ~1.7 mm from the port in the unsettled region, and the ratio picks up a ~1/VSWR amplitude ripple that grows with frequency. Term 1 (boundary loss) still dominates on the coupon, so the model is not wrong, it is mis-attributed.
+- **The lid test stays a loss control.** With no gain hypothesis left to excuse the board, the lid measurement is a clean test of the boundary-loss term, which is what it always was.
+- **No S-parameter on an imported board is quotable yet** — unchanged, and now for a named reason rather than an outstanding doubt.
+
+**Next test.** The named next test is a **CW twin at two or three frequencies on the same mesh** (cheap frequency-domain solves, one at a time, within the 4 GiB cap). If the same along-x envelope appears in CW, the effect is linear mismatch/ripple: the fix is to put the reference plane in the settled region and/or absorb the downstream reflection, then re-quote. If CW is flat with P9/P1 = 1, the pulse path has a time-integration energy error, and the fix is in the time stepping. The A-test is skipped. The lid test stays held behind this.
+

@@ -1,5 +1,52 @@
 # RESUME -- session state
 
+## Checkpoint 2026-10-21 -- Im(z_c) is refuted, and term 2 is a flux-profile ripple
+
+`decisions.md` section 63 has the table and the argument; this is the state it
+leaves.  The pulse run that the checkpoint below was waiting on has returned:
+`.scratch/m2/board_run_pw_dump.log`, `EXIT=0`, 3249.6 s of pulse solve, 11
+accepted bins, dump `board_run_pw.npz` 13010 B.  Determinism against the
+production record is exact -- max|diff| 0.000000e+00 on both passivity
+columns -- so everything below is that result re-examined offline, not a new
+variant.  It supersedes the classification test set out in the checkpoint
+below, which the run has now answered.
+
+The Im(z_c) hypothesis is refuted.  Re-doing the de-embedding on the same dump
+with z_c forced real, magnitude kept, moves passivity by at most 0.0021 -- and
+in the wrong direction: the real-z_c column sits above production at 11/11
+bins, 1.68 % -> 1.77 % at 3.6667 GHz and 9.15 % -> 9.37 % at 7.8333 GHz.  The
+column that carries the whole excess, `|S21_power|^2 = P2/P1 = Re(v2 conj i2)
+/ Re(v1 conj i1)`, is identical under all three z_c conventions (1.0189 ->
+1.0968), because z_c does not appear in it.
+
+The two-term model is revised.  Term 1 is the boundary loss, and it still
+dominates on the coupon, so the model was not wrong -- it was mis-attributed.
+Term 2 is not de-embedding phase: it is a flux-profile term.  The metric is a
+ratio of local Re(v conj i) at two planes, one of which sits about 1.7 mm from
+the port in the unsettled region, so the ratio picks up an amplitude ripple
+that grows with frequency.
+
+The excess is a spatially distributed flux rise, not launch localisation.
+P2/P1 does exceed the mean of steps 2-8 at 11/11 bins (+0.42 % to +2.48 %), but
+the first step carries only 31.86 % to 39.06 % of the total excess against
+12.5 % for a uniform rise, and re-referencing does not cure it: P9/P2 =
+1.0128 ... 1.0610 and P9/P3 = 1.0090 ... 1.0379, both still greater than 1.
+The profile is quantitatively consistent with one small standing wave -- a node
+near the port, an antinode near station 8 above about 6.8 GHz, eps_eff ~ 1.28,
+VSWR 1.018 to 1.097 -- but that reading is self-consistent and not proved.
+
+Test order from here.  (1) A CW twin at two or three frequencies on the same
+mesh: cheap frequency-domain solves, one at a time, inside the 4 GiB cap.  A
+matching along-x envelope makes the effect linear mismatch and ripple; a flat
+P9/P1 = 1 makes it a time-integration energy error in the pulse path.  (2) Then
+the lid test as the loss control for term 1, which is what it always was, now
+that there is no gain hypothesis left to excuse the board.  The A-test -- use
+station 2 or 3 as the upstream reference -- is SKIPPED: already answered by the
+station profile, where re-referencing removes only about a third of the excess.
+
+No S-parameter on an imported board is quotable yet, now for a named reason
+rather than an outstanding doubt.
+
 ## Checkpoint 2026-10-21 -- the anchor was never at the tone, and the board is running
 
 HEAD is `6d7d4d2` on `master` ("Broadband single-span subsection; record the
