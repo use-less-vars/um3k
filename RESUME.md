@@ -8,11 +8,12 @@ harness imposes.
 
 ## Position
 
-HEAD is commit `e2fa4f5` ("studies: opt-in dt_scale on both wave studies,
-defaulting to the CFL step").  The full suite is green: `396 passed in 301.58s`,
-exit 0, log `.scratch/m2/pytest_full.log`.  Do not budget 550 s for the tests: the
-earlier `556.58 s` single-file figure was inflated by CPU contention with a solve
-running at the same time, and on an idle machine the whole suite takes about 300 s.
+The commit that closed section 67 and shipped the Poynting instrument is `ab948ba`.
+HEAD is that commit or a later docs-only touch-up of this file.  The full suite is
+green: `396 passed in 301.58s`, exit 0, log `.scratch/m2/pytest_full.log`.  Do not
+budget 550 s for the tests: the earlier `556.58 s` single-file figure was inflated by
+CPU contention with a solve running at the same time, and on an idle machine the whole
+suite takes about 300 s.
 
 `decisions.md` section 63 (the Im(z_c) hypothesis) is **refuted**.  Section 64 (the
 standing-wave reading of the board excess) is **dead**.  Section 65 is the **CW twin**
