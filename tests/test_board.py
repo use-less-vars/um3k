@@ -225,17 +225,19 @@ def test_the_board_path_reaches_the_default_run() -> None:
 # a port on a named pad
 # ---------------------------------------------------------------------------
 def test_from_kicad_places_the_port_on_the_connector_pad(support) -> None:
-    """Reading the port off J1.1 shortens the line to the 2.0 mm run at 4.5 mm.
+    """Reading the port off J1.1 puts the port plane at the start of the strip.
 
-    Kills taking the dominant 3.0 mm width, and pins the coupon's published
+    Kills a port that decides the width: the copper under the connector is a
+    2.0 mm launch over 4.15 mm of fan-out, and the line it launches onto is the
+    3.0 mm run that begins 4.15 mm further on.  Pins the coupon's published
     numbers so they cannot drift.
     """
     spec = MicrostripBoard.from_kicad(
         support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1"))
 
-    assert spec.w == pytest.approx(0.002)
-    assert spec.x_port == pytest.approx(0.0045)
-    assert spec.x_far == pytest.approx(0.007)
+    assert spec.w == pytest.approx(0.003)
+    assert spec.x_port == pytest.approx(0.00865)
+    assert spec.x_far == pytest.approx(0.03222)
     assert spec.length == pytest.approx(0.07)
     assert spec.width == pytest.approx(0.02)
     assert spec.h == pytest.approx(0.0016)
@@ -247,9 +249,12 @@ def test_from_kicad_places_the_port_on_the_connector_pad(support) -> None:
     assert spec.port.net == "RF_IN"
     assert spec.port.reference == "J1"
     assert spec.port.number == "1"
+    assert spec.port.position == pytest.approx(0.00865)
+    assert spec.port.position == spec.x_port
 
-    # Without the port pad the same net reads exactly as it did before: the port
-    # comes from the extreme x of the run that carries the dominant width.
+    # The pad chose the launch and nothing else, so the same net reads the same
+    # line without it: the port comes from the extreme x of the run that carries
+    # the dominant width.
     whole = MicrostripBoard.from_kicad(
         support, net="RF_IN", eps_r=4.4, taper="dominant")
     assert whole.w == pytest.approx(0.003)
@@ -258,9 +263,9 @@ def test_from_kicad_places_the_port_on_the_connector_pad(support) -> None:
     assert whole.port is None
 
     # A port says where the *launch* is; it says nothing about where the board
-    # ends.  x_far is 7.0 mm inside a 70 mm outline, so the mesh still refuses
+    # ends.  x_far is 32.22 mm inside a 70 mm outline, so the mesh still refuses
     # the line -- this exists so that a port cannot be read as a fix for that.
-    with pytest.raises(ValueError, match="7.000000") as caught:
+    with pytest.raises(ValueError, match="32.220000") as caught:
         spec.to_cell_counts(n_sub=8, n_pml=12)
     assert "70.000000" in str(caught.value)
 
@@ -325,14 +330,14 @@ def test_cropped_to_strip_lands_the_far_plane_on_the_wall(support) -> None:
 
     cropped = whole.cropped_to_strip()
 
-    assert cropped.length == pytest.approx(0.007)
+    assert cropped.length == pytest.approx(0.03222)
     assert cropped.length == pytest.approx(cropped.x_far)
     assert cropped.supplied == ("eps_r", "length")
 
     # The line is the same line: only the box was cropped.
-    assert cropped.w == pytest.approx(whole.w) == pytest.approx(0.002)
-    assert cropped.x_port == pytest.approx(whole.x_port) == pytest.approx(0.0045)
-    assert cropped.x_far == pytest.approx(whole.x_far) == pytest.approx(0.007)
+    assert cropped.w == pytest.approx(whole.w) == pytest.approx(0.003)
+    assert cropped.x_port == pytest.approx(whole.x_port) == pytest.approx(0.00865)
+    assert cropped.x_far == pytest.approx(whole.x_far) == pytest.approx(0.03222)
     assert cropped.width == pytest.approx(0.02)
     assert cropped.h == pytest.approx(0.0016)
     assert cropped.eps_r == pytest.approx(4.4)
@@ -341,7 +346,7 @@ def test_cropped_to_strip_lands_the_far_plane_on_the_wall(support) -> None:
     assert cropped.port == whole.port
     assert cropped.port is not None
     assert cropped.port.reference == "J1"
-    assert cropped.port.position == pytest.approx(0.0045)
+    assert cropped.port.position == pytest.approx(0.00865)
 
 
 def test_cropped_to_strip_is_idempotent_and_declares_only_what_it_did(
@@ -362,13 +367,14 @@ def test_cropped_to_strip_is_idempotent_and_declares_only_what_it_did(
     assert twice.supplied == once.supplied
     assert twice.supplied.count("length") == 1
 
-    # The dominant spec runs 23.57 mm inside the same 70 mm outline, so the same
-    # crop moves the wall by a different amount.
+    # The plain dominant spec is the same line in the same box, so the same crop
+    # lands on the same wall: the pad had chosen the launch, not the geometry.
     dominant = MicrostripBoard.from_kicad(
         support, net="RF_IN", eps_r=4.4, taper="dominant")
     assert dominant.x_far == pytest.approx(0.03222)
     assert dominant.length == pytest.approx(0.07)
     assert dominant.cropped_to_strip().length == pytest.approx(0.03222)
+    assert dominant.cropped_to_strip().x_port == pytest.approx(0.00865)
 
     # Written directly, already ending at its own far wall: the crop supplied
     # nothing, so it may declare nothing.
@@ -380,27 +386,31 @@ def test_cropped_to_strip_is_idempotent_and_declares_only_what_it_did(
 
 
 def test_the_cropped_port_coupon_meshes_at_sixteen_substrate_cells(support) -> None:
-    """The cropped 2.0 mm coupon, meshed by the real method.
+    """The cropped 3.0 mm coupon, snapped and then meshed by the real method.
 
-    Kills trusting the arithmetic instead of running it: the crop lands the far
+    Kills trusting the arithmetic instead of running it: the snap lands the far
     plane on the wall, which is the condition ``to_cell_counts`` checks first,
-    so 0.1 mm cells hold 20 strip cells, 78 clean cells, 33 cells of port plane
-    and a 25-cell line.  It does not relax the mesh, though -- at 0.2 mm the
-    4.5 mm port plane is 22.5 cells and the 2.5 mm line is 12.5, so the cropped
-    coupon refuses exactly as the uncropped one did.
+    so 0.1 mm cells hold 30 strip cells, 73 clean cells, 75 cells of port plane
+    and a 235-cell line.  It does not relax the mesh, though -- the coarse 0.2 mm
+    snap leaves the clearance at 30.5 cells, so the cropped coupon refuses
+    exactly as the uncropped one did.
     """
     cropped = MicrostripBoard.from_kicad(
         support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1")
-    ).cropped_to_strip()
+    ).cropped_to_strip(n_sub=16)
 
     assert cropped.to_cell_counts(n_sub=16, n_pml=12) == {
-        "n_strip": 20, "n_clean": 78, "n_ref": 33, "n_line": 25,
+        "n_strip": 30, "n_clean": 73, "n_ref": 75, "n_line": 235,
         "cell": pytest.approx(0.0001)}
 
     with pytest.raises(
-            ValueError, match="n_ref = 4.500000 mm / 0.200000 mm") as caught:
-        cropped.to_cell_counts(n_sub=8, n_pml=12)
-    assert "n_line = 2.500000 mm / 0.200000 mm" in str(caught.value)
+            ValueError,
+            match="n_clean = 8.500000 mm / 0.200000 mm") as caught:
+        MicrostripBoard.from_kicad(
+            support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1")
+        ).cropped_to_strip(n_sub=8).to_cell_counts(n_sub=8, n_pml=12)
+    assert "n_clean = 8.500000 mm / 0.200000 mm - 12 = 30.500000 cells" \
+        in str(caught.value)
     assert "n_sub = 16, 32 would fit every dimension" in str(caught.value)
 
 
@@ -439,3 +449,122 @@ def test_even_the_cropped_dominant_coupon_needs_a_finer_mesh(support) -> None:
     assert counts["cell"] == pytest.approx(1e-5)
     assert (counts["n_strip"], counts["n_clean"], counts["n_ref"],
             counts["n_line"]) == (300, 838, 853, 2357)
+
+
+# ---------------------------------------------------------------------------
+# what the port pad does, and what snapping the planes to a mesh does
+def test_the_port_pad_chooses_the_launch_not_the_width(support) -> None:
+    """The pad moves the port plane to the end of the run it is nearest.
+
+    Kills a port that reads its width off the copper under the pad: on this
+    coupon that is a 2.0 mm launch, and the line it launches onto is 3.0 mm.
+    Also kills a port that made ``taper`` matter, now that the width no longer
+    depends on where the pad is.
+    """
+    plain = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, taper="dominant")
+
+    for mode in ("raise", "dominant"):
+        spec = MicrostripBoard.from_kicad(
+            support, net="RF_IN", eps_r=4.4, taper=mode, port_pad=("J1", "1"))
+        assert spec.w == pytest.approx(plain.w) == pytest.approx(0.003)
+        assert spec.x_port == pytest.approx(plain.x_port) == pytest.approx(0.00865)
+        assert spec.x_far == pytest.approx(plain.x_far) == pytest.approx(0.03222)
+        assert spec.length == pytest.approx(0.07)
+        # Nothing about the line was supplied: the file carries all of it.
+        assert spec.supplied == ("eps_r",)
+        assert spec.port is not None
+        assert spec.port.position == spec.x_port
+        # The pad is at 4.5 mm; the plane it launches on is at 8.65 mm.
+        assert spec.port.y == pytest.approx(0.01)
+
+
+def test_cropped_to_strip_at_sixteen_cells_snaps_inward(support) -> None:
+    """0.1 mm cells move the port forward and the far plane back, never out.
+
+    Kills an outward snap, which would model copper the board does not have, and
+    a snap that moves the planes without declaring them: after the call those
+    numbers are the caller's, not the file's.
+    """
+    raw = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1"))
+    snapped = raw.cropped_to_strip(n_sub=16)
+
+    cell = snapped.h / 16
+    assert cell == pytest.approx(1e-4)
+    assert snapped.x_port == pytest.approx(0.0087)
+    assert snapped.x_far == pytest.approx(0.0322)
+    assert snapped.length == pytest.approx(0.0322)
+    assert snapped.x_far - snapped.x_port == pytest.approx(0.0235)
+    assert snapped.supplied == ("eps_r", "length", "x_far", "x_port")
+
+    # The port plane moved with the copper, so the port still describes the
+    # plane the study drives.
+    assert snapped.port is not None
+    assert snapped.port.position == snapped.x_port
+    assert snapped.port.reference == raw.port.reference
+
+    # Every one of those three numbers is a whole number of cells, and so is the
+    # span between the planes.
+    for value in (snapped.x_port, snapped.x_far, snapped.x_far - snapped.x_port):
+        assert value / cell == pytest.approx(round(value / cell), abs=1e-9)
+
+    # Everything else is still the board's.
+    assert snapped.w == pytest.approx(raw.w)
+    assert snapped.width == pytest.approx(raw.width)
+    assert snapped.h == pytest.approx(raw.h)
+    assert snapped.eps_r == pytest.approx(raw.eps_r)
+    assert snapped.name == raw.name
+
+    # Cropping a snap is not a change.
+    assert snapped.cropped_to_strip(n_sub=16) == snapped
+
+
+def test_cropped_to_strip_without_a_mesh_leaves_the_planes_alone(support) -> None:
+    """No ``n_sub``, no snapping: the box moves and the two planes do not.
+
+    Kills a default snap, which would silently move the port plane of every
+    caller that only meant to shorten the outline -- and would then have to
+    declare a ``x_port`` nobody asked it to touch.
+    """
+    raw = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1"))
+    cropped = raw.cropped_to_strip()
+
+    assert cropped.x_port == raw.x_port
+    assert cropped.x_far == raw.x_far
+    assert cropped.port == raw.port
+    assert cropped.supplied == ("eps_r", "length")
+    assert cropped != raw
+    assert cropped.length == pytest.approx(raw.x_far) == pytest.approx(0.03222)
+
+    # Which is why the plain crop still does not mesh: the port plane is 86.5
+    # cells and the line 235.7 at 0.1 mm, and only the snap fixes that.
+    with pytest.raises(
+            ValueError, match="n_ref = 8.650000 mm / 0.100000 mm") as caught:
+        cropped.to_cell_counts(n_sub=16, n_pml=12)
+    assert "n_line = 23.570000 mm / 0.100000 mm = 235.700000 cells" \
+        in str(caught.value)
+
+
+def test_the_snapped_span_stays_inside_the_copper(support) -> None:
+    """Every mesh, coarse or fine, snaps inward from the copper it was given.
+
+    Kills a snap to the *nearest* boundary, which at a coarse mesh would push
+    the port plane behind the pad or the far plane past the end of the track --
+    the study would then drive a strip the board does not have.
+    """
+    raw = MicrostripBoard.from_kicad(
+        support, net="RF_IN", eps_r=4.4, port_pad=("J1", "1"))
+
+    for n_sub in (2, 4, 8, 16, 20, 32, 64):
+        snapped = raw.cropped_to_strip(n_sub=n_sub)
+        assert snapped.x_port >= raw.x_port
+        assert snapped.x_far <= raw.x_far
+        assert snapped.x_far > snapped.x_port
+        assert snapped.length == snapped.x_far
+
+        cell = snapped.h / n_sub
+        for value in (snapped.x_port, snapped.x_far):
+            assert value / cell == pytest.approx(round(value / cell), abs=1e-9)
+

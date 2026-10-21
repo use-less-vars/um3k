@@ -43,6 +43,7 @@ by the caller).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 
 from .kicad import Board, Track
@@ -283,19 +284,21 @@ class MicrostripBoard:
         that covers the most track length and uses the extreme ``x`` of the
         segments that carry it.
 
-        ``port_pad`` places the port on a pad instead of at the extreme ``x`` of
-        the net.  The pad is looked up by the file's own identifiers (see
+        ``port_pad`` puts a :class:`Port` on a pad and lets the pad choose the
+        launch.  The pad is looked up by the file's own identifiers (see
         :meth:`emfit.kicad.Board.pad_at`), so an absent or repeated pad number
-        raises there rather than being guessed at here; after that the line has
-        to start where the pad is, which changes both ``w`` and ``x_port``.  The
-        width is read off the copper *at the port plane*, and ``x_far`` becomes
-        the end of the run of that width which begins at the port.  On this
-        repository's coupon that shortens the modelled line from 23.57 mm to
-        2.5 mm: the line at the connector is 2.0 mm wide, the 3.0 mm run does not
-        begin until 8.65 mm, and one uniform strip can only start where it is
-        uniform.  Because the width comes from the port plane, ``taper`` has no
-        effect on the width when ``port_pad`` is given -- it only has to be one
-        of the two accepted modes.
+        raises there rather than being guessed at here.  The line is the same
+        line either way: it is the width that covers the most of the net, and
+        the run that carries it.  A pad does **not** decide how wide the strip
+        is -- the copper under a connector is a tapered launch fan-out, and
+        reading a width there answers a question about the launch, not about the
+        line.  What the pad decides is which end of that run is the port plane:
+        the end it is nearest to, with the far plane at the other end.  On this
+        repository's coupon J1.1 sits at 4.5 mm, 4.15 mm behind the start of the
+        3.0 mm run, so the port lands on 8.65 mm and the line runs 23.57 mm to
+        32.22 mm -- the same numbers the net gives without a pad at all.
+        ``taper`` therefore has no effect when ``port_pad`` is given; it only has
+        to be one of the two accepted modes.
 
         Args:
             board: A :class:`emfit.kicad.Board`; its lengths are millimetres.
@@ -376,56 +379,33 @@ class MicrostripBoard:
                     f"{pad.net_name!r}, not on {net!r}: a port launches onto the "
                     f"line the spec models, so the pad has to sit on that net")
 
-            # The line has to begin where the instrument is attached, and the
-            # width it has there is the width of the copper at that plane -- not
-            # the widest run anywhere on the net.
+            # The line is the width that covers the most of the net, read off
+            # the whole net and not the copper under the pad: a connector's
+            # launch is a tapered fan-out, and the strip it launches onto is the
+            # run the track is mostly made of.
             x_pad_mm = pad.position[0]
-            at_plane = [track for track in tracks if _reaches(track, x_pad_mm)]
-            if not at_plane:
-                raise ValueError(
-                    f"pad {pad.reference}.{pad.number} sits at x = "
-                    f"{x_pad_mm:.6f} mm, where no segment of net {net!r} ends: a "
-                    f"port is where the instrument meets the line, so the line "
-                    f"has to begin at the port plane")
-            widths_at_port: dict[float, float] = {}
-            for track in at_plane:
+            widths: dict[float, float] = {}
+            for track in along:
                 key = round(track.width, 9)
-                widths_at_port[key] = widths_at_port.get(key, 0.0) + track.length()
-            if len(widths_at_port) > 1:
-                listing = ", ".join(
-                    f"{width:g} mm over {span:.3f} mm"
-                    for width, span in sorted(widths_at_port.items()))
-                raise ValueError(
-                    f"the segments of net {net!r} that meet the port pad at x = "
-                    f"{x_pad_mm:.6f} mm disagree about their width ({listing}): a "
-                    f"port is one plane across one uniform strip, so the line it "
-                    f"launches onto has to have a single width there")
-            w_mm = next(iter(widths_at_port))
-            x_port = x_pad_mm * MM
+                widths[key] = widths.get(key, 0.0) + track.length()
+            w_mm = max(widths, key=lambda width: widths[width])
+            run = _run_nearest(
+                [track for track in along if round(track.width, 9) == w_mm],
+                x_pad_mm)
+            low_mm = min(min(track.start[0], track.end[0]) for track in run)
+            high_mm = max(max(track.start[0], track.end[0]) for track in run)
 
-            # Walk the run of that width starting at the port plane and stop
-            # where it stops being that width: that is the far plane.
-            same_width = [track for track in along
-                          if round(track.width, 9) == w_mm]
-            x_far_mm = x_pad_mm
-            while True:
-                following = [track for track in same_width
-                             if abs(min(track.start[0], track.end[0]) - x_far_mm)
-                             <= TOL * max(1.0, abs(x_far_mm))]
-                if not following:
-                    break
-                if len(following) > 1:
-                    raise ValueError(
-                        f"net {net!r} branches at x = {x_far_mm:.6f} mm into "
-                        f"{len(following)} segments of width {w_mm:g} mm: a branch "
-                        f"is not a strip, so the line that starts at the port has "
-                        f"no single far plane")
-                x_far_mm = max(following[0].start[0], following[0].end[0])
-            x_far = x_far_mm * MM
-            if x_far <= x_port:
-                behind_mm = min(
-                    x_pad_mm,
-                    *(min(track.start[0], track.end[0]) for track in at_plane))
+            # The pad decides the launch and nothing else: which end of that run
+            # the instrument is nearest to.  The line runs from the port plane
+            # towards +x, so a pad on the down-stream end has no port plane.
+            if abs(x_pad_mm - low_mm) <= abs(high_mm - x_pad_mm):
+                x_port_mm, x_far_mm = low_mm, high_mm
+            else:
+                x_port_mm, x_far_mm = high_mm, low_mm
+            if x_far_mm <= x_port_mm:
+                here = [min(track.start[0], track.end[0]) for track in tracks
+                        if _reaches(track, x_pad_mm)]
+                behind_mm = min([x_pad_mm, *here])
                 raise ValueError(
                     f"the port at {pad.reference}.{pad.number} sits at x = "
                     f"{x_pad_mm:.6f} mm, and the {w_mm:g} mm run of net {net!r} at "
@@ -433,6 +413,8 @@ class MicrostripBoard:
                     f"model runs the line from the port plane towards the far "
                     f"wall, so a port on the far end of a line cannot be placed "
                     f"without reversing the line")
+            x_port = x_port_mm * MM
+            x_far = x_far_mm * MM
             port = Port(
                 position=x_port,
                 y=pad.position[1] * MM,
@@ -495,14 +477,14 @@ class MicrostripBoard:
     # ------------------------------------------------------------------
     # cropping the outline to the line
     # ------------------------------------------------------------------
-    def cropped_to_strip(self) -> "MicrostripBoard":
+    def cropped_to_strip(self, *, n_sub: int | None = None) -> "MicrostripBoard":
         """This same line in a box that ends where the strip does.
 
-        The crop sets ``length`` to ``x_far`` and changes nothing else -- the
-        width, the substrate, the two ``x`` planes, the loads and the port are
-        carried over untouched.  It is the **box** that moves, not the line: the
-        geometry the study models is the strip, and the outline only ever
-        supplied the lateral clearance and the far wall.
+        Without ``n_sub`` the crop sets ``length`` to ``x_far`` and changes
+        nothing else -- the width, the substrate, the two ``x`` planes, the loads
+        and the port are carried over untouched.  It is the **box** that moves,
+        not the line: the geometry the study models is the strip, and the outline
+        only ever supplied the lateral clearance and the far wall.
 
         ``'length'`` is appended to :attr:`supplied` (once), because the number
         now in that field is this method's and not the file's: the outline the
@@ -521,14 +503,62 @@ class MicrostripBoard:
         clearance or port plane is not a whole number of cells refuses exactly as
         it did before.
 
+        With ``n_sub`` given the crop also **snaps the two ``x`` planes onto the
+        mesh** that :meth:`to_cell_counts` is going to be asked for.  The cell is
+        ``h / n_sub``; ``x_port`` moves forward to the next cell boundary and
+        ``x_far`` back to the previous one, so the snap runs *inward* and never
+        claims copper the board does not have -- a port plane pulled onto copper
+        that is there, a far plane left inside copper that stops.  ``length``
+        becomes the snapped ``x_far``, and :attr:`port` moves with the port
+        plane, because a port whose ``position`` disagreed with ``x_port`` would
+        be describing a different plane from the one the study drives.  Every
+        field that actually moved joins :attr:`supplied`, for the same reason
+        ``'length'`` does: those are this method's numbers now, not the file's.
+        A snap that leaves no span between the two planes raises rather than
+        returning a line of zero or negative length.
+
+        Args:
+            n_sub: Substrate cells across ``h``, which fixes the cell size the
+                two planes are snapped onto; ``None`` -- the default -- crops the
+                box without touching either plane.
+
         Returns:
             A :class:`MicrostripBoard` whose ``length`` is its ``x_far``.
         """
-        if abs(self.x_far - self.length) <= TOL * self.length:
-            return self
-        supplied = (self.supplied if "length" in self.supplied
-                    else self.supplied + ("length",))
-        return replace(self, length=self.x_far, supplied=supplied)
+        if n_sub is None:
+            if abs(self.x_far - self.length) <= TOL * self.length:
+                return self
+            supplied = (self.supplied if "length" in self.supplied
+                        else self.supplied + ("length",))
+            return replace(self, length=self.x_far, supplied=supplied)
+
+        n_sub = int(n_sub)
+        if n_sub < 1:
+            raise ValueError(
+                f"n_sub must be at least 1, got {n_sub}: it is the number of "
+                f"substrate cells across h and so the only thing that fixes the "
+                f"cell size to snap onto")
+        cell = self.h / n_sub
+        x_port = _snap(self.x_port, cell, up=True)
+        x_far = _snap(self.x_far, cell, up=False)
+        span = x_far - x_port
+        if span <= 0.0:
+            raise ValueError(
+                f"snapping to {cell * 1e3:.6f} mm cells leaves a span of "
+                f"{span * 1e3:.6f} mm between the port plane at "
+                f"{x_port * 1e3:.6f} mm and the far plane at "
+                f"{x_far * 1e3:.6f} mm: the port plane has to stay behind the "
+                f"far plane, so this mesh is too coarse for this line")
+        supplied = list(self.supplied)
+        if x_far != self.length and "length" not in supplied:
+            supplied.append("length")
+        if x_far != self.x_far and "x_far" not in supplied:
+            supplied.append("x_far")
+        if x_port != self.x_port and "x_port" not in supplied:
+            supplied.append("x_port")
+        port = None if self.port is None else replace(self.port, position=x_port)
+        return replace(self, length=x_far, x_port=x_port, x_far=x_far,
+                       supplied=tuple(supplied), port=port)
 
     # ------------------------------------------------------------------
     # to the study's cell counts
@@ -626,6 +656,48 @@ def _reaches(track: Track, x_mm: float) -> bool:
     high = max(track.start[0], track.end[0])
     tolerance = TOL * max(1.0, abs(x_mm))
     return abs(low - x_mm) <= tolerance or abs(high - x_mm) <= tolerance
+
+
+def _run_nearest(tracks: list[Track], x_mm: float) -> list[Track]:
+    """The chain of end-to-end ``tracks`` whose end is closest to ``x_mm``.
+
+    ``tracks`` are all the same width, and a net may carry that width in more
+    than one place.  Segments that share an end are joined into one run, because
+    a router writes a long straight as several abutting segments and the strip is
+    the whole of it; the run whose nearest end is closest to ``x_mm`` is the one
+    the pad launches onto.  All lengths are millimetres.
+    """
+    runs: list[list[Track]] = []
+    for track in sorted(tracks, key=lambda t: min(t.start[0], t.end[0])):
+        low = min(track.start[0], track.end[0])
+        for run in runs:
+            top = max(max(t.start[0], t.end[0]) for t in run)
+            if abs(top - low) <= TOL * max(1.0, abs(low)):
+                run.append(track)
+                break
+        else:
+            runs.append([track])
+
+    def gap(run: list[Track]) -> float:
+        return min(abs(x_mm - min(min(t.start[0], t.end[0]) for t in run)),
+                   abs(x_mm - max(max(t.start[0], t.end[0]) for t in run)))
+
+    return min(runs, key=gap)
+
+
+def _snap(value: float, cell: float, *, up: bool) -> float:
+    """``value`` moved to the next multiple of ``cell``, up or down, or kept.
+
+    A value that is already a whole number of cells is returned untouched -- not
+    recomputed as ``round(value / cell) * cell``, which would differ from it by
+    round-off and make a second call look like a change.  A value that is not is
+    moved to the *nearer boundary in the requested direction*, so an upward snap
+    never lands below the value it started from.
+    """
+    ratio = value / cell
+    if _integral(ratio):
+        return value
+    return (math.ceil(ratio) if up else math.floor(ratio)) * cell
 
 
 def _net_code(board: Board, name: str) -> int:
