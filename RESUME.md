@@ -1,69 +1,38 @@
 # RESUME -- session state
 
-## Checkpoint 2026-10-21 — milestone 1, falsification read
+## Checkpoint 2026-10-21 -- milestone 2, falsification read
 
-Read this before trusting any earlier line in this file. For each claim this session made, what is actually
-true, and where the correction lives in `decisions.md`.
+Checkpoint -- milestone 2 complete on `wip/m2`. The branch sits four commits above `master` (`8518f72`): `d69bde2` the `--port-pad` flag, `49bca14` the `nsteps` ceiling turned into a stated cost, `4eee73f` the `microstrip_board` study plus the `str` parameter kind, and a docs commit carrying this checkpoint and section 54 of `decisions.md`. Land it with `git checkout master && git merge --ff-only wip/m2`.
 
-| claimed | true | correction |
-| --- | --- | --- |
-| "the audited board-path run closes both gaps" | it closes eleven rows and leaves exactly one open | §49 tail |
-| "both gaps are only because `audit=False`" | false; the audit changes nothing about the station `|S21|` | §49 tail |
-| "`570` s is the cost of the audit" | it is the cost of one route; the study route costs `17`-`31.79` s | §50 |
-| "the published `31.79` s clock is unaudited" | it is an audited clock, and it is the study route's | §50 |
-| "the suite is green at `9763897` with `373 passed`" | `380 passed in 350.12s (0:05:50)` at `f23e78e` with `EXIT=0`; the first run also reached `[100%]` with `EXIT=0` but printed no counts line, because `-q` on the command line stacked on `addopts = "-q"` to make `-qq` | below |
+A port can now be placed on a pad and run end to end. `python3 -m emfit board PATH --net RF_IN --port-pad J1.1 --json` fills the board spec's `port` key with the reference, the pad number, the net and the pad's copper position; `--port-pad` without `--net` exits 2 with a named reason; a pad the board does not declare is named in the refusal and left unfixed. And `python3 -m emfit run microstrip_board --set board=... --set net=... --set port_pad=J1.1` reports `|S11|` at both the measured plane and the port plane, `|S21|` between the station planes, the mismatch as a VSWR, the passivity bound (named as a bound and explicitly not a losslessness check), both beta readings, and the station-span wrapping warning. Text parameters now render as text inputs in the web form, so the browser path can express a filename or `J1.1`.
 
-**The audited reference-box run** (PID 2712, `wall_s = 600.6859359579998`, `66 x 52 x 26` at `0.40` mm,
-`npml 10`, `2400` steps, `600` warm-up / `1800` accounted, `f 5.827786408` GHz, `n_edges 280840`,
-`n_faces 274196`) reproduces, against the published digits: lateral sink `1.3360133447381923` (`1.33601`,
-`2.5e-06`), `alpha_fit 2.469703092775746` (`2.469703`, `3.8e-08`), lateral work `1.9763611915240925e-07` J
-(`1.976361e-07` J), fractions `0.07054150460217655` / `0.9294584953978235` (`7.054` / `92.946` per cent),
-`implied_s21 0.9640842781613148` (`0.9640843`), `eps_eff 3.604312254366848` (`1.0e-10`), `beta
-231.8857152867915` (`1.4e-11`), `|z0| 53.14411383477105` (`2.1e-06`), `Re z0 50.952340670283945`
-(`6.7e-06`), `|gamma| 0.006281926302682181` (`4.2e-06`), `fit_residual 0.007812967007589234` (`4.2e-06`).
+The acceptance run (`n_sub=16`, `n_air=12`, `n_top=12`, `npml=12`, `nsteps=4800`, `f0=5.8278`, `crop=true`, pad `J1.1` on net `RF_IN`): 322 x 200 x 40 cells at 0.1000 mm in a 32.20 x 20.00 x 4.00 mm box, 4800 steps of which 3600 transformed, 720 s, two figures (line phasors and the mid-plane Ez slice). beta 238.050 rad/m from the one-wave fit against 222.735 closed form, `|gamma|` 0.02055, fit residual 0.05007, eps_eff 3.79848 against 3.32545, line Z0 50.617 ohm closed form against 53.6803 from the stations, `|S11|` 0.02018 = -33.90 dB at both planes (beta is real here, so moving the plane changes phase and nothing else), VSWR 1.0412:1, `|S21|` 0.867547 = -1.234 dB over 14.10 mm between the station planes, passivity sum 0.753059, ground-current full/strip ratio 1.000. Above 4000 steps the record warns on stderr that the mesh will take minutes, quoting only the two measured anchors and predicting no wall clock.
 
-**The one row that does not close, and the audit does not touch it.** Station `|S21| = 0.9861098351994007`,
-byte-identical audited and unaudited, `9.1e-04` below the `0.9870082` this log records for the same box at
-lines 216-218 (old dump `0.9869798`). It sits inside the `7.8e-3` fit residual and four orders of magnitude
-above the round-off every other row achieves. It is not the mesh, the stackup, the port or the audit — the
-same run puts everything else on the published digits. Left open on purpose, named, not absorbed into a
-tolerance.
+Deferred, and named. No comparison is drawn with the earlier direct coupon measurement: this box is 40 cells tall and that one 52, so the absorbing lid sits closer and `|S21|` is expected to fall--two runs that differ in the lid do not check each other. The `0.2 mm` coupon cell cannot exist (`8.5 mm / 0.2 mm - 12 = 30.5` cells, so `n_sub = 16` or `32` are the only offers), which makes 0.1 mm the cheapest real cell. A bad-pad refusal exits 0 like every other `no microstrip spec:` refusal.
 
-**Five clocks, one box** (`66 x 52 x 26` at `0.40` mm, `npml 10`, `2400` steps, `600/1800`):
-`9.763592199` s direct with `audit=False`; `17` s study path with `audit=True` including `import emfit`;
-`31.792227651982103` s as actually published, from `.scratch/study_dump.txt` line 1, whose line 47 is the
-absorbed-work row; and `570.3019553209888`, `784.1913794020074`, `600.6859359579998` s for three direct
-`audit=True` calls that return bit-identical numbers. Both routes build the same
-`AbsorbedWork(groups={"end", "lateral"})` (`emfit/studies.py:1968-1974`) and call it on every step
-(`emfit/pml.py:720-721`, `:731-732`, guard `if self._audit is not None`, from `emfit/evolve.py:193`,
-`:202`); the only economy is `_build` cached per `dt` (`emfit/pml.py:364`), leaving four gathers and four
-weighted dots per step (`emfit/pml.py:369-371`). **The `35`-fold gap is an open item, not a hardware
-explanation.** Never quote `570`/`600`/`784` as the cost of the audit.
-
-**Decided, not deferred:** no audited test is added to the suite — `17` s at best to `600.69` s at worst for
-identical output, against a `302.22` s suite. The audited row is recorded with its number and its route
-named. Deferred to milestone 2 by the same ruling as `--port-pad`: CLI pad into the study path.
+Falsification read. What would have convicted the run: a launch row naming `J1.1` while the mesh still tracked the taper; `|S11|` differing in magnitude between the two planes; a passivity sum above 1; a full/strip ground-current ratio away from 1.000; an `|S21|` of exactly 1 (which would mean the two stations shared a plane). None occurred. The residual 0.05007 is the largest number in the run and is reported rather than explained away.
 
 **Hazard worth keeping.** `.scratch/` is gitignored and `.scratch/study_run.py:11` writes
 `open(".scratch/study_dump.txt", "w")` with a cwd-relative path, so re-running it from the repo root would
 overwrite the evidence file with nothing visible in `git status`. Run such scripts from `/tmp/retime`.
 
 **State.** History `master ffbb4a4` -> `a1cafd8` -> `6e65897` -> `d555b4d` -> `9763897` -> `329258e` on
-`wip/ports`. `Intro.txt` is modified in the working tree and is **not ours**: never stage, edit or revert it.
+`wip/ports` is milestone 1's chain; `master` now sits at `8518f72` and `wip/m2` carries the four milestone-2
+commits above it. `Intro.txt` is modified in the working tree and is **not ours**: never stage, edit or revert it.
 `git stash drop` is not available through this tool's surface (only push and pop), so the stale `stash@{0}`
-has to be dropped by hand. Merge with `git checkout master && git merge --ff-only wip/ports`; `wip/seam2` is
+has to be dropped by hand. Merge with `git checkout master && git merge --ff-only wip/m2`; `wip/seam2` is
 never merged.
 
 
-Branch: `wip/ports`, on top of *"ports: a port plane can be placed on a pad"*, which sits on the pad-placement commit, which sits on master's decisions commit (`ffbb4a4`). No HEAD hash is written on this line on purpose: hashes here have gone stale twice. Describe the position by its subject and confirm it with `git log -1 --oneline`.
-Base: master @ `ffbb4a4`. master already carries the ten delivered commits (tip `62d1684`) plus `ffbb4a4`, the decisions entry; `wip/ports` adds the port work on top, so master fast-forwards.
-Working tree right now: clean apart from `Intro.txt`. The arc refusal and the `port` key in `board --json` are **committed** (`ec88551`), as is the crop (`4ed5045`); no work of ours is outstanding in the tree. `Intro.txt` is modified and is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
+Branch: `wip/m2`, four commits above `master` (`8518f72`): `d69bde2` the `--port-pad` flag, `49bca14` the `nsteps` cost, `4eee73f` the `microstrip_board` study, and the docs commit carrying this checkpoint and `decisions.md` section 54. No HEAD hash is written on this line on purpose: hashes here have gone stale twice. Describe the position by its subject and confirm it with `git log -1 --oneline`.
+Base: master @ `8518f72`. master already carries the ten delivered commits (tip `62d1684`), `ffbb4a4` the milestone-1 decisions entry and `8518f72` the milestone-2 order; `wip/m2` adds the port work and its docs on top, so master fast-forwards.
+Working tree right now: clean apart from `Intro.txt` and the pending docs commit (`RESUME.md`, `decisions.md`). The arc refusal and the `port` key in `board --json` are **committed** (`ec88551`), as is the crop (`4ed5045`); nothing else of ours is outstanding in the tree. `Intro.txt` is modified and is NOT ours -- never stage, edit or revert it. `docs/report/*.tex` and `docs/report/main.pdf` are committed and clean.
 
 ## To land the work
 
 ```
 git checkout master
-git merge --ff-only wip/ports
+git merge --ff-only wip/m2
 ```
 
 `wip/seam2` (`62d1684`) is already an ancestor of master, so do not merge it again. There is no `merge` and no `branch -f` in the agent's tool surface, so these two lines are yours to run.
@@ -74,7 +43,7 @@ Code (4 commits):
 
 - `8440ae9` cli: a GIF is no longer filed as a figure, PNG only. Rationale: a GIF is not a
   citable figure, and the animation claim is split into "test" and "observation" in `ad336bd`.
-- `d75b467` cli: `python -m emfit board PATH [--net NAME] [--eps-r EPS] [--json]`.
+- `d75b467` cli: `python -m emfit board PATH [--net NAME] [--eps-r EPS] [--port-pad REF.NUM] [--json]`.
 - `8e14dd5` gerber: `emfit/gerber.py` (364 lines) plus `tests/test_gerber.py` (8 tests), the
   plotted artwork checked against the board segment for segment.
 - `962bffb` log: `decisions.md` gains 3 entries, 570 lines, 44 sections.
@@ -332,4 +301,4 @@ sections. Two entries were added:
 - So acceptance 2 of step 4 -- a port on an SMA pad runs end to end -- lands as: the port is placed, the spec is cropped and declared, the mesh is built, `9600` steps run, and the analysis declines to quote a beta. The chain is complete and the line is a tenth of a wavelength long.
 - Acceptance 1 -- the imported coupon reproduces the hand-built study -- is arithmetically impossible and was never true of the published box. The arithmetic is in the section above and comes to a `17.4` mm substrate against the import's `width 0.02` m, and `21.6` mm of line against the import's `23.57` mm. The published coupon numbers stand for a hand-built box. No published number is changed and none is called wrong.
 - The width that could be measured in principle, the dominant `w 3.0` mm run, needs `n_sub 160`, which is a `3222 x 2000 x 196` mesh and about `1.26e9` cells: not runnable here either. So the imported coupon has no measurable configuration at any mesh this code can build, and the `3.0` mm study stays hand-built.
-- Open gap: the CLI has no path from a pad to a study. `microstrip_wave_board` is a function and is unregistered; the registered microstrip study takes only `nsteps, f0, npml, load_kind, load_at_mm, load_value, eps_r, h_mm, strip_cells`, and `nsteps` is capped at `4000`, below the `9600` a `0.1` mm cell needs. That is why step 4 is a scratch script and not a command.
+- Gap closed in milestone 2: the CLI does have a path from a pad to a study. `--port-pad REF.NUM` with `--net` fills the board spec's `port` key, and the registered `microstrip_board` study runs that spec end to end, with `microstrip_wave_board` as its internal helper rather than an unregistered function; the older `microstrip` study still takes only `nsteps, f0, npml, load_kind, load_at_mm, load_value, eps_r, h_mm, strip_cells`, and `nsteps` is capped at `20000` and the record warns on stderr above `4000`: the `0.2` mm coupon needs `4800` steps (`120.27` s measured) and a `0.1` mm cell needs `9600`, so the ceiling now states a cost instead of refusing the request. So step 4 is a command, not a scratch script: `python3 -m emfit run microstrip_board --set board=... --set net=... --set port_pad=J1.1`, which is what the milestone-2 acceptance run used.
