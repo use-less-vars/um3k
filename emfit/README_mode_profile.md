@@ -84,8 +84,10 @@ clipped:
   77 z-nodes / 76 z-cells), and the strip lands on `k = 16`, `iy = 100`;
 * **98.208 %** of `sum e_y^2` is retained, and the placed strip column still
   telescopes to `v_mode` bit-for-bit -- no renormalisation is needed;
-* **1.164852 % of the modal power is invisible to the FDTD plane** (from a
-  `0.5/eta * int |E_t|^2 dA` integral on the converged profile). The projection
+* **1.164852 % of the modal power is invisible to the FDTD plane**, from a
+  `0.5/eta * int |E_t|^2 dA` integral on the converged profile. The figure is
+  **measured at one cross-section**: the 2-D eigenvalue solve carries no
+  station index, so nothing here measures it at a second `x`. The projection
   window is the **full 201-node plane, `|y| = 10 mm`**; the `8.5 mm` width that
   appears in older notes was the *PML-interior* width, **not** the projection
   domain, and is not the boundary this number refers to.
@@ -97,11 +99,19 @@ clipped:
   ceiling, not the sides.
 
   1.164852 % of the modal power lies outside the FDTD box. This is a constant
-  lateral truncation, identical at every station, so it biases the LEVEL of a
-  projection and cannot contribute to a decay along x; the observed decay is
-  separately accounted for by the lateral PML flux that sx_station measures. It
-  is therefore not in the decay budget at all, and with unit-power normalisation
-  over the projection window it does not bias the level either.
+  lateral truncation: it biases the LEVEL of a projection and cannot contribute
+  to a decay along x; the observed decay is separately accounted for by the
+  lateral PML flux that sx_station measures. It is therefore not in the decay
+  budget at all, and with unit-power normalisation over the projection window it
+  does not bias the level either.
+
+  **That the truncation is the same at every station is inferred, not
+  measured.** The number is computed once, at one cross-section, in a 2-D
+  eigenvalue solve that has no station index; the argument is the geometry --
+  the mode is x-invariant on a uniform line, so the clip removes the same
+  fraction everywhere. A per-station measurement would need the transverse
+  power integral evaluated at each station's `x`, i.e. a station-indexed plane
+  capture on a run carrying the line, not a single eigen-cross-section.
 
   For the record: the earlier 1.1466 % figure was computed on a **different
   window** (a clip at `|y| = 8.5 mm`) and must never be quoted alongside the
@@ -114,7 +124,7 @@ size, or `k_strip < n_sub`) still raises `ValueError`.
 
 ## Tests
 
-`tests/test_mode_profile.py`, 12 tests, all passing in ~17 s: the edge field as
+`tests/test_mode_profile.py`, 12 tests, `12 passed in 2.90s`: the edge field as
 the exact gradient of `phi`; the `v_mode` telescoping over all five strip columns
 (roundoff) and the per-cent fringing bound off the strip; the normalisation
 domain (unit power on the projection window, 1.01178580 W on the wide box); `e_z < 0` over the whole

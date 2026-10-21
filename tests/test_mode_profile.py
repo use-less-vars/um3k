@@ -177,13 +177,18 @@ def test_placed_profile_keeps_its_normalisation():
 def test_normalisation_domain_is_the_projection_window():
     """Unit power is measured on the clipped plane, not on the wide box.
 
-    ``0.5 Re(v_mode conj(i_mode)) = 1 W`` and the discrete Poynting sum over the
-    very slices :meth:`ModeProfile.plane_window` copies is 1 W to roundoff --
-    that is the domain the port mode is ever measured on.  The whole box carries
-    1.01178580 W at the same scale, i.e. 1.164852 % more, so a re-normalisation
-    over the wide box would put the window 1.165 % (0.584 % in amplitude) low
-    and fail here.  This is what pins the *domain* of the normalisation.
+    The guard is the discrete Poynting sum over the very slices
+    :meth:`ModeProfile.plane_window` copies: it is 1 W to roundoff, that being
+    the domain the port mode is ever measured on.  The whole box carries
+    1.01178580 W at the same scale, i.e. 1.164852 % more (a cross-section
+    figure -- the solve has no station index), so a re-normalisation over the
+    wide box would put the window 1.165 % (0.584 % in amplitude) low and fail
+    *there*, on ``the plane_window slices carry ...``.  This is what pins the
+    *domain* of the normalisation.
     """
+    # Consistency check, not a domain guard: ``i_mode`` is *defined* as
+    # ``_POWER_W / (0.5 * v_mode)``, so this identity holds by construction
+    # under any normalisation, including one taken over the wide box.
     p = _converged()
     assert abs(0.5 * p.v_mode * p.i_mode - 1.0) <= 1e-12, (
         f"0.5 v_mode i_mode = {0.5 * p.v_mode * p.i_mode!r} W, expected 1 W "
@@ -211,7 +216,9 @@ def test_normalisation_domain_is_the_projection_window():
     )
     assert abs(p_box - 1.01178580) < 1e-8, (
         f"power_full_box = {p_box!r} W, pinned at 1.01178580 W = 1 / (1 - "
-        "0.01164852), i.e. the 1.164852 % the clip removed"
+        "0.01164852), i.e. the 1.164852 % the clip removed at this "
+        "cross-section (station-independence is inferred, not measured: "
+        "a 2-D eigen-solve has no station index)"
     )
 
 

@@ -600,12 +600,20 @@ def microstrip_mode_profile(
     over the converged box.  The two are not the same domain: 1.164852 % of this
     profile's modal power lies outside the FDTD plane (0.571953 % from the
     ``|y| > 10 mm`` clip, 0.780454 % above ``z = 7.6 mm``, 0.187555 % in the
-    corner both cut).  That clip is a constant lateral truncation, identical at
-    every station, so it biases the *level* of an excitation -- by
+    corner both cut) -- measured here at the one cross-section the 2-D solve
+    provides, since it carries no station index.  That clip biases the *level*
+    of an excitation -- by
     ``sqrt(P_window / P_box) = 0.994159``, i.e. 0.584 % in amplitude and 1.165 %
     in power -- and cannot contribute to a decay along ``x``.  Normalising on the
     window removes the bias by construction instead of leaving it to be argued
     away.
+
+    What is *measured* is the cross-section figure; that the clip removes the
+    same fraction at **every station along ``x`` is inferred** from the
+    geometry -- the mode of a uniform line is ``x``-invariant -- and not
+    measured by this solve.  A per-station figure would need the transverse
+    power integral evaluated at each station's ``x``, i.e. a station-indexed
+    plane capture on a run carrying the line, not a single eigen-cross-section.
 
     The ``1 V`` strip of the potential solve is therefore *reported*, not
     imposed: ``v_mode`` is the voltage that unit power implies on this geometry,
