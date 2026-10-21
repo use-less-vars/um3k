@@ -240,3 +240,27 @@ sections. Two entries were added:
 - `emfit/board.py:241-251`, `:264-269`, `:275-283`: a `taper` other than `'raise'` or
   `'dominant'`, a net with no track segment, a net whose segments do not run along x, or more
   than one width under `taper='raise'` are each refused with the net named.
+
+## The crop lands the far plane; the division is separate arithmetic
+
+- Dominant-width line: `x_port 0.00865` -> `x_far 0.03222` = `23.57` mm of line over `h 1.6` mm,
+  in a `70` mm outline. `n_line` is a whole number of cells only when `n_sub` is a multiple of
+  `160` (`n_line = 2357 * n_sub / 160`); `n_ref` is the next binding dimension and needs a
+  multiple of `32`.
+- Smallest meshable spec for that box: `n_sub 160`, `0.01` mm cell, `n_strip 300`,
+  `n_clean 838`, `n_ref 853`, `n_line 2357` -- all confirmed against `to_cell_counts`. At
+  `n_sub 32` the same spec refuses: "no n_sub in 1..32 fits every dimension". Nothing is broken;
+  a `23.57` mm line in a `70` mm outline simply does not divide into a cubic mesh small enough to
+  search.
+- Consequence for the published coupon study: `124 x 87 x 44` cells at `0.200` mm, `npml 12`
+  (`decisions.md:527`) was hand-set, not derived from the import, and cannot be reproduced from
+  it -- `87 = 2 * (12 + n_clean) + n_strip` needs `n_strip 15` (`w 3.0` mm) and `n_clean 24`, a
+  `17.4` mm wide box, and `124 - 12` leaves `n_ref + n_line = 112` (`108` of line only if
+  `n_ref 4`, i.e. `x_port 3.2` mm, which no document states -- that figure is arithmetic, not a
+  quote). The import gives `w 2.0` mm on a `20` mm box, `x_port 4.5`, `x_far 7.0` mm, whose
+  `n_ref` at `0.200` mm is `10.5`. State it as geometry: do not chase the old box, and do not
+  change the published numbers.
+- The cropped port-bearing spec (`net='RF_IN'`, `port_pad=('J1','1')`) does divide: `n_sub 16`,
+  `n_pml 12`, `0.1` mm cell, `n_strip 20`, `n_clean 78`, `n_ref 33`, `n_line 25`. That is the spec
+  the end-to-end run uses.
+
