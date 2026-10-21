@@ -2869,19 +2869,20 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         passivity_row = (
             f"{bound_sum:.6f} from |S11|^2 = {gamma_sq:.6f} plus |S21|^2 = "
             f"{s21_sq:.6f}: a passive network must satisfy "
-            "|S11|^2 + |S21|^2 <= 1, and the bound is the whole of the claim "
-            "-- a lossless network sits at exactly 1, so this row is not a "
-            "losslessness check.  The plain sum is legitimate here because "
-            "both magnitudes are read on the same cross-section, at the two "
-            "station planes, and the split hands both of them the one zc "
-            "chosen for this record: the per-plane power-wave weighting "
-            "sqrt(Re zc) that the general form of the sum carries is then the "
-            "same factor on both terms and cancels, and two planes on "
-            "different cross-sections would need it written out.  The test is "
-            "one-sided: the surrounding matched layers absorb power the two "
-            "planes never see again, which lowers the sum, while a sign or a "
-            "normalisation error in the wave split is what lifts it above 1, "
-            "so a wide margin here is expected and not a defect")
+            "|S11|^2 + |S21|^2 <= 1, and the two sides of that bound are two "
+            "different claims.  Above 1 is a bug.  Near 1 is what a model "
+            "with no material loss should return, because the sum is the "
+            "power budget of the two station planes and with nothing in the "
+            "model to absorb energy there is nothing for it to be short of.  "
+            "Well below 1 is power that left through something the two planes "
+            "do not see -- an absorbing boundary close enough to the line, a "
+            "source that radiates -- and that sink has to be found before any "
+            "number from this run is quoted.  The plain sum is legitimate "
+            "here because both magnitudes are read on the same cross-section, "
+            "the two station planes, and the split hands both of them the one "
+            "zc chosen for this record: the per-plane sqrt(Re zc) weighting "
+            "is then the same factor on both terms and cancels, where two "
+            "planes on different cross-sections would need it written out.")
     else:
         passivity_row = (
             "n/a: this record has no finite |S11| or |S21| to add, so there "
@@ -3507,11 +3508,20 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
         passivity_row = (
             f"{gamma_sq + s21_sq:.6f} from |S11|^2 = {gamma_sq:.6f} plus "
             f"|S21|^2 = {s21_sq:.6f}: a passive network must satisfy "
-            "|S11|^2 + |S21|^2 <= 1, and that is the whole of the claim -- a "
-            "lossless network sits at exactly 1, so this is not a losslessness "
-            "check.  The surrounding matched layers only ever remove power "
-            "the two planes never see again, which lowers the sum, so a wide "
-            "margin is the expected reading and not a defect")
+            "|S11|^2 + |S21|^2 <= 1, and the two sides of that bound are two "
+            "different claims.  Above 1 is a bug.  Near 1 is what a model "
+            "with no material loss should return, because the sum is the "
+            "power budget of the two station planes and with nothing in the "
+            "model to absorb energy there is nothing for it to be short of.  "
+            "Well below 1 is power that left through something the two planes "
+            "do not see -- an absorbing boundary close enough to the line, a "
+            "source that radiates -- and that sink has to be found before any "
+            "number from this run is quoted.  The plain sum is legitimate "
+            "here because both magnitudes are read on the same cross-section, "
+            "the two station planes, and the split hands both of them the one "
+            "zc chosen for this record: the per-plane sqrt(Re zc) weighting "
+            "is then the same factor on both terms and cancels, where two "
+            "planes on different cross-sections would need it written out.")
     else:
         passivity_row = (
             "n/a: this record has no finite |S11| or |S21| to add, so there is "
