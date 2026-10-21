@@ -30,14 +30,51 @@ What is deliberately not modelled
 * **Zone fills.**  A poured zone stores a triangulation per island, which is a
   mesh rather than a description.  :attr:`Zone.has_fill` records whether such
   geometry is present and nothing more; interpreting it is the caller's job.
-* **Footprint-local geometry.**  Pad positions stay in the footprint frame,
-  exactly as the file writes them (see :class:`Pad`).  Rotating and translating
-  them onto the board is a placement question, not a parsing one, and this
-  module does not pretend to answer it.
+* **Footprint-local geometry in the raw model.**  A :class:`Pad` keeps the
+  position the file stores for it, which is in the footprint's own frame.  The
+  one place that rotates and translates a pad onto the board is
+  :meth:`Board.pads_in_board_frame`, and that view -- not :attr:`Board.pads` --
+  is what geometry code should consume.
+
+Pad placement
+-------------
+:meth:`Board.pads_in_board_frame` turns a footprint-local :class:`Pad` into a
+:class:`PlacedPad` in board millimetres.  For a pad at footprint-local
+``(x, y)`` inside a footprint at ``(px, py)`` whose ``at`` carries the
+orientation ``theta``, the board-frame centre is::
+
+    x' = px + x cos(theta) + y sin(theta)
+    y' = py + y cos(theta) - x sin(theta)
+
+Everything stays in the file's own frame, where ``y`` grows *downwards*: read
+on screen, the formula above is a *counter-clockwise* rotation by ``theta``,
+which is what pcbnew calls a positive orientation.  The sign was not assumed --
+it was checked against KiCad's own artwork.  ``J1`` of the coupon fixture is
+placed at ``(4.5, 10, 90)`` and its asymmetric silkscreen chevron, drawn at
+footprint-local ``(-4.1, 0.5) -> (-3.6, 0) -> (-4.1, -0.5)``, appears in
+``F_Silkscreen.gto`` at ``(5.0, 14.1) -> (4.5, 13.6) -> (4.0, 14.1)`` (Gerber
+``y`` negated), which is what this sign produces and what the opposite sign
+cannot produce.
+
+A footprint on ``B.Cu`` needs no second mirroring here.  KiCad mirrors a
+footprint's pads when the footprint is *flipped* and then writes the result:
+pcbnew stores each pad's relative position as ``RotatePoint(pos - fp_pos,
+-fp_orientation)`` and writes pad layer sets as ``B.Cu``/``B.Mask``, so the
+stored local geometry is already mirrored and the formula above holds on both
+sides.  Applying another mirror on top of it would mirror twice.  Unlike the
+rotation sign, that reading is *not* verified against an oracle here: there is
+no ``B.Cu`` footprint anywhere in this repository, so :attr:`PlacedPad.side` is
+reported and nothing further is claimed about the back side.
+
+Layer questions are refused rather than guessed.  A footprint whose layer is
+neither ``F.Cu`` nor ``B.Cu``, and a pad declaring a layer that is neither
+copper nor mask nor paste or a copper layer this board does not have, raise
+:class:`LayerError` naming the footprint and, where there is one, the pad.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,8 +85,10 @@ import numpy as np
 __all__ = [
     "Board",
     "Footprint",
+    "LayerError",
     "Net",
     "Pad",
+    "PlacedPad",
     "StackupEntry",
     "Track",
     "Via",
@@ -318,7 +357,9 @@ class Pad:
 
     ``position`` is *footprint-local* millimetres -- what the file stores, in
     the footprint's own frame -- so it must be rotated and translated by the
-    owning :class:`Footprint` before it means anything on the board.
+    owning :class:`Footprint` before it means anything on the board.  Ask
+    :meth:`Board.pads_in_board_frame` for that placed view; it is the only place
+    in this module that does the arithmetic.
 
     ``size`` keeps the file's own shape (one number for a circular pad, two for
     anything rectangular or oval) and ``layers`` keeps the raw layer tokens,
@@ -368,6 +409,94 @@ class Footprint:
     layer: str
     pads: list[Pad] = field(default_factory=list)
     library_link: str | None = None
+
+
+#: Pad layer tokens that are not copper and need no interpretation: they carry
+#: no current and take no part in the board-frame transform.
+_NON_COPPER_PAD_LAYERS = frozenset(
+    {"F.Mask", "B.Mask", "*.Mask", "F.Paste", "B.Paste", "*.Paste"}
+)
+
+
+class LayerError(ValueError):
+    """A footprint or pad sits on a layer whose meaning this module cannot place.
+
+    Raised instead of guessing, because a wrong side or a wrong copper layer
+    would silently put a pad on the wrong face of the board -- exactly the kind
+    of error a field solver is least able to notice.
+    """
+
+
+@dataclass(frozen=True)
+class PlacedPad:
+    """One pad in board coordinates, as :meth:`Board.pads_in_board_frame` returns it.
+
+    ``position`` is the pad centre in board millimetres and ``rotation`` the
+    absolute orientation in degrees, the footprint's ``at`` angle plus the pad's
+    own; the module docstring states the convention and how its sign was
+    checked.  ``side`` is ``"front"`` or ``"back"`` and comes from the owning
+    footprint's layer, while ``copper_layers`` lists the copper layers of *this
+    board* that the pad actually reaches -- every one of them for a ``*.Cu``
+    through-hole pad, a single layer for an SMD pad.  ``net_name`` is
+    :meth:`Board.net_name` of the pad's net code, so an unnamed net is ``""``.
+    """
+
+    reference: str
+    number: str
+    side: str
+    position: Point
+    rotation: float
+    copper_layers: tuple[str, ...]
+    shape: str
+    size: tuple[float, ...]
+    drill: float | None
+    net_name: str
+
+
+def _footprint_side(footprint: Footprint) -> str:
+    """``"front"`` or ``"back"`` from the footprint layer, refusing anything else."""
+    if footprint.layer == "F.Cu":
+        return "front"
+    if footprint.layer == "B.Cu":
+        return "back"
+    raise LayerError(
+        f"footprint {footprint.reference!r} is placed on layer "
+        f"{footprint.layer!r}, which is neither 'F.Cu' nor 'B.Cu', so which side "
+        "of the board its pads sit on is not intelligible"
+    )
+
+
+def _pad_copper_layers(
+    pad: Pad, copper: list[str], reference: str
+) -> tuple[str, ...]:
+    """The board copper layers ``pad`` reaches, refusing unknown layer tokens."""
+    # A file with no ``(layers ...)`` table still has the two outer layers.
+    known = list(copper) or ["F.Cu", "B.Cu"]
+    reached: list[str] = []
+    for token in pad.layers:
+        if token == "*.Cu":
+            reached.extend(known)
+        elif token == "F&B.Cu":
+            reached.extend(name for name in ("F.Cu", "B.Cu") if name in known)
+        elif token in _NON_COPPER_PAD_LAYERS:
+            continue
+        elif token.endswith(".Cu"):
+            if token not in known:
+                raise LayerError(
+                    f"pad {pad.number!r} of footprint {reference!r} declares copper "
+                    f"layer {token!r}, which this board does not have"
+                )
+            reached.append(token)
+        else:
+            raise LayerError(
+                f"pad {pad.number!r} of footprint {reference!r} declares layer "
+                f"{token!r}, which is neither copper, mask nor paste"
+            )
+    if not reached:
+        raise LayerError(
+            f"pad {pad.number!r} of footprint {reference!r} reaches no copper layer"
+        )
+    return tuple(dict.fromkeys(reached))
 
 
 @dataclass
@@ -427,8 +556,52 @@ class Board:
     # ------------------------------------------------------------------
     @property
     def pads(self) -> list[Pad]:
-        """Every pad of every footprint, flattened."""
+        """Every pad of every footprint, flattened, still footprint-local."""
         return [pad for fp in self.footprints for pad in fp.pads]
+
+    def pads_in_board_frame(self) -> list[PlacedPad]:
+        """Every pad, rotated and translated into board coordinates.
+
+        Pads come back footprint by footprint in the order
+        :attr:`footprints` holds them and, within a footprint, in file order, so
+        a caller can match them against an artwork import one for one.  The
+        transform and the sign of the rotation are stated in the module
+        docstring; so is the one thing here that is reasoned rather than
+        verified, namely the back side.  A flipped footprint follows the same
+        rule because KiCad writes each pad's post-flip local coordinates; no
+        back-side footprint exists in this repository, so that half is argued
+        from the format and not checked against plotted artwork.
+
+        Raises
+        ------
+        LayerError
+            If a footprint sits on a layer that is neither ``F.Cu`` nor
+            ``B.Cu``, or a pad declares a layer that cannot be placed.
+        """
+        placed: list[PlacedPad] = []
+        for footprint in self.footprints:
+            side = _footprint_side(footprint)
+            radians = math.radians(footprint.rotation)
+            cos, sin = math.cos(radians), math.sin(radians)
+            px, py = footprint.position
+            copper = _pad_copper_layers
+            for pad in footprint.pads:
+                x, y = pad.position
+                placed.append(
+                    PlacedPad(
+                        reference=footprint.reference,
+                        number=pad.number,
+                        side=side,
+                        position=(px + x * cos + y * sin, py + y * cos - x * sin),
+                        rotation=(footprint.rotation + pad.rotation) % 360.0,
+                        copper_layers=copper(pad, self.copper_layers, footprint.reference),
+                        shape=pad.shape,
+                        size=pad.size,
+                        drill=pad.drill,
+                        net_name=self.net_name(pad.net),
+                    )
+                )
+        return placed
 
     def net_name(self, code: int) -> str:
         """Name of net ``code``, or ``""`` if the board never declares it."""

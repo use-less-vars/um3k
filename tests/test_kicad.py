@@ -20,13 +20,18 @@ files written by a KiCad version newer than the reader.
 
 from __future__ import annotations
 
-from collections import Counter
+import math
+import re
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from emfit.gerber import read_gerber
 from emfit.kicad import (
+    LayerError,
+    PlacedPad,
     Board,
     Footprint,
     Net,
@@ -638,3 +643,312 @@ def test_missing_kicad_pcb_form_raises(tmp_path: Path) -> None:
     path.write_text("(not_a_board (version 1))", encoding="utf-8")
     with pytest.raises(ValueError):
         load_board(path)
+
+
+# ---------------------------------------------------------------------------
+# pads in board coordinates, against the two importers that can contradict them
+# ---------------------------------------------------------------------------
+COUPON = Path(__file__).resolve().parent.parent / "kicad_support_project"
+COUPON_BOARD = COUPON / "kicad_support_project.kicad_pcb"
+COUPON_GERBERS = COUPON / "gerbers"
+COUPON_F_CU = COUPON_GERBERS / "kicad_support_project-F_Cu.gtl"
+COUPON_F_SILK = COUPON_GERBERS / "kicad_support_project-F_Silkscreen.gto"
+COUPON_DRILL = COUPON_GERBERS / "kicad_support_project.drl"
+
+#: A Gerber position is written under ``%FSLAX46Y46``: four integer and six
+#: decimal digits of a millimetre, so one nanometre.  A placed pad may therefore
+#: differ from the artwork by that resolution and no more.  The number is read
+#: off the file's own format rather than fitted to the data.
+PLACEMENT_TOL = 1e-6
+
+
+@pytest.fixture(scope="module")
+def coupon() -> Board:
+    """The Gerber-exported coupon, parsed once for the placement tests."""
+    return load_board(COUPON_BOARD)
+
+
+def _distance(a, b) -> float:
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def _match_one_for_one(left, right, tol: float = PLACEMENT_TOL):
+    """Pair two point lists greedily; return ``(pairs, left_only, right_only)``.
+
+    Greedy nearest match, one partner per point.  Returning what was left over
+    on *both* sides is the point: a pad no artwork claims and a piece of
+    artwork no pad claims fail separately, so neither a missing nor a doubly
+    counted pad can hide behind a matching total.
+    """
+    pairs, left_only = [], []
+    remaining = list(right)
+    for point in left:
+        best = min(remaining, key=lambda c: _distance(point, c), default=None)
+        if best is not None and _distance(point, best) <= tol:
+            pairs.append((point, best))
+            remaining.remove(best)
+        else:
+            left_only.append(point)
+    return pairs, left_only, remaining
+
+
+def _assert_points_match(found, expected, tol: float = 1e-9) -> None:
+    pairs, only_found, only_expected = _match_one_for_one(found, expected, tol)
+    assert only_found == []
+    assert only_expected == []
+    assert len(pairs) == len(expected)
+
+
+def test_front_copper_pads_match_the_gerber_flashes(coupon: Board) -> None:
+    """Every front pad is one ``D03`` flash of the exported ``F.Cu`` layer."""
+    layer = read_gerber(COUPON_F_CU)
+    # KiCad writes Gerber with y negated relative to the board file.
+    flashes = [(flash.x, -flash.y) for flash in layer.flashes]
+    pads = [p for p in coupon.pads_in_board_frame() if "F.Cu" in p.copper_layers]
+
+    assert all(isinstance(pad, PlacedPad) for pad in pads)
+    assert len(pads) == 12
+    assert len(flashes) == 12
+
+    pairs, pad_only, flash_only = _match_one_for_one(
+        [pad.position for pad in pads], flashes
+    )
+
+    print(f"{len(pairs)} of {len(pads)} pads matched one of {len(flashes)} flashes")
+    for pad in pads:
+        hit = [f for pos, f in pairs if pos is pad.position or pos == pad.position]
+        print(
+            f"  {pad.reference:>3} {pad.number:>2} "
+            f"({pad.position[0]:8.3f}, {pad.position[1]:8.3f}) -> {hit}"
+        )
+
+    assert pad_only == []
+    assert flash_only == []
+    assert len(pairs) == len(pads) == len(flashes)
+
+
+def _excellon_hits(path: Path) -> list[tuple[float, float, float]]:
+    """Parse a metric Excellon file into ``(diameter, x, y)``, y un-negated.
+
+    Deliberately here and not in the package: the drill file is a fixture for
+    cross-checking the board reader, not something emfit ships a reader for.
+    """
+    tools: dict[int, float] = {}
+    diameter: float | None = None
+    hits: list[tuple[float, float, float]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        tool = re.fullmatch(r"T(\d+)C([\d.]+)", line)
+        if tool:
+            tools[int(tool.group(1))] = float(tool.group(2))
+            continue
+        select = re.fullmatch(r"T(\d+)", line)
+        if select:
+            diameter = tools[int(select.group(1))]
+            continue
+        hit = re.fullmatch(r"X(-?[\d.]+)Y(-?[\d.]+)", line)
+        if hit and diameter is not None:
+            hits.append((diameter, float(hit.group(1)), -float(hit.group(2))))
+    return hits
+
+
+def test_through_hole_pads_match_the_excellon_drill(coupon: Board) -> None:
+    """Every drilled hole is a through-hole pad, and every such pad a hole."""
+    hits = _excellon_hits(COUPON_DRILL)
+    through = [p for p in coupon.pads_in_board_frame() if p.drill is not None]
+
+    assert Counter(round(d, 6) for d, _, _ in hits) == {1.5: 2, 1.7: 8}
+    assert len(through) == 10
+
+    matched = 0
+    for diameter in (1.5, 1.7):
+        pads = [p for p in through if p.drill == pytest.approx(diameter)]
+        holes = [(x, y) for d, x, y in hits if d == pytest.approx(diameter)]
+        pairs, pad_only, hole_only = _match_one_for_one(
+            [p.position for p in pads], holes
+        )
+        print(
+            f"  T{diameter}: {len(pairs)} pairs from "
+            f"{len(pads)} pads and {len(holes)} holes"
+        )
+        assert pad_only == []
+        assert hole_only == []
+        matched += len(pairs)
+
+    assert matched == len(through) == len(hits)
+
+
+def test_rotated_footprints_land_on_the_board(coupon: Board) -> None:
+    """J1 is placed at 90 degrees and J2 at 270; both centres are by hand."""
+    placed = [p for p in coupon.pads_in_board_frame() if p.reference in ("J1", "J2")]
+    by_ref = defaultdict(list)
+    for pad in placed:
+        by_ref[pad.reference].append(pad)
+
+    assert sorted(by_ref) == ["J1", "J2"]
+    # 4.5/65.5 +/- 2.54 keeps the same four offsets at either quarter turn.
+    _assert_points_match(
+        [p.position for p in by_ref["J1"]],
+        [
+            (4.5, 10.0),
+            (1.96, 7.46),
+            (1.96, 12.54),
+            (7.04, 7.46),
+            (7.04, 12.54),
+        ],
+    )
+    _assert_points_match(
+        [p.position for p in by_ref["J2"]],
+        [
+            (65.5, 10.0),
+            (62.96, 7.46),
+            (62.96, 12.54),
+            (68.04, 7.46),
+            (68.04, 12.54),
+        ],
+    )
+
+    for pad in by_ref["J1"]:
+        assert pad.rotation == pytest.approx(90.0)
+    for pad in by_ref["J2"]:
+        assert pad.rotation == pytest.approx(270.0)
+    for pad in placed:
+        assert pad.side == "front"
+        assert pad.copper_layers == ("F.Cu", "B.Cu")
+        assert pad.drill in (pytest.approx(1.5), pytest.approx(1.7))
+
+QUARTER_TURN = """(kicad_pcb (version 20221018) (generator pcbnew)
+  (net 0 "")
+  (net 1 "N")
+  (footprint "Test:Asymmetric" (layer "F.Cu") (at 10 10 90)
+    (property "Reference" "Q1")
+    (property "Value" "ASYM")
+    (pad "1" smd rect (at 1 0) (size 1 1) (layers "F.Cu" "F.Mask") (net 1 "N"))
+    (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu" "F.Mask") (net 1 "N"))
+  )
+)
+"""
+
+
+def test_quarter_turn_of_an_asymmetric_footprint(tmp_path: Path) -> None:
+    """A 90-degree footprint whose pads cannot be confused with each other.
+
+    Every pad on the coupon is symmetric under a quarter turn, so the coupon
+    cannot say which way a rotation goes; this board can.  Under the documented
+    rule local ``(1, 0)`` becomes ``(0, -1)`` and local ``(0, 2)`` becomes
+    ``(2, 0)``; the opposite handedness would give ``(10, 11)`` and
+    ``(8, 10)``.
+    """
+    path = tmp_path / "rotated.kicad_pcb"
+    path.write_text(QUARTER_TURN, encoding="utf-8")
+
+    pads = {pad.number: pad for pad in load_board(path).pads_in_board_frame()}
+    assert set(pads) == {"1", "2"}
+    assert pads["1"].position == (pytest.approx(10.0), pytest.approx(9.0))
+    assert pads["2"].position == (pytest.approx(12.0), pytest.approx(10.0))
+    assert pads["1"].rotation == pytest.approx(90.0)
+    assert pads["1"].reference == "Q1"
+    assert pads["1"].side == "front"
+    assert pads["1"].net_name == "N"
+    assert pads["1"].copper_layers == ("F.Cu",)
+    assert pads["1"].shape == "rect"
+    assert pads["1"].size == (1.0, 1.0)
+    assert pads["1"].drill is None
+
+
+def test_rotation_sign_is_the_one_kicad_silkscreen_uses(coupon: Board) -> None:
+    """The handedness comes from KiCad's own plot, not from a guess.
+
+    J1 carries an asymmetric silk chevron at footprint-local
+    ``(-4.1, 0.5) -> (-3.6, 0) -> (-4.1, -0.5)``.  Rotating it by J1's own
+    ``at`` angle must land on the chevron KiCad plotted; the opposite sign would
+    put it at ``(4.0, 5.9) -> (4.5, 6.4) -> (5.0, 5.9)``, which is not in the
+    file.
+    """
+    j1 = next(fp for fp in coupon.footprints if fp.reference == "J1")
+    assert j1.rotation == pytest.approx(90.0)
+
+    theta = math.radians(j1.rotation)
+    local = [(-4.1, 0.5), (-3.6, 0.0), (-4.1, -0.5)]
+    expected = [
+        (
+            round(j1.position[0] + x * math.cos(theta) + y * math.sin(theta), 6),
+            round(j1.position[1] + y * math.cos(theta) - x * math.sin(theta), 6),
+        )
+        for x, y in local
+    ]
+    assert expected == [(5.0, 14.1), (4.5, 13.6), (4.0, 14.1)]
+
+    layer = read_gerber(COUPON_F_SILK)
+    plotted = {
+        (round(s.x0, 6), round(-s.y0, 6))
+        for s in layer.segments
+        if abs(s.width - 0.12) < 1e-9 and 4.0 <= s.x0 <= 5.1 and 13.5 <= -s.y0 <= 14.2
+    }
+    # The chevron is two strokes meeting at the apex, i.e. three points; the
+    # box above excludes the squares it sits inside.  Only each stroke's start
+    # is collected, so the apex shows up once, as the second stroke's start.
+    assert plotted == {(5.0, 14.1), (4.5, 13.6)}
+    assert (5.0, 14.1) in plotted
+    assert (4.5, 13.6) in plotted
+
+
+def test_unintelligible_layers_are_refused(tmp_path: Path) -> None:
+    """A layer this module cannot place raises instead of being guessed."""
+    inner = tmp_path / "inner.kicad_pcb"
+    inner.write_text(
+        "(kicad_pcb (version 20221018) (generator pcbnew)\n"
+        '  (net 0 "")\n'
+        '  (footprint "Test:Inner" (layer "In1.Cu") (at 1 1)\n'
+        '    (property "Reference" "U9")\n'
+        '    (pad "1" smd rect (at 0 0) (size 1 1) (layers "In1.Cu") (net 0 ""))\n'
+        "  )\n)\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(LayerError, match="U9"):
+        load_board(inner).pads_in_board_frame()
+
+    silk = tmp_path / "silk.kicad_pcb"
+    silk.write_text(
+        "(kicad_pcb (version 20221018) (generator pcbnew)\n"
+        '  (net 0 "")\n'
+        '  (footprint "Test:Silk" (layer "F.Cu") (at 1 1)\n'
+        '    (property "Reference" "U8")\n'
+        '    (pad "3" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.SilkS") (net 0 ""))\n'
+        "  )\n)\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(LayerError, match="U8") as raised:
+        load_board(silk).pads_in_board_frame()
+    assert "'3'" in str(raised.value)
+
+
+FLIPPED = """(kicad_pcb (version 20221018) (generator pcbnew)
+  (net 0 "")
+  (net 1 "N")
+  (footprint "Test:Asymmetric" (layer "B.Cu") (at 10 10 90)
+    (property "Reference" "Q2")
+    (property "Value" "ASYM")
+    (pad "1" smd rect (at 1 0) (size 1 1) (layers "B.Cu" "B.Mask") (net 1 "N"))
+  )
+)
+"""
+
+
+def test_flipped_footprint_follows_the_documented_rule(tmp_path: Path) -> None:
+    """A back-side footprint is placed by the same rule as a front one.
+
+    KiCad writes a flipped footprint's pads already mirrored -- the stored local
+    coordinates are post-flip and the pad layer set reads ``B.Cu``/``B.Mask`` --
+    so no second mirror is applied here.  No board in this repository has a
+    ``B.Cu`` footprint, so this test pins the choice rather than an oracle: it
+    exists so that changing the back-side rule has to break a test.
+    """
+    path = tmp_path / "flipped.kicad_pcb"
+    path.write_text(FLIPPED, encoding="utf-8")
+
+    pads = {pad.number: pad for pad in load_board(path).pads_in_board_frame()}
+    assert pads["1"].side == "back"
+    assert pads["1"].copper_layers == ("B.Cu",)
+    # The same arithmetic as the front: local (1, 0) at +90 -> (0, -1).
+    assert pads["1"].position == (pytest.approx(10.0), pytest.approx(9.0))
