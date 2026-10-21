@@ -107,8 +107,15 @@ tense. Where the two disagree, the roadmap is authoritative for status and this 
         and a bistatic scattering width computed through it has been set beside a Mie series
         (Section~\ref{sec:res-scatter}), though the agreement the milestone asks for has not been reached.
         Waveguide ports and S-parameters remain unavailable, and with them every input impedance.
-  \item[] \textbf{Not implemented.} Geometry import from a board layout. A large-grid eigensolver, the dense
-        path refusing more than 3000 free edges. Magnetoquasistatic eddy currents and time-parallel
+  \item[] \textbf{Layout import, in part.} A KiCad board file is read into a board model -- layers, nets,
+        tracks, vias, zones, stack-up -- and the model is mapped to a runnable cross-section: the coupon shipped in
+        the repository comes back as a $1.600$ mm substrate of $\eps_r = 4.4$ under a $3.00$ mm strip with a port
+        plane and a far end, and the artwork reader agrees with the board reader segment for segment. What has
+        been measured through it is the cross-section's bias against closed form, $7.8$ per cent too high in
+        $\eps_{\mathrm{eff}}$ (Section~\ref{sec:msres-import}), which is the bias the hand-written reference box
+        carries as well. The port it carries is a geometric plane and not a driven one, so no impedance is
+        measured through it.
+  \item[] \textbf{Not implemented.} A large-grid eigensolver, the dense path refusing more than 3000 free edges. Magnetoquasistatic eddy currents and time-parallel
         integration. Lossy and dispersive media: $\Ms$ is assembled but not yet coupled into the step, and
         the material layer understands diagonal tensors only. There is no non-orthogonal grid and no
         finite-element path; the two-dimensional studies of Section~\ref{sec:results} are the transverse-magnetic
