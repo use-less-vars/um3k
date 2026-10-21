@@ -3488,7 +3488,12 @@ MICROSTRIP = Study(
         "too short for the transient to reach the far end lies about beta: read "
         "the fit residual and |gamma| first."),
     params=(
-        Param("nsteps", "leapfrog steps", "int", MS_NSTEPS, lo=64, hi=4000,
+        # 20000, not 4000: this ceiling is here to catch a mistyped digit, not
+        # to forbid a cell size.  A 0.2 mm coupon cell needs 4800 steps and the
+        # 9600 that a 0.1 mm cell needs is the run this study's own board path
+        # exists for, so a cap of 4000 refused the geometry the package now
+        # describes while ``microstrip_wave`` underneath was fine with both.
+        Param("nsteps", "leapfrog steps", "int", MS_NSTEPS, lo=64, hi=20000,
               help="The first quarter is warm-up; the rest is Fourier "
                    "transformed, and the drive frequency is snapped to one of "
                    "its bins. The record also has to be long enough for the "

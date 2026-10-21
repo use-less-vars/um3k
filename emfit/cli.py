@@ -29,6 +29,12 @@ splitting happens here.  Files are only written when ``--out`` is given: a run
 with no ``--out`` still renders them (the studies always do) but leaves your
 disk alone.
 
+A record deeper than :data:`SLOW_STEPS` steps prints one line on stderr saying
+what runs like it have cost, before the study starts.  It is a warning and not
+a refusal: the microstrip ceiling that used to make a 0.1 mm cell unaskable is
+gone, so the price has to be stated instead of enforced, and it goes to stderr
+because stdout is the JSON.
+
 ``board`` is the read-only command: it parses a ``.kicad_pcb`` file and prints
 what a study could take from it -- the stackup, the outline, the nets that carry
 tracks -- and, for one named net, the microstrip cross-section that net makes
@@ -63,6 +69,25 @@ BOARD_NET_ROWS = 12
 BOARD_N_SUBS = (2, 4, 6, 8)
 #: Copper thickness the closed-form comparison assumes, in metres: 35 um.
 BOARD_COPPER_T = 35e-6
+
+#: ``nsteps`` above which ``run`` says on stderr what the record will cost.
+#: This was the microstrip study's ceiling until a 0.1 mm cell needed 9600
+#: steps and the cap had to go; it stays as the threshold because it is exactly
+#: the depth the cap used to refuse, i.e. the runs nobody has been able to ask
+#: for, and so nobody has any feel for what they cost.
+SLOW_STEPS = 4000
+
+#: What ``run`` prints above :data:`SLOW_STEPS`: the two measurements that
+#: exist, and nothing extrapolated from them.  The 0.2 mm coupon and the 0.1 mm
+#: port path are different meshes at different cell sizes, so a formula fitted
+#: through the two would read as a promise the numbers do not support -- the
+#: honest statement is the order of magnitude plus the anchors to measure
+#: against.  One line, because it is a warning and not a page.
+_SLOW_WARNING = (
+    "warning: nsteps={nsteps} -- minutes to hours, not seconds. Measured: the "
+    "0.2 mm coupon (124x87x44, pml 12) took 120.27 s at 4800 steps; the 0.1 mm "
+    "port path (70x200x52, pml 12) about 288 s at 9600. No wall clock is "
+    "predicted for this mesh.")
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +171,16 @@ def _cmd_run(args) -> int:
     except ValueError as exc:                 # bad key, bad value, out of range
         print(exc, file=sys.stderr)
         return EXIT_USAGE
+
+    # The cap that used to refuse a deep record is gone, so the cost has to be
+    # said out loud instead of refused: with the cap in place a run slower than
+    # a couple of minutes could not be asked for at all, and now it can.  To
+    # stderr, because stdout carries the single object ``--json`` promises; and
+    # silent at or below the line, because that is the common case and a warning
+    # there would be noise on every run.
+    nsteps = values.get("nsteps")
+    if isinstance(nsteps, int) and nsteps > SLOW_STEPS:
+        print(_SLOW_WARNING.format(nsteps=nsteps), file=sys.stderr)
 
     sink = studies.FigureSink()
     try:

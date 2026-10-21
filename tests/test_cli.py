@@ -18,6 +18,12 @@ study's GIF animation -- because a script reads that key to find the pictures
 and an animation in it is a picture that will not render.  One cheap rcs run
 covers it.
 
+What ``run`` says on stderr before a deep run is pinned here as well.  ``nsteps``
+was capped at 4000, which was the only thing between a user and an hours-long
+field solve; the cap went because a 0.1 mm cell needs 9600, so the warning in
+its place is what a user has left and it has a stream (not stdout) and a
+threshold to get right.
+
 The read side of ``board`` is pinned here too: the coupon's stackup and outline,
 the microstrip spec ``from_kicad`` derives from them, a board that has neither a
 stackup nor an outline (a report, not a failure), and the cell counts the coupon
@@ -27,6 +33,7 @@ code derived from it: when a derived number moves, the assertions above it still
 say whether the file changed or the derivation did.
 """
 
+import dataclasses
 import inspect
 import json
 import math
@@ -35,7 +42,7 @@ from pathlib import Path
 import pytest
 
 import emfit
-from emfit import cli, webapp
+from emfit import cli, studies, webapp
 
 ROOT = Path(__file__).resolve().parent.parent
 COUPON = ROOT / "kicad_support_project" / "kicad_support_project.kicad_pcb"
@@ -125,6 +132,45 @@ def test_json_files_the_animation_under_attachments_not_figures(capsys, tmp_path
     assert figures == set(pngs), written["figures"]
     assert set(gifs) <= attachments, written["attachments"]
     assert not set(gifs) & figures, written["figures"]
+
+
+# ---------------------------------------------------------------------------
+# the bill: a deep record warns on stderr, a normal one stays silent
+# ---------------------------------------------------------------------------
+def test_a_deep_record_warns_on_stderr_and_a_normal_one_does_not(
+        capsys, monkeypatch):
+    """The price of a deep ``nsteps`` is said on stderr, and only then.
+
+    ``nsteps`` was capped at 4000 until a 0.1 mm coupon cell needed 9600, so
+    the cap that used to keep a user off an hours-long run is gone and this
+    warning is what stands in its place.  Three things about it are contracts:
+    it appears above 4000, it is silent at or below (the case almost every run
+    hits, where a warning would be noise), and it is on stderr -- a warning on
+    stdout would corrupt the single object ``--json`` promises to a script.
+
+    The solve is stubbed, the way ``test_webapp.py`` stubs the same study: what
+    is under test is the number in the line and the stream it goes to, and the
+    real run this warns about is minutes long by definition.  The parameters,
+    the coercion and the ceiling stay the real ones, so a cap that quietly came
+    back would fail here rather than pass.
+    """
+    def run(values, sink):
+        return {"leapfrog steps": str(values["nsteps"])}
+
+    monkeypatch.setitem(studies.STUDIES, "microstrip",
+                        dataclasses.replace(studies.MICROSTRIP, run=run))
+
+    assert cli.main(["run", "microstrip", "--set", "nsteps=2400"]) == 0
+    quiet = capsys.readouterr()
+    assert "warning" not in quiet.err, quiet.err
+
+    assert cli.main(["run", "microstrip", "--set", "nsteps=4800"]) == 0
+    loud = capsys.readouterr()
+    assert loud.err.startswith("warning: nsteps=4800"), loud.err
+    # The two measurements the line is built from, still in it: the anchors are
+    # all a reader has to go on, since no wall clock is predicted.
+    assert "120.27 s" in loud.err and "288 s" in loud.err, loud.err
+    assert "warning" not in loud.out, loud.out
 
 
 # ---------------------------------------------------------------------------
