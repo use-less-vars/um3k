@@ -1,5 +1,59 @@
 # RESUME -- session state
 
+## Checkpoint 2026-10-21 -- the standing wave is dead, the forward wave grows, CW is running
+
+`decisions.md` section 64 has the tables and the argument; this is the state
+it leaves.  Two readings died today, not one.  Section 63 refuted Im(z_c) --
+forcing z_c real moves passivity by at most 0.0021, and in the wrong
+direction, and the column that carries the whole excess, `P2/P1`, does not
+contain z_c at all -- and section 64 refutes the reading that was standing
+behind it, that the excess is a standing wave in the feed section.  The
+forward/backward decomposition is post-processing on the existing pulse dump,
+no new solve: `.scratch/m2/ab_decompose.py`, 0.49 s, A and B reconstructed
+from the station voltages with the port reflection, x = station_x - x_port =
+1.70 to 11.30 mm.  The result is unambiguous.  max |B|/|A| is 0.0312, and all
+eleven accepted bins are A_RISING -- the forward wave grows monotonically
+across the span, the forward share of the travelling power is 98.7 to 100 per
+cent, and there is no backward wave for a standing pattern to be made of.
+beta * span runs 1.407 to 3.013 rad, so the beat the old reading wanted was
+not even a quarter period.
+
+The old eps_eff is wrong and, more to the point, physically unavailable.  The
+8.6 mm figure implies eps_eff 1.24 to 1.65 across the band, against 3.325
+from the closed form and 3.56270 from the solver -- a factor of two, not a
+rounding.  And 8.6 mm is a quarter guided wavelength only at 4.779 GHz, where
+the profile is still monotone, so the one frequency at which the arithmetic
+closes is the one frequency at which the standing-wave story is already
+excluded.
+
+What this opens is the opposite question from the one we were asking.  |A|
+does not oscillate; it rises, monotonically, by 0.83 to 4.47 per cent over
+9.6 mm.  Fitted as an exponential, the growth rate alpha is 8.6e-4 to 4.55e-3
+per mm, and alpha/f^2 is near-constant at 6.4e-5 to 7.4e-5 across the band,
+so alpha goes as f^2.  That is a shape, not an explanation: f^2 is what a
+solve losing energy to its own grid would show, and it is also what a genuine
+distributed loss in the feed would show, and the two have not been separated.
+
+The CW twin is running, not finished.  `.scratch/m2/board_run_cw.py` is
+solving 3.6667 GHz detached and a watcher queues 7.8333 GHz after it; dumps
+`board_cw_3.6667GHz.npz` and `board_cw_7.8333GHz.npz` land with their logs
+alongside.  They run one at a time, about 43 minutes each.  The mesh was
+proven against the pulse run before either was let go: n_strip 30, n_clean
+73, n_ref 75, n_line 235, cell 1e-4, 322 x 200 x 76, dt
+1.906574869530972051e-13, relative mismatch 0.00e+00.  Expected convergence
+is 7627 steps to 3.667196 GHz and 8034 steps to 7.833566 GHz.
+
+Next after CW is the refinement test, not a repair.  Halve dt and re-measure
+alpha on the same decomposition.  If alpha falls with dt it is numerical and
+the story ends there; if it is invariant it is in the model and the story
+gets harder.  Moving the reference plane is not the fix to reach for first --
+the reference-plane move is the manoeuvre that produced the eps_eff that just
+died, and reaching for it again before the refinement test would repeat the
+error section 64 is about.
+
+The lid test still holds.  Nothing measured on an imported board is quotable
+yet, and the A-test was skipped.
+
 ## Checkpoint 2026-10-21 -- Im(z_c) is refuted, and term 2 is a flux-profile ripple
 
 `decisions.md` section 63 has the table and the argument; this is the state it

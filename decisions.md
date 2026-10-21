@@ -1295,3 +1295,77 @@ This reading is self-consistent but **not proved**. What is proved is the negati
 
 **Next test.** The named next test is a **CW twin at two or three frequencies on the same mesh** (cheap frequency-domain solves, one at a time, within the 4 GiB cap). If the same along-x envelope appears in CW, the effect is linear mismatch/ripple: the fix is to put the reference plane in the settled region and/or absorb the downstream reflection, then re-quote. If CW is flat with P9/P1 = 1, the pulse path has a time-integration energy error, and the fix is in the time stepping. The A-test is skipped. The lid test stays held behind this.
 
+
+## 64. The standing-wave reading is dead: the forward wave itself grows
+
+**Ownership.** The complex-z_c hypothesis was advanced as the leading candidate on evidence that showed only that Im(z_c) is *present* in the power ratio, not that it is *decisive*: the three-way recompute established that the z_c convention moves the number at all, and that movement was read as causation. It never was.
+
+**A variable shown to be present in a ratio is not thereby shown to be the cause; find the column that carries the effect and check whether the variable is in it.** That is the general rule this adds, and it is the same class of error as the earlier vacuous-pass and wrong-pair-tolerance results: sensitivity was demonstrated, causality was inferred too fast.
+
+**Two problems with the standing-wave reading of section 63.**
+
+*(2a) The implied eps_eff does not reproduce and is not physically available.* Node-to-antinode 8.6 mm implies lambda_g/4 = 8.6 mm, hence lambda_g = 34.4 mm. lambda_0(6.8 GHz) = 44.15 mm, so eps_eff = (44.15/34.4)^2 = 1.647 -- not the 1.28 recorded in section 63. Held at 34.4 mm across the band, the same arithmetic gives, bin by bin:
+
+| f (GHz) | lambda_0 (mm) | eps_eff implied by 34.4 mm | eps_eff implied by the per-bin beta |
+|---|---|---|---|
+| 3.6667 | 81.762 | 5.6491 | 3.6382 |
+| 4.0833 | 73.419 | 4.5551 | 3.5965 |
+| 4.5000 | 66.621 | 3.7506 | 3.5620 |
+| 4.9167 | 60.975 | 3.1418 | 3.5416 |
+| 5.3333 | 56.211 | 2.6701 | 3.5378 |
+| 5.7500 | 52.138 | 2.2971 | 3.5495 |
+| 6.1667 | 48.615 | 1.9972 | 3.5721 |
+| 6.5833 | 45.538 | 1.7524 | 3.5991 |
+| 7.0000 | 42.828 | 1.5500 | 3.6244 |
+| 7.4167 | 40.422 | 1.3807 | 3.6435 |
+| 7.8333 | 38.271 | 1.2377 | 3.6548 |
+
+Three closing facts. First, the geometry supplies eps_eff = 3.325 (closed form) / 3.56270 (solver), so 34.4 mm is a wavelength this line does not have. Second, 8.6 mm equals lambda_g/4 for eps_eff = 3.325 only at **4.779 GHz**, and at that frequency the profile is still monotone to station 9, while the turnover -- the observation the 8.6 mm was fitted to -- sits at 7.0/7.4167/7.8333 GHz. Third, 8.6 mm is not a station distance at all: station 1 to station 8 is 8.40 mm, station 1 to station 9 is 9.60 mm. Verdict: the node-to-antinode spacing is inconsistent with the quasi-TEM microstrip mode, and the value it would require (1.2 to 1.65) is unavailable to a grounded eps_r 4.4 substrate under air.
+
+*(2b) A standing wave does not decay along x; it oscillates with constant forward and backward amplitudes.* A disturbance that decays geometrically with a 2.5 to 3 mm e-fold is local and transient. The two readings in section 63 cannot both be true, and the decay observation comes directly from the numbers.
+
+**The forward/backward decomposition (post-processing, no new solve).** `.scratch/m2/ab_decompose.py`, log `.scratch/m2/ab_decompose.log`, 0.49 s, run on the existing `board_run_pw.npz`: split `A(x) = 0.5 (v + z_c i) exp(+j beta x)`, `B(x) = 0.5 (v - z_c i) exp(-j beta x)`, with `x = station_x - x_port` (1.70 to 11.30 mm), per-bin `z_c` and `beta` taken from the dump, accepted bins only. |A|, |B| and |B/A| are rotation-invariant, so the result does not depend on the phase-reference convention.
+
+Two integrity checks, both passed. `P9/P1 = Re(v9 conj i9) / Re(v1 conj i1)` reproduces the stored `s21_power^2` to **2.220e-16** (relative 2.164e-16). And `|A|^2 - |B|^2` equals `Re(conj(z_c) v conj i)` to **3.652e-14**, with the ratio `(|A|^2 - |B|^2) / (Re(z_c) Re(v conj i))` running **1.00185 to 1.00710** -- the excess over unity is the quadrature term from arg(z_c) = +2.96deg to +3.39deg. So the split is a genuine travelling-wave decomposition, not an artefact.
+
+| f (GHz) | \|A\|max/\|A\|min | \|B/A\| s1 | \|B/A\| s5 | \|B/A\| s9 | \|B/A\|max (where) | B9/B1 | A9/A1 | arg(A) drift (deg) | forward share | backward share | class |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 3.6667 | 1.00835 | 0.0166 | 0.0065 | 0.0124 | 0.0166 (k=1) | 0.7576 | 1.0083 | +0.708 | +99.3 | +0.7 | A_RISING |
+| 4.0833 | 1.01042 | 0.0135 | 0.0052 | 0.0120 | 0.0135 (k=1) | 0.8957 | 1.0104 | +0.227 | +99.8 | +0.2 | A_RISING |
+| 4.5000 | 1.01261 | 0.0093 | 0.0056 | 0.0112 | 0.0112 (k=9) | 1.2300 | 1.0126 | -0.258 | +100.2 | -0.2 | A_RISING |
+| 4.9167 | 1.01500 | 0.0058 | 0.0073 | 0.0103 | 0.0103 (k=9) | 1.8007 | 1.0150 | -0.614 | +100.2 | -0.2 | A_RISING |
+| 5.3333 | 1.01771 | 0.0084 | 0.0094 | 0.0090 | 0.0113 (k=4) | 1.0959 | 1.0177 | -0.744 | +100.0 | -0.0 | A_RISING |
+| 5.7500 | 1.02088 | 0.0147 | 0.0112 | 0.0077 | 0.0147 (k=1) | 0.5330 | 1.0209 | -0.608 | +99.6 | +0.4 | A_RISING |
+| 6.1667 | 1.02463 | 0.0211 | 0.0122 | 0.0062 | 0.0211 (k=1) | 0.3013 | 1.0246 | -0.241 | +99.2 | +0.8 | A_RISING |
+| 6.5833 | 1.02898 | 0.0265 | 0.0125 | 0.0048 | 0.0265 (k=1) | 0.1878 | 1.0290 | +0.257 | +98.9 | +1.1 | A_RISING |
+| 7.0000 | 1.03389 | 0.0300 | 0.0118 | 0.0039 | 0.0300 (k=1) | 0.1335 | 1.0339 | +0.757 | +98.7 | +1.3 | A_RISING |
+| 7.4167 | 1.03919 | 0.0312 | 0.0104 | 0.0039 | 0.0312 (k=1) | 0.1302 | 1.0392 | +1.145 | +98.8 | +1.2 | A_RISING |
+| 7.8333 | 1.04466 | 0.0302 | 0.0082 | 0.0051 | 0.0302 (k=1) | 0.1770 | 1.0447 | +1.357 | +99.0 | +1.0 | A_RISING |
+
+The classification thresholds: constant means |A|max/|A|min within 1.005, small means |B|/|A| at most 0.05, and a rise counts as A_RISING when |A9|/|A1| exceeds 1.005 monotonically. **All 11 accepted bins are A_RISING; no bin is PURE, none is B_FROM_PORT, none is B_GROWING.** max|B|/|A| over the whole dump is **0.0312**, so the backward wave never exceeds about 3 per cent. beta times the station-1-to-station-9 span is 1.407 to 3.013 rad, so the decomposition is nowhere near phase-degenerate.
+
+The rise decomposes as `(P9 - P1)/P1 = [d|A|^2 - d|B|^2] / (|A1|^2 - |B1|^2)`:
+
+| f (GHz) | (P9-P1)/P1 (%) | forward share | backward share |
+|---|---|---|---|
+| 3.6667 | +1.6890 | +99.3 % | +0.7 % |
+| 4.0833 | +2.0992 | +99.8 % | +0.2 % |
+| 4.5000 | +2.5334 | +100.2 % | -0.2 % |
+| 4.9167 | +3.0145 | +100.2 % | -0.2 % |
+| 5.3333 | +3.5721 | +100.0 % | -0.0 % |
+| 5.7500 | +4.2364 | +99.6 % | +0.4 % |
+| 6.1667 | +5.0285 | +99.2 % | +0.8 % |
+| 6.5833 | +5.9519 | +98.9 % | +1.1 % |
+| 7.0000 | +6.9875 | +98.7 % | +1.3 % |
+| 7.4167 | +8.0962 | +98.8 % | +1.2 % |
+| 7.8333 | +9.2277 | +99.0 % | +1.0 % |
+
+**What this settles and what it opens.** Settled: the standing-wave reading of section 63 is dead, on both grounds -- the spacing is not the mode's, and there is no standing wave, because the backward wave is at most 3 per cent and is net *negative* between 4.5 and 5.33 GHz. The rise is not a renormalisation, not a reflection and not the split: `Re(v conj i)` itself rises, verified to 2.220e-16 against the stored metric. The forward wave amplitude is not conserved along x in a geometry with no gain: |A9|/|A1| = 1.0083 at 3.6667 GHz rising monotonically to 1.0447 at 7.8333 GHz.
+
+Opened: the per-mm growth rate. alpha = ln(|A9|/|A1|)/9.6 mm runs from 8.6e-4 per mm at 3.6667 GHz to 4.55e-3 per mm at 7.8333 GHz, and **alpha/f^2 = 6.4e-5 and 7.4e-5 respectively** -- near-constant across a factor 2.14 in frequency, so alpha scales as roughly f^2. Stated as a hypothesis and not a conclusion: a near-field settling artefact has a spatial scale fixed by the geometry and would not scale with f^2, whereas a per-cell term in the update scales that way. So the branch the ruling's decision tree assigns for A_RISING ("near field not settled; use a longer settling distance or move the reference plane") may be the wrong repair, and moving the reference plane would hide the effect rather than fix it.
+
+**The discriminating test.** Re-measure alpha on a refined run -- halve dt (or refine dx) at a fixed frequency, and compare alpha. If alpha falls with refinement the growth is numerical and the repair is in the discretisation or the update, not in the reference plane. If alpha is invariant, the growth is a property of the model and the reference-plane question is back on the table. Note also that `n_warm = 0` in the reference run, so a settling explanation is not yet excluded *independently* of the f^2 argument; the refined run should settle both at once by testing the f^2 scaling of alpha directly.
+
+**The CW twin is running.** Launched detached, on the same mesh, with the mesh proven by an independent recomputation of the counts and the step rather than assumed (`n_strip 30, n_clean 73, n_ref 75, n_line 235, cell 1e-4`, mesh 322x200x76, dt = 1.906574869530972051e-13 s, relative difference 0.00e+00 against the pulse run), one frequency at a time because `memory.max` is 4 GiB and one solve peaks at 3.59 GB. The two record lengths are not 9600, and deliberately so: the CW path snaps the tone to its own DFT bin, and at nsteps = 9600 the snapped tones would have been 3.6423 GHz (-24 MHz) and 8.0131 GHz (+180 MHz), so the record length was searched instead -- 7627 steps for 3.667196 GHz (+0.496 MHz) and 8034 steps for 7.833566 GHz (+0.266 MHz). Mechanically, the CW path writes no dump of its own (`bins` exists only in the pulse branch), so the wrapper `.scratch/m2/board_run_cw.py` rebuilds the accumulated signal vector `concat(v_stations, [v_port, i_ground_full, i_ground_truncated], -i_stations)` and calls the solver's own `_bin_metrics` and `_dump_bins`, producing the pulse dump's schema with one row. The pre-registered reading stands: forward wave grows in CW too means it is not a pulse/time-integration artefact; CW flat at P9/P1 = 1 means the pulse path is at fault.
+
+**Also recorded.** The print-precision fix (commit `caeab65`) is what made this decomposition possible at all -- a 1-dp dB grid could not have shown a 0.8 per cent change in |A|. And the whole-record z_c (arg 16.4346deg) is far from the per-bin z_c (+2.96deg to +3.39deg), so the whole-record fit is not the quantity the per-bin de-embedding uses; that mismatch was the first signal, and it was in hand before any of this.
