@@ -1,7 +1,7 @@
 # RESUME -- session state
 
-Position as of 2026-10-21, ~15:30 UTC.  The earlier chronological checkpoints have
-been dropped from this file; their narrative is in `decisions.md` sections 54-65,
+Position as of 2026-10-21, ~17:05 UTC.  The earlier chronological checkpoints have
+been dropped from this file; their narrative is in `decisions.md` sections 54-66,
 which is the record of argument.  What is left here is only what is needed to
 resume: where HEAD is, what is running, what to do next, and the constraints the
 harness imposes.
@@ -15,45 +15,40 @@ earlier `556.58 s` single-file figure was inflated by CPU contention with a solv
 running at the same time, and on an idle machine the whole suite takes about 300 s.
 
 `decisions.md` section 63 (the Im(z_c) hypothesis) is **refuted**.  Section 64 (the
-standing-wave reading of the board excess) is **dead**.  Section 65, added today, is
-the **CW twin** at both bands: at 7.8333 GHz it reproduces the pulse's forward growth
-almost intact, at 3.6667 GHz it does not reproduce it at all -- the CW record there
-is a launch-region bump that decays, not a rate.
+standing-wave reading of the board excess) is **dead**.  Section 65 is the **CW twin**
+at both bands: at 7.8333 GHz it reproduces the pulse's forward growth almost intact,
+at 3.6667 GHz it does not reproduce it at all.  Section 66, written today, is the
+**dt refinement**: halving the time step moved alpha by -0.030 per cent (3.990803 ->
+3.989607 per metre) and left the nine-station profile unchanged to 0.025 percentage
+points, so the growth is **not** a time-discretisation error.  The negative branch of
+the pre-registered tree fired.  The remaining causes are the spatial discretisation
+and the model itself, and neither is testable inside the 4 GiB cap.
 
 ## In flight
 
-Refinement solve, PID 3708, launched 15:26:28 UTC, expected back around 17:04.
+Nothing.  No solve is running; the machine is idle.
 
-    .scratch/m2/board_run_cw.py 7.8333 0.5
-
-`dt = 9.532874347654860253e-14 s`, bit-exactly half the pulse step; the mesh is
-unchanged at `322 x 200 x 76 cells at 0.1000 mm`; `nsteps=16067 n_warm=4016
-n_acc=12051`; span 1.148806688e-09 s, so the tone snaps to 7.834216 GHz (residual
-+0.916232 MHz, 0.65 MHz above the full-step tone).  That 8.3e-5 relative tone offset
-is negligible beside the discriminator.
+The refinement solve (PID 3708) returned at 16:58:56 with `ELAPSED 5547.6 s`,
+0.3453 s per step, and **EXIT=0** -- the first clean exit of the three CW runs,
+because the wrapper's post-solve `np.load` fix landed on disk before the launch.
 
     dump  /workspace/.scratch/m2/board_cw_7.8333GHz_dts0.5.npz
     log   /workspace/.scratch/m2/board_cw_7.8333GHz_dts0.5.log
 
-It runs on the CW path and **will exit 0**: the wrapper's post-solve `np.load` was
-fixed on disk before this launch, unlike the two full-step runs, which both exited
-non-zero after writing valid dumps.  The dump, not the exit code, is the deliverable.
+`ab_decompose.py`, `cw_vs_pw.py` and `station_profile.py` have all been run on that
+dump; every number is in section 66 and is not repeated here.
 
 ## Next steps, in order
 
-1. When it returns, run
-
-       PYTHONPATH=/workspace python3 .scratch/m2/ab_decompose.py .scratch/m2/board_cw_7.8333GHz_dts0.5.npz
-
-   read `|A9|/|A1|` and compute `alpha = ln(|A9|/|A1|) / 0.0096 m`.  The full-step
-   values at 7.833566 GHz are `|A9|/|A1|` = 1.039055 and alpha = 3.990803 /m.  If
-   alpha halves or falls substantially, the growth is a time-discretisation error and
-   the repair is in the update rather than the reference plane; if it holds at 3.99 it
-   is not a time-discretisation error.
-2. Check the profile shape too, not only the rate: at the full step the CW profile
-   rose monotonically to a maximum at station 8 and then dipped 0.13 % at station 9.
-3. Then commit `decisions.md` and `RESUME.md` (docs only, no test run needed) and
-   report to the ruling in under 400 words.
+1. Commit `decisions.md` and `RESUME.md` (docs only, no test run needed).  Stage
+   nothing else: `Intro.txt` and `docs/report/main.pdf` are never staged.
+2. Report to the ruling in under 400 words.  The line is: the refinement is flat, so
+   the growth is not the time step; the steady-state passivity statement (8.4549 per
+   cent more flux at station 9 than at station 1, `|S11|` 37 dB down) is the form to
+   argue; no S-parameter measured on the imported board is quotable.
+3. Only if the thread is reopened: the open discriminators are spatial (dx, blocked by
+   memory) and the model itself.  Do the memory arithmetic before launching anything
+   (roughly eightfold per halving against a 4 GiB cap).
 
 ## Working tree -- what must not be staged
 
@@ -88,9 +83,11 @@ non-zero after writing valid dumps.  The dump, not the exit code, is the deliver
 - `board_run_pw.py` -- **do not edit**.
 - `board_run_cw.py` -- takes `f_GHz` and an optional `dt_scale`; snaps the tone to its
   own DFT bin and searches the record length.
-- `board_run_lid5_pw.py`, `compare_power.py`, `tri_compare.py`, `station_profile.py`.
-- `ab_decompose.py` -- argv[1] = npz; the forward/backward split.
-- `cw_vs_pw.py` -- argv[1] = npz, argv[2] = f in Hz.
+- `board_run_lid5_pw.py`, `compare_power.py`, `tri_compare.py`, `station_profile.py`
+  (argv[1] = npz; the nine-station `P/P1` profile and the launch-vs-cumulative split).
+- `ab_decompose.py` -- argv[1] = npz; the forward/backward split, plus an `alpha_e2e`
+  end-to-end column added today (`ln(|A9|/|A1|)/0.0096 m`).
+- `cw_vs_pw.py` -- argv[1] = npz, argv[2] = f in Hz; its `eps_eff` column is fixed.
 - `validate_coupon.py`.
 
 Hazard kept from an earlier session: `.scratch/study_run.py:11` writes
@@ -101,12 +98,15 @@ Run such scripts from `/tmp/retime`.
 ## Standing rules
 
 - **No S-parameter measured on an imported board is quotable.**  The lid test is
-  held, and nothing in section 65 is a reported S-parameter -- those are diagnostics.
-- The `eps_eff` column of `.scratch/m2/cw_vs_pw.py` prints the *reciprocal* of the
-  eps_eff that beta gives (0.27361, 0.27333 for the two full-step rows).  The label is
-  wrong; no table may be built from that column until it is fixed.
+  held, and nothing in sections 65-66 is a reported S-parameter -- those are
+  diagnostics.
+- The `eps_eff` column of `.scratch/m2/cw_vs_pw.py` printed the *reciprocal* of the
+  eps_eff that beta gives; that bug was fixed today (pre-edit copies at `/tmp/*.orig`)
+  and the column now agrees with the beta-derived value (3.65849 against 3.65849 at
+  dt/2; 3.65855 against 3.65855 at the full step).  No table may be built from output
+  produced before that fix.
 - The 3.6667 GHz CW number is a net over a bump and a decay and must not be pushed
   into an alpha(f) fit; no power law is fitted to two CW frequencies.
-- `dt_scale` refines time only: a spatial artefact is invisible to the refinement
-  test, so "alpha invariant" would establish "not the time step", not "a property of
-  the model".  Refining dx is out of reach inside the 4 GiB cap.
+- `dt_scale` refines time only: the refinement has now been run and the growth
+  survived it, so the result establishes "not the time step", not "a property of the
+  model".  Refining dx is out of reach inside the 4 GiB cap.
