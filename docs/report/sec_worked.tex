@@ -42,10 +42,10 @@ did not move at all, and that is exactly the outcome this ledger exists to displ
     & quotable \\
     \addlinespace
     (b) Station-profile tilt of the time-averaged Poynting flux
-    & $0.987038$ as a ratio;\newline $6.48$ per cent as a tilt
+    & $0.967800$ as a ratio;\newline $6.48$ per cent as a tilt
     & CW run at \SI{5.8278}{\giga\hertz}; nine stations at cells $52$--$100$ of the propagation axis, \SI{9.6}{mm}
       span; flux formed by time-averaging $\mathbf{E}\times\mathbf{H}$ at each station, then
-      $r = \sqrt{s_9/s_1}$
+      $r = \sqrt{s_9/s_1}$, while the tilt is $(s_1-s_9)/\bar{s}$ with $\bar{s} = 6466.0168$, which is not $1-r$
     & diagnostic only \\
     \addlinespace
     (c) ``Field loss'' of the reference box
@@ -203,7 +203,9 @@ standing-wave period looks like.
 A deficit quoted as a bare percentage is therefore ambiguous until it says whether the ratio it came from was a
 power ratio or an amplitude ratio. Here the two differ by close to a factor of two: $6.34$ per cent on the power
 ratio $0.936635$, $3.22$ per cent on the amplitude ratio $0.96780$. That is one way a number acquires two
-defensible-looking values, and it is why this report prints the ratio as well as the percentage.
+defensible-looking values, and it is why this report prints the ratio as well as the percentage. In the
+amplitude convention the logarithm of that ratio is $20\log_{10}(0.96780) = -0.2843$\,dB, and taken with
+$10\log_{10}$ the same ratio gives $-0.1421$\,dB, half as much; neither is an attenuation.
 
 The same extraction on the pulse record at \SI{5.333}{\giga\hertz} gives a deficit of $1.9561$ per cent against a
 tilt of $1.9757$ per cent and a mean-to-first factor of $0.9901$; the product is $1.9561$ per cent, and there the
@@ -216,7 +218,7 @@ same reason as the residue above. On the substrate-only record the nine stations
     & 4772.478055,\ 4703.721293,\ 4621.547925 ,
   \end{aligned}
 \end{equation*}
-with a mean of $4803.871$, a ratio of $0.97324$ ($5.27$ per cent), a tilt of $5.363$ per cent and a
+with a mean of $4803.871$, a ratio of $0.97324$ ($5.28$ per cent), a tilt of $5.363$ per cent and a
 mean-to-first factor of $0.984568$, whose product is $5.28$ per cent. Three records, three arrays, and in every
 one the ``attenuation'' is the tilt multiplied by a factor within a few per cent of one.
 
@@ -237,9 +239,15 @@ $|S_{21}|_{\text{poynting}} = 0.987038$ and quoted as an attenuation of $-0.1133
 span, which is the largest single contribution the report ever claimed towards the loss of the reference box,
 and it was presented as model-free -- which, in the sense of ``containing no fitted parameter'', it was. It is
 now called the station-profile tilt, and it carries \emph{no} attenuation claim. The value $0.987038$ survives
-in the table and in this sentence; the name does not, because the name is what the arithmetic does not support.
+in this sentence; the name does not, because the name is what the arithmetic does not support.
 The correspondence is exact: $20\log_{10}(0.987038) = -0.1133$\,dB, so nothing has been recomputed, only
 relabelled, which is the honest form of a correction.
+
+The value is not the nine-station array of this section: $0.987038$ comes from the prodcheck board run at
+\SI{7.833566}{\giga\hertz}, whose stations are cells $104$ to $200$ spaced \SI{1.2}{\milli\metre} over the same
+\SI{9.6}{\milli\metre} ($n_{\text{warm}} = 4000$, $n_{\text{acc}} = 6026$, mesh $322\times200\times76$), a
+different run from the nine-station reference-box array whose tilt the ledger row now reports as $0.967800$.
+That cross-run mismatch is why the old $|S_{21}|_{\text{poynting}}$ name could not travel with the number.
 
 Two further consequences follow from the relabelling, and both were visible only afterwards. The first is that
 the tilt cannot serve as a bound on the loss either. At resonance, the full-section tilt of $6.48$ per cent is

@@ -2195,3 +2195,41 @@ pulse record, whose usable bin sits at `5.33333` GHz (`:1977`); quoting it as th
 itself in the form the report arrived in, which is the argument for the rule rather than an aside
 about two numbers.
 
+## 79. Report reconciliation: the tilt ratio and the withdrawn 0.987008
+
+Three numbers had drifted apart in the report. This records what each one is, checked against the stored
+records rather than inferred from the prose.
+
+`0.987038` is the prodcheck board record: the square root of the ratio of the last to the first entry of the
+`sx_station` array in the prodcheck nwarm4000 nacc6026 plane record, whose nine entries run from 24100.762336
+to 23480.001545, ratio 0.974243, root 0.987038. That run drives the board at 7.833566 GHz with 6026 accepted
+plane samples and stations at cells 104 to 200 spaced 1.2 mm over 9.6 mm, from x = 0.0104 to 0.02, plane
+capture in the env convention, `reference_used` false, x_port 0.0087; the mesh 322x200x76 and n_warm 4000 are
+recorded in that run's manifest rather than in the record. An identical copy of the array sits in the m2 board
+CW smoke record.
+
+`0.967800` is the rung-8 reference box: the square root of the ratio of the last to the first entry of the
+nine-entry `sx_station` array in the probe rung8 CW plane Poynting record, entries 6614.038753 to 6194.943464,
+root 0.967800, at 5.827786 GHz with 1800 accepted steps and stations at cells 52 to 100 over the same 9.6 mm,
+plane capture in the kwarg convention. The unsquared root of that same array is 0.936635, and the two roots
+read 6.48 per cent apart: that is the ripple trap, not a disagreement between runs.
+
+`0.987008` is withdrawn. It is not reproducible from any stored record. It survives in the tree only as a
+literal in the reference-box audit script, `abs_s21` = 0.9870082, which the pre-correction decisions log
+explains as an aggregation-step difference from 0.9869798. The nearest stored root is 0.9870375. The report
+now quotes the sourced value `0.987038`, which is 1.296 per cent below unity, not 1.299: the deficit follows
+from the sourced number, not from the withdrawn one.
+
+The error the withdrawal exposed is a cross-run label, not a wrong number. The worked ledger row and the
+glossary tilt item both described the rung-8 reference box while quoting the prodcheck board ratio as if it
+belonged to that box. Both now print the reference-box ratio `0.967800`, which is the record their 0.35
+lambda_g and 13.688 mm ripple argument is about, and `0.987038` is named on the run it actually comes from.
+Neither figure is an insertion loss anywhere in the report; each is a tilt diagnostic on a named run.
+
+Also in this pass: `ports.py` is quoted at 1908 lines in the implementation table; the outlook section no
+longer claims that no port exists; the worked ledger row now states the tilt's definition, the
+mean-normalised `(s_1 - s_9)/\bar{s}` with `\bar{s} = 6466.0168`, so that its `6.48` per cent cannot be
+misread as `1 - 0.967800 = 3.22` per cent; a substrate-array parenthetical in the same section was corrected
+from `5.27` to `5.28` per cent, which is the deficit the stored array prints (`0.947199`); and the
+amplitude-convention logarithm now sits beside the tilt itself, `-0.2843` dB at `20\log_{10}` and `-0.1421`
+dB at `10\log_{10}`, with a statement that neither is an attenuation.

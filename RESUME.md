@@ -295,3 +295,6 @@ Run such scripts from `/tmp/retime`.
   wall-clock cap so that a kill leaves evidence. Work needing more than about 450 MB or more
   than about 5 minutes goes to that larger path. The earlier 3 GiB figure is retracted, and
   so is the 4 GiB figure that appeared in this section; neither was ever measured.
+
+- `docs/report/main.pdf` is a local build artefact: regenerate it with the build command and never
+  commit it.

@@ -12,8 +12,9 @@ normal incidence in two dimensions. The matched lossy layer of Section~\ref{sec:
 more deeply than the one-way condition does on the same geometry, and the near-to-far-field transform of
 Section~\ref{sec:res-scatter} turns the field on a contour into a bistatic scattering width, which has now
 been plotted against a Mie series. What
-the package still cannot do is drive: there is no port, so no input impedance and no $S$-parameter can be
-quoted. The roadmap is therefore still a list of capabilities rather than a list of improvements, and each entry
+the package now does is drive: driven ports are implemented in \texttt{ports.py}, that module reads and writes
+Touchstone files, and $S$-parameters are quoted in the worked example of Section~\ref{sec:worked}.
+The roadmap is therefore still a list of capabilities rather than a list of improvements, and each entry
 carries an acceptance test expressed in terms of a quantity the code must reproduce. That is deliberate: a
 milestone is done when its number is reproduced by the test suite, not when the module exists.
 
