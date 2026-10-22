@@ -44,6 +44,7 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from . import animate
 from . import nearfield
 from . import scatter
 from . import viz  # selects the Agg backend before pyplot is imported anywhere
@@ -1216,6 +1217,14 @@ MS_N_BINS = 25
 #: its own ``fmax`` and falls to nothing by ``2.5 fmax``, so this is where the
 #: drive has energy and where the band has to sit to be measurable.
 MS_F_PULSE_GHZ = 5.83
+#: Whether a ``microstrip_board`` run attaches the mid-plane animation.  On by
+#: default because that run already accumulates the phasor it is drawn from, so
+#: the frames cost the file and nothing else; ``"no"`` gives the figures-only
+#: run back.
+MS_ANIMATE = "yes"
+#: Frames per period of that animation: a tenth of a period per frame, which at
+#: the 12 fps playback default is one exact period in three seconds.
+MS_N_FRAMES = 36
 #: The weight the broadband sweep multiplies the kept record by before summing
 #: a bin, and measures its own drive spectrum through: ``"rect"`` or
 #: ``"hann"``.  Flat is a deliberate choice here and not the default by
@@ -4261,7 +4270,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
     return metrics
 
 
-def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
+def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink,
+                          *, midplane: dict = None) -> dict:
     """Study wrapper: one coupon read out of a board file, as formatted strings."""
     path = str(values.get("board", "")).strip()
     if not path:
@@ -4343,6 +4353,31 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
         n_bins=n_bins, f_pulse=f_pulse,
         keep_slice=True,
         sink=sink)
+    # The mid-plane phasor leaves through ``midplane`` and never through
+    # ``metrics``: an array cannot go in a table row.
+    if midplane is not None:
+        # The caller that draws the plane needs the cell size along each in-plane
+        # axis, which plane was accumulated and where it sits, and the mesh it
+        # sits in.  Every one of those is a field of ``result.geometry`` and is
+        # read from there, never recomputed; ``cell`` is a single width because
+        # the grid this run builds is ``Grid.uniform`` in all three directions
+        # (studies.py:2506), so there are no edge coordinates to pass instead of
+        # an average and ``uniform_xy`` says so.  ``f`` and ``nsteps`` are here
+        # for the same reason: the caption has to quote the tone the phasor was
+        # accumulated at and the steps that were actually run, which are the
+        # record's numbers and not the knobs'.
+        geom = result.geometry
+        midplane["ez"] = result.slice_ez
+        midplane["dx"] = float(geom["cell"])
+        midplane["dy"] = float(geom["cell"])
+        midplane["uniform_xy"] = True
+        midplane["plane_index"] = int(geom["k_mid"])
+        midplane["plane_z"] = float(geom["z_mid"])
+        midplane["nx"] = int(geom["nx"])
+        midplane["ny"] = int(geom["ny"])
+        midplane["nz"] = int(geom["nz"])
+        midplane["f"] = float(geom["f"])
+        midplane["nsteps"] = int(geom["nsteps"])
     g = result.geometry
     # A record whose station fit was refused still has a report to write, and
     # every row below reads its numbers off ``sf``: a blank fit says ``n/a`` on
@@ -4502,6 +4537,59 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink) -> dict:
         metrics.update(_broadband_rows(
             result.bins, sink, span=float(g["n_acc"]) * float(g["dt"]),
             nsteps=int(g["nsteps"])))
+    return metrics
+
+
+def _run_microstrip_board_animated(values: Mapping[str, Any],
+                                   sink: FigureSink) -> dict:
+    """Study wrapper: the board report, plus one period of the mid-plane field.
+
+    Every row of the table is :func:`_run_microstrip_board`'s and is returned
+    untouched; the animation is an attachment and never a row, because a GIF is
+    not a number.  The run accumulates the mid-plane phasor anyway (``keep_slice``
+    is on), so a caller that does not want the file loses only the file.
+    """
+    midplane: dict = {}
+    metrics = _run_microstrip_board(values, sink, midplane=midplane)
+    if str(values.get("animate", MS_ANIMATE)).strip().lower() != "yes":
+        return metrics
+    ez = midplane.get("ez")
+    if ez is None:              # keep_slice is on, so the phasor is always here
+        return metrics
+
+    f0 = float(values["f0"]) * 1e9
+    # The tone the phasor was actually accumulated at, which is the nearest DFT
+    # bin of the record and not always ``f0``: a period of the wrong frequency
+    # would drift against the field it is meant to show.
+    f_bin = float(midplane["f"])
+    n_frames = int(values.get("n_frames", MS_N_FRAMES))
+    dx, dy = float(midplane["dx"]), float(midplane["dy"])
+    gif = animate.steady_state_gif(
+        ez, dx=dx, dy=dy, f0=f_bin, n_frames=n_frames,
+        title=f"Mid-plane Ez, CW steady state at {f0 / 1e9:.3f} GHz",
+        plane_note=f"z = {float(midplane['plane_z']) * 1e3:.2f} mm")
+    # Plain text, not the HTML a figure's caption is authored in: an
+    # attachment's caption is escaped by both front ends.
+    caption = (
+        f"f0 = {f0 / 1e9:.3f} GHz, from the study's f0 knob. This study has no "
+        f"separate target-frequency parameter -- f0 is the frequency handed to "
+        f"the solver -- and the nearest DFT bin of the record, "
+        f"{f_bin / 1e9:.4f} GHz, is the tone the phasor was accumulated at and "
+        f"the one this animation plays. "
+        f"Mesh: {int(midplane['nx'])} x {int(midplane['ny'])} x "
+        f"{int(midplane['nz'])} cells of {dx * 1e3:.4f} mm, the same width on "
+        f"all three axes of the uniform grid. "
+        f"Slice plane k = {int(midplane['plane_index'])} on that z axis, at "
+        f"z = {float(midplane['plane_z']) * 1e3:.3f} mm. "
+        f"{int(midplane['nsteps'])} leapfrog steps were run, and the loop is "
+        f"{n_frames} frames of the {1.0e9 / f_bin:.4g} ns period. "
+        "CW steady state at f0 — reconstructed one period; not a time-stepped "
+        "transient; reflections in steady position. "
+        "[not for quotable S-parameters — see M3]")
+    sink.add_attachment(
+        "midplane-animation", "midplane-ez-steady-state.gif", gif,
+        title="Mid-plane Ez of the driven microstrip, one period at f0",
+        caption=caption)
     return metrics
 
 
@@ -4845,8 +4933,24 @@ MICROSTRIP_BOARD = Study(
               lo=0.1, hi=40.0, unit="GHz",
               help="Centre frequency of the Ricker wavelet the pulse run is "
                    "driven with. Read only when excite is pulse."),
+        # The animation is an attachment and not a figure: a figure is PNG by
+        # contract and a GIF cannot travel that way.  It is drawn from the
+        # mid-plane phasor this run already accumulates, so it costs the file
+        # and nothing else -- but it is the one output here that could be
+        # mistaken for a time-stepped transient, which is why its caption says
+        # what it is.
+        Param("animate", "Mid-plane animation", "choice", MS_ANIMATE,
+              choices=("yes", "no"),
+              help="yes attaches midplane-ez-steady-state.gif: one "
+                   "reconstructed period of the mid-plane phasor at f0. no "
+                   "leaves the run exactly as it was, figures only."),
+        Param("n_frames", "Animation frames", "int", MS_N_FRAMES,
+              lo=8, hi=120, unit="frames",
+              help="Frames per period of the animation, read only when "
+                   "animate is yes. More frames play smoother and make a "
+                   "bigger file; the playback rate is 12 frames per second."),
     ),
-    run=_run_microstrip_board,
+    run=_run_microstrip_board_animated,
 )
 
 STUDIES: dict = {study.name: study

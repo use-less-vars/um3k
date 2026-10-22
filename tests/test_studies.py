@@ -99,6 +99,8 @@ def test_microstrip_board_study_is_registered():
         "band_hi": "float",
         "n_bins": "int",
         "f_pulse": "float",
+        "animate": "choice",
+        "n_frames": "int",
     }
 
     for param in study.params:
