@@ -1939,3 +1939,124 @@ cell PML and lid, while ladder rung 4 is 66 x 52 x 19 with a 3 cell lid. The tra
 dimensions agree only because `nx = length/cell` and `ny = width/cell` are invariant to the
 PML split; the lid and air stack differ. Any future note saying the ladder reproduces the
 reference box must say "transversely only".
+
+### Result at rung 8, and what it does and does not establish
+
+The two premises above were tested on the 132 x 104 x 38 mesh, in two separate runs, both
+loaded from `kicad_support_project/reference_box.kicad_pcb` through
+`MicrostripBoard.from_kicad(board, net="RF_IN")`, with cell 0.200 mm, `n_pml = n_top = 6`,
+`n_air = 24`, `n_strip = 16`, `n_clean = 38`, `n_ref = 18`, `n_line = 108`.
+
+**Run one, `excite="cw"`.** The mode reproduces; the recorded residual does not.
+
+| quantity | recorded | reproduced | delta |
+|---|---|---|---|
+| mesh | 132 x 104 x 38 | 132 x 104 x 38 | exact |
+| f | 5.827864 GHz | 5.827864 GHz | 0.000 pc |
+| beta | 229.55 rad/m | 229.5544 | -0.21 pc |
+| eps_eff | 3.5465 | 3.53220 | -0.42 pc |
+| Z0 | 50.35 ohm | 50.3615 | +0.02 pc |
+| residual | 0.0188 | 0.01285 | not reproduced |
+
+Z0 here is `Re(station_fit.z0)`, which is the convention the published table already uses,
+not `abs(run.z0)`. So beta, eps_eff, Z0 and f all reproduce to better than half a per cent,
+which is the strongest result in this section and is worth stating plainly: the ladder's
+resonance column is sound.
+
+The residual does not reproduce, and it is the one column that is a property of a fit rather
+than of the field, so it is the one column a reader cannot check from the table.
+
+**Run one has no passivity.** Its bin tuple is empty, `run.bins == ()`. This is the fact that
+undermines the table. The passivity in the published rows is a bin value, computed in
+`_bin_metrics` and reachable only through a populated bin tuple; a `cw` run produces none.
+
+**Run two, `excite="pulse"`.** The only configuration that yields bins, and therefore the
+only one that can yield passivity. Drive 5.463549758 GHz, 2400 steps, 170 s, peak RSS 486 MB,
+25 bins requested of which 12 usable, band 3.66667 - 8.25 GHz at 416.67 MHz spacing. At bin
+index 8, f = 5.33333 GHz:
+
+| quantity | value |
+|---|---|
+| s21 | 0.999790 |
+| s21_power | 0.985670 |
+| passivity = s11^2 + s21^2 | 0.999606 |
+| passivity_power | 0.971571 |
+| s11^2 | 2.4926e-5 |
+
+Three normalisations and one independent measurement, all for the same physical loss, and
+they disagree by two orders of magnitude in the deficit:
+
+| route | deficit |
+|---|---|
+| plain passivity, `passivity` | 0.0394 pc |
+| power passivity, `passivity_power` | 2.8429 pc |
+| flux, full transverse section | 1.9561 pc |
+| flux, substrate transverse section | 0.8959 pc |
+
+The flux ratio is computed from the two station vectors, not from the circuit, and is
+independent of the reference. `sx_station` [W] over the nine stations:
+
+```
+753.8289 751.9339 750.0581 748.1850 746.3129 744.4528 742.6213 740.8307 739.0829
+```
+
+`sx_station_sub` [W]:
+
+```
+560.9303 561.1447 561.3231 561.2100 560.7376 559.9125 558.7708 557.3806 555.9047
+```
+
+which gives `|S21|_poynting = sqrt(739.0829 / 753.8289) = 0.990171` on the full section and
+`sqrt(555.9047 / 560.9303) = 0.995510` on the substrate section, hence `passivity_poynting`
+of 0.980464 and 0.991066 with the measured `s11^2` of 2.4926e-5 added in. Both of those sit
+between the two circuit answers rather than agreeing with either.
+
+**The ratio `r` is not interpretable at this rung.** It came out at -48.57 on the full
+section and -21.67 on the substrate section. Negative, and meaningless, because its
+denominator is the circuit deficit, 3.94e-4, which is four hundred times smaller than the
+tilt on the same run. A ratio whose denominator is at the noise floor of the normalisation
+it is built from does not carry a sign, let alone a magnitude.
+
+**The tilt objection does not rescue this.** The standing rule says a flux ratio is quotable
+only where the profile is flat enough that the drive bin carries essentially all the excited
+power. On this run the measured station-to-station tilt is 1.9757 pc peak to peak on the
+full section and 0.9681 pc on the substrate section, both well inside the 6.31 pc figure the
+rule was written against. So the flatness condition is satisfied and the flux ratio is
+quotable, and it still disagrees with the circuit. What cannot be established from the dump
+is the fraction of excited power landing in the analysis bin, because neither `f_pulse` nor
+the drive spectrum is in the payload.
+
+**Why the published passivity column cannot be the run it is presented as.** The published
+rung 8 row pairs f = 5.8278 GHz with passivity 0.9267. Those two numbers cannot come from one
+run. A run that produces passivity is a pulse run, and this pulse run drives at 5.4635 GHz,
+which is 6.7 pc below the tabulated 5.8278; a run that produces f = 5.8278 is a `cw` run,
+and a `cw` run produces no bins and therefore no passivity. The table also never records
+`x_first`, `x_last`, the band, the bin count or whether a reference was used, and every one
+of those moves the bin grid. The passivity column is therefore not reproducible from the
+table, and the column-mixing is the mechanism, not an accident of transcription.
+
+**Consequence for the claim this section was written to support.** The figure of 16 pc of
+station-plane power unaccounted, which was the centrepiece of the previous session's report,
+is **withdrawn**. It rests on a passivity deficit of 7.33 pc from a table row that has just
+been shown to be internally inconsistent, and the largest independent deficit measured on a
+faithful reproduction of that rung is 2.84 pc. Nothing measured here supports 7.33 pc, let
+alone 16. A deficit of a few per cent at rung 8 is consistent with discretisation and with
+the transverse flux the substrate section excludes, and is not evidence of anything.
+
+**What this does not establish, and why rung 12 is now the only step that matters.** A single
+rung cannot distinguish a real loss from a numerical one; only its growth with refinement
+can. Rung 12 was attempted and could not be run: the worker container is hard-capped at
+512 MiB (`/sys/fs/cgroup/memory.max` = 536870912, and a `mem_limit` of 6 GiB is not honoured),
+rung 8 already peaked at 486 MB for 521,664 cells which is about 0.93 KB per cell, and rung 12
+at 1,760,616 cells needs about 1.64 GB. It was OOM-killed at step 0, rc 137, `memory.peak`
+at the 512 MiB ceiling, `oom_kill` 1, dying inside operator construction before the first
+step. Time is not the obstacle: at the measured 0.0708 s per step for rung 8, rung 12 comes
+to about 574 s of stepping and would fit a single call. The obstacle is memory, and the
+earlier attempt that burned 890 s did not time out, it ran a reference process that was
+OOM-killed after about 7 s while the main process polled for an output file that never
+appeared.
+
+No reduction of `nsteps` or `n_bins` helps, because neither touches the mesh, and dropping
+the reference does not help either, because passivity is then refused as a passivity without
+its reflection. So the fork between a real loss and a numerical one stays unassigned, no
+M3b code is written, and the deciding measurement needs a container with at least 2 GB.
