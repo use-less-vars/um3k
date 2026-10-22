@@ -1907,3 +1907,35 @@ rather than rounded into a fork.
 
 Nothing in this section is derived from a flux measurement. The three premises follow from
 the `emfit/` source, from the already-published ladder table, and from `RESUME.md`.
+
+**Corrections to this pre-registration, added before the first flux number was read.**
+Four facts learned from the source after the section above was written, none of them from a
+measurement, are recorded here so that the pre-registration is accurate before data exists.
+
+First, the flag allocates six arrays, not three: `sx_station_sum`, `_sub_sum`, `_first_sum`,
+`_sub_first_sum`, `_second_sum` and `_sub_second_sum`, each `np.zeros(n_stations)` at
+`emfit/studies.py:2636-2648`, which is 432 bytes at nine stations. Memory is therefore not a
+constraint on either rung, and the earlier worry that rung 12 might overflow the cap with
+this flag on is void.
+
+Second, the passivity in the ladder table is not a property of the run. `MicrostripWave` has
+no `s11` field: `|S11|` is `abs(run.gamma)` or `abs(run.gamma_port)`, and `|S11|^2 + |S21|^2`
+exists only per bin, as `run.bins[i].passivity` or `.passivity_power`, computed in
+`_bin_metrics`. A run whose bin tuple is empty returns no passivity at all. The 0.9267 and
+0.8391 rows are therefore bin values, and the circuit side of every comparison has to name
+the bin and the frequency it belongs to.
+
+Third, and this one constrains the comparison itself: in the bin dump, `sx_station` and
+`sx_station_sub` are run-level means over the settled record, written once per run, while
+every circuit quantity in the same dump is per bin. A run-level flux ratio therefore answers
+a broadband question while the circuit passivity answers a narrowband one. The flux ratio is
+quotable for `r` only when the drive is a settled single tone and the analysis bin carries
+essentially all of the excited power. Where that does not hold, the comparison is reported
+with that limitation stated, and not treated as a number of equal standing.
+
+Fourth, a naming correction that matters for reproducibility: the ladder box is not the
+published reference box mesh. At cell 0.400 mm the published board is 66 x 52 x 26 with a 10
+cell PML and lid, while ladder rung 4 is 66 x 52 x 19 with a 3 cell lid. The transverse
+dimensions agree only because `nx = length/cell` and `ny = width/cell` are invariant to the
+PML split; the lid and air stack differ. Any future note saying the ladder reproduces the
+reference box must say "transversely only".
