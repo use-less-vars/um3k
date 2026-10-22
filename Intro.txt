@@ -173,3 +173,65 @@ These additions do three things the current brief does not: they **bound the pro
 ---
 
 The most important judgment I can offer is this: **your current solver is ahead of your product.** The cavity physics is verified more thoroughly than many commercial tools' documentation would suggest. The bottleneck is not the mathematics of the step; it is the engineering of the interface between a PCB and that step. Spend the next phase on ports, KiCad import, and S-parameter extraction, and let the solver improvements follow the measured needs of real layouts. A tool that simulates one microstrip correctly is worth more than a tool that simulates a cavity perfectly and a PCB not at all.
+
+----------- Second batch of engineer's path forward: memo on session assessment and next steps ----------------
+
+Two commits, suite 268 passed, tree clean. The session is strong and the sequencing is mostly right, and the best result in it is not the port validation, good as that is, but the **behaviour-preserving migration**: no pin moved, the old rule's error kept as a regression at 5.685 / 3.490 / 2.051 per cent at h/4, h/8, h/16, and the defect test replaced by a stronger property (bit-identical C' for `z < h` and `z <= h`, at all three refinement levels, where `test_interface_plane_assignment_does_not_converge_away` had stood). That is the right way to retire a defect - prove the fix changes nothing where the behaviour was already right, and pin the error where it was not. The parallel-plate port validation is the number that makes the port machinery credible: |S11| -68.83 dB in air and -56.93 dB in eps_r 4, |S21| 1.0000006 and 0.9999979, Z0 to 0.005 per cent. The agent is right that my earlier memo had the port sequencing backwards; validating the port on a closed-form line before touching microstrip was the correct call and the numbers justify it.
+
+## 9. Where we are on the PCB prototype
+
+The honest map, which answers your question directly:
+
+| Layer | State |
+|---|---|
+| Verified FIT core | Done. Cavity, energy, CFL, dispersion all measured. |
+| Port machinery | Validated on a closed-form line. Not yet on microstrip. |
+| Microstrip S-parameters end to end | **Not yet.** The agent's next four items are exactly this gap. |
+| Board abstraction | Not yet; studies are hand-built grids. |
+| KiCad import | Parser fixture only (CMEX). Not wired to a Board. |
+| Lumped component on a board | Not yet. This is your demo. |
+
+So the answer to "where are we" is: **the port works, the line it has been tested on is a parallel plate, and the microstrip end-to-end demonstration is three to four sessions away.** Your instinct - excite the board with a part and see what happens - is exactly the right acceptance test, but it is the milestone *after* the microstrip S-parameter workflow, not the next one. Say that plainly so the expectation is managed.
+
+---
+
+## 10. Next steps, in order
+
+I have endorsed the agent's four items with three changes: one ordering move, one diagnostic requirement, and one acceptance criterion stated now as numbers. The headline:
+
+1. **Fill `system_architecture.md` before writing the Board abstraction.** It should carry the pipeline `Geometry -> VoxelMask+MaterialFields -> FITSystem -> PortDefs -> TimeStepper -> Spectrum` and the hook list. The Board is the interface that will accrete hooks; write it down before code grows around it. This is an ordering change: it moves ahead of the synthetic Board work, not after it.
+
+2. **Diagnose the ground-current probe before fixing it.** The 4 per cent Z0 residual is currently attributed to `ports.plate_current` summing return current over all ny columns including the lateral PML. Prove it. Two controlled runs: (a) re-sum with the lateral PML contribution zeroed; (b) re-run with a wider lateral domain and the probe unchanged. If both move Z0 toward the closed form, the probe is confirmed. If only the wider domain helps, it is lateral truncation, not the probe. Fix what the diagnostic names, not what is suspected.
+
+3. **Fix `ports.plate_current`** if step 2 confirms it, and record the diagnostic in the test suite as the regression that would catch it coming back.
+
+4. **Re-run the time-domain microstrip with the corrected interface and the fixed probe.** Report Z0 against Hammerstad-Jensen with a convergence plot over lateral and stackup refinement. Do not tune; report the residual and attribute it.
+
+5. **`ports.fit_beta` and `pml.PML(walls=)`.** These are the two remaining pieces the microstrip needs before the study can be driven end to end. `fit_beta` gives de-embedding; selective PML walls are required because the microstrip needs PML on the lateral and end walls but not on the ground plane.
+
+6. **Synthetic Board, then the microstrip study through it.** The study should be driven through a Board object rather than a hand-built grid, so that the KiCad importer has a target to fill and the hand-built path can be retired.
+
+7. **Define the microstrip milestone as numbers now**, so "done" is a number and not a feeling:
+   - 50 ohm microstrip on a two-layer stackup with known eps_r and h.
+   - Lumped ports at both ends, de-embedded with `fit_beta`.
+   - |S11| below -20 dB across the band; |S21| within 1 per cent of unity in the passband.
+   - Z0 within 2 per cent of Hammerstad-Jensen.
+   - A convergence plot over lateral and stackup refinement.
+   - A field slice on the substrate mid-plane.
+
+8. **Then the lumped-component demo.** A series R, a shunt C, or a simple L-C matching network placed as a gap load on the trace, excited through ports, with S21 compared against a circuit calculation (scikit-rf or a hand calculation). This is the first demo a human will appreciate. It sits after `fit_beta` and `PML(walls=)`, so it is two to three sessions away, not next.
+
+---
+
+## 11. Judgements endorsed
+
+- CMEX is the parser's fixture, not a simulation target. At 174720 cells, 549319 edges and 14331 steps it is unaffordable, and at 1 mm the pours cover the board to within a cell, so it is eight solid plates. Use it for netlist and stackup parsing only.
+- Thin-sheet copper removes the 35 um dt collapse, but dt is still set by the finest cell anywhere. Local time stepping stays on the roadmap as a measured need, not a wish.
+- The microstrip extraction is limited by lateral truncation and by the interface convention, not by the grid. The interface convention is now a fixed, tested module feature rather than a known trap that every caller has to remember. That is the right outcome.
+
+---
+
+## 12. One risk to name
+
+The temptation to improve solver physics (PBA, dispersion repair, higher order) before the microstrip workflow is end to end. Resist it. The next three sessions should be ports and Board only. A tool that simulates one microstrip correctly is worth more than a tool that simulates a cavity perfectly and a PCB not at all.
+
