@@ -1844,3 +1844,66 @@ Caveat on rung 12: its drive frequency snapped to 6.5563 GHz, 12.5 pc above the 
 No frozen mesh. Plateau criterion stated as (8 to 12 step) below 25 pc of (4 to 8 step): it fails on Z0 (50 pc), on the identity (115 pc) and on passivity (125 pc), and passes on eps_eff and beta. Three of five fail.
 
 The stop condition in the dispatch fires on the identity clause: no rung is within 3 pc of 87.9553, and the deviation worsens with refinement. M3b was not started and no pre-registration was frozen.
+
+## 76. The Poynting discriminator: pre-registration, and three dispatch premises corrected before data
+
+The supervisor ordered the reference box run at `n_sub` 8 and 12 with the Poynting flux
+measured, to decide whether the 16 pc station-plane power deficit is the field or the
+extraction. This section fixes the decision rule before any flux number exists, and records
+three premises in the dispatch that do not hold.
+
+**Premise 1, falsified: there is no `poynting` command-line flag.** `poynting` is a Python
+keyword argument of `microstrip_wave` (`emfit/studies.py:2292`) and of the board wrapper
+(`emfit/studies.py:3402`), default `False`. It appears nowhere in `emfit/cli.py`, so
+`--set poynting=yes` cannot be honoured and the measurement has to be a Python call. The flag
+allocates three arrays only when it is on (`studies.py:2636-2648`), consumes them per settled
+step (`2756-2768`) and averages them at (`2783-2799`). It writes exactly two keys into the
+dump, `sx_station` and `sx_station_sub` (`studies.py:2149-2155`, `float64`, shape
+`(n_stations,)`, watts, signed, +x positive, mean over the settled record). The helper is
+`station_poynting` (`emfit/ports.py:470`), which is time-instantaneous -- a single sample,
+not a phasor and not `0.5 Re(V conj I)`.
+
+**Premise 2, arithmetic: Fork A cannot fire at rung 8, and neither can Fork B.** Fork A
+requires a circuit-to-flux gap of at least 10 pc at both rungs. The measured circuit
+passivity at rung 8 is 0.9267, so the largest gap physically available at that rung is
+1 - 0.9267 = 7.33 pc, for any field whatsoever. Fork A is unreachable there. Fork B requires
+agreement within 5 pc at both rungs; a flux passivity of 1.0000 at rung 8 gives a gap of
+7.33 pc, which fails B and lands in the 3 to 10 pc band the dispatch assigns to Fork C. The
+A/B/C partition therefore has a hole exactly where the cleanest possible answer lies, and no
+rung-8 outcome can be read.
+
+**Premise 3, instrument: `sx_station` is barred by standing rule from this use.** `RESUME.md`
+records that `sx_station` carries a mesh-independent fixture tilt of 6.2646 pc peak-to-peak
+at 0.800 mm and 6.3135 pc at 0.400 mm, that it is for shape comparison and never for
+absolute conservation checks, and that the conservation-grade quantity there is
+`0.5 Re(v conj i)` at 1.9 pc, which is not in the dump. The ordered test is an absolute
+conservation check on the barred quantity. The tilt is comparable to the whole 7.33 pc
+deficit at rung 8 and to the 5 pc Fork B threshold at every rung. Two mitigations are
+reported rather than assumed: the flux enters as a ratio of two stations, so a shape
+distortion cancels to first order, and `sx_station_sub` supplies an independent second
+integral whose ratio can be compared with the first as a within-run check that does not
+depend on the tilt at all.
+
+**The decision rule, fixed now.** The discriminator is the fraction of the apparent loss
+that the field does not see:
+
+    r = (passivity_poynting - passivity_circuit) / (1 - passivity_circuit)
+
+`r` near 1 means the extraction is the entire deficit. `r` near 0 means the field loses the
+power. This replaces the absolute percentage thresholds, which scale with the size of the
+deficit and so cannot be compared across rungs of unequal deficit.
+
+- **Fork A, M3b is the fix:** `r` at least 0.70.
+- **Fork B, M3b is a diagnostic:** `r` at most 0.30.
+- **Fork C, ambiguous:** anything else, or a disagreement between the two station integrals
+larger than the tilt.
+
+A rung counts toward the decision only if its entire circuit deficit exceeds the 6.31 pc
+fixture tilt. Rung 8, at 7.33 pc, does not, and is reported undecided. Rung 12, at 16.09 pc,
+does, and the decision rests on it. The expected resolution in `r` at rung 12 is about plus
+or minus 0.4 if the full tilt propagates, and better if it cancels in the station ratio;
+that is stated before the number is known, so that a value in the middle is called ambiguous
+rather than rounded into a fork.
+
+Nothing in this section is derived from a flux measurement. The three premises follow from
+the `emfit/` source, from the already-published ladder table, and from `RESUME.md`.
