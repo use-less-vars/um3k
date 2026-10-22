@@ -46,6 +46,7 @@ rate of 0.01160 dB/mm.  Two things are **absent** and are not defects of the run
 dump carries no first-half / second-half pair, so the halves check cannot be made at
 all, and the port is not mode-matched, so no beta, eps_eff, Z0, S11 or passivity number
 comes out of this record.
+_[Superseded, note added on review: this figure is the section 68 derivation from sqrt(0.969277006), not a tool output. Section 73 replaces it with 0.987038 at POY_WARM=4000 POY_NACC=6026; the 0.26 pc difference is warm-up sensitivity at fixed n_acc.]_
 
 ## In flight
 
@@ -75,6 +76,7 @@ and it is not a second run.  `dump written: None` in the solve log is **cosmetic
    quotable **as a flux diagnostic only**.  beta, eps_eff, Z0, S11 and any passivity
    statement are **not** quotable from this record.  The standing rule below is intact:
    no S-parameter measured on an imported board is quotable.
+_[Superseded, note added on review: this figure is the section 68 derivation from sqrt(0.969277006), not a tool output. Section 73 replaces it with 0.987038 at POY_WARM=4000 POY_NACC=6026; the 0.26 pc difference is warm-up sensitivity at fixed n_acc.]_
 4. Nothing else.  Do not launch another solve, and do not run pytest while the docs are
    the only open item.
 
@@ -88,6 +90,7 @@ record it wrote, `.scratch/.../plane_record.npz`, is also outside version contro
 that record is what the cross-section check consumes; (3) the smoke harness
 `.scratch/host/m3a-smoke/run.sh` is likewise outside version control; (4) `.scratch/` is
 not committed at all, so none of the three survives a clone.
+_[Superseded, note added on review: this figure is the section 68 derivation from sqrt(0.969277006), not a tool output. Section 73 replaces it with 0.987038 at POY_WARM=4000 POY_NACC=6026; the 0.26 pc difference is warm-up sensitivity at fixed n_acc.]_
 
 For a holder of the tree the number is at least fully specified.  Production mesh
 `322 x 200 x 76` (200 y-nodes, 76 z-cells, strip on `k = 16` at `iy = 100`); nine
@@ -111,6 +114,7 @@ pending a ruling.
 
 Until that move happens, `0.984519` should be quoted with its provenance attached, never
 as a bare number.
+_[Superseded, note added on review: this figure is the section 68 derivation from sqrt(0.969277006), not a tool output. Section 73 replaces it with 0.987038 at POY_WARM=4000 POY_NACC=6026; the 0.26 pc difference is warm-up sensitivity at fixed n_acc.]_
 
 ### The section-70 branch regression suite is owed, and cannot be re-run
 The four synthetic branch re-verifications of section 70 -- nominal PASS, drop
