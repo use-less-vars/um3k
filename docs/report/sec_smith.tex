@@ -1,0 +1,361 @@
+\section{The Smith chart}
+\label{sec:smith}
+
+\noindent\emph{Status: draft -- the map, the two families of circles and the rotation law are derived; the matching
+constructions are stated as chart operations and then verified algebraically in the worked example of
+\S\ref{sec:smith-example}. No figure is included: the preamble has no drawing package, so the geometry is given
+as algebra plus a table of values.}
+
+A chart is a device for turning an algebraic relation into a visual one, and the Smith chart earns its place in
+every microwave course because the relation it turns is the one that appears in every line problem: the reflection
+coefficient of a load, seen through a length of line, is the load's reflection coefficient rotated by a phase that
+depends on the length. Section~\ref{sec:tline-ripple} derived that rotation, \eqref{eq:tline-gamma-z}; this
+chapter takes it seriously. Once $\Gamma$ is drawn as a point inside the unit disc, the two operations that a
+line problem needs -- moving along the line, and converting between impedance and admittance -- become a
+rotation and a reflection of the page, and matching becomes a construction rather than a search. The cost of
+doing it on paper has fallen, since a computer does the same arithmetic in a microsecond, but the understanding
+has not: a matching network designed by an optimiser that converges to a solution with a narrow bandwidth is
+doing something the chart makes obvious in advance, which is the point of \S\ref{sec:smith-bandwidth}.
+
+The chapter is deliberately self-contained about the geometry and does not appeal to a printed chart. Everything a
+chart would let one read off is computed here from the same formula, and the small number of landmarks that are
+actually needed are tabulated in Table~\ref{tab:smith-landmarks}.
+
+\subsection{The bilinear map from impedance to reflection coefficient}
+\label{sec:smith-map}
+
+Normalise the impedance by the reference, $z=Z/Z_0=r+jx$, so that a matched load is $z=1$ and the two landmarks
+of a short and an open are $z=0$ and $z=\infty$. Then \eqref{eq:tline-gamma} reads
+\begin{equation}
+  \Gamma = \frac{z-1}{z+1},
+  \qquad
+  z = \frac{1+\Gamma}{1-\Gamma} ,
+  \label{eq:smith-map}
+\end{equation}
+and the inverse in \eqref{eq:smith-map} is obtained by solving for $z$ in one line, which is worth doing once
+because it shows that the map is its own kind of symmetry: the same expression, with $\Gamma$ in place of $z$ and
+$z$ in place of $\Gamma$, apart from a sign. The map is a M\"obius transformation -- fractional linear, and
+composing two of them is again one -- with a single pole at $z=-1$, i.e. at the point $\Gamma=\infty$ which is the
+short circuit. It is also the Cayley transform of the right half-plane onto the unit disc, and that identification
+is what the next subsection exploits.
+
+Two structural facts follow from \eqref{eq:smith-map} without any computation, and both are what make the chart
+usable. First, a M\"obius transformation maps generalised circles to generalised circles: every circle or straight
+line in the $z$-plane becomes a circle or straight line in the $\Gamma$-plane, and there is no question of a
+family of curves becoming distorted into something unrecognisable. Second, the map is conformal wherever its
+derivative does not vanish, and
+\begin{equation}
+  \frac{\dd\Gamma}{\dd z} = \frac{(z+1)-(z-1)}{(z+1)^2} = \frac{2}{(z+1)^2} \neq 0
+  \quad\text{for } z\neq\infty ,
+  \label{eq:smith-derivative}
+\end{equation}
+so it is conformal everywhere except at the open circuit. Conformality means angles are preserved: two curves
+that cross at a right angle in the impedance plane still cross at a right angle on the chart. This is why the
+constant-resistance and constant-reactance families intersect orthogonally, and it is a property worth stating
+because it is what makes reading a chart at a point a reliable operation -- local geometry means what it looks
+like it means.
+
+\subsection{Why constant resistance and constant reactance become circles}
+\label{sec:smith-circles}
+
+Write $\Gamma=u+jv$ and clear the denominator in \eqref{eq:smith-map}:
+\begin{equation}
+  (1-\Gamma) z = 1+\Gamma
+  \quad\Longrightarrow\quad
+  (1-u-jv)(r+jx) = 1+u+jv .
+  \label{eq:smith-clear}
+\end{equation}
+Equating real and imaginary parts gives two real equations,
+\begin{equation}
+  r - ur + vx = 1+u ,
+  \qquad
+  x - ux - vr = v ,
+  \label{eq:smith-twoeq}
+\end{equation}
+and eliminating first $x$ and then $r$ yields the two explicit forms
+\begin{equation}
+  r = \frac{1-u^2-v^2}{(1-u)^2+v^2},
+  \qquad
+  x = \frac{2v}{(1-u)^2+v^2} ,
+  \label{eq:smith-rx}
+\end{equation}
+which are the equations of the chart written the useful way round: given a point, read off the impedance.
+The families of curves are then obtained by fixing $r$ or $x$ in \eqref{eq:smith-rx} and rearranging. For
+constant $r$,
+\begin{equation}
+  r\left[(1-u)^2+v^2\right] = 1-u^2-v^2
+  \;\Longrightarrow\;
+  \left(u - \frac{r}{1+r}\right)^2 + v^2 = \frac{1}{(1+r)^2} ,
+  \label{eq:smith-rcircle}
+\end{equation}
+a circle with centre $\left(r/(1+r),\,0\right)$ on the real axis and radius $1/(1+r)$. For constant $x$,
+\begin{equation}
+  x\left[(1-u)^2+v^2\right] = 2v
+  \;\Longrightarrow\;
+  (u-1)^2 + \left(v - \frac{1}{x}\right)^2 = \frac{1}{x^2} ,
+  \label{eq:smith-xcircle}
+\end{equation}
+a circle with centre $\left(1,\,1/x\right)$ and radius $1/|x|$.
+
+The two families are worth reading as limits. The constant-resistance circles all pass through the point
+$(u,v)=(1,0)$, which is the open circuit $\Gamma=+1$: every circle of the family is tangent there, so the right
+half of the chart is nested arcs all meeting at one point. As $r\to\infty$ the centre approaches $(1,0)$ and the
+radius approaches zero, so the whole real axis of the chart collapses to a point on its rim. The
+constant-reactance circles all pass through $(1,0)$ as well, with centres on the vertical line $u=1$; for
+$x>0$ they lie in the upper half, for $x<0$ in the lower half, and $x\to0$ degenerates the circle into the real
+axis. The orthogonality of the two families is exactly the conformality of \eqref{eq:smith-derivative}: two
+circles whose centres lie on perpendicular lines through a common point meet at right angles, and the whole
+apparatus of a printed chart is that observation drawn on paper.
+
+\subsection{The passive half-plane is the unit disc}
+\label{sec:smith-passive}
+
+The inequality \eqref{eq:tline-gamma-passive} established that a passive load, $\Re Z\ge 0$, gives
+$|\Gamma|\le1$. In the $(u,v)$ plane that is the statement that the entire right half of the impedance plane maps
+into the closed unit disc, and because the map is a bijection, the correspondence is exact: $r\ge0$ if and only
+if $u^2+v^2\le1$. The rim of the disc, $|\Gamma|=1$, is $r=0$, the pure reactances -- the inductors and
+capacitors, and the two extremes of short and open at $(-1,0)$ and $(+1,0)$. The real axis of the chart is the
+purely resistive line $x=0$, with the matched point $z=1$ at the centre. The upper half of the disc is
+$x>0$, the inductive half; the lower half is capacitive. These landmarks, and a few representative points, are
+collected in Table~\ref{tab:smith-landmarks}; they are the only ones the constructions of
+\S\ref{sec:smith-matching} need, and they replace the figure this report cannot draw.
+
+\begin{table}[H]
+  \centering
+  \caption{Landmarks of the chart: normalised impedances and the reflection coefficients they map to, computed from \eqref{eq:smith-map}. The pattern along each row is the algebra of \eqref{eq:smith-rcircle} and \eqref{eq:smith-xcircle} evaluated at a fixed value.}
+  \label{tab:smith-landmarks}
+  \small
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+    Load & $z=r+jx$ & $\Gamma=u+jv$ & $|\Gamma|$ \\
+    \midrule
+    matched load        & $1$              & $0$              & $0$ \\
+    short circuit       & $0$              & $-1$             & $1$ \\
+    open circuit        & $\infty$         & $+1$             & $1$ \\
+    pure reactance      & $j1$             & $0.000+j1.000$   & $1$ \\
+    pure reactance      & $-j1$            & $0.000-j1.000$   & $1$ \\
+    quarter-wave load   & $2$              & $0.333$          & $0.333$ \\
+    half the reference  & $0.5$            & $-0.333$         & $0.333$ \\
+    the example below   & $0.5+j0.5$       & $-0.2+j0.4$      & $0.4472$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The reason the disc is worth drawing at all is that the passivity constraint is a constraint on the picture:
+a problem that produces $|\Gamma|>1$ has produced a load that is active, whatever the schematic says. That is the
+same inequality that appears as the passivity condition \eqref{eq:sp-passivity} on a scattering matrix, and the
+one-port case of it is precisely this rim.
+
+\subsection{Moving along the line is a rotation, one turn per half wavelength}
+\label{sec:smith-rotation}
+
+Equation \eqref{eq:tline-gamma-z} says that at a distance $d$ towards the generator,
+$\Gamma(d)=\Gamma_L e^{-2j\beta d}$. On the chart this is a rotation of the point about the centre by the angle
+$-2\beta d$: a decrease of $2\beta d$ radians in the argument, with the modulus unchanged. The direction matters
+and is worth fixing once. Looking towards the generator, $d$ increases, and the rotation is clockwise; looking
+towards the load, it is anticlockwise. The modulus is unchanged, so a lossless length of line moves a point
+around a circle centred on the origin and never towards it -- which is the geometrical form of the remark at the
+end of Section~\ref{sec:tline-zin} that a length of line cannot improve a match by itself.
+
+The period follows from \eqref{eq:tline-ripple-period}. One full turn is $2\pi$, so it requires
+$2\beta d=2\pi$, i.e. $d=\pi/\beta=\lambda_g/2$. A complete revolution of the chart is half a guided wavelength,
+and a quarter wavelength is a half turn, which is why the quarter-wave transformer \eqref{eq:tline-quarter}
+appears on the chart as a rotation by $180^\circ$ taking $z$ to $1/z$. This is the same factor of two as before,
+and the reason is the same: the wave goes and comes back. It is worth saying explicitly that the chart's most
+familiar scale -- the ``wavelengths towards the generator'' ring printed round the rim -- runs from $0$ to
+$0.5$, not from $0$ to $1$, for exactly this reason.
+
+\subsection{VSWR is the distance from the centre}
+\label{sec:smith-vswr}
+
+Since moving along a lossless line preserves $|\Gamma|$, and since \eqref{eq:tline-vswr} expresses the standing
+wave ratio as a function of $|\Gamma|$ alone, the ratio is constant along the line and corresponds to a circle
+centred on the origin. Read \eqref{eq:tline-vswr} the other way and it is transparent:
+\begin{equation}
+  |\Gamma| = \frac{\mathrm{VSWR}-1}{\mathrm{VSWR}+1} ,
+  \label{eq:smith-vswr}
+\end{equation}
+so the radius of the point is a direct readout of the mismatch. The centre is the perfect match; the rim is total
+reflection; a VSWR of $2$ is a radius of $\tfrac13$, and a VSWR of $1.5$ is a radius of $0.2$. This is why the
+concentric circles printed on a chart are labelled both in $|\Gamma|$ and in VSWR: they are the same circles. The
+circle through the point therefore marks every place along the line where the standing wave has its maxima, and
+the crossing of that circle with the real axis towards the load is where the voltage maximum sits -- a fact used
+constantly in slotted-line measurements, and the geometrical version of the $\pm1.2$ per cent envelope computed in
+Section~\ref{sec:tline-ripple}.
+
+\subsection{Matching, as two constructions}
+\label{sec:smith-matching}
+
+Two matching problems account for almost everything the chart is used for, and both are one-line constructions.
+
+The \emph{quarter-wave transformer} uses the half-turn of \S\ref{sec:smith-rotation}. A real load $R_L$ sits on
+the real axis at $z=R_L/Z_0$; rotate by $180^\circ$ (a length $\lambda_g/4$) and the point lands at $1/z=Z_0/R_L$,
+which by \eqref{eq:tline-quarter} is the impedance seen there. Choose the transformer's characteristic impedance
+to be the geometric mean $\sqrt{Z_0 Z_{\mathrm{in}}}$ and both are real, so the match is exact at the design
+frequency. The construction is thus: rotate the load by a half turn, read the impedance, and take the square root
+of the product. What the construction makes immediately visible is the limit: the half turn is a half turn only at
+one frequency, so a quarter-wave transformer is a narrow-band device, and its bandwidth is set by how far the load
+is from the centre.
+
+The \emph{shunt stub} uses the same rotation plus one more observation: adding a susceptance at a point means
+adding to the imaginary part of the admittance at that point, so the point is moved along a constant-conductance
+circle. The construction runs in the admittance plane, which on the chart means reflecting the point through the
+centre -- inverting $z$, since $y=1/z$ and $|\Gamma(y)|=|\Gamma(z)|$ with the argument negated (the chart's
+``impedance/admittance'' overlay is exactly that reflection). Then: rotate towards the generator until the point
+crosses the circle $\Re y=1$, which is the image of the $\Re z=1$ circle under the reflection; at that plane the
+input conductance is already matched, and only a susceptance $b$ remains. A shorted stub of length $l<\lambda_g/4$
+supplies $y_{\mathrm{stub}}=-j\cot\beta l$, purely susceptive, whose value is read off the chart the same way; set
+it to $-b$ and the point lands on the centre. Two properties of the construction are visible and both matter. The
+rotation must reach the $\Re y=1$ circle, which it always does on a lossless line, so a solution always exists;
+but it may reach it twice, once before and once after the first $\lambda_g/2$, and the two solutions have
+different stub lengths and different bandwidths.
+
+\subsection{What the match costs in bandwidth}
+\label{sec:smith-bandwidth}
+
+A match designed on the chart is exact at one frequency. Move off it and two things happen at once: the load's
+own impedance drifts, and every electrical length in the construction -- the transformer, the stub, the line
+between them -- rotates by a different amount than it should. On the chart this is simply the observation that
+the point, which was placed on the centre, departs from the centre along some path, and the rate of departure is
+what bandwidth means. A construction that reaches the centre from a small radius (a well-matched load) has a
+shallow departure and a wide band; one that reaches it from near the rim -- the familiar case of matching a
+low-resistance load such as an antenna with a real impedance far from $50\ \Ohm$ -- has a steep departure, because
+the rotation angle changes the argument of a vector that was long to begin with.
+
+The quantitative statement is the Bode--Fano limit, which deserves to be quoted for its shape rather than its
+derivation: for a load with a fixed reactive part, the integral of $\ln(1/|\Gamma|)$ over frequency is bounded by
+a constant that depends only on the load, not on the matching network. The consequence is the one the chart shows
+qualitatively: bandwidth and match depth trade off against each other, and a design that achieves a very deep
+null over a very narrow band has not done something clever, it has spent the budget in one place. This is the
+reason the broadband comparison of Section~\ref{sec:msres-broadband} is worth more than the deepest single-frequency
+null in the report: a match at one bin validates one bin, and says nothing about the neighbouring one. When a
+matching network is evaluated here, the figure of merit quoted is the band over which the return loss stays below
+a stated level, precisely because a single number at the design frequency can be made arbitrarily good.
+
+\subsection{A worked example: $Z_L=25+j25\ \Ohm$ on a $50\ \Ohm$ line}
+\label{sec:smith-example}
+
+The example is small enough to check by hand at every step and is carried out completely, because a worked
+matching problem is where the conventions of \S\ref{sec:smith-rotation} either become usable or stay abstract.
+Take $Z_0=50\ \Ohm$, $Z_L=25+j25\ \Ohm$, and a frequency at which $\lambda_g=100$ mm, corresponding to
+$f=1$ GHz on a substrate with $\eps_{\mathrm{eff}}=9$ and $v_p=c/3=10^{8}$ m/s, so that
+$\beta=2\pi/\lambda_g=62.832$ rad/m and one millimetre is $3.6^\circ$ of electrical length.
+
+\emph{Step 1: normalise.} $z_L=(25+j25)/50=0.5+j0.5$. The load is in the lower-right quadrant of the chart's
+upper half -- more precisely, in the region $0<r<1$, $x>0$, so inside the $r=1$ circle and above the axis.
+
+\emph{Step 2: the reflection coefficient.} From \eqref{eq:smith-map},
+\begin{equation}
+  \Gamma_L = \frac{(0.5+j0.5)-1}{(0.5+j0.5)+1}
+           = \frac{-0.5+j0.5}{1.5+j0.5}
+           = \frac{(-0.5+j0.5)(1.5-j0.5)}{1.5^2+0.5^2}
+           = \frac{-0.5+j1.0}{2.5} = -0.2+j0.4 .
+  \label{eq:smith-ex-gamma}
+\end{equation}
+Hence $|\Gamma_L|=\sqrt{0.04+0.16}=\sqrt{0.2}=0.4472$, and $\angle\Gamma_L=\arctan(0.4/-0.2)$ in the second
+quadrant, $180^\circ-63.435^\circ=116.565^\circ$. The point sits at radius $0.447$ and angle $116.6^\circ$: upper
+left, inside the disc, as a passive inductive load must.
+
+\emph{Step 3: the VSWR.} By \eqref{eq:smith-vswr},
+\begin{equation}
+  \mathrm{VSWR} = \frac{1+0.4472}{1-0.4472} = \frac{1.4472}{0.5528} = 2.6179 ,
+  \label{eq:smith-ex-vswr}
+\end{equation}
+which is the radius of the circle through the point, and the return loss is
+$20\log_{10}(0.4472)=-6.99$ dB -- a badly matched load, which is the point of matching it.
+
+\emph{Step 4: the impedance at $\lambda_g/8$.} Here $\beta d=45^\circ$ and the rotation of
+\S\ref{sec:smith-rotation} is a quarter turn clockwise:
+\begin{equation}
+  \Gamma_{\mathrm{in}} = 0.4472\,\angle\,(116.565^\circ-90^\circ) = 0.4472\,\angle\,26.565^\circ
+                      = 0.4+j0.2 ,
+  \label{eq:smith-ex-gin}
+\end{equation}
+and inverting \eqref{eq:smith-map},
+\begin{equation}
+  z_{\mathrm{in}} = \frac{1+0.4+j0.2}{1-0.4-j0.2}
+                  = \frac{1.4+j0.2}{0.6-j0.2}
+                  = \frac{(1.4+j0.2)(0.6+j0.2)}{0.36+0.04}
+                  = \frac{0.80+j0.40}{0.40} = 2.0+j1.0 ,
+  \label{eq:smith-ex-zin}
+\end{equation}
+so $Z_{\mathrm{in}}=100+j50\ \Ohm$. The cross-check through the tangent form \eqref{eq:tline-zin} gives
+$\tan45^\circ=1$ and hence $z_{\mathrm{in}}=(0.5+j0.5+j)/(1+j(0.5+j0.5))=(0.5+j1.5)/(0.5+j0.5)=2.0+j1.0$,
+agreeing. Two more points on the same circle, for orientation: at $d=\lambda_g/4$ the half turn gives
+$z=1/z_L=1/(0.5+j0.5)=1-j1$, i.e. $Z_{\mathrm{in}}=50-j50\ \Ohm$, which is \eqref{eq:tline-quarter} with
+$Z_0^2/Z_L=2500/(25+j25)=50-j50$; and at $d=\lambda_g/2$ the full turn returns $Z_{\mathrm{in}}=Z_L$ by
+\eqref{eq:tline-half}.
+
+\emph{Step 5: where to put the shunt stub.} Work in admittance. The load admittance is
+\begin{equation}
+  y_L = \frac{1}{z_L} = \frac{1}{0.5+j0.5} = \frac{0.5-j0.5}{0.5} = 1-j1 ,
+  \label{eq:smith-ex-yl}
+\end{equation}
+whose real part is already unity: the load lies on the $\Re y=1$ circle before any rotation at all, so a stub at
+the load plane will do. That is a slightly atypical accident, and the construction is better seen by solving the
+general problem, which is where the chart earns its keep. Writing $t=\tan\beta d$, the impedance and admittance
+at the plane are
+\begin{equation}
+  z(d) = \frac{z_L+jt}{1+jz_Lt},
+  \qquad
+  y(d) = \frac{1}{z(d)} = \frac{1+jz_Lt}{z_L+jt} .
+  \label{eq:smith-ex-yd}
+\end{equation}
+With $z_L=0.5+j0.5$ the numerator is $1+j(0.5+j0.5)t=(1-0.5t)+j0.5t$ and the denominator is $0.5+j(0.5+t)$, so
+\begin{equation}
+  \Re y(d) = \frac{(1-0.5t)\cdot 0.5 + 0.5t\,(0.5+t)}{0.5 + t + t^2}
+           = \frac{0.5+0.5t^2}{0.5+t+t^2} ,
+  \label{eq:smith-ex-reyd}
+\end{equation}
+and imposing $\Re y(d)=1$ gives $0.5+0.5t^2 = 0.5+t+t^2$, i.e.
+\begin{equation}
+  t^2 + 2t = 0 \quad\Longrightarrow\quad t=0 \ \ \text{or}\ \ t=-2 .
+  \label{eq:smith-ex-t}
+\end{equation}
+Both roots are physical and they are the two crossings of the $\Re y=1$ circle that
+\S\ref{sec:smith-matching} promised: $t=0$ is the load plane itself ($d=0$ or $d=\lambda_g/2$), and
+$t=-2$ is $\beta d=180^\circ-63.435^\circ=116.565^\circ$, hence $d=(116.565/360)\times100\ \mathrm{mm}=32.38$ mm,
+i.e. $d=0.3238\lambda_g$. At the second crossing the admittance is obtained from \eqref{eq:smith-ex-yd} with
+$t=-2$:
+\begin{equation}
+  z(d) = \frac{0.5+j0.5-j2}{1+j(0.5+j0.5)(-2)} = \frac{0.5-j1.5}{2-j1}
+       = \frac{(0.5-j1.5)(2+j1)}{5} = \frac{2.5-j2.5}{5} = 0.5-j0.5 ,
+  \label{eq:smith-ex-yd-value}
+\end{equation}
+so $y(d)=1/(0.5-j0.5)=1+j1$, real part unity as required and susceptance $+1$.
+
+Two matching networks therefore exist. At the load plane the residual susceptance is $-1$, so the stub must
+supply $+j1$:
+\begin{equation}
+  -j\cot\beta l = +j1 \quad\Longrightarrow\quad \cot\beta l = -1 \quad\Longrightarrow\quad
+  \beta l = 135^\circ , \qquad l = 0.375\lambda_g = 37.5\ \mathrm{mm} .
+  \label{eq:smith-ex-stub}
+\end{equation}
+At the second crossing the residual is $+1$, so the stub must supply $-j1$:
+\begin{equation}
+  -j\cot\beta l = -j1 \quad\Longrightarrow\quad \cot\beta l = 1 \quad\Longrightarrow\quad
+  \beta l = 45^\circ , \qquad l = 0.125\lambda_g = 12.5\ \mathrm{mm} .
+  \label{eq:smith-ex-stub2}
+\end{equation}
+Both give $y_{\mathrm{tot}}=1$ and hence $Z_{\mathrm{in}}=50\ \Ohm$ and $\Gamma=0$ at the design frequency; the
+second is preferred on the chart because its stub is shorter, and \S\ref{sec:smith-bandwidth} is the reason the
+choice is not merely a matter of taste. The check that closes the loop is a reflection: at the matched plane
+$\Gamma$ must be the load point rotated by $-2\beta d=-233.13^\circ$, which is the same as
+$+126.87^\circ$, i.e. $\Gamma=0.4472\,\angle\,(116.565^\circ+126.87^\circ)=0.4472\,\angle\,-116.565^\circ
+=-0.2-j0.4$. Inverting \eqref{eq:smith-map} gives $z=(0.8-j0.4)/(1.2+j0.4)=0.5-j0.5=1/y(d)$, which is the
+reflection of the load point through the centre of the chart -- the impedance/admittance inversion of
+\S\ref{sec:smith-matching}, confirmed numerically. Every quantity in the example has now been obtained by two
+independent routes and they agree.
+
+\emph{Step 6: what it costs in bandwidth.} The stub supplies exactly $-j1$ at $1$ GHz. At $1.1$ GHz the same
+$12.5$ mm is $\beta l=49.5^\circ$ electrically, so $\cot\beta l=0.854$ and the stub supplies only $-j0.854$: a
+residual susceptance of $+j0.146$ is left over, and $y=1+j0.146$ corresponds to
+$|\Gamma|=0.073$, a return loss of $22.8$ dB. Ten per cent off the design frequency has therefore already cost
+the match everything beyond about $-23$ dB, and the trend continues quadratically. This is the numeric content of
+\S\ref{sec:smith-bandwidth}: the chart says the same thing in one glance, because the stub's susceptance is read
+off a circle and the circle moves fast near its extremes.
+
+That is one line, one match and one tolerance, worked out on the chart. The next section uses all three at once
+on a printed line whose reference plane is not where the ports are: the line of Section~\ref{sec:tline}, the
+S-parameter and its reference impedance of Section~\ref{sec:sparams} and the chart of this section are the
+whole of the vocabulary it needs, and Section~\ref{sec:microstrip} is where they are spent together.
