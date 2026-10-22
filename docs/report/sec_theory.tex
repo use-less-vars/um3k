@@ -314,3 +314,27 @@ measure-based, low-order approximation, which is why an explicit step exists at 
 view puts the two families on one footing; for the problems this project targets the trade of geometric fidelity
 against cost per unknown falls on the FIT side, at the price of a structured grid and of a staircase at curved
 surfaces.
+
+\begin{remark}[What is exact in the scheme, and what is not]
+\label{rem:exact}
+The word ``exact'' has been used three times above with three different objects, and it is worth separating them
+once, because the whole credibility of the numbers in this report rests on the separation. The topological
+identities are exact in the strongest sense: $\Smat\Cmat=0$ and its companions are statements about integer
+incidence matrices, they hold for any material distribution, on any grid, at any time step, and they are what
+Proposition~\ref{prop:identities} and \eqref{eq:identities} record. The constitutive relation is not exact: the
+Hodge star matrices $\Em$, $\Mm$ of \eqref{eq:stars} replace a continuous field by a diagonal, measure-based,
+low-order average, and every approximation in space is in that replacement and nowhere else
+(Section~\ref{sec:hodge}). The time step is not exact either: the leapfrog recursion
+\eqref{eq:leapfrog-h}--\eqref{eq:leapfrog-e} conserves the mixed-state quadratic form \eqref{eq:invariant} to
+rounding, which is an exact statement about the discrete system, but the scheme is only conditionally stable
+\eqref{eq:cfl}, at a step set by the smallest cell (Table~\ref{tab:cfl}), and stepping inside the bound does not
+remove the dispersion of \eqref{eq:dispersion}, which is why a tracked wavefront travels at $0.904\,c_0$
+(Section~\ref{sec:dispersion}). Nothing in the report therefore claims that the finite integration technique is
+exact. What can be claimed is narrower and is measured: the conserved quantity is exact, the incidence relations
+are exact, and the accuracy of any field, frequency or impedance quoted here is the accuracy of the stars at the
+resolution used, which for the closed cavity is about one per cent on a coarse grid with second-order convergence
+(Section~\ref{sec:results}). An error in that accounting, whether it is attributed to the grid when it belongs to
+the boundary or the other way round, is the one mistake this scheme makes easy, and the measurements of
+Section~\ref{sec:worked} are reported per record for that reason.
+\end{remark}
+

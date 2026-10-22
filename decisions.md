@@ -2108,3 +2108,90 @@ is -- the end-to-end change in the station Poynting profile, carrying the known
 mesh-independent fixture tilt, not the line's attenuation. The rename is not cosmetic. Where
 sections 68 and 73 called this number an interim insertion loss, they were naming a quantity
 this number cannot supply, and the correction travels with the figure from here.
+
+## 78. A glossary, a Touchstone subsection, two withdrawn objections, and the rule about worker reports
+
+**What changed.** `docs/report/sec_glossary.tex` is new (24 entries, `description` environment,
+cross-referenced into `docs/report/main.tex` after `sec_outlook` at line 69), and
+`docs/report/sec_sparams.tex` gains `\subsection{The Touchstone file format}` (`sec_touchstone`, appended
+at line 419). The glossary is a reading aid and says so in its status line: it fixes one sense per term and
+points at the section where the sense is defined and where the quantity is measured, and where an entry and
+a section disagree the section governs. No number is introduced by it. The Touchstone subsection adds the
+file contract only, because the physics of the reference impedance is `sec:sp-refz` and the physics of the
+reference plane is `sec:sp-refplane`. `docs/report/sec_theory.tex` gains a remark at `rem:exact` that
+separates the three things the word exact has been carrying -- the integer incidence relations, the Hodge
+stars, and the conditional leapfrog step -- and states that nothing in the report claims the scheme itself
+is exact. `docs/report/sec_energy.tex` gains one sentence beside the `0.904 c0` figure saying that it is a
+property of grid and wavelength together and is measured rather than assumed, and `docs/report/sec_intro.tex`
+gains a forward pointer to the glossary.
+
+**Correction one, on the absorbing boundary.** It was asserted, as a blocking objection to the glossary,
+that defining both the Mur condition and the matched layer in one place would contradict
+`sec_impl.tex`, which was said to describe a single boundary mechanism. The objection is wrong and was
+withdrawn after checking: `sec_impl.tex:45`--`48` lists `abc.py` (348 lines, Mur planes, `eq:mur`) and
+`pml.py` (808 lines, conductivity profile, layer fit) as separate modules, `sec_impl.tex:171`--`175`
+describes the condition of `sec:res-abc` and the layer of `sec:res-pml` as two additions to the same
+array, and the test tables carry `test_abc` (`sec_impl.tex:240`), `test_pml` (`:241`, "below Mur") and
+`test_pml_audit` (`:254`). The glossary therefore cites both measurement sections side by side and asserts
+neither as *the* boundary. Nothing in the implementation section needed changing.
+
+**Correction two, on the file extension.** It was asserted that the Touchstone writer picks its row order
+or its port count from the file extension, so that the format claim could not be made without a documented
+`.s2p` path in the package. The assertion is wrong and was withdrawn after checking: `s2p` occurs nowhere
+in `emfit/`, the writer is generic in `n_ports` (`emfit/ports.py:1791`, flattened with a single
+`order="F"` reshape at `:1833`), and the reader infers the port count from the column count,
+`n_ports = round(sqrt((n_vals - 1) / 2))` at `emfit/ports.py:1888`, rejecting any row that is not
+`1 + 2 n_ports^2` columns (`:1889`--`1892`). The extension lives only in tests
+(`tests/test_ports.py:321`, `tests/test_port_parallel_plate.py:394`), which is where it belongs. The
+subsection says exactly that, and adds the consequence a reader needs: the column count is the contract,
+so a file named `.s2p` holding four-port rows is read as a four-port.
+
+**Why these two are recorded rather than silently fixed.** Each passed a plausibility argument and failed
+a grep, and in each case the first correction would have been worse than the error it was aimed at --
+one would have forced a glossary to choose between two boundary mechanisms that both exist, the other
+would have written a `.s2p` path into the report that the package does not have. The standing rule this
+section makes explicit: an assertion about the tree enters the report only with a `file:line` and a check
+that reproduces it, and where the check contradicts the assertion the assertion is withdrawn here, dated,
+in the same place as the number it touched. The `7.33` per cent pairing was handled this way before
+(`:2051`--`2055`) and the rule is the same one.
+
+**One tone correction in the worked example.** `sec_worked.tex:210` said of the pulse record that "the
+identity closes to every printed digit". That is stronger than `§77` (`:2088`--`2091`) can support, where
+the same identity on the rung 8 record leaves a residue of `0.0001` pc from rounding the tilt to four
+decimal places. The sentence now reads that it closes at the precision to which the tilt is quoted, four
+decimal places, and not beyond that, for the same reason as the residue above: the number is unchanged and
+the claim is now the one the arithmetic makes.
+
+**Two figures, and why only one of them stays.** The mode-normalisation entry arrived carrying
+`v_mode = 9.9558` V and the reference-impedance entry carrying `Z0 = 49.761 + 13.592j` ohm (`|Z0| = 51.584`
+ohm, `15.278` degrees), both supplied with the brief. The two do not stand on the same footing, and the check
+that separated them is the paragraph. `9.9558` is struck: it has no symbol and no value anywhere under
+`docs/report/`, and the entry now says only that the 1 W normalisation fixes the voltage scale and the
+current scale on the port, which is what the sections support. The reference impedance is restored with its
+citation: `sec_worked.tex:121`--`124` prints `z_0 = 49.76097429242066 + 13.592389198926165j` ohm and
+`|z_0| = 51.5839859517` ohm at `15.277852` degrees under `\label{eq:worked-z0}`, and `:38` prints the
+rounded pair in the summary table, so the entry quotes `49.761 + 13.592j` and points at the equation it is
+rounded from. How the first reading of it went wrong is worth more than the correction. A grep was run
+against one file, `sec_sparams.tex`, returned nothing, and the absence in that file was written down as an
+absence from the report; it was then acted on by deleting a number the report prints to seventeen digits
+nine sections earlier. The statement was true about the place searched and false about the tree, which is
+precisely the failure mode the next paragraph's rule is about -- and it was made by the agent, not by a
+worker, which is why the rule binds the agent too.
+
+**The rule about worker reports, and the evidence for it.** A worker report enters this file in exactly
+two forms, and neither is a substitute for checking. The first is a statement of absence -- "there is no
+port in the package", "the writer takes its row order from the extension", "the report never prints
+this figure" -- and it is a claim a search can reproduce, so it has to be, because it is right only
+about the place that was searched. The second is verbatim quoted output carrying a `file:line`, which
+looks stronger and is still not enough: a quoted line is evidence of what one file says at one address,
+so it is admissible as a statement about the text and not admissible as a statement of mechanism or of
+provenance, and mechanism and provenance are what a claim about code or about a number actually needs.
+Both forms failed in this session. The `7.33` per cent passivity deficit is not a measurement at all:
+it is `1 - 0.9267`, the passivity of the row at `:1833` subtracted from one and carried into the table
+at `:1839`, and it was quoted as a measured loss until the arithmetic behind it was checked. The drive
+frequency `5.463549758` GHz at `:1975` is a real number from a real run, but it is the drive of the
+pulse record, whose usable bin sits at `5.33333` GHz (`:1977`); quoting it as the frequency behind the
+`cw` figures was a provenance error of exactly the kind the rule forbids. Neither error announced
+itself in the form the report arrived in, which is the argument for the rule rather than an aside
+about two numbers.
+

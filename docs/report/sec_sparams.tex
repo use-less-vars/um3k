@@ -415,3 +415,58 @@ placed, not the current in the conductor beneath it. Section~\ref{sec:ms-lossles
 complex power as $\tfrac12\Re\{VI^*\}$ on exactly this basis, and the factor of two between peak and rms phasors
 -- one half of the total energy in the electric field, one half in the magnetic -- is the same factor of two that
 has to be watched in \eqref{eq:sp-power}.
+
+\subsection{The Touchstone file format}
+\label{sec_touchstone}
+
+A number that has passed through a reference impedance and a reference plane is still only a number until it is
+written down in a form another tool can read, and for scattering parameters that form is Touchstone. The
+implementation is two functions in \texttt{emfit/ports.py}, exported in its \texttt{\_\_all\_\_} at
+\texttt{ports.py:71}--\texttt{72}: \texttt{write\_touchstone} (\texttt{ports.py:1791}) and
+\texttt{read\_touchstone} (\texttt{ports.py:1849}). Neither is where the physics lives --
+Section~\ref{sec:sp-refz} decided the impedance and Section~\ref{sec:sp-refplane} decided the plane, and this
+subsection only says what the file does with them.
+
+The writer emits version~1 files as its docstring states: an option line, then one row per frequency. The option
+line is written from the two defaults of the signature, \texttt{fmt="ri"} and \texttt{z0=50.0}, and both
+the format token and the impedance are interpolated into it, so the line reads \texttt{\# HZ S RI R 50}
+unless one of them is changed, and a file written against \SI{75}{\ohm} says so and a file written against
+\SI{50}{\ohm} says so
+(\texttt{ports.py:1832}; the corresponding assertion on a \SI{75}{\ohm} write is at
+\texttt{tests/test\_ports.py:350}). Two formats are accepted, \texttt{ri} and \texttt{ma}
+(\texttt{ports.py:1824}--\texttt{1825}), and every number on every row is written with \texttt{\%.12g}
+(\texttt{ports.py:1835}--\texttt{1842}), which is the reason a round trip through the file reproduces the array it
+started from rather than a rounded copy of it.
+
+The one place where the format can bite is the order of the entries within a row. Touchstone version~1 mandates the
+input port slowest and the output port fastest, so a two-port row reads $S_{11}\,S_{21}\,S_{12}\,S_{22}$, which is
+the $s[f,\text{out},\text{in}]$ layout flattened in column order rather than row order; the docstring says as much
+at \texttt{ports.py:1795}--\texttt{1799}, and the implementation is the single \texttt{order="F"} reshape at
+\texttt{ports.py:1833}. Writing $S$ in the natural row-major order instead transposes every off-diagonal element,
+which for a reciprocal two-port is invisible and for anything else is wrong in a way that still looks like a
+plausible matrix. The property is pinned by a test rather than by a comment
+(\texttt{tests/test\_ports.py:333}).
+
+The reader inverts it exactly: \texttt{read\_touchstone} returns \texttt{(freqs, s)} with the same
+\texttt{s[f,\ out,\ in]} convention (\texttt{ports.py:1855}--\texttt{1857}), skips blanks and \texttt{!}
+comments (\texttt{ports.py:1874}), and takes the frequency unit and the data format from the option line, scaling
+\texttt{HZ}, \texttt{KHZ}, \texttt{MHZ} and \texttt{GHZ} and accepting \texttt{RI}, \texttt{MA} and \texttt{DB}
+(\texttt{ports.py:1876}--\texttt{1882}). The port count is not read from the filename. It is inferred from the
+number of columns in the first data row, $n_{\text{ports}}=\operatorname{round}\sqrt{(n_{\text{vals}}-1)/2}$
+(\texttt{ports.py:1888}), and a row that does not carry exactly $1+2n_{\text{ports}}^2$ columns is rejected rather
+than truncated (\texttt{ports.py:1889}--\texttt{1892}). A consequence worth stating plainly: the extension is a
+convention, the column count is the contract, and a file named \texttt{.s2p} that contains four-port rows is read as
+a four-port. In this tree the \texttt{.s2p} name appears only in tests
+(\texttt{tests/test\_ports.py:321}, \texttt{tests/test\_port\_parallel\_plate.py:394}), which is the honest place
+for it, because the code itself is generic in the port count and the tests are where a two-port line is a
+two-port line.
+
+Two things the format cannot carry, and both matter for provenance. It carries the reference impedance and it does
+not carry the reference plane: a de-embedded matrix and a raw one are the same file, byte for byte, so the plane at
+which the phases of Section~\ref{sec:sp-refplane} were taken has to travel with the file by some other means or not
+at all. And the two magnitude formats lose phase unless the phase is written beside the magnitude, which is why
+\texttt{ri} is the default here and why a file that has been through \texttt{ma} is not a substitute for the record
+it came from. Neither omission is a fault of the format, which does one thing well; it is a reminder that the file
+is a carrier and not a certificate, and that the numbers in
+Section~\ref{sec:worked} are auditable only against the runs and windows that produced them.
+

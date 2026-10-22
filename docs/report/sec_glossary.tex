@@ -1,0 +1,195 @@
+\section{Glossary}
+\label{sec:glossary}
+
+\noindent\emph{Status: a reading aid, not a source. Each entry fixes one sense of a term and points at the section
+where that sense is defined and, where there is one, at the section where the quantity is measured. Where an entry
+and a section disagree, the section governs: this list is not a place to record a new result.}
+
+Several words here carry a narrower technical sense than their everyday one, ``exact'' being the obvious case, and
+a few numbers acquired names that drifted away from the quantities they were computed from. The entries below fix
+the senses in the order the terms are met, from Section~\ref{sec:theory} to Section~\ref{sec:worked}, and each
+carries the distinction that the corresponding section had to keep straight. An entry that ends with a trap is a
+mistake that was made in this report and then corrected, listed so that it is not made twice.
+
+\begin{description}[leftmargin=1.6em,style=nextline,itemsep=4pt]
+
+  \item[Finite integration technique (FIT).]
+        A discretisation of Maxwell's equations on a pair of interlocked cell complexes, primal and dual, in which
+        the curl and divergence operators are integer incidence matrices and the metric enters only through the
+        diagonal Hodge star matrices. What is exact in it is the topology (Proposition~\ref{prop:identities}); what
+        is approximated is the constitutive relation and the time step. It is not an exact method, and this report
+        does not call it one.
+
+  \item[Primal and dual complex; degrees of freedom.]
+        The primal complex is the hexahedral mesh of edges and faces; the dual complex is built on the dual cells
+        whose vertices are the primal cell centres. The unknowns are line integrals of $\vec e$ along primal edges
+        and of $\vec h$ along dual edges, so that a primal edge carries a voltage and a dual edge a magnetic
+        voltage, and one degree of freedom belongs to each. Written bold lower case, with a tilde on a dual
+        quantity; the notation table is Table~\ref{tab:notation}.
+
+  \item[Topological operators and the exact identities.]
+        The curl matrices $\Cmat$ (primal edges to primal faces) and $\Smat$ (dual edges to dual faces) and the
+        gradient $\Gmat$ are sparse, integer, and satisfy $\Smat\Cmat=0$ identically. The discrete identities of
+        Proposition~\ref{prop:identities} and \eqref{eq:identities} are consequences of the incidence matrices
+        alone: they hold for any material, on any grid, at any time step. This is the part of the scheme that
+        cannot be wrong, and it is the reason statements about topology and statements about accuracy are kept
+        apart throughout.
+
+  \item[Hodge star matrices.]
+        $\Em$, $\Mm$ and $\Ms$: diagonal, positive, with entries assembled from cell measures and material
+        constants, as in \eqref{eq:stars} and Section~\ref{sec:hodge}. They are the only spatial approximation in
+        the scheme -- diagonal, measure-based, low order -- and every accuracy statement in this report is
+        ultimately a statement about them.
+
+  \item[Leapfrog update and the mixed-state invariant.]
+        The electric and magnetic unknowns are staggered by half a step (\eqref{eq:leapfrog-h},
+        \eqref{eq:leapfrog-e}), which is what makes the step explicit. The quadratic form \eqref{eq:invariant} is
+        conserved to rounding (Sections~\ref{sec:invariant} and~\ref{sec:evidence}). Trap: the conserved form is a
+        mixed-state quantity, in which the two fields are read half a step apart; it is not the instantaneous
+        physical energy, which oscillates at twice the drive frequency even though the invariant does not move.
+
+  \item[CFL bound.]
+        The largest time step for which the explicit recursion is stable, \eqref{eq:cfl}, tabulated in
+        Table~\ref{tab:cfl} against measured runs. It is set by the smallest cell anywhere in the domain, not by the
+        average one. Trap: the bound is a statement about stability and not about accuracy, so stepping well below
+        it does not remove the dispersion of Section~\ref{sec:dispersion}.
+
+  \item[Numerical dispersion; grid-dependent phase velocity.]
+        The dispersion relation \eqref{eq:dispersion} is exact for the scheme and gives the phase velocity through
+        \eqref{eq:phase}, which falls below $c_0$ for every non-zero wave vector (Section~\ref{sec:dispersion}).
+        The phase velocity is a property of the grid and the wavelength together, not of the medium, and on this
+        grid it is measured per run -- $0.904\,c_0$ for the tracked front of the demonstration -- rather than
+        assumed from the permittivity.
+
+  \item[PEC and PMC as constraints on the unknown space.]
+        A perfect electric or magnetic conductor is imposed by constraining the tangential unknowns on the
+        boundary face, \eqref{eq:pec}; it is not a material and involves no approximation of its own. The cost is
+        paid in degrees of freedom, which is why the boundary conditions of this report are described as
+        constraints and can be argued about exactly.
+
+  \item[Mur first-order absorbing condition.]
+        A one-way condition, first order in the cell size, applied to the six outer planes; implemented in
+        \texttt{abc.py} and measured in Section~\ref{sec:res-abc}, \eqref{eq:mur}, at about $-50$\,dB of
+        reflection at normal incidence in two dimensions. It is one member of a family of local boundary
+        conditions and is not ``the'' absorbing boundary of the report.
+
+  \item[PML; matched lossy layer.]
+        A graded artificial conductivity added in a shell around the domain, chosen so that the interface
+        reflects little and the wave decays inside the shell; implemented in \texttt{pml.py}, measured in
+        Section~\ref{sec:res-pml}, where it absorbs more deeply than the one-way condition does on the same
+        geometry. Trap: neither mechanism is \emph{the} boundary of the report. Both are additions to the same
+        array, both were measured at normal incidence only, and the sections that measure them
+        (Sections~\ref{sec:res-abc} and~\ref{sec:res-pml}) are cited side by side rather than ranked.
+
+  \item[Cavity eigenproblem and the gradient null space.]
+        The resonance problem is the generalised eigenproblem \eqref{eq:geneig} on the interior edges, and it is
+        singular: every gradient of a scalar potential is a null vector of the curl-curl operator at zero
+        frequency. Those modes are physical only as the static limit and are removed by projection before the
+        solve (Section~\ref{sec:eigen}). Trap: a small eigenvalue returned with no check against the null space is
+        more likely to be a gradient mode than a resonance.
+
+  \item[Port; wave port.]
+        A port is the surface through which a known field enters and leaves the domain and on which the
+        travelling-wave amplitudes are measured (Section~\ref{sec:sp-definition}). A wave port is one that
+        carries the transverse mode profile of the line rather than a lumped terminal pair, which is what allows
+        $a$ and $b$ to be defined on it and a power to be assigned to each.
+
+  \item[Mode normalisation.]
+        The transverse mode profile $\mathbf{e}_{\text{mode}}$ is scaled so that the mode carries $1$\,W, which
+        for the line measured here fixes a voltage scale without the report printing a value for it. The port
+        voltage and current are then projections onto that profile, $V=\int\mathbf{E}\cdot
+        \mathbf{e}_{\text{mode}}$ and $I=\oint\mathbf{H}\cdot\mathbf{h}_{\text{mode}}$, and the reference
+        impedance follows from them (Sections~\ref{sec:sp-definition} and~\ref{sec:sp-power}).
+
+  \item[Travelling waves $a$ and $b$.]
+        The incident and outgoing wave amplitudes at a reference plane, normalised so that $|a|^2$ and $|b|^2$
+        are powers and their difference is the power crossing the plane, \eqref{eq:sp-power}. They are
+        coefficients of a mode expansion on the port surface, not voltages and not field values at a point.
+
+  \item[Reference plane.]
+        The transverse surface at which $a$ and $b$ are evaluated and at which the phase of a scattering
+        parameter is defined (Section~\ref{sec:sp-refplane}, \eqref{eq:sp-refplane}). Moving it rotates the phase
+        and leaves the magnitude alone. Trap: a scattering parameter quoted without its reference plane has a
+        phase that does not mean anything, and the factor of two between a plane shift expressed in the line and
+        one expressed in its round trip is a mistake this report made once.
+
+  \item[Scattering parameters and reference impedance.]
+        $S_{mn}=b_m/a_n$ with every port terminated in a reference impedance $Z_0$. On the line measured here that
+        impedance is complex rather than real -- $z_0 = 49.761 + 13.592\,j$\,\si{\ohm}, of magnitude
+        \SI{51.584}{\ohm} at \SI{15.278}{\degree}, which is the fit of \eqref{eq:worked-z0} rounded to three
+        decimal places -- and that is why every $S$-parameter derived from the record has to be renormalised
+        before it is compared with another tool: the reflection coefficient, and so every element of the matrix,
+        depends on which reference impedance is assumed
+        (Sections~\ref{sec:sp-refz} and~\ref{sec:worked}). Trap: an $S$-parameter whose reference impedance is
+        not stated is not a number, because the same physical termination renormalises to different values, and
+        the choice is not cosmetic.
+
+  \item[Renormalisation.]
+        The closed-form mapping that carries a scattering matrix from one reference impedance to another,
+        \eqref{eq:sp-renorm}, \eqref{eq:sp-renorm-2p}, \eqref{eq:sp-renorm-delta} and \eqref{eq:sp-renorm-1p},
+        written in terms of the reflection coefficient $\rho$ of the new reference impedance in the old one and
+        checked against the series impedance of \eqref{eq:sp-series-z}. It changes magnitudes as well as phases,
+        which is what distinguishes it from a reference-plane shift; the two are often confused because both are
+        called corrections.
+
+  \item[De-embedding; reference-plane shift.]
+        Moving a measured network from the port plane to another plane along the line, by rotating with the
+        propagation constant of the line (Sections~\ref{sec:sp-refplane} and~\ref{sec:ms-deembed}). It is exact
+        given $\beta$ and it cannot repair an error in magnitude: whatever is wrong with the measurement at the
+        port plane is still there, rotated, at the new one.
+
+  \item[Touchstone; \texttt{.s2p}.]
+        The plain-text interchange format for scattering parameters: an option line such as
+        \texttt{\# HZ S RI R 50}, then one row per frequency, frequency first. The port count is encoded in the
+        filename by convention, and this project's reader infers it from the column count instead
+        (Section~\ref{sec_touchstone}, \texttt{emfit/ports.py:1849}). Trap: the row order Touchstone v1 mandates
+        is input port slowest, so a two-port row reads $S_{11}\,S_{21}\,S_{12}\,S_{22}$; a matrix flattened in the
+        natural order transposes the file.
+
+  \item[Passivity.]
+        The statement that a network cannot deliver more power than it receives. As a test on what was measured it
+        is the circuit condition $|s_{21}|^2+|\gamma|^2\le1$ (\eqref{eq:worked-passivity}), which for the rung 8
+        record reads $0.96228$, a loss of $3.77$ per cent. Trap: that percentage is a statement about the circuit
+        the measurement defined, and it is not comparable with the flux deficits of the next two entries, which
+        are statements about the field at a plane; the two live on different records and must not be subtracted
+        from one another.
+
+  \item[Station-profile tilt diagnostic; insertion loss.]
+        The end-to-end change in the station Poynting profile on the CW run at \SI{5.8278}{\giga\hertz}, nine
+        stations at cells $52$--$100$ of the propagation axis over a \SI{9.6}{\milli\metre} span, $0.987038$,
+        which the ledger of Section~\ref{sec:worked} also quotes as $-0.1133$\,dB over that span, the logarithm
+        taken in the amplitude convention, $20\log_{10}$. That span is $0.35\,\lambda_g$ at the drive frequency,
+        against a standing wave whose ripple period is $\lambda_g/2=\SI{13.688}{\milli\metre}$
+        (\eqref{eq:tline-ripple-period}, Sections~\ref{sec:worked-tilt} and~\ref{sec:msres-alpha}). Trap: a
+        window shorter than the ripple period cannot supply a decay per unit length, so this number is a
+        diagnostic of the profile and not an attenuation, and where earlier sections called it an interim
+        insertion loss they were naming a quantity it cannot supply. A reader converting it himself with
+        $10\log_{10}$ gets half the figure, which is why the sentence stating the convention sits beside
+        the number in Section~\ref{sec:worked}.
+
+  \item[Power deficit and amplitude deficit.]
+        One record, two numbers, a factor of two apart. The power ratio $s_9/s_1=0.936635$ gives a deficit of
+        $6.3365$ per cent, printed as $6.34$; the amplitude ratio $\sqrt{s_9/s_1}=0.96780$ gives $3.2201$ per
+        cent, printed as $3.22$ (Sections~\ref{sec:worked-ledger} and~\ref{sec:worked-tilt}). Trap: a deficit
+        quoted as a bare percentage is ambiguous until it says which ratio it came from, and a deficit is
+        compared with a tilt only when both are referenced the same way.
+
+  \item[$\eps_{\text{eff}}$ and $\lambda_g$.]
+        The effective permittivity of the quasi-TEM line and the guided wavelength that follows from it:
+        $\eps_{\text{eff}}=3.5322$ gives $\lambda_g=\SI{27.375}{\milli\metre}$ against \SI{51.449}{\milli\metre}
+        in free space at the same frequency (Sections~\ref{sec:tline-epseff} and~\ref{sec:msres-import}). Trap:
+        the closed-form estimate differs by $7.8$ per cent and that bias belongs to the reference box, not to the
+        solver, so agreement with closed form is not by itself the test of either.
+
+  \item[Accumulation window and warm-up.]
+        The steady-state interval over which the frequency-domain sums are taken: of $2400$ steps, $600$ were
+        discarded and $1800$ accumulated, a window of $6.8637\times10^{-10}$\,s (Section~\ref{sec:worked}). Trap:
+        quantities read off a plane are raw sums over that window while station quantities are means of the
+        Poynting flux, so the two are not comparable until each is divided by the window length, and a factor of
+        the window length appearing between two columns is a bookkeeping error and not physics.
+
+\end{description}
+
+The list stops here because the terms beyond it are used once and defined where they are used. It is deliberately
+short of formulas: where a formula is written above it is a pointer to the numbered equation that carries the
+argument, and the equation, not the entry, is the statement to be checked.
