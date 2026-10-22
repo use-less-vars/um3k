@@ -4878,7 +4878,7 @@ MICROSTRIP_BOARD = Study(
         # same contradiction the nsteps cap was. A finer cell is the only way to
         # reduce the discretisation error of a mesh that has to be integral, so
         # the ceiling has to reach past the coarsest useful mesh.
-        Param("n_sub", "Substrate cells", "int", MS_N_SUB, lo=1, hi=32,
+        Param("n_sub", "Substrate cells", "int", 2, lo=1, hi=32,
               unit="cells",
               help="Cells across the substrate. Sets the cell size, so every "
                    "dimension and the timestep move with it. A board's strip "

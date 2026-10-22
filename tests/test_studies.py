@@ -115,6 +115,42 @@ def test_microstrip_board_study_is_registered():
                 param.key, param.lo, param.default, param.hi)
 
 
+def test_the_board_study_form_defaults_two_substrate_cells():
+    """The form's ``n_sub`` default is 2 while ``MS_N_SUB`` is still 4.
+
+    Kills a front end that reads the module constant instead of the declared
+    default, and the mirror-image edit that moves the historical constant along
+    with the form: the two numbers are separate decisions and are pinned
+    separately.  At ``MS_H = 1.6 mm`` they mean a 0.8 mm cell on the form and
+    the 0.4 mm cell the reference mesh has always had.  Nothing here makes the
+    default argument runnable, either: the reference coupon's cropped strip
+    fits only ``n_sub = 16`` or ``32`` at the study's own ``npml = 6`` (measured
+    over 1..32), so a board named with no ``n_sub`` is still refused at 2.
+    """
+    study = studies.get("microstrip_board")
+    assert study is studies.STUDIES["microstrip_board"], (
+        "the registry is how every front end reaches the study")
+
+    declared = study.param("n_sub")
+    assert declared.default == 2, (
+        "the form default is 2 cells -- the value coerce() supplies to a run "
+        "that names no n_sub")
+    assert study.defaults()["n_sub"] == 2, (
+        "defaults() is the map a form is pre-filled with, so it has to agree "
+        "with the declaration")
+
+    assert studies.MS_N_SUB == 4, (
+        "MS_N_SUB is the historical 0.4 mm reference mesh and stays 4")
+
+    assert declared.default != studies.MS_N_SUB, (
+        "the form default and the module constant are separate knobs: moving "
+        "one must not move the other")
+    assert studies.MS_H / declared.default == pytest.approx(0.8e-3), (
+        "2 cells across 1.6 mm is a 0.8 mm cell")
+    assert studies.MS_H / studies.MS_N_SUB == pytest.approx(0.4e-3), (
+        "4 cells across 1.6 mm is the 0.4 mm cell of the reference mesh")
+
+
 def test_a_str_param_is_free_text():
     """A ``str`` knob takes a path or a net name as typed, and nothing else.
 
