@@ -2233,3 +2233,101 @@ misread as `1 - 0.967800 = 3.22` per cent; a substrate-array parenthetical in th
 from `5.27` to `5.28` per cent, which is the deficit the stored array prints (`0.947199`); and the
 amplitude-convention logarithm now sits beside the tilt itself, `-0.2843` dB at `20\log_{10}` and `-0.1421`
 dB at `10\log_{10}`, with a statement that neither is an attenuation.
+
+## 80. The tolerance-freezing pre-registration for the modal route
+
+**Placement.** `decisions.md` already carries a section `## 76.` titled 'The Poynting discriminator:
+pre-registration, and three dispatch premises corrected before data'. That is not this section and
+it is not retitled: its subject is the Fork A/B/C rule on
+`r = (passivity_poynting - passivity_circuit) / (1 - passivity_circuit)`.
+Section 80 is the separate act that section 74 promised at line 1739, "The tolerances are frozen in
+the pre-registration, which is its own separate act in a later session, before any modal code
+exists. They are deliberately not written here.", and the act that line 1846 left open, "M3b was not
+started and no pre-registration was frozen." It is written before any modal code exists and it
+quotes no modal number.
+
+**The primary claim.** The gate compares residuals against closed form, applied separately to each
+of `beta`, `epsilon_eff` and `Z0`, with all three having to pass on one run at one frequency:
+
+    gap_circuit = |value_circuit - value_closedform|
+    gap_modal   = |value_modal   - value_closedform|
+    pass        = gap_modal <= 0.50 x gap_circuit
+
+**What that is not.** It is not a claim that a number moves by 50 per cent. The residual against
+closed form of the modal quantity must be at most half of the circuit route's residual, per
+quantity, simultaneously.
+
+**Direction safety.** Because both sides are absolute residuals to closed form, a modal value that
+overshoots past closed form does not pass by accident: it is charged the full size of its overshoot,
+and an overshoot larger than the circuit gap fails.
+
+**Tightness.** Where the circuit route is already close to closed form, the target is half of a
+small number. That tightness is intended, not a defect to be argued down.
+
+**A partial pass is the report.** If one or two quantities pass and the third does not, the
+single-scale hypothesis is wrong. The hypothesis, with its evidence, at line 1556: "the projection
+must repair `beta` by `+4.89` per cent, `epsilon_eff` by `+10.02` per cent and `Z0` by `+4.4` per
+cent SIMULTANEOUSLY", and "The supporting identity is `(1.0489)^2 = 1.10019` against the observed
+`3.65855/3.32545 = 1.10017`". A partial pass is the report; it is not a failure to be worked around,
+and no per-quantity tuning is permitted after the fact.
+
+**Frozen parameters.** These are fixed now, before any modal code exists:
+
+- mesh rung 8, 132 x 104 x 38 cells, cell 0.200 mm, box z extent 7.6 mm as substrate 1.6 mm plus air
+  4.8 mm plus top PML 1.2 mm, the PML inside the count.
+- one cw run at `f0 = 5.827786 GHz`; every modal number is quoted together with the frequency it was
+  computed at.
+- closed form at `t = 35 um`: `Z0` 48.098655 (the record prints it to four decimal places as
+  48.0987), `epsilon_eff` 3.343938, and `beta` from `2*pi*f0*sqrt(epsilon_eff)/c0` at the run's own
+  `f0`.
+- one run per rung: a cw run yields plane phasors and station fluxes at a single frequency, so
+  mixing frequencies inside one comparison would reintroduce the cross-run error class this log has
+  already recorded once.
+
+**Secondary, reported and not gated.** The absolute agreement the modal route achieves against
+closed form at `t = 35 um` on rung 8 is reported for the record and is not a pass or fail criterion.
+At one frequency on one mesh an absolute number cannot separate the route from the mesh.
+
+**Smoke rule.** Circuit passivity at most 1, and nothing else. It is necessary and not sufficient.
+There is deliberately no modal-versus-flux gate, because the station-ratio flux deficit is
+algebraically the standing-wave tilt on a span of about 0.35 lambda_g and is not a loss measurement:
+the fixture tilt is 6.2646 per cent peak-to-peak at 0.800 mm and 6.3135 per cent at 0.400 mm, and
+`sx_station` is barred by standing rule from absolute conservation use.
+
+**Downstream closure gate.** For closure, and not for starting code: reference-box `|S11|_modal`
+within plus or minus 0.012 absolute, on the production mesh 322 x 200 x 76, in a separate host run.
+The record's own words, quoted in full from line 1739:
+
+    The log had already said so twice, in its own words: the reference box's agreement "proves
+    consistency and not correctness", and, earlier still, that same agreement is "a property of the
+    reference box and not a validation of either".
+
+The phrase 'agreement there proves consistency and not correctness' was offered as a paraphrase of
+that sentence; the record's actual words are quoted instead, and the paraphrase is not used.
+
+**Recorded and not acted on.** The dispatch that ordered this pre-registration supplied an offset
+for the drive tone, "13.3 ppm from target". That figure is not supported by anything in this record:
+`ppm` and 13.3 both return no hits, and the record states tone offsets as absolute MHz residuals and
+once as a relative 8.3e-5. Section 80 therefore fixes the frequency itself, `f0 = 5.827786 GHz`, and
+does not freeze an offset; the supplied figure is recorded here rather than adopted.
+
+**Standing rule.** No relative-percent tolerance on a quantity of magnitude below 0.1: absolute
+tolerances only.
+
+**Named debt, not fixed here.**
+
+- (a) the `t = 0` study printout: the printed reference rows use `t = 0` although the board has
+  copper (`Z0` 48.686, air-filled 89.0289), and it flips a gate at refinement; queued as its own
+  slice.
+- (b) flux that is not ripple-immune: only that route can measure loss; queued as its own slice.
+
+**Rung-12 trigger, restated.** It fires only if `beta`, `epsilon_eff` or `Z0` stop improving under
+refinement before the modal route is applied. The flux-ratio trigger is withdrawn: the ratio came
+out at -48.57 on the full section and -21.67 on the substrate section, and, at lines 2015 to 2019,
+"A ratio whose denominator is at the noise floor of the normalisation it is built from does not
+carry a sign, let alone a magnitude." No gate depending on rung 12 can fire today in any case: rung
+12 needs about 1.64 GB of mesh against a 512 MiB container ceiling, where it was OOM-killed before
+its first step.
+
+**Closing.** Section 80 does not start M3b, does not touch `emfit/`, and quotes no modal number. It
+is a contract that a later session tests against.
