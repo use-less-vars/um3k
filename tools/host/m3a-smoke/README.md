@@ -1,8 +1,15 @@
 # M3a production harness -- hostile placement, explicit artefact directory
 
 These two files were relocated here from `.scratch/host/m3a-smoke/run.sh` and
-`.scratch/m2/board_run_cw_poynting.py` (previously unversioned). Content is
-byte-identical to those originals; only the location changed.
+`.scratch/m2/board_run_cw_poynting.py` (previously unversioned). Content was
+byte-identical to those originals; only the location changed. The originals
+were deleted only after all four md5s were confirmed equal, so the claim is
+checkable against commit `f123a5a` without them:
+
+| file | md5 |
+|---|---|
+| `run.sh` | `cc1fd368797671f55ddb14bdde035f94` |
+| `board_run_cw_poynting.py` | `f345b537a40637ba12d792d301cc26f8` |
 
 ## Why the harness takes a RUN_DIR
 
@@ -66,3 +73,11 @@ name directories after the parameters they hold (e.g. `nwarm4000_nacc6026`).
 `board_run_cw_poynting.py`'s docstring `Usage::` line still names the file
 `board_run_cw.py`. The filename is `board_run_cw_poynting.py`. Preserved as-is
 to keep the file byte-identical to its pre-relocation copy.
+
+## What is not here
+
+The `.npz` plane records and the `analysis.*` / `verdict.txt` files these
+runs produced are run outputs and are not versioned. Only the code and the
+parameters needed to reproduce them are. A figure quoted from a run whose
+`RUN_DIR` is gone is not reproducible here and should be re-run before
+being quoted again.
