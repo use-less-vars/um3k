@@ -1745,3 +1745,56 @@ The uncertainty attached to the quotable figure therefore gains a warm-up-sensit
 **No relative-percent tolerance on a quantity of magnitude below 0.1.** Absolute tolerances only, for `|S11|` at the order of one hundredth, for any `|S21|` residual, and for any phasor-derived ratio near unity. The arithmetic that forces this: the reference box runs `|S11|` near `0.0066`, so a 2 per cent relative tolerance is plus or minus `1.3e-4`, roughly eighty-five times tighter than the record's own fit residual of `0.0112`. It cannot be met, and if it were met it would measure nothing, because the comparison noise is two orders of magnitude larger than the window. A relative tolerance on a small number is a way of writing a strict-looking criterion that no measurement can satisfy and no reader will check.
 
 **Nothing in this section moves a quotable number.** `0.987038` remains a flux diagnostic and not a board S-parameter, `|S11|` remains not quotable, and the not-quotable list is unchanged: `beta`, `eps_eff`, `|z0|`, `|S11|`, `passivity`.
+
+---
+
+## 75. The oracle rule recurred: this time "published" was the route under test
+
+**The canonical statement of the class is in section 69, and this section reuses it rather than restating it.** "The
+oracle rule: never use a quantity from the route under test as the oracle." That sentence was written about a `Z0` of
+`52.9` briefed as an oracle when it was in fact the FDTD circuit value. What follows records a recurrence of that
+class in a new coat. **No ordinal is assigned to the recurrence.** This log does not keep a tally of errors, and it
+will not start one for this entry; an error class is a shape, and a count of shapes is a way of looking busy instead
+of looking again.
+
+**The recurrence.** M3b's primary validation had been drafted as "reproduces the published series S11". A
+falsification read went to the tree looking for that series and found no such series anywhere in it. The decisive
+point is not that the phrase was unbacked. It is that in this repository "published" means the repository's own prior
+record, and that prior record is itself a product of the route under test. So the oracle was the route again, wearing
+a new word: not a `Z0` lifted from the FDTD this time, but a magnitude lifted from an earlier run of the same
+simulator and then labelled "published". The reference-box validation was promoted from a consistency check to primary
+without anyone asking whether it was independent. Section 74 already records the incident and extracts the rules from
+it. What is new here is the classification and the recurrence: the same shape, entered from a different door.
+
+**The test was ill-posed, not merely hard, and the difference is the whole point.** The arithmetic is already in the
+record: a 2 per cent relative tolerance on an `|S11|` of order `0.0066` is plus or minus about `1.3e-4`, roughly
+eighty-five times tighter than the record's own fit residual of `0.0112`. The reference-box run now in hand reports a
+fit residual of `0.03312`, three times that figure, so the window is tighter still against the estimator it would
+actually constrain -- the correction runs against the test, not for it. A tolerance an order of magnitude below the
+scatter of the estimator it constrains does not measure agreement; it measures the estimator's own noise. Such a test
+can be passed by luck or failed by luck, and neither outcome carries information. A hard test is one that could be met
+and was not. An ill-posed one is one whose outcome is uninformative whichever way it falls, and it is worse than a
+hard test precisely because it looks stricter.
+
+**The class reproduced itself twice inside the writing of this record, and both are the same move as the recurrence
+above: a record of our own activity offered as independent testimony.**
+
+**(a) The pointer.** Three self-references broke inside one session, and the insertion that broke each of them was the
+author's own. A section citing another file's line number is invalidated by an annotation added to that file. The
+parallel is exact: an address is true of a file at one instant only, so writing one into prose makes the prose
+precisely wrong instead of vaguely right, and it does so silently -- no tool complains, and the sentence keeps its
+confidence. A pointer is our own prior state of the tree, quoted as though it were a fact about the world. Name the
+things instead: the resolved-parameters block, the pre-registration text.
+
+**(b) The byte count.** Section 73 went in byte-perfect: the appended bytes hashed and compared clean against the
+staged copy, and the section still rendered as a single paragraph, because the transport had dropped every separator
+and nothing failed while the document got worse. The byte arithmetic the record reports elsewhere is a 252-byte
+annotation against a 253-byte observed delta, and the one-byte gap is the newline -- a real fact about the transport,
+and a reminder that the count was never the thing being checked. The rule this yields: a byte count is not a
+structural check. The instrument agreed with itself; it never looked at the structure.
+
+**The consequence, stated once.** The class is not "a number was wrong". Numbers are wrong here constantly, and this
+log survives them because it re-measures. The class is that independence was asserted rather than established, three
+times, each time by an instrument or a record that was a product of the thing it was measuring. The only defence found
+so far is the falsification read: go to the tree and look for the series, the file, the annotation that is claimed to
+exist, because that step does not depend on the claim being true.
