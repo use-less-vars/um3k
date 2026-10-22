@@ -1969,6 +1969,7 @@ than of the field, so it is the one column a reader cannot check from the table.
 **Run one has no passivity.** Its bin tuple is empty, `run.bins == ()`. This is the fact that
 undermines the table. The passivity in the published rows is a bin value, computed in
 `_bin_metrics` and reachable only through a populated bin tuple; a `cw` run produces none.
+_[Superseded, note added on review: the second step of this paragraph is wrong and is withdrawn. A `cw` record carries both `gamma` and `s21`, so the circuit passivity, s11^2 + s21^2, needs no bin tuple at all; a populated bin tuple is not required in order to have a passivity. What survives is only the narrower fact, `run.bins == ()`, which is a statement about bins and not about passivity. The corrected paragraph is "**Why the published passivity column cannot be taken at face value.**", below.]_
 
 **Run two, `excite="pulse"`.** The only configuration that yields bins, and therefore the
 only one that can yield passivity. Drive 5.463549758 GHz, 2400 steps, 170 s, peak RSS 486 MB,
@@ -2026,14 +2027,24 @@ quotable, and it still disagrees with the circuit. What cannot be established fr
 is the fraction of excited power landing in the analysis bin, because neither `f_pulse` nor
 the drive spectrum is in the payload.
 
-**Why the published passivity column cannot be the run it is presented as.** The published
-rung 8 row pairs f = 5.8278 GHz with passivity 0.9267. Those two numbers cannot come from one
-run. A run that produces passivity is a pulse run, and this pulse run drives at 5.4635 GHz,
-which is 6.7 pc below the tabulated 5.8278; a run that produces f = 5.8278 is a `cw` run,
-and a `cw` run produces no bins and therefore no passivity. The table also never records
-`x_first`, `x_last`, the band, the bin count or whether a reference was used, and every one
-of those moves the bin grid. The passivity column is therefore not reproducible from the
-table, and the column-mixing is the mechanism, not an accident of transcription.
+**Why the published passivity column cannot be taken at face value.** The published rung 8
+row pairs `f = 5.8278` GHz with passivity `0.9267`, and the largest gap that row leaves is
+`1 - 0.9267 = 7.33` pc. The faithful reproduction of that rung does not produce it: the
+continuous-wave run at `f0 = 5.827786408327` GHz, nine stations, `600` warm-up and `1800`
+accounted steps, gives `|s21|^2 + |gamma|^2 = 0.96228`, a deficit of `3.77` pc. That is a
+numeric mismatch between the published row and the only record of that rung we can
+reproduce, and it is the evidence on which the `7.33` pc is withdrawn. What it is not is a
+provenance proof: nothing in the record says which run produced `0.9267`, or at what
+frequency, so whether a single run could have produced both numbers is unresolved and is not
+claimed here. The argument previously offered -- that a `cw` run produces no bins and
+therefore no passivity -- is withdrawn as wrong: a `cw` record carries both `gamma` and
+`s21`, so the circuit passivity needs no bin tuple at all. What survives of that paragraph
+is narrower and still true: the `cw` run's bin tuple is empty, `run.bins == ()`, which is a
+statement about bins and not about passivity. The table also never records `x_first`,
+`x_last`, the band, the bin count or whether a reference was used, and every one of those
+moves the bin grid. The column is therefore not reproducible from the table; the mismatch
+between the passivity and the frequency printed beside it is an unexplained discrepancy, not
+an identified mechanism.
 
 **Consequence for the claim this section was written to support.** The figure of 16 pc of
 station-plane power unaccounted, which was the centrepiece of the previous session's report,
@@ -2060,3 +2071,40 @@ No reduction of `nsteps` or `n_bins` helps, because neither touches the mesh, an
 the reference does not help either, because passivity is then refused as a passivity without
 its reflection. So the fork between a real loss and a numerical one stays unassigned, no
 M3b code is written, and the deciding measurement needs a container with at least 2 GB.
+
+## 77. The rung 8 deficit restated as an identity, and the flux column renamed
+
+**The percentage was quoted without its unit, and the two readings differ by a factor two.**
+Rung 8 measures `P9/P1 = 0.93663467`, so the power deficit is `6.3365` pc, quoted as `6.34`
+pc where rounded. The amplitude transmission it implies is `sqrt(0.93663467) = 0.96780`, so
+the amplitude deficit is `3.2201` pc, quoted as `3.22` pc. Both statements are correct about
+the same record and neither one is the other. A bare percentage that says "the line is 6 per
+cent down" and one that says "the field is 6 per cent down" are separated by a factor of two
+in the quantity they name, and nothing in the number itself says which is meant. The `6.32`
+pc quoted earlier is wrong and is superseded by `6.3365`; the error was arithmetic and not a
+property of the run, so the run was not re-solved to fix it.
+
+**The deficit is the tilt carried by the mean-to-first ratio, and that identity is the part
+worth writing down.** The measured station-profile tilt over the rung 8 span is `6.4815` pc
+and the ratio of the mean profile to the first station is `0.977617`, and
+`6.4815 x 0.977617 = 6.3364`, against the measured `6.3365` pc, a residue of `0.0001` pc from
+rounding the tilt to four decimal places. The identity therefore closes at the quoted
+precision. So
+`deficit = tilt x (mean/first)`, and the reading is that the deficit is not the tilt: the
+tilt is what the profile does end to end, and the deficit is what is left of that once the
+reference is the profile's own mean rather than its first station. Two rules follow. A
+deficit is quoted with its unit named, power or amplitude, because the two differ by a factor
+two. And a deficit is compared against a tilt only when both are referenced the same way.
+Neither mistake survives the identity, which is why the identity is recorded here rather than
+the number alone.
+
+**`|S21|_poynting` keeps its number and loses its name.** `0.987038` stands, with the `9.60`
+mm span and the `POY_WARM=4000 POY_NACC=6026` provenance that sections 73 and 74 fixed to it.
+What it is not, anywhere, is an insertion loss: a diagnostic taken over a span short compared
+with the ripple period cannot be an insertion loss, because the quantity an insertion loss
+names is a decay per unit length, and a window that does not contain a full decay cannot
+supply one. It is relabelled the **station-profile tilt diagnostic**, which is what the column
+is -- the end-to-end change in the station Poynting profile, carrying the known
+mesh-independent fixture tilt, not the line's attenuation. The rename is not cosmetic. Where
+sections 68 and 73 called this number an interim insertion loss, they were naming a quantity
+this number cannot supply, and the correction travels with the figure from here.
