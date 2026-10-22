@@ -11,7 +11,11 @@ Only two kinds of claim are made here, and both are cheap:
   suite: a handful of cells per axis, a few dozen steps, and assertions about
   shape and finiteness only.  ``Z0`` and ``eps_eff`` on such a grid are junk --
   pinning junk is worse than pinning nothing -- so they are deliberately
-  **not** asserted.
+  **not** asserted.  The closed-form reference those numbers are compared
+  against is not junk and not from the grid: it is the Hammerstad-Jensen value
+  at the declared cross-section, so it is pinned -- on the 35 um foil the study
+  is cut from, together with the two values that foil must leave alone,
+  ``eps_eff`` and ``beta``.
 * *The default case, once.*  The one grid whose numbers mean something is the
   default mesh, and the two ways to get a plausible-looking wrong ``beta`` out
   of it are a record too short for the transient and a phase difference taken
@@ -32,6 +36,7 @@ import pytest
 
 from emfit import studies
 from emfit.board import Load
+from emfit.microstrip import COPPER_T, Microstrip
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +265,71 @@ def test_microstrip_wave_smoke():
 
     # Cheap is the point: this must not become a slow test by accident.
     assert elapsed < 10.0, f"the tiny case took {elapsed:.2f} s"
+
+
+# ---------------------------------------------------------------------------
+# the closed-form reference the tiny run is compared against
+# ---------------------------------------------------------------------------
+def _study_line(t):
+    """The closed form at the study's own cross-section, ``t`` metres of foil."""
+    return Microstrip(w=studies.MS_W, h=studies.MS_H, eps_r=studies.MS_EPS_R, t=t)
+
+
+@pytest.fixture(scope="module")
+def tiny_wave():
+    """The six-cell run of the smoke test above, run once for the two claims."""
+    return studies.microstrip_wave(
+        n_sub=1,
+        n_air=1,
+        n_strip=2,
+        n_clean=1,
+        n_pml=2,
+        n_top=0,
+        n_ref=1,
+        n_line=6,
+        x_first=6.4e-3,
+        x_last=11.2e-3,
+        n_stations=4,
+        nsteps=40,
+        sink=None,
+    )
+
+
+def test_microstrip_wave_z0_model_is_the_35_um_foil(tiny_wave):
+    """``z0_model`` is 48.099 ohm, the foil value, not the 48.686 sheet one.
+
+    The grid's own impedance is junk on six cells and stays unasserted; this is
+    the closed form, which depends on the declared cross-section alone.  The
+    two candidates are 0.587 ohm apart, so the second assertion is what gives
+    the first one content.
+    """
+    assert tiny_wave.z0_model == pytest.approx(_study_line(COPPER_T).z0,
+                                               rel=1e-12), (
+        f"z0_model {tiny_wave.z0_model!r} is not the closed form's "
+        f"{_study_line(COPPER_T).z0!r} at this cross-section")
+    assert abs(tiny_wave.z0_model - _study_line(0.0).z0) > 0.4, (
+        f"z0_model {tiny_wave.z0_model!r} is within 0.4 ohm of the "
+        f"zero-thickness {_study_line(0.0).z0!r}, so the foil did not reach it")
+
+
+def test_microstrip_wave_eps_eff_and_beta_do_not_see_the_foil(tiny_wave):
+    """``eps_eff_model`` and ``beta_model`` must be the ``t = 0`` floats, to the bit.
+
+    The thickness correction widens the strip, so it feeds ``Z0`` and nothing
+    else; an ``eps_eff`` that moved with it would mean the correction had been
+    routed into the dielectric as well.
+    """
+    foil = _study_line(COPPER_T)
+    sheet = _study_line(0.0)
+    f = tiny_wave.geometry["f"]
+    assert tiny_wave.eps_eff_model == sheet.eps_eff, (
+        f"eps_eff_model {tiny_wave.eps_eff_model!r} is not the sheet's "
+        f"{sheet.eps_eff!r}")
+    assert tiny_wave.beta_model == foil.beta(f), (
+        f"beta_model {tiny_wave.beta_model!r} is not the closed form's "
+        f"{foil.beta(f)!r} at {f!r} Hz")
+    assert foil.beta(f) == sheet.beta(f), (
+        "the foil thickness moved beta, which eps_eff alone sets")
 
 
 # ---------------------------------------------------------------------------

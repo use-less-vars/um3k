@@ -56,7 +56,7 @@ import traceback
 from . import DEFAULT_PORT, __version__, studies
 from .board import MicrostripBoard
 from .kicad import load_board
-from .microstrip import Microstrip
+from .microstrip import COPPER_T, Microstrip
 
 __all__ = ["build_parser", "main"]
 
@@ -68,7 +68,9 @@ BOARD_NET_ROWS = 12
 #: Substrate cell counts the ``board --net`` representability report tries.
 BOARD_N_SUBS = (2, 4, 6, 8)
 #: Copper thickness the closed-form comparison assumes, in metres: 35 um.
-BOARD_COPPER_T = 35e-6
+#: The same constant the study's closed-form reference uses, aliased rather
+#: than repeated, so the two references cannot drift apart.
+BOARD_COPPER_T = COPPER_T
 
 #: ``nsteps`` above which ``run`` says on stderr what the record will cost.
 #: This was the microstrip study's ceiling until a 0.1 mm cell needed 9600

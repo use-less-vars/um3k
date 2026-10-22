@@ -55,6 +55,7 @@ from functools import cached_property
 __all__ = [
     "C0",
     "COPPER_SIGMA",
+    "COPPER_T",
     "EPS0",
     "ETA0",
     "MU0",
@@ -76,6 +77,13 @@ EPS0 = 1.0 / (MU0 * C0 * C0)
 ETA0 = MU0 * C0
 #: Conductivity of annealed copper at 20 C, S/m.
 COPPER_SIGMA = 5.8e7
+#: Copper foil thickness a closed-form comparison assumes, in metres: 35 um.
+#: The mesh models copper as an infinitesimally thin sheet, so this is the
+#: thickness of the foil the cross-section is cut from, not of any PEC in the
+#: simulation.  It enters only through the thickness correction in
+#: :func:`_delta_u`, which moves ``Z0`` and leaves ``eps_eff`` (and so
+#: ``beta``) alone.
+COPPER_T = 35e-6
 
 
 # ---------------------------------------------------------------------------

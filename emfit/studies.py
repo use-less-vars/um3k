@@ -55,7 +55,7 @@ from .evolve import FITStepper, RickerSource, cfl_dt, ricker
 from .grid import Grid
 from .kicad import load_board
 from .materials import C0, material_matrices
-from .microstrip import Microstrip
+from .microstrip import COPPER_T, Microstrip
 from .operators import CellComplex
 from .plane_phasor import PLANE_CONVENTION
 from .pml import PML, AbsorbedWork, cells_for_wavelength
@@ -2967,7 +2967,10 @@ def microstrip_wave(
         station_fit_ok = False
         warn_station_fit_skipped(exc, "loss-aware")
 
-    line = Microstrip(w=float(w), h=float(h), eps_r=float(eps_r))
+    # The closed-form reference describes the same cross-section the board
+    # report describes, so it is cut from the same foil: 35 um, not a sheet.
+    line = Microstrip(
+        w=float(w), h=float(h), eps_r=float(eps_r), t=COPPER_T)
     beta_model = float(line.beta(f0))
     eps_eff = (beta * C0 / (2.0 * np.pi * f0)) ** 2
     # The minus sign is the reference-plane convention, not a result.  The port
@@ -3331,6 +3334,7 @@ def microstrip_wave(
         power_ratio_port=float(power_ratio_port[0]),
         z0_model=float(line.z0),
         eps_eff=float(eps_eff),
+        # This closed form's eps_eff is thickness-free, so the foil moves Z0 only.
         eps_eff_model=float(line.eps_eff),
         loss_fit=loss_fit,
         loss_fit_two=loss_fit_two,
@@ -4197,7 +4201,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "port Z, modulus": port_z_modulus,
         "port Z, phase": port_z_phase,
         "port Z, real part": port_z_real,
-        "line Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
+        "line Z0 (Hammerstad-Jensen)": (
+            f"{result.z0_model:.3f} ohm (t = {COPPER_T * 1e3:.3f} mm)"),
         "port modulus / model": port_z_modulus_ratio,
         "port real part / model": port_z_real_ratio,
         "line Z0 from stations, modulus": stations_z0_modulus,
@@ -4496,7 +4501,8 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink,
         "fit residual": f"{result.fit_residual:.5f}",
         "eps_eff": f"{result.eps_eff:.5f} (from this run's beta)",
         "eps_eff (Hammerstad-Jensen)": f"{result.eps_eff_model:.5f}",
-        "line Z0 (Hammerstad-Jensen)": f"{result.z0_model:.3f} ohm",
+        "line Z0 (Hammerstad-Jensen)": (
+            f"{result.z0_model:.3f} ohm (t = {COPPER_T * 1e3:.3f} mm)"),
         "line Z0 from stations": num(abs(sf.z0), "ohm"),
         "|S11| at the measured plane": (
             f"{gamma_abs:.5f} = {num(s11_measured_db, 'dB', '.2f')} at x = "
