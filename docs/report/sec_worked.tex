@@ -1,0 +1,338 @@
+\section{Four numbers, and what happened to them}
+\label{sec:worked}
+
+\noindent\emph{Status: draft -- a ledger, not a result. The four quantities below have all been quoted in this
+report at some time, and they are now sorted by whether they can still be quoted. Two of them cannot, one only
+after being renamed, and one can with a caveat attached to its reference impedance. The values are printed here
+exactly as the records give them; the sorting is the content. The rules applied are those of
+Section~\ref{sec:method}.}
+
+A measurement that is withdrawn is more useful than a measurement that is quietly repaired. When a number stops
+being defensible, the temptation is to adjust it -- to change the normalisation, to choose a longer window, to
+report the value from the run that agrees -- and to keep the sentence it supported. Doing so destroys the only
+evidence that the earlier reasoning was wrong, and it hides the cost. This section therefore keeps every value
+and changes only the status word beside it: a number may be quotable, diagnostic, or withdrawn, and the value is
+never the thing that is corrected. In two of the four cases below the status moved a long way while the digits
+did not move at all, and that is exactly the outcome this ledger exists to display.
+
+\subsection{The ledger}
+\label{sec:worked-ledger}
+
+\begin{table}[H]
+  \centering
+  \caption{Four quantities from this report's records, with provenance and the status they now carry.
+  \emph{Quotable}: the record supports the quantity as a measurement of what its name says. \emph{Diagnostic
+  only}: the quantity is exact and repeatable, but it measures a property of the sampling rather than of the
+  device, and is reported under a name that says so. \emph{Withdrawn}: the quantity was quoted as a measurement
+  and is not one; the value is retained for the audit trail and must not be cited. The provenance column is
+  part of the number: a value whose run, mesh and estimator are not stated here is not reproducible.}
+  \label{tab:worked}
+  \small
+  \begin{tabular}{@{}p{3.1cm}p{3.2cm}p{6.2cm}p{2.0cm}@{}}
+    \toprule
+    Quantity & Value & Provenance: run, mesh, estimator & Status \\
+    \midrule
+    (a) Transmission coefficient, phase constant and reference impedance of the reference box at
+    \SI{5.8278}{\giga\hertz}
+    & $s_{21} = 0.98088 + 0.00476\,j$;\newline $\gamma = 0.01022 + 0.00418\,j$;\newline
+      $z_0 = 49.76 + 13.59\,j$\,\si{\ohm};\newline $\beta = 229.554$\,m$^{-1}$
+    & CW run, mesh $132\times104\times38$ with a \SI{0.2}{mm} cell; driven at \SI{5.827786408327}{\giga\hertz}
+      against a requested \SI{5.827864}{\giga\hertz}; $600$ of $2400$ steps discarded, $1800$ accumulated over
+      $6.8636695303115883\times10^{-10}$\,s; two-wave fit at a transverse cut
+    & quotable \\
+    \addlinespace
+    (b) Station-profile tilt of the time-averaged Poynting flux
+    & $0.987038$ as a ratio;\newline $6.48$ per cent as a tilt
+    & CW run at \SI{5.8278}{\giga\hertz}; nine stations at cells $52$--$100$ of the propagation axis, \SI{9.6}{mm}
+      span; flux formed by time-averaging $\mathbf{E}\times\mathbf{H}$ at each station, then
+      $r = \sqrt{s_9/s_1}$
+    & diagnostic only \\
+    \addlinespace
+    (c) ``Field loss'' of the reference box
+    & $16$ per cent, later ``at most'' $2$ per cent
+    & the same nine-station arrays as (b), read through two different normalisations; no separate run exists
+    & withdrawn \\
+    \addlinespace
+    (d) Passivity deficit from a paired $|S_{11}|$ and $|S_{21}|$
+    & $7.33$ per cent
+    & its provenance is not established in this report
+    & withdrawn, pending \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Three of the four rows are the same record, and that is the point of the table rather than a defect in it. One
+field dump was processed four ways: a two-wave fit at a cut, a nine-station flux profile, a loss figure derived
+from that profile, and -- in the fourth row -- an unrelated published pair that turned out not to reproduce. The
+first is quotable, the second is a diagnostic, the third is withdrawn, and the fourth is withdrawn pending. The
+digits in rows (a) and (b) have not changed since they were first written down. Only the claims attached to them
+have, and the next three subsections say why for each.
+
+A status is assigned by three tests, and they are mechanical enough to be checked by a reader. First, does the
+derivation of the quantity assume the proposition the quantity is supposed to establish? A flux ratio that
+assumes a smooth envelope fails this test whatever its value. Second, is the quantity a ratio of two numbers
+obtained by the same operation on the same field dump? If so it may be stable to many digits and still say
+nothing about level, and it cannot be quotable on its own. Third, does the record carry a second, independent
+route to the same quantity? Only where all three tests pass does the word quotable apply, and the tests are
+applied to the quantity as it is used in a sentence, not to the quantity as it might in principle be computed.
+Row (b) is an exact number and fails the first test; rows (c) and (d) fail it outright; row (a) passes all
+three, which is why it is the only row that is quotable.
+
+\subsection{Quotable: one controlled transmission record}
+\label{sec:worked-cw}
+
+The record of row (a) is the best-controlled run in the report, and it is quotable because every assumption in
+its reduction was checked against something else in the same record. The mesh is $132\times104\times38$ cells
+with a \SI{0.2}{mm} cell, which puts the transverse cross-section at roughly a tenth of a guide wavelength; the
+drive was snapped to the nearest frequency the discrete time step can represent on the transform grid, which is
+\SI{5.827786408327}{\giga\hertz} against a requested \SI{5.827864}{\giga\hertz}, an offset of
+$-77\,591.67$\,Hz, or $-13.3$\,ppm; the step is $\dd t = 3.8131497390619936\times10^{-13}$\,s; and the first
+$600$ of $2400$ steps were discarded, leaving $1800$ accumulated steps spanning $6.8636695303115883\times10^{-10}$\,s.
+The offset of $-13.3$\,ppm is quoted rather than absorbed because it is a property of the drive: a resonance
+measured $-13.3$\,ppm away from the requested frequency is the resonance of a slightly different structure,
+and the reader is entitled to know by how much.
+
+At that drive the two-wave fit at a transverse cut returns
+\begin{equation}
+  \begin{aligned}
+    s_{21} &= 0.9808843848072781 + 0.004761855437949522\,j , \\
+    \gamma &= 0.010215720318428398 + 0.004178365747705708\,j ,
+  \end{aligned}
+  \label{eq:worked-s21}
+\end{equation}
+with $|\gamma| = 0.0110371953841$ and a fit residual of $0.0128478440321$. The reflection coefficient is the
+reason this record is quotable and the others are not: at $|\gamma| \approx 0.011$ the standing-wave ratio on
+the line is $1.022$, so the field at a cut is very nearly a single travelling wave, and the two-wave model is
+forced by the record rather than imposed on it. In the records of Section~\ref{sec:msres-alpha} the same model
+returns a rate that disagrees with the joule audit by a factor of $1.86$; here there is no fitted rate at all,
+only a complex amplitude at a cut, and the quantity being quoted is that amplitude.
+
+Two numbers in the same reduction need their status stated separately, because both look like measurements and
+only one is. The effective permittivity is $\eps_{\mathrm{eff}} = 3.53220159465$, and it is a restatement of the
+phase constant: by $\eps_{\mathrm{eff}} \equiv (\beta c/\omega)^2$, once $\beta = 229.554353095$\,m$^{-1}$ is
+known at a known $\omega$ the permittivity is arithmetic, and it cannot disagree with the phase constant by so
+much as a digit. It is recorded because a reader wants it and because the dispersion curves of
+Section~\ref{sec:dispersion} are drawn against it; it is not a second measurement of anything, and any sentence
+of the form ``the phase constant and the effective permittivity agree'' would be a sentence about a
+substitution.
+
+The reference impedance is the number with the caveat. The fit returns
+\begin{equation}
+  z_0 = 49.76097429242066 + 13.592389198926165\,j \,\si{\ohm} ,
+  \qquad |z_0| = \SI{51.5839859517}{\ohm} \text{ at } 15.277852^{\circ} ,
+  \label{eq:worked-z0}
+\end{equation}
+and the imaginary part is not noise. An imaginary term of \SI{13.6}{\ohm} in the reference impedance says that
+the line cannot be referred to a real \SI{50}{\ohm} reference without a transformation: the reflection
+coefficient, and therefore every $S$-parameter computed from this record, depends on which reference impedance
+is assumed, and ``the transmission coefficient of this line'' is not a well-defined number until the reference is
+named. That is not a defect of the fit and it is not a large effect -- the angle is $15^{\circ}$, so
+$\operatorname{Re} z_0$ is within a per cent of \SI{50}{\ohm} -- but it is the kind of caveat that has to travel
+with the number rather than be rediscovered by whoever uses it next. Accordingly the quotable claim is the pair
+of amplitudes of equation~\eqref{eq:worked-s21} together with the reference of
+equation~\eqref{eq:worked-z0}, and any statement of an attenuation or a mismatch derived from them is only as
+good as the reference it was derived against.
+
+The record also carries its own conservation check, and it is this rather than the smallness of $|\gamma|$ that
+lets the third test of Section~\ref{sec:worked-ledger} be passed. From the amplitudes of
+ equation~\eqref{eq:worked-s21},
+\begin{equation}
+  |s_{21}|^{2} + |\gamma|^{2} \;=\; 0.96228 ,
+  \label{eq:worked-cw-passivity}
+\end{equation}
+so $3.77$ per cent of the incident power is neither returned nor transmitted and is accounted for as absorbed in
+the section. That is not a second measurement of the transmission coefficient -- it is the same two amplitudes
+entered once more -- but it is an independent check on the \emph{pair}, because passivity is a property of the
+structure and not of the fit: a fit that returned a transmission above unity, or a reflection inconsistent with
+the standing-wave ratio at the cut, would fail here even if each amplitude separately looked plausible. It is
+also the number that the pairing of Section~\ref{sec:worked-pairing} fails to reproduce, which is why the two
+rows are worth reading side by side: one record, two amplitudes, and a deficit of $3.77$ per cent on one line of
+arithmetic, against a published $7.33$ per cent that cannot be recovered from it.
+
+\subsection{Diagnostic only: the station-profile tilt}
+\label{sec:worked-tilt}
+
+The second number is the one this section exists for, because it is the only number in the report that was
+demoted without any digit changing, and because the demotion was forced by an identity rather than by a
+disagreement.
+
+The construction is this. The field is sampled at nine stations spaced six cells apart along the propagation
+axis, \SI{1.2}{mm} apart, spanning \SI{9.6}{mm}. At each station $k$ the time-averaged Poynting flux $s_k$ is
+formed by averaging $\mathbf{E}\times\mathbf{H}$ over the accumulated window, and the flux at the last station is
+divided by the flux at the first to give a transmission-like ratio $r = \sqrt{s_9/s_1}$. If the flux declined
+only by absorption, then $r = |S_{21}|$ and the record measures attenuation. The reason it does not is that the
+two quantities $r$ and the fractional drop of the flux are related by an identity in which the attenuation does
+not appear at all.
+
+Let $\tau$ be the tilt of the station profile, the drop from first to last measured against the mean of the
+array, and $\bar{s}$ that mean. Then
+\begin{equation}
+  1 - r^{2} \;=\; \frac{s_1 - s_9}{s_1} \;=\; \tau \cdot \frac{\bar{s}}{s_1} ,
+  \qquad
+  \tau \;=\; \frac{s_1 - s_9}{\bar{s}} .
+  \label{eq:worked-tilt}
+\end{equation}
+Nothing in equation~\eqref{eq:worked-tilt} refers to a material, a cross-section or a rate. It is an algebraic
+relation between three averages of the same nine numbers, and it says that whatever $r$ reports, it reports a
+property of the shape of the station profile, scaled by the ratio of the mean to the first value. If the profile
+declines linearly, $\bar{s}/s_1$ is close to one and $1 - r^2$ is nearly the tilt; if the profile is a standing
+wave sampled at an arbitrary phase, the same is still true, and the number that comes out is the amplitude of
+the standing wave, not the loss.
+
+The CW record at \SI{5.8278}{\giga\hertz} gives, at the nine stations lying on cells
+$52$, $58$, $64$, $70$, $76$, $82$, $88$, $94$ and $100$,
+\begin{equation*}
+  \begin{aligned}
+    s_1, \dots, s_9 \;=\; {} & 6614.038753,\ 6584.568766,\ 6563.085584, \\
+    & 6543.527531,\ 6516.123028,\ 6470.735308, \\
+    & 6400.792767,\ 6306.335991,\ 6194.943464 ,
+  \end{aligned}
+\end{equation*}
+with a mean of $6466.0168$. The last station over the first is $s_9/s_1 = 6194.943464/6614.038753 = 0.936635$, a
+power ratio, so the power deficit is $6.3365$ per cent, printed as $6.34$. The amplitude transmission is its
+square root, $r = \sqrt{s_9/s_1} = 0.96780$, and a deficit taken on that basis is $3.22$ per cent. On the same
+array the tilt is $6.4815$ per cent and the mean-to-first factor is $0.977617$, and their product,
+$6.4815 \times 0.977617 = 6.3365$ per cent, reproduces the power deficit exactly rather than only to the last
+printed place. That agreement is not a coincidence to be explained; it is equation~\eqref{eq:worked-tilt}
+holding, as it must, because the three numbers are three averages of one array. The reason the deficit and the
+tilt are so close is that the profile is nearly straight over nine points, which is what a fraction of a
+standing-wave period looks like.
+
+A deficit quoted as a bare percentage is therefore ambiguous until it says whether the ratio it came from was a
+power ratio or an amplitude ratio. Here the two differ by close to a factor of two: $6.34$ per cent on the power
+ratio $0.936635$, $3.22$ per cent on the amplitude ratio $0.96780$. That is one way a number acquires two
+defensible-looking values, and it is why this report prints the ratio as well as the percentage.
+
+The same extraction on the pulse record at \SI{5.333}{\giga\hertz} gives a deficit of $1.9561$ per cent against a
+tilt of $1.9757$ per cent and a mean-to-first factor of $0.9901$; the product is $1.9561$ per cent, and there the
+identity closes to every printed digit. On the substrate-only record the nine stations are
+\begin{equation*}
+  \begin{aligned}
+    s_1, \dots, s_9 \;=\; {} & 4879.172642,\ 4867.110209,\ 4862.878825, \\
+    & 4859.305586,\ 4847.939993,\ 4820.684887, \\
+    & 4772.478055,\ 4703.721293,\ 4621.547925 ,
+  \end{aligned}
+\end{equation*}
+with a mean of $4803.871$, a ratio of $0.97324$ ($5.27$ per cent), a tilt of $5.363$ per cent and a
+mean-to-first factor of $0.984568$, whose product is $5.28$ per cent. Three records, three arrays, and in every
+one the ``attenuation'' is the tilt multiplied by a factor within a few per cent of one.
+
+That is the whole of the diagnostic, and the geometry says why it is a diagnostic. The stations span
+\SI{9.6}{mm}. At \SI{5.8278}{\giga\hertz} the free-space wavelength is \SI{51.449}{mm}, and with the
+$\eps_{\mathrm{eff}} = 3.5322$ of the controlled record of Section~\ref{sec:worked-cw} the guide wavelength of
+the cross-section they sample is $\lambda_g = \lambda_0/\sqrt{\eps_{\mathrm{eff}}} =
+\SI{51.449}{mm}/1.879415 = \SI{27.375}{mm}$, so the span is $0.35\,\lambda_g$. The flux on a line carrying a
+forward and a reflected wave ripples at twice the phase constant, that is, with period
+$\lambda_g/2 = \SI{13.688}{mm}$ in space, so the array covers seventy per cent of one period of that ripple. The
+first and last stations of such a sample can fall at \emph{any} relative phase, including the phase that makes
+them differ by several per cent while the line is lossless, and seven tenths of a period is nowhere near enough
+of the ripple to average it out. A reading that does not average the standing wave is confounded at any loss
+level, including zero.
+
+What that reading was called is the history this subsection records. The quantity was for a period written as
+$|S_{21}|_{\text{poynting}} = 0.987038$ and quoted as an attenuation of $-0.1133$\,dB over the \SI{9.60}{mm}
+span, which is the largest single contribution the report ever claimed towards the loss of the reference box,
+and it was presented as model-free -- which, in the sense of ``containing no fitted parameter'', it was. It is
+now called the station-profile tilt, and it carries \emph{no} attenuation claim. The value $0.987038$ survives
+in the table and in this sentence; the name does not, because the name is what the arithmetic does not support.
+The correspondence is exact: $20\log_{10}(0.987038) = -0.1133$\,dB, so nothing has been recomputed, only
+relabelled, which is the honest form of a correction.
+
+Two further consequences follow from the relabelling, and both were visible only afterwards. The first is that
+the tilt cannot serve as a bound on the loss either. At resonance, the full-section tilt of $6.48$ per cent is
+larger than the circuit-level passivity deficit of $3.77$ per cent computed from the amplitudes of
+equation~\eqref{eq:worked-s21}; a quantity that exceeds the thing it is supposed to bound is not a bound, it is
+a different quantity. On the substrate-only record the tilt is $5.36$ per cent against the same $3.77$ per cent,
+and there it does bound the deficit -- which is the one surviving quantitative role of the construction, and the
+reason it is a diagnostic worth keeping rather than deleting. The second consequence is that the tilt is a good
+measurement of something else, namely of how much standing wave is present at the array: a tilt far above the
+passivity deficit is evidence that the sampling sits inside a ripple, which is exactly the warning one wants
+before quoting any between-station rate. The array was doing useful work all along. It was just not doing the
+work it was named for.
+
+\subsection{Withdrawn: the field-loss figures}
+\label{sec:worked-withdrawn}
+
+Two published figures are withdrawn outright: a ``$16$ per cent field loss'' of the reference box, and, before
+that, a figure of ``at most $2$ per cent''. Both were computed from the nine-station arrays of
+Section~\ref{sec:worked-tilt}, through two different normalisations of the same flux profile, and both are
+therefore readings of the tilt rather than of a loss.
+
+The withdrawal is not a small correction and it is worth saying plainly what it removes. Between ``at most $2$
+per cent'' and ``$16$ per cent'' lies a factor of eight, and both numbers were at some point the report's answer
+to the question of how much the reference box loses. They differ because the two normalisations respond
+differently to where the standing wave sits in the array -- which is the signature of a sampling artefact and not
+of physics, since a physical loss cannot change by a factor of eight when nothing about the geometry changes.
+The audit of Section~\ref{sec:worked-tilt} explains both figures with one mechanism, arithmetic on nine
+numbers, and that explanation is the reason they are withdrawn rather than demoted. A diagnostic is a quantity
+that is exactly what it is; these two were never exactly anything, because the normalisation was chosen after
+the fact to make the number plausible.
+
+What replaces them is not another reading of the same array. The rate of loss that the report now quotes for the
+reference box comes from the joule audit of Section~\ref{sec:ms-accounting}, in which the power dissipated in
+the conductors is integrated over the volume of the metal and divided by the power entering the section, and it
+is $0.01160$\,dB/mm. That number is not a ratio of two samples of the same quantity and it does not depend on
+where the standing wave sits; it is the work the walls actually did. The station arrays remain, and their tilt
+remains, as the audit trail for the withdrawal -- and as a warning attached to any future flux-based reading:
+nine stations spanning a third of a guide wavelength cannot measure a loss, whatever they are called.
+
+\subsection{Withdrawn pending: the passivity pairing}
+\label{sec:worked-pairing}
+
+The fourth row is different from the other three in every respect: it comes from a different reduction, it does
+not involve the station arrays, and it is withdrawn pending a question that has not been answered rather than
+withdrawn because the answer is known.
+
+A published pairing of $|S_{11}|$ and $|S_{21}|$ at the reference box recorded a passivity deficit of $7.33$ per
+cent, that is, $|S_{11}|^2 + |S_{21}|^2$ short of unity by that fraction at resonance. A single CW record now
+carries both coefficients at the same frequency, and it gives
+\begin{equation}
+  |s_{21}|^{2} + |\gamma|^{2} \;=\; 0.96228 ,
+  \label{eq:worked-passivity}
+\end{equation}
+a deficit of $3.77$ per cent. The two deficits do not agree: they differ by a factor close to two, far outside
+anything that the per-cent-level uncertainties in either record could explain. The row therefore does not
+reproduce, and its status is withdrawn pending -- withdrawn because the number it quotes cannot be defended,
+pending because the run that produced it has not been found and the question of what it actually measured is
+still open.
+
+The correction to the record concerns not the number but the \emph{reason} I first gave for the mismatch, and it
+is recorded here because the reason was quoted and was wrong. My first note on the discrepancy asserted that the
+pairing \emph{could not} have come from a single run -- that no one field dump could yield both coefficients at
+the resonance, so the pairing must be a mixture of two records. That claim is too strong and it is false. A
+single CW run does yield both numbers at $f_0$: $\gamma$ from the two-wave fit at a cut, $s_{21}$ from the same
+fit, both referred to the same plane. What the single record shows is not that the pairing is impossible but
+that it is different: $3.77$ per cent against $7.33$ per cent.
+
+The difference between the two kinds of failure is the reason the correction matters. A provenance
+impossibility would be closed by finding the missing run, and the number would then be either vindicated or
+replaced. A numeric mismatch is closed only by re-measuring, and until that is done the honest entry is an open
+discrepancy with a stated value. By asserting impossibility I had moved the failure into the category with the
+easier remedy, and made the report look more rigorous while making it less true -- the second error described in
+Section~\ref{sec:method-provenance}, committed in the same direction as the first. What stands now is the weak
+statement: the pairing does not reproduce against the single record, the reason is unknown, and the row stays
+withdrawn until it is either located or replaced.
+
+\subsection{What the ledger says}
+\label{sec:worked-lessons}
+
+One row of four is quotable without qualification. That is the honest count for this stage of the work, and it is
+worth reading against the length of the report: the great majority of the numbers in this document are
+restatements, diagnostics or arithmetic, and the four entries above are the ones that were load-bearing enough
+to audit.
+
+The audit did not leave the argument where it found it, and this section should not be read as claiming that
+nothing was lost. Three things were. The ``two model-free readings agree'' finding of
+Section~\ref{sec:ms-criterion} is no longer a finding, because one of the two was the tilt; the coincidence that
+the tilt lands $1.9$ per cent from the audited rate is recorded and not counted, and the criterion is now
+satisfied on the joule audit alone. The $0.671$ fall of the ratio in Section~\ref{sec:msres-verdict} is quoted
+and not read, since the quantity that falls is the tilt. And the claim about where the missing loss goes rests
+on the audited work per unit length rather than on a comparison of two readings. Each of these is a weaker
+statement than the one it replaced, and each is one that a reader can check.
+
+What the ledger buys is the opposite of what it costs. Rows (a) and (b) are the same record, and after the audit
+they can both be used -- one as a measurement, one as a diagnostic -- without either contaminating the other,
+because the border between them is written down. The alternative, keeping the tilt under its old name, would have
+preserved a paragraph of agreement and would have made every future comparison between the report's loss figures
+and the literature an unmarked comparison of unlike things. A number that is defendable is worth a paragraph of
+argument, and the four rows of Table~\ref{tab:worked} are the accounting.

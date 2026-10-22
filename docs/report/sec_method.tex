@@ -1,0 +1,241 @@
+\section{Measuring a number you can defend}
+\label{sec:method}
+
+\noindent\emph{Status: draft -- this section is an argument, not a result. Nothing in it is computed. It is the
+rule that the measurements of this report are held to, written after breaking that rule at least once each.
+Every number used as an example is the report's own, and the section it came from is cited so that the reader
+can check the break rather than take my word for the correction.}
+
+Every number in this report arrived by the same three-step route. A field was stepped, a record was written to
+disk, and somebody applied an arithmetic operation to that record and called the result a measurement. The
+arithmetic is not the problem: dividing two fluxes, taking a logarithm, fitting an exponential, and inverting a
+$2\times 2$ system are all legitimate operations, and all of them appear in what follows. The problem is the
+noun. \emph{Measurement} carries an implicit claim of independence, and most of the numbers in this report
+cannot support that claim: they are derived quantities, and a derived quantity inherits every assumption of the
+derivation while looking, in a table, exactly like something that was observed. What follows is the audit of
+that word, in the order in which the mistakes were made. It is written in the first person because the errors
+are mine, and it is written as a list of rules because a rule can be seen to be broken, while a good intention
+cannot.
+
+\subsection{A number without provenance is not a number}
+\label{sec:method-provenance}
+
+Before the rules about derivation, there is a rule about the record itself. A number in this report is a
+statement about a particular run of a particular mesh processed by a particular estimator, and unless all three
+are named the number is not reproducible even in principle. Two runs of the same structure at the same mesh
+differ in their truncation of the field outside the computational window, in the frequency they were driven at,
+and in the length of the record that was transformed; two estimators applied to one run differ far more than
+that, as the next subsection shows. A single printed value is therefore a summary of a triple, and a value whose
+triple has been lost is a rumour.
+
+This is why Section~\ref{sec:worked} is built around a four-column table whose middle two columns are the
+provenance: the cell size and the mesh counts, the estimator, the record length and the drive frequency. It reads
+as bureaucracy and it is the only part of that table which cannot be argued with. Where the provenance is
+missing, the number is marked as such rather than reconstructed, because reconstructing it means choosing the
+run that makes it most plausible, which is a way of fitting the provenance to the answer.
+
+The most useful thing provenance does is to make a class of disagreement impossible. When two numbers in the
+record do not match -- and several do not -- there are two separate questions: could these two numbers have come
+from the same run, and do they in fact agree. These are routinely conflated, and I conflated them myself. A
+published pairing of $|S_{11}|$ and $|S_{21}|$ once recorded a $7.3$ per cent passivity deficit, while the single
+record that now carries both quantities gives $|s_{21}|^2 + |\gamma|^2 = 0.96228$, a $3.77$ per cent deficit at
+the same frequency. My first note on the discrepancy claimed that the pairing \emph{could not} have come from a
+single run. That claim was too strong and it was wrong: a single run does yield both numbers at the resonance,
+and they are simply different numbers. The failure is a numeric mismatch, which is a fact about the record, and
+not a provenance impossibility, which would have been a fact about the archive.
+
+The distinction matters because the two failures have different remedies. A provenance impossibility is closed
+by finding the missing run; a numeric mismatch is closed only by re-measuring, and until then it is reported as
+an open discrepancy. Saying the strong thing when the weak thing is true is not caution. It is a second error,
+committed in the direction of looking rigorous.
+
+\subsection{A fit is not a measurement}
+\label{sec:method-fit}
+
+The first rule is the one I broke most often, and the one that is easiest to break without noticing, because
+fitting feels like measuring. You take a record, you choose a model, and the model returns a number with a
+residual beside it; the residual looks like an error bar, the number looks like a result, and the fact that the
+model \emph{was} the source of the number is invisible in the output.
+
+It is not invisible in the logic. If a quantity is extracted by fitting a model to a record, then that quantity
+is a property of the pair (record, model), not of the record alone. Change the model and the number changes; the
+only defence is that the model be forced by something outside the record, and that its misfit be reported rather
+than absorbed. A quantity recovered by fitting is therefore not an independent measurement of anything. It is a
+projection of the record onto a chosen family of curves, and it can be perfectly repeatable, perfectly smooth in
+the fit parameter, and wrong by a factor.
+
+The clearest instance in this report is the attenuation of the microstrip line, where two different models of
+the same record return rates that differ by a factor of $1.86$: the two-wave fit returns about
+$0.0215$\,dB/mm against an audited $0.0116$\,dB/mm for the work the walls actually removed
+(Section~\ref{sec:msres-alpha}). Both fits converge; neither reports a large residual; the fit is simply
+describing a record that does not contain what the model says it contains. The audited figure is not a fit at
+all -- it is a volume integral of $\sigma|\mathbf{E}|^2$ over the conductors, divided by the power entering the
+section -- and that is why it is the one that is quoted, and why the fit is quoted only as a fit.
+
+The same rule applies one level down, to quantities that are definitionally tied to the fitted ones. The
+effective permittivity of Section~\ref{sec:tline-epseff} is $\eps_{\mathrm{eff}} \equiv (\beta c/\omega)^2$: once
+$\beta$ is known, $\eps_{\mathrm{eff}}$ adds no information whatsoever and inherits the full uncertainty of the
+fit that produced $\beta$. Reporting both is legitimate bookkeeping. Reporting both as \emph{two} numbers, or
+worse, as agreement between two numbers, is a category error, because the second cannot disagree with the first.
+This is why Section~\ref{sec:worked} lists $\eps_{\mathrm{eff}}$ as a restatement of the phase constant rather
+than as a second result, and why the fit residual of that record, $0.0128$, is recorded as a property of the fit
+and never used as an error bar on anything.
+
+\subsection{Never use the quantity under test as its own oracle}
+\label{sec:method-oracle}
+
+A special case of the first rule deserves its own heading, because it survives review: an estimator can be
+built out of the very assumption it is supposed to test. If you estimate transmission by assuming the field
+envelope is constant, then your estimator has already asserted the result. It cannot detect a departure from a
+constant envelope, because the departure is the thing the model was built to ignore. The estimator is not
+biased in the statistical sense, where more data would eventually correct it; it is blind, and more data
+sharpens the blindness.
+
+This is what happened to the flux estimator that was for a while the report's headline measurement of loss. The
+field was sampled at nine stations along the line, the time-averaged Poynting flux was formed at each, and the
+square root of the last divided by the first was read as a transmission coefficient. On paper that is a
+model-free measurement of attenuation. In fact the estimator assumes that the flux at a station is a smooth
+function of position, declining because energy is being absorbed -- that is, it assumes what it is measuring.
+Where the assumption holds it returns a plausible number; where it fails it returns a number of the same
+plausible size, because the failure mode, a standing wave, is itself a smooth function of position. There is no
+residual to warn you. Section~\ref{sec:worked} takes this record apart station by station and shows the reading
+was dominated by a standing-wave ripple in the flux, not by absorption.
+
+The same trap sits in every de-embedding step. Moving a reference plane by $d$ assumes a single travelling wave
+of known $\beta$; if a reflected wave is also present, the move mixes them, and the mixing is smooth and
+plausible. The rule that follows is blunt: before trusting a derived number, ask what the derivation assumed,
+and then ask whether that assumption is precisely the proposition the number is supposed to establish. If it
+is, the number is decoration.
+
+\subsection{Stability is not accuracy}
+\label{sec:method-stability}
+
+A ratio is the most reassuring object in numerical work, because it cancels. Systematic errors that scale both
+numerator and denominator leave the ratio untouched, and a ratio that moves by a part in a thousand between runs
+feels like a measurement accurate to a part in a thousand. That feeling is wrong whenever the thing that is
+stable is the \emph{scale} rather than the \emph{shape}.
+
+Take two numbers that are both short by the same factor: $a \to \alpha a$ and $b \to \alpha b$. Their ratio
+$a/b$ is unchanged, exactly, and remains unchanged as $\alpha$ wanders over any range at all. The ratio is
+perfectly stable and completely silent about $\alpha$. Every quantity in this report that is extracted as a
+ratio is exposed to this: the reference impedance from the ratio of the two modal voltages, the transmission
+coefficient from the ratio of two fluxes, the reflection coefficient from the ratio of two sampled amplitudes.
+If a common gain error, a common cell-volume convention, or a common windowing factor sits on both terms of the
+ratio, then the ratio is reproducible to many digits while the absolute level is wrong by tens of per cent.
+
+The way to tell the two apart is to break the commonality deliberately. If the numerator and denominator are
+computed by genuinely different operations -- a volume integral of dissipation on one side, a flux integral over
+a surface on the other -- then a common factor is unlikely and the ratio means something. Where both terms come
+from the same field dump through the same windowing and the same normalisation, the ratio measures the
+arithmetic and not the physics. That test is what separates the audited attenuation of
+Section~\ref{sec:ms-accounting} from the station ratios of Section~\ref{sec:ms-estimators}: the audit divides
+joules lost by joules entering, computed from different parts of the field, while the station ratio divides two
+samples of the same quantity taken by the same operation. The first is a measurement that happens to be a
+ratio; the second is a ratio that is not a measurement.
+
+\subsection{A tolerance needs a pair of measurements}
+\label{sec:method-tolerance}
+
+A single number has no error bar. It has a value, and the value is exact in the sense that it was printed, and
+nothing about it says how far it might sit from the truth. A target with no error bar therefore cannot be
+failed: the comparison of one number against a bound is a comparison of two conventions, and the convention
+wins or loses by fiat rather than by evidence.
+
+This is not a philosophical point, it is the reason the acceptance criteria of this report are written the way
+they are. When the criterion of Section~\ref{sec:ms-criterion} asks whether a measured rate of loss sits within
+a stated band, it can only do so because there are two independent routes to the rate -- the audited joule
+budget and the fitted decay -- whose \emph{difference} is a quantity with a meaning. The difference can be
+large or small; that is evidence. One number compared against a target is not evidence of anything, and a
+document full of such comparisons is a document that has never been tested.
+
+The failure is common enough in this report's own history to be embarrassing. The reflection result of
+Section~\ref{sec:msres-verdict} was for a while quoted as ``$-44.48$\,dB, goal $-20$\,dB met with $24$\,dB to
+spare''. That is a true sentence and it is not a measurement, because the $24$\,dB is a statement about a
+tolerance chosen in advance, not about the difference between two ways of obtaining the reflection. The moment a
+second route was computed -- the summary line of the same dump carrying $|\gamma| = 0.00628$ against the
+$0.00597$ of the plane rows, $5.2$ per cent apart -- the number acquired a real error bar, and the honest
+statement became that the agreement is good to a few per cent and that the $5.2$ per cent itself is
+unreconciled. Both statements describe the same run. Only the second one can be wrong.
+
+The corollary is that a report which states tolerances must state them twice: once as the band it wishes to
+meet, and once as the spread of the routes it actually has. Where there is only one route, the second number is
+absent and the tolerance should be described as advisory, not met.
+
+\subsection{Transients get a discard window, not a correction}
+\label{sec:method-transients}
+
+Every time-domain record begins before the physics does. The drive is switched on into a structure that is not
+yet in its steady state, energy has not yet filled the section, and the reference plane sees a field that
+contains the switch-on as well as the wave. There are two ways to deal with this, and only one of them is
+honest.
+
+The honest way is to discard. Accumulate the transform over a window that begins after the transient has left
+the domain of interest, and report the start of the window as part of the provenance of the number; if the
+window cannot be made long enough for the residual transient to be negligible, the number is provisional, not
+corrected. The dishonest way is to model the transient -- to fit a decaying offset, subtract a mean, or
+otherwise take the switch-on out of the record -- because the model of the transient is a hypothesis about the
+same structure whose behaviour you are trying to measure. The correction and the measurement then share a
+model, and the first rule applies again.
+
+The record used throughout this report discards the first $600$ of $2400$ steps and accumulates over the
+remaining $1800$, and that choice is stated with the number rather than buried in a script, because it is part
+of what the number means. The window is not a convenience: a record that begins at step zero contains a
+transient of the order of the resonator's filling time, and a transform over the whole record would mix it in.
+Nothing about the arithmetic afterwards can remove it, so nothing is attempted; the window is the whole of the
+treatment.
+
+The same logic governs the drive. A resonant record is only as good as the frequency it was driven at, and the
+report's records are driven at a snapped frequency that differs from the requested one by $-13.3$ parts per
+million. That offset is small, and it is quoted anyway, because a resonance measured at a frequency that is not
+the one you asked for is a resonance of a slightly different structure, and the reader is entitled to know how
+different. Correcting the result to the requested frequency would require the very dispersion model that the
+result is supposed to test.
+
+\subsection{A repeatable diagnostic is still a diagnostic}
+\label{sec:method-diagnostic}
+
+The last rule is the one this report needed longest to learn, and it concerns a class of quantity that is
+\emph{perfectly} well behaved. A diagnostic quantity is one that is computed by a clean operation from a clean
+record, returns the same value every time the record is reprocessed, varies smoothly with the run parameters,
+and is entirely useless for the purpose its name suggests. Its repeatability is what makes it dangerous: a
+quantity that scattered would be caught immediately, whereas a quantity that is stable to five digits looks
+like the best number in the document.
+
+The station-profile tilt of Section~\ref{sec:worked} is such a quantity. It is the fractional change in the
+time-averaged Poynting flux between the first and last station of a nine-point array, it is trivially
+reproducible, and it was for a period quoted as a transmission coefficient and hence as a rate of loss. It is
+not a rate of loss. The stations span about a third of a guide wavelength, so the standing wave that exists on any
+real line -- including a lossless one -- is not averaged over the span at all; what the tilt measures is the
+phase at which the array happens to be sampled. The reading is stable because the sampling is deterministic, not
+because the physics is captured. Its correctness as an arithmetic average is not in question; its competence as
+a measurement of attenuation is nil, and no amount of repetition can change that.
+
+The rule that follows is a naming rule. A quantity may be reported as a diagnostic, with the word in its label
+and the caveat in its paragraph, or it may be reported as a measurement. It may not be reported as a
+measurement because it is stable, because it is convenient, or because it agrees with something else. And if a
+later audit shows that a quantity which was published under a measurement name in fact measures a sampling
+artefact, the correct response is to relabel it and keep the value -- the value is a fact about the record and
+should not be destroyed -- while withdrawing every conclusion that leaned on the name. That is the procedure
+applied to the tilt in Section~\ref{sec:worked}, and to the two ``field loss'' figures that preceded it, both of
+which are withdrawn in favour of the audit that replaced them.
+
+\subsection{What it cost, and what it bought}
+\label{sec:method-cost}
+
+The rules above are cheap to state and were expensive to learn. The price of getting them wrong is not an error
+bar on one number; it is a whole chain of reasoning built on a noun. A derived quantity that is called a rate of
+loss will be compared against an audited rate of loss, will agree with it to a couple of per cent, and the
+agreement will be written down as independent confirmation -- when in fact the two are the same arithmetic on
+the same field, and the agreement is a coincidence or an identity. Withdrawing the second as a witness leaves
+the first standing, which is the correct outcome, but it also removes a paragraph of the argument, and the
+paragraph has to be rewritten rather than deleted.
+
+Section~\ref{sec:worked} is the ledger of that process for four numbers, with the status of each recorded as
+quotable, diagnostic only, or withdrawn. It is deliberately unflattering. The report has a much smaller number
+of real measurements than its length suggests, and after the audit they are: cavity frequencies against an
+analytic spectrum, a reflection coefficient against a matched reference plane, an attenuation against a joule
+audit, and a scattering width against a Mie series -- each of them a comparison of two independent routes to one
+quantity, which is the only shape in which a number can be defended. Everything else in this document is either
+a restatement of one of these, a diagnostic that is named as one, or arithmetic that would fail the tests above
+if it were called a measurement. That is not a comfortable inventory for a document of this size. It is,
+however, an inventory that can be checked, and a number that can be checked is worth ten that cannot.
