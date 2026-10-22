@@ -1798,3 +1798,49 @@ log survives them because it re-measures. The class is that independence was ass
 times, each time by an instrument or a record that was a product of the thing it was measuring. The only defence found
 so far is the falsification read: go to the tree and look for the series, the file, the annotation that is claimed to
 exist, because that step does not depend on the claim being true.
+
+## The tenth supervising-side error: I specified a refinement that did not vary one thing
+
+The M3b dispatch opened with a mesh ladder: run `microstrip_board` at `n_sub` = 2, 4, 6, 8 and read the error against closed form at each rung. The intent was one variable, cell size. It was two.
+
+`n_air` and `n_top` are cell counts, not distances (`studies.py:2510-2515`: `cell = h/n_sub`; `nz = n_sub + n_air + n_top`). Left at their defaults of 12 and 6, halving the cell halves the physical air gap. Across the four rungs the air box above the strip went 9.6, 4.8, 3.2, 2.4 mm and the total z extent 16.00, 8.80, 6.40, 5.20 mm. Discretisation and domain truncation varied together, in opposition, so the sequence could not measure convergence at all.
+
+This is the same trap recorded in `RESUME.md` from the M2 refinement, and I wrote the ladder without applying my own recorded rule. The rule, restated: every physical length in millimetres, cell counts derived per rung.
+
+The correction has a consequence I did not anticipate. `n_top` must equal `n_pml` (`studies.py:2504-2508`), and `n_pml` also sets the lateral absorber (`nx = n_pml + n_ref + n_line`, `ny = 2*n_pml + n_strip + 2*n_clean`). Production proportions are substrate 1.6, air 4.8, top PML 1.2 mm, so `n_pml = 0.75*n_sub`, which is integral only where `n_sub` is divisible by four. The corrected ladder therefore admits `n_sub` = 4, 8, 12 and not five rungs, and 12 needs about 1.3 GB.
+
+Two arithmetic corrections to the dispatch itself. The four layers as I listed them, `1.6 + 4.8 + 1.2 + 1.2`, sum to 8.8 mm and not the 7.6 mm I called the total; production's 76 cells is `16 + 48 + 12` = 1.6 + 4.8 + 1.2 = 7.6 mm with the PML already inside the count, so the fourth layer was double-counted. And the 480 MB cap I later imposed on the finest rung was my own prediction used as the test of that prediction: the rung needs 1.3 GB and the run was killed by the cap, not by the machine.
+
+The agent stopped on the non-monotone branch and did not run a corrected ladder, on the grounds that the fix required a physics decision about what physical box height is correct rather than a parameter to be optimised. That was right.
+
+## Mesh ladder, corrected: three rungs, no plateau
+
+Same coupon, `RF_IN`, `animate=no`, every physical length at production proportions (substrate 1.600, air gap 4.800, top PML 1.200 mm), so every rung has the identical 26.40 x 20.80 x 7.60 mm box.
+
+| `n_sub` | mesh | cell mm | wall s | peak RSS MB | drive GHz | beta rad/m | eps_eff | Z0 ohm | residual | passivity |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4 | 66 x 52 x 19 | 0.4000 | 17.22 | 162 | 5.8278 | 232.399 | 3.62030 | 49.355 | 0.0415 | 0.9965 |
+| 8 | 132 x 104 x 38 | 0.2000 | 130.80 | 468 | 5.8278 | 230.039 | 3.54712 | 50.353 | 0.0188 | 0.9267 |
+| 12 | 198 x 156 x 57 | 0.1333 | 294.11 | 1327 | 6.5563 | 259.115 | 3.55594 | 50.853 | 0.0308 | 0.8391 |
+
+Reference, Hammerstad-Jensen at `w/h = 2.0` with 35 um copper (`t/h = 0.021875`): Z0 48.0987, eps_eff 3.343938, air-filled Z0 87.9553. The study's own printed reference rows use `t = 0` (Z0 48.686, air-filled 89.0289) even though the board has copper -- named debt, not fixed here.
+
+Errors against the 35 um reference, and the identity:
+
+| `n_sub` | eps_eff pc | beta pc | Z0 pc | `Z0*sqrt(eps_eff)` ohm | vs 87.9553 pc | passivity deficit pc |
+|---|---|---|---|---|---|---|
+| 4 | +8.26 | +4.05 | +2.61 | 93.909 | +6.77 | 0.35 |
+| 8 | +6.08 | +2.99 | +4.69 | 94.833 | +7.82 | 7.33 |
+| 12 | +6.34 | +3.12 | +5.73 | 95.895 | +9.03 | 16.09 |
+
+Three facts, measured, no interpretation:
+
+1. **No quantity converges toward the closed form.** The Z0 error grows monotonically with refinement (2.61, 4.69, 5.73 pc). The eps_eff error turns (8.26, 6.08, 6.34 pc).
+2. **The station planes lose power, and the loss grows with refinement.** Passivity 0.9965, 0.9267, 0.8391; the deficit is 0.35, 7.33, 16.09 pc, roughly doubling per step, while `|S11|^2` falls to 1.1e-5. Sixteen per cent of the two-plane budget is unaccounted at the finest rung with essentially no reflection.
+3. **The quasi-TEM identity is violated at every rung and the violation grows.** `Z0*sqrt(eps_eff)` is the air-filled impedance of the same cross-section and must be 87.9553 ohm for 35 um copper. Measured 93.909, 94.833, 95.895 ohm. A fixed multiplicative error in the station Z0 would not grow; refinement moves the extraction away from the target, not toward it.
+
+Caveat on rung 12: its drive frequency snapped to 6.5563 GHz, 12.5 pc above the other two, because the CFL step changes with the cell. That rung is not a pure refinement point and its eps_eff turn coincides with the jump. The jump does not explain the passivity trend or the identity trend, neither of which a 12 pc frequency change can manufacture.
+
+No frozen mesh. Plateau criterion stated as (8 to 12 step) below 25 pc of (4 to 8 step): it fails on Z0 (50 pc), on the identity (115 pc) and on passivity (125 pc), and passes on eps_eff and beta. Three of five fail.
+
+The stop condition in the dispatch fires on the identity clause: no rung is within 3 pc of 87.9553, and the deviation worsens with refinement. M3b was not started and no pre-registration was frozen.
