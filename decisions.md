@@ -1732,7 +1732,7 @@ The uncertainty attached to the quotable figure therefore gains a warm-up-sensit
 
 **What stays shut.** `beta`, `eps_eff`, `|z0|`, `|S11|` and `passivity` remain not quotable from any record in this log. `|S21|_poynting` remains a flux diagnostic over `9.60` mm and is not a board insertion loss. No S-parameter measured on an imported board is quotable, the lid test being held. Nothing in this section licenses an `alpha(f)` fit: two CW points are not a frequency dependence and this section does not add a third.
 
-## 74. Close-out of the section 73 numbers: the retraction now travels with them, and four rules extracted
+## 74. Close-out of the section 73 numbers: the retraction now travels with them, and five rules extracted
 
 **The retraction travels with the numbers.** Ten prose sites in the repository quoted `0.984519` as though it were quotable. All ten now carry a 252-byte annotation: derived in the section 68 record from `sqrt(0.969277006)` and not from a tool output, superseded by `0.987038`, the 0.26 per cent difference between them being warm-up sensitivity at fixed `n_acc`. Five sit in this log, four in `RESUME.md`, one in the 2026-10-22 falsification-read report -- whose contested line asserted that the figure "remains the one quotable amplitude" and is now contradicted in place, on the same page, by the retraction. The annotation is insert-only throughout: not one original character was altered, and each file's byte delta reconciles exactly against 253 bytes per annotation (five, four and one). That reconciliation is the check that would have caught the defect described two paragraphs below, had I thought to ask for it.
 
