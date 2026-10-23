@@ -2660,3 +2660,97 @@ Static spread 1.55 per cent, no form 2 per cent or more from H-J, so sub-check 1
 **What the two physics answers change about Test 2.** The reactive content of a launch mismatch is expected to decay with an e-folding set by the strip width, of order w/π — about 1 mm at w = 3.2 mm — so a purely reactive mismatch ought to be dead within 3 mm and to be a weak explanation of a residual measured from 10.4 mm onward. What does not settle is the standing wave. The number that therefore needs watching in Test 2 is not the shape of the port profile on its own but the overlap it produces with the mode and whether the fit residual decays over the station span; a profile mismatch that leaves no decaying residual has not explained anything.
 
 **What this section does not do.** It adds no candidate and records no prediction. The pattern noted across this session — h-independent, box-invariant, air-gap-invariant, gauge-invariant — is consistent with a mechanism fixed by the conductor's own geometry rather than by the surrounding box, which is a hypothesis with no reading attached to it and is not to be quoted as one.
+
+## 94. Tests 1 to 3 and the long box: the launch and the window are both cleared, and the gap survives
+
+**Four instruments were run in the pre-registered order, all container-side, all on stored records or one cheap rung.** Test 1 returned a third number and was not promoted; Test 3 found a mis-wiring whose blast radius is confined to one exploratory run; Test 2 killed the launch hypothesis outright; the long box failed its control on the first pass, was repaired without a re-solve, and then returned a negative that is itself decisive. The count of eliminations rises from nine to twelve and the open question narrows rather than closes.
+
+### 94.1 Test 1 — direct beta: fallback instrument, third number, not promoted
+
+**The registered per-cell instrument could not be executed.** The rung-8 plane archive holds 28 keys; the usable blocks are `plane_Ez` (9,105,38), `plane_Ey` (9,105,39), `plane_Hy` (9,105,38) and `plane_Hz` (9,104,39), indexed `[station, y, z]`, that is transverse cross-sections at the nine station positions. There is **no per-cell longitudinal axis in the file**: no array with an x-like extent of `nx = 132` exists. The circuit keys (`v`, `i`, `z0`, `beta`, `s11_measured`, `s21`, `passivity`, `refused`) are present but **empty, length zero**, so the archive cannot reproduce the circuit route from which the earlier abs(Z0) numbers came. The sanctioned fallback ran instead, and is labelled FALLBACK throughout: point phasor against station integral, from the same nine samples.
+
+| route | beta [rad/m] | eps_eff | vs 223.35 | vs 229.867 | bwd/fwd | residual |
+|---|---|---|---|---|---|---|
+| modal V, strip integral | 229.866776 | 3.541823 | +2.918 % | — | 1.33e-2 | 4.34e-3 |
+| modal I | 229.996193 | 3.545812 | +2.976 % | +0.056 % | 6.22e-3 | 4.32e-3 |
+| single column, ground to strip | 230.773167 | 3.569809 | +3.324 % | +0.394 % | 9.65e-3 | 2.77e-3 |
+| strip-wide column sum | 230.705977 | 3.567731 | +3.295 % | +0.365 % | 9.78e-3 | 2.82e-3 |
+| strip-centre mesh-edge phasor | **225.483558** | **3.408036** | **+0.955 %** | **−1.906 %** | 3.89e-2 | 1.77e-2 |
+
+`k0` = 122.141371 rad/m; every fit `fit_beta(..., n_wave=2)` on nine stations. The station integral reproduces 229.866776 exactly, which is the value rounded to 229.6 in the §93 registration.
+
+**This is the third number, and it is not read as a family.** 225.483558 sits 0.955 % above the closed form and 1.906 % below the station estimator; the registered readings were "close to 223.4" or "close to 229.6", and this is neither.
+
+**More useful than the number is its internal structure: the registered Family B mechanism is refuted by its own ladder.** Narrowing the transverse average from the whole strip to a single column moves beta **up**, 229.867 → 230.773, that is +0.394 % *away* from the closed form. The 1.906 % drop happens at the single step where the quantity stops being an integral and becomes a raw mesh-edge phasor, and that is exactly the step at which the two-wave fit degrades: residual RMS up by a factor 4.1, backward ratio up by 2.9. Cross-strip averaging therefore contributes 0.39 % in the wrong direction, and the remainder belongs to a change of estimator class, not of sampling.
+
+### 94.2 Test 3 — the eta_eff width audit is a mis-wiring, and the blast radius is one run
+
+**`microstrip_mode_profile(h, w, eps_r, *, n_sub, n_clean, n_air, check)` has no `n_strip` parameter** (`emfit/mode_profile.py`:535-543). It derives its own strip from the nominal electrical width, `n_strip = int(round(w / cell))` (:458), and masks the metal with that derived value. `eta_eff` is `sqrt(MU0 / (EPS0 * eps_eff))` with `eps_eff = c_prime / c_air` (:649-652), all of it a function of `(h, w, eps_r, n_sub, n_clean, n_air)` alone. **It is not a cache**: no `lru_cache`, no memo dictionary, no default argument evaluated once. The blindness is at the API level, so the same value is produced for any mesh strip width, which is what was observed.
+
+**The defect is not confined to a summary key.** `eta_eff` also scales the projected magnetic field (:716-717, `h_z = e_y/eta_eff`, `h_y = -e_z/eta_eff`), so every projected phasor inherits it.
+
+**Blast radius, stated precisely rather than generously.** The ladder is unaffected: stock runs have `n_strip = round(0.0032/0.0004) = 8`, the value the profile derives for itself, so profile and mesh agree and those numbers stand. The exploratory w/h = 1.0 run is affected: it sets `n_strip = 4` while `w` stays 3.2 mm, so its mode profile describes a 3.2 mm strip against a 1.6 mm mesh strip. Accordingly `modal.eta_eff`, `modal.z0_power`, `modal.v_mode` and `modal.i_mode` are **withdrawn** from §93. `modal.eps`, `beta`, `zabs`/`zre`/`zim`, `purity` and `amp_mismatch_max` come from the captured phasors and are unaffected. The eta_eff path is withdrawn from the reference argument; the capacitance-ratio line stands, because it is computed inside the same profile for the geometry that profile was actually given, and the Laplace comparison of §92 used the stock-width rung-8 cross-section, which is self-consistent.
+
+**One knock-on is flagged and not resolved.** §93 quoted a circuit-route abs(Z0) of 69.259 Ω (−2.49 %) for the w/h = 1.0 run against the two-wave 43.556 Ω. If that 69.259 is `z0_power` it is profile-based and must be withdrawn with the rest; if it comes from the captured phasors it survives. Which one it is has not been checked, and no argument may use 69.259 until it has been.
+
+### 94.3 Test 2 — the port current profile is mode-shaped before it has travelled half a strip width
+
+**One rung-4 solve, seven planes from 0.4 mm to 15.2 mm past the launch**, 26.68 s wall and 144.6 MiB peak; current taken as `J_x` proportional to `−H_y` in the cell above the strip metal, as a complex phasor over eight strip cells; the far plane at 20 mm is the reference.
+
+| x [mm] past port | overlap with settled profile | residual after best scalar | edge/centre | peak abs(J) |
+|---|---|---|---|---|
+| 0.4 | 0.998079 | 0.0438 | 1.685 | 176.0 |
+| 0.8 | 0.999188 | 0.0285 | 1.875 | 206.5 |
+| 1.6 | 0.998847 | 0.0340 | 1.928 | 239.9 |
+| 2.8 | 0.999315 | 0.0262 | 1.880 | 263.9 |
+| 4.4 | 0.999657 | 0.0185 | 1.845 | 280.6 |
+| 7.2 | 0.999864 | 0.0117 | 1.840 | 293.3 |
+| 15.2 | 1.000000 (ref) | 0 | 1.880 | 253.2 |
+
+**Overlap is 0.998 at the first captured plane and rises monotonically**; the residual after the best complex scalar falls monotonically from 0.0438 to 0.0117; edge-to-centre is 1.685 at 0.4 mm against 1.880 settled, so the launched current is very slightly *less* edge-peaked than the mode and converges to it within three millimetres. The launch is mode-shaped to 99.8 % essentially at the port plane. **M3c dies**, and this confirms rather than merely repeats the analytic estimate that an evanescent transverse component with wavenumber of order π/w decays with an e-folding near one millimetre.
+
+**The prediction that the port profile was the leading candidate is recorded as failed, and was logged as failed before this run started**, so it cannot be reframed by these numbers. The residual decay is the only quantity here that behaves as a launch artefact should, and its magnitude, four per cent or less, is an order below the effect under investigation.
+
+**An unpromoted observation is recorded so that it is not rediscovered as new.** The plane-to-plane phase steps of this run imply an incremental beta of roughly 200 rad/m near the launch. It is not usable: non-uniform station spacing, wrapped phases, a single cell-level phasor, no fit, a standing wave present, rung 4, one run. It is written down only because it is the kind of number that gets promoted later by accident.
+
+### 94.4 The long box — an instrument, pre-registered, control-gated, and negative
+
+**Declared before running, as an instrument and not a candidate: a longer box to resolve a degeneracy, not to test a mechanism.** Box length was eliminated as a *mechanism* in §90; it had never been tested as a *resolution*. The domain is about one guided wavelength (2π/229.6 = 27.4 mm against a 26.4 mm box) and the station span is 9.6 mm = 0.35 λ_g, inside which a third component and a shift in beta are near-degenerate for any estimator, which is also the honest explanation of §89.
+
+**Design.** Rung 4, x lengthened and nothing else: `n_line` 54 → 128, hence `nx` 66 → 140 and box x 26.4 → 56.0 mm; cell, `n_sub`, `ny`, `nz`, strip, port position and frequency all stock, verified against the solver's own geometry record. One field record read through two windows: series A the stock nine stations 10.4 → 20.0 mm as the control, and series B twenty-five stations 10.4 → 48.8 mm at 1.60 mm spacing, since 1.567 mm is not a multiple of the 0.4 mm cell, so exact stations force 1.60 mm and the window ends slightly long. The absorber is 3 cells = 1.2 mm, so the last station is 6.0 mm, five absorber thicknesses, clear. 84.1 s wall, 198 MB.
+
+**The first pass failed its control, and the failure was informative.** With the station voltage formed as a thickness integral of `E_z` over the substrate, `beta_A` came out 230.880206, which is +0.2995 % against the stock 230.1907601901 and outside the 0.1 % gate, so on the pre-registration the run was to be discarded. It was repaired instead, without re-solving: the stock route is **not** a thickness integral at all, it builds a mode profile and *projects* it (`microstrip_mode_profile` → `plane_mode(...)` → `modal_station_phasors`, `sweep3.py`:161), and that construction is fully reproducible from the stored planes. The repair is itself a datum: two defensible constructions of "the station voltage" differ by 0.30 % in beta.
+
+| window | n | span [mm] | beta [rad/m] | eps_eff | bwd/fwd | residual |
+|---|---|---|---|---|---|---|
+| A (control) | 9 | 9.6 | 230.139920 | 3.550245 | 0.0356 | 0.00436 |
+| B | 25 | 38.4 | 230.652553 | 3.566079 | 0.0389 | 0.03318 |
+| B first half | 13 | 19.2 | 230.367491 | 3.557270 | 0.0373 | 0.01578 |
+| B second half | 13 | 19.2 | 230.814487 | 3.571088 | 0.0422 | 0.02064 |
+
+Control: 230.139920 against 230.190760 is **−0.022 %**, inside the gate, so the run stands.
+
+**Pre-registered reading, applied without adjustment.** B − A = **+0.223 %**, below the 0.5 % threshold. The 0.35 λ_g span was therefore **adequate** and the degeneracy story is **wrong**: quadrupling the window does not move beta by anything remotely like 2.9 %. The trend is monotone rather than scattered, +0.194 % between halves with the second half highest, so there is a slight drift with distance from the launch, but its magnitude is an order below the effect under investigation. **The +5.9 % survives a four-times-longer window.** Per the registered fence the run is not chained to any candidate: what it licenses is "run the extraction with more room and the number barely moves", and nothing further.
+
+### 94.5 What the four negatives add up to
+
+| route or parameter changed | shift in beta | direction |
+|---|---|---|
+| cell halving, rung 4 → rung 8 | −0.14 % | immaterial |
+| extraction window four times longer | +0.22 % | immaterial |
+| station voltage: thickness integral against mode projection | 0.30 % | construction-dependent |
+| transverse average narrowed to one column | +0.39 % | away from closed form |
+| projection replaced by a raw mesh-edge phasor | −1.91 % | fit degrades ×4.1 |
+| **closed form against every projection route** | **+2.9 to +3.3 %** | **unexplained** |
+
+Every route variant tested is smaller than the gap, and the only large one is the variant that stops being a projection at all. The 2.9 % in beta, equivalently 5.9 % in eps_eff, is therefore not an artefact of the extraction route, the launch, the window length, the cell size, the box, the air gap, the reference plane, or the mode projection. **Twelve eliminations, and none of them is the cause.**
+
+### 94.6 Honest end state for this round
+
+**The round ends with a named open problem rather than a mechanism:** on this geometry the field produced by `emfit` is 2.9 % slower, 5.9 % in eps_eff, than every standard quasi-static model, and twelve candidate explanations have been eliminated by measurement rather than by argument.
+
+The falsification sentence, stated before the fact as required: for a longer box *not* to change beta, the field must be genuinely two-wave across the window and the estimator genuinely two-wave, in which case the 5.9 % is real. That is what the data now say.
+
+**Two things remain, in order.** First, resolve the `z0_power` provenance question in 94.2, since §93's 69.259 Ω either survives or does not. Second, the three-wave `ports.py` edit remains **held** pending its own pre-registration with a fence; the long box has removed the objection that a third component could be hiding in a too-short window, which makes that instrument more attractive than it was, not less.
+
+**Session errors, tenth and eleventh.** Tenth: the long-box first pass invented its own construction of the station voltage instead of reusing the stock one and returned a 0.30 % control discrepancy; the repair worked and became a datum, but the pass should have read the stock path first. Eleventh: the briefing written for Test 2 specified rung-4 geometry values, `ny` 46, `j_centre` 23, `k_strip` 8, that do not match the solver's actual record of `ny` 52, `j_centre` 26, `k_strip` 4; the worker read them from the geometry dictionary rather than trusting the brief, which is correct behaviour and the error was mine.
