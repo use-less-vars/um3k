@@ -298,3 +298,24 @@ Run such scripts from `/tmp/retime`.
 
 - `docs/report/main.pdf` is a local build artefact: regenerate it with the build command and never
   commit it.
+
+- **The impedance identity `Z0 sqrt(eps_eff) = 87.9553 ohm` is a gate, not a diagnostic, and it is
+  printed with pass/fail on every run at every rung.** It holds exactly for any self-consistent
+  quasi-TEM route: the closed form at t = 35 um returns the constant to the digit. The modal route
+  passes it (+0.29 per cent at rung 8); the V/I circuit route fails it (+7.75 per cent at rung 8,
+  and the published ladder gives +6.77 / +7.82 / +9.03 per cent at rungs 4 / 8 / 12 -- monotone and
+  worsening, so a bias and not a discretisation error). **The circuit `Z0` column is not for use in
+  any table or in the report:** quote `Z0` from a route that passes the gate or do not quote it, and
+  do not read a failing circuit `Z0` as an independent second opinion that brackets a wrong
+  `eps_eff`. M3b's deviation is therefore **one** error -- `eps_eff` high by 5.63 per cent -- and not
+  the three that section 80 enumerated; `eps_eff`, `beta` and `Z0` are one number and a definition,
+  not three measurements.
+
+- **The full suite has not been re-run since `f1cbb52`, and that is a named debt.** The
+  `396 passed in 301.58s` figure in the Position section above is the section-67/68 state and does
+  not cover the current tree. Pay it sharded, one test file per bash call, before the next merge of
+  any branch. Working recipe: `mkdir -p /workspace/.scratch/logs`, then for each file
+  `PYTHONPATH=/workspace timeout 560 python -m pytest -o addopts="" -q <file> > /workspace/.scratch/logs/m-<name>.log 2>&1; tail -25 <log>`.
+  Never pipe pytest to `tail`, `head` or `grep`: the pipe buffers, the 600 s bash cap kills the call,
+  and every line of output is lost -- that has already happened once, which is why the debt exists.
+  `-o addopts=""` is mandatory because `pyproject.toml` already sets `addopts = "-q"`.
