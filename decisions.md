@@ -2754,3 +2754,73 @@ The falsification sentence, stated before the fact as required: for a longer box
 **Two things remain, in order.** First, resolve the `z0_power` provenance question in 94.2, since §93's 69.259 Ω either survives or does not. Second, the three-wave `ports.py` edit remains **held** pending its own pre-registration with a fence; the long box has removed the objection that a third component could be hiding in a too-short window, which makes that instrument more attractive than it was, not less.
 
 **Session errors, tenth and eleventh.** Tenth: the long-box first pass invented its own construction of the station voltage instead of reusing the stock one and returned a 0.30 % control discrepancy; the repair worked and became a datum, but the pass should have read the stock path first. Eleventh: the briefing written for Test 2 specified rung-4 geometry values, `ny` 46, `j_centre` 23, `k_strip` 8, that do not match the solver's actual record of `ny` 52, `j_centre` 26, `k_strip` 4; the worker read them from the geometry dictionary rather than trusting the brief, which is correct behaviour and the error was mine.
+
+## 95. The array audit: the solver solves the intended cross-section
+
+**The falsification sentence was said aloud before the audit ran.** A1 was pre-registered as an array-level read of `material_matrices()` against the cross-section that `microstrip_mode_profile` builds, with one written consequence per outcome. The sentence stated before the run was: *if `h_eff` comes back 0.85 mm, then the solver has been solving a substrate half as thick as intended, and all twelve earlier eliminations were correctly measuring the wrong box.* It did not come back that way. The audit is zero-solve: both sides were dumped at full resolution and compared elementwise, nothing was simulated.
+
+### 95.1 Scope
+
+**Code read.** `emfit/materials.py:241 material_matrices()` assembles a flat `m_eps` with blocks `off_ex | off_ey | off_ez`, entry `eps_r * EPS0 * A~_e / L_e`. Metal enters through `operators.py:265 pec_edge_mask()`; the strip is laid down at `studies.py:2558-2564`. The profile side is `mode_profile._section` / `_conductors`. Both constructions were dumped in full and diffed node by node.
+
+**Grid, both sides.**
+
+| quantity | solver (`material_matrices`) | profile (`_section` / `_conductors`) |
+|---|---|---|
+| cells `(nx, ny, nz)` | 132, 104, 38 | 1, 92, 32 |
+| nodes | 133 x 105 x 39 | 1 x 93 x 33 |
+| transverse cell | 0.2 mm | 0.2 mm |
+| dielectric cells, ground to strip | **8** | **8** |
+| strip cells, transverse | **16** | **16** |
+| `h_eff` | **1.600000 mm**, error 0.0000 % | 1.600000 mm |
+| `w_eff` | **3.200000 mm**, error 0.0000 % | 3.200000 mm |
+
+The solver's block decomposition is `n_pml 6, n_ref 18, n_line 108, n_clean 38, n_strip 16, n_air 24, n_top 6`; the profile's is `n_sub 8, n_clean 38, n_air 24` with `n_strip` derived as `int(round(w/cell)) = 16` and `periodic = (True, False, False)`.
+
+### 95.2 Relative permittivity, block by block
+
+**Every count is reproduced by the geometry, and the two paths agree.**
+
+| block | shape | 1.0 | 2.7 | 4.4 | total |
+|---|---|---|---|---|---|
+| `ex` | (132, 105, 39) | 415800 | 13860 | 110880 | 540540 |
+| `ey` | (133, 104, 39) | 414960 | 13832 | 110656 | 539448 |
+| `ez` | (133, 105, 38) | 418950 | 0 | 111720 | 530670 |
+
+**The totals are the array sizes exactly** (540540 = 132 x 105 x 39, 539448 = 133 x 104 x 39, 530670 = 133 x 105 x 38), so no cell is unset. **`ez` carries no 2.7 at all**: the half-and-half interface value touches the transverse components only, which is what the dual averaging rule does and not a bug. In the solver the interface row sits on the strip plane and carries the arithmetic dual average of 4.4 and 1.0; **the profile builder produces the same 2.7 row by the same arithmetic** — see 95.5.
+
+**Profile side.** Counts `{1.0: 2232, 2.7: 93, 4.4: 744}`, total 3069 = 93 x 33, i.e. 33 rows of 93: 8 dielectric (4.4) + 1 interface (2.7) + 24 air (1.0). Consistent with the solver row for row.
+
+### 95.3 A column through the strip centre
+
+**Solver, `i = 78, j = 52`.** `EX`/`EY`: `k = 0..7` -> 4.4 (k = 0 also `pec = 1`), `k = 8` -> 2.7 (`pec = 1`), `k = 9..37` -> 1.0, `k = 38` -> 1.0 with `pec = 1` (the lid). `EZ`: `k = 0..7` -> 4.4 (`z_c` 0.1 to 1.5 mm), `k = 8..37` -> 1.0.
+
+**Metal lives on exactly three z-node layers of `EX`/`EY`: `[0, 8, 38]`** — ground at k = 0 (z = 0), strip at k = 8 (z = 1.600 mm), lid at k = 38. **`EZ` carries no metal layer at all**, which is required: a PEC sheet is edge-intangent to its own normal component. The strip exists on k = 8 only; in y it occupies `EX` nodes 44..60 (17 nodes) and `EY` cells 44..59 (16 cells) — 16 cells at 0.2 mm is 3.200000 mm, and 8 cells of 0.2 mm is 1.600000 mm. **Both errors are 0.0000 %.**
+
+### 95.4 Extent differences, which are not cross-section differences
+
+**Three differences exist and none of them is the geometry in question.** Solver `ny = 104` = 12 PML + 16 strip + 76 clean, against profile `ny = 92` with no PML. Solver `nz = 38` = 8 + 24 + 6 (the lid), against profile `nz = 32` = 8 + 24. The conditional `z <= h` versus `z < h` at the substrate top is **inert**: the dual rule never samples z = h, so the two spellings cannot differ. All three are domain extent, not cell content; a cross-section comparison is unaffected by them, and no run was performed to chase them.
+
+### 95.5 Node-by-node comparison: zero differences
+
+**Over `EX`/`EY` for k = 0..32 and `EZ` for k = 0..31 there are 0 differing entries.** That is the whole of the transverse cross-section, every component, every node, including the interface row on the strip plane. The arrays match.
+
+### 95.6 Reading: the branch that fired
+
+**The pre-registered reading was "arrays match -> stop, do not chain into a physics test".** That branch fired, and nothing was chained: no solve, no physics claim, no follow-up experiment opened on the strength of this section.
+
+**What it settles.** The solver solves the cross-section we describe it with. `h_eff = 1.600000 mm` and `w_eff = 3.200000 mm`, both to 0.0000 %, node-identical against the builder that produced the design, interface averaging included. The 0.85 mm candidate is dead, and it was the last cheap geometry story standing.
+
+**What it costs.** The Laplace route returned 3.542 at `n_sub 8` and 3.369119 at `n_sub 16`, and the projection routes sit +2.9 to +3.3 % away from the closed form with no mechanism attached (section 94.5). Those numbers cannot now be blamed on a mis-described box. **The Huygens-Jordan inversion's three-way degeneracy — `w/h` 3.8, `h` 0.85 mm, `eps_r` 4.6 — is exhausted as an explanation**: all three parameters have been confirmed exact, so the argument is withdrawn rather than promoted. The excess sits in the field or in the estimator, not in the geometry used to describe it.
+
+**Count.** Thirteen checks, none the cause. That is the honest state of the search, and it is a stronger statement than twelve: the remaining candidate is no longer "we measured the wrong thing" but "we do not have the right relation between what we measure and what we report".
+
+### 95.7 Open, and deliberately not opened here
+
+**A2.** Whether the 69.259 ohm circuit route of section 93 is the same quantity as the withdrawn `z0_power` or is phasor-based and therefore stands. Zero-solve code read; not performed in this section.
+
+**A3.** The record carries 3.363120 and 3.369119 for the Laplace `eps_eff`. These are two discretisations of one quantity — `n_sub 8` on the rung-8 cross-section, and the `n_sub 16` refinement — not two values for it. The record should say so in those words the next time it quotes them.
+
+**The three-wave `ports.py` edit remains held.** It was made conditional on this audit returning "arrays match", and that condition is now met, but the edit still needs its own pre-registration before `ports.py` is touched. **No code was changed in this section**, and no run is scheduled: the principal wants the physics conversation first.
+
+**No twelfth session error.** The audit was read-only and zero-solve, and every artefact was staged under `.scratch/logs` rather than `/tmp`.
