@@ -2605,3 +2605,44 @@ The order knob is known to be live at the 1 per cent level, since one wave to tw
 **The sentence that has to be said first, and the fence.** If W1 moves eps_V by less than 0.5 per cent, the estimator's basis order is ruled out as the cause and W2 is the last standard candidate in existence; if W2 then fails, the finding is that the microstrip model in emfit differs from every closed form checked by a mechanism no standard check explains, M3b stays gated, and no tenth candidate is to be proposed from a list. If W1 moves eps_V by two points or more, that is the first sentence of the report and the round stops there.
 
 **Bound.** One session, container only, W1 zero-solve, W2 at most one rung-4 run of about 45 seconds. `modal.py`, the runner and the production record are not touched; none of the nine eliminations is re-tested; C1, nx 94 and rung 12 are not run; §80, §81, §83, §86, §87, §88 and §89 are not reopened.
+
+## 92. W1 is forbidden by the code, W2 fails on its third sub-check, and the excess survives a change of geometry
+
+**W1 could not be asked, and the reason is five lines of code.** `fit_beta` has the signature `def fit_beta(z, v, n_wave=1)` and rejects the order before any fit is attempted — `ports.py:910-912`, `if n_wave not in (1, 2): raise ValueError(f"n_wave must be 1 or 2, got {n_wave}")`. Three waves and four waves raise on both rungs and both series. None of PASS, FAIL, PARTIAL or DIVERGENCE can be scored, and the divergence clause cannot be applied either, because its required artefact — the order-3 residual pattern — does not exist. It is recorded as **UNEVALUABLE**, not as a fail, and the distinction is the whole of this paragraph: the pre-registered clause "if W1 moves eps by less than 0.5 per cent, the estimator's order is ruled out" does **not** fire, because there was no movement to measure. Nothing about the estimator's order has been excluded. `n_wave` is a flag with two legal values, not an order.
+
+**The archive was checked before the API was blamed.** The n_wave=2 reconstruction reproduces the stored rung-4 and rung-8 records to relative 0.000e+00 on beta_V, beta_I, eps_V, eps_I and abs(Z0), so the failure is the guard and not a broken record. For the log: rung 4 eps_V 3.551814 (+6.216 per cent), eps_I 3.558305 (+6.411 per cent), residuals 4.669e-3 and 4.711e-3; rung 8 eps_V 3.541823 (+5.918 per cent), eps_I 3.545812 (+6.037 per cent), residuals 4.335e-3 and 4.320e-3. abs(Z0) is invariant across the order by construction — `fit_station_impedance(z, v, i, beta)` has no order parameter — so that invariance check is vacuous, not verified, and is not quoted as a result.
+
+**W2, first sub-check: the reference is sound.** As built and read from the config and record: w 3.2 mm, h 1.6 mm, w/h 2.000, eps_r 4.4, f 5.827786408 GHz, h/lambda0 0.0311. Thickness is absent from every config and from the mesh, which models the strip as an infinitesimal sheet; `COPPER_T = 35 µm` exists only in the closed form and does not enter eps_eff at all — verified bit-identical at t = 0 and t = 35 µm, where only Z0 moves, 48.685768 → 48.098655.
+
+| form | eps_eff | vs H-J |
+|---|---|---|
+| Hammerstad-Jensen as implemented, `microstrip.py:183-185` | 3.343938310 | — |
+| H-J with Jensen-Stayle thickness, t = 35 µm | 3.343938310 | +0.000 per cent |
+| Wheeler (1977), 12h/w | 3.342540 | −0.042 per cent |
+| Wheeler (1977), 10h/w variant | 3.394022 | +1.498 per cent |
+| Kirschning-Jansen dispersive, 5.828 GHz | 3.391585 | +1.425 per cent, bracket +0.39 to +10.1 |
+| Getsinger (1973) dispersive | 3.358466 | +0.434 per cent |
+| Kobayashi (1988) dispersive | 3.374299 | +0.908 per cent |
+
+Static spread 1.55 per cent, no form 2 per cent or more from H-J, so sub-check 1 is silent. The Kirschning-Jansen row is a bracket and not a number: the four plausible unit conventions in its leading coefficient span +0.39 to +10.1 per cent, nothing in the repository pins one, and the two convention-free dispersion models both put dispersion under 1 per cent at h/lambda0 = 0.031. A row that can be given five values is not evidence of a disagreement.
+
+**W2, second sub-check: the Laplace solve agrees with H-J, and the 3.374 was a different quantity.** At `mode_profile.py:650-652` the permittivity is `eps_eff = c_prime / c_air`, a true quasi-static capacitance ratio, while `eta_eff = sqrt(MU0 / (EPS0 * eps_eff))` is a wave impedance in ohms — 205.097427521 Ω here. The 3.374 carried since §84 is `(ETA0/eta_eff)^2`, i.e. the Laplace eps_eff at n_sub 4, reproduced to nine digits. At the rung-8 cross-section the same path gives **3.363120** (n_sub 16: 3.369119): 0.574 per cent above H-J, 5.045 per cent below the FDTD. Sub-check 2 is silent — the Laplace value sits with the closed forms, nowhere near the FDTD.
+
+**W2, third sub-check: the excess persists at w/h = 1.0.** The target ratio was declared before the run: halve the strip. One rung-4 run, 16.19 s, n_strip 4 (1.6 mm, w/h = 1.000), box 26.4 × 19.2 × 7.6 mm, cell 0.4000 mm, nsteps 2400, residuals 4.158e-3 and 3.859e-3. The transverse box is 19.2 mm rather than 20.8 mm because `ny` is derived from the strip width at `studies.py:2528`; the substrate, cell, frequency and station positions are unchanged.
+
+| quantity | w/h = 2.0, rung 4 | w/h = 1.0, rung 4 |
+|---|---|---|
+| eps_V | 3.551814 | 3.344137 |
+| eps_I | 3.558305 | 3.355187 |
+| closed form at that geometry | 3.343938 | 3.167823 |
+| excess, eps_V / eps_I | +6.216 / +6.411 per cent | +5.566 / +5.915 per cent |
+| abs(Z0), two-wave route vs its own closed form | 45.549 vs 48.686, −6.44 per cent | 43.556 vs 71.031, −38.68 per cent |
+| abs(Z0), circuit route vs its own closed form | 49.412, +1.49 per cent | 69.259, −2.49 per cent |
+
+**The closed form fell 5.27 per cent and the FDTD fell 5.85 per cent; the gap between them barely moved.** Sub-check 3 does not fire — the band was 3.11 to 12.43 points — and with the first two silent **W2 fails** on its pre-registered reading: the closed forms agree with each other and with the Laplace solve to 1.55 per cent, and the excess persists within a factor of two at a geometry where the reference is a different number.
+
+**The third sub-check tripped its health gate, and the gate tripped on a route rather than on a run.** The two-wave abs(Z0) sits 38.68 per cent under its own closed form, past the 15 per cent gate, so that run is recorded as gate-tripped and no abs(Z0) conclusion is drawn from it. The gate's own premise — that the record is not a clean transmission line — is what fails: residuals match production, the phase fits are clean, and the circuit route in the same run lands 2.49 per cent from its closed form. What is anomalous is the two-wave V–I amplitude ratio, and it is anomalous by more than the phase ever is: the two routes disagree by 8 per cent at w/h = 2.0 (45.549 against 49.412) and by 59 per cent at w/h = 1.0 (43.556 against 69.259), while the circuit route stays within 2.5 per cent of the closed form at both. Recorded as an observation and not as a claim: the V–I amplitude decomposition is geometry-fragile in a way β is not, and it is β that carries the excess of interest.
+
+**One more, recorded and not diagnosed.** `modal.eta_eff` is bit-identical between the two runs, 205.097427521 Ω at both strip widths, while `modal.eps` moves 3.731593 → 3.475708. The Laplace cross-section on that path does not see the strip width. That is either a cache or an argument that never reaches the solve, and it is not investigated here.
+
+**Two structural facts and the verdict.** emfit's estimator is two-wave by construction, so the single hypothesis §90 left standing — that the field carries a third component the fit cannot absorb — is the one hypothesis the code forbids testing. And the reference is sound to 0.6 per cent, measured three independent ways, at two geometries whose closed forms differ by 5.3 per cent. The eps excess of 5.6 to 6.4 per cent is therefore a property of the field the FDTD produces, or of how β is read off it, and it is not a wrong closed form and not a wrong air gap and not a phase plane. W1 unevaluable and W2 failed: the principal's conditional is met in substance and not in letter, because W1 failed to be askable rather than answering no. M3b stays gated, and the next instrument is not a candidate from the list — it is either permission to edit `emfit/ports.py` to carry a third component, or a direct measurement of β from a field that never passes through the estimator at all.
