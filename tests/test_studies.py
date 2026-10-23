@@ -105,6 +105,7 @@ def test_microstrip_board_study_is_registered():
         "n_bins": "int",
         "f_pulse": "float",
         "animate": "choice",
+        "plane": "choice",
         "n_frames": "int",
     }
 
