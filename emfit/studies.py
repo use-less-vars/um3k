@@ -1225,6 +1225,12 @@ MS_ANIMATE = "yes"
 #: Frames per period of that animation: a tenth of a period per frame, which at
 #: the 12 fps playback default is one exact period in three seconds.
 MS_N_FRAMES = 36
+#: The ``z`` plane the animation is cut on, named rather than indexed: ``"mid"``
+#: is halfway up the substrate, which is the plane this study has always cut it
+#: on, so the default reproduces the previous picture exactly; ``"strip"`` is the
+#: layer under the strip and ``"air"`` halfway up the air above it.
+#: :func:`_slice_index` is what turns the name into a mesh index.
+MS_ANIMATE_PLANE = "mid"
 #: The weight the broadband sweep multiplies the kept record by before summing
 #: a bin, and measures its own drive spectrum through: ``"rect"`` or
 #: ``"hann"``.  Flat is a deliberate choice here and not the default by
@@ -2280,6 +2286,7 @@ def microstrip_wave(
     n_warm: int = None,
     drive: float = 1.0,
     keep_slice: bool = False,
+    plane: str = MS_ANIMATE_PLANE,
     audit: bool = False,
     loads: tuple[Load, ...] = (),
     reference: LineReference | None = None,
@@ -2411,6 +2418,12 @@ def microstrip_wave(
             ``nxn * nyn`` signals, which is nothing beside the field update on
             the mesh test but still wasted on a run that only wants numbers.
             When it is on and a ``sink`` is given, the plane is also drawn.
+        plane: Which plane ``keep_slice`` keeps, named rather than indexed:
+            ``"mid"`` (halfway up the substrate, the default and the plane this
+            run has always cut on), ``"strip"`` (the layer under the strip) or
+            ``"air"`` (halfway up the air above it).  Read only when
+            ``keep_slice`` is on; :func:`_slice_index` turns the name into the
+            ``k`` the accumulation is cut on.
         loads: Lumped loads placed on the strip's ``E_z`` edges; see
             :func:`emfit.evolve.add_load` for what each of them is.
         reference: A :class:`LineReference` -- a load-free run of the same line
@@ -2525,6 +2538,20 @@ def microstrip_wave(
     j1 = j0 + n_strip                        # one past the last one
     j_centre = j0 + n_strip // 2
     y_half = 0.5 * (n_strip + 2 * n_clean) * cell   # physical strip extent
+
+    # --- the plane the map is cut on ----------------------------------------
+    # ``k_slice`` is the integer index the ``E_z`` accumulation below is cut on,
+    # and it is resolved here so that each of the three named planes is decided
+    # once.  ``k_mid`` stays the mid plane of the substrate and is what the
+    # geometry reports; the two are the same integer at the default plane, which
+    # is why a run that asks for nothing draws the picture it always drew.
+    k_slice = _slice_index(plane, n_sub=n_sub, n_air=n_air, k_strip=k_strip)
+    if keep_slice and not 1 <= k_slice <= cc.nz - 1:
+        raise ValueError(
+            f"plane={plane!r} puts the kept plane at k = {k_slice}, outside "
+            f"1..{cc.nz - 1} on this {cc.nz}-cell z stack: the plane has to sit "
+            "between two node layers, because the field is the mean of the two "
+            "cells either side of it and both of them have to exist")
 
     # --- PEC: the six walls plus the thin strip sheet ------------------------
     pec = np.array(cc.pec_edge_mask(), dtype=bool)
@@ -2774,7 +2801,7 @@ def microstrip_wave(
         if slice_acc is not None:
             ez = stepper.e[cc.off_ez:cc.off_ez + cc.n_ez].reshape(
                 cc.nxn, cc.nyn, cc.nz)
-            slice_signals[:] = 0.5 * (ez[:, :, k_mid - 1] + ez[:, :, k_mid]).ravel()
+            slice_signals[:] = 0.5 * (ez[:, :, k_slice - 1] + ez[:, :, k_slice]).ravel()
             slice_acc.add(slice_signals, n)
 
     # Mean of the instantaneous flux over the settled record, on the same
@@ -3202,6 +3229,7 @@ def microstrip_wave(
         "n_clean": n_clean, "n_pml": n_pml, "n_ref": n_ref, "n_line": n_line,
         "ix_port": ix_port, "ix_far": nx, "k_strip": k_strip,
         "k_mid": k_mid, "z_mid": k_mid * cell, "keep_slice": bool(keep_slice),
+        "k_slice": k_slice, "z_slice": k_slice * cell,
         "j_strip": (j0, j1), "j_centre": j_centre, "y_extent": y_half,
         "station_cells": [int(v) for v in js],
         "f": f0, "f_target": float(f_target), "dt": dt,
@@ -3246,7 +3274,7 @@ def microstrip_wave(
                      f"{dt:.3e} s. The dotted ramp is the closed-form phase "
                      "slope at the same frequency."))
 
-    # --- the mid-plane map, drawn from the phasor ---------------------------
+    # --- the kept z plane, drawn from the phasor ----------------------------
     # ``plot_field_slice`` wants a whole edge vector and a component block in
     # it, so the plane is written back into two ``E_z`` cells of an otherwise
     # empty vector and drawn through the ordinary slice routine: the same
@@ -3256,22 +3284,25 @@ def microstrip_wave(
     # the accumulated record starts on.
     if sink is not None and slice_ez is not None:
         ez_block = np.zeros((cc.nxn, cc.nyn, cc.nz), dtype=complex)
-        ez_block[:, :, max(k_mid - 1, 0)] = slice_ez
-        ez_block[:, :, k_mid] = slice_ez
+        ez_block[:, :, max(k_slice - 1, 0)] = slice_ez
+        ez_block[:, :, k_slice] = slice_ez
         vec = np.zeros(cc.n_edges, dtype=float)
         vec[cc.off_ez:cc.off_ez + cc.n_ez] = np.real(ez_block).ravel()
         z_mid = k_mid * cell
+        z_slice = k_slice * cell
         fig_s, ax_s = viz.plot_field_slice(
-            grid, vec, "EZ", axis="z", index=max(k_mid - 1, 0),
-            title=rf"$\mathrm{{Re}}\,E_z$ at $z = {z_mid * 1e3:.2f}$ mm")
+            grid, vec, "EZ", axis="z", index=max(k_slice - 1, 0),
+            title=rf"$\mathrm{{Re}}\,E_z$ at $z = {z_slice * 1e3:.2f}$ mm")
         ax_s.axvline(ix_port * cell, color=viz.COL_INK, lw=0.8, ls="--")
         ax_s.axhline(j0 * cell, color=viz.COL_INK, lw=0.8, ls="--")
         ax_s.axhline(j1 * cell, color=viz.COL_INK, lw=0.8, ls="--")
         sink.add_figure(
-            "midplane-ez", "Mid-plane E_z of the driven microstrip", fig_s,
+            "midplane-ez",
+            rf"$E_z$ on the kept plane, $z = {z_slice * 1e3:.2f}$ mm", fig_s,
             caption=(f"Real part of the {f0 / 1e9:.3f} GHz phasor of $E_z$ on "
-                     f"the node layer $z = {z_mid * 1e3:.2f}$ mm, halfway up "
-                     f"the {float(h) * 1e3:.2f} mm substrate, from the mean of "
+                     f"the node layer $z = {z_slice * 1e3:.2f}$ mm of the "
+                     f"{float(h) * 1e3:.2f} mm substrate stack (the mid plane "
+                     f"is $z = {z_mid * 1e3:.2f}$ mm), from the mean of "
                      f"the two cells that straddle it on the "
                      f"{'x'.join(str(n) for n in (nx, ny, nz))}-cell mesh of "
                      f"{cell * 1e3:.1f} mm cells. Dashed: the port plane and "
@@ -3349,6 +3380,47 @@ def microstrip_wave(
     )
 
 
+def _slice_index(plane, *, n_sub: int, n_air: int, k_strip: int) -> int:
+    """The ``z`` index the map is cut on, for one named plane.
+
+    ``plane`` names a position in the substrate-and-air stack this run builds
+    and what comes back is the *mesh index* ``k`` the ``E_z`` accumulation is
+    cut on -- a count of cells, not a length.  The field that is actually kept
+    is the mean of layers ``k - 1`` and ``k``: ``E_z`` does not live on a node
+    layer, so the two cells straddling the plane are what the phasor is built
+    from, and ``k`` is the upper of the pair.
+
+    The three names are the only positions in this model that have one:
+
+    * ``"mid"`` -- ``n_sub // 2``, halfway up the substrate.  Every earlier
+      version of the picture was cut here, so this default changes nothing.
+    * ``"strip"`` -- ``k_strip``, the node layer the strip sheet sits on; with
+      the mean above, the kept field is the layer just under the strip.
+    * ``"air"`` -- ``n_sub + max(n_air // 2, 1)``, halfway up the air above the
+      strip, and never the first air cell, which belongs half to the strip's
+      own node layer.
+
+    The result is an index into a mesh this function does not have, so the
+    caller has to check it: ``1 <= k <= nz - 1`` is the legal range, because
+    both ``k - 1`` and ``k`` have to exist for the mean to be taken.
+
+    Raises:
+        ValueError: If ``plane`` is none of those three names.
+    """
+    key = str(plane).strip().lower()
+    if key == "mid":
+        return int(n_sub) // 2
+    if key == "strip":
+        return int(k_strip)
+    if key == "air":
+        return int(n_sub) + max(int(n_air) // 2, 1)
+    raise ValueError(
+        f"plane={plane!r} is not a plane this run can cut on: the plane is a "
+        "position on the z axis and only these three are named positions in "
+        "this model -- 'mid' (halfway up the substrate), 'strip' (the layer "
+        "just under the strip) and 'air' (halfway up the air above it)")
+
+
 def microstrip_reference_board() -> MicrostripBoard:
     """The default cross-section of :func:`microstrip_wave` as a board spec.
 
@@ -3391,6 +3463,7 @@ def microstrip_wave_board(
     nsteps: int = MS_NSTEPS,
     dt_scale: float = 1.0,
     keep_slice: bool = False,
+    plane: str = MS_ANIMATE_PLANE,
     audit: bool = False,
     reference: LineReference | None = None,
     sink: FigureSink = None,
@@ -3434,10 +3507,14 @@ def microstrip_wave_board(
         nsteps: Leapfrog steps; the record is what is left after warm-up.
         dt_scale: Multiplier on the mesh's CFL time step, passed straight
             through to :func:`microstrip_wave`; ``1.0`` is that run's own step.
-        keep_slice: Whether to accumulate the mid-plane phasor block, which is
+        keep_slice: Whether to accumulate the kept-plane phasor block, which is
             what the ``midplane-ez`` figure is drawn from; it is a separate
             accumulation through the time loop, so a run that wants no picture
             should leave it off.
+        plane: Which plane ``keep_slice`` keeps, passed straight through to
+            :func:`microstrip_wave`: ``"mid"`` (halfway up the substrate, the
+            default), ``"strip"`` (the layer under the strip) or ``"air"``
+            (halfway up the air above it).  Read only when ``keep_slice`` is on.
         audit: Whether to build the absorbed-work accounting; ``False`` (the
             default) skips it because it costs substantially more than the
             solve itself.
@@ -3493,6 +3570,7 @@ def microstrip_wave_board(
         nsteps=nsteps,
         dt_scale=dt_scale,
         keep_slice=keep_slice,
+        plane=plane,
         audit=audit,
         loads=spec.loads,
         reference=reference,
@@ -4338,6 +4416,9 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink,
     # 10.4/20.0 mm of the typed-in default line: on a coupon those two numbers
     # are wherever the board happens to put the copper.
     span = spec.x_far - spec.x_port
+    # The plane the run is cut on, read once: the solver gets it as a name and
+    # the caller that draws and titles the plane gets the same word back.
+    plane = str(values.get("plane", MS_ANIMATE_PLANE)).strip().lower()
     result = microstrip_wave_board(
         spec,
         n_sub=n_sub,
@@ -4352,6 +4433,7 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink,
         excite=excite, band_lo=band_lo, band_hi=band_hi,
         n_bins=n_bins, f_pulse=f_pulse,
         keep_slice=True,
+        plane=plane,
         sink=sink)
     # The mid-plane phasor leaves through ``midplane`` and never through
     # ``metrics``: an array cannot go in a table row.
@@ -4371,8 +4453,9 @@ def _run_microstrip_board(values: Mapping[str, Any], sink: FigureSink,
         midplane["dx"] = float(geom["cell"])
         midplane["dy"] = float(geom["cell"])
         midplane["uniform_xy"] = True
-        midplane["plane_index"] = int(geom["k_mid"])
-        midplane["plane_z"] = float(geom["z_mid"])
+        midplane["plane_index"] = int(geom["k_slice"])
+        midplane["plane_z"] = float(geom["z_slice"])
+        midplane["plane"] = plane
         midplane["nx"] = int(geom["nx"])
         midplane["ny"] = int(geom["ny"])
         midplane["nz"] = int(geom["nz"])
@@ -4564,9 +4647,19 @@ def _run_microstrip_board_animated(values: Mapping[str, Any],
     f_bin = float(midplane["f"])
     n_frames = int(values.get("n_frames", MS_N_FRAMES))
     dx, dy = float(midplane["dx"]), float(midplane["dy"])
+    # The title names the plane that was actually cut on.  "Mid-plane" is a
+    # false claim the moment the plane can move, but it is the string every
+    # earlier run printed, so it is kept byte for byte at the default plane.
+    plane_name = str(midplane.get("plane", MS_ANIMATE_PLANE))
+    if plane_name == "mid":
+        title = f"Mid-plane Ez, CW steady state at {f0 / 1e9:.3f} GHz"
+    else:
+        title = (f"Ez on the {plane_name} plane (k = "
+                 f"{int(midplane['plane_index'])}), CW steady state at "
+                 f"{f0 / 1e9:.3f} GHz")
     gif = animate.steady_state_gif(
         ez, dx=dx, dy=dy, f0=f_bin, n_frames=n_frames,
-        title=f"Mid-plane Ez, CW steady state at {f0 / 1e9:.3f} GHz",
+        title=title,
         plane_note=f"z = {float(midplane['plane_z']) * 1e3:.2f} mm")
     # Plain text, not the HTML a figure's caption is authored in: an
     # attachment's caption is escaped by both front ends.
@@ -4586,9 +4679,18 @@ def _run_microstrip_board_animated(values: Mapping[str, Any],
         "CW steady state at f0 — reconstructed one period; not a time-stepped "
         "transient; reflections in steady position. "
         "[not for quotable S-parameters — see M3]")
+    # The same idiom as the GIF title above: the default plane keeps the string
+    # every earlier run printed, and any other plane is named.
+    if plane_name == "mid":
+        attachment_title = ("Mid-plane Ez of the driven microstrip, one "
+                            "period at f0")
+    else:
+        attachment_title = (f"Ez on the {plane_name} plane (k = "
+                            f"{int(midplane['plane_index'])}) of the driven "
+                            "microstrip, one period at f0")
     sink.add_attachment(
         "midplane-animation", "midplane-ez-steady-state.gif", gif,
-        title="Mid-plane Ez of the driven microstrip, one period at f0",
+        title=attachment_title,
         caption=caption)
     return metrics
 
@@ -4944,6 +5046,17 @@ MICROSTRIP_BOARD = Study(
               help="yes attaches midplane-ez-steady-state.gif: one "
                    "reconstructed period of the mid-plane phasor at f0. no "
                    "leaves the run exactly as it was, figures only."),
+        # The plane is named, not indexed: an index would have to be validated
+        # against a mesh the form does not know, and the three names are the
+        # only positions in the stack this model has a word for.
+        Param("plane", "Animation plane", "choice", MS_ANIMATE_PLANE,
+              choices=("mid", "strip", "air"),
+              help="Which z plane the animation is cut on. mid is halfway "
+                   "up the substrate, where this study has always cut it; "
+                   "strip is the layer just under the strip; air is halfway "
+                   "up the air above it. It moves the slice the run "
+                   "accumulates, so it changes the picture and never a "
+                   "number in the table."),
         Param("n_frames", "Animation frames", "int", MS_N_FRAMES,
               lo=8, hi=120, unit="frames",
               help="Frames per period of the animation, read only when "
