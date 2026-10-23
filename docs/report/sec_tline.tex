@@ -1,0 +1,505 @@
+\section{Transmission lines: the distributed circuit}
+\label{sec:tline}
+
+\noindent\emph{Status: settled material, included because everything after it depends on it. Nothing in this
+section is a claim about the solver. What is derived here -- the propagation constant, the characteristic
+impedance, the reflection coefficient, the half-wavelength ripple, the quarter-wave identity, and the
+operational meaning of the effective permittivity -- is used without further argument by
+Section~\ref{sec:microstrip}, and the three chapters that follow this one exist so that the measurement
+language of the later sections is derived rather than assumed.}
+
+The reader arriving from Section~\ref{sec:impl} has a solver that computes fields, and a box that supports a
+mode which travels along a strip. Neither of those is yet a measurement. A measurement needs a vocabulary in
+which the field inside the box can be summarised as a handful of complex numbers that a network analyser would
+also have produced, on a bench, from the same physical object. That vocabulary is built in three steps. This
+section builds the first: the description of a guiding structure by two conductors and four numbers per metre,
+from which a propagation constant and a characteristic impedance follow. Section~\ref{sec:sparams} builds the
+second: the description of a whole network by waves entering and leaving its ports. Section~\ref{sec:smith}
+builds the third: the graphical representation of one complex number, the reflection coefficient, in which the
+arithmetic of matching becomes geometry.
+
+The order matters, and it is the reason these three sections stand between the implementation and the
+microstrip. A scattering parameter is defined as a ratio of wave amplitudes at a port, and a wave at a port is
+a travelling-wave solution of the equations derived below, evaluated at a reference impedance defined below.
+Quoting an $S_{11}$ for a structure whose guided wavelength and whose characteristic impedance have not been
+established is quoting a number with two free definitions inside it. The microstrip sections that follow are
+unusually careful about exactly this point, and they can afford to be only because the definitions are fixed
+here.
+
+\subsection{When a wire stops being a node}
+\label{sec:tline-lumped}
+
+Lumped-circuit analysis rests on an assumption so familiar that it is rarely stated: that the voltage at every
+point of a connection is the same, so that a wire may be replaced by a mathematical node. The assumption is
+false at every frequency, and it becomes a useful approximation below a size that depends on the guided
+wavelength. The size of the failure is a phase difference. If a structure of length $l$ carries a wave of
+guided wavelength $\lambda_g$, the phase of the field at one end relative to the other is
+\begin{equation}
+  \Delta\varphi = 2\pi\,\frac{l}{\lambda_g}\ \text{radians},
+  \label{eq:tline-dphi}
+\end{equation}
+and a lumped model asserts $\Delta\varphi = 0$. Nothing in circuit theory fails gradually: the assertion is
+simply wrong by $\Delta\varphi$, and whether that is acceptable is a statement about the accuracy wanted from
+the model, not about the circuit.
+
+What makes the criterion confusing is that it is usually stated as a fraction of a wavelength rather than as a
+phase. The common rule of thumb is that a structure may be treated as lumped when $l < \lambda_g/10$, which by
+\eqref{eq:tline-dphi} admits a phase error of $36^\circ$; a rule of $l < \lambda_g/20$ admits $18^\circ$; an
+accuracy target of one per cent in a resonance frequency corresponds to a considerably shorter structure.
+Table~\ref{tab:tline-lumped} tabulates the lengths at which each of those conventions fails for a line on a
+substrate of $\eps_{\mathrm{eff}} = 3.3$, which is the value the reference box of
+Section~\ref{sec:msres-box} is close to. All of them are small at microwave frequencies, and all of them are
+large compared with a printed trace. That coincidence is the whole reason printed circuits at microwave
+frequencies are transmission-line problems.
+
+\begin{table}[H]
+  \centering
+  \caption{Lengths at which lumped-circuit analysis stops being defensible, for a guided wavelength on a
+  substrate of $\eps_{\mathrm{eff}} = 3.3$ ($\sqrt{\eps_{\mathrm{eff}}} = 1.8166$, so
+  $\lambda_g = \lambda_0/1.8166$). The right-hand column is the length at which \eqref{eq:tline-dphi} reaches
+  $36^\circ$, the phase error hidden by the folk rule $l<\lambda_g/10$. A 10 mm trace is already a distributed
+  structure by the middle of the table.}
+  \label{tab:tline-lumped}
+  \small
+  \begin{tabular}{@{}rrrrr@{}}
+    \toprule
+    $f$ & $\lambda_0$ & $\lambda_g$ & $\lambda_g/10$ & $\lambda_g/63$ ($1^\circ$ per cell) \\
+    \midrule
+    $1$ MHz     & $300$ m      & $165$ m      & $16.5$ m     & $2.62$ m \\
+    $100$ MHz   & $3.00$ m     & $1.65$ m     & $165$ mm     & $26.2$ mm \\
+    $1$ GHz     & $300$ mm     & $165$ mm     & $16.5$ mm    & $2.62$ mm \\
+    $10$ GHz    & $30.0$ mm    & $16.5$ mm    & $1.65$ mm    & $262\ \mu$m \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The criterion is sometimes restated in the time domain, where it reads more directly and is more useful for
+digital work. A signal with rise time $t_r$ has content up to a bandwidth of order $1/t_r$, so the shortest
+wavelength present is of order $v_p t_r$, and the lumped assumption holds while the structure is short against
+that: $l \ll v_p t_r$, with $l < v_p t_r/6$ the usual working form. On a printed board with
+$v_p = 2.0\times10^{8}$ m/s, a $100$ ps edge is $20$ mm of propagation, so traces longer than a few millimetres
+already carry a visible phase gradient. The two forms of the criterion are the same statement: what matters is
+the electrical length in wavelengths, and neither the physical size of the object nor the frequency alone
+determines it.
+
+\subsection{The infinitesimal section and the telegrapher's equations}
+\label{sec:tline-telegrapher}
+
+The distributed description replaces the wire by a limit of short sections, each of which is a lumped circuit
+small enough for the previous subsection's criterion to hold locally. Consider a length $\dd z$ of a
+two-conductor line, with the two conductors carrying currents $I(z,t)$ and $-I(z,t)$ and a voltage $V(z,t)$
+between them. The section is modelled by four quantities, all referred to unit length: a series resistance
+$R'$ and a series inductance $L'$ in the conductor path, and a shunt conductance $G'$ and a shunt capacitance
+$C'$ between the conductors. Their units are ohm per metre, henry per metre, siemens per metre and farad per
+metre, and the primes are there to distinguish them from circuit elements measured in ohms, henrys, siemens and
+farads. A line of length $L$ with no reflections has a total series inductance $L' L$, and that is all the
+prime means.
+
+Kirchhoff's voltage law around the loop formed by the two conductors over the section, divided by $\dd z$ and
+taken to the limit, gives the loss of voltage along the line as the drop across the series elements; the
+current law at the node between the section and the next gives the loss of current along the line as the
+current diverted through the shunt elements. The two statements are
+\begin{equation}
+  \frac{\partial V}{\partial z} = -\left(R' I + L' \frac{\partial I}{\partial t}\right),
+  \qquad
+  \frac{\partial I}{\partial z} = -\left(G' V + C' \frac{\partial V}{\partial t}\right),
+  \label{eq:tline-telegrapher}
+\end{equation}
+with the sign convention that $z$ increases in the direction of the incident wave and that the voltages and
+currents are of the forward-travelling wave. The first equation is a statement about flux: the voltage falls
+along the line at a rate set by the resistive drop and by the rate of change of the magnetic flux threading
+the section. The second is a statement about charge: the current falls at a rate set by the leakage through
+the dielectric and by the rate of change of the charge stored on the section. Nothing in
+\eqref{eq:tline-telegrapher} refers to a field, a grid, or a mode; it is an exact consequence of the
+definitions of $V$ and $I$ once those are taken as line integrals of $\mathbf{E}$ and $\mathbf{H}$ over a
+transverse plane, and it is exact only to the extent that the transverse field pattern does not change with
+$z$.
+
+For harmonic excitation the time dependence is $e^{j\omega t}$ and the two partial differential equations
+collapse to a pair of ordinary ones,
+\begin{equation}
+  \frac{\dd V}{\dd z} = -(R' + j\omega L')\,I, \qquad
+  \frac{\dd I}{\dd z} = -(G' + j\omega C')\,V .
+  \label{eq:tline-harmonic}
+\end{equation}
+Differentiating either and substituting the other decouples them into a second-order equation for each
+quantity,
+\begin{equation}
+  \frac{\dd^2 V}{\dd z^2} = \gamma^2 V, \qquad
+  \gamma = \sqrt{(R' + j\omega L')(G' + j\omega C')} = \alpha + j\beta,
+  \label{eq:tline-propgamma}
+\end{equation}
+with $\gamma$ the propagation constant in reciprocal metres, $\alpha$ the attenuation constant in nepers per
+metre and $\beta$ the phase constant in radians per metre. The sign convention is chosen so that a forward wave
+is $e^{-\gamma z}$: a solution that decays as it travels has $\alpha > 0$, and a solution that accumulates phase
+has $\beta > 0$. This is the same convention as Section~\ref{sec:microstrip} uses for the mode of a strip,
+\eqref{eq:ms-hybrid}, and the same $\alpha$ and $\beta$ that the station fits of
+Section~\ref{sec:ms-estimators} return, so the two descriptions can be compared without a change of variable.
+
+The general solution is a sum of two exponentials,
+\begin{equation}
+  V(z) = V^{+}e^{-\gamma z} + V^{-}e^{+\gamma z}, \qquad
+  I(z) = \frac{V^{+}}{Z_0}e^{-\gamma z} - \frac{V^{-}}{Z_0}e^{+\gamma z},
+  \label{eq:tline-solution}
+\end{equation}
+with $Z_0$ fixed by substituting \eqref{eq:tline-solution} into \eqref{eq:tline-harmonic} and requiring both
+signs to be consistent,
+\begin{equation}
+  Z_0 = \sqrt{\frac{R' + j\omega L'}{G' + j\omega C'}} .
+  \label{eq:tline-z0-general}
+\end{equation}
+The minus sign in front of the backward current is not a convention that may be chosen: it follows from the
+fact that the backward wave carries power in the $-z$ direction, so its current must be negative with respect
+to the same reference direction as the forward wave. That sign is the origin of every subsequent statement
+about reflection, and getting it wrong is the most common way a derivation of $S_{11}$ ends up with the
+reciprocal of the right answer.
+
+\subsection{The lossless line, and where $Z_0$ and $v_p$ come from}
+\label{sec:tline-lossless}
+
+Setting $R' = G' = 0$ in \eqref{eq:tline-propgamma} and \eqref{eq:tline-z0-general} gives the lossless line, on
+which every quantity of interest becomes a real square root and every formula can be checked by hand,
+\begin{equation}
+  \gamma = j\omega\sqrt{L'C'} = j\beta, \qquad
+  \alpha = 0, \qquad
+  \beta = \omega\sqrt{L'C'}, \qquad
+  Z_0 = \sqrt{\frac{L'}{C'}} .
+  \label{eq:tline-lossless}
+\end{equation}
+Three consequences deserve to be spelled out, because the rest of the report uses all three. The first is that
+$Z_0$ is real and frequency-independent on a lossless line: it is a property of the geometry and the materials
+through $L'$ and $C'$, not of the drive. The second is the phase velocity,
+\begin{equation}
+  v_p = \frac{\omega}{\beta} = \frac{1}{\sqrt{L'C'}},
+  \label{eq:tline-vp}
+\end{equation}
+which is likewise real, so that a lossless line delays a signal without distorting it. The third is that the
+two quantities are not independent: \eqref{eq:tline-lossless} and \eqref{eq:tline-vp} can be solved for the
+per-unit-length parameters in terms of the two measurable ones,
+\begin{equation}
+  L' = \frac{Z_0}{v_p}, \qquad C' = \frac{1}{Z_0 v_p}, \qquad L'C' = \frac{1}{v_p^{2}}, \qquad
+  \frac{L'}{C'} = Z_0^{2} .
+  \label{eq:tline-lc}
+\end{equation}
+A $50\ \Ohm$ line on a substrate that slows the wave to $2.0\times10^{8}$ m/s therefore has
+$L' = 250$ nH/m and $C' = 100$ pF/m, and a reader who multiplies those two numbers gets
+$2.5\times10^{-17}\,\mathrm{s}^2/\mathrm{m}^2$, which is the reciprocal square of the velocity. The check is
+worth performing once: it fixes the orders of magnitude that the rest of the section quotes, and it is the same
+arithmetic by which a measured $\beta$ is converted into an effective permittivity below.
+
+The derivation of $Z_0$ is worth doing explicitly rather than quoting \eqref{eq:tline-z0-general}, because it
+shows what $Z_0$ is a ratio \emph{of}. Take the lossless first equation of \eqref{eq:tline-harmonic} with the
+forward wave alone, $V = V^{+}e^{-j\beta z}$. Then $\dd V/\dd z = -j\beta V^{+}e^{-j\beta z} = -j\omega L' I$,
+so
+\begin{equation}
+  I = \frac{\beta}{\omega L'}\,V = \frac{\omega\sqrt{L'C'}}{\omega L'}\,V
+    = \sqrt{\frac{C'}{L'}}\,V = \frac{V}{Z_0},
+  \label{eq:tline-z0-derivation}
+\end{equation}
+using $\beta = \omega\sqrt{L'C'}$ from \eqref{eq:tline-lossless}. The characteristic impedance is therefore the
+ratio of the voltage to the current \emph{of a single travelling wave}, and nothing else. It is not the ratio
+that would be measured at a plane where two waves are present; that ratio is the input impedance, which is a
+property of the termination as much as of the line and is derived in Section~\ref{sec:tline-zin}. Confusing the
+two is the first of the three confusions catalogued in Section~\ref{sec:ms-z0}, where the same distinction is
+made for a microstrip and where the spread between the definitions is used as a measurement rather than
+dismissed as an annoyance.
+
+A lossy line is not qualitatively different, and the low-loss limit is worth recording because the microstrip
+sections refer to attenuation in decibels per millimetre and the conversion has to come from somewhere. For
+$R' \ll \omega L'$ and $G' \ll \omega C'$, expanding \eqref{eq:tline-propgamma} and
+\eqref{eq:tline-z0-general} to first order gives
+\begin{equation}
+  \alpha \simeq \tfrac12\left(\frac{R'}{Z_0} + G' Z_0\right), \qquad
+  \beta \simeq \omega\sqrt{L'C'}, \qquad
+  Z_0 \simeq \sqrt{\frac{L'}{C'}}\left[1 + \frac{j}{2}\left(\frac{G'}{\omega C'}
+  - \frac{R'}{\omega L'}\right)\right],
+  \label{eq:tline-lowloss}
+\end{equation}
+so the attenuation has two additive mechanisms, one in the conductor and one in the dielectric, and the
+characteristic impedance acquires a small imaginary part. The neper is the natural unit of $\alpha$; one neper
+per metre is $8.6859$ dB per metre, or $8.6859\times10^{-3}$ dB per millimetre, which is the conversion used
+wherever an attenuation appears in this report in decibels.
+
+\subsection{The reflection coefficient}
+\label{sec:tline-gamma}
+
+A line that is not terminated in $Z_0$ has nowhere to send part of the wave that arrives at its end, and that
+part comes back. This is not a metaphor: it is the consequence of the two boundary conditions at the load, and it
+is worth deriving once so that the symbol $\Gamma$ never again appears as an incantation. Write the general
+solution of the lossless line as a sum of a forward wave travelling in $+z$ and a backward wave travelling in
+$-z$,
+\begin{equation}
+  V(z) = V^{+} e^{-j\beta z} + V^{-} e^{j\beta z}, \qquad
+  I(z) = \frac{V^{+}}{Z_0} e^{-j\beta z} - \frac{V^{-}}{Z_0} e^{j\beta z},
+  \label{eq:tline-two-waves}
+\end{equation}
+where the sign of the second current term is the only thing that distinguishes a wave carrying power towards
+$+z$ from one carrying power towards $-z$: for the backward wave the current reverses with respect to the
+voltage. Let the load sit at $z=0$, so that the ratio $V(0)/I(0)$ must equal the load impedance $Z_L$:
+\begin{equation}
+  Z_L = \frac{V^{+} + V^{-}}{V^{+}/Z_0 - V^{-}/Z_0}
+      = Z_0\,\frac{1 + \Gamma_L}{1 - \Gamma_L},
+  \qquad \Gamma_L \equiv \frac{V^{-}}{V^{+}} .
+  \label{eq:tline-gamma-def}
+\end{equation}
+Inverting \eqref{eq:tline-gamma-def} is two lines of algebra and gives the reflection coefficient at the load,
+\begin{equation}
+  \Gamma_L = \frac{Z_L - Z_0}{Z_L + Z_0},
+  \label{eq:tline-gamma}
+\end{equation}
+which is the quantity the rest of this report uses constantly. Three cases fix its meaning. A load equal to
+$Z_0$ gives $\Gamma_L=0$: the line is \emph{matched}, no backward wave exists, and the voltage magnitude is the
+same at every station. An open circuit gives $\Gamma_L=+1$: the backward wave equals the forward wave in both
+amplitude and phase, which at the open end doubles the voltage and cancels the current, as an open circuit must.
+A short circuit gives $\Gamma_L=-1$: the backward wave is inverted, which zeroes the voltage and doubles the
+current. Between these, $|\Gamma_L|$ measures how badly the load is matched.
+
+There is a property of \eqref{eq:tline-gamma} that matters more than any of the special cases: for any passive
+load, $|\Gamma_L|\le 1$. The proof is a statement about the right half-plane. The map $Z_L\mapsto\Gamma_L$ sends
+$\Re\{Z_L\}\ge 0$ into the closed unit disc, because
+\begin{equation}
+  |\Gamma_L|^2 = \frac{(R_L-Z_0)^2 + X_L^2}{(R_L+Z_0)^2 + X_L^2} \le 1
+  \iff (R_L-Z_0)^2 \le (R_L+Z_0)^2 \iff 0 \le 4 R_L Z_0 ,
+  \label{eq:tline-gamma-passive}
+\end{equation}
+which holds exactly when the resistive part $R_L$ is non-negative, i.e. when the load can only dissipate and
+never generate. Equality holds only for $R_L=0$, the purely reactive load. An active load with $R_L<0$ produces
+$|\Gamma_L|>1$ and therefore a backward wave larger than the forward one, which is the distributed-language
+statement that the load is a source. The inequality \eqref{eq:tline-gamma-passive} is the same statement that
+will be read geometrically in Section~\ref{sec:smith} as ``the passive half-plane lands inside the unit circle'',
+and it is the same statement that reappears in Section~\ref{sec:sparams} as the passivity condition on a
+scattering matrix.
+
+\subsection{The standing wave, and why the ripple has period $\lambda_g/2$}
+\label{sec:tline-ripple}
+
+The sum of a forward and a backward wave of the same frequency is a standing wave, and the point of this
+subsection is to derive -- not assert -- the distance over which it repeats. Let the reflection coefficient at
+$z=0$ be $\Gamma_L=|\Gamma|e^{j\theta}$. At a distance $z$ towards the generator the backward wave has travelled
+an extra $2z$ relative to the forward one: $z$ going away from the load and another $z$ coming back. One
+factor of $e^{-j\beta z}$ per leg, so
+\begin{equation}
+  \Gamma(z) = \Gamma_L e^{-2j\beta z} = |\Gamma| e^{j(\theta - 2\beta z)} ,
+  \label{eq:tline-gamma-z}
+\end{equation}
+and \eqref{eq:tline-gamma-z} already contains the answer, since the phase of $\Gamma$ advances by $2\beta$ per
+metre, not $\beta$. Now compute the voltage magnitude, which is what a probe measures:
+\begin{align}
+  |V(z)|^2 &= \left(V^{+} e^{-j\beta z} + V^{-} e^{+j\beta z}\right)
+              \left(V^{+*} e^{+j\beta z} + V^{-*} e^{-j\beta z}\right) \nonumber\\
+           &= |V^{+}|^2 + |V^{-}|^2 + V^{+}V^{-*} e^{-2j\beta z} + V^{+*}V^{-} e^{+2j\beta z} \nonumber\\
+           &= |V^{+}|^2\left[1 + |\Gamma|^2 + 2|\Gamma|\cos\!\left(2\beta z - \theta\right)\right].
+  \label{eq:tline-ripple}
+\end{align}
+The derivation is finished: in \eqref{eq:tline-ripple} the only dependence on position is inside the cosine,
+and the argument is $2\beta z-\theta$. A cosine returns to its value when its argument advances by $2\pi$, so
+the pattern repeats over a distance $\Delta z$ satisfying $2\beta\,\Delta z = 2\pi$, that is
+\begin{equation}
+  \Delta z = \frac{\pi}{\beta} = \frac{\pi}{2\pi/\lambda_g} = \frac{\lambda_g}{2} .
+  \label{eq:tline-ripple-period}
+\end{equation}
+The ripple period on a transmission line is half a guided wavelength, and the factor of two in the argument is
+the whole reason. Physically it is the round trip: to see the same relative phase between the two travelling
+waves, the probe must move by half a wavelength, because moving by a full wavelength advances the forward wave
+by $2\pi$ and the backward wave by $-2\pi$, a relative change of $4\pi$ -- two full cycles of the interference
+term. The same factor of two governs the reference-plane rotation of Section~\ref{sec:sp-refplane} and the
+rotation of the Smith chart in Section~\ref{sec:smith-rotation}; all three are the same equation wearing
+different hats.
+
+Two landmarks follow immediately. Maxima of $|V|$ occur where $\cos(2\beta z-\theta)=+1$, i.e. at
+$2\beta z = \theta + 2n\pi$, which are spaced by $\Delta z=\pi/\beta=\lambda_g/2$; minima sit halfway between
+them and are also spaced by $\lambda_g/2$. Their ratio is the voltage standing wave ratio,
+\begin{equation}
+  \mathrm{VSWR} = \frac{|V|_{\max}}{|V|_{\min}}
+               = \frac{1+|\Gamma|}{1-|\Gamma|} ,
+  \qquad |\Gamma| = \frac{\mathrm{VSWR}-1}{\mathrm{VSWR}+1},
+  \label{eq:tline-vswr}
+\end{equation}
+obtained by setting the cosine to $+1$ and $-1$ in \eqref{eq:tline-ripple} and taking the square roots. The
+VSWR is therefore nothing but a monotone relabelling of $|\Gamma|$: it carries exactly as much information and
+is quoted because it can be read off a slotted line with a detector diode that responds to magnitude only. And
+the ``envelope'' of the standing wave, the pair of curves $\pm 20\log_{10}(1\pm|\Gamma|)$ in decibels around the
+matched level, is what the estimator comparison of Section~\ref{sec:ms-estimators} has to fight. A concrete
+number makes the difficulty explicit. With $|\Gamma|=0.0060$ -- a return loss of 44.4 dB, which sounds like an
+excellent match -- \eqref{eq:tline-vswr} gives a VSWR of $1.0121$ and an envelope of $\pm1.21$ per cent. That is
+precisely the ``$\pm1.2$ per cent'' figure quoted in Section~\ref{sec:ms-criterion}, and it is worth
+understanding that this is not an error but the exact, unavoidable amplitude modulation that any backward wave
+imposes on the standing wave. An estimator that assumes a constant envelope is wrong by 1.2 per cent before it
+begins; an estimator that knows the period is $\lambda_g/2$ can average the ripple out, which is the entire
+content of the estimators compared later.
+
+\subsection{Input impedance, and the quarter- and half-wave identities}
+\label{sec:tline-zin}
+
+The impedance seen looking into a length $d$ of line terminated in $Z_L$ is the ratio $V(-d)/I(-d)$, and it is
+the workhorse of everything that follows. Substituting \eqref{eq:tline-gamma-z} into
+$Z(d)=Z_0(1+\Gamma(d))/(1-\Gamma(d))$ and dividing through by $e^{-j\beta d}$ gives
+\begin{equation}
+  Z_{\mathrm{in}}(d) = Z_0\,\frac{Z_L + j Z_0 \tan\beta d}{Z_0 + j Z_L \tan\beta d} ,
+  \label{eq:tline-zin}
+\end{equation}
+a M\"obius transformation of $Z_L$ whose only frequency dependence is through $\tan\beta d$. Two values of that
+tangent deserve their own names. At $\beta d=\pi/2$, i.e. $d=\lambda_g/4$, the tangent is infinite and
+\eqref{eq:tline-zin} reduces to
+\begin{equation}
+  Z_{\mathrm{in}}(\lambda_g/4) = \frac{Z_0^2}{Z_L} ,
+  \label{eq:tline-quarter}
+\end{equation}
+the quarter-wave transformer: a short circuit becomes an open circuit and an open circuit becomes a short, and
+a real load $R_L$ is transformed into the real impedance $Z_0^2/R_L$. At $\beta d=\pi$, i.e. $d=\lambda_g/2$,
+the tangent vanishes and
+\begin{equation}
+  Z_{\mathrm{in}}(\lambda_g/2) = Z_L ,
+  \label{eq:tline-half}
+\end{equation}
+so a half-wavelength of line is invisible. Equation \eqref{eq:tline-half} is the impedance-side statement of the
+period $\lambda_g/2$ derived in \eqref{eq:tline-ripple-period}: if the impedance repeats every half wavelength,
+then so must the standing-wave pattern, because the pattern is a function of the impedance.
+Table~\ref{tab:tline-speciallens} collects the special lengths.
+
+\begin{table}[H]
+  \centering
+  \caption{Special electrical lengths of a lossless line and the impedance transformation each performs. The periodicity in the last row is the same $\lambda_g/2$ as the standing-wave period of \eqref{eq:tline-ripple-period}.}
+  \label{tab:tline-speciallens}
+  \small
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    Electrical length & $\tan\beta d$ & $Z_{\mathrm{in}}$ \\
+    \midrule
+    $0$                & $0$        & $Z_L$ \\
+    $\lambda_g/8$      & $1$        & $Z_0(Z_L+jZ_0)/(Z_0+jZ_L)$ \\
+    $\lambda_g/4$      & $\infty$   & $Z_0^2/Z_L$ (short $\leftrightarrow$ open) \\
+    $3\lambda_g/8$     & $-1$       & $Z_0(Z_L-jZ_0)/(Z_0-jZ_L)$ \\
+    $\lambda_g/2$      & $0$        & $Z_L$ (transparent) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Both identities are special cases of a single remark: the line is a periodic filter of impedance with period
+$\lambda_g/2$, and a quarter wave is the half-period that inverts. In the language of Section~\ref{sec:smith}
+\eqref{eq:tline-quarter} is a rotation of the reflection coefficient by $\pi$, which turns $z$ into $1/z$ -- and
+a rotation is exactly what a lossless length of line does to $\Gamma$, never a change of $|\Gamma|$. That is
+worth stating plainly now, because it is the reason a length of line can never by itself improve a match: it can
+move a badly matched impedance to a place where a stub can fix it, but it leaves the distance from the centre of
+the chart unchanged.
+
+\subsection{Microstrip as a quasi-TEM line, and the meaning of $\eps_{\mathrm{eff}}$}
+\label{sec:tline-epseff}
+
+Everything above assumed a TEM mode: a transverse electric and a transverse magnetic field, both perpendicular
+to the direction of propagation, with $E$ and $H$ in a fixed ratio everywhere in the cross-section. A TEM mode
+requires a homogeneous dielectric, and this is worth seeing rather than quoting. In a homogeneous medium of
+permittivity $\eps$ and permeability $\mu$ a TEM field satisfies $\nabla_t^2 \phi=0$ in the cross-section, the
+two-dimensional Laplace equation, and the transverse fields are $-\nabla_t\phi$ and
+$-\hat z\times\nabla_t\phi/\eta$ with $\eta=\sqrt{\mu/\eps}$ the wave impedance. A single scalar potential serves
+both components, which is why $E/H$ is fixed at $\eta$ everywhere and why $v_p=1/\sqrt{\mu\eps}$ follows without
+any assumption about dispersion. Microstrip breaks the homogeneity: the field is partly in the substrate of
+permittivity $\eps_r$ and partly in the air above it. The boundary conditions at that interface cannot be met by
+a single potential satisfying Laplace's equation in both regions with the same $\beta$, so the true mode is a
+hybrid, with a small longitudinal component of both $E$ and $H$.
+
+The engineering response is not to solve the hybrid problem but to define a quantity that makes the TEM
+formulae true. This report takes the definition seriously, because the alternative -- writing
+$\beta=2\pi f\sqrt{\eps_{\mathrm{eff}}}/c$ as if it were a theorem about microstrip -- is a habit that hides
+where the number comes from. Define, for the mode actually propagating,
+\begin{equation}
+  \eps_{\mathrm{eff}} \equiv \left(\frac{\beta c}{\omega}\right)^2 = \left(\frac{c}{v_p}\right)^2 ,
+  \label{eq:tline-epseff}
+\end{equation}
+with $\beta$ the measured propagation constant and $c$ the speed of light in vacuum. With this definition
+\begin{equation}
+  \beta = \frac{2\pi f}{c}\sqrt{\eps_{\mathrm{eff}}}
+  \label{eq:tline-beta-epseff}
+\end{equation}
+is an identity, true by construction and carrying no physical content; all the physical content sits in the
+claim that a single real number $\eps_{\mathrm{eff}}$, independent of frequency over some band, reproduces the
+measured $\beta$ over that band. That claim is an approximation, and Section~\ref{sec:tline-limits} says where it
+fails. Operationally \eqref{eq:tline-epseff} says that $\eps_{\mathrm{eff}}$ is not measured directly: it is
+extracted from a measured phase, which is exactly what Section~\ref{sec:ms-estimators} does with the phase of
+$S_{21}$ across a length of line, and it is why an error in the assumed length becomes an error in
+$\eps_{\mathrm{eff}}$.
+
+Given \eqref{eq:tline-epseff}, the characteristic impedance follows from a partial-capacitance argument rather
+than from a fit. Fill the cross-section with dielectric of effective permittivity $\eps_{\mathrm{eff}}$ and the
+capacitance per unit length becomes $C'=\eps_{\mathrm{eff}}C'_{\mathrm{air}}$, where $C'_{\mathrm{air}}$ is the
+capacitance of the same conductor geometry with all dielectric removed. For a non-magnetic substrate
+$\mu_r=1$ the inductance per unit length is unchanged by the dielectric, because $L'$ depends on the magnetic
+field distribution alone and the dielectric does not perturb it at these frequencies. Substituting into the
+lossless identities \eqref{eq:tline-z0-derivation} and \eqref{eq:tline-vp},
+\begin{equation}
+  Z_0 = \sqrt{\frac{L'}{C'}} = \frac{1}{\sqrt{\eps_{\mathrm{eff}}}}\sqrt{\frac{L'}{C'_{\mathrm{air}}}}
+      = \frac{Z_{0,\mathrm{air}}}{\sqrt{\eps_{\mathrm{eff}}}},
+  \qquad v_p = \frac{1}{\sqrt{L'C'}} = \frac{c}{\sqrt{\eps_{\mathrm{eff}}}} ,
+  \label{eq:tline-z0-epseff}
+\end{equation}
+which is the reason a microstrip of a given width has a lower impedance on a thicker or higher-permittivity
+substrate. The numbers make it concrete: a line of $50\ \Ohm$ with $\eps_{\mathrm{eff}}=3.3$ would be
+$50\sqrt{3.3}=90.8\ \Ohm$ in air, so the dielectric does part of the impedance-lowering work and the geometry the
+rest. These identities are used without further comment in Section~\ref{sec:ms-z0}, where the same argument is
+pushed one step further to the three different impedances that a microstrip measurement can mean, and where the
+distinction between them is shown to matter numerically.
+
+\subsection{Where the quasi-TEM picture breaks}
+\label{sec:tline-limits}
+
+The quasi-TEM picture is an approximation with identifiable failure modes, and it is worth listing them because
+each one shows up somewhere in the measurements of this report.
+
+\emph{Fringing.} The field is not confined to the substrate. The fringing field above the strip makes the
+effective width larger than the physical width and makes $C'$ larger than a parallel-plate estimate would give;
+it is the physical origin of the fact that $\eps_{\mathrm{eff}}$ lies strictly between $1$ and $\eps_r$ rather
+than equalling $\eps_r$. For a narrow strip most of the field is in air and $\eps_{\mathrm{eff}}\to1$; for a
+wide strip the field is mostly in the substrate and $\eps_{\mathrm{eff}}\to\eps_r$. Neither limit is a TEM mode,
+and the interpolation between them is what an $\eps_{\mathrm{eff}}$ formula approximates.
+
+\emph{Substrate thickness.} If the substrate thickness $h$ becomes comparable to the strip width $w$, the
+fringing field is a large fraction of the total and any quasi-static estimate of $C'$ deteriorates rapidly; if
+$h$ becomes comparable to $\lambda_g$, the longitudinal field component is no longer small and the hybrid nature
+of the mode is no longer a correction.
+
+\emph{Radiation.} An open microstrip line radiates, weakly, from its discontinuities and from any bend; the
+radiation is a loss mechanism not captured by $R'$ and $G'$ and it grows with frequency and with substrate
+thickness. The important point for this report is the converse, which is a statement about the reference box: a
+line inside a closed conducting enclosure cannot radiate into free space at all, because the enclosure's walls
+are a boundary condition (the conducting enclosure of the measurement is not the computational domain of
+Section~\ref{sec:res-abc}, whose walls are absorbers rather than conductors). Any loss extracted from a
+measurement inside a box therefore excludes the radiative channel by construction, and
+Section~\ref{sec:ms-quasithem} and Section~\ref{sec:msres-box} discuss what that does to the number that comes
+out. It is also why the box is a help and a hindrance at once: it removes a loss mechanism the open line has,
+and it adds wall loading the open line does not have.
+
+\emph{Dispersion.} The field distribution shifts between substrate and air as frequency rises -- the mode becomes
+slightly more concentrated in the substrate -- so $\eps_{\mathrm{eff}}$ is a weak, increasing function of
+frequency. The assumption behind \eqref{eq:tline-beta-epseff}, that one number describes the whole band, is
+therefore approximate, and the error grows with $f h$. When $\eps_{\mathrm{eff}}$ is extracted separately at each
+frequency and the results drift, that drift is this effect and not necessarily a measurement error; the
+broadband extraction of Section~\ref{sec:ms-estimators} is where the distinction has to be made.
+
+\emph{Higher-order modes and conductor thickness.} The lowest substrate mode of a microstrip is not the only one:
+the first surface-wave-like mode appears at a frequency set by $h$, and above it the quasi-TEM description is
+invalid regardless of how carefully $\eps_{\mathrm{eff}}$ was extracted. Finite conductor thickness, typically
+$0.035$ mm of copper, adds a small extra capacitance and a frequency-dependent conductor loss that a
+zero-thickness model does not have; at the frequencies of this report it is a correction of a few per cent in
+$\alpha$ and a small shift in $\eps_{\mathrm{eff}}$.
+
+The lesson is not that the quasi-TEM picture is wrong but that it is a model with a domain, and the
+$\eps_{\mathrm{eff}}$ obtained from a measurement inside a box is the value appropriate to that box. It includes
+the wall loading and excludes the radiation, and it is therefore not the open-line value quoted by a synthesis
+formula. Reported without that qualification the number would be true and misleading.
+
+\subsection{What the measurement takes from this}
+\label{sec:tline-summary}
+
+Three things, and each becomes a chapter. First, the propagation constant: the phase of a travelling wave
+advances by $\beta$ per metre, so a pair of voltage samples at known separation yields $\beta$ and hence
+$\eps_{\mathrm{eff}}$ through \eqref{eq:tline-epseff} -- which is the whole of the phase-based extraction
+discussed in Section~\ref{sec:ms-estimators}, and explains why the ripple of period $\lambda_g/2$ derived in
+\eqref{eq:tline-ripple-period} is such a nuisance there. Second, the reflection coefficient:
+\eqref{eq:tline-gamma} turns a ratio of two voltages into a single complex number that describes the termination
+completely, and the fact that it is bounded by unity for passive loads means it can be drawn inside a disc --
+which is the Smith chart of Section~\ref{sec:smith}, and the reason that chart can be read as a map rather than
+a table. Third, the characteristic impedance: $Z_0$ is the ratio of voltage to current for a single travelling
+wave, and only for a single travelling wave, so any measurement that contains a backward wave must first
+separate the two before $Z_0$ means anything at all. That separation is what scattering parameters do, and
+Section~\ref{sec:sparams} constructs them.
+

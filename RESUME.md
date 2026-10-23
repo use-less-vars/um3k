@@ -171,10 +171,19 @@ is cosmetic (`str(np.savez(...))` returns `"None"`).
   `/proc/<pid>/status` and the cgroup files instead.
 - PID 1 does not reap, so finished processes persist as zombies: `State: Z` means
   **done**, not alive.  Never use `while [ -d /proc/PID ]` as a liveness test.
-- The memory cap is 4 GiB (`/sys/fs/cgroup/memory.max`), and one solve peaks near
-  3.6 GB.  One solve at a time, and **never run pytest while a solve is in flight**.
-  That cap belongs to the worker container, not to the host: the host run used 15.3 GiB
-  total / about 8.0 GiB available on 12 cores.
+- The worker container's memory cap is 512 MiB, not 4 GiB: `/sys/fs/cgroup/memory.max` reads
+  536870912, a `mem_limit` of 6 GiB is not honoured, and a run that exceeds the cap is killed by
+  the OOM killer with rc 137. Mesh memory costs about 0.93 KB per cell, so a 1.76 million cell
+  mesh (about 1.64 GB) cannot be built here at all. The cap belongs to the worker container,
+  not to the host: a host run used about 15.3 GiB total with about 8.0 GiB available on
+  12 cores, and that host path is where anything above roughly 450 MB has to go.
+
+- Timing, measured on this machine: rung 8 at 521,664 cells took 170 s for 2400 steps, which is
+  0.0708 s per step and includes setup, the DFT and the bin metrics, so it is an upper bound on
+  the stepping cost. Scaling by cell count puts a 1.76 million cell run at about 574 s of
+  stepping. A bash call is killed near 890 s, so a single rung-12 solve fits one call; two
+  solvers in one call do not, because they compete for the same core.
+  One solve at a time, and never run pytest while a solve is in flight.
 - Guard pytest with `ulimit -v 1100000`, and never pass `-q`: `pyproject.toml` already
   sets `addopts = "-q"`, so a second one suppresses the summary line.
 - The report builds with `.tools/bin/tectonic -X compile docs/report/main.tex`.
@@ -263,4 +272,29 @@ Run such scripts from `/tmp/retime`.
   into an alpha(f) fit; no power law is fitted to two CW frequencies.
 - `dt_scale` refines time only: the refinement has now been run and the growth
   survived it, so the result establishes "not the time step", not "a property of the
-  model".  Refining dx is out of reach inside the 4 GiB cap.
+  model".  Refining dx further is out of reach on the default container, whose measured ceiling is
+  512 MiB; the meshes above need a container with more, and rung 12 at about 1.64 GB is the
+  case that failed.
+
+- Pin the analysis bin across ladder rungs. The CFL step tracks cell size, so a fixed `f_pulse`
+  snaps to a different bin at each rung, and a bin-by-bin comparison between rungs then compares
+  different frequencies. Record the bin index and its frequency with every rung, or choose
+  `f_pulse` per rung so that the same frequency is hit, and never compare one rung's circuit
+  passivity against another rung's flux ratio without checking that the bin agrees.
+
+- Container limits, as measured rather than assumed. The default worker container is capped at
+  512 MiB by its cgroup and does not honour `mem_limit`: that is measured, from
+  `/sys/fs/cgroup/memory.max` = 536870912, from a `memory.peak` that stopped exactly at the
+  ceiling, and from an `oom_kill` of 1. Mesh memory costs about 0.93 KB per cell, so rung 8
+  (521,664 cells, 486 MB) fits and rung 12 (1,760,616 cells, about 1.64 GB) does not, and no
+  reduction of `nsteps` or `n_bins` helps because neither touches the mesh. A separate,
+  larger container path exists and has been used before at a recorded 1327 MB, but its actual
+  limit has never been measured, so 2 GiB is a requirement to be checked rather than a known
+  capability. A bash call is killed near 890 s and two solvers in one call compete for one
+  core, so run one solver per call, emit flushed progress prints, and set a self-imposed
+  wall-clock cap so that a kill leaves evidence. Work needing more than about 450 MB or more
+  than about 5 minutes goes to that larger path. The earlier 3 GiB figure is retracted, and
+  so is the 4 GiB figure that appeared in this section; neither was ever measured.
+
+- `docs/report/main.pdf` is a local build artefact: regenerate it with the build command and never
+  commit it.

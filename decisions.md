@@ -1745,3 +1745,589 @@ The uncertainty attached to the quotable figure therefore gains a warm-up-sensit
 **No relative-percent tolerance on a quantity of magnitude below 0.1.** Absolute tolerances only, for `|S11|` at the order of one hundredth, for any `|S21|` residual, and for any phasor-derived ratio near unity. The arithmetic that forces this: the reference box runs `|S11|` near `0.0066`, so a 2 per cent relative tolerance is plus or minus `1.3e-4`, roughly eighty-five times tighter than the record's own fit residual of `0.0112`. It cannot be met, and if it were met it would measure nothing, because the comparison noise is two orders of magnitude larger than the window. A relative tolerance on a small number is a way of writing a strict-looking criterion that no measurement can satisfy and no reader will check.
 
 **Nothing in this section moves a quotable number.** `0.987038` remains a flux diagnostic and not a board S-parameter, `|S11|` remains not quotable, and the not-quotable list is unchanged: `beta`, `eps_eff`, `|z0|`, `|S11|`, `passivity`.
+
+---
+
+## 75. The oracle rule recurred: this time "published" was the route under test
+
+**The canonical statement of the class is in section 69, and this section reuses it rather than restating it.** "The
+oracle rule: never use a quantity from the route under test as the oracle." That sentence was written about a `Z0` of
+`52.9` briefed as an oracle when it was in fact the FDTD circuit value. What follows records a recurrence of that
+class in a new coat. **No ordinal is assigned to the recurrence.** This log does not keep a tally of errors, and it
+will not start one for this entry; an error class is a shape, and a count of shapes is a way of looking busy instead
+of looking again.
+
+**The recurrence.** M3b's primary validation had been drafted as "reproduces the published series S11". A
+falsification read went to the tree looking for that series and found no such series anywhere in it. The decisive
+point is not that the phrase was unbacked. It is that in this repository "published" means the repository's own prior
+record, and that prior record is itself a product of the route under test. So the oracle was the route again, wearing
+a new word: not a `Z0` lifted from the FDTD this time, but a magnitude lifted from an earlier run of the same
+simulator and then labelled "published". The reference-box validation was promoted from a consistency check to primary
+without anyone asking whether it was independent. Section 74 already records the incident and extracts the rules from
+it. What is new here is the classification and the recurrence: the same shape, entered from a different door.
+
+**The test was ill-posed, not merely hard, and the difference is the whole point.** The arithmetic is already in the
+record: a 2 per cent relative tolerance on an `|S11|` of order `0.0066` is plus or minus about `1.3e-4`, roughly
+eighty-five times tighter than the record's own fit residual of `0.0112`. The reference-box run now in hand reports a
+fit residual of `0.03312`, three times that figure, so the window is tighter still against the estimator it would
+actually constrain -- the correction runs against the test, not for it. A tolerance an order of magnitude below the
+scatter of the estimator it constrains does not measure agreement; it measures the estimator's own noise. Such a test
+can be passed by luck or failed by luck, and neither outcome carries information. A hard test is one that could be met
+and was not. An ill-posed one is one whose outcome is uninformative whichever way it falls, and it is worse than a
+hard test precisely because it looks stricter.
+
+**The class reproduced itself twice inside the writing of this record, and both are the same move as the recurrence
+above: a record of our own activity offered as independent testimony.**
+
+**(a) The pointer.** Three self-references broke inside one session, and the insertion that broke each of them was the
+author's own. A section citing another file's line number is invalidated by an annotation added to that file. The
+parallel is exact: an address is true of a file at one instant only, so writing one into prose makes the prose
+precisely wrong instead of vaguely right, and it does so silently -- no tool complains, and the sentence keeps its
+confidence. A pointer is our own prior state of the tree, quoted as though it were a fact about the world. Name the
+things instead: the resolved-parameters block, the pre-registration text.
+
+**(b) The byte count.** Section 73 went in byte-perfect: the appended bytes hashed and compared clean against the
+staged copy, and the section still rendered as a single paragraph, because the transport had dropped every separator
+and nothing failed while the document got worse. The byte arithmetic the record reports elsewhere is a 252-byte
+annotation against a 253-byte observed delta, and the one-byte gap is the newline -- a real fact about the transport,
+and a reminder that the count was never the thing being checked. The rule this yields: a byte count is not a
+structural check. The instrument agreed with itself; it never looked at the structure.
+
+**The consequence, stated once.** The class is not "a number was wrong". Numbers are wrong here constantly, and this
+log survives them because it re-measures. The class is that independence was asserted rather than established, three
+times, each time by an instrument or a record that was a product of the thing it was measuring. The only defence found
+so far is the falsification read: go to the tree and look for the series, the file, the annotation that is claimed to
+exist, because that step does not depend on the claim being true.
+
+## The tenth supervising-side error: I specified a refinement that did not vary one thing
+
+The M3b dispatch opened with a mesh ladder: run `microstrip_board` at `n_sub` = 2, 4, 6, 8 and read the error against closed form at each rung. The intent was one variable, cell size. It was two.
+
+`n_air` and `n_top` are cell counts, not distances (`studies.py:2510-2515`: `cell = h/n_sub`; `nz = n_sub + n_air + n_top`). Left at their defaults of 12 and 6, halving the cell halves the physical air gap. Across the four rungs the air box above the strip went 9.6, 4.8, 3.2, 2.4 mm and the total z extent 16.00, 8.80, 6.40, 5.20 mm. Discretisation and domain truncation varied together, in opposition, so the sequence could not measure convergence at all.
+
+This is the same trap recorded in `RESUME.md` from the M2 refinement, and I wrote the ladder without applying my own recorded rule. The rule, restated: every physical length in millimetres, cell counts derived per rung.
+
+The correction has a consequence I did not anticipate. `n_top` must equal `n_pml` (`studies.py:2504-2508`), and `n_pml` also sets the lateral absorber (`nx = n_pml + n_ref + n_line`, `ny = 2*n_pml + n_strip + 2*n_clean`). Production proportions are substrate 1.6, air 4.8, top PML 1.2 mm, so `n_pml = 0.75*n_sub`, which is integral only where `n_sub` is divisible by four. The corrected ladder therefore admits `n_sub` = 4, 8, 12 and not five rungs, and 12 needs about 1.3 GB.
+
+Two arithmetic corrections to the dispatch itself. The four layers as I listed them, `1.6 + 4.8 + 1.2 + 1.2`, sum to 8.8 mm and not the 7.6 mm I called the total; production's 76 cells is `16 + 48 + 12` = 1.6 + 4.8 + 1.2 = 7.6 mm with the PML already inside the count, so the fourth layer was double-counted. And the 480 MB cap I later imposed on the finest rung was my own prediction used as the test of that prediction: the rung needs 1.3 GB and the run was killed by the cap, not by the machine.
+
+The agent stopped on the non-monotone branch and did not run a corrected ladder, on the grounds that the fix required a physics decision about what physical box height is correct rather than a parameter to be optimised. That was right.
+
+## Mesh ladder, corrected: three rungs, no plateau
+
+Same coupon, `RF_IN`, `animate=no`, every physical length at production proportions (substrate 1.600, air gap 4.800, top PML 1.200 mm), so every rung has the identical 26.40 x 20.80 x 7.60 mm box.
+
+| `n_sub` | mesh | cell mm | wall s | peak RSS MB | drive GHz | beta rad/m | eps_eff | Z0 ohm | residual | passivity |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4 | 66 x 52 x 19 | 0.4000 | 17.22 | 162 | 5.8278 | 232.399 | 3.62030 | 49.355 | 0.0415 | 0.9965 |
+| 8 | 132 x 104 x 38 | 0.2000 | 130.80 | 468 | 5.8278 | 230.039 | 3.54712 | 50.353 | 0.0188 | 0.9267 |
+| 12 | 198 x 156 x 57 | 0.1333 | 294.11 | 1327 | 6.5563 | 259.115 | 3.55594 | 50.853 | 0.0308 | 0.8391 |
+
+Reference, Hammerstad-Jensen at `w/h = 2.0` with 35 um copper (`t/h = 0.021875`): Z0 48.0987, eps_eff 3.343938, air-filled Z0 87.9553. The study's own printed reference rows use `t = 0` (Z0 48.686, air-filled 89.0289) even though the board has copper -- named debt, not fixed here.
+
+Errors against the 35 um reference, and the identity:
+
+| `n_sub` | eps_eff pc | beta pc | Z0 pc | `Z0*sqrt(eps_eff)` ohm | vs 87.9553 pc | passivity deficit pc |
+|---|---|---|---|---|---|---|
+| 4 | +8.26 | +4.05 | +2.61 | 93.909 | +6.77 | 0.35 |
+| 8 | +6.08 | +2.99 | +4.69 | 94.833 | +7.82 | 7.33 |
+| 12 | +6.34 | +3.12 | +5.73 | 95.895 | +9.03 | 16.09 |
+
+Three facts, measured, no interpretation:
+
+1. **No quantity converges toward the closed form.** The Z0 error grows monotonically with refinement (2.61, 4.69, 5.73 pc). The eps_eff error turns (8.26, 6.08, 6.34 pc).
+2. **The station planes lose power, and the loss grows with refinement.** Passivity 0.9965, 0.9267, 0.8391; the deficit is 0.35, 7.33, 16.09 pc, roughly doubling per step, while `|S11|^2` falls to 1.1e-5. Sixteen per cent of the two-plane budget is unaccounted at the finest rung with essentially no reflection.
+3. **The quasi-TEM identity is violated at every rung and the violation grows.** `Z0*sqrt(eps_eff)` is the air-filled impedance of the same cross-section and must be 87.9553 ohm for 35 um copper. Measured 93.909, 94.833, 95.895 ohm. A fixed multiplicative error in the station Z0 would not grow; refinement moves the extraction away from the target, not toward it.
+
+Caveat on rung 12: its drive frequency snapped to 6.5563 GHz, 12.5 pc above the other two, because the CFL step changes with the cell. That rung is not a pure refinement point and its eps_eff turn coincides with the jump. The jump does not explain the passivity trend or the identity trend, neither of which a 12 pc frequency change can manufacture.
+
+No frozen mesh. Plateau criterion stated as (8 to 12 step) below 25 pc of (4 to 8 step): it fails on Z0 (50 pc), on the identity (115 pc) and on passivity (125 pc), and passes on eps_eff and beta. Three of five fail.
+
+The stop condition in the dispatch fires on the identity clause: no rung is within 3 pc of 87.9553, and the deviation worsens with refinement. M3b was not started and no pre-registration was frozen.
+
+## 76. The Poynting discriminator: pre-registration, and three dispatch premises corrected before data
+
+The supervisor ordered the reference box run at `n_sub` 8 and 12 with the Poynting flux
+measured, to decide whether the 16 pc station-plane power deficit is the field or the
+extraction. This section fixes the decision rule before any flux number exists, and records
+three premises in the dispatch that do not hold.
+
+**Premise 1, falsified: there is no `poynting` command-line flag.** `poynting` is a Python
+keyword argument of `microstrip_wave` (`emfit/studies.py:2292`) and of the board wrapper
+(`emfit/studies.py:3402`), default `False`. It appears nowhere in `emfit/cli.py`, so
+`--set poynting=yes` cannot be honoured and the measurement has to be a Python call. The flag
+allocates three arrays only when it is on (`studies.py:2636-2648`), consumes them per settled
+step (`2756-2768`) and averages them at (`2783-2799`). It writes exactly two keys into the
+dump, `sx_station` and `sx_station_sub` (`studies.py:2149-2155`, `float64`, shape
+`(n_stations,)`, watts, signed, +x positive, mean over the settled record). The helper is
+`station_poynting` (`emfit/ports.py:470`), which is time-instantaneous -- a single sample,
+not a phasor and not `0.5 Re(V conj I)`.
+
+**Premise 2, arithmetic: Fork A cannot fire at rung 8, and neither can Fork B.** Fork A
+requires a circuit-to-flux gap of at least 10 pc at both rungs. The measured circuit
+passivity at rung 8 is 0.9267, so the largest gap physically available at that rung is
+1 - 0.9267 = 7.33 pc, for any field whatsoever. Fork A is unreachable there. Fork B requires
+agreement within 5 pc at both rungs; a flux passivity of 1.0000 at rung 8 gives a gap of
+7.33 pc, which fails B and lands in the 3 to 10 pc band the dispatch assigns to Fork C. The
+A/B/C partition therefore has a hole exactly where the cleanest possible answer lies, and no
+rung-8 outcome can be read.
+
+**Premise 3, instrument: `sx_station` is barred by standing rule from this use.** `RESUME.md`
+records that `sx_station` carries a mesh-independent fixture tilt of 6.2646 pc peak-to-peak
+at 0.800 mm and 6.3135 pc at 0.400 mm, that it is for shape comparison and never for
+absolute conservation checks, and that the conservation-grade quantity there is
+`0.5 Re(v conj i)` at 1.9 pc, which is not in the dump. The ordered test is an absolute
+conservation check on the barred quantity. The tilt is comparable to the whole 7.33 pc
+deficit at rung 8 and to the 5 pc Fork B threshold at every rung. Two mitigations are
+reported rather than assumed: the flux enters as a ratio of two stations, so a shape
+distortion cancels to first order, and `sx_station_sub` supplies an independent second
+integral whose ratio can be compared with the first as a within-run check that does not
+depend on the tilt at all.
+
+**The decision rule, fixed now.** The discriminator is the fraction of the apparent loss
+that the field does not see:
+
+    r = (passivity_poynting - passivity_circuit) / (1 - passivity_circuit)
+
+`r` near 1 means the extraction is the entire deficit. `r` near 0 means the field loses the
+power. This replaces the absolute percentage thresholds, which scale with the size of the
+deficit and so cannot be compared across rungs of unequal deficit.
+
+- **Fork A, M3b is the fix:** `r` at least 0.70.
+- **Fork B, M3b is a diagnostic:** `r` at most 0.30.
+- **Fork C, ambiguous:** anything else, or a disagreement between the two station integrals
+larger than the tilt.
+
+A rung counts toward the decision only if its entire circuit deficit exceeds the 6.31 pc
+fixture tilt. Rung 8, at 7.33 pc, does not, and is reported undecided. Rung 12, at 16.09 pc,
+does, and the decision rests on it. The expected resolution in `r` at rung 12 is about plus
+or minus 0.4 if the full tilt propagates, and better if it cancels in the station ratio;
+that is stated before the number is known, so that a value in the middle is called ambiguous
+rather than rounded into a fork.
+
+Nothing in this section is derived from a flux measurement. The three premises follow from
+the `emfit/` source, from the already-published ladder table, and from `RESUME.md`.
+
+**Corrections to this pre-registration, added before the first flux number was read.**
+Four facts learned from the source after the section above was written, none of them from a
+measurement, are recorded here so that the pre-registration is accurate before data exists.
+
+First, the flag allocates six arrays, not three: `sx_station_sum`, `_sub_sum`, `_first_sum`,
+`_sub_first_sum`, `_second_sum` and `_sub_second_sum`, each `np.zeros(n_stations)` at
+`emfit/studies.py:2636-2648`, which is 432 bytes at nine stations. Memory is therefore not a
+constraint on either rung, and the earlier worry that rung 12 might overflow the cap with
+this flag on is void.
+
+Second, the passivity in the ladder table is not a property of the run. `MicrostripWave` has
+no `s11` field: `|S11|` is `abs(run.gamma)` or `abs(run.gamma_port)`, and `|S11|^2 + |S21|^2`
+exists only per bin, as `run.bins[i].passivity` or `.passivity_power`, computed in
+`_bin_metrics`. A run whose bin tuple is empty returns no passivity at all. The 0.9267 and
+0.8391 rows are therefore bin values, and the circuit side of every comparison has to name
+the bin and the frequency it belongs to.
+
+Third, and this one constrains the comparison itself: in the bin dump, `sx_station` and
+`sx_station_sub` are run-level means over the settled record, written once per run, while
+every circuit quantity in the same dump is per bin. A run-level flux ratio therefore answers
+a broadband question while the circuit passivity answers a narrowband one. The flux ratio is
+quotable for `r` only when the drive is a settled single tone and the analysis bin carries
+essentially all of the excited power. Where that does not hold, the comparison is reported
+with that limitation stated, and not treated as a number of equal standing.
+
+Fourth, a naming correction that matters for reproducibility: the ladder box is not the
+published reference box mesh. At cell 0.400 mm the published board is 66 x 52 x 26 with a 10
+cell PML and lid, while ladder rung 4 is 66 x 52 x 19 with a 3 cell lid. The transverse
+dimensions agree only because `nx = length/cell` and `ny = width/cell` are invariant to the
+PML split; the lid and air stack differ. Any future note saying the ladder reproduces the
+reference box must say "transversely only".
+
+### Result at rung 8, and what it does and does not establish
+
+The two premises above were tested on the 132 x 104 x 38 mesh, in two separate runs, both
+loaded from `kicad_support_project/reference_box.kicad_pcb` through
+`MicrostripBoard.from_kicad(board, net="RF_IN")`, with cell 0.200 mm, `n_pml = n_top = 6`,
+`n_air = 24`, `n_strip = 16`, `n_clean = 38`, `n_ref = 18`, `n_line = 108`.
+
+**Run one, `excite="cw"`.** The mode reproduces; the recorded residual does not.
+
+| quantity | recorded | reproduced | delta |
+|---|---|---|---|
+| mesh | 132 x 104 x 38 | 132 x 104 x 38 | exact |
+| f | 5.827864 GHz | 5.827864 GHz | 0.000 pc |
+| beta | 229.55 rad/m | 229.5544 | -0.21 pc |
+| eps_eff | 3.5465 | 3.53220 | -0.42 pc |
+| Z0 | 50.35 ohm | 50.3615 | +0.02 pc |
+| residual | 0.0188 | 0.01285 | not reproduced |
+
+Z0 here is `Re(station_fit.z0)`, which is the convention the published table already uses,
+not `abs(run.z0)`. So beta, eps_eff, Z0 and f all reproduce to better than half a per cent,
+which is the strongest result in this section and is worth stating plainly: the ladder's
+resonance column is sound.
+
+The residual does not reproduce, and it is the one column that is a property of a fit rather
+than of the field, so it is the one column a reader cannot check from the table.
+
+**Run one has no passivity.** Its bin tuple is empty, `run.bins == ()`. This is the fact that
+undermines the table. The passivity in the published rows is a bin value, computed in
+`_bin_metrics` and reachable only through a populated bin tuple; a `cw` run produces none.
+_[Superseded, note added on review: the second step of this paragraph is wrong and is withdrawn. A `cw` record carries both `gamma` and `s21`, so the circuit passivity, s11^2 + s21^2, needs no bin tuple at all; a populated bin tuple is not required in order to have a passivity. What survives is only the narrower fact, `run.bins == ()`, which is a statement about bins and not about passivity. The corrected paragraph is "**Why the published passivity column cannot be taken at face value.**", below.]_
+
+**Run two, `excite="pulse"`.** The only configuration that yields bins, and therefore the
+only one that can yield passivity. Drive 5.463549758 GHz, 2400 steps, 170 s, peak RSS 486 MB,
+25 bins requested of which 12 usable, band 3.66667 - 8.25 GHz at 416.67 MHz spacing. At bin
+index 8, f = 5.33333 GHz:
+
+| quantity | value |
+|---|---|
+| s21 | 0.999790 |
+| s21_power | 0.985670 |
+| passivity = s11^2 + s21^2 | 0.999606 |
+| passivity_power | 0.971571 |
+| s11^2 | 2.4926e-5 |
+
+Three normalisations and one independent measurement, all for the same physical loss, and
+they disagree by two orders of magnitude in the deficit:
+
+| route | deficit |
+|---|---|
+| plain passivity, `passivity` | 0.0394 pc |
+| power passivity, `passivity_power` | 2.8429 pc |
+| flux, full transverse section | 1.9561 pc |
+| flux, substrate transverse section | 0.8959 pc |
+
+The flux ratio is computed from the two station vectors, not from the circuit, and is
+independent of the reference. `sx_station` [W] over the nine stations:
+
+```
+753.8289 751.9339 750.0581 748.1850 746.3129 744.4528 742.6213 740.8307 739.0829
+```
+
+`sx_station_sub` [W]:
+
+```
+560.9303 561.1447 561.3231 561.2100 560.7376 559.9125 558.7708 557.3806 555.9047
+```
+
+which gives `|S21|_poynting = sqrt(739.0829 / 753.8289) = 0.990171` on the full section and
+`sqrt(555.9047 / 560.9303) = 0.995510` on the substrate section, hence `passivity_poynting`
+of 0.980464 and 0.991066 with the measured `s11^2` of 2.4926e-5 added in. Both of those sit
+between the two circuit answers rather than agreeing with either.
+
+**The ratio `r` is not interpretable at this rung.** It came out at -48.57 on the full
+section and -21.67 on the substrate section. Negative, and meaningless, because its
+denominator is the circuit deficit, 3.94e-4, which is four hundred times smaller than the
+tilt on the same run. A ratio whose denominator is at the noise floor of the normalisation
+it is built from does not carry a sign, let alone a magnitude.
+
+**The tilt objection does not rescue this.** The standing rule says a flux ratio is quotable
+only where the profile is flat enough that the drive bin carries essentially all the excited
+power. On this run the measured station-to-station tilt is 1.9757 pc peak to peak on the
+full section and 0.9681 pc on the substrate section, both well inside the 6.31 pc figure the
+rule was written against. So the flatness condition is satisfied and the flux ratio is
+quotable, and it still disagrees with the circuit. What cannot be established from the dump
+is the fraction of excited power landing in the analysis bin, because neither `f_pulse` nor
+the drive spectrum is in the payload.
+
+**Why the published passivity column cannot be taken at face value.** The published rung 8
+row pairs `f = 5.8278` GHz with passivity `0.9267`, and the largest gap that row leaves is
+`1 - 0.9267 = 7.33` pc. The faithful reproduction of that rung does not produce it: the
+continuous-wave run at `f0 = 5.827786408327` GHz, nine stations, `600` warm-up and `1800`
+accounted steps, gives `|s21|^2 + |gamma|^2 = 0.96228`, a deficit of `3.77` pc. That is a
+numeric mismatch between the published row and the only record of that rung we can
+reproduce, and it is the evidence on which the `7.33` pc is withdrawn. What it is not is a
+provenance proof: nothing in the record says which run produced `0.9267`, or at what
+frequency, so whether a single run could have produced both numbers is unresolved and is not
+claimed here. The argument previously offered -- that a `cw` run produces no bins and
+therefore no passivity -- is withdrawn as wrong: a `cw` record carries both `gamma` and
+`s21`, so the circuit passivity needs no bin tuple at all. What survives of that paragraph
+is narrower and still true: the `cw` run's bin tuple is empty, `run.bins == ()`, which is a
+statement about bins and not about passivity. The table also never records `x_first`,
+`x_last`, the band, the bin count or whether a reference was used, and every one of those
+moves the bin grid. The column is therefore not reproducible from the table; the mismatch
+between the passivity and the frequency printed beside it is an unexplained discrepancy, not
+an identified mechanism.
+
+**Consequence for the claim this section was written to support.** The figure of 16 pc of
+station-plane power unaccounted, which was the centrepiece of the previous session's report,
+is **withdrawn**. It rests on a passivity deficit of 7.33 pc from a table row that has just
+been shown to be internally inconsistent, and the largest independent deficit measured on a
+faithful reproduction of that rung is 2.84 pc. Nothing measured here supports 7.33 pc, let
+alone 16. A deficit of a few per cent at rung 8 is consistent with discretisation and with
+the transverse flux the substrate section excludes, and is not evidence of anything.
+
+**What this does not establish, and why rung 12 is now the only step that matters.** A single
+rung cannot distinguish a real loss from a numerical one; only its growth with refinement
+can. Rung 12 was attempted and could not be run: the worker container is hard-capped at
+512 MiB (`/sys/fs/cgroup/memory.max` = 536870912, and a `mem_limit` of 6 GiB is not honoured),
+rung 8 already peaked at 486 MB for 521,664 cells which is about 0.93 KB per cell, and rung 12
+at 1,760,616 cells needs about 1.64 GB. It was OOM-killed at step 0, rc 137, `memory.peak`
+at the 512 MiB ceiling, `oom_kill` 1, dying inside operator construction before the first
+step. Time is not the obstacle: at the measured 0.0708 s per step for rung 8, rung 12 comes
+to about 574 s of stepping and would fit a single call. The obstacle is memory, and the
+earlier attempt that burned 890 s did not time out, it ran a reference process that was
+OOM-killed after about 7 s while the main process polled for an output file that never
+appeared.
+
+No reduction of `nsteps` or `n_bins` helps, because neither touches the mesh, and dropping
+the reference does not help either, because passivity is then refused as a passivity without
+its reflection. So the fork between a real loss and a numerical one stays unassigned, no
+M3b code is written, and the deciding measurement needs a container with at least 2 GB.
+
+## 77. The rung 8 deficit restated as an identity, and the flux column renamed
+
+**The percentage was quoted without its unit, and the two readings differ by a factor two.**
+Rung 8 measures `P9/P1 = 0.93663467`, so the power deficit is `6.3365` pc, quoted as `6.34`
+pc where rounded. The amplitude transmission it implies is `sqrt(0.93663467) = 0.96780`, so
+the amplitude deficit is `3.2201` pc, quoted as `3.22` pc. Both statements are correct about
+the same record and neither one is the other. A bare percentage that says "the line is 6 per
+cent down" and one that says "the field is 6 per cent down" are separated by a factor of two
+in the quantity they name, and nothing in the number itself says which is meant. The `6.32`
+pc quoted earlier is wrong and is superseded by `6.3365`; the error was arithmetic and not a
+property of the run, so the run was not re-solved to fix it.
+
+**The deficit is the tilt carried by the mean-to-first ratio, and that identity is the part
+worth writing down.** The measured station-profile tilt over the rung 8 span is `6.4815` pc
+and the ratio of the mean profile to the first station is `0.977617`, and
+`6.4815 x 0.977617 = 6.3364`, against the measured `6.3365` pc, a residue of `0.0001` pc from
+rounding the tilt to four decimal places. The identity therefore closes at the quoted
+precision. So
+`deficit = tilt x (mean/first)`, and the reading is that the deficit is not the tilt: the
+tilt is what the profile does end to end, and the deficit is what is left of that once the
+reference is the profile's own mean rather than its first station. Two rules follow. A
+deficit is quoted with its unit named, power or amplitude, because the two differ by a factor
+two. And a deficit is compared against a tilt only when both are referenced the same way.
+Neither mistake survives the identity, which is why the identity is recorded here rather than
+the number alone.
+
+**`|S21|_poynting` keeps its number and loses its name.** `0.987038` stands, with the `9.60`
+mm span and the `POY_WARM=4000 POY_NACC=6026` provenance that sections 73 and 74 fixed to it.
+What it is not, anywhere, is an insertion loss: a diagnostic taken over a span short compared
+with the ripple period cannot be an insertion loss, because the quantity an insertion loss
+names is a decay per unit length, and a window that does not contain a full decay cannot
+supply one. It is relabelled the **station-profile tilt diagnostic**, which is what the column
+is -- the end-to-end change in the station Poynting profile, carrying the known
+mesh-independent fixture tilt, not the line's attenuation. The rename is not cosmetic. Where
+sections 68 and 73 called this number an interim insertion loss, they were naming a quantity
+this number cannot supply, and the correction travels with the figure from here.
+
+## 78. A glossary, a Touchstone subsection, two withdrawn objections, and the rule about worker reports
+
+**What changed.** `docs/report/sec_glossary.tex` is new (24 entries, `description` environment,
+cross-referenced into `docs/report/main.tex` after `sec_outlook` at line 69), and
+`docs/report/sec_sparams.tex` gains `\subsection{The Touchstone file format}` (`sec_touchstone`, appended
+at line 419). The glossary is a reading aid and says so in its status line: it fixes one sense per term and
+points at the section where the sense is defined and where the quantity is measured, and where an entry and
+a section disagree the section governs. No number is introduced by it. The Touchstone subsection adds the
+file contract only, because the physics of the reference impedance is `sec:sp-refz` and the physics of the
+reference plane is `sec:sp-refplane`. `docs/report/sec_theory.tex` gains a remark at `rem:exact` that
+separates the three things the word exact has been carrying -- the integer incidence relations, the Hodge
+stars, and the conditional leapfrog step -- and states that nothing in the report claims the scheme itself
+is exact. `docs/report/sec_energy.tex` gains one sentence beside the `0.904 c0` figure saying that it is a
+property of grid and wavelength together and is measured rather than assumed, and `docs/report/sec_intro.tex`
+gains a forward pointer to the glossary.
+
+**Correction one, on the absorbing boundary.** It was asserted, as a blocking objection to the glossary,
+that defining both the Mur condition and the matched layer in one place would contradict
+`sec_impl.tex`, which was said to describe a single boundary mechanism. The objection is wrong and was
+withdrawn after checking: `sec_impl.tex:45`--`48` lists `abc.py` (348 lines, Mur planes, `eq:mur`) and
+`pml.py` (808 lines, conductivity profile, layer fit) as separate modules, `sec_impl.tex:171`--`175`
+describes the condition of `sec:res-abc` and the layer of `sec:res-pml` as two additions to the same
+array, and the test tables carry `test_abc` (`sec_impl.tex:240`), `test_pml` (`:241`, "below Mur") and
+`test_pml_audit` (`:254`). The glossary therefore cites both measurement sections side by side and asserts
+neither as *the* boundary. Nothing in the implementation section needed changing.
+
+**Correction two, on the file extension.** It was asserted that the Touchstone writer picks its row order
+or its port count from the file extension, so that the format claim could not be made without a documented
+`.s2p` path in the package. The assertion is wrong and was withdrawn after checking: `s2p` occurs nowhere
+in `emfit/`, the writer is generic in `n_ports` (`emfit/ports.py:1791`, flattened with a single
+`order="F"` reshape at `:1833`), and the reader infers the port count from the column count,
+`n_ports = round(sqrt((n_vals - 1) / 2))` at `emfit/ports.py:1888`, rejecting any row that is not
+`1 + 2 n_ports^2` columns (`:1889`--`1892`). The extension lives only in tests
+(`tests/test_ports.py:321`, `tests/test_port_parallel_plate.py:394`), which is where it belongs. The
+subsection says exactly that, and adds the consequence a reader needs: the column count is the contract,
+so a file named `.s2p` holding four-port rows is read as a four-port.
+
+**Why these two are recorded rather than silently fixed.** Each passed a plausibility argument and failed
+a grep, and in each case the first correction would have been worse than the error it was aimed at --
+one would have forced a glossary to choose between two boundary mechanisms that both exist, the other
+would have written a `.s2p` path into the report that the package does not have. The standing rule this
+section makes explicit: an assertion about the tree enters the report only with a `file:line` and a check
+that reproduces it, and where the check contradicts the assertion the assertion is withdrawn here, dated,
+in the same place as the number it touched. The `7.33` per cent pairing was handled this way before
+(`:2051`--`2055`) and the rule is the same one.
+
+**One tone correction in the worked example.** `sec_worked.tex:210` said of the pulse record that "the
+identity closes to every printed digit". That is stronger than `§77` (`:2088`--`2091`) can support, where
+the same identity on the rung 8 record leaves a residue of `0.0001` pc from rounding the tilt to four
+decimal places. The sentence now reads that it closes at the precision to which the tilt is quoted, four
+decimal places, and not beyond that, for the same reason as the residue above: the number is unchanged and
+the claim is now the one the arithmetic makes.
+
+**Two figures, and why only one of them stays.** The mode-normalisation entry arrived carrying
+`v_mode = 9.9558` V and the reference-impedance entry carrying `Z0 = 49.761 + 13.592j` ohm (`|Z0| = 51.584`
+ohm, `15.278` degrees), both supplied with the brief. The two do not stand on the same footing, and the check
+that separated them is the paragraph. `9.9558` is struck: it has no symbol and no value anywhere under
+`docs/report/`, and the entry now says only that the 1 W normalisation fixes the voltage scale and the
+current scale on the port, which is what the sections support. The reference impedance is restored with its
+citation: `sec_worked.tex:121`--`124` prints `z_0 = 49.76097429242066 + 13.592389198926165j` ohm and
+`|z_0| = 51.5839859517` ohm at `15.277852` degrees under `\label{eq:worked-z0}`, and `:38` prints the
+rounded pair in the summary table, so the entry quotes `49.761 + 13.592j` and points at the equation it is
+rounded from. How the first reading of it went wrong is worth more than the correction. A grep was run
+against one file, `sec_sparams.tex`, returned nothing, and the absence in that file was written down as an
+absence from the report; it was then acted on by deleting a number the report prints to seventeen digits
+nine sections earlier. The statement was true about the place searched and false about the tree, which is
+precisely the failure mode the next paragraph's rule is about -- and it was made by the agent, not by a
+worker, which is why the rule binds the agent too.
+
+**The rule about worker reports, and the evidence for it.** A worker report enters this file in exactly
+two forms, and neither is a substitute for checking. The first is a statement of absence -- "there is no
+port in the package", "the writer takes its row order from the extension", "the report never prints
+this figure" -- and it is a claim a search can reproduce, so it has to be, because it is right only
+about the place that was searched. The second is verbatim quoted output carrying a `file:line`, which
+looks stronger and is still not enough: a quoted line is evidence of what one file says at one address,
+so it is admissible as a statement about the text and not admissible as a statement of mechanism or of
+provenance, and mechanism and provenance are what a claim about code or about a number actually needs.
+Both forms failed in this session. The `7.33` per cent passivity deficit is not a measurement at all:
+it is `1 - 0.9267`, the passivity of the row at `:1833` subtracted from one and carried into the table
+at `:1839`, and it was quoted as a measured loss until the arithmetic behind it was checked. The drive
+frequency `5.463549758` GHz at `:1975` is a real number from a real run, but it is the drive of the
+pulse record, whose usable bin sits at `5.33333` GHz (`:1977`); quoting it as the frequency behind the
+`cw` figures was a provenance error of exactly the kind the rule forbids. Neither error announced
+itself in the form the report arrived in, which is the argument for the rule rather than an aside
+about two numbers.
+
+## 79. Report reconciliation: the tilt ratio and the withdrawn 0.987008
+
+Three numbers had drifted apart in the report. This records what each one is, checked against the stored
+records rather than inferred from the prose.
+
+`0.987038` is the prodcheck board record: the square root of the ratio of the last to the first entry of the
+`sx_station` array in the prodcheck nwarm4000 nacc6026 plane record, whose nine entries run from 24100.762336
+to 23480.001545, ratio 0.974243, root 0.987038. That run drives the board at 7.833566 GHz with 6026 accepted
+plane samples and stations at cells 104 to 200 spaced 1.2 mm over 9.6 mm, from x = 0.0104 to 0.02, plane
+capture in the env convention, `reference_used` false, x_port 0.0087; the mesh 322x200x76 and n_warm 4000 are
+recorded in that run's manifest rather than in the record. An identical copy of the array sits in the m2 board
+CW smoke record.
+
+`0.967800` is the rung-8 reference box: the square root of the ratio of the last to the first entry of the
+nine-entry `sx_station` array in the probe rung8 CW plane Poynting record, entries 6614.038753 to 6194.943464,
+root 0.967800, at 5.827786 GHz with 1800 accepted steps and stations at cells 52 to 100 over the same 9.6 mm,
+plane capture in the kwarg convention. The unsquared root of that same array is 0.936635, and the two roots
+read 6.48 per cent apart: that is the ripple trap, not a disagreement between runs.
+
+`0.987008` is withdrawn. It is not reproducible from any stored record. It survives in the tree only as a
+literal in the reference-box audit script, `abs_s21` = 0.9870082, which the pre-correction decisions log
+explains as an aggregation-step difference from 0.9869798. The nearest stored root is 0.9870375. The report
+now quotes the sourced value `0.987038`, which is 1.296 per cent below unity, not 1.299: the deficit follows
+from the sourced number, not from the withdrawn one.
+
+The error the withdrawal exposed is a cross-run label, not a wrong number. The worked ledger row and the
+glossary tilt item both described the rung-8 reference box while quoting the prodcheck board ratio as if it
+belonged to that box. Both now print the reference-box ratio `0.967800`, which is the record their 0.35
+lambda_g and 13.688 mm ripple argument is about, and `0.987038` is named on the run it actually comes from.
+Neither figure is an insertion loss anywhere in the report; each is a tilt diagnostic on a named run.
+
+Also in this pass: `ports.py` is quoted at 1908 lines in the implementation table; the outlook section no
+longer claims that no port exists; the worked ledger row now states the tilt's definition, the
+mean-normalised `(s_1 - s_9)/\bar{s}` with `\bar{s} = 6466.0168`, so that its `6.48` per cent cannot be
+misread as `1 - 0.967800 = 3.22` per cent; a substrate-array parenthetical in the same section was corrected
+from `5.27` to `5.28` per cent, which is the deficit the stored array prints (`0.947199`); and the
+amplitude-convention logarithm now sits beside the tilt itself, `-0.2843` dB at `20\log_{10}` and `-0.1421`
+dB at `10\log_{10}`, with a statement that neither is an attenuation.
+
+## 80. The tolerance-freezing pre-registration for the modal route
+
+**Placement.** `decisions.md` already carries a section `## 76.` titled 'The Poynting discriminator:
+pre-registration, and three dispatch premises corrected before data'. That is not this section and
+it is not retitled: its subject is the Fork A/B/C rule on
+`r = (passivity_poynting - passivity_circuit) / (1 - passivity_circuit)`.
+Section 80 is the separate act that section 74 promised at line 1739, "The tolerances are frozen in
+the pre-registration, which is its own separate act in a later session, before any modal code
+exists. They are deliberately not written here.", and the act that line 1846 left open, "M3b was not
+started and no pre-registration was frozen." It is written before any modal code exists and it
+quotes no modal number.
+
+**The primary claim.** The gate compares residuals against closed form, applied separately to each
+of `beta`, `epsilon_eff` and `Z0`, with all three having to pass on one run at one frequency:
+
+    gap_circuit = |value_circuit - value_closedform|
+    gap_modal   = |value_modal   - value_closedform|
+    pass        = gap_modal <= 0.50 x gap_circuit
+
+**What that is not.** It is not a claim that a number moves by 50 per cent. The residual against
+closed form of the modal quantity must be at most half of the circuit route's residual, per
+quantity, simultaneously.
+
+**Direction safety.** Because both sides are absolute residuals to closed form, a modal value that
+overshoots past closed form does not pass by accident: it is charged the full size of its overshoot,
+and an overshoot larger than the circuit gap fails.
+
+**Tightness.** Where the circuit route is already close to closed form, the target is half of a
+small number. That tightness is intended, not a defect to be argued down.
+
+**A partial pass is the report.** If one or two quantities pass and the third does not, the
+single-scale hypothesis is wrong. The hypothesis, with its evidence, at line 1556: "the projection
+must repair `beta` by `+4.89` per cent, `epsilon_eff` by `+10.02` per cent and `Z0` by `+4.4` per
+cent SIMULTANEOUSLY", and "The supporting identity is `(1.0489)^2 = 1.10019` against the observed
+`3.65855/3.32545 = 1.10017`". A partial pass is the report; it is not a failure to be worked around,
+and no per-quantity tuning is permitted after the fact.
+
+**Frozen parameters.** These are fixed now, before any modal code exists:
+
+- mesh rung 8, 132 x 104 x 38 cells, cell 0.200 mm, box z extent 7.6 mm as substrate 1.6 mm plus air
+  4.8 mm plus top PML 1.2 mm, the PML inside the count.
+- one cw run at `f0 = 5.827786 GHz`; every modal number is quoted together with the frequency it was
+  computed at.
+- closed form at `t = 35 um`: `Z0` 48.098655 (the record prints it to four decimal places as
+  48.0987), `epsilon_eff` 3.343938, and `beta` from `2*pi*f0*sqrt(epsilon_eff)/c0` at the run's own
+  `f0`.
+- one run per rung: a cw run yields plane phasors and station fluxes at a single frequency, so
+  mixing frequencies inside one comparison would reintroduce the cross-run error class this log has
+  already recorded once.
+
+**Secondary, reported and not gated.** The absolute agreement the modal route achieves against
+closed form at `t = 35 um` on rung 8 is reported for the record and is not a pass or fail criterion.
+At one frequency on one mesh an absolute number cannot separate the route from the mesh.
+
+**Smoke rule.** Circuit passivity at most 1, and nothing else. It is necessary and not sufficient.
+There is deliberately no modal-versus-flux gate, because the station-ratio flux deficit is
+algebraically the standing-wave tilt on a span of about 0.35 lambda_g and is not a loss measurement:
+the fixture tilt is 6.2646 per cent peak-to-peak at 0.800 mm and 6.3135 per cent at 0.400 mm, and
+`sx_station` is barred by standing rule from absolute conservation use.
+
+**Downstream closure gate.** For closure, and not for starting code: reference-box `|S11|_modal`
+within plus or minus 0.012 absolute, on the production mesh 322 x 200 x 76, in a separate host run.
+The record's own words, quoted in full from line 1739:
+
+    The log had already said so twice, in its own words: the reference box's agreement "proves
+    consistency and not correctness", and, earlier still, that same agreement is "a property of the
+    reference box and not a validation of either".
+
+The phrase 'agreement there proves consistency and not correctness' was offered as a paraphrase of
+that sentence; the record's actual words are quoted instead, and the paraphrase is not used.
+
+**Recorded and not acted on.** The dispatch that ordered this pre-registration supplied an offset
+for the drive tone, "13.3 ppm from target". That figure is not supported by anything in this record:
+`ppm` and 13.3 both return no hits, and the record states tone offsets as absolute MHz residuals and
+once as a relative 8.3e-5. Section 80 therefore fixes the frequency itself, `f0 = 5.827786 GHz`, and
+does not freeze an offset; the supplied figure is recorded here rather than adopted.
+
+**Standing rule.** No relative-percent tolerance on a quantity of magnitude below 0.1: absolute
+tolerances only.
+
+**Named debt, not fixed here.**
+
+- (a) the `t = 0` study printout: the printed reference rows use `t = 0` although the board has
+  copper (`Z0` 48.686, air-filled 89.0289), and it flips a gate at refinement; queued as its own
+  slice.
+- (b) flux that is not ripple-immune: only that route can measure loss; queued as its own slice.
+
+**Rung-12 trigger, restated.** It fires only if `beta`, `epsilon_eff` or `Z0` stop improving under
+refinement before the modal route is applied. The flux-ratio trigger is withdrawn: the ratio came
+out at -48.57 on the full section and -21.67 on the substrate section, and, at lines 2015 to 2019,
+"A ratio whose denominator is at the noise floor of the normalisation it is built from does not
+carry a sign, let alone a magnitude." No gate depending on rung 12 can fire today in any case: rung
+12 needs about 1.64 GB of mesh against a 512 MiB container ceiling, where it was OOM-killed before
+its first step.
+
+**Closing.** Section 80 does not start M3b, does not touch `emfit/`, and quotes no modal number. It
+is a contract that a later session tests against.

@@ -95,21 +95,31 @@ time, not a second mechanism. Mode purity, $|\gamma_I + \gamma_V| = 6.808\times1
 mode, says the same thing from the other side: the record is one mode plus a residue at the $0.7$ per cent level,
 which is the number the ``not quite one mode'' remarks elsewhere in this report should be read against.
 
-\subsection{Four rates for one attenuation}
+\subsection{Four rates for one attenuation, one of them a tilt}
 \label{sec:msres-alpha}
 
 Table~\ref{tab:ms-alpha} is the estimator problem of Section~\ref{sec:ms-estimators} made numeric on one record.
 Two of the five estimators listed there collapse into one row here: the endpoint ratio and the model-free end
 ratio are the same arithmetic, $|V_N|/|V_1|$ of the raw station amplitudes, so a record that does not subtract a
 backward wave first cannot distinguish them and this one does not. The forward-subtracted variant is not reported
-separately by this record. What is left is four rates, and they span a factor $1.86$.
+separately by this record. What is left is four rates, and they span a factor $1.86$. One of the four is not a
+rate of loss. The direct station-plane ratio is relabelled a \emph{station-profile tilt diagnostic}: its two
+stations are $9.60$ mm apart, a third of a guide wavelength at $5.83$ GHz, so the standing wave, whose envelope
+period along
+the line is $\lambda_g/2$, is not averaged over the span, and the reading records where in that wave the span
+begins and ends -- it is confounded at any loss level, including zero. The number is kept because it is what a
+laboratory reads off an instrument; it is not kept as a measurement of attenuation.
 
 \begin{table}[H]
   \centering
-  \caption{Four estimates of one attenuation on the reference box, with the $|S_{21}|$ each implies. The two
-  right-hand columns apply $\exp(-\alpha L)$ over, respectively, the measured station span and the extrapolation
-  to the far plane; the last row is a bound over the short span only and is not extrapolated, because it is
-  already an upper bound (Section~\ref{sec:ms-accounting}).}
+  \caption{Four readings of one record on the reference box, with the $|S_{21}|$ each implies if it is read as
+  decay. The two right-hand columns apply $\exp(-\alpha L)$ over, respectively, the measured station span and the
+  extrapolation to the far plane; the last row is a bound over the short span only and is not extrapolated, because
+  it is already an upper bound (Section~\ref{sec:ms-accounting}). The direct station-plane ratio is a
+  station-profile tilt diagnostic and not a rate of loss: its stations are about a third of a guide wavelength
+  apart, so
+  the standing wave is not averaged over the span and the reading is confounded at any loss level, including
+  zero.}
   \label{tab:ms-alpha}
   \begin{tabular}{@{}lrrr@{}}
     \toprule
@@ -117,7 +127,7 @@ separately by this record. What is left is four rates, and they span a factor $1
     \midrule
     One-wave joint fit            & $0.02145 \pm 0.00117$ & $0.9766$ & $0.948$ \\
     Two-wave joint fit            & $0.02164 \pm 0.00067$ & $0.9764$ & $0.948$ \\
-    Direct station-plane ratio    & $0.01183$             & $0.9870$ & $0.971$ \\
+    Station-profile tilt          & $0.01183$             & $0.9870$ & $0.971$ \\
     Lateral-wall accounting       & $0.01160$             & $0.9873$ & $0.972$ \\
     Same work charged to the span & $0.03311$ (bound)     & $0.9641$ & not extrapolated \\
     \bottomrule
@@ -128,8 +138,10 @@ The two fits agree with each other and disagree with everything else. They are a
 parameter space -- $\rho(\alpha,\beta) = -0.0000$ from the $2\times2$ block of $s^2(D^{\mathsf T}D)^{-1}$ on those
 two parameters, over $18$ measurements -- so the decay costs the phase constant almost nothing to measure, and the
 agreement between the one-wave and two-wave fits is not the agreement of two independent estimators: both are
-fitting the same exponential to the same ripple. The direct ratio and the accounting rate are the two that share
-no machinery with them, and those two agree to $1.9$ per cent. That pattern is the finding of the next subsection.
+fitting the same exponential to the same ripple. The station-profile tilt and the accounting rate are the two that
+share no machinery with them, and those two read $1.9$ per cent apart -- a coincidence, since the tilt is
+confounded at the few per cent level at any loss and cannot corroborate anything. That pattern is the finding of
+the next subsection.
 
 On the phase constant the record is consistent with itself and with nothing else. The one-wave fit gives
 $\beta = 231.886 \pm 0.134$ rad/m and the two-wave fit $232.419 \pm 0.078$ rad/m, while a summary line of the same
@@ -173,12 +185,14 @@ injected energy and each share is a share of the injected power.
   \end{tabular}
 \end{table}
 
-The lateral rate is $1.3360$ Np/m, which is $0.01160$ dB/mm. Set against it, the direct station-plane ratio is
+The lateral rate is $1.3360$ Np/m, which is $0.01160$ dB/mm. Set against it, the station-profile tilt reads
 $0.01183$ dB/mm -- $1.9$ per cent away -- and the one-wave fit is $0.02145$ dB/mm, $1.84$ times the absorbed rate
 ($1.85$ times for the two-wave value). That ordering is the result of this section and it is stated as a finding
-rather than as a discrepancy: \emph{two model-free measurements agree with each other and the fit is the outlier},
-so the attenuation this box exhibits is a lateral boundary sink of $0.0116$ dB/mm and not conductor loss -- which
-it could not be in any case, since the solver contains no ohmic term. What that sink physically is, the
+rather than as a discrepancy: \emph{the fitted rate is $1.84$ times the work the walls actually removed, and the
+tilt lands $1.9$ per cent from that work}, so the attenuation this box exhibits is a lateral boundary sink of
+$0.0116$ dB/mm and not conductor loss -- which it could not be in any case, since the solver contains no ohmic
+term. The tilt's agreement is recorded and not counted: its stations are a third of a guide wavelength apart, so it is
+confounded at any loss level, including zero, by more than the $1.9$ per cent it appears to confirm. What that sink physically is, the
 accounting does not say: Section~\ref{sec:msres-verdict} names the two candidates it leaves, and the clearance
 test it carries separates them. Over the $21.6$ mm of the line the sink costs $0.25$ dB, and $|S_{21}| = 0.972$;
 that magnitude belongs to this box rather than to the line, as the clearance test in
@@ -200,15 +214,23 @@ without choosing an estimator by taste. Two of them are met outright; the third 
 mechanism, and the two qualifications that carries are stated where they arise.
 
 First, $|S_{21}|$ must be consistent with a lossless \emph{material} model within the stated uncertainty of the
-measurement. The direct ratio, $|S_{21}| = 0.987008$, is $1.299$ per cent below unity. The span the estimators
-produce over the
-same $9.60$ mm runs from $0.9764$ to $0.9873$, so $0.987008$ sits at the lossless end of that span, and $1.3$ per
-cent is inside the $2.5$ to $3$ per cent this record can resolve. This requirement is met.
+measurement. The station-profile tilt reads $|S_{21}| = 0.987038$, $1.296$ per cent below unity, and the span
+the estimators produce over the same $9.60$ mm runs from $0.9764$ to $0.9873$, so $0.987038$ sits at the lossless
+end of that span and $1.3$ per cent is inside the $2.5$ to $3$ per cent this record can resolve. That reading is
+a diagnostic and not a transmission -- its stations are a third of a guide wavelength apart, so it is confounded
+at any
+loss level, including zero -- so what it establishes here is only that nothing in this record requires a lossy
+material. The positive side of the requirement is carried by the joule audit of Table~\ref{tab:ms-acct}, which
+accounts for the decay as wall work and not as material absorption, and the solver contains no ohmic term in
+which a material loss could reside in any case. This requirement is met.
 
-Second, the attenuation that remains must be attributed with its magnitude accounted for. The measured rate is
-$0.01183$ dB/mm; the lateral-wall accounting, which counts joules and never looks at the amplitude record,
-predicts $0.01160$ dB/mm. The two agree to $1.9$ per cent, which is an attribution that pays for the whole of the
-effect rather than a name attached to a residual. This requirement is met.
+Second, the attenuation that remains must be attributed with its magnitude accounted for. The lateral-wall
+accounting, which counts joules and never looks at the amplitude record, produces $0.01160$ dB/mm; the station
+tilt reads $0.01183$ dB/mm, $1.9$ per cent away. Only the first of those two is a rate of loss: the tilt is
+confounded at any loss level, including zero, by more than $1.9$ per cent, so its agreement is recorded as a
+coincidence and the attribution rests on the joules, which pay for the whole of the effect rather than attaching
+a name to a residual. This requirement is met in the form the audit supports, with the tilt not counted as a
+witness.
 
 Third, the mechanism must be identified by name and by the part of the box responsible for it. The part is
 settled: the matched layer on $y_{\min}$, $y_{\max}$ and the top face removed $7.054$ per cent of the injected
@@ -228,8 +250,8 @@ the solve. The substrate-thickness test did not discriminate. The audited latera
 at $h = 1.60$ mm and $0.004322$ dB/mm at $h = 0.80$ mm with $w/h$ held at $2.000$, a ratio of $0.372$, that is
 $h$ to the $1.425$. Both candidates predict a fall with thickness, and $0.372$ lies between the $h$ and
 $h$-squared keys, so it separates neither. Only the audited wall work and the absorbed-work totals carry that
-scaling; the fitted attenuation and the station ratio are unusable at the thinner substrate, and that estimator
-disagreement is itself the reason the audit exists. What the test did establish is that the sink is not a
+scaling; the fitted attenuation and the station-profile tilt are both unusable at the thinner substrate, and that
+estimator disagreement is itself the reason the audit exists. What the test did establish is that the sink is not a
 material attenuation: it scales with the geometry as a boundary term, and it falls per unit stored power faster
 than the stored power falls.
 
@@ -252,26 +274,29 @@ nearer edge of the band it excludes.
 The magnitude of that sink is set by the clearance, so $0.011604$ dB/mm is a property of this box and not of the
 line, and the audited sink in the wide box is $0.00522$ dB/mm for the same strip. The total
 attenuation falls less than the sink does, and that difference is visible with a single estimator carried across
-the two boxes: the audited lateral work falls to $0.450$ of its value, while the plain station-to-station rate
+the two boxes: the audited lateral work falls to $0.450$ of its value, while the plain station-to-station tilt
 over the same $9.60$ mm falls from $1.36215$ Np/m to $0.91350$ Np/m, a ratio of $0.671$, and the fitted
-attenuation falls to $0.590$ of its reference-box value. Only the audited ratio selects: $0.671$ lies in the
-$0.50$ to $0.75$ gap between the two registered bands, where neither reading is favoured, so it is reported and
-not used. Every estimator falls when the box is widened and none
+attenuation falls to $0.590$ of its reference-box value. Only the audited ratio selects, and $0.671$ could not
+have: it lies in the $0.50$ to $0.75$ gap between the two registered bands, where neither reading is favoured, and
+a station-profile tilt is confounded at any loss level in any case. It is reported and not used. Every estimator falls when the box is widened and none
 stays put, so the decay measured in the reference box is not an attenuation set by the line: a quantity fixed by
-the line would not move when the wall moves. What remains open is how the between-station decay divides. In the
-reference box the audited lateral work reproduces the endpoint rate to within $2$ per cent, a factor of $1.02$,
-so there the sink is the whole of the decay within the accuracy of that comparison. In the wide box the lateral
-bin accounts for only two thirds of it, a factor of $1.52$, which leaves $0.31$ Np/m of the between-station
-decay unaccounted for by that bin. Two readings survive one run: either the endpoint rate carries an error of
-order $0.2$ Np/m at a rate near $0.9$ Np/m, or there is a component of the decay that does not depend on the
-clearance and that the lateral bin does not capture, and nothing in this record decides between them. What a
+the line would not move when the wall moves. What remains open is how the between-station reading divides. In the
+reference box the audited lateral work reproduces the station tilt to within $2$ per cent, a factor of $1.02$,
+so there the sink is the whole of the reading within the accuracy of that comparison -- a comparison of two
+numbers rather than of two measurements, since the tilt is confounded at any loss level, including zero. In the
+wide box the lateral bin accounts for only two thirds of it, a factor of $1.52$, which leaves $0.31$ Np/m of the
+between-station reading unaccounted for by that bin. Two readings survive one run: either the station tilt
+carries an error of order $0.2$ Np/m at a rate near $0.9$ Np/m, or there is a component of the reading that does
+not depend on the clearance and that the lateral bin does not capture, and nothing in this record decides between
+them. What a
 closed box cannot do is separate layer absorption from radiation in general: a wider box cures both, so the test
 above separates the two candidates it was registered against and no further pair, and a demonstration that the
 strip radiates nothing at all would need an open boundary or a clearance convergence study.
 
-So the criterion is met on the reference box in the form the record can grade it in: $|S_{21}|$ is consistent
-with a lossless material model, the shortfall is attributed to a sink whose magnitude the energy balance pays for
-to $1.9$ per cent, and the sink is located in the box. The mechanism requirement is met in the sense the
+So the criterion is met on the reference box in the form the record can grade it in: nothing in the record
+requires a lossy material, the shortfall is attributed to a sink whose magnitude the audited wall work pays for
+out of joules, and the sink is located in the box. The station tilt lands $1.9$ per cent from that work, which is
+noted as a coincidence and not counted as a confirmation. The mechanism requirement is met in the sense the
 criterion asks for: the sink is a boundary artefact, the decaying tail of the discretised mode absorbed at the
 lateral layer, and not a power the strip radiates. Two qualifications travel with that. The first is the
 $0.31$ Np/m of wide-box between-station decay that the lateral bin does not account for, so the sink is
@@ -315,9 +340,10 @@ between estimators for a discrepancy against a truth, and it was wrong. The $1.6
 for fitted values over $14.4$ mm is comparable with neither, its window and its geometry both differing.
 
 Comparisons that do hold are inside one estimator across boxes: audited lateral work falls to $0.450$, the fitted
-attenuation to $0.590$, the endpoint ratio to $0.671$, and only the first of the three selects. A fitted
-attenuation here is therefore a property of the window and the estimator and not of the line, which is why the
-criterion of Section~\ref{sec:ms-criterion} rests on audited work and the station ratio, not on a fit.
+attenuation to $0.590$, the station tilt to $0.671$, and only the first of the three selects -- the tilt is a
+diagnostic confounded at any loss level, so its fall to $0.671$ is quoted and not read. A fitted attenuation
+here is therefore a property of the window and the estimator and not of the line, which is why the criterion of
+Section~\ref{sec:ms-criterion} rests on audited work, not on a fit and not on the tilt.
 
 \subsection{The same line imported from a layout}
 \label{sec:msres-import}

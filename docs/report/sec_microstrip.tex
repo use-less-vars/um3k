@@ -7,8 +7,10 @@ quoted here.}
 
 A microstrip is the simplest printed transmission line and the hardest to measure: an open, mixed-dielectric
 guide whose ``mode'' is a convenience of the frequency range rather than an exact solution, driven at a port
-whose impedance is not the impedance a catalogue quotes. This section fixes what is being measured before any
-number is asserted. It sets out what the quasi-TEM assumption buys and costs, which of the several impedances
+whose impedance is not the impedance a catalogue quotes. The vocabulary it needs -- the line, the network with
+its reference impedance and the chart -- is built in Sections~\ref{sec:tline}, \ref{sec:sparams} and
+\ref{sec:smith}, and is used here all at once. This section fixes what is being measured before any number is
+asserted. It sets out what the quasi-TEM assumption buys and costs, which of the several impedances
 called $Z_0$ a transmission-line study must name, why moving the reference plane cannot repair a magnitude,
 why a lossless solver can nonetheless return an attenuation, and how an attenuation is to be extracted from a
 record that is contaminated by a standing wave. It closes with the acceptance criterion this measurement is
@@ -170,7 +172,11 @@ wrong in proportion to the reflected content when it does not. The fourth is the
 fit: fit \eqref{eq:ms-twowave}, subtract the fitted backward wave, and then take an ordinary least-squares line
 through $\ln|V_n|$ against $z_n$ for the remaining forward amplitude. The fifth is the model-free end ratio of
 $|V|$, the ratio of the raw amplitudes at the two extreme planes of the record, with no fit, no phase model and
-no removed wave at all -- the number a laboratory would read off an instrument.
+no removed wave at all -- the number a laboratory would read off an instrument. It is not, however, a measurement
+of attenuation and this report does not count it as one: its two planes are $9.60$ mm apart, a third of a guide
+wavelength at $5.83$ GHz, so a standing wave of period $\lambda_g/2$ is not averaged over the span, and the reading
+is set by where in that wave the span begins and ends rather than by any loss. It is carried below as a
+\emph{station-profile tilt diagnostic}, confounded at any loss level, including zero.
 
 That these five disagree is the point. Each is unbiased under a different assumption about what else is in the
 record, and a fit is not more trustworthy than a ratio merely because it uses more points. The one-wave fit is
@@ -195,11 +201,13 @@ disagreement has a cause no estimator on this record can remove.
 
 The cause is the port reflection. At $|\Gamma| = 0.0060$ in amplitude a standing wave moves the raw envelope of
 the field by $\pm 1.2$ per cent, that is by $2.4$ per cent peak to peak, at the ripple period. Every model-free
-attenuation on this record is a ratio of the field at two stations, and each such ratio inherits that movement:
-the raw envelope falls $3.0$ per cent across the $9.60$ mm of measured line, so a single ratio is not good to one
-per cent, while the half-span fits, which average over several ripples, are individually good to
-$1.4\times 10^{-3}$ in $\ln|V|$. That is why the disagreement does not shrink when the fit is done more
-carefully: the two halves of the record agree with each other and disagree with the ratios.
+reading on this record is a ratio of the field at two stations, and each such ratio inherits that movement: the
+raw envelope falls $3.0$ per cent across the $9.60$ mm of measured line, so a single ratio is not good to one per
+cent. That is the whole of the tilt diagnostic: the two stations span about a third of a guide wavelength, so the
+ripple is not averaged out and the ratio is confounded at any loss level, including zero; it is a reading of the
+station profile and not of an attenuation. The half-span fits, which average over several ripples, are
+individually good to $1.4\times 10^{-3}$ in $\ln|V|$. That is why the disagreement does not shrink when the fit is
+done more carefully: the two halves of the record agree with each other and disagree with the ratios.
 
 The floor of \eqref{eq:ms-criterion-number} is worth stating exactly, because it is easy to misread as a
 property of the box of Section~\ref{sec:msres-box}. It is not. The clearance and lid sweeps of the earlier study
@@ -216,10 +224,12 @@ $0.0139$.
 
 The decisive statement is the spread among the estimators on the reference box itself. The five rows of
 Table~\ref{tab:ms-alpha} span $0.01160$ to $0.02164$ dB/mm, a factor of $1.86$, and the span is not noise about
-a common value: the two model-free rows sit together at $0.01160$ and $0.01183$, the two one-wave fits sit
-together at $0.02145$ and $0.02164$, and the gap between the two groups is exactly the standing-wave bias
-analysed in Section~\ref{sec:msres-alpha}. Charged over the $21.6$ mm of line between the port plane and the far
-plane, the span runs from
+a common value: the audited row and the station-profile tilt sit together at $0.01160$ and $0.01183$, the two
+one-wave fits sit together at $0.02145$ and $0.02164$, and the gap between the two groups is exactly the
+standing-wave bias analysed in Section~\ref{sec:msres-alpha}. That the tilt lands on the audited rate is a
+coincidence the record does not explain, not a second measurement of it: a quantity confounded at the few per
+cent level cannot corroborate anything to $1.9$ per cent. Charged over the $21.6$ mm of line between the port
+plane and the far plane, the span runs from
 \begin{equation}
   |S_{21}| = 10^{-0.01160 \times 21.6/20} = 0.972
   \quad\text{to}\quad

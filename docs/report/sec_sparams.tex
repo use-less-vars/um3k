@@ -1,0 +1,472 @@
+\section{Scattering parameters: measuring a network with waves}
+\label{sec:sparams}
+
+\noindent\emph{Status: draft -- definitions, redundancy relations and reference conventions are stated and derived;
+the numerical verification of the renormalisation formula is done by hand in Section~\ref{sec:sp-refz} and the
+power argument of Section~\ref{sec:sp-powerflow} is order-of-magnitude only.}
+
+The previous chapter established that a wire carrying a wave has two travelling components, and that only when
+one of them is absent does the ratio of voltage to current at a point equal the characteristic impedance. Every
+measurement of a microwave network is a measurement of those travelling waves, and the parameters that describe
+the network must therefore be defined on the waves rather than on the terminal currents and voltages. That is
+the whole content of scattering parameters, and the reason they are not merely a convenient notation but the
+only self-consistent description available once the ports are far enough apart for the phase to matter. This
+chapter builds the definition from the power waves of \eqref{eq:sp-ab}, derives the properties that a
+measurement can be checked against (\S\ref{sec:sp-properties}), and is explicit about the two conventions that
+are usually left implicit and are the source of most of the disagreements in the literature: the reference
+impedance (\S\ref{sec:sp-refz}) and the reference plane (\S\ref{sec:sp-refplane}). It closes by asking what
+physically moves when power moves (\S\ref{sec:sp-powerflow}), because the answer is surprising enough to be worth
+one page and it corrects a picture many of us carry from circuit theory.
+
+The parameters defined here are what the solver of Section~\ref{sec:impl} computes and what the comparisons of
+Section~\ref{sec:res-scatter} plot. The one place where the network is not a two-port but a scatterer -- the
+radar-cross-section comparison -- reports its answer as a scattering amplitude, which is the same object with
+the reference impedance replaced by the impedance of free space.
+
+\subsection{Why impedance and admittance parameters fail at microwave frequencies}
+\label{sec:sp-zy}
+
+Impedance parameters are defined by open-circuit measurements. For a two-port,
+\begin{equation}
+  \begin{pmatrix} V_1 \\ V_2 \end{pmatrix}
+  =
+  \begin{pmatrix} Z_{11} & Z_{12} \\ Z_{21} & Z_{22} \end{pmatrix}
+  \begin{pmatrix} I_1 \\ I_2 \end{pmatrix},
+  \qquad
+  Z_{ij} = \left.\frac{V_i}{I_j}\right|_{I_k=0,\ k\neq j} ,
+  \label{eq:sp-zdef}
+\end{equation}
+so $Z_{11}$ is the input impedance with port~2 open-circuited. At a millihertz this is easy: switch off the
+current, measure the voltage. At a gigahertz the ``open circuit'' is a pair of conductors a fraction of a
+wavelength long, and it is an open circuit only if nothing leaves through it -- but the capacitance between the
+two conductors of the open end is a real admittance that grows with frequency, and it draws a measurable current.
+The condition $I_2=0$ cannot be imposed, so $Z_{11}$ cannot be measured. The same objection applies to
+admittance parameters, which need short circuits: a short at the end of a length of line is a short only if its
+inductance is negligible, and a $1$ mm wire has about $1$ nH, which is $6.3\ \Ohm$ at 1 GHz and no longer a
+short.
+
+There is a second and more fundamental failure, independent of how carefully the terminations are built. The
+impedance matrix of an ideal thru connection -- two ports joined by a perfect conductor -- is
+\begin{equation}
+  Z_{\mathrm{thru}} = \begin{pmatrix} 0 & 0 \\ 0 & 0 \end{pmatrix},
+  \label{eq:sp-zthru}
+\end{equation}
+because the voltage across a perfect short is zero whatever current flows through it. The matrix carries no
+information about the thru at all, and the corresponding admittance matrix is singular. A description that
+assigns the zero matrix to one of the most useful networks in the subject, and an infinite matrix to the ideal
+open, is a description whose numerical values are the wrong quantities to store. What one wants is a parameter
+set that is bounded, that exists for every passive network, and that degrades gracefully: a thru should be a
+harmless identity, a matched load should be a zero. Scattering parameters are exactly that, and
+\eqref{eq:sp-zthru} is the strongest single argument for them.
+
+\subsection{Power waves, and why the normalisation contains a square root}
+\label{sec:sp-power}
+
+Let port $i$ have a reference impedance $Z_{0i}$, in general complex, and let $V_i$ and $I_i$ be the phasor
+voltage and current flowing into the network at that port. Define the incident and reflected power waves
+\begin{equation}
+  a_i = \frac{V_i + Z_{0i} I_i}{2\sqrt{\Re Z_{0i}}},
+  \qquad
+  b_i = \frac{V_i - Z_{0i} I_i}{2\sqrt{\Re Z_{0i}}} .
+  \label{eq:sp-ab}
+\end{equation}
+The definition is invertible in two lines,
+\begin{equation}
+  V_i = \sqrt{\Re Z_{0i}}\,(a_i + b_i),
+  \qquad
+  I_i = \frac{a_i - b_i}{\sqrt{\Re Z_{0i}}} ,
+  \label{eq:sp-vibreak}
+\end{equation}
+and it is worth checking that \eqref{eq:sp-vibreak} returns \eqref{eq:sp-ab} identically, since that is the only
+algebra in this chapter that is easy to get wrong. For a real reference impedance, $Z_{0i}=Z_0\in\R$, the
+definition collapses to the familiar
+\begin{equation}
+  a_i = \frac{V_i + Z_0 I_i}{2\sqrt{Z_0}},
+  \qquad
+  b_i = \frac{V_i - Z_0 I_i}{2\sqrt{Z_0}} ,
+  \label{eq:sp-ab-real}
+\end{equation}
+which is the form used throughout this report: every port of every network here is referred to
+$50\ \Ohm$ exactly, and the general complex form is quoted only because the renormalisation formula of
+\S\ref{sec:sp-refz} is easiest to state with it in view.
+
+Now compute the power entering the port. With the peak-phasor convention used throughout this report -- the same
+convention that produced $P=\tfrac12\Re\{VI^*\}$ in Section~\ref{sec:ms-lossless} -- the complex power is
+\begin{equation}
+  \tfrac12 V_i I_i^{*}
+  = \tfrac12\left[\sqrt{\Re Z_{0i}}(a_i+b_i)\right]
+            \left[\frac{a_i^*-b_i^*}{\sqrt{\Re Z_{0i}}}\right]
+  = \tfrac12\left(|a_i|^2 - |b_i|^2 + b_i a_i^* - a_i b_i^*\right),
+  \label{eq:sp-power-general}
+\end{equation}
+and the last two terms are purely imaginary, $b_ia_i^*-a_ib_i^* = -2j\,\Im\{a_ib_i^*\}$. Taking the real part,
+\begin{equation}
+  P_i = \Re\left\{\tfrac12 V_i I_i^*\right\} = \tfrac12\left(|a_i|^2 - |b_i|^2\right) .
+  \label{eq:sp-power}
+\end{equation}
+So $|a_i|^2/2$ is the power carried into the port by the incident wave and $|b_i|^2/2$ the power carried out by
+the reflected wave, each measured in watts when the phasors are peak values. This is the statement that makes
+scattering parameters physical rather than algebraic, and the factor of two in \eqref{eq:sp-power} is the single
+most common place a power budget ``loses'' half. With rms phasors the same equation reads $P_i=|a_i|^2-|b_i|^2$
+and \eqref{eq:sp-ab} gains no factor, because the $\sqrt{2}$ is absorbed into the definition of the phasor. The
+two conventions differ by exactly a factor of two in $|a|^2$, and a chain of reasoning that mixes them will
+produce a network that appears to lose 3 dB or to gain 3 dB with no mechanism.
+
+The modulus signs in \eqref{eq:sp-power} deserve a remark. Because the imaginary part of \eqref{eq:sp-power-general}
+need not vanish, $|a|^2-|b|^2$ is not in general the complex power; it is its real part, and separately
+$|a|^2+|b|^2$ is related to the reactive part. The reason the cross terms cancel for the real part is that a
+wave travelling on a line of real characteristic impedance has its voltage and current in phase, so it carries
+real power and no reactive power. A wave on a line of complex $Z_0$ carries reactive power even when it travels
+in one direction only, which is why the general definition \eqref{eq:sp-ab} carries the $\sqrt{\Re Z_{0i}}$ rather
+than $\sqrt{Z_{0i}}$: the normalisation is chosen so that the power identity \eqref{eq:sp-power} survives a
+complex reference impedance. That is the reason for the awkward-looking square root of a real part.
+
+\subsection{The definition of $S$, and what a matched termination really is}
+\label{sec:sp-definition}
+
+With the waves defined, the scattering matrix of an $n$-port is defined element by element by
+\begin{equation}
+  S_{ij} = \left.\frac{b_i}{a_j}\right|_{a_k = 0,\ k\neq j} ,
+  \qquad\text{i.e.}\qquad
+  \begin{pmatrix} b_1 \\ \vdots \\ b_n \end{pmatrix}
+  =
+  \begin{pmatrix} S_{11} & \cdots & S_{1n} \\ \vdots & & \vdots \\ S_{n1} & \cdots & S_{nn} \end{pmatrix}
+  \begin{pmatrix} a_1 \\ \vdots \\ a_n \end{pmatrix}.
+  \label{eq:sp-def}
+\end{equation}
+Read the condition $a_k=0$ carefully, because the whole physical content of the definition is in it. $a_k=0$
+means there is no incident wave at port $k$, and the only way to guarantee that is to terminate port $k$ in a
+load that emits nothing back: an absorber. Such a termination is called \emph{matched}, and the word is a
+statement about the termination, not about the network. A matched load is one that absorbs completely; it has
+$b=0$ for every $a$, which by \eqref{eq:sp-power} means it converts every incident watt into heat (or into
+whatever else) and reflects nothing. Then and only then does the ratio $b_i/a_j$ isolate one column of $S$.
+
+The practical consequence is that measuring $S_{21}$ requires terminating port~2 well, and the quality of the
+whole measurement is the quality of that termination. If the termination reflects $\Gamma_T$, then the wave
+$b_2$ returning from it re-enters the network and produces a further contribution at port~1, so the measured
+ratio is not $S_{21}$ but
+\begin{equation}
+  \left.\frac{b_1}{a_1}\right|_{\text{bad termination}}
+  = S_{11} + \frac{S_{12}S_{21}\Gamma_T}{1 - S_{22}\Gamma_T} ,
+  \label{eq:sp-termination-error}
+\end{equation}
+a geometric series in the round-trip product $S_{22}\Gamma_T$. The second term is the same multiple-reflection
+sum that appears as the de-embedding correction of Section~\ref{sec:ms-deembed}, seen from the other end of the
+problem: there the series had to be removed from a measurement of a line, here it has to be suppressed by a good
+load. With $|S_{22}\Gamma_T|=0.1$ the error in $S_{11}$ can be a tenth of $S_{21}S_{12}$, which for a
+well-matched through structure is of the same order as the quantity being measured.
+
+For a two-port the four elements have direct one-line readings. $S_{11}$ is the input reflection coefficient with
+the output matched: $S_{11}=\Gamma_{\mathrm{in}}$ at $Z_0$ reference. $S_{21}$ is the forward transmission
+coefficient, the ratio of the outgoing wave at port~2 to the incident wave at port~1. $S_{12}$ is the reverse
+transmission, and $S_{22}$ the output reflection. Each is a complex number with a magnitude and a phase, and each
+therefore carries two pieces of information; a two-port is eight real numbers, not four. The magnitudes are what
+gets plotted as insertion and return loss; the phases are what carries $\beta$, and Section~\ref{sec:ms-estimators}
+is entirely about extracting a propagation constant from the phase of $S_{21}$.
+
+\subsection{$S_{11}$ as an input impedance, and the link to transfer matrices}
+\label{sec:sp-zin}
+
+Terminate port~2 in $Z_0$, so that $a_2=0$, and look into port~1. From \eqref{eq:sp-vibreak} the input
+impedance is $Z_{\mathrm{in}}=V_1/I_1=Z_0(a_1+b_1)/(a_1-b_1)=Z_0(1+S_{11})/(1-S_{11})$, and inverting gives
+\begin{equation}
+  S_{11} = \frac{Z_{\mathrm{in}}-Z_0}{Z_{\mathrm{in}}+Z_0} = \Gamma_{\mathrm{in}} ,
+  \label{eq:sp-s11-gamma}
+\end{equation}
+which is \eqref{eq:tline-gamma} again. This is a useful thing to have established: $S_{11}$ and $\Gamma$ are not
+analogous quantities, they are the same quantity, and the only difference is that $\Gamma$ is defined on a line
+where $Z_0$ is a property of the line, while $S_{11}$ is defined on a port where $Z_0$ is a convention. The
+corollary is the one that matters for measurement: everything Section~\ref{sec:smith} says about $\Gamma$ at a
+reference plane is true of $S_{11}$, including the fact that $|S_{11}|\le1$ for a passive one-port.
+
+For a two-port it is often convenient to switch to the transfer (ABCD) matrix, which chains: cascading two
+two-ports multiplies their ABCD matrices. The conversion from ABCD to $S$ at equal real reference impedances is
+\begin{equation}
+  \begin{aligned}
+    S_{11} &= \frac{A + B/Z_0 - C Z_0 - D}{\Delta}, &
+    S_{12} &= \frac{2(AD-BC)}{\Delta}, \\
+    S_{21} &= \frac{2}{\Delta}, &
+    S_{22} &= \frac{-A + B/Z_0 - C Z_0 + D}{\Delta},
+  \end{aligned}
+  \qquad
+  \Delta = A + \frac{B}{Z_0} + C Z_0 + D ,
+  \label{eq:sp-abcd-s}
+\end{equation}
+and it is worth testing \eqref{eq:sp-abcd-s} against the two networks of \S\ref{sec:sp-zy}. The ideal thru has
+$A=D=1$, $B=C=0$, so $\Delta=2$ and $S_{11}=S_{22}=0$, $S_{21}=S_{12}=1$: an identity, as required, and in
+sharp contrast with \eqref{eq:sp-zthru}. A series impedance $Z$ has $A=D=1$, $B=Z$, $C=0$, so
+$\Delta=2+Z/Z_0$ and
+\begin{equation}
+  S_{11} = \frac{\Delta-2}{\Delta} = \frac{Z}{2Z_0+Z},
+         \qquad\text{so}\qquad
+         S_{11} = \frac{Z/Z_0}{2+Z/Z_0} = \frac{Z}{Z+2Z_0} ,
+  \qquad
+  S_{21} = \frac{2Z_0}{Z+2Z_0} ,
+  \label{eq:sp-series-z}
+\end{equation}
+so with $Z=Z_0$ the series element gives $S_{11}=\tfrac13$ and $S_{21}=\tfrac23$, and
+$|S_{11}|^2+|S_{21}|^2=\tfrac19+\tfrac49=\tfrac59<1$ -- the missing $\tfrac49$ having gone into the series
+resistor, as it must. Both of these are rederived below in \S\ref{sec:sp-refz}, where they serve as the
+numerical test of the renormalisation formula.
+
+\subsection{Reciprocity, losslessness and passivity}
+\label{sec:sp-properties}
+
+Three properties of a scattering matrix can be checked from its elements alone, and because they are necessary
+conditions they are what a computed or measured matrix should be validated against before any further use.
+
+\emph{Reciprocity.} If the network is built from isotropic, linear, passive materials with no gyrotropic and no
+active constituents, then the network is reciprocal and
+\begin{equation}
+  S = S^{\mathsf{T}} ,
+  \qquad\text{i.e.}\qquad S_{ij} = S_{ji}\ \ \forall i,j .
+  \label{eq:sp-reciprocity}
+\end{equation}
+This halves the number of independent measurements: $S_{12}$ need not be measured if $S_{21}$ is, and a measured
+matrix with $|S_{21}-S_{12}|$ large is either non-reciprocal or wrong. The reason it holds is that the underlying
+differential operator is self-adjoint for such materials, which is the same self-adjointness that gives the
+eigenvalue problem of Section~\ref{sec:eigen} its real spectrum.
+
+\emph{Losslessness.} If the network contains no dissipative material and no radiating aperture, then power is
+conserved and \eqref{eq:sp-power} applied to all ports at once gives
+\begin{equation}
+  \sum_{k}|b_k|^2 = \sum_{k}|a_k|^2
+  \quad\Longrightarrow\quad
+  S^{\mathsf{H}} S = I ,
+  \label{eq:sp-lossless}
+\end{equation}
+so the scattering matrix is unitary. The columns of $S$ are then orthonormal: each has unit norm (a lossless
+two-port cannot absorb, so whatever enters one port leaves through the two), and distinct columns are orthogonal
+(a lossless network fed at port~1 cannot also deliver to the matched load at port~2, at any frequency). Unitarity
+is a strong constraint, and a computed lossless structure whose $S$ deviates from it by more than the discretisation
+error is a structure that is losing power to the grid.
+
+\emph{Passivity.} If the network can dissipate but cannot generate, then for every set of incident waves
+$|b|^2\le|a|^2$, which is to say
+\begin{equation}
+  S^{\mathsf{H}} S \le I ,
+  \label{eq:sp-passivity}
+\end{equation}
+meaning that $I - S^{\mathsf{H}}S$ is positive semi-definite. Equivalently, every singular value of $S$ is at
+most one, so no incident excitation produces a reflected or transmitted wave with more power than it supplied.
+
+A warning is needed here, and it is the most important sentence in this subsection. \emph{Passivity is a
+necessary condition and not a sufficient one.} A solver can produce a scattering matrix that satisfies
+\eqref{eq:sp-passivity} exactly and is still wrong: the matrix may be too lossy (a scheme with numerical
+dissipation of the right sign satisfies \eqref{eq:sp-passivity} comfortably while smearing every resonance), it
+may be passive and non-causal, it may be passive and violate reciprocity, and it may be passive while getting the
+phase of $S_{21}$ badly wrong -- passivity constrains magnitudes through \eqref{eq:sp-passivity}, and constrains
+phases only through their coupling to magnitudes. Passivity is the one property that a badly converged
+calculation is most likely to preserve, because damping is the direction numerical error usually errs in. It is
+therefore a sanity check that rules out one class of failure and says nothing about the rest; convergence and
+independent ground truth are what establish correctness, and the comparisons of Section~\ref{sec:res-scatter}
+are built on the latter.
+
+\subsection{The reference impedance is part of the number}
+\label{sec:sp-refz}
+
+An $S$-parameter without a stated reference impedance is not a number. The definition \eqref{eq:sp-def} divides
+by $\sqrt{\Re Z_{0i}}$, and the condition $a_k=0$ is a statement about a termination of impedance $Z_{0k}$, so
+changing $Z_{0k}$ changes every element of the matrix. The reason this is easy to forget is that a great deal of
+software reports $S$ referred to $50\ \Ohm$ without saying so, and then a user compares numbers with a paper that
+used $75\ \Ohm$ and finds a disagreement that is not an error.
+
+The reason a real reference impedance is the usual choice is worth stating precisely. A real $Z_0$ cannot absorb
+a reactance: an incident wave on a line of real $Z_0$ has voltage and current in phase, so the load that reflects
+nothing is a pure resistance. Reference a port to a complex $Z_0=R_0+jX_0$ and the matched termination must be
+that complex impedance, which is a particular circuit that happens to sit at one frequency only; sweep the
+frequency and the ``matched'' load is no longer matched. A real reference impedance is therefore the only choice
+that gives a frequency-independent meaning to the word matched, and that is why $50\ \Ohm$ is used even for
+structures whose natural impedance is nothing of the kind.
+
+The renormalisation formula is worth having explicitly. Let $\rho=(Z_0'-Z_0)/(Z_0'+Z_0)$ be the reflection
+coefficient of the new reference impedance in the old one, and let $S$ be referred to $Z_0$, $S'$ to $Z_0'$, all
+ports changed at once and both real. Then
+\begin{equation}
+  S' = (S - \rho I)(I - \rho S)^{-1} ,
+  \label{eq:sp-renorm}
+\end{equation}
+and for a two-port, writing it out,
+\begin{equation}
+  \begin{aligned}
+    S'_{11} &= \frac{(S_{11}-\rho)(1-\rho S_{22}) + \rho S_{12}S_{21}}{\Delta}, &
+    S'_{12} &= \frac{S_{12}(1-\rho^2)}{\Delta}, \\
+    S'_{21} &= \frac{S_{21}(1-\rho^2)}{\Delta}, &
+    S'_{22} &= \frac{(S_{22}-\rho)(1-\rho S_{11}) + \rho S_{12}S_{21}}{\Delta},
+  \end{aligned}
+  \label{eq:sp-renorm-2p}
+\end{equation}
+where
+\begin{equation}
+  \Delta = (1-\rho S_{11})(1-\rho S_{22}) - \rho^2 S_{12}S_{21} .
+  \label{eq:sp-renorm-delta}
+\end{equation}
+For a one-port \eqref{eq:sp-renorm} collapses to the M\"obius form
+\begin{equation}
+  \Gamma' = \frac{\Gamma - \rho}{1 - \rho\Gamma} ,
+  \label{eq:sp-renorm-1p}
+\end{equation}
+which is the same bilinear map that will be drawn as the Smith chart in Section~\ref{sec:smith}, and it is a good
+check that \eqref{eq:sp-renorm-2p} reduces to it when the ports are decoupled.
+
+Two numerical tests fix the formula. First, take the series impedance of \eqref{eq:sp-series-z} with $Z=Z_0$:
+$S_{11}=\tfrac13$, $S_{21}=\tfrac23$, $S_{12}=\tfrac23$, $S_{22}=\tfrac13$. Renormalise from $Z_0$ to $Z_0'=2Z_0$,
+so $\rho=\tfrac13$. Then $\Delta=(1-\tfrac19)^2-(\tfrac19)(\tfrac49)=\tfrac{64}{81}-\tfrac{4}{81}=\tfrac{60}{81}$,
+and
+\begin{equation}
+  S'_{11} = \frac{\left(\tfrac13-\tfrac13\right)\left(1-\tfrac19\right)+\tfrac13\cdot\tfrac49}{\tfrac{60}{81}}
+          = \frac{\tfrac{4}{27}}{\tfrac{60}{81}} = \frac15 = 0.2 ,
+  \qquad
+  S'_{21} = \frac{\tfrac23\left(1-\tfrac19\right)}{\tfrac{60}{81}}
+          = \frac{\tfrac{16}{27}}{\tfrac{60}{81}} = \frac45 = 0.8 ,
+  \label{eq:sp-renorm-check}
+\end{equation}
+and the direct calculation agrees: referred to $2Z_0$ the series element $Z=Z_0$ sees $4Z_0$ of total
+impedance, giving $S'_{11}=Z/(Z+4Z_0)=\tfrac15$ and $S'_{21}=4Z_0/(Z+4Z_0)=\tfrac45$. Second, take the thru,
+$S_{11}=S_{22}=0$, $S_{21}=S_{12}=1$, which must be invariant under any renormalisation because a perfect
+connection has no impedance to be renormalised: \eqref{eq:sp-renorm-2p} gives $\Delta=1-\rho^2$, then
+$S'_{11}=(0-\rho)(1-0)/(1-\rho^2)+\rho(1)(1)/(1-\rho^2)=(-\rho+\rho)/(1-\rho^2)=0$ and
+$S'_{21}=1\cdot(1-\rho^2)/(1-\rho^2)=1$, as required. Both checks pass, and the formula is used in this form wherever
+this report compares numbers referred to different impedances.
+
+\subsection{Reference planes, and what a length of line does to $S$}
+\label{sec:sp-refplane}
+
+The second convention is where the ports are. Moving a reference plane outwards by a length $L$ of lossless line
+of propagation constant $\beta$ does not change the network; it changes only the phase with which the waves are
+referred to it. The incident wave at the moved plane has travelled an extra $L$ to reach the old plane, so it
+picks up $e^{-j\beta L}$; the reflected wave has travelled $L$ out and $L$ back, so it picks up $e^{-2j\beta L}$.
+For a two-port with port~1 moved by $L_1$ and port~2 by $L_2$,
+\begin{equation}
+  S'_{11} = S_{11}e^{-2j\beta L_1}, \quad
+  S'_{22} = S_{22}e^{-2j\beta L_2}, \quad
+  S'_{21} = S_{21}e^{-j\beta(L_1+L_2)}, \quad
+  S'_{12} = S_{12}e^{-j\beta(L_1+L_2)} .
+  \label{eq:sp-refplane}
+\end{equation}
+The often-quoted pair $S_{11}\to S_{11}e^{-2j\beta L}$ and $S_{21}\to S_{21}e^{-j\beta L}$ is the special case
+$L_1=L$, $L_2=0$: it is what happens when the same physical length is added at one port only, and quoting it
+without that qualification is how a factor-of-two error enters a de-embedding. The general form
+\eqref{eq:sp-refplane} is the one this report uses, and it is exactly the per-port shift $d$ of
+\eqref{eq:ms-deembed} applied to a scattering matrix rather than to a propagation factor.
+
+Two consequences are worth naming. First, $|S_{21}|$ is unchanged by a length of lossless line, so attenuation
+cannot be mistaken for de-embedding error and vice versa: a measured $|S_{21}|$ that falls with length is
+dissipation, while a measured $\angle S_{21}$ that falls with length is propagation. Second, the factor of two in
+the reflection terms is the same factor of two as in the standing-wave period of \eqref{eq:tline-ripple-period}
+and in the Smith-chart rotation of Section~\ref{sec:smith-rotation}. All three say one thing: a reflection
+involves a round trip. A reference-plane shift of $\lambda_g/4$ therefore rotates $S_{11}$ by $\pi$ and
+$S_{21}$ by $\pi/2$, which is why a de-embedding carried out at one frequency and assumed valid at a nearby one
+fails fastest in the reflection coefficient.
+
+\subsection{What actually carries the power}
+\label{sec:sp-powerflow}
+
+Everything above treats $|a|^2$ as a power and never asks what is doing the carrying. The answer is not the
+electrons, and the orders of magnitude make the point so emphatically that the picture is worth correcting once.
+
+A current density $J$ in a conductor with $n$ free electrons per unit volume and charge $-e$ corresponds to a
+drift velocity
+\begin{equation}
+  v_d = \frac{J}{n e} .
+  \label{eq:sp-drift}
+\end{equation}
+For copper, $n=8.5\times10^{28}\ \mathrm{m}^{-3}$ and $e=1.602\times10^{-19}$ C. At a current density of
+$1$ A/mm$^2$, which is $10^{6}$ A/m$^2$ and a perfectly ordinary value for a PCB trace, \eqref{eq:sp-drift} gives
+\begin{equation}
+  v_d = \frac{10^{6}}{8.5\times10^{28}\times1.602\times10^{-19}}
+      \approx 7.3\times10^{-5}\ \mathrm{m/s},
+  \label{eq:sp-drift-num}
+\end{equation}
+that is, $0.073$ mm/s: the electrons move less than a tenth of a millimetre per second. A typical signal of a few
+milliamperes in a $0.1$ mm$^2$ trace is an order of magnitude less again, some $7\times10^{-7}$ m/s, and at that
+rate an electron takes about a fortnight to traverse a $1$ m cable. The signal, meanwhile, travels at the phase
+velocity of the line, $2\times10^{8}$ m/s on a typical substrate. The ratio is
+$2\times10^{8}/7.3\times10^{-5}\approx 3\times10^{12}$: the disturbance moves thirteen orders of magnitude faster
+than the charges that constitute it.
+
+The reconciliation is that the electrons are not the message. A signal is a rearrangement of charge density and
+field, and the rearrangement propagates because each electron nudges its neighbour through the Coulomb field,
+which propagates at the speed of light in the surrounding dielectric. The drift velocity is a statement about how
+far the carriers get; the signal velocity is a statement about how fast the pattern of pushes propagates, and the
+two are related the way the speed of a wave on a rope is related to how far the rope's material moves.
+
+So what carries the power is the field, and the quantitative statement is Poynting's theorem: the power flowing
+through a surface is
+\begin{equation}
+  P = \oint \left(\mathbf{E}\times\mathbf{H}\right)\cdot\dd\mathbf{A} .
+  \label{eq:sp-poynting}
+\end{equation}
+For a TEM mode both $\mathbf{E}$ and $\mathbf{H}$ are purely transverse, so $\mathbf{E}\times\mathbf{H}$ points
+along the direction of propagation and its integral over the cross-section is exactly
+$\tfrac12\Re\{VI^*\}$ -- the same quantity that appeared as $|a|^2/2-|b|^2/2$ in \eqref{eq:sp-power}. That identity
+is not a coincidence: it is the reason the scattering parameters of a TEM line can be defined at all, and it is
+why $|a|^2$ deserves to be called a power. It also separates the energy storage cleanly. In a TEM mode the
+electric and magnetic energy densities are equal at every point,
+$\tfrac12\eps|\mathbf{E}|^2=\tfrac12\mu|\mathbf{H}|^2$, so each holds half of the total stored energy and the
+wave carries the two halves along together: neither can be described as the ``cause'' of the other, and a
+description that tracks only the voltage is tracking only half the energy. For the quasi-TEM mode of a microstrip
+this equality is approximate, which is the field-theoretic statement of the same caveat as
+Section~\ref{sec:tline-limits}: a longitudinal field component tilts $\mathbf{E}\times\mathbf{H}$ slightly and a
+little power flows in the transverse direction, near the conductor edges, where the mode is least TEM-like.
+
+The practical moral for the measurements of this report is that a probe measures the field at the point it is
+placed, not the current in the conductor beneath it. Section~\ref{sec:ms-lossless} already had to take the
+complex power as $\tfrac12\Re\{VI^*\}$ on exactly this basis, and the factor of two between peak and rms phasors
+-- one half of the total energy in the electric field, one half in the magnetic -- is the same factor of two that
+has to be watched in \eqref{eq:sp-power}.
+
+\subsection{The Touchstone file format}
+\label{sec_touchstone}
+
+A number that has passed through a reference impedance and a reference plane is still only a number until it is
+written down in a form another tool can read, and for scattering parameters that form is Touchstone. The
+implementation is two functions in \texttt{emfit/ports.py}, exported in its \texttt{\_\_all\_\_} at
+\texttt{ports.py:71}--\texttt{72}: \texttt{write\_touchstone} (\texttt{ports.py:1791}) and
+\texttt{read\_touchstone} (\texttt{ports.py:1849}). Neither is where the physics lives --
+Section~\ref{sec:sp-refz} decided the impedance and Section~\ref{sec:sp-refplane} decided the plane, and this
+subsection only says what the file does with them.
+
+The writer emits version~1 files as its docstring states: an option line, then one row per frequency. The option
+line is written from the two defaults of the signature, \texttt{fmt="ri"} and \texttt{z0=50.0}, and both
+the format token and the impedance are interpolated into it, so the line reads \texttt{\# HZ S RI R 50}
+unless one of them is changed, and a file written against \SI{75}{\ohm} says so and a file written against
+\SI{50}{\ohm} says so
+(\texttt{ports.py:1832}; the corresponding assertion on a \SI{75}{\ohm} write is at
+\texttt{tests/test\_ports.py:350}). Two formats are accepted, \texttt{ri} and \texttt{ma}
+(\texttt{ports.py:1824}--\texttt{1825}), and every number on every row is written with \texttt{\%.12g}
+(\texttt{ports.py:1835}--\texttt{1842}), which is the reason a round trip through the file reproduces the array it
+started from rather than a rounded copy of it.
+
+The one place where the format can bite is the order of the entries within a row. Touchstone version~1 mandates the
+input port slowest and the output port fastest, so a two-port row reads $S_{11}\,S_{21}\,S_{12}\,S_{22}$, which is
+the $s[f,\text{out},\text{in}]$ layout flattened in column order rather than row order; the docstring says as much
+at \texttt{ports.py:1795}--\texttt{1799}, and the implementation is the single \texttt{order="F"} reshape at
+\texttt{ports.py:1833}. Writing $S$ in the natural row-major order instead transposes every off-diagonal element,
+which for a reciprocal two-port is invisible and for anything else is wrong in a way that still looks like a
+plausible matrix. The property is pinned by a test rather than by a comment
+(\texttt{tests/test\_ports.py:333}).
+
+The reader inverts it exactly: \texttt{read\_touchstone} returns \texttt{(freqs, s)} with the same
+\texttt{s[f,\ out,\ in]} convention (\texttt{ports.py:1855}--\texttt{1857}), skips blanks and \texttt{!}
+comments (\texttt{ports.py:1874}), and takes the frequency unit and the data format from the option line, scaling
+\texttt{HZ}, \texttt{KHZ}, \texttt{MHZ} and \texttt{GHZ} and accepting \texttt{RI}, \texttt{MA} and \texttt{DB}
+(\texttt{ports.py:1876}--\texttt{1882}). The port count is not read from the filename. It is inferred from the
+number of columns in the first data row, $n_{\text{ports}}=\operatorname{round}\sqrt{(n_{\text{vals}}-1)/2}$
+(\texttt{ports.py:1888}), and a row that does not carry exactly $1+2n_{\text{ports}}^2$ columns is rejected rather
+than truncated (\texttt{ports.py:1889}--\texttt{1892}). A consequence worth stating plainly: the extension is a
+convention, the column count is the contract, and a file named \texttt{.s2p} that contains four-port rows is read as
+a four-port. In this tree the \texttt{.s2p} name appears only in tests
+(\texttt{tests/test\_ports.py:321}, \texttt{tests/test\_port\_parallel\_plate.py:394}), which is the honest place
+for it, because the code itself is generic in the port count and the tests are where a two-port line is a
+two-port line.
+
+Two things the format cannot carry, and both matter for provenance. It carries the reference impedance and it does
+not carry the reference plane: a de-embedded matrix and a raw one are the same file, byte for byte, so the plane at
+which the phases of Section~\ref{sec:sp-refplane} were taken has to travel with the file by some other means or not
+at all. And the two magnitude formats lose phase unless the phase is written beside the magnitude, which is why
+\texttt{ri} is the default here and why a file that has been through \texttt{ma} is not a substitute for the record
+it came from. Neither omission is a fault of the format, which does one thing well; it is a reminder that the file
+is a carrier and not a certificate, and that the numbers in
+Section~\ref{sec:worked} are auditable only against the runs and windows that produced them.
+

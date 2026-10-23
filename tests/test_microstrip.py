@@ -18,7 +18,11 @@ which kind of claim broke:
    comment block above the table says where each number comes from and how much
    it can be trusted: these are standard design-chart values and textbook
    worked examples, quoted to the accuracy with which they are usually printed,
-   so the tolerances are a few per cent, not 0.1 %.
+   so the tolerances are a few per cent, not 0.1 %.  The values here that are
+   not from the literature are the ``Z0`` the study and the board report print:
+   the closed form at their own cross-section, on the 35 um foil they are cut
+   from, pinned on both sides of the foil in the ``test_z0_at_the_study_``
+   tests below and again through the study itself in ``test_studies``.
 
 3. *An independent numerical oracle.*  A finite-volume solution of the 2-D
    Laplace equation on the cross-section -- a completely different route to the
@@ -44,9 +48,11 @@ import pytest
 from scipy.sparse import coo_matrix
 from scipy.sparse.linalg import spsolve
 
+from emfit.cli import BOARD_COPPER_T
 from emfit.microstrip import (
     C0,
     COPPER_SIGMA,
+    COPPER_T,
     EPS0,
     ETA0,
     MU0,
@@ -57,6 +63,7 @@ from emfit.microstrip import (
     width_for_z0,
     z0_eps_eff,
 )
+from emfit.studies import MS_EPS_R, MS_H, MS_W
 
 # ---------------------------------------------------------------------------
 # the finite-difference oracle (layer 3)
@@ -340,6 +347,45 @@ def test_constant_relations():
     assert ETA0 == pytest.approx(MU0 * C0)
     assert ETA0 == pytest.approx(376.730313668, rel=1e-9)
     assert COPPER_SIGMA == pytest.approx(5.8e7)
+
+
+def test_copper_t_is_the_35_um_foil_and_the_board_report_aliases_it():
+    """35 um, and the board report's copy is the same object, not a repeat."""
+    assert COPPER_T == 35e-6, f"COPPER_T is {COPPER_T!r}, not 35e-6"
+    assert BOARD_COPPER_T is COPPER_T, (
+        f"the board report's {BOARD_COPPER_T!r} is a separate constant from "
+        f"COPPER_T = {COPPER_T!r}, so the two references can drift apart")
+
+
+def test_z0_at_the_study_cross_section_is_the_35_um_foil_value():
+    """``w/h = 2`` on ``eps_r = 4.4``, the study's line: 48.099 ohm on 35 um.
+
+    Measured 48.098655 on the foil and 48.685768 on a zero-thickness sheet, so
+    the two differ by 0.587 ohm and a tolerance of 2e-3 ohm tells them apart.
+    """
+    line = Microstrip(w=MS_W, h=MS_H, eps_r=MS_EPS_R, t=COPPER_T)
+    assert line.z0 == pytest.approx(48.099, abs=2e-3), (
+        f"Z0 on the 35 um foil is {line.z0!r}, not 48.099 ohm")
+
+
+def test_z0_at_the_study_cross_section_is_48_686_on_a_bare_sheet():
+    """The zero-thickness value both reports printed before the foil reached it.
+
+    Pinned so the size of the change stays visible -- the two numbers are one
+    call apart, and this one is still what ``t = 0`` means.
+    """
+    line = Microstrip(w=MS_W, h=MS_H, eps_r=MS_EPS_R, t=0.0)
+    assert line.z0 == pytest.approx(48.686, abs=2e-3), (
+        f"Z0 on a zero-thickness sheet is {line.z0!r}, not 48.686 ohm")
+
+
+def test_the_foil_thickness_leaves_eps_eff_bit_identical():
+    """``eps_eff`` never sees ``t``, so the two must be the same float."""
+    foil = Microstrip(w=MS_W, h=MS_H, eps_r=MS_EPS_R, t=COPPER_T)
+    sheet = Microstrip(w=MS_W, h=MS_H, eps_r=MS_EPS_R, t=0.0)
+    assert foil.eps_eff == sheet.eps_eff, (
+        f"eps_eff moved with the foil thickness: {foil.eps_eff!r} != "
+        f"{sheet.eps_eff!r}")
 
 
 def test_losses_have_the_expected_shape():

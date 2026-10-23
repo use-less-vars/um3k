@@ -31,6 +31,35 @@ be taken with a smaller step.  Output: ``.scratch/m2/
 board_cw_<f>GHz.npz`` and a printed report on stdout (redirect it to
 ``.scratch/m2/board_cw_<f>GHz.log``).  Every print flushes, so the log can be
 read while the solve runs.
+
+The self-check
+--------------
+
+The last block before the dump compares the quantities the tone path measured
+during the solve against the same quantities re-derived by emfit's own bin
+reader off the rebuilt phasor vector, and prints one row per quantity.  A row
+measures how well the rebuilt vector reproduces the run -- no number in the
+report depends on it.
+
+Four of the five rows (``beta``, ``eps_eff``, ``|S21|`` and ``residual``) agree
+to 1e-6 relative on a healthy run and are judged RELATIVE at
+``SELF_CHECK_REL_TOL``.  ``|gamma|`` is the row that does not: its two sides
+come from two *separate* ``fit_station_impedance`` calls -- the tone path fits
+the live phasors during the run, the bin path refits the same station voltages
+and currents off the rebuilt vector -- and on a healthy run they disagree by
+1.2e-2 relative, which is only 1.7e-4 absolute on a |gamma| of 1.4e-2.  The
+relative 1e-3 the row used to carry allows a disagreement of 1.4e-5 on that
+|gamma|, an order of magnitude below the spread two independent fits actually
+show, so it printed ``<-- MISMATCH`` on every healthy run and trained the
+reader to ignore the line.  The row is therefore judged in ABSOLUTE terms at
+``SELF_CHECK_GAMMA_ABS_TOL`` (1e-3): about 6x above the observed 1.7e-4 and
+about 14x below the quantity itself, so a good run is silent while a rebuild
+defect that moves |gamma| at order |gamma| still fails loudly.  Why two fits
+agree so much more loosely on ``|gamma|`` than on the other rows is not
+established here; what is measured is the spread quoted above.
+
+The verdict is print-only: it does not reach the exit status, which this script
+returns as 0 on a completed run (1 if the solve raised, 2 on a usage error).
 """
 
 from __future__ import annotations
@@ -85,6 +114,19 @@ SPAN_TOL = 0.02
 #: stall visible (the first minutes are JIT, and a stalled ETA is information).
 PROGRESS_EVERY_STEPS = 500
 PROGRESS_EVERY_S = 30.0
+
+#: How the self-check judges the four rows a healthy run agrees on: relative,
+#: at 1e-6.  ``beta``, ``eps_eff``, ``|S21|`` and ``residual`` meet 1e-6
+#: relative on a healthy run, and that is the spread this tolerance pins.  See
+#: "The self-check" in the module docstring.
+SELF_CHECK_REL_TOL = 1.0e-6
+#: How the self-check judges |gamma|: absolute, at 1e-3.  ``|gamma|`` is a small
+#: number (1.4e-2), so a relative tolerance on it is a much tighter absolute
+#: one: the relative 1e-3 the row used to carry allowed only 1.4e-5, while two
+#: independent fits of this row spread by 1.7e-4.  The tolerance belongs on the
+#: absolute scale where that spread lives.  See "The self-check" in the module
+#: docstring.
+SELF_CHECK_GAMMA_ABS_TOL = 1.0e-3
 
 
 def mark(name: str) -> None:
@@ -288,6 +330,104 @@ def choose_nsteps(f_target: float, dt: float, span_target: float
           % (NSTEPS_MIN, NSTEPS_MAX, SNAP_TOL / 1e6, 100.0 * SPAN_TOL,
              residual / 1e6), flush=True)
     return (nsteps, n_warm, n_acc, f0, residual)
+
+
+def self_check_row(name: str, tone: float, bin_value: float, tol: float,
+                   absolute: bool = False) -> tuple[str, bool]:
+    """One self-check row: the printed line, and whether it failed.
+
+    A row compares one quantity as the tone path measured it (``tone``) against
+    the same quantity as the bin reader re-derived it (``bin_value``).  ``tol``
+    is judged on whichever of the two scales ``absolute`` names:
+
+      * ``absolute`` False: ``rel = delta / max(abs(tone), 1e-30)``.  This is
+        the scale for the rows a healthy run agrees on -- beta, eps_eff,
+        |S21|, residual.  On those rows a healthy run agrees to 1e-6 relative,
+        and that is the only slack they need.
+      * ``absolute`` True: ``abs = delta``.  This is the scale for |gamma|,
+        whose two sides come from two independent fits: on a healthy run they
+        spread by 1.2e-2 *relative*, which is 1.7e-4 *absolute* on a |gamma|
+        of 1.4e-2.  A relative 1e-3 on that row allows only 1.4e-5 there,
+        below that spread, so it flagged a healthy run every time; an absolute
+        1e-3 sits about 6x above the spread and about 14x below the quantity,
+        so it is silent on a good run and still bites when a rebuild defect
+        moves |gamma| at order |gamma|.
+
+    The failure test is written ``not (measure <= tol)`` rather than
+    ``measure > tol`` so that a NaN measure fails instead of passing: a row
+    built from a refused or non-finite fit must never read as silent.
+
+    The line states which measure judged it (``rel=`` or ``abs=``), so a reader
+    can tell a real mismatch from a tolerance that cannot be reached.
+
+    Args:
+        name: The row's label, as it appears in the verdict.
+        tone: The tone path's value.
+        bin_value: The bin path's value.
+        tol: The tolerance on the chosen scale.
+        absolute: Judge the absolute difference instead of the relative one.
+
+    Returns:
+        ``(line, failed)``: the printed row, and whether it failed.
+    """
+    delta = abs(float(tone) - float(bin_value))
+    if absolute:
+        measure = delta
+        text = "abs=%.2e" % delta
+    else:
+        measure = delta / max(abs(float(tone)), 1e-30)
+        text = "rel=%.2e" % measure
+    failed = not (measure <= tol)
+    flag = "   <-- MISMATCH" if failed else ""
+    line = "    %-9s tone=%.12g  bin=%.12g  %s%s" % (name, float(tone),
+                                                   float(bin_value), text, flag)
+    return line, failed
+
+
+def self_check(checks) -> tuple[list[str], list[str]]:
+    """Judge every row: the lines to print, and the names that failed.
+
+    ``checks`` is a sequence of ``(name, tone, bin_value, tol, absolute)``
+    tuples, in the order they are to be printed; each is handed to
+    :func:`self_check_row`.  ``bad`` keeps the failures in that same order, so
+    the verdict reads in the order the rows above it were read.
+
+    The two lists are returned rather than printed so the caller owns every
+    ``print`` and its flush -- this script's output goes through ``tee`` and a
+    line that sits in a block buffer arrives after the phase it announced.
+
+    Args:
+        checks: ``(name, tone, bin_value, tol, absolute)`` per row.
+
+    Returns:
+        ``(lines, bad)``: one printed row per check, and the failed names.
+    """
+    lines = []
+    bad = []
+    for name, tone, bin_value, tol, absolute in checks:
+        line, failed = self_check_row(name, tone, bin_value, tol, absolute)
+        lines.append(line)
+        if failed:
+            bad.append(name)
+    return lines, bad
+
+
+def verdict_text(bad: list[str]) -> str:
+    """The verdict field: ``OK`` when nothing failed, else ``CHECK: a; b``.
+
+    One place, so the verdict is the same string whether it is printed from a
+    run, quoted in a log, or asserted in a test.  The failure names are the row
+    labels (``|gamma|``), plus ``bin refused: ...`` when the bin reader refused
+    the rebuilt vector -- a refusal is a failure of this check too, not a
+    separate category.
+
+    Args:
+        bad: The failed names, in row order.
+
+    Returns:
+        ``'OK'``, or ``'CHECK: '`` followed by the names joined with ``'; '``.
+    """
+    return "OK" if not bad else "CHECK: " + "; ".join(bad)
 
 
 def main(argv: list[str]) -> int:
@@ -525,40 +665,36 @@ def main(argv: list[str]) -> int:
     # Self-check: the rebuilt vector must reproduce what the tone path measured.
     mark("verify")
     checks = [
-        ("beta", cw.beta, metric.beta, 1e-6),
-        ("eps_eff", cw.eps_eff, metric.eps_eff, 1e-6),
-        ("|S21|", abs(cw.s21), metric.s21, 1e-6),
-        # The one row that can print ``<-- MISMATCH`` with nothing wrong: the
-        # comparison is ``abs(cw.gamma)`` (tone path) against
-        # ``metric.s11_measured`` (bin path) at a 1e-3 relative tolerance, and
-        # the two are *two separate* ``fit_station_impedance`` calls -- the
-        # tone path fits the live phasors during the run, ``_bin_metrics``
+        ("beta", cw.beta, metric.beta, SELF_CHECK_REL_TOL, False),
+        ("eps_eff", cw.eps_eff, metric.eps_eff, SELF_CHECK_REL_TOL, False),
+        ("|S21|", abs(cw.s21), metric.s21, SELF_CHECK_REL_TOL, False),
+        # DECISION: |gamma| is judged in ABSOLUTE terms at
+        # SELF_CHECK_GAMMA_ABS_TOL, not relative.  The two numbers compared are
+        # ``abs(cw.gamma)`` (tone path) and ``metric.s11_measured`` (bin path),
+        # and they come from *two separate* ``fit_station_impedance`` calls --
+        # the tone path fits the live phasors during the run, ``_bin_metrics``
         # refits the same station voltages and currents off the rebuilt phasor
-        # vector.  |gamma| is the *difference* of two large, nearly equal wave
-        # amplitudes, so it amplifies whatever second-order difference those
-        # two fits have (1.2e-2 relative here, about 1.7e-4 absolute on a
-        # |gamma| of 1.4e-2), while beta / eps_eff / |S21| / residual are
-        # carried over from the one fit and agree bit for bit.  So the 1e-3
-        # is tighter than two independent fits can be expected to agree: it
-        # is a property of this check, not a solver discrepancy, and no number
-        # in the report depends on it.
-        ("|gamma|", abs(cw.gamma), metric.s11_measured, 1e-3),
-        ("residual", cw.fit_residual, metric.residual, 1e-6),
+        # vector.  On a healthy run they spread by 1.2e-2 relative, which is
+        # only 1.7e-4 absolute on a |gamma| of 1.4e-2.  A relative 1e-3 on that
+        # row allows only 1.4e-5 there, below that spread, so it printed
+        # MISMATCH on every healthy run, which is how a real mismatch came to be
+        # unreadable.  The absolute 1e-3 sits about 6x above the spread and
+        # about 14x below the quantity: silent when the rebuild is right, loud
+        # when a rebuild defect moves |gamma| at order |gamma|.  The other four
+        # rows stay relative: they agree to SELF_CHECK_REL_TOL on a healthy run.
+        # See "The self-check" in the module docstring.
+        ("|gamma|", abs(cw.gamma), metric.s11_measured,
+         SELF_CHECK_GAMMA_ABS_TOL, True),
+        ("residual", cw.fit_residual, metric.residual, SELF_CHECK_REL_TOL, False),
     ]
     print("self-check (tone path vs rebuilt bin, dt_scale=%g):" % dt_scale,
           flush=True)
-    bad = []
-    for name, a, b, tol in checks:
-        rel = abs(float(a) - float(b)) / max(abs(float(a)), 1e-30)
-        flag = "" if rel <= tol else "   <-- MISMATCH"
-        if rel > tol:
-            bad.append(name)
-        print("    %-9s tone=%.12g  bin=%.12g  rel=%.2e%s"
-              % (name, a, b, rel, flag), flush=True)
+    lines, bad = self_check(checks)
+    for line in lines:
+        print(line, flush=True)
     if metric.refusal is not None:
         bad.append("bin refused: %s" % metric.refusal)
-    print("    verdict      %s" % ("OK" if not bad else "CHECK: " + "; ".join(bad)),
-          flush=True)
+    print("    verdict      %s" % verdict_text(bad), flush=True)
 
     # WART, commented and deliberately not fixed: ``_dump_bins`` returns
     # ``str(np.savez(...))``, and ``np.savez`` returns ``None`` -- the handle is
