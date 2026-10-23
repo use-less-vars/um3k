@@ -2824,3 +2824,58 @@ The solver's block decomposition is `n_pml 6, n_ref 18, n_line 108, n_clean 38, 
 **The three-wave `ports.py` edit remains held.** It was made conditional on this audit returning "arrays match", and that condition is now met, but the edit still needs its own pre-registration before `ports.py` is touched. **No code was changed in this section**, and no run is scheduled: the principal wants the physics conversation first.
 
 **No twelfth session error.** The audit was read-only and zero-solve, and every artefact was staged under `.scratch/logs` rather than `/tmp`.
+
+## 96. The reference is non-dispersive by construction, and section 95.6 is wrong
+
+### 96.1 Correction owed
+
+**Section 95.6 misattributes a number.** It reads "The Laplace route returned 3.542 at `n_sub 8`", which is wrong on both counts. 3.541823 is `eps_V = (beta_V/k0)^2` from `.scratch/logs/L8.json:236` — the FDTD two-wave V reading, `beta_V` 229.866775698 — and section 93's own text at `decisions.md:2601` already calls it "the FDTD's 3.542". The Laplace capacitance ratio at `n_sub 8` is 3.363120. The correct sentence is: *the Laplace route returned 3.363120 at `n_sub 8` and 3.369119 at `n_sub 16`; the FDTD two-wave route returned 3.541823.* **Twelfth session error** (section 95.7's "no twelfth session error" is scoped to the audit itself, which was clean; this one is in the writing of 95.6): I composed a table of derived `eps_eff` values from memory of the record instead of reading the artefact, and the misattribution went into the committed text. Nothing downstream used it; no run is affected.
+
+### 96.2 What actually produced 223.35, and its one structural property
+
+**Producer.** `emfit/studies.py:2999-3001` builds `Microstrip(w, h, eps_r, t=COPPER_T)` and calls `.beta(f0)`. `emfit/microstrip.py:386` returns `2*pi*f*sqrt(eps_eff)/C0`; `eps_eff` at `:189-191` is the Hammerstad-Jensen blend on `u = w/h` alone.
+
+**The frequency enters only through `k0`.** `eps_eff` has no frequency dependence anywhere in the module. `microstrip.py:13-15` says so in as many words — "Nothing here is dispersive" — and `:31-35` states the quasi-static limit and that `eps_eff` is **under-predicted** above it. There is no Kirschning-Jansen, no Getsinger and no Wheeler implementation anywhere in the repository.
+
+**Numbers at rung 8.** `f = 5.827786408e9` Hz, `k0 = 2*pi*f/C0 = 122.1413713` rad/m; `beta` in rad/m confirmed.
+
+| route | beta (rad/m) | vs HJ | eps_eff = (beta/k0)^2 |
+|---|---|---|---|
+| HJ closed form | 223.353067 | — | 3.343938 |
+| FDTD two-wave V | 229.866776 | +2.9164 % | 3.541823 |
+| FDTD two-wave I | 229.996193 | +2.9742 % | 3.5458 |
+| single column ground to strip | 230.773167 | +3.3219 % | 3.5698 |
+| strip-wide projection | 230.705977 | +3.2918 % | 3.5677 |
+| strip-centre mesh-edge phasor | 225.483558 | +0.9539 % | 3.408036 |
+
+The last two `eps_eff` entries are derived by me with the same formula and are printed to four decimals only. **`(229.866776/223.353067)^2 = 1.059208`, i.e. `eps_eff` is 5.92 % high while `beta` is 2.92 % high** — the square root compresses the excess, and every dispersion estimate below is expressed in `eps_eff` where the effect is twice as visible.
+
+### 96.3 The hypothesis, and its falsifier, stated before the arithmetic is believed
+
+**Statement.** The 2.9 % is not a solver error. It is ordinary microstrip dispersion, and the reference model does not model dispersion at all, so the comparison is between a finite-frequency field solve and a zero-frequency closed form.
+
+**Falsifier.** Implement Kirschning-Jansen, the Hammerstad-Jensen dispersion extension and Getsinger in closed form — arithmetic only, no solve. If none of them places `eps_eff(f)` within about 0.5 % of 3.5418, and they sit near 3.344 instead, the hypothesis is dead and section 94.5's "+2.9 to +3.3 % unexplained" stands.
+
+**My arithmetic, from memory, to be recomputed and not quoted.** With `eps_eff(0) = 3.343938`, `eps_r = 4.4`, `h = 1.6` mm, `Z0 = 48.098655` ohm: Kirschning-Jansen gives `f_50 = c/(2*pi*h*sqrt(eps_r - eps_eff(0))) = 29.01` GHz, `G = 0.6 + 0.009*Z0 = 1.033`, `f/f_50 = 0.2009`, hence `eps_eff(f)` about 3.513, or +5.05 %. A Getsinger-type form with `f_p = Z0/(2*mu0*h) = 11.96` GHz lands near 3.55. **The measured 3.5418 sits between the two.** Sign, order and magnitude all match, and the residue after correction is 0.2 to 0.9 % in `eps_eff`, which is 0.1 to 0.5 % in `beta` — the same size as section 94.5's route spread.
+
+**The operating point.** `h/lambda_g = 0.0569` at rung 8 (`lambda_g` from `eps_eff` 3.3439). That is below the module's own stated `h <= lambda_g/10`, so the module claims validity here, but it is squarely in the range where the dispersion formulas are fitted and where the effect is percent-level rather than the `(h/lambda_0)^2` 0.1 % that instinct suggests; the coefficient on that small parameter is of order ten, not of order one.
+
+### 96.4 What it would explain, and what it would not
+
+**It would explain the shape of the problem.** The offset is route-invariant: four different projection constructions sit +2.92, +2.97, +3.32 and +3.29 % high. A projection error moves when the projection changes; a reference error does not. It is also why halving the cell, thickening the box fourfold and narrowing the transverse average all failed to move it, and why the long box was control-gated to 0.02 % — the instrument was fine and the target was misplaced.
+
+**It would invert the "raw sample is closest" reading.** Against a dispersion-corrected reference the mesh-edge phasor is about 1.9 % *low*, and it is the one route whose fit collapses (residual x4.1, backward ratio x2.9). On this reading the estimator that agrees with the static formula is the biased one, and it is biased for the mundane reason that its fit is poor.
+
+**What it would not explain.** `(229.866776/225.483558)^2 = 1.039258`, a 3.9 % gap in `eps_eff` between the best-fitting projection and the raw phasor. Dispersion is shared by both routes and cancels out of that ratio entirely, so the gap needs its own account — the phasor route's own bias, which is a claim requiring C1 and C2, not this section.
+
+### 96.5 C1 and C2, as far as the code and the artefacts carry them
+
+**C1 partial, and it turned up a provenance fact.** `plane_mode`, `modal_station_phasors` and `modal_line_quantities` **are not in `/workspace/emfit`**. Their only definitions are under `.scratch/wt-m3b-diag/emfit/modal.py:267, :372, :538`, and `sweep3.py:26-31` imports `emfit.modal`, so the projection route resolves against that shadow tree. **The third route was run on a copy of the package, not on the repository package.** Placement within the bigger grid is a pure integer zero-pad shift (`modal.py:292-303`): arrays are allocated as zeros and integer-sliced, with no interpolation and no resize, so resampling is excluded as a failure mode. Not yet determined: whether `ModeProfile.plane_window` (`mode_profile.py:452+`) places the mode on the true strip row; which grid the normalisation is computed on; whether the transfer is conservative or a plain elementwise multiply; and whether the projection sums over the whole plane or only the profile footprint.
+
+**C2 is negative.** 225.483558 appears only at `decisions.md:2678` and `:2682`. There is no script, no per-station phasor series, no station positions, no fit window, no absolute residual (only "x4.1 worse", with no base) and no covariance anywhere in the tree. **Its stability to better than 0.5 % cannot be established from stored artefacts**, so it should not be quoted as "the raw-field answer". By contrast the V route does carry its uncertainty: spread 6.8e-9 over ten starts and SVD ratio 7.3e-9 (`decisions.md:2565`).
+
+**A3 gains a second problem.** 3.363120 and 3.369119 have no stored output anywhere in the tree either — they are prose in `decisions.md:2629` and `:2822` with nothing behind them. That they are two discretisations of one quantity is still the right reading, but the record should note that they are currently unreproducible.
+
+### 96.6 What was not done
+
+**No solve, no field test, no code change.** The next action is arithmetic in closed form: implement the three dispersion models and see whether 3.5418 stops being an anomaly. If it does, thirteen eliminations were all correct and the anomaly was the benchmark. The three-wave `ports.py` edit stays held.
