@@ -4377,9 +4377,9 @@ the port displaced, nothing else moved.
 **Every parameter names its source.** Cell 1e-4 m, box 322 x 200 x 76 cells (4,894,400 of them),
 `n_sub` 16, `n_air` 48, `n_top` 12, `n_pml` 12, `n_stations` 9, `nsteps` 8034 and dt
 1.9065748695309721e-13 s are the anchor's and come from 4143-4144. The station positions, 10.4 mm to
-20.0 mm, are pinned absolutely at 3315. The alternative port distances are **NOT YET AVAILABLE**:
-the file records one port displacement only, C6d's +100 cells (3301), which at the anchor cell of
-1e-4 m is +10 mm (derived: 100 x 0.1 mm) and which the paragraph above disqualifies. The port datum
+20.0 mm, are pinned absolutely at 3315. The alternative port distances are the next paragraph's,
+not this paragraph's: one port displacement is on file, C6d's +100 cells (3301), +10 mm at the anchor
+cell of 1e-4 m (derived 100 x 0.1 mm), and the paragraph above disqualifies it. The port datum
 is fixed, and the record supplies it even though this section does not. The anchor's `x_port` is
 `8.700` mm -- index 87 of the 322 cells, at the anchor cell of `1e-4` m -- which is the solver's
 port plane (812, and 3162's `x_port` 8.7 mm, `ix_port` 87). Line 518's `x_port = 8.65` mm is not a
@@ -4387,8 +4387,32 @@ rival datum but a different quantity: it is where the uniform `3.0` mm run begin
 8.65 mm to 32.22 mm track run that `emfit/board.py:542-543` snaps to `ix_port` 87 and `ix_far` 322
 (3162, 3166-3168), so its 0.05 mm offset from the port plane is one half cell and a snap, not a
 disagreement. Any alternative port distance is therefore expressible as a signed cell count from
-index 87, though none is registered here, and any parameter not listed in this paragraph is
-**NOT YET AVAILABLE**.
+index 87, which is how the next paragraph states its four, and any parameter not listed in this
+paragraph or that one is **NOT YET AVAILABLE**.
+
+**The four port planes, frozen.** From 87, in whole cells of `1e-4` m: `ix_port` 67 (-20 cells,
+-2.0 mm, `x_port` 6.700 mm), 107 (+20, +2.0 mm, 10.700), 47 (-40, -4.0 mm, 4.700), 127 (+40, +4.0,
+12.700). Held: `ix_far` 322, the box 322 x 200 x 76, the cell, `n_stations` 9: the far plane is that
+wall and the copper is built from the port to it (`emfit/board.py:604-611`, `studies.py:2592-2597`).
+
+**What else moves, listed.** `n_ref` as well as `n_line`, partitioning one span (`board.py:618-621`)
+whose total plus `n_pml` is the 322-cell box (`studies.py:2556`): 67 gives 55 / 255, 107 95 / 215;
+47 35 / 275, 127 115 / 195, against 75 / 235; `nsteps` 8034, dt, `n_warm` 2008 and `n_acc` 6026 do
+not move, being no function of the port plane (`studies.py:2650-2652`, `2659`).
+
+**The station row, in the code's convention.** Absolute, on the `xmin` datum (`emfit/board.py:195`),
+not port-referred: `linspace(x_first, x_last, 9)` snapped as `js * cell` (`studies.py:2668-2675`),
+so 10.4-20.0 mm is requested, not guaranteed. At 67 and 47 the row and the stations 7-8 turnover
+(4263-4266) are the anchor's cell for cell; at 107 the first station clips to 10.8 mm; at 127 the
+port (12.7 mm) is past `x_first` and the clip to [`ix_port` + 1, `nx` - 2] (`studies.py:2670`)
+collapses three onto 12.8 mm: the code's convention, `R` reading 12.8-20.0 mm, not "pinned".
+
+**Why these four.** Port-near decays over about 2.8 mm (3331, 3333), so +/-2 and +/-4 mm move its
+contribution by order its own size; C6d's +100 cells stays disqualified (3301, 4370-4372 above).
+
+**Frozen on writing. Nothing in this paragraph has been run.** Whatever repeat-run resolution `R`
+eventually carries will be set at the anchor's port distance only, so each shifted plane needs its
+own repeat before a difference counts.
 
 **What the pre-registration does not claim.** It is not a substitute for C5 and does not by itself
 score the cell-squared rival: it holds the cell, so it says nothing about R-prime or L, and it
