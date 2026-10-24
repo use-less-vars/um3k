@@ -4041,3 +4041,176 @@ because it was useful rather than because it was assigned. None of this is a cla
 unreliable; the record relies on its refusals, and has twice been right to. It is a claim about what a fence
 is for. A fence respected only when it is convenient is not a fence, and a breach recorded only when it
 damages something is not a record.
+
+### 101.12 Zero-copy dual curl: landed and measured
+
+#### 101.12.0 Why this section exists
+
+The lever was proposed and priced in 101.11, and 101.11.8 left the saving as a paper calculation:
+the only run that exercised it used a monkeypatched shim, and the run that followed crashed in its
+own diagnostic before it could report. 101.11.9 then recorded the fence that kept the change out of
+`emfit/`. This section lands the change, verifies it through the real path, and replaces the paper
+calculation with a measurement at the anchor mesh.
+
+The order of work was fixed before any edit. Pre-check for in-place mutation of the primal `C`; then
+the change, with the signature preserved and no caller touched; then a full anchor solve through the
+real `emfit/` path, bit-compared against `.scratch/m2/board_cw_7.8333GHz.npz` on all fifteen keys
+and all eighteen station phasors; then this record. A full revert was to follow any difference.
+
+#### 101.12.1 Pre-check: can the buffer be shared?
+
+> No change to the operator is admissible until it is shown that nothing in `emfit/` mutates the
+> primal curl's data array in place.
+
+(a) The site. `curl_dual()` returned `self._cache["C_tilde"] = self.curl().T.tocsr()` (pre-edit
+`emfit/operators.py:245`), an independent copy of the transpose. The primal `C` is built at
+`emfit/operators.py:205-208` and cached at `:209` under the key `"C"`, in the `_cache` dict opened
+at `:74`.
+
+(b) The call graph. `curl_dual()` is the only producer of `C_tilde`. Its callers are
+`emfit/evolve.py:126` (`self.C_tilde = cc.curl_dual()`), `emfit/maxwell.py:62`, which assigns it and
+never reads it in-tree, and the test helper `curl_h_to_e()` in `emfit/operators.py`. The only
+consumer inside a solve is `emfit/evolve.py:194`, `ce = self.C_tilde @ self.h`, which uses the value
+and nothing else.
+
+(c) The search. `.data` occurs zero times anywhere in `emfit/`, so no code path reaches the buffer
+at all. Each of the following occurs zero times: `setdiag`, `sort_indices`, `sum_duplicates`,
+`eliminate_zeros`, `prune`, `resize`, `asformat`, an in-place `astype` on a sparse matrix,
+`np.frombuffer`. There is no in-place augmented operation on `C` or `C_tilde`, no format
+introspection, and no pickling or deep copy of an operator.
+
+(d) Conclusion: safe. Nothing in `emfit/` mutates a sparse data array in place, so a view over
+`C.data` is sound for as long as that remains true. It is a contract about the whole package and not
+about the one call site, which is why it was written into the comment rather than left in this
+record alone.
+
+(e) Recorded and not taken: `divergence_dual()` keeps its `.T.tocsr()` copy. The same lever is
+available there and was deliberately left out of this change, which is one edit and one edit only.
+
+#### 101.12.2 The change
+
+Two files, nine lines inserted, three deleted.
+
+`emfit/operators.py:251` now reads `self._cache["C_tilde"] = self.curl().transpose(copy=False)`,
+carrying a three-line comment that states the contract: a CSC view sharing `C.data`, not a
+duplicate, safe only because no code path in `emfit/` mutates a sparse data array in place, and any
+future in-place use of `C.data` must copy here first. The docstring gained one sentence to the same
+effect, that the result is deliberately a zero-copy view sharing `C.data` and must not be mutated.
+
+`emfit/maxwell.py:39` said the field was csr. It now reads
+`C : csr_matrix, C_tilde : csc_matrix (zero-copy view sharing C.data)`, on one numpydoc line.
+
+Untouched: the signature, the return value, the cache key, the guard, and every caller.
+`emfit/evolve.py` is byte-identical before and after, so the only path that consumes the operator is
+provably unchanged.
+
+Hashes, before to after: `emfit/operators.py` `a0458566...bc57` to `5a46ede5...04267`;
+`emfit/maxwell.py` `e9cce659...9292b` to `ef3cf2a8...2222c5`; `emfit/evolve.py` `8368221...d87a6`,
+unchanged. Commit `f065d26`.
+
+#### 101.12.3 Verification at three scales
+
+(a) Probe mesh. 12x10x8 nodes, `C` of shape (2318, 2584) with 9272 non-zeros:
+`(new != old).nnz = 0`; the canonical sorted `data`, `indices` and `indptr` are bit-identical; 5 of
+5 random matvecs are `array_equal` with maximum absolute difference 0.0; the result is `csc`; the
+old path still builds and still works. Ten probes were written and two printed FAIL. Both were
+mis-specified rather than wrong: `.data is .data` is False for any scipy 1.18.1 transpose view,
+including scipy's own `C.T`, because the wrapper object differs while `np.shares_memory` is True and
+the buffer address is equal; and a positional, unsorted `.data` comparison fails purely because a
+transpose reorders entries, while the canonical form is identical. Neither can be satisfied by any
+correct implementation.
+
+(b) Anchor-mesh operator proof, 322x200x76 cells. `C` has shape (14787272, 14891942), 59149088
+non-zeros, format `csr`, `C.data.nbytes` 473192704. The new `curl_dual()` returns the transposed
+shape, format `csc`, over the same 473192704-byte buffer, with `np.shares_memory` True and `data`,
+`indices` and `indptr` all pointer-equal. `(new != old).nnz = 0`. 5 of 5 matvecs `array_equal`,
+maximum absolute difference 0. The independent copy that is no longer allocated is 769356828 bytes:
+473192704 data, 236596352 indices, 59567772 indptr. Peak RSS 3060044 kB. 18 of 18 checks pass.
+
+(c) The full anchor through the real path. The gate driver was copied to
+`.scratch/lever/run_real.py` with the monkeypatch block deleted, so the numerics come from the
+in-tree edit and nothing else, and with its broken diagnostic repaired. The configuration is the
+anchor's: 322x200x76 cells, 4894400 of them, cell 1e-4, `n_sub` 16, `n_air` 48, `n_top` 12, `n_pml`
+12, `n_stations` 9, 8034 steps, dt 1.9065748695309721e-13 s, `excite` cw, `sink` None, `reference`
+None. The run asserted the lever instead of assuming it: `shim_active` False, the source containing
+the zero-copy transpose and no longer containing `.T.tocsr()`, `curl_dual().format` `csc`,
+`np.shares_memory` True with an equal buffer address, and `emfit`'s own sha256 unchanged across the
+run. Wall 4229.8 s, 0.5265 s per step. That is not offered as a speed claim: the anchor's 4474.8 s
+was measured under different contention, and the only quantity this run is evidence for is identity.
+
+> The receipt: the modified solve is bit-identical to the anchor on every recorded quantity, at zero
+> ULP.
+
+The comparison of the new dump against `.scratch/m2/board_cw_7.8333GHz.npz` exited 0 with the
+verdict "bit-identical on all 15 compared keys, on the derived eps_V, and on every per-station
+phasor component": 15 of 15 keys with `n_diff` 0, `max_abs` 0.0 and `max_ulp` 0; all nine `v` and
+all nine `i` station phasors with difference 0.000e+00; `eps_V` 3.6585525753171959 on both sides.
+The scalars, for the record: f 7833566197.718491 Hz, beta 314.03158662735785, s21 1.039055068395964,
+s11 0.013677440673277025, z0 (53.41247461887226 + 3.1557724449079396j).
+
+One caveat has to travel with that receipt. The run tested the working-tree edit before it was
+committed. The in-run hash is what shows `emfit/` did not change during the solve, and the commit is
+what fixes the bytes that were tested; the two agree by construction, not by measurement.
+
+#### 101.12.4 The saving, measured
+
+The eliminated allocation is 769356828 bytes at 4894400 cells, 157.19 bytes per cell, 733.66 MiB at
+the anchor mesh. At C5's 23699200 cells the same rate gives 3725640000 bytes, about 3.469 GiB.
+
+The cell count 23699200 is the supervisor's and has no occurrence anywhere in this tree; a search
+for it returns nothing. The C5 number is therefore an extrapolation from a measured anchor-mesh
+number and not a measurement at C5, and it is to be quoted as such wherever it is used.
+
+This is what replaces the paper calculation of 101.11.8. At the anchor mesh the number is now
+measured. At C5 it remains derived.
+
+#### 101.12.5 Correction: the nbytes defect is not a format fact
+
+The `AttributeError` that `'csc_matrix' object has no attribute 'nbytes'` raised in the gate driver
+after its dump is a defect in that driver's diagnostic, and not a fact about the csc/csr
+distinction: scipy 1.18.1 has no `.nbytes` on `csr_matrix` either. 101.11.8 already records it
+correctly as a defect, at lines 3931, 3932 and 3937, so nothing there needs repair; the mis-framing
+exists only in the scratch note `.scratch/block_101_11_8.md:47-49`.
+
+The same mistake recurred inside this verification, in the first version of the operator-proof
+script, and was caught by reading its exit code rather than its output. It is a pattern and not a
+one-off. The fix is `.data.nbytes`, or data plus indices plus indptr when the whole allocation is
+meant.
+
+#### 101.12.6 Five instrument catches
+
+Recorded because each one, believed, would have written a false record.
+
+(1) A `tail -n +N` off-by-one: `+N` skips N-1 lines, because tail numbers from 1, so a check
+anchored at the wrong line reports the wrong content. (2) A stale job record read as current: a
+previous `submit_query` record was consulted as if it described the run then in flight. (3) An
+unsatisfiable check: a `tail -n 67` hash comparison that no correct file could pass, which would
+have declared a correct change corrupt. (4) A mis-specified probe: `.data is .data` is unsatisfiable
+for any scipy 1.18.1 transpose view, so the probe declared correct behaviour broken, as recorded in
+101.12.3(a). (5) The nbytes recurrence of 101.12.5, caught by an exit code and not by reading the
+output.
+
+They sit here rather than in 101.11.9, and the reason is worth stating. 101.11.9 records the refusal
+class, a worker stopping when a precondition fails. These five are failures of verification
+instruments, and they belong with the verification record they corrupt. A worker that reports a
+mis-specified probe as a FAIL is doing its job; the defect is in the probe.
+
+#### 101.12.7 One deviation, accepted
+
+The instruction was to revert if bit-identity was not confirmed. On a run whose verification had
+printed two FAILs, the worker declined to revert and asked instead.
+
+Ruling: the decline is accepted and the change stands. The revert clause was written for a numerical
+difference, and both FAILs were mis-specified probes that no correct implementation could satisfy.
+What makes this acceptable rather than merely convenient is what happened alongside it: the FAILs
+were reported rather than suppressed, the numerics were not touched in order to make the probes
+pass, and the question was asked instead of decided. It is recorded as a deviation so that this
+record does not read as though the clause was obeyed.
+
+#### 101.12.8 What remains open
+
+`divergence_dual()` still materialises its copy, and the same lever is available there. The C5
+passivity test remains pre-registered and unrun, at lines 3333-3345 and open at 3367, and three
+incompatible C5 prices are on file: 12.98 GiB and about 28430 s at 3287 and 3351, 16.556 GiB peak
+and 1.25 GiB short at 3414, and 41868 s, which is 11.63 h, at 3700. Those must be reconciled before
+any such run is authorised. The wall still needs a quiet window.
