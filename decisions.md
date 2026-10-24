@@ -4648,3 +4648,184 @@ reading is corrected here, and the correction is the order's own.
 
 **Status: BLOCKED.** The order awaits a ruling on which of the three variants is authorized. The window
 resolution of `R` is **NOT YET AVAILABLE**, and no number for it appears anywhere in this record.
+
+#### 101.12.14 Experiment B: the estimator window as an instrument (pre-registered)
+
+**(i) What B asks, and what it does not.** 101.12.13(vi) closed the variant question: A is REFUSED
+by the principal, C is nothing on its own and becomes the floor of 101.12.15, and B is the one
+runnable variant. B is an *instrument* test, not a rival test. Every number in this record that
+leans on `R` is read out of one DFT window -- the nine stations of the anchored config, the bin
+that `round(f*span)/span` snaps to, and the phase slope across those stations. B asks whether that
+window is why the anchor agrees with itself: whether the anchor's agreement is an accident of its
+own bin. It moves `nsteps` so the window is forced onto a different `k`, and reads whether the
+agreement survives.
+
+**(ii) The two arms, and why exactly 8926 and 8928.** `n_warm` is not a parameter of
+`microstrip_wave_board` (`studies.py:3491-3515`); the study takes `nsteps: int = MS_NSTEPS`
+(`studies.py:3501`), hands it to `microstrip_wave` at `studies.py:3608`, and the warm-up is the
+default `n_warm = nsteps//4` at `studies.py:2659`. The accumulated window is therefore
+`nsteps - nsteps//4`, which moves in steps of 3/4. With `dt = 1.9065748695309721e-13` s
+(`.scratch/tol/tol_driver.py:103`) the bin lattice has period `1/(F_TARGET*dt)` = 669.578309 in
+`n_acc`; the anchor's `n_acc` is 6026 (`k = 9`), and 6026 + 669.578309 = 6695.578, so the two
+integers straddling one crossing of the lattice are 6695 and 6696. Inverting the 3/4 rule:
+8926 - 8926//4 = 8926 - 2231 = 6695 and 8928 - 8928//4 = 8928 - 2232 = 6696, both checked in
+Python. `k` is 10 in both arms, not 9: this is a genuinely different bin, not the anchor's bin
+nudged.
+
+**(iii) The predicted estimator state (checked by arithmetic, not by a solve).** For `n_acc` 6695:
+span 1.2764518751509857e-09 s, `k = 10`, `f0` = 7834216232.2548552 Hz, offset **+0.916232255 MHz**.
+For `n_acc` 6696: span 1.2766425326379389e-09 s, `k = 10`, `f0` = 7833046247.7518301 Hz, offset
+**-0.253752248 MHz**. The anchor, for comparison: `n_acc` 6026, span 1.1489020163793638e-09 s,
+`k = 9`, `f0` = 7833566197.7184906 Hz, offset +0.266197718 MHz. The anchor is itself 0.266 MHz off
+`F_TARGET`: no arm of this record is exactly on the tone, and the guard is not a check that the
+run is on the tone, only that the snapped bin is a plausible representative of it.
+
+**(iv) One number in 101.12.13 is corrected here.** 101.12.13(iv) gave the lattice spacing as
+669.5556. The value is 669.578309 (`1/(7833300000.0 * 1.9065748695309721e-13)`). The conclusion is
+untouched -- with either figure `k = 9` lands on 6026 and `k = 10` on 6695/6696, inside the
+one-megahertz guard -- but this record should carry the right constant.
+
+**(v) One driver edit; no library edit.** The library needs nothing for B. The driver does:
+`.scratch/tol/tol_driver.py` hardcodes `ANCHOR_NSTEPS = 8034` (`:104`), prints it as a constant
+(`:157-159`, `:179-182`), appends the string "nsteps" to its deviation list when it differs from
+8034 (`:203-204`), asserts that list is empty (`:209`), and passes it at `:216`. B therefore needs
+`nsteps` lifted to a parameter in that driver -- a `.scratch` edit, not a change to `emfit/`.
+`emfit/studies.py` stays untouched, as it must: its dirty SHIFT-IMPL edit is another workstream's
+and is not B's.
+
+**(vi) Pre-registered acceptance and void conditions.** Accept iff both arms return
+`dt = 1.9065748695309721e-13` (dt is a function of the grid alone, so any other value means the
+grid moved and the run is not B), `k = 10`, the spans above to the last printed digit, and
+`|offset| < 1e6` Hz. The 6695 arm is the tight one: +0.916232255 MHz uses 91.6 per cent of the
+guard, leaving 8.4 per cent of margin. If either arm lands outside the guard the run is VOID, not
+evidence: the response is to move the requested tone, not to widen the band after the fact.
+
+**(vii) What B licenses, and what it does not.** B registers no prediction for the value of `R`. It
+registers a prediction about the *estimator*, and a discipline for reading it. If both arms pass,
+then a single-bin offset of the size the anchor carries is ordinary and the estimator is bin-robust;
+the `R` each arm returns must then be reported together with its bin offset, and no later
+differential may average across bins without saying so. If the two arms' `R` disagree by more than
+the cross-configuration spread of `decisions.md:3335`, that is a result this record has not yet
+faced -- the estimator is not stable across `nsteps` -- and it outranks any reading of `R` taken
+from a single window. B does not close `R'` or `L`: both scale with the cell, which is C5's job,
+and moving `nsteps` changes neither.
+
+**(viii) Cost.** At 0.5676 s/step (`decisions.md:4362-4363`): 8926 -> 5066.4 s = 84.44 min and
+8928 -> 5067.5 s = 84.46 min, the pair 10134 s = 168.9 min. At 0.487 s/step (2936.7 s / 6026):
+72.45, 72.47 and 144.9 min. Two runs, no more.
+
+#### 101.12.15 The port plane as a variable: the +/-2 mm port-position test (pre-registered)
+
+**(i) The question.** 101.12.13(vi) variant C was named as an option and is empty on its own. It
+becomes a test here, and the test is spatial. If `R` is contaminated by something near the launch
+-- the pad, the edge where the strip meets the port plane, the evanescent tail that has not yet
+settled into the line -- then moving the port plane moves the contamination. If it does not move,
+the contamination is not where the port is, and the near-field story loses its simplest home.
+
+**(ii) `x_port` is already a parameter -- of the spec, not of the study.** `x_port` is a field of
+the frozen dataclass `MicrostripBoard`, in **metres from the `xmin` datum** (docstring
+`emfit/board.py:195`, declaration `:212`, positivity guard `:220-225`). `cropped_to_strip` snaps
+it up onto the cell (`emfit/board.py:542`) and rewrites `port.position` (`:559`);
+`to_cell_counts(n_sub, n_pml)` derives `n_ref = x_port/cell - n_pml` and
+`n_line = (x_far - x_port)/cell` (`emfit/board.py:618-621`) and raises unless both are exact
+integers (`:623-630`). `microstrip_wave` consumes the counts: `nx = n_pml + n_ref + n_line`
+(`studies.py:2556`), `ix_port = n_pml + n_ref` (`:2566`), strip sheet from `ix_port` to `nx`
+(`:2592-2597`). What `microstrip_wave_board` does **not** expose is `x_port`, `n_ref` or `n_line`
+as a keyword (`studies.py:3491-3514`): the port arrives only through the spec, which the study
+converts at `studies.py:3591-3603`, and the driver builds the spec itself at
+`.scratch/tol/tol_driver.py:163-165`
+(`MicrostripBoard.from_kicad(...).cropped_to_strip(n_sub=N_SUB)`).
+
+VERDICT -- **feasible, but not runnable as written.** The variable is one
+`dataclasses.replace(spec, x_port=...)` in the `.scratch` driver, with `port.position` following
+it. Zero `emfit` change, exactly as for B, and the same sentence applies: `emfit/studies.py` stays
+untouched.
+
+**(iii) The planes.** The anchor sits at `ix_port` 87, `x_port` = 8.7 mm. Twenty cells at 1e-4 m is
+2.0 mm, so the pair is `ix_port` 67 (6.7 mm) and 107 (10.7 mm). `decisions.md:4418-4419` lists four
+planes (67/107/47/127); the +/-4 mm pair is deferred there, and the reason is `decisions.md:4435`:
+the port-near field decays over about 2.8 mm, so a 4 mm move relocates the contamination by its own
+size and can no longer be read as a differential.
+
+**(iv) What else moves, stated plainly.** The strip runs from `ix_port` to the far wall `nx = 322`
+(fixed, `decisions.md:4420-4421`), so the port plane and the line length are one number in opposite
+directions: `n_ref` 75 -> 55 and `n_line` 235 -> 255 at -20; 75 -> 95 and 235 -> 215 at +20
+(`decisions.md:4424`). The stations are independent keywords -- `MS_X_FIRST, MS_X_LAST = 10.4e-3,
+20.0e-3` (`studies.py:1177`, keyword defaults `:3497-3498`), consumed `:2668`, snapped to cells
+`:2669`, clipped to `[ix_port+1, nx-2]` `:2670` -- so at -20 the row is the anchor's cell for cell
+(`decisions.md:4430-4431`), while at +20 the first station clips from 10.4 to 10.8 mm
+(`decisions.md:4431`). The grid is unchanged (322x200x76), so `dt = cfl_dt(grid)` and with it
+`n_warm`, `n_acc`, `span` and `f0` are identical in the two arms (`studies.py:2650-2652`,
+`decisions.md:4425-4426`): the estimator window is the same window in both, which is what makes
+the differential an honest one. It is **not** differential in the port alone, and it cannot be:
+the line length changes with the port because the model is one straight strip from the port plane
+to a fixed far wall, and the +20 arm pays one station-class cell at the near end. Both are
+consequences of the model, not of the edit, and both are stated here before the run rather than
+after it.
+
+**(v) The loads question, closed.** The one way the +20 arm could refuse to build is a lumped load
+inside the widened strip: the guard raises unless `ix_port < ix_load < nx`
+(`studies.py:2614-2617`), and it sits inside `if loads:` (`studies.py:2609`). `MicrostripBoard.loads`
+defaults to `()` (`emfit/board.py:216`), `from_kicad` constructs no `Load` (the module imports only
+`math`, `dataclasses` and `emfit.kicad`, `emfit/board.py:44-49`), and the driver passes none
+(`.scratch/tol/tol_driver.py:163-165`). The empty tuple makes the guard vacuous in both arms and
+the +20 arm cannot raise. This is a closed condition, not an open one, and it is written down
+because a load between 8.7 and 10.7 mm would have made this test unbuildable rather than
+uninteresting.
+
+**(vi) The floor this test may use -- and the reconciliation it is bound by.** The order asked for a
+ruling on three candidate floors and gets one here.
+
+  - 0.00510656508428875 (0.470763 per cent of `R` = 1.084742) is a difference between two
+    *estimators on one run*, not between two runs. A same-route differential carries it in both
+    arms, so it cancels, and it is **not a floor on a differential**. What it governs is any
+    **absolute** reading of `R`. Adopted here as the falsification (lower) threshold, `T_f`.
+  - 0.011822697446726149 (1.089721 per cent; `decisions.md:3335`) is
+    `1.0967517700737275 - 1.0849290726270013`, and those two numbers come from **two different
+    captures** -- the cw anchor `board_cw_7.8333GHz.npz` and `.scratch/m2/board_run_pw.npz` bin 14
+    (`decisions.md:3096`, `:3098`) -- so it varies the capture *and* the frequency. Part of it is
+    common mode and cancels in a fixed-frequency same-route differential, so it is **not a floor on
+    one either**, and it must not be used as one. Adopted as the deliberately conservative upper
+    (confirmed) threshold, `T_c`.
+  - 0.0024 sits below both and below the 0.47 per cent cross-route gap. It is not defensible on any
+    reading, and it is not used.
+  - The repeat of the identical configuration returned **exactly zero** (`decisions.md:4448-4454`).
+    The common-mode floor of a same-config repeat is therefore 0; the differential's own floor is
+    **unmeasured**, and is bounded above only by `T_c` = 0.0118.
+
+  One sentence of reading: the principal's 0.0051-based floor is the right number in the wrong
+  role -- it cannot be a floor on a differential, and it is what governs any absolute number
+  instead.
+
+**(vii) The prediction the rival makes, if it is real.** The rival geometry is near-field
+contamination at lambda = 2.77 mm (`decisions.md:3329`). Distance from the port plane to the first
+station: 1.7 mm at the anchor, 3.7 mm at -20, 0.1 mm at +20 (the +20 station having clipped to
+10.8 mm). Exponential factors 0.54133422 / 0.26296349 / 0.96454279, ratio +/(-) = 3.667972.
+Calibrated so that the anchor's own `R` = 1.084742 is entirely contamination -- `R_true` = 1 --
+`c(anchor) = 1 - 1/R` = 0.07812180 and `A = 0.14431344`; then `c(-)` = 0.03794917 -> `R(-)` =
+1.039446 and `c(+)` = 0.13919649 -> `R(+)` = 1.161705, so **Delta = R(+) - R(-) = 0.122259**, with
+departures -0.045296 and +0.076963 from the anchor. Margins: 10.34 x `T_c` and 23.94 x `T_f`.
+Sensitivity (shape only): 1.296019 of `R` per unit `c(anchor)`, so `T_c` needs `c` = 0.009122
+(0.91 per cent) and `T_f` needs 0.003940 (0.39 per cent); the test sees down to 11.7 per cent of
+the contamination the rival needs, an 8.6-fold margin. The rival is not merely detectable, it is
+loud, and so a null result is informative.
+
+**(viii) Pre-registered outcomes.** Four, and only four, decided by `Delta` alone:
+
+  1. `Delta` > 0 with `R(-)` < anchor < `R(+)` and magnitudes in the ratio of (vii): the rival's
+     port-near shape survives, and the near-field account becomes the leading one.
+  2. |`Delta`| <= `T_f` = 0.0051: the port plane does not move `R` at the falsification threshold,
+     so the rival's *shape* is falsified as calibrated. This is a bound, not a zero: the
+     differential's floor is unmeasured.
+  3. `T_f` < |`Delta`| <= `T_c`: undecided at the pre-registered thresholds. Recorded as undecided,
+     and no reading of `R` is authorised from it.
+  4. `Delta` < 0, or the ratio of (vii) inverted: the rival's geometry is wrong in sign, a stronger
+     refutation than (2) and the strongest result this test can return.
+
+**(ix) What this test does not do.** It does not close `R'` or `L`: both scale with the cell, and
+that is C5's job -- a port plane is a position, not a length. It does not measure the differential's
+floor (see (vi)). It does not run variant A, REFUSED by the principal. And it changes nothing in
+`emfit/`, whose `studies.py` carries another workstream's SHIFT-IMPL edit and stays untouched here.
+
+**(x) Cost.** 2 x 8034 = 16068 steps: 9120 s = 152.0 min at 0.5676 s/step, 7825 s = 130.4 min at
+0.487 s/step.
