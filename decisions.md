@@ -3368,3 +3368,203 @@ C3 and C4 cannot separate H from R-prime, because both rivals are independent of
 - **Closed.** 99.9, void by 100.1.
 - **Run in this block.** Nothing.
 - **Fence.** No run may be launched under this section without a fresh amendment and the principal's go. The Problem chapter remains deferred.
+
+## 101. The memory model corrected by measurement, and a pre-registration for deleting the second curl copy
+
+### 101.0 Status
+
+NOT IMPLEMENTED / NOT RUN / NOT APPROVED. No line of `emfit/` was edited for this section, no solve
+was launched for it, no memory measurement was taken of a lever-on run; the only executions behind this
+text are (i) the already-recorded C3 anchor measurement quoted in 101.1 and (ii) the in-process scipy
+comparisons reported in 101.5, both of which run no part of `emfit/`. This section pre-registers a lever
+and the gate that would decide it; it proposes nothing by being written.
+
+### 101.1 Corrected memory model – §100 is 24.34 B/cell low
+
+The C3 anchor measurement (cgroup file read at 12:16:58 UTC, 220 s after the banner
+"C3 INVARIANTS OK – solve starting 12:13:18" in `C3.log`) gives four independent numbers for the same
+process: `memory.current` 3,013,267,456 B = 2.80636 GiB, `memory.peak` 3,670,994,944 B = 3.41888 GiB,
+`VmRSS` 2,931,380 kB = 2.79558 GiB, `VmHWM` 3,589,172 kB = 3.42290 GiB, with no `oom` counter increment.
+The C3 run was still in flight when this was written, so `memory.current` is a mid-run reading and
+`memory.peak` is a lower bound on that run's peak.
+The itemised enumeration of the live arrays – 7 `n_edges` float64 vectors (`e`, `inv_m_eps`, `M_eps.diag`,
+`M_sigma.diag`, PML `sigma_e`, PML `e`-multiplier, and `current` created at `emfit/studies.py:2733`),
+5 `n_faces` float64 vectors (`h`, `inv_m_mu`, `M_mu.diag`, PML `sigma_m`, PML `h`-multiplier), the two CSR
+operators and 3 `n_edges` bools – is 3,005,610,434 B = 2.79919 GiB = 614.09 B/cell, i.e. 3.7 MiB above
+`VmRSS`; the enumeration is therefore complete to within 0.13 % and is used as the price list.
+
+`decisions.md:3293` prices the same set at "about 588 to 591 bytes per cell" by adding the vector tally at
+`decisions.md:3295` (267 B/cell) and the operator tally (`decisions.md:3301`, "together 314 bytes per
+cell") plus the 3 bools. The vector tally is wrong by exactly `current`: `decisions.md:3295` names
+`current` among the float64 vectors, but its two printed groups add to 146.05 + 120.69 = 266.74 B/cell,
+and 8 B × `n_edges`/N = 8 × 14,891,942 / 4,894,400 = 24.34 B/cell appears nowhere in that sum;
+266.74 + 314.00 + 9.13 = 589.87 B/cell reproduces the 588–591 band, and 589.87 + 24.34 = 614.21 B/cell
+reproduces the enumeration and the measurement. §100 is 24.34 B/cell low, and the C5 price in
+`decisions.md:3301` ("about 3.46 GiB at C5 (12.98 GiB down to about 9.5 GiB)") is low by the same term.
+
+Re-priced C5 (`n_sub=32`, 4.842105 × the cells of the anchor: N = 23,699,200):
+
+| term | at anchor | at C5 | derivation |
+|---|---|---|---|
+| steady, lever off | 2.799 GiB | 13.55 GiB | 614.09 B/cell × 23,699,200 / 2³⁰ |
+| build transient | 0.613 GiB | 2.97 GiB | (peak − current) = 3.41888 − 2.80636 GiB = 0.61256 GiB, × 4.842105 |
+| peak, lever off | 3.419 GiB | 16.556 GiB | 3.41888 GiB × 4.842105; agrees with steady + transient, 13.55 + 2.97 = 16.52 GiB, to 0.04 GiB |
+| host `MemTotal` | 15.31 GiB | 15.31 GiB | 16,050,128 kB / 2²⁰ |
+
+C5 as specified does not fit: 16.556 GiB of peak against 15.31 GiB of host memory is 1.25 GiB short, and
+the shortfall is what forces the choice between shrinking the working set and shrinking the geometry. No
+fixed process overhead is added to either side: peak and steady are two readings of the same process, so
+the interpreter and numpy/scipy import baseline cancels in the difference, and the transient is purely
+proportional to N.
+
+That the 0.61256 GiB transient is the `T.tocsr()` copy at `emfit/operators.py:245` is NOT INSTRUMENTED.
+It is an inference from a size coincidence – one full second copy is 157.00 B/cell = 0.7156 GiB at the
+anchor (101.3), of the same order as the transient – and 1 s-cadence `VmRSS` sampling through
+`Stepper.__init__` would settle it.
+
+`decisions.md` prints the C5 price as 28,430 s (`decisions.md:3266`, `decisions.md:3287`); the product
+2936.7 × 4.842105 × 2 is 28,439.6 s, so the recorded digit is 10 s low, and 7.9 h stands either way. This
+is a correction to §100, not a disagreement with it.
+
+### 101.2 What the lever is
+
+`emfit/operators.py:242-246` builds the second curl operator as a stored CSR matrix,
+
+    C_tilde = C.T.tocsr()          # emfit/operators.py:245
+
+and the only use site is `emfit/evolve.py:194`, which multiplies the electric field vector by it. The
+object lives for the whole solve because it is an attribute of the operator bundle constructed at
+`emfit/evolve.py:126` (the `FITStepper` constructor, which stores both `self.C` and `self.C_tilde`), and
+`emfit/studies.py:2650` constructs one `FITStepper(cc, ...)` for the whole run. The replacement is
+
+    C_tilde @ h        ->        C.transpose(copy=False) @ h
+
+i.e. delete the stored matrix and multiply through a CSC view of `C` returned by
+`scipy.sparse.csr_matrix.transpose(copy=False)`; the view is rebuilt per call (it is three attribute
+assignments, no data movement) or cached once as a `.T` attribute on the bundle. No array of length
+`nnz` is allocated on this route (`transpose(copy=False)` returns a `csc_matrix` whose `data`, `indices`
+and `indptr` are the original three arrays, verified by `np.shares_memory` returning True for all three).
+
+### 101.3 Saving, term by term
+
+With `nnz` = 4 × `n_faces` = 4 × 14,767,272 = 59,069,088, `n_edges` = 14,891,942 and N = 4,894,400:
+
+| term | bytes | B/cell | derivation |
+|---|---|---|---|
+| data | 472,552,704 | 96.55 | `nnz` × 8 B (float64 ±1 entries) / N |
+| indices | 236,276,352 | 48.27 | `nnz` × 4 B (int32) / N |
+| indptr | 59,567,772 | 12.17 | (`n_edges` + 1) × 4 B / N |
+| **full second copy (what is allocated today)** | **768,396,828** | **157.00** | 96.55 + 48.27 + 12.17 |
+| **transpose view (what the lever allocates)** | **0** | **0.00** | all three arrays shared, see 101.2 |
+
+The alternative total sometimes quoted – 144.82 B/cell = 96.55 + 48.27 – is what a *rebuilt* transpose
+costs when `data` and `indices` are shared but a fresh `indptr` of length `n_edges` + 1 must be
+materialised. The implementation does not pay it: scipy's `transpose(copy=False)` stores the CSR row
+pointer as the CSC column pointer of the transpose, which is exactly correct (column j of `C.T` is row j
+of `C`), so `indptr` is shared as well and the saving is the full 157.00 B/cell = 3.46 GiB at C5
+(768,396,828 B × 4.842105 = 3.46 GiB), not 144.82 B/cell = 3.19 GiB.
+
+### 101.4 What it does not save
+
+The remaining steady state after the lever is 614.09 − 157.00 = 457.09 B/cell = 10.09 GiB at C5
+(457.09 × 23,699,200 / 2³⁰ = 10.089 GiB); the lever touches nothing outside the two operators. It does
+not touch the COO assembly transient at `emfit/operators.py:205-208`, which allocates the coordinate
+triplets for both operators before either CSR exists; it does not touch `current`
+(`emfit/studies.py:2733`, 24.34 B/cell); and it does not reduce wall time – `C.transpose(copy=False) @ h`
+dispatches `csc_matvec` instead of `csr_matvec`, the same number of multiply–adds over the same `nnz`, and
+the per-call view construction is an attribute assignment. The lever buys memory and nothing else. That
+is a claim about multiply–adds and `nnz` only; it is not a wall-time prediction, and 101.6.5 records wall
+time without gating it.
+
+### 101.5 Bit-identity gate – the crux
+
+The gate is decidable and cheap: one lever-on anchor run (2936.7 s, `price_levers.py:26` `ANCHOR_WALL`)
+must reproduce, to the digits printed below, every derived key stored in
+`.scratch/m2/board_cw_7.8333GHz.npz`:
+
+| key | stored value |
+|---|---|
+| `f` | 7,833,566,197.718491 Hz |
+| `beta` | 314.03158662735785 rad/m |
+| `s11_port` (`s11_measured`) | 0.013677440673277025 |
+| `s21` | 1.039055068395964 |
+| `s21_power` | 1.0415094815908448 |
+| `passivity` | 1.0798225075427126 |
+| `passivity_power` | 1.0849290726270013 |
+| `z0` | 53.41247461887226 + 3.1557724449079396j Ω |
+| `x_port` | 0.008700000000000001 m |
+
+The stored pair is internally consistent: `s11_port² + s21²` = 0.013677440673277025² + 1.039055068395964²
+= 1.079822507542713 = `passivity`, and `eps_V` = (`beta` · c / (2π`f`))² = 3.6585525753171959 with
+c = 299,792,458 m/s, i.e. n_eff = 1.9127343, matching the value carried in §100. The gate asserts
+bit-identity with the record as it stands, not with a physically correct value: `passivity`
+1.0798225075427126 and `passivity_power` 1.0849290726270013 both exceed 1, so the anchor's own
+S-parameters violate passivity, and the gate requires reproducing those digits. A lever-on run that
+improved them would falsify under 101.6.1 rather than pass.
+
+Prior probability that the gate passes: high. An in-process scipy 1.18.1 / numpy 2.5.4 comparison of
+`C.transpose(copy=False) @ h` against `C.T.tocsr() @ h` on 500 × 500 CSR matrices with 4 nonzeros per row
+returned bitwise equality (`np.array_equal` True, max ulp 0.000, zero differing entries) for all 5 seeds
+× {real `h`, complex `h`} = 10 of 10 combinations, and at n = 10, 50, 200, 2000, and again on the int64
+index path; a 1-nonzero-per-row control (no accumulation at all) is likewise identical, so no arithmetic
+difference is introduced by the format switch. Both routes also disagree identically with a naive
+ascending sequential float64 accumulation (200 of 200 entries differ from the hand-rolled loop), i.e. the
+two kernels share one internal summation order that is not the textbook one. The one residual risk is
+ordering of the row entries themselves: the test matrices had sorted rows, and the anchor `C` is assembled
+from COO at `emfit/operators.py:205-208`, so if the anchor `C`'s rows are not sorted the CSC view sums in
+a different order than the sorted CSR copy and the gate fails. That is decidable before spending the
+2936.7 s by evaluating `C.has_sorted_indices` at `emfit/operators.py:245`, and by one off-line comparison
+of the two products on the real anchor `C` (one build, no solve). Gate cost: 2936.7 s.
+
+### 101.6 Falsifiers
+
+The lever is dead if any one of the following holds after the gate run:
+
+1. any derived key in 101.5 differs from the stored digits – one differing digit in `f`, `beta`, `s21`,
+   `s11_port`, `passivity`, `passivity_power` or `z0` falsifies it; bit-identity, not tolerance, is the
+   criterion, because `decisions.md` carries these numbers as digits.
+2. `C.has_sorted_indices` is False at `emfit/operators.py:245` and the off-line product comparison on the
+   real `C` is not bitwise equal – the gate then cannot pass and is not worth running.
+3. the gate run cannot be completed for memory reasons: peak above 15.31 GiB, or an `oom` counter
+   increment in the lever-on cgroup, falsifies the resize argument in 101.1.
+4. the lever-on anchor peak is not at least 0.7 GiB (157.00 B/cell × 4,894,400 = 0.7156 GiB) below the
+   lever-off peak of 3.41888 GiB – the saving would not exist as priced.
+5. wall time is not a falsifier: the gate run's wall time is recorded but not gated, because the anchor's
+   run-to-run scatter is not characterised; if a second lever-off anchor run ever exists the gate becomes
+   the observed scatter, and not before.
+
+### 101.7 Cost
+
+The gate is one anchor run: 2936.7 s. C5 follows the same cells/dt rule that priced C5 in
+`price_levers.py:33` (`wall = ANCHOR_WALL × N/ANCHOR_N × dt/ANCHOR_DT` with `ANCHOR_WALL` = 2936.7 s,
+`ANCHOR_N` = 4,894,400, `ANCHOR_DT` = 1.906574869530972e-13 s): the lever-off C5 wall that matters here is
+N/`ANCHOR_N` = 4.842105 with `dt` halved (cell halved at `n_sub=32`, `dt` ∝ cell, `nsteps` doubled to hold
+the span) = 2936.7 × 4.842105 × 2 = 28,439.6 s = 7.90 h. Total gate + C5 = 2936.7 + 28,439.6 = 31,376.3 s
+= 8.72 h. Note the inconsistency, recorded rather than smoothed: `price_levers.py:33` as literally written
+multiplies by `dt/ANCHOR_DT` = 0.5 and would print 7,110 s for C5, 4 × lower than the 28,439.6 s that the
+step count implies; the 28,439.6 s figure is the one that prices a solve, and the printed 7,110 s in the
+C5 row of the lever table must be read as an error of that line, not as a second estimate.
+
+Memory after the lever: steady 10.09 GiB (457.09 B/cell × 23,699,200 / 2³⁰). The peak after the lever has
+two labelled readings. Reading one, the transient is the second-copy build, which the lever removes:
+peak = 4.842105 × (3.41888 − 0.7156) = 13.09 GiB. Reading two, the full measured transient recurs:
+peak = 10.09 + 2.97 = 13.06 GiB. Headroom against 15.31 GiB is 2.22 GiB on reading one and 2.25 GiB on
+reading two; both fit, which is the whole point of the lever.
+
+### 101.8 What voids this pre-registration
+
+This section is void, and must be re-written rather than reinterpreted, if any of the following changes
+before the gate runs: the anchor configuration (322 × 200 × 76, cell 1e-4 m, `nsteps` 8034, `n_warm` 2008),
+because 101.1's price list is per cell of that geometry; the contents of `.scratch/m2/board_cw_7.8333GHz.npz`,
+because 101.5's digits are the gate; the scipy or numpy version, because 101.5's bit-identity evidence is
+kernel behaviour and not mathematics; `emfit/operators.py:242-246` or `emfit/evolve.py:194`, because 101.2
+names those lines; or the C5 geometry `n_sub=32`, because 101.7's 28,439.6 s is that geometry's. A second
+copy of the curl operator introduced anywhere else is equally voiding.
+
+### 101.9 Status and the decision asked
+
+NOT IMPLEMENTED / NOT RUN / NOT APPROVED – nothing in this section has been executed. The single decision
+asked of the principal: approve the bit-identity gate of 101.5 (checked first for sorted rows at
+`emfit/operators.py:245`, then one lever-on anchor run at 2936.7 s) so that C5 can be re-priced from
+16.556 GiB of peak to 13.06 GiB of peak and run inside 15.31 GiB of host memory, or refuse the lever and
+shrink the geometry instead.
