@@ -1,0 +1,171 @@
+\section{An open problem: an 8\% passivity excess on a graded mesh}
+\label{sec:openproblem}
+
+\noindent\emph{Status: draft -- a problem statement. Nothing here is computed, no new field solve stands behind it,
+and the one run that would settle it has been registered, priced and not made. Every number carries the line of
+\texttt{decisions.md} that holds it.}
+
+\subsection{The observation}
+\label{sec:openproblem-observation}
+
+At \SI{7.833566}{\giga\hertz} the port-plane reflection is $|S_{11}| = 0.013677$ and the transmission is
+$|S_{21}| = 1.039055$, both from the single record \texttt{board\_cw\_7.8333GHz.npz}
+(\texttt{decisions.md:3096}), so $|S_{11}|^2 + |S_{21}|^2 = 1.079823$: reflected and transmitted power together
+exceed the incident power by $7.98$ per cent (\texttt{decisions.md:1394}). No gain term can deliver it: the only
+damping is the perfectly matched layer (\texttt{decisions.md:83-88}).
+
+The same excess appears in coordinate space, and that is the form we argue in. Over nine station planes from
+\SI{10.4}{mm} to \SI{20.0}{mm} -- \SI{9.6}{mm} of a \SI{23.5}{mm} line -- the circuit quantity
+$\tfrac12\operatorname{Re}(v\,i^{*})$ rises $8.4742$ per cent in power end to end, $4.1509$ per cent in amplitude
+(\texttt{decisions.md:3102}), while the same nine cross-sections reduced as a time-averaged Poynting flux fall
+$3.0723$ per cent (\texttt{decisions.md:1472}).
+
+The profile is not monotone: it peaks at station 8, station 9 sits $0.13$ per cent below the peak in the full-step
+and the half-step record alike, and nothing jumps at the strip interface (\texttt{decisions.md:1424}). It saturates
+and turns over, which neither an instability nor a sink would do. Nor is it the whole line: the last station stops
+\SI{12.2}{mm} short of the far wall, so the excess belongs to \SI{9.6}{mm} of it (\texttt{decisions.md:3323}).
+Halving the step, mesh unchanged, over $16\,067$ steps moves the growth from $1.039055$ to $1.039043$, the excess
+from $8.4742$ to $8.4549$ per cent and $\alpha$ by $-0.030$ per cent for \SI{5547.6}{s}
+(\texttt{decisions.md:1408}, \texttt{decisions.md:1430}, \texttt{decisions.md:1434}); \texttt{dt\_scale} refines
+time only (\texttt{decisions.md:1428}).
+
+\subsection{What it is not}
+\label{sec:openproblem-not}
+
+\emph{Not the field update.} No parameter of the update can add power, and the part a test can hold is held:
+\texttt{pec\_conservation} pins the relative drift of the mixed-state invariant below $10^{-10}$ over a thousand
+steps on a box with PEC walls (\texttt{tests/test\_energy.py:157}, \texttt{decisions.md:87}). The excess is
+$7.98\times10^{-2}$, eight orders above that drift, and halving $\dd t$ moves it by $0.030$ per cent of itself.
+
+\emph{Not the reference division.} The division that would inflate $|S_{21}|$ is at
+\texttt{emfit/studies.py:1984-1990}, inside \texttt{if reference is not None:}, with the power column at
+\texttt{:2005-2008} under the same guard, and \texttt{reference\_used} (\texttt{emfit/studies.py:2153}) is
+\texttt{False} on all six board captures (\texttt{decisions.md:2987}): the named mechanism has no referent in the
+stored data. The two amplitude routes left, power and projection, agree to $2.36\times10^{-3}$ and both exceed
+unity (\texttt{decisions.md:3100}).
+
+\emph{Not the 5.9 per cent effective permittivity.} The one material-side number of that size is the $5.9$ per cent
+between measured $\eps_{\mathrm{eff}}$ and the static Hammerstad-Jensen value, and it is not an error: at
+\SI{5.827786408}{\giga\hertz} the measurement is $3.541823$ against $3.343938310$ static, every dispersion closure
+in the tree lies between those, and a quasi-static open-boundary formula is not a like-for-like reference
+(\texttt{decisions.md:3010}, \texttt{decisions.md:3016}). The static value is retired in both directions, neither
+solver-error evidence nor validation (\texttt{decisions.md:2899}, \texttt{decisions.md:2901}), and the family
+explains sign and order only, its spread being the size of the effect (\texttt{decisions.md:3086}).
+
+\emph{Not the coupon floor.} The instrument has one calibration, a matched uniform coupon at \SI{5.8278}{\giga\hertz}
+with $|\gamma| = 0.0328$, on which the flux must be flat and is not: \texttt{sx\_station} decays $6.2646$ per cent
+over \SI{6.4}{mm} where the circuit quantity decays $1.9205$ per cent, the halves agreeing to $1.1\times10^{-3}$
+(\texttt{decisions.md:1446}). That tilt is mesh-independent, rate ratio $1.0044$, so not truncation
+(\texttt{decisions.md:1448}). Its settledness, $1.1\times10^{-3}$, sits a factor $79.8$ below the board excess of
+$7.98\times10^{-2}$; that factor is arithmetic between two stored figures and nothing else, the record forbidding
+the floor to be combined with, subtracted from or used to bound $1.079823$, the two not being on the same footing
+(\texttt{decisions.md:3084}). What separates them is sign: the coupon artefact is a decay of about one per cent per
+millimetre, a spurious decay cannot manufacture a growth at any mesh, and scaling the board figure by it was
+computed and rejected (\texttt{decisions.md:1460}).
+
+One mechanism survives all four, the per-station power reading on a graded mesh (\texttt{decisions.md:3090}).
+
+\subsection{The four rivals, and what would separate them}
+\label{sec:openproblem-rivals}
+
+The scored quantity is $R$, last-station power over first: $R = 1.084742$ at the anchor's cell
+(\texttt{decisions.md:3341}). Each rival predicts $R$ at the \SI{0.05}{mm} cell the test would build, from the
+anchor value scaled to that cell and widened by the only scatter on file, $1.0849$ against $1.0968$, about $1.1$
+per cent (\texttt{decisions.md:3335}); no reading of $R$ resolves less than that.
+
+\begin{table}[H]
+  \centering
+  \caption{The four rivals and the number each predicts at the cell the test of Section~\ref{sec:openproblem-c5}
+  would build (\SI{0.05}{mm}, \texttt{n\_sub} 32; \texttt{decisions.md:3297}, \texttt{decisions.md:3341}). Bands
+  from \texttt{decisions.md:3345-3347}, widened by the $1.1$ per cent floor of \texttt{decisions.md:3335}; the
+  port-near row from \texttt{decisions.md:3331}, \texttt{decisions.md:3333}, \texttt{decisions.md:4324}.}
+  \label{tab:openproblem-rivals}
+  \begin{tabular}{@{}lp{3.6cm}cc p{4.5cm}@{}}
+    \toprule
+    Rival & Claim & $R$ at \SI{0.05}{mm} & Band & Separated from the others by \\
+    \midrule
+    H & the rise is scale-free, not a property of the mesh & $1.0847$ & $[1.0728,\,1.0967]$
+      & the cell refinement alone; disjoint from both others \\
+    \addlinespace
+    R$'$ & the rise is second order in the cell & $1.0212$ & $[1.0101,\,1.0324]$
+      & the cell refinement alone; overlaps L \\
+    \addlinespace
+    L & first order in the cell, named although nothing on file predicts it & $1.0424$
+      & $[1.0310,\,1.0538]$ & as R$'$; a reading here falsifies both others \\
+    \addlinespace
+    port-near & near-field contamination at the port, decaying over \SI{2.77}{mm} & $1.084742$
+      & $[1.0728,\,1.0967]$ & not the cell refinement at all: the four port planes \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+A reading in the H band falsifies R$'$ and L, one in either of the others falsifies H, and one below $1.0101$ or
+above $1.0967$ falsifies every named rival and is recorded as a class (d) outcome rather than resolved by preference
+(\texttt{decisions.md:3351-3356}). R$'$ and L overlap, so a reading between $1.0310$ and $1.0324$ chooses neither --
+which is why the first-order rival was named at all, so that the gap between the other two is never read as an empty
+band (\texttt{decisions.md:3347}, \texttt{decisions.md:3357}).
+
+\subsection{The test we registered, and what we admitted about it}
+\label{sec:openproblem-c5}
+
+The lever is \texttt{n\_sub} $16 \to 32$: the cell halves to \SI{0.05}{mm}, the mesh becomes $644\times400\times92$
+-- $4.842$ times the anchor's cells -- and the steady resident set goes from $2.68$\,GiB to $12.98$\,GiB
+(\texttt{decisions.md:3297}, \texttt{decisions.md:3307}). The step count doubles with the cell's halving, $8034$ to
+$16\,068$ (\texttt{decisions.md:4452-4459}), so the wall time is $2936.7 \times 4.842 \times 2.0 = 28\,439.6$\,s,
+$7.90$\,h, plus the gate, itself conditional on the anchor being re-run in a quiet window
+(\texttt{decisions.md:4464-4466}). One memory distinction, and we keep it: $12.98$\,GiB is the steady figure for
+the run as registered, and the only peak on file, $13.06$ to $13.09$\,GiB, derived and not measured, is the
+post-lever peak, $10.09$\,GiB steady, leaving $2.22$ to $2.25$\,GiB against the $15.30659$\,GiB host limit
+(\texttt{decisions.md:3311}, \texttt{decisions.md:4461-4463}). At nine point seven times the anchor, the verdict on
+file is that the run is inadmissible as it stands (\texttt{decisions.md:3361}).
+
+The amendment we then wrote is the part of this chapter we would most like attacked. What was claimed first stands
+as registered; what changed is what the test is said to decide (\texttt{decisions.md:4447-4450}). It decides H
+against R$'$ and against L, whose bands do not overlap; it does not decide R$'$ against L, whose bands do; and it
+does not close the port rival, which the four displaced port planes exist to test
+(\texttt{decisions.md:4440-4445}). The bands were not redrawn, because a pre-registration edited after a result
+exists has failed at its only job (\texttt{decisions.md:3090}). One run scores two questions: passivity is read
+from the same capture, $1.0212$ under R$'$ against $1.0849$ under H (\texttt{decisions.md:3359}). Only this lever
+moves the cell.
+
+\subsection{What we would check first}
+\label{sec:openproblem-six}
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=3pt]
+  \item \textbf{Measure the absorber before trusting the wall.} The board runs twelve cells of it at \SI{0.1}{mm}
+        (\texttt{decisions.md:4378}), under the twenty-cell default of a layer whose measured table calls twenty
+        cells modest and forty what a real absorber wants (\texttt{emfit/pml.py:32-36}). What is its reflection?
+  \item \textbf{Price the fan-outs the mesh leaves out.} The strip is one uniform width, $30$ cells
+        (\texttt{decisions.md:1369}), while the copper fans \SI{2.0}{mm} to \SI{3.0}{mm} before the port plane and
+        \SI{3.0}{mm} to \SI{0.64}{mm} past the far one (\texttt{decisions.md:3162}): what do the steps cost?
+  \item \textbf{Name the wave before comparing ratios.} \texttt{z0} enters only where a caller wants an absolute
+        power wave, never in a ratio (\texttt{emfit/ports.py:31}), yet $|S_{11}|^2+|S_{21}|^2$ sums a station fit
+        with a normalised amplitude whose power twin sits beside it (\texttt{emfit/studies.py:1990}, \texttt{:2004}).
+  \item \textbf{Show the record is long enough where it is shortest.} The upper band runs $8034$ steps at
+        \SI{7.833566}{\giga\hertz} so its tone lands on a DFT bin, where the pulse's $9600$ would sit at
+        \SI{8.0131}{\giga\hertz}; the band below is clean, passivity $1.00046$ at \SI{3.667}{\giga\hertz}
+        (\texttt{decisions.md:1369}, \texttt{decisions.md:1378}).
+  \item \textbf{Check the strip's cell where it is used, not only where it is assigned.} The static audit clears
+        the material map and its dual interface average (\texttt{decisions.md:2339}), then names what it cannot
+        reach: the staircased strip, the port excitation, the strip and interface assignment
+        (\texttt{decisions.md:2343}). The extractor reads a gap voltage there (\texttt{emfit/studies.py:2766-2767}).
+  \item \textbf{Move the port, not the mesh.} Four port planes at $\pm 2$ and $\pm 4$\,mm are written down and
+        none has been run (\texttt{decisions.md:4393}); the near field decays over \SI{2.8}{mm}, so \SI{4}{mm} moves
+        it by its own size (\texttt{decisions.md:4413}), and scoring them needs a resolution we do not have
+        (\texttt{decisions.md:4361-4368}).
+\end{enumerate}
+
+\subsection{The request}
+\label{sec:openproblem-request}
+
+Here is the check we have not done: we have never refined the cell at \SI{7.8333}{\giga\hertz} on a record that can
+be read on the admitted branch, and until we do, an eight per cent excess in the power budget of a lossless line is
+a statement about our own extraction before it is a statement about the discretisation. Time we have refined and
+the growth survived it. Space we have not, and we know why: nine point seven anchor runs, thirteen gigabytes of
+resident memory, and a price arithmetically wrong by four in the script everyone would quote.
+
+Two replies would be worth more than agreement: a fifth mechanism we have not named, with the observation that
+would distinguish it from the mesh-and-estimator rivals; or a demonstration that one of the four is not decidable by
+the levers we hold, which would be the cheaper result. What would not help is a reading of $1.079823$ as plausible:
+it is $8.4742$ per cent in power, \SI{0.353}{dB}, on a line whose material model contains no loss and whose only
+damping is a layer outside the box.
