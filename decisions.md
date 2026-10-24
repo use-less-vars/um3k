@@ -3099,7 +3099,7 @@ Artefact preservation: the pre-correction output is kept verbatim at `.scratch/l
 
 **Both amplitude routes exceed unity on the anchored row.** Recomputing from the stored complex S-parameters at the power route reproduces the stored `s21_power` and `passivity_power` columns to all printed digits, so the wiring matches `emfit/studies.py:2000-2014`; the projection route gives |S21| 1.04150948159084 against the printed 1.03905506839596, a relative 2.36e-3.
 
-**The station-power profile rises and does not jump.** 0.5 Re(V conj I) over the nine stations of `board_cw_7.8333GHz.npz` rises monotonically by 8.47 per cent end to end in power, with no discontinuity at the strip interface. Computed for this section from the stored per-station fields; no stored file carries the column.
+**The station-power profile rises and does not jump.** 0.5 Re(V conj I) over the nine stations of `board_cw_7.8333GHz.npz` rises by 8.4742 per cent end to end in power, 4.1509 per cent in amplitude (sqrt(P[-1]/P[0]) - 1 = 0.041509481590844777), with no discontinuity at the strip interface, and it is not monotone: the nine per-station values run 212759021179.74, 219657743579.10, 224093910502.79, 226928363098.90, 228777740931.42, 230016159425.63, 230798681406.99, 231096074611.05 and 230788646204.39, peaking at station 7 and easing 0.13 per cent into station 8. Computed for this section from the stored per-station fields; no stored file carries the column.
 
 ### 99.2 The surviving mechanism, and its rival
 
@@ -3150,3 +3150,73 @@ Recorded here because these are the clauses a future protocol must not reproduce
 ### 99.7 Provenance of the thresholds
 
 The 1e-3 floor is the straight-line coupon floor already in the record (`decisions.md:3084`). The 3 per cent line is chosen for this preregistration, before the run, at roughly a third of the 8.47 per cent observed on the board, so that F2 fires on a control that reproduces a substantial fraction of the rise rather than all of it. The 0.3 per cent line in the wall preregistration was chosen the same way. A threshold that is chosen after a result exists is not a threshold.
+
+## Section 99.8. Amendment before the run: 99.3 is not a discriminator
+
+Written before the run 99.3 owes, and nothing has been run to produce it. 99.3 proposed a straight-line control and read its predictions against the board capture. The premise that the board capture is a straight line does not survive a reading of the code that built it, and the cost line attached to the control is wrong by a factor of twenty. Both defects are established from files already on disk. The run 99.3 describes is withdrawn as a discriminator; what replaces it is a narrower test, pre-registered in 99.9 below.
+
+### 99.8.1 The board capture is not a straight line
+
+`emfit/board.py:216` carries `loads`, `port` and the geometry in one spec; `:464-475` builds it from a bounding box, so `length` is the extent of the cropped outline and not the length of any one track; `:533` fixes the cell from the substrate, and `:560-561` snaps the port and far planes onto that cell. The counts then come from `to_cell_counts`, whose docstring at `emfit/studies.py:3516-3531` says it plainly: "…the resulting counts and dimensions are handed straight to :func:`microstrip_wave`. Nothing is adjusted here". `emfit/studies.py:3592-3623` is that pass-through, keyword for keyword; `:3591` fetches the counts; `:3613` passes `loads=spec.loads`; `:2300` is where the mesh is finally fixed; `:2609` is where the solver is entered.
+
+The spec this capture was built from, read from `emfit/board.py:391-396` and printed in `.scratch/m2/board_cw_7.8333GHz.log`, is `RF_IN` = net 2, w 3.0 mm, x_port 8.7 mm, x_far 32.2 mm, snapped from a track run of 8.65 mm to 32.22 mm. The board file's copper for that net does not begin or end at those planes: a fan-out widens 2.0 mm to 3.0 mm over 4.5 mm to 8.65 mm, and a second fan-out narrows 3.0 mm to 0.64 mm over 32.22 mm to 34.32 mm. Both transitions sit outside the solved span [8.7, 32.2] mm, and the file carries no vias. The capture is therefore a straight run of line whose ends are not the ends of the metal: a class (d) geometry by construction — one whose number cannot be read against either surviving mechanism, because neither was a statement about fan-outs.
+
+Handed to the solver unchanged: `n_strip` 30, `n_clean` 73, `n_ref` 75, `n_line` 235, w 3.0 mm, h 1.6 mm, eps_r 4.4, cell 0.1 mm, `loads` (). Every one of those is the board's, none is the run's.
+
+### 99.8.2 The capture is not anchored on the metal either
+
+`emfit/board.py:387-390` chooses the run by width: the modal width along the pad's axis, and `:391` keeps only the tracks of that width before `_run_nearest` picks the run containing the pad. `:469` sets `length` from the cropped bounding box. `:613-623` computes `n_ref` as the port plane less the absorber behind it and `n_line` as port plane to far plane; `:645` rounds each to an integer; `:542` and `:543` are the snaps that make the rounding exact. Cross-checked against the printed log: `ix_port` 87, `ix_far` 322, `n_line` 235 = 322 - 87, `n_ref` 75 = 87 - 12. The arithmetic closes, which means the solved region is exactly the snapped span and nothing wider — the fan-outs are not in the mesh and cannot be in the number.
+
+### 99.8.3 The cost line in 99.3 is wrong by a factor of twenty
+
+99.3 prices the control at "150 to 180 s wall by the measurements in 97.9". The capture itself took 2936.7 s (`.scratch/m2/board_cw_7.8333GHz.log`, 0.3655 s/step over 8034 steps). The 144.69 s and 175.48 s figures belong to the 642k-cell rung-8 boxes (`W50`, `W62`), which are 322 x 200 x 76 = 4.89 M cells smaller than the board mesh and are not this mesh at any rung. The board-equivalent solve costs about fifty minutes, not three. A preregistration that misprices its own control by twenty times has not read its own record.
+
+### 99.8.4 The straight-line control is rung 8, and a straight-line number is already on file — on the forbidden branch
+
+A straight line with `n_ref`, `n_line` 54 in the recorded configurations is rung 4 at cell 0.4 mm; the straight-line control that matches the board capture's mesh family is rung 8, cell 0.2 mm, `n_sub` 8, `n_strip` 16, `n_ref` 18, `n_line` 108, `n_clean` 38. There is a stored run of exactly that box, `.scratch/run_rung8/rung8_pulse_bins.npz`, and at bin 14 (f 7.833333 GHz) it reads passivity 1.0044615814615045 and passivity_power 0.9749627620312687. Its `reference_used` is True. Under 99.3's own argument (`decisions.md:3116`) a run carrying a reference is on the other branch of `emfit/studies.py:1984`, so that row may not be cited in either direction: not as evidence the estimator inflates a lossless line, and not as evidence it does not. It is a straight line, it is lossless, and its column is unusable here.
+
+### 99.8.5 What the proof kills, and what it does not reach
+
+**R, as stated, has no referent.** The proof in 99.8.1 does not depend on any artefact, so it stands on its own: the anchored geometry carries no load, no discontinuity, no pad, no connector and no board-specific port, and the 8.49 per cent elevation in the power route was therefore measured on a lossless straight line through the undivided code path. What that kills is the rival reading as stated. There is no board port bookkeeping for it to be about, because the adapter hands the straight-line call the same counts and an empty load tuple.
+
+**It does not establish H either, and it must not be recorded as though it did.** Two facts stop it. The rung-8 straight-line records, `.scratch/logs/L8.json` and `.scratch/logs/S0_shift0.json`, read `circuit.passivity` 0.9961967772574657 and `circuit.s21` 0.9980503985897048, both below unity, with `modal.power_ratio` running 1.014486708222603 at station 0 to 0.9998023199226067 at station 8: an end-to-end fall of 1.4474 per cent, and a trough at station 5 that sits 2.8476 per cent below station 0. And those two files are at f 5827786408.327286 Hz, which is 25.6 per cent below the anchored bin, and neither stores a `passivity_power` column, an `excite` key, or any `reference` key at all. A coarse straight line reads clean at 5.83 GHz and says nothing about 7.83 GHz.
+
+**The sweep, which 99.8.4 asserted without having run it.** A sweep of `.scratch/logs/**` and `.scratch/run_*/**`, 41 artefacts, finds exactly one reading within 1 per cent of 7.833333 GHz: `.scratch/run_rung8/rung8_pulse_bins.npz` bin 14, passivity 1.0044615814615045, passivity_power 0.9749627620312687, `reference_used` True. There is therefore no straight-line reading at this frequency on the undivided branch anywhere in the tree. That is the fact 99.8.4 asserted on the strength of the code alone; the sweep is the evidence for it.
+
+**So the record at this frequency is one point.** One admissible reading, on the anchored configuration only, 8.49 per cent high in the power route; no admissible straight-line reading at any other mesh; and the one reading at another mesh that does exist reads low but takes the forbidden branch and stores no configuration. A single point cannot separate an estimator artefact from a property of that configuration's discretisation. The elevation is not in doubt, its cause is unmeasured at this frequency, and that is why 99.9 is owed rather than dissolved.
+
+**What does survive, measured on the anchor's own geometry.** Halving dt moves `passivity_power` from 1.0849290726270013 to 1.0847355995267958, a shift of 1.9347310020556563e-4, and the two independent power-route implementations read 1.0849290726270013 and 1.0909658648878728, 0.5564227573194414 per cent apart. The elevation survives a halved timestep and two implementations, so it is not a timestep artefact and not one implementation's slip. The weakness is worth naming: a shift that small under dt halving is weak evidence of mesh independence, because the mesh is what did not change.
+
+### 99.8.6 The residual rival
+
+**R-prime.** R as stated has lost its referent, and what is left standing is R-prime: the claim that the elevation is a property of the 0.1 mm configuration's discretisation -- thirty cells across the strip, 73 clean cells, 235 line cells -- rather than of the physics. R-prime is not excluded by anything on file at 7.8333 GHz, and it is the only rival left once R as stated has gone.
+
+**Why 99.9 is built the way it is.** 99.9 changes one variable, the cell size, at fixed frequency, fixed branch and identical board geometry. A single-variable change is what makes the three readings below separable; two variables moving at once would leave the outcome attributable to either, which is the defect 99.3 already had. And if 99.9 does not separate them, the next amendment must change a different single variable rather than widen a band.
+
+### 99.9 Pre-registration of the next minimum test (written before the run)
+
+Frozen on writing. Nothing in this subsection has been run.
+
+**The test.** One call to `emfit.studies.microstrip_wave_board` on the same board spec the anchored capture used: `MicrostripBoard.from_kicad('kicad_support_project/kicad_support_project.kicad_pcb', net='RF_IN', eps_r=4.4, port_pad=('J1', '1')).cropped_to_strip(n_sub=8)`, with `excite='cw'`, `sink=None`, `reference=None`, `f_target` 7833300000.0, and every other keyword at the anchored capture's value.
+
+**The one variable.** Halving `n_sub` from 16 to 8 doubles the cell from 0.1 mm to 0.2 mm, and the adapter recomputes the counts, so the width, the substrate, the two x planes and the empty load tuple are identical to the anchor by construction. That is what makes this a single-variable change rather than a new geometry.
+
+**Expected cost, written here before the run so that it can be scored like everything else.** The grid should come back 161 x 100 x 38, one eighth of the anchor's 4 894 400 cells, with half the steps at double the timestep, so about one sixteenth of 2936.7 s: 180 to 200 s. If the measured wall exceeds 600 s the run is abandoned as mispriced and is not reinterpreted.
+
+**Frozen predictions, mutually disjoint, each with the mechanism it names and what it would establish.**
+
+- (i) **The dispersion error of the mesh, falling as the square of the cell.** At 0.2 mm it is four times the 8.49 per cent seen at 0.1 mm, so `passivity_power` lands in [1.25, 1.45]. The board row is then a fine-mesh artefact with a named mechanism, and no passivity from this geometry may be quoted at 0.1 mm at all.
+- (ii) **A property of the 0.1 mm configuration's discretisation, R-prime.** The elevation is absent at 0.2 mm and `passivity_power` lands in [0.980, 1.010], consistent with the 0.9962 the 0.2 mm straight line reads at 5.83 GHz. The next single variable is then cells across the strip at 0.1 mm, that is `n_strip` 15 against 30.
+- (iii) **Grid-counted rather than wavelength-counted**, set by the source plate and the station spacing in cells rather than by the cell in wavelengths. The elevation is unchanged to within twenty per cent and `passivity_power` lands in [1.065, 1.110]. H then stands with a mechanism, and the next single variable is the station count and the clean length at 0.1 mm.
+
+**Falsifiers.**
+
+- `passivity_power` above 1.45 falsifies all three at once. The estimator family is then not characterised by this geometry, section 100 opens on that, and no fourth band is invented here.
+- A value in a gap between the three bands is class (d) again, and licenses no further run without a fresh amendment written before it, as this one is.
+- `reference_used` True voids the run. It is the wrong branch.
+- A `passivity_power` that is missing or non-finite voids the run, and `passivity` may not be substituted for it, which is exactly the substitution 99.3 would have forced.
+- A printed geometry that is not w 0.003, `n_strip` 15, cell 1e-4 times two, and `n_clean` and `n_line` as recomputed by the adapter, voids the run. The single variable must be seen to have been held, not assumed.
+
+**Operational note.** The driver must print `passivity` and `passivity_power` from the payload rather than rebuild them, and the record's `V_residual` is `backward_voltage.residual`, not `bwd_fwd_V`, which reads nan in both blocks of both rung-8 files.
+
+**Why this is admissible.** It adds a variable. It is not admissible as a rescue, because every band above is a prediction about a number that does not yet exist, and a miss is a miss.
