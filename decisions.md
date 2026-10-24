@@ -3880,3 +3880,97 @@ The second is the address. `.scratch/levers/price_levers.py:26` reads
 
 These four numbers are now in version control, in prose, in this file. They are the durable copies. The
 `.scratch/` originals are not, and cannot be recovered from the repository.
+
+#### 101.11.8 The gate runs, the bits are identical, and the wall ratio is not a price
+
+§101.11.5 deferred the gate. It has now run and it passed, and that deferral is superseded by this section.
+The wall deferral in §101.11.6 is not superseded: nothing below is a price.
+
+The run reached `C3 DONE` and wrote two files, `.scratch/gate/GATE.npz` (4154 B) and
+`.scratch/gate/GATE.json` (3117 B). The npz is bit-identical to the anchor,
+`.scratch/m2/board_cw_7.8333GHz.npz` (4154 B, md5 `2259ff08c637fb8e39299e723cf694c6`). Same 15 keys, no
+extras. All 13 numeric keys compare equal with `n_diff=0`, `max_abs=0.0`, `max_ulp=0`; the two boolean keys
+`refused` and `reference_used` are `False` on both sides; and all 18 per-station `v`/`i` phasor components
+compare equal with `|diff|=0`. The comparison script exits 0 with
+
+> `GATE VERDICT: bit-identical on all 15 compared keys, on the derived eps_V, and on every per-station
+> phasor component.`
+
+The values, so that no one has to unpack the archive to check them: `f` 7833566197.718491; `beta`
+314.03158662735785; `s11_measured` and `s11_port` both 0.013677440673277025; `s21` 1.039055068395964;
+`s21_power` 1.0415094815908448; `passivity` 1.0798225075427126; `passivity_power` 1.0849290726270013;
+`z0` (53.41247461887226+3.1557724449079396j); `x_port` 0.008700000000000001; `eps_V` 3.658552575317196
+from both estimators at relative difference 0.0. The structural invariants agree on both sides: mesh
+322x200x76 = 4894400 cells, `dt` 1.9065748695309721e-13 s, 8034 steps (2008 warm-up plus 6026
+accumulated).
+
+Why a contended host could run a gate it could not price. §101.11.6 refused the wall on this host because
+the host failed its three-condition manifest, and that refusal stands. The manifest governs the measurement
+of a price, not the execution of a solve. Host contention moves the wall of a run; it cannot move a
+floating-point result, because the same operations on the same inputs in the same order produce the same
+bits whatever else the machine is doing. This run is the empirical form of that argument: it took 1.524
+times the anchor's time and changed nothing.
+
+The measured wall was 4474.762402289023 s (`.scratch/gate/GATE.json`, field `wall`; the process log line
+reads `elapsed=4474.9`), which is 0.55697 s per step against the anchor's 2936.7/8034 = 0.36554 s per step.
+The ratio is 4474.762402289023/2936.7 = 1.5237, an increase of 52.4 per cent, on output that is bit for bit
+the same as the anchor's.
+
+> That ratio is not a price. §101.11.6 rules that this run's wall is a contended wall, never to be quoted
+> as the price and not comparable to `ANCHOR_WALL` in either direction, and that ruling still binds.
+
+The ratio is admissible for exactly one purpose, the one §101.11.6 anticipated before the number existed.
+The two walls belong to the same configuration and the two outputs are bit-identical, so every second of
+the difference is attributable to the host and to nothing that was computed. That is evidence for the
+asymmetry which justified running the gate on a busy machine while refusing to read a wall on it. It is not
+a second price, it does not displace `ANCHOR_WALL`, and it is not a base for scaling to any other mesh.
+
+Three defects in this attempt, none of which touches the result.
+
+The first is that my driver's diagnostics never ran. `gate_driver.py:307` raised
+`AttributeError: 'csc_matrix' object has no attribute 'nbytes'`, and it raised it after `C3 DONE` and after
+both output files had been written. No `GATE:` diagnostic lines exist for this run: no nbytes accounting,
+no `ptr_equal`/`may_share` check, no `lever_took_effect`, no operator `builds` count, no `emfit_unchanged`
+comparison. The shim's engagement therefore rests on two log lines only, `SHIM: class=CellComplex
+replaced={'curl_dual': 'CellComplex.curl_dual', 'curl_h_to_e': 'CellComplex.curl_h_to_e'}` and
+`SHIM: produced_count=1`. The 769 MB operator saving that motivated the lever is, for this run, a paper
+calculation and not a measurement. It was already known that `nbytes` would have proved little; leaving the
+call in was careless, and the correct statement is that the saving is unmeasured here.
+
+The second is that the comparison script crashed on its way out. `compare_gate.py:60` passed a shape-(1,)
+array to `float()` inside the `eps_V` reporting helper, which runs after every comparison has already
+passed. The fix is `float(np.ravel(beta)[0])` and `float(np.ravel(f)[0])`, after which the script completes
+and exits 0. No tolerance and no comparison was altered, so the verdict above is the one the run produced
+and not a re-derived one.
+
+The third is that my pre-run estimate of peak memory was wrong. The estimate was 2819815 kB; the measured
+`MAXRSS_KB` is 3587764. The peak is set during mesh and operator construction rather than during stepping,
+which means resident set size is not a decisive instrument for anything the lever claims, and the estimate
+should not have been offered as a prediction.
+
+A record error, repaired: the z0 imaginary part. §101.10.7 and §101.11.4 each record the imaginary part of
+z0 growing by a factor of about 6.1, 6.13 in its unrounded form, and treat that as owing an explanation. It
+owes none. The two numbers were not the same estimand.
+
+The anchor's z0, which the gate reproduces exactly, is 53.41247461887226 + 3.1557724449079396j. The figure
+it was compared against, 52.862439125104672 + 19.354379957943259j, is the raw `cw.z0` stored in the old
+`C3.json` and computed on 18 irregularly spaced stations spanning x = 0.01040 to 0.02000 m. Refitting that
+same 18-station data with the current convention gives -53.439810322530903 - 3.0817740011330144j, whose
+sign-and-order-corrected form is 53.4398 + 3.0818j: 0.0789 ohm from the anchor, or 1.47e-3 relative on a
+|z0| of 53.51 ohm. The variant with the sign convention reversed lands 107.034 ohm away, so the convention
+is not a matter of taste -- one choice puts the fit on the anchor and the other puts it nowhere near.
+
+The refit is not beta-limited: `fit_beta`, the curvature-derived sigma, and the beta stored in `C3.json` all
+return a bit-identical z0, so the 0.0789 ohm is a residual of the station fit and not a disagreement about
+propagation. A second figure is worth recording because it looks like an independent defect and is not. The
+old `C3.json` carries `stored_beta` 313.755658470664 against the anchor's 314.03158662735785, a difference
+of 0.27593 rad/m or 8.79e-4 relative. The two frequencies are one number printed two ways --
+7833566197.7184906 and 7833566197.718491 differ by 4e-7, below the double spacing of about 1.9e-6 at that
+magnitude -- so this is the same estimand difference as the z0 gap, arising from the same 18-station
+station set, and it demonstrably does not propagate to z0. The gate closes the question without depending
+on any station count: it reproduces the anchor exactly, so neither gap survives as a discrepancy between
+runs.
+
+What this section does not do. It does not price C5: the wall for the lever's configuration remains
+unmeasured and unestimated. It does not measure the 769 MB operator saving, which the failed diagnostics
+left on paper. And it does not authorise C5.
