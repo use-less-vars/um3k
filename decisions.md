@@ -2620,9 +2620,11 @@ The order knob is known to be live at the 1 per cent level, since one wave to tw
 | H-J with Jensen-Stayle thickness, t = 35 µm | 3.343938310 | +0.000 per cent |
 | Wheeler (1977), 12h/w | 3.342540 | −0.042 per cent |
 | Wheeler (1977), 10h/w variant | 3.394022 | +1.498 per cent |
-| Kirschning-Jansen dispersive, 5.828 GHz | 3.391585 | +1.425 per cent, bracket +0.39 to +10.1 |
+| Kirschning-Jansen dispersive at 5.83 GHz, unverified provenance | 3.391585 | +1.425 per cent, bracket +0.39 to +10.1 |
 | Getsinger (1973) dispersive | 3.358466 | +0.434 per cent |
-| Kobayashi (1988) dispersive | 3.374299 | +0.908 per cent |
+| Kobayashi (1988) dispersive | ~~3.374299~~ | +0.908 per cent |
+_[R1-RECORD 2026-10-24: relabelled. The row read "Kirschning-Jansen dispersive, 5.828 GHz"; it is a dispersive value at the operating frequency in an unpinned unit convention, not a static limit, and no in-tree implementation returns it. Kirschning-Jansen is constructed so that f -> 0 gives ee0 = 3.343938310 exactly, and 3.391585 / 3.343938310 = 1.014249, so 3.391585 is dispersive by construction (MISMATCH-BY-LABEL); 3.391585 would be a static form to +1.4249 per cent and no static form is that far off except the 10h/w Wheeler variant. The in-tree implementations give 3.512927 (form A at G = G0 = 1.033) or 3.351115 / 3.503772 (KJ 1990 with h in cm / h in mm), which is the 4.78 per cent convention bracket discussed at line 2627. The label now says what the number is; the number is unchanged.]_
+_[R1-RECORD 2026-10-24: struck. "Kobayashi (1988) dispersive" has no implementation anywhere in the tree -- grep over the package returns zero hits for kobayashi, and zero for any dispersion code outside the docstring at microstrip.py:28-31 -- so 3.374299 cannot be reproduced from anything in the repository. 3.374299 / 3.343938310 = 1.009079 is again a dispersive value, not a static one. Refused rather than reconstructed: the skeleton is statable but f_p and m are not defensible, and reproducing 3.374299 would need m ~ 2.19 at f_p = 29.0185 GHz, which no source in the tree states. Struck through with the original visible rather than deleted. See section 98.4.]_
 
 Static spread 1.55 per cent, no form 2 per cent or more from H-J, so sub-check 1 is silent. The Kirschning-Jansen row is a bracket and not a number: the four plausible unit conventions in its leading coefficient span +0.39 to +10.1 per cent, nothing in the repository pins one, and the two convention-free dispersion models both put dispersion under 1 per cent at h/lambda0 = 0.031. A row that can be given five values is not evidence of a disagreement.
 
@@ -2879,3 +2881,272 @@ The last two `eps_eff` entries are derived by me with the same formula and are p
 ### 96.6 What was not done
 
 **No solve, no field test, no code change.** The next action is arithmetic in closed form: implement the three dispersion models and see whether 3.5418 stops being an anomaly. If it does, thirteen eliminations were all correct and the anomaly was the benchmark. The three-wave `ports.py` edit stays held.
+
+## 97. The negative register -- what is withdrawn, what is bounded, and what stays open
+
+**This section collects the arguments the record has retired.** Each entry below was at some point load-bearing in this log and is now either withdrawn by name, bounded strictly below the effect it was invoked to explain, or left explicitly undecided. Nothing here is new physics and nothing here is a new solve: no run was made for this section, no source file was edited, and every number is quoted from a stored artefact or from an earlier entry in this log. The point is to make the negative space of the argument legible in one place, so that a later section cannot quietly pick up a claim that an earlier one put down.
+
+**Standing.** This is the documentation chapter that `decisions.md:3012` records as reserved. Section 98, which follows, was written while this section was still parked, and its opening sentence that section 97 is "reserved and unwritten" is a statement about the order in which the two were written, not about the state of the record now. Section 98 has not been renumbered and has not been edited to make room for this one; the numbering runs 96, 97, 98, and 98's own text is untouched. Dated 2026-10-24.
+
+### 97.1 Scope, and the three kinds of entry
+
+**Three kinds, and only three.** *Withdrawn*: the log names the claim and voids it, and the claim may not be used in either direction, for the coupon or for the board. *Bounded*: the claim survives as written, but the artefacts we hold bound it far below the effect it was called on to explain, so it can carry no weight. *Open*: the question is well posed, the artefacts we hold cannot decide it, and the record registers a test rather than a guess. Every subsection below says in its first sentence which kind it is.
+
+**What this section is not.** It is not a review of the solver, it is not a negative result about the physics, and it is not an argument from silence. Where the record holds no artefact, the entry says so and quotes its number as a log entry that is currently unreproducible, which is a weaker thing than a measurement.
+
+### 97.2 Bounded on both sides: the static benchmark is retired
+
+**The fixed point.** w 3.2 mm, h 1.6 mm, w/h 2.000, eps_r 4.4, t 0, f 5.827786408 GHz, h/lambda0 0.0311; the run's eps_V is 3.541823 (`.scratch/logs/L8.json:236`) and the static Hammerstad-Jensen value at the same cross-section is 3.343938310, a 5.9 per cent difference (98.2, `decisions.md:3016`, `:3020`). The closures implemented in the tree move eps_eff off the static value, at that one frequency, to somewhere between 3.343938 and 3.546540, spanning +0.215 to +6.059 per cent, and they disagree among themselves by 5.8 per cent of eps_eff (`:3024-3037`, `:3043`). The zero-frequency limit of the family returns 3.343938310 exactly (`:3039`).
+
+**Why this is an entry in a negative register.** Section 98's verdict is that the 5.9 per cent is the dispersion increment and not solver error, because a quasi-static open-boundary formula is not a like-for-like reference for a propagating mode at h/lambda0 = 0.031 (`:3016`). That verdict cuts both ways, and the record must not take only the half it likes: it removes the excess as evidence of solver error, and it does *not* convert the excess into evidence of solver correctness. The static value is retired as a benchmark in both directions.
+
+**And the family is not precise enough to do better.** Its internal spread is the same order as the effect it explains, so it fixes sign and order and nothing finer (`:3086`). Three restrictions already in force are restated here because they bind everything downstream: no "models agree to about 1 per cent" claim, which is forbidden in this record and appears nowhere in it (`:3085`); no convergence claim (`:3082`); and no blending of the coupon floor with the board number 1.079823, which are not on the same footing (`:3084`). The Kirschning-Jansen unit convention is unresolved and gives 3.351115 or 3.503772 on one formula with one set of inputs, a 4.78 per cent spread, so it contributes nothing numerical to the band (`:3078`, 98.8).
+
+### 97.3 Bounded: the thickness falsifier, and why it is no longer a pillar
+
+**What exists.** One log file, `.scratch/g2_sweep_B.log`, 3031 bytes, and nothing else: there is no `.npz` and no `.json` for this run anywhere in the tree. Its geometry line records nx 66, ny 48, nz 24, cell 4e-4 m, h 0.8 mm, w 1.6 mm, eps_r 4.4, n_sub 2, n_air 12, n_top 10, n_strip 4, n_clean 12, n_pml 10, n_ref 2, n_line 54, with f 5827786408.327286 and eps_eff 3.5413233352015694. `PROV1_provenance.md:193-205` records it as an unpublished run, records that it and the h 1.6 mm capture "share the identical drive frequency f = 5827786408.327286", and records that "Two captures at the same frequency were conflated"; see also `:168`, `:221-222`, `:255`.
+
+**Two independent weakenings.** First, the dimension the run varies is the dimension the mesh resolves least: cell 4e-4 against h 0.8 mm gives n_sub 2, two cells under the strip. Second, the drive frequency is bit-identical to the capture it is compared with, so h and electrical length are not separated; halving h at fixed f changes the geometry and h/lambda0 together. A thickness falsifier needs h/w moved at fixed electrical thickness, or the frequency moved with h. Neither was done.
+
+**Consequence.** The run is weakened, not void: it is a real solve with a real geometry line and a real eps_eff, and it is the only thickness datum in the tree. But it cannot carry the weight of a falsifier, it is not a pillar of any argument in this document, and no section may cite it as one. Its eps_eff is additionally unreproducible from the tree, which is the same defect 97.7 records for L8.
+
+### 97.4 Withdrawn by name: the flat-passivity discriminator
+
+**The claim.** `decisions.md:982-991` recorded that "Across 3.67 to 7.83 GHz passivity stays between 0.975014 and 0.980713, flat within about half a per cent", and read that flatness as a boundary sink rather than a port sink.
+
+**The withdrawal.** `:1185-1189`: "**The classification is withdrawn.** ... was an inference from a column that is not a power ratio. It is void as stated and must not be used as an argument in either direction, for the coupon or for the board." The defect is recorded at `:1150-1161`, the bounds at `:1163-1169`, and the retirement is repeated at `:243`, `:251`, `:2040`, `:2051`, `:2190` and `:2401`.
+
+**Why it belongs here.** It was the one test in the record that would have separated a loss at the boundary from a loss at the port, and it is the test a reader will reach for when a passivity above unity appears. It is not available. The correct statement is that this record has no flat-versus-rising discriminator at all: none current, and none retired-but-usable. This section does not construct one. The phrase "static/dynamic discriminator" occurs nowhere in this log; the retired test is flat-versus-rising, and the two must not be run together.
+
+### 97.5 Withdrawn: the plus or minus 0.7 per cent spread
+
+**There is no such number in the record.** A search of the tree for a plus or minus 0.7 per cent spread of the closure predictions, or of eps_eff across closures, returns nothing: the figure is not in this log, not in `PROV1_provenance.md`, not in `prereg_transverse_wall.md`, not in its addendum, not in `phase1_passivity_findings.md`, and not in any stored artefact. It must not be quoted, and it must not be replaced by another round number chosen to sound the same.
+
+**What the record does say.** `decisions.md:3024-3037` tabulates the implemented closures at the 98.2 fixed point; `:3043` records that they span +0.215 to +6.059 per cent and disagree among themselves by 5.8 per cent of eps_eff; 98.4 is the section that states this plainly, and 98.9 forbids the phrase "models agree to about 1 per cent" (`:3085`). The only other spread in play is the Kirschning-Jansen unit ambiguity, 3.351115 against 3.503772, 4.78 per cent on one formula and one set of inputs (`:3078`).
+
+**Consequence.** Any sentence of the form "the closures agree to within X" is false for X below 5.8 per cent. The strongest claim the dispersion family carries is 97.2's sign and order, and the band it produces, 3.343938 to 3.546540, is 6.1 per cent wide and is not an error bar.
+
+### 97.6 Bounded: the Laplace triple oscillates, and none of it is stored
+
+Three values of one quantity, all in the log, none with output behind it:
+
+- 3.373966045, with eta_eff 205.097427521, at n_sub 4 (`decisions.md:2432`);
+- 3.363120 at the next discretisation (`:2629`);
+- 3.369119 at n_sub 16 (`:2629`), with a fourth entry at `:2822`.
+
+The sequence runs 3.373966 to 3.363120 to 3.369119: the third step reverses direction, and the total spread is 0.32 per cent of the value. `:2877` records that there is "no stored output anywhere in the tree"; `emfit/mode_profile.py:650-652` is the code path, and `phase1_passivity_findings.md:31` and `:36` record the same.
+
+**Consequence.** No refinement sequence in this tree supports a convergence claim for the Laplace route, and none of the three numbers may be quoted with an error bar. They are log entries, not artefacts. A reversal of 0.18 per cent between two adjacent discretisations is the wrong shape to extrapolate from, and the total spread of 0.32 per cent is not an error bar either: it is the width of a wiggle.
+
+### 97.7 Bounded: one artefact, three dielectric constants
+
+**`.scratch/logs/L8.json` carries three different permittivity numbers.** `:71` gives eta_eff 205.4278943763168, which converts to eps_eff 3.3631195; `:75` gives `"eps": 3.5848357976358223`; `:236` gives eps_V 3.541823. The first two differ by 6.59 per cent, and eps_V sits 1.21 per cent below the second and 5.31 per cent above the first. The file states all three, and nothing in this log reconciles them.
+
+**Consequence.** A sentence of the form "the L8 run gives eps = X" is incomplete without the key. The fixed point in 98.2, and every number in 97.2, is quoted against eps_V at `:236`; the other two keys are used nowhere in the dispersion arithmetic, and this section does not pick a winner between them. Any later section that wants a second opinion from this file must first say which of the three it is reading.
+
+### 97.8 Bounded: three lateral-boundary gauges, and one number as a bridge
+
+**This bundling is this section's own construction.** Each ingredient is sourced; the "three boxes" framing is not a term used anywhere in this log, and it is introduced here only because 97.9, and any later comparison of permittivities, needs to know that a number computed under one lateral boundary treatment is not commensurable with a number computed under another.
+
+- **A Neumann box**, at 20 mm: `emfit/mode_profile.py:70`, `:98`, `:135`, `:140`, `:357`, `:588`; `emfit/quasistatic.py:10` and `:58`.
+- **A PML stack in h**, recorded as 4.750, 4.625 and 2.875 mm: `prereg_transverse_wall.md:58-60`, with `:64` and `:140` carrying the result that 4.8 mm more h moves eps_V by 0.353 per cent.
+- **The wall test's own lid**: `prereg_transverse_wall.md` addendum `:24`, `:41-43`, `:128-129`.
+
+**The bridge is one datum.** 0.353 per cent for 4.8 mm of h (`prereg_transverse_wall.md:140`) is the only quantitative statement in the tree that crosses a boundary dimension, and it is a lid result, not a study of boundary treatment. Everything else is a change of gauge. This record does not license comparing an eps computed in the Neumann box to an eps computed under the PML stack without that bridge, and the bridge is one datum wide.
+
+### 97.9 Bounded twice over: wall proximity, and a sweep that is DEAD
+
+**Cleared as an aliasing explanation first.** `.scratch/shift_pair_result.md:50`, `:69`, `:71-72`, `:79`, `:82`, `:85`, `:94`, `:103`, and the transverse-wall addendum's `§A9` at `:181` and `:186-197`, in particular item 4 at `:192-194`. The index-shift pair moved eps_V by +0.01164 per cent, which is inside band f1. Whatever produces the eps puzzle, it is not an index shift.
+
+**Then measured, and flat.** A three-point sweep of the clean width either side of the strip, with everything else held (`prereg_transverse_wall.md` addendum `§A7`):
+
+- n_clean 38, the baseline: ny 104, 521,664 grid points, eps_V 3.5418227632826453;
+- n_clean 50: ny 128, 642,048 grid points, eps_V 3.5401642478502513, minus 0.04683 per cent;
+- n_clean 62: ny 152, 762,432 grid points, eps_V 3.539838798664012, minus 0.05601 per cent.
+
+The largest departure is 0.056 per cent: 5.4 times below the 0.3 per cent line the preregistration fixed for calling the band live, and below the 0.1 per cent record-length noise floor of the quantity. **The band is DEAD, and it is DEAD flat -- the sign of the excursion is not resolvable at this resolution.** This is therefore not a confirmation of the frozen prediction: that prediction was +0.15 to +0.40 per cent, centred on +0.25 per cent, and the band was right while the point estimate was wrong in sign and 4.5 times too large. The honest reading is DEAD and flat, not DEAD as predicted. No fourth run was made, because the fourth point was conditional on an excursion above 1 per cent.
+
+**What the sweep does establish.** Wall proximity is not the explanation at the resolution of the artefacts we hold: 63 per cent more clean cells and 46 per cent more grid points move eps_V by less than a tenth of a per cent. Every gate that would have invalidated the comparison passed, on both runs: f0 bit-identical, ny 128 and 152 as designed, n_pml 6, passivity excess +0.00254 and +0.00166, V-residual ratios 0.881 and 0.846, backward-forward ratios 1.576 and 1.752 against a 2.0 kill.
+
+**What it does not establish.** No convergence claim: three points, one of them the baseline, do not make a limit, and no fit is offered. One trend moves the wrong way and is carried forward as open, not as a pass: `bwd_ratio_max` rises monotonically 3.563 to 5.615 to 6.241, 75 per cent over the sweep and within 12 per cent of the kill, while eps_V does not move at all. One preregistered detector was not evaluable: the "PML absorption migrating" check has no absorbed-work key in any payload, the baseline included, so it is recorded as a gap and not as a pass.
+
+**Three operational notes for whoever repeats this.** First, `.scratch/sweep_wall_driver.py:73` prints eps_V from `mod["eps"]`, the modal estimator; those REPORT lines read 3.587591 and 3.589185, which score as +1.29 and +1.34 per cent and would fire a false LIVE CANDIDATE. The scored field is the `TWOWAVE` line and the JSON. Second, the `V_residual=nan` on the same lines is `modal.bwd_fwd_V`, nan in all three payloads including the baseline; the valid field is `backward_voltage.residual`. Third, the preregistered memory band fails literally on both new points -- 580.4 MB and 696.0 MB against a 492 MB plus or minus 10 per cent band, both above the 512 MiB tier -- and both runs completed anyway, at 144.69 s and 175.48 s, 16 to 18 per cent faster than predicted. The band was wrong, not the runs.
+
+**And the estimator spread exceeds the endpoint.** The modal estimator moves up by 0.0769 and 0.1213 per cent and the circuit estimator up by 0.0631 and 0.1262 per cent, both opposite in sign to the scored column, with circuit.gamma_i running 0.00998 to 0.01253 to 0.01406 and circuit.zabs 50.434 to 49.735 to 49.333; the spread across estimators is 3.2 times the scored endpoint as recorded in `.scratch/wall_sweep_result.md`. Inside a DEAD band these are reported and not scored.
+
+One preregistration slip, recorded for completeness: the addendum's `§A7` says j_centre runs 52 to 64 to 80, and the recorded values are 52, 64 and 76, the last being j0 68 plus k_strip 8. The co-variation is intact and no threshold depends on it.
+
+### 97.10 Bounded: the 7.8333 GHz non-passive row cannot falsify anything
+
+**The row, and its band.** At 7.8333 GHz the board capture returns eps_eff 3.65855 against a computed 3.32545, +10.02 per cent, and passivity 1.079823 (`decisions.md:1501`), with |S11| 0.013677 and |S21| 1.039055 (`:1394`). Four columns are in play -- 1.01677967, 1.00045543, 1.09153308 and 1.07982251 (`:1378`, `:1385`, `:1386`; also `:1419`, `:1556`, `_s96b_t1_core.txt:11`) -- and the passivity band across artefacts is 1.079823, 1.079798, 1.079823 and 1.085801 (`:1386`, `:1422`, `_s96b_npz.txt:890-891`, `:908-909`). `:1501` already records that the 1.079823 is not quotable.
+
+**The record has no status marker for this bug.** There is no OPEN, no deferred and no closed marker anywhere for it, because the census has no status field. The row is open by omission rather than by statement, and that is the fact 97.11 acts on.
+
+**Two rows, now separated.** The 1.09153308 column is no longer unidentified: it is bin 14 of `board_run_pw.npz`, the 25-bin, 2 to 12 GHz pulse broadband capture at n_sub 16, where |S21| is 1.04465816531075 and passivity is 1.09153308396051. The anchored 1.079823 is a different record: `board_cw_7.8333GHz.npz` reproduces passivity 1.07982250754271 with |S21| 1.03905506839596 and |S11| 0.01367744, agreeing with `:1394` to better than 5e-6. That two captures at one frequency can be confused is already on the record (`PROV1_provenance.md:193-205`); it has now happened once in the census.
+
+**The correction the record owes itself.** It has been written that both amplitude columns of a board capture are already divided by |forward_ratio|. That is false as an unconditional statement. The division at `emfit/studies.py:1984-1990` sits inside `if reference is not None:`, the power column at `:2005-2008` sits inside the same guard, and `reference_used`, recorded at `studies.py:2153` as `np.array([reference is not None])`, is False on all six board captures. On every board artefact the division never ran. The conditional statement is the true one: if a reference is supplied, both columns are divided. No board artefact supplies one.
+
+**Consequence.** The mechanism most often named for this defect -- the reference normalisation inflating |S21| -- has no referent in the stored data, so this row can neither falsify it nor confirm it. What the row does establish survives both amplitude routes: recomputing |S21| from the stored complex S-parameters reproduces the stored `s21_power` and `passivity_power` columns to all printed digits on the power route, so the wiring matches `studies.py:2000-2014`, and the projection route gives 1.04150948159084 against the printed 1.03905506839596, a relative 2.36e-3. Both are above unity. The excess is not a display artefact and it is not a reference artefact.
+
+**What is left, and it is one observation.** Station by station, 0.5 Re(V conj I) over the nine stations of `board_cw_7.8333GHz.npz` rises monotonically, by 8.47 per cent end to end in power (4.15 per cent in amplitude), with no discontinuity at the strip interface, and both stored amplitude columns inherit that 4.15 per cent. That is the signature of a per-station power reading on a graded mesh rather than of a port normalisation, and it is the only surviving lead. Section 99 pre-registers the test that separates it from its rival.
+
+### 97.11 Open: what this register does not close
+
+**The passivity defect is open and stays open here.** `decisions.md:1501` says only that the number is not quotable. This section does not close it, and a register that closed it by argument would be exactly the failure this section exists to prevent. Section 99 pre-registers the minimum test and nothing else.
+
+**Carried forward as open, with the section that bounds each.**
+
+- The `bwd_ratio_max` trend in 97.9: monotonically rising, 75 per cent over the sweep, within 12 per cent of the kill, with eps_V flat.
+- 3.363120, 3.369119 and 3.5413233352015694 have no stored output anywhere in the tree (97.6, 97.3). They are log entries, not artefacts.
+- The Kirschning-Jansen unit convention, 4.78 per cent, unresolved in-tree (97.2, 98.8).
+- Three permittivity keys in one file (97.7), unreconciled.
+- The thickness run's two-cell resolution and its shared drive frequency (97.3).
+- The flat-versus-rising discriminator is gone and nothing replaced it (97.4).
+
+**And a structural note.** The record has never had a status field for these questions. Adding one is not a documentation chore: it is the difference between "we do not know" and "we have forgotten that we did not know", and every entry in this section would have been cheaper to bound at the moment it was created than it is to bound now.
+
+**What is left standing.** A single measured permittivity with a named key and a named artefact (98.2); the retirement of the static benchmark (97.2); two null sweeps that bound the wall route (97.9); and the stored S-parameters themselves, which are re-readable and self-consistent to better than 5e-6 on the anchored row (97.10). That is thin, and it is what the record actually holds.
+
+## 98. R1: dispersion closures and the +5.9 per cent -- the excess is the dispersion increment
+
+**Section 97 is reserved and unwritten.** It is the doc chapter and stays parked until R1 and section 97 both land; nothing has been moved into it. R1 is written here as section 98, appended after 96.6, and it is dated 2026-10-24. It is a record of accepted artefacts, not a solve: no run was made, no source file was edited, `emfit/studies.py` is untouched, and nothing was committed.
+
+### 98.1 Verdict
+
+**The +5.9 per cent is the dispersion increment, not solver error.** L8's eps_eff at 5.827786408 GHz is 3.541823 (`.scratch/logs/L8.json:236`); the static Hammerstad-Jensen open-boundary value at the same cross-section is 3.343938310; and every dispersion closure implemented anywhere in the tree moves eps_eff off the static value, at that frequency, to between 3.343938 and 3.546540. The measurement sits inside that band, 0.133 per cent below Getsinger B1 and 0.082 per cent above Getsinger B2 on the pre-correction numbers of 98.3. A quasi-static open-boundary formula is not a like-for-like reference for a propagating mode at h/lambda0 = 0.031, so the 5.9 per cent is the size of the thing the static formula leaves out, with its sign and its order fixed by the closures rather than fitted to the data. This is a statement about the reference and not a validation of the solve: it removes the excess as evidence of solver error, and it does not convert the excess into evidence of solver correctness.
+
+### 98.2 The fixed point
+
+w 3.2 mm, h 1.6 mm, w/h 2.000, eps_r 4.4, t 0 (the mesh models the strip as an infinitesimal sheet; thickness is absent from every config and from the mesh -- decisions.md:2615), f 5.827786408 GHz, h/lambda0 0.0311. Measured eps_eff 3.541823 (`.scratch/logs/L8.json:236`). Static Hammerstad-Jensen 3.343938310, reproduced independently to 1.89e-11 and to the same value by the module's own path. Every closure below is evaluated at this one frequency and this one cross-section; nothing is extrapolated.
+
+### 98.3 The closures, as recorded
+
+Cited from `.scratch/r1_closures.md`, not re-derived here. eps_eff at 5.8278 GHz | delta vs static | delta vs measured (per cent):
+
+| form | eps_eff | vs static | vs measured |
+|---|---|---|---|
+| Hammerstad-Jensen 1980, static (`microstrip.py:183-185`) | 3.343938 | +0.000 | -5.587 |
+| same, independently restated (cross-check, agrees to 1.89e-11) | 3.343938 | +0.000 | -5.587 |
+| H-J + Kirschning-Jansen 1990, [f GHz, h cm] | 3.351115 | +0.215 | -5.384 |
+| H-J + Kirschning-Jansen 1990, [f GHz, h mm] | 3.503772 | +4.780 | -1.074 |
+| Kirschning-Jansen simplified, form A (in-tree, G = G0) | 3.512927 | +5.054 | -0.816 |
+| Getsinger B1, n = 2 (in-tree) | 3.546540 | +6.059 | +0.133 |
+| Getsinger B2, exponent 2G = 2.0658 (in-tree) | 3.538909 | +5.831 | -0.082 |
+| Getsinger B1 with G = 1.200 | 3.503555 | +4.773 | -1.080 |
+| Kobayashi 1988 | refused, see 98.5 | -- | -- |
+| Yamashita 1979 | refused, see 98.5 | -- | -- |
+
+The f -> 0 validation gate passes for all five implemented forms: each returns 3.343938310 exactly as f -> 0, so none of them is a static formula wearing a dispersive label. The record for this table is the artefact trio `.scratch/r1_closures.md`, `.scratch/r1_closures.json`, `.scratch/r1_closures.py`, together with the in-tree dispersion artefact `.scratch/logs/_s96b_disp.py` and its output `.scratch/logs/_s96b_dispersion.txt`. The three dispersion values in this table are pre-Z0-correction; 98.7 gives the corrected values and the size of the shift.
+
+### 98.4 The spread, stated plainly
+
+The implemented closures span +0.215 to +6.059 per cent in delta against static -- 3.343938 to 3.546540, a range of 6.059 per cent of eps_eff -- and the measured point sits inside it. They disagree with each other on the size of the dispersion increment by 5.8 per cent of eps_eff, which is not a small model-choice perturbation: the Kirschning-Jansen unit-convention bracket alone spans 4.78 per cent of static (h in cm 3.351115, h in mm 3.503772, h in m 3.343944, decisions.md:2627), and the sensitivity halfwidths of the two implemented families are 1.935 (B1/B2 over six points) and 2.732 (A over the G x f50 grid) per cent of static. **No single closure is a precision oracle and the family cannot adjudicate a 1 per cent claim.** The sentence "the dispersion models agree to ~1 per cent" is false for the implemented set and is forbidden in this record: they disagree by 5.8 per cent. What the family does establish is the sign, the order and the rough size of the increment, and that is what 98.1 uses it for.
+
+### 98.5 Refusals
+
+**Kobayashi 1988 -- refused.** No implementation exists anywhere in the tree (grep over the package: zero hits for kobayashi, zero for dispersion code outside the docstring at `microstrip.py:28-31`). The skeleton is statable but f_p and m are not defensible from anything in the repository, and reproducing the recorded 3.374299 would need m ~ 2.19 at f_p = 29.0185 GHz, which no source in the tree states.
+
+**Yamashita 1979 -- refused.** No in-tree implementation and coefficients not restated at full fidelity anywhere in the tree; quoting a number would mean quoting from memory.
+
+Refusal, not fabrication, is the required behaviour here: a closure that cannot be pinned in-tree contributes nothing to a bracket whose whole purpose is to bound a 1 per cent claim.
+
+### 98.6 The two in-tree labels corrected in section 92
+
+`decisions.md:2623` and `:2625` carried two numbers under static labels that are not static values. Both are corrected in place, original text preserved, by the `_[R1-RECORD 2026-10-24: ...]_` notes added directly under the table at lines 2626-2627.
+
+- **:2623 relabelled.** "Kirschning-Jansen dispersive, 5.828 GHz" | 3.391585 is now "Kirschning-Jansen dispersive at 5.83 GHz, unverified provenance", number unchanged. Kirschning-Jansen is built so f -> 0 returns ee0 = 3.343938310 exactly, and 3.391585 / 3.343938310 = 1.014249, so the number is dispersive by construction: it is a dispersive value at 5.828 GHz in some unit convention, and no correct KJ implementation can return it as a static limit. (MISMATCH-BY-LABEL.)
+- **:2625 struck.** "Kobayashi (1988) dispersive" | 3.374299 is struck through with the number left visible. Zero Kobayashi implementations exist in the tree and 3.374299 / 3.343938310 = 1.009079 is again a dispersive value; see 98.5. (NOT REPRODUCIBLE.)
+
+### 98.7 The Z0 correction in the in-tree dispersion artefact
+
+`.scratch/logs/_s96b_disp.py:3` carried a hardcoded `Z0 = 48.098655`. That literal is the **t = 35 um** value of the closed form (decisions.md:2345: 48.685768 at t = 0 against 48.098655 at t = 35 um, +1.2205 per cent), and it came into the artefact through the arithmetic at decisions.md:2859, which was written from memory and labelled "to be recomputed and not quoted". This geometry is t = 0: thickness is absent from the mesh and from every config (decisions.md:2615), so the artefact was running a thickness convention that the model does not have, and Z0 was +1.221 per cent low.
+
+Line 3 now reads `Z0 = 48.685768`, i.e. `z0_eps_eff(2.0, 4.4, 0.0) = 48.68576813308817`, with the provenance in a trailing comment. Recomputed, the derived constants move from G0 = 1.032888, f_p = 1.196115e10 Hz to G0 = 1.038172, f_p = 1.210716e10 Hz, f50 = 2.901858e10 Hz unchanged (it does not depend on Z0). The three anchors:
+
+| anchor | recorded (old Z0) | recomputed (derived Z0) | shift | agreement with R1-CLOSURES expectation |
+|---|---|---|---|---|
+| A (KJ form A, G = G0) | 3.512927 | **3.511727** | -1.200e-3 | hit, 3.95e-7 against 3.511727 |
+| B1 (Getsinger n = 2) | 3.546540 | **3.542597** | -3.943e-3 | hit, 1.17e-7 against 3.542597 |
+| B2 (Getsinger 2G) | 3.538909 | **3.533750** | -5.159e-3 | **MISS, 1.21e-3 against the expected 3.534956** |
+
+**The B2 discrepancy is recorded rather than reconciled.** `.scratch/r1_closures.md` expected 3.534956 for B2 at the derived Z0, and the self-consistent recomputation gives 3.533750; the difference is 1.21e-03, far outside the 1e-5 gate, and the shift (-5.16e-3) also exceeds the 4e-3 the closure expected. The cause is identifiable and is not numerical: 3.534956 is a **mixed evaluation** -- f_p from the derived Z0 but the exponent from the old G0 = 1.032888 (2G = 2.065777). That mix is what the artefact's own `B2 G=1.033` row computes, 3.534931 (line 34 of the new output; 2.5e-5 from the expected value), whereas the script derives G0 from the module-level Z0 exactly once, so no self-consistent run can return 3.534956. The R1-CLOSURES Z0-provenance row for B2 is therefore internally inconsistent. Nothing was adjusted to make it match: the record carries the true self-consistent value 3.533750 and the discrepancy, and the conclusion is unaffected because the three anchors move by at most 5.2e-3 in eps_eff, which is at most 0.16 percentage points of the delta and leaves the ordering A < B2 < B1 unchanged.
+
+Artefact preservation: the pre-correction output is kept verbatim at `.scratch/logs/_s96b_dispersion_pre-Z0fix.txt` (and the pre-correction script at `.scratch/logs/_s96b_disp_pre-Z0fix.py`), so the `_s96b_dispersion.txt:NN` citations in `.scratch/r1_closures.md` decode against that preserved copy; `.scratch/logs/_s96b_dispersion.txt` now holds the post-correction run, in which A nominal is 3.511727 and B1 nominal 3.542597. The pre-correction values remain the ones quoted in the 98.3 table because that table is the accepted R1-CLOSURES record; the corrected family is 3.511727 / 3.542597 / 3.533750, i.e. +5.018 / +5.941 / +5.676 per cent over static.
+
+### 98.8 The KJ unit convention
+
+**KJ unit convention unresolvable in-tree.** The only Kirschning-Jansen 1990 implementation in the tree is the one in `.scratch/r1_closures.py`, and it gives 3.351115 with h in cm and 3.503772 with h in mm -- a 4.78 per cent spread on the same formula and the same inputs. Nothing in the tree pins the convention: no config, no record, no comment and no source file states which unit the leading coefficient expects, and decisions.md:2627 already records that "nothing in the repository pins one". Settled from in-tree artefacts only, with no network and no recall of the published form, the convention is unresolvable here, and R1 does not guess it. The numeric evidence R1 does stand on is the Getsinger pair, which is in-tree, convention-free, and reproduces to 4.5e-7 (B1) and 2.5e-5 (B2) against its own recorded output; that is the pair the verdict leans on, and it is the pair whose post-correction values 98.7 lists.
+
+### 98.9 What R1 does not establish
+
+- **No convergence claim.** R1 does not show any solve converged, and no mesh or box refinement is quoted here.
+- **Nothing about the wall test.** The transverse-wall preregistration is untouched by this section; no inference runs from these numbers to that test, in either direction.
+- **No blending of floors.** The coupon floor (1e-3 on straight lines) is not combined with, subtracted from, or used to bound the board result 1.079823; the two numbers are not on the same footing and this section does not put them on one.
+- **No "models agree" claim.** "Models agree to ~1 per cent" is forbidden in this record and appears nowhere in it: the implemented closures disagree by 5.8 per cent of eps_eff (98.4).
+- **The coincidence of scale is not evidence.** The dispersion increment (~6 per cent) is the same order as the +5.9 per cent it is used to explain, which is exactly why it can explain it and exactly why it cannot be used as a precise correction: a family whose internal spread is comparable to the effect is an explanation of sign and order, not a measurement of the effect.
+
+## 99. Pre-registration: the minimum passivity test
+
+**Registered, not run.** The question is the one 97.10 leaves open: `board_cw_7.8333GHz.npz` returns passivity 1.079823 and |S21| 1.039055, both above unity, and the record does not know why. Section 97 records that the reference normalisation has no referent in the stored data, and that the flat-versus-rising discriminator which might have separated a boundary sink from a port sink is withdrawn. Of the mechanisms named so far one survives: the per-station power reading on a graded mesh. This section fixes, before any new field solve, the single cheapest measurement that separates it from its rival, together with the thresholds and the failure clauses. It contains no result. If it is edited after a result exists, it has failed at its only job. Registered 2026-10-24.
+
+### 99.1 Premises, all read from stored artefacts
+
+**Condition of the six board captures.** `reference_used` is False on all six (`emfit/studies.py:2153`), and the divisions at `emfit/studies.py:1984-1990` and `:2005-2008` sit inside `if reference is not None:`. No board capture therefore carries a divided column, and 97.10's correction applies to every number below.
+
+**The anchored row reproduces.** `board_cw_7.8333GHz.npz`: passivity 1.07982250754271, |S21| 1.03905506839596, |S11| 0.01367744, agreeing with `decisions.md:1394` to better than 5e-6.
+
+**The neighbouring row does not belong to it.** `board_run_pw.npz` is the 25-bin, 2 to 12 GHz pulse broadband capture at n_sub 16; its bin 14 carries |S21| 1.04465816531075 and passivity 1.09153308396051, which is the 1.09153308 column of the census. Two captures at one frequency were conflated once already (`PROV1_provenance.md:193-205`).
+
+**Both amplitude routes exceed unity on the anchored row.** Recomputing from the stored complex S-parameters at the power route reproduces the stored `s21_power` and `passivity_power` columns to all printed digits, so the wiring matches `emfit/studies.py:2000-2014`; the projection route gives |S21| 1.04150948159084 against the printed 1.03905506839596, a relative 2.36e-3.
+
+**The station-power profile rises and does not jump.** 0.5 Re(V conj I) over the nine stations of `board_cw_7.8333GHz.npz` rises monotonically by 8.47 per cent end to end in power, with no discontinuity at the strip interface. Computed for this section from the stored per-station fields; no stored file carries the column.
+
+### 99.2 The surviving mechanism, and its rival
+
+**H.** The 8.47 per cent power rise, and therefore the passivity above unity, is a property of the per-station power reading on a graded mesh: an estimator effect, present on any geometry, unconditional on the physics.
+
+**R.** The reading is faithful and the model genuinely returns |S21| above unity at that cross-section; the defect is in the board geometry's port bookkeeping, and the 4.15 per cent in amplitude is a property of the discretisation rather than of the estimator.
+
+**H and R differ in exactly one prediction**, and it is the prediction 99.3 measures: on a lossless straight line taken through the same undivided code path, H requires the same rise and R requires none. No other stored quantity separates them, which is why the earlier protocol could not decide.
+
+### 99.3 The minimum test
+
+**One run, one quantity.** The straight-line control the geometry already supports (`n_ref`, `n_line` 54 in the recorded configurations), at w 3.2 mm, h 1.6 mm, eps_r 4.4, with the same `n_clean` and the same mesh family as the capture that produced the anchored row, at the same drive frequency 7.8333 GHz, with `reference = None`.
+
+**Why `reference = None` on the control.** Both sides of the comparison must take the same branch of `emfit/studies.py:1984`. A control run with a reference differs from the board capture in the code path as well as in the geometry, and any difference between them is then unattributable. Supplying a reference to the control is precisely the error the retired protocol made, and it is not repeated here.
+
+**Measured.** Passivity from the stored columns at the power route (`emfit/studies.py:2000-2014`), and the 0.5 Re(V conj I) profile over the station set, both read from the run's JSON. Cost is one board-equivalent solve: 2 GiB tier, 150 to 180 s wall by the measurements in 97.9.
+
+**Frozen predictions, written before the run.**
+
+- P1. Control passivity will sit above unity by at least 3 per cent.
+- P2. The control's station-power profile will rise by at least 3 per cent from first station to last, that is, by most of the 8.47 per cent seen on the board.
+- P3. Re-reading the JSON will reproduce P1 and P2 to all printed digits.
+
+### 99.4 Falsifiers, and what each outcome licenses
+
+- **F1. Control |passivity - 1| <= 1e-3**, the straight-line coupon floor already in the record (`decisions.md:3084`). H is falsified: the estimator does not inflate a lossless line, the board's 4.15 per cent in amplitude is a property of that geometry, and the 7.8333 row becomes a datum that a loss mechanism must explain. Section 100 then opens the port bookkeeping, not the mesh.
+- **F2. Control passivity excess >= 3e-2.** H survives. The estimator inflates a lossless straight line by 3 per cent or more, and no passivity above unity in this tree may be read as evidence of anything physical. The census columns 1.0798 to 1.0858 are withdrawn as passivity data and re-issued as estimator output. This does not identify the defect; it removes the number from the argument.
+- **F3. 1e-3 < excess < 3e-2.** INCONCLUSIVE. Report the shortfall, do not run a second geometry, do not interpolate. The preregistration has failed to be discriminating, and section 100 must say so in those words.
+- **F4. The run does not complete, or a gate fails** -- passivity of the control nan, `backward_voltage.residual` outside the band 97.9 records, or f0 not identical to the board capture's. NOT RUN. No partial reading, and no reading of the station profile either.
+
+### 99.5 Why the earlier protocol is retired, in five clauses
+
+Recorded here because these are the clauses a future protocol must not reproduce.
+
+- The mechanism it named had no referent: no board capture carries a reference, so "the division inflated |S21|" could not be tested on the stored artefacts at all (97.10).
+- Its reproduction clause of 1e-9 is unsatisfiable by construction: the power and projection routes differ by 2.4e-3 on a clean record, six orders above it.
+- Its two falsifier clauses collapsed: passivity reconstructed with a fixed |S11| squared and passivity taken as |S21| squared agree to 2e-16, so they were one clause wearing two hats.
+- It named the wrong record: 1.09153308 is the pulse bin, not the anchored row, and the two differ by 1.1e-2 in passivity.
+- The |S11| squared it used, 1.77e-4, is the residue of the rounded 1.03906 printed in the log, not the record's own 0.01367744, which squares to 1.871e-4, 5.5 per cent larger.
+
+### 99.6 What this preregistration does not do
+
+- **It does not test the reference normalisation.** If F1 fires, that route is still untested, and it must be pre-registered separately, with its own frozen prediction, before it is run.
+- **It does not measure absorption.** No payload in this tree carries an absorbed-work key, the baseline included (97.9), so no absorbed fraction can be quoted from any outcome.
+- **It makes no convergence claim**, and no claim about the physics of the board.
+- **It does not close 97.10.** It decides whether that number may be used as passivity data. Nothing more.
+
+### 99.7 Provenance of the thresholds
+
+The 1e-3 floor is the straight-line coupon floor already in the record (`decisions.md:3084`). The 3 per cent line is chosen for this preregistration, before the run, at roughly a third of the 8.47 per cent observed on the board, so that F2 fires on a control that reproduces a substantial fraction of the rise rather than all of it. The 0.3 per cent line in the wall preregistration was chosen the same way. A threshold that is chosen after a result exists is not a threshold.
