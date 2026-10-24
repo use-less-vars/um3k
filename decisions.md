@@ -3800,3 +3800,42 @@ still multiplies by it.
 - What changed: the wall question now has a mechanism and a measurement plan, where before it had two
 readings and no way to choose between them. The gate itself is unaffected by all of it, and remains the
 only thing standing between the lever and a schedulable C5.
+
+#### 101.11.7 The four constants that price C5, restated where they can be read
+
+§101.11.2 concluded that `.scratch/` being git-ignored (`.gitignore:34`) is a defect in the record's
+reproducibility, and that the repair is a decision: either the pricing script comes under version control,
+or its constants are restated here where they can be read without the scratch tree. This is the second
+repair, taken. The four values are transcribed, not re-derived, from the one line that defines them,
+`.scratch/levers/price_levers.py:11`, which reads in full:
+
+`ANCHOR_DT=1.906574869530972e-13; ANCHOR_NSTEPS=8034; ANCHOR_WALL=2936.7; ANCHOR_N=4894400`
+
+- `ANCHOR_WALL = 2936.7` s - the wall of the anchored cw board capture itself: 322x200x76, 4,894,400
+  cells, `nsteps=8034`, `dt_scale=1.0`, 9 stations. The optimistic C5 figure of 7.90 h, 28,439.6 s, is
+  scaled from it; the pessimistic 11.63 h figure is not, because it scales C3's own wall instead (§101.10.7).
+- `ANCHOR_DT = 1.906574869530972e-13` s - the CFL step of that mesh, and the value the C3 report records
+  as `dt`. Both captures are made at `dt_scale=1.0`, so this is also the step actually taken.
+- `ANCHOR_NSTEPS = 8034` - the anchored step count: 2008 warm-up and 6026 accumulation.
+- `ANCHOR_N = 4894400` = 322 x 200 x 76 - the cell count, which is the scaling base for every other mesh.
+
+They are consumed by the scaling relation at `.scratch/levers/price_levers.py:33`,
+`wall = ANCHOR_WALL * (N / ANCHOR_N) * (dt / ANCHOR_DT)`. That relation is defective in one direction, and
+the defect is already recorded in §101.11.2: a finer C5 mesh has a smaller CFL step and should cost more,
+and the expression makes it cost less. It is not repaired here, and nothing in §101.1 or §101.10 depends
+upon it - those sections scale by cell count and by step count directly.
+
+Two checks were made while transcribing, so that this is not merely a copy.
+
+The first is the `dt` literal in `.scratch/c3_driver.py:45`, which is written with one more digit than
+line 11's: `1.9065748695309721e-13` against `1.906574869530972e-13`. They are the same IEEE754 double,
+`0x1.ad528ef0c3821p-43`, bytes `3d4ad528ef0c3821`, `a - b == 0.0`, and `repr()` of both is
+`1.906574869530972e-13`. The anchor the pricer uses and the anchor the driver asserts on are therefore
+numerically identical, and no reconciliation is owed between them.
+
+The second is the address. `.scratch/levers/price_levers.py:26` reads
+`c=spec.to_cell_counts(n_sub=n_sub,n_pml=n_pml)`, which confirms the wrong address already recorded in
+§101.11.2: `ANCHOR_WALL` is defined at `:11`, not at `:26`.
+
+These four numbers are now in version control, in prose, in this file. They are the durable copies. The
+`.scratch/` originals are not, and cannot be recovered from the repository.
