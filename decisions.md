@@ -3220,3 +3220,151 @@ Frozen on writing. Nothing in this subsection has been run.
 **Operational note.** The driver must print `passivity` and `passivity_power` from the payload rather than rebuild them, and the record's `V_residual` is `backward_voltage.residual`, not `bwd_fwd_V`, which reads nan in both blocks of both rung-8 files.
 
 **Why this is admissible.** It adds a variable. It is not admissible as a rescue, because every band above is a prediction about a number that does not yet exist, and a miss is a miss.
+
+## 100. Section 99.9 is void before launch, the admissible lever set, and a pre-registration the rise can be scored against
+
+### 100.0 What is settled, what is open, and why 5.9 dB may not be cited either way
+
+The 5.9 dB discrepancy against the benchmark is a retired benchmark in both directions. It is no longer evidence that the solver is wrong, and it was never evidence that it is right: 97.2 retired it on its own grounds, before anything in this section was measured. The number must not be cited in either role. Cited as a fault it invites a defence that has nothing to do with the fault; cited as a clean bill of health it asserts something that section withdrew.
+
+What is definitely wrong is the passivity defect. Two questions have been run together through this stretch of the record that 99 treated as one.
+
+- (i) Does the model satisfy passivity? Closed, and closed the wrong way: the defect is established and unfixed.
+- (ii) How does the end-to-end power rise behave, and what sets its size? Open: the rise is unresolved.
+
+99.9 was meant to answer (ii), and it is (ii) that this section re-registers, not (i).
+
+Closing (i) does not require (ii), and nothing in this block closes (i) either: the model still returns more power at the last station than at the first, on a geometry that carries no load. The two statements must be carried separately wherever they are written down, the deferred Problem chapter included.
+
+### 100.1 99.9 is void before launch, and its falsifier fired at the adapter
+
+99.9 specified `n_sub` 8. The adapter refuses that request before any solve is issued: `to_cell_counts(n_sub=8)` raises, at `emfit/board.py:600-641` against `cropped_to_strip` at `:480-575`. The message, verbatim:
+
+```
+the mesh is cubic ... at cell = h / n_sub = 1.600000 mm / 8 = 0.200000 mm these do not fit: n_clean = 8.500000 mm / 0.200000 mm - 12 = 30.500000 cells ... n_sub = 16, 32 would fit every dimension
+```
+
+That is 99.9's own falsifier 5 firing at the adapter and not at the solver. Nothing was learned about any hypothesis in 99.9, because none was tested, and no run was attempted. The void is a class (d) outcome of the kind the earlier registers already know: void for a reason written before the run rather than found after it.
+
+**What the refusal establishes, in four parts.**
+
+- The void is enforced rather than reinterpreted. A code path refuses the mesh, so no reader has to be persuaded that the mesh was wrong.
+- The falsifier that fired is the printed-geometry falsifier, and it fired before the solver was reached.
+- The fence held. No solve was started and abandoned, and none was attempted at a substituted `n_sub`.
+- The method is not in question. The refusal says nothing about the adapter's correctness, only about the counts 99.9 froze.
+
+**The same adapter at `n_sub` 16, as a control.** Driving `cropped_to_strip(n_sub=16)` and reading the counts back reproduces the anchored capture exactly: `n_strip` 30, `n_clean` 73, `n_ref` 75, `n_line` 235, cell 1e-4, grid 322 x 200 x 76 = 4,894,400 cells, dt 1.9065748695309721e-13 s, nsteps 8034 and 2008, f 7833566197.718491 Hz. One call therefore does two things: it validates the method and it invalidates 99.9's numbers. The adapter is sound; what 99.9 froze out of it was not.
+
+### 100.2 Three arithmetic errors in 99.9, and the cost it froze is withdrawn
+
+Three separate errors, and none of them is repaired by the others.
+
+**1. The vertical count.** 99.9 took `nz` as `n_sub + n_air + n_top` with `n_air` 48 and `n_top` 12, and then wrote 38. At `n_sub` 8 that expression is 8 + 48 + 12 = 68, not 38. The 38 is `n_clean` 38 of the rung-8 straight-line box of 99.8.4, transposed into the z slot. Two counts from two different adapters were placed in one tuple.
+
+**2. The cell count.** With `nz` corrected, the frozen grid is 161 x 100 x 68 = 1,094,800 cells, which is 1,094,800 / 4,894,400 = 22.4 per cent of the anchor, not the frozen 611,800 = one eighth. The half-cell error is separate and independent of the first: the frozen `ny` of 100 is `n_strip` 15 + 2(30.5 + 12), and the 30.5 is the non-integral `n_clean` the adapter refused in 100.1. The frozen grid was never buildable even had `nz` been right.
+
+**3. Cost, in both tables.** The frozen 180 to 200 s inherits the wrong one-eighth factor and is void with the grid it was computed from. The second cost table is wrong in method as well as in input: wall time is proportional to cells divided by dt, not multiplied by the dt ratio. At `n_sub` 32 the cell ratio is 4.842 and dt halves, so nsteps doubles -- 16,069 against 8034, as that table's own row states -- and the price is 2936.7 s x 4.842 x 2.0 = 28,430 s = 7.9 h, not 7110 s = 2.0 h. 7.9 h stands; 2.0 h is withdrawn.
+
+What survives 99.9 is its design and not its numbers: one variable, cells, changed at fixed frequency, fixed branch and identical geometry, with every band written before the run and every miss counted as a miss. That design is what 100.5 re-registers; the counts, the grid and the price attached to it are void.
+
+### 100.3 The admissible lever set, read back from the adapter with no solve
+
+Every row of the table below was produced by driving `cropped_to_strip(*, n_sub)` and reading the grid back. No solve was executed for any of them, and no number in this subsection comes from a run.
+
+The adapter is the only knob. It snaps `x_port` up and `x_far` down to cell boundaries and moves `port.position` to match (`emfit/board.py:551-570`). There is no `margin` and no `length` argument to reach through it, and `port_pad` is not a lever -- it selects the net.
+
+`n_pml` is a subtraction from the box, so at `n_pml` 6 and 12 the grid is identical (verified: 322 x 200 x 76 both ways). That is why a PML change cannot be mistaken for a geometry change, and why C6c is common-mode for both rivals.
+
+| id | change | grid / cells | ratio | memory | wall time | verdict |
+|---|---|---|---|---|---|---|
+| C0 | anchor | 322 x 200 x 76 / 4,894,400 | 1 | 2.68 GiB | 2936.7 s | build |
+| C1 | `x_far` -117.5 cells | -- | -- | -- | -- | RAISES (`n_line` 117.5) |
+| C1' | `n_line` 118 | 205 x 200 x 76 / 3,116,000 | 0.637 | 1.71 GiB | 1869.6 s | build |
+| C2 | `x_far` -58.75 cells | -- | -- | -- | -- | RAISES (needs `n_sub` 80) |
+| C2' | `n_line` 59 | 146 x 200 x 76 / 2,219,200 | 0.453 | 1.22 GiB | 1331.5 s | build, but stations collapse to 5 unique layers unless `x_last` moved to about 14.2 mm |
+| C3 | `n_stations` 18 | unchanged | 1 | 2.68 GiB | 2936.7 s | build |
+| C4 | `n_stations` 4 (`emfit/studies.py:2522` floor) | unchanged | 1 | 2.68 GiB | 2936.7 s | build |
+| C5 | `n_sub` 32 | 644 x 400 x 92 / 23,699,200 | 4.842 | 12.98 GiB | about 28,430 s (7.9 h) | build, inadmissible on cost |
+| C6a | `n_air` 24 | 322 x 200 x 52 / 3,348,800 | 0.684 | 1.83 GiB | 2009 s | build, confounded (top boundary moves) |
+| C6b | `n_top` 0 | 322 x 200 x 64 / 4,121,600 | 0.842 | 2.26 GiB | 2473 s | build, confounded |
+| C6c | `n_pml` 6 | 322 x 200 x 76, unchanged | 1 | 2.68 GiB | 2936.7 s | build, common-mode |
+| C6d | `x_port` +100 cells (`n_ref` 175, `n_line` 135) | 322 x 200 x 76, unchanged | 1 | 2.68 GiB | 2936.7 s | build, but stations collapse to 2 layers |
+
+**Memory, and what is buying it.** The anchor's resident set is about 588 to 591 bytes per cell, and it is dominated by two copies of one operator. `C` (`emfit/operators.py:170-210`) and `C_tilde` (`:242-246`) are two CSR copies of the same curl, together 314 bytes per cell, which is 1.43 GiB at the anchor.
+
+Eleven full-length float64 vectors account for a further 267 bytes per cell: `m_eps` and `m_mu` (`emfit/materials.py:259` and `:274`), `inv_eps` and `inv_mu` (`emfit/evolve.py:137-138`), `e` and `h` (`:168-169`), `sigma_e` and `sigma_m` (`emfit/pml.py:649` and `:613`), the two `_multipliers` (`:690-692`), and `current` (`emfit/studies.py:2733`). Three boolean masks are 9 bytes per cell (`emfit/studies.py:2590-2599`).
+
+There are no complex three-dimensional fields and m = 0, so nothing else of that order is hidden in the working set. At 4,894,400 cells that is 2.68 GiB; at C5's 23,699,200 cells it is 12.98 GiB.
+
+**The limit that binds is not the declared one.** The cgroup limit is not honoured on this host -- a probe was OOM-killed even at `mem_limit=8g` -- so the operating limit is free host RAM, not the declared limit, and a run that would fit the declared limit can still take the machine down.
+
+Deleting one of the two curl copies would save 157 bytes per cell, about 3.46 GiB at C5 (12.98 GiB down to about 9.5 GiB), and would make C5 near-affordable. It needs changes to `emfit/operators.py` and `emfit/evolve.py`, which the standing fence excludes, so it is priced here and not proposed.
+
+**What can and cannot separate the rivals, stated honestly.** C5 is the only lever that changes the cell, and therefore the only direct test of the cell-squared rival.
+
+C3 and C4 change only the estimator. They cost a full anchor run each, 2936.7 s and not zero, and because the station x positions are pinned absolutely at 10.4 mm to 20.0 mm, the endpoint ratio is the same under both rivals. C3 and C4 are therefore a record-quality test and cannot separate the rivals.
+
+C1', C2', C6a, C6b, C6c and C6d move both rivals together and can only test a third hypothesis, that of accumulation along the line.
+
+### 100.4 What the record already holds, and the third rival it forces
+
+Nine station layers are already in hand and cost nothing to read: `station_x` = 10.4, 11.6, 12.8, 14.0, 15.2, 16.4, 17.6, 18.8 and 20.0 mm, that is node layers 104 to 200 at 1.2 mm spacing, spanning 9.6 mm inside a 23.5 mm line (`x_port` 8.7 mm, `x_far` 32.2 mm).
+
+"End to end" therefore means 9.6 mm, and the last station stops 12.2 mm short of the far wall. That sentence must be carried wherever the 8.4742 per cent is quoted, because without it the number reads as a property of the whole line when it is a property of a window that stops 12.2 mm short of one end.
+
+`v[k]` is the complex gap voltage of the strip-over-ground column (`emfit/studies.py:2766-2767`) and `i[k]` is the negated trace current (`:2734`, `:2786-2790`, `:2776-2782`).
+
+**The increments.** The successive increments, as percentage points of half P0 = 106,379,510,589.87, are 6.4850, 4.1701, 2.6645, 1.7385, 1.1642, 0.7356, 0.2796 and -0.2890. They sum to 18,029,625,024.65 = 16.9485 percentage points, and the exact ratio 18,029,625,024.65 / 106,379,510,589.87 = 0.1694838 gives 16.9484, the difference being rounding in the printed increments; half of either is 8.4742 per cent.
+
+**The first six decay geometrically and the seventh does not.** The ratios of the first five increments are 0.64304, 0.63894, 0.65246, 0.66964 and 0.63187. A log-linear least squares over the six increments 6.4850, 4.1701, 2.6645, 1.7385, 1.1642 and 0.7356 against k = 0 to 5 gives a slope of -0.432449 in natural log per station step, so r = 0.64887 and a decay length of 1.2 mm / 0.432449 = 2.77 mm; the geometric mean of the five successive ratios, 0.6470, gives 2.76 mm, and the two routes differ in the third decimal and agree. The geometry holds for the first six increments only: increment 7 is 0.2796 where the fitted trend gives 0.480 (exp(0.779223 - 0.432449 x 3.5) = 0.47997; 0.477 by the ratio route), that is 0.58 of the predicted value, which in raw ratio terms is 0.380 against a trend ratio of 0.649, and increment 8 is -0.2890, negative. The record turns over between stations 7 and 8.
+
+**What this forces, as a hypothesis and not as a rescue.** It forces a third rival: port-near field contamination decaying with a length of about 2.8 mm. That is a property of the field near the port, not of the mesh, and it is not a scale-free estimator offset.
+
+The whole measured rise sits within about three and a half decay lengths of the port (span 9.6 mm, decay 2.77 mm), so on this reading the record is measuring the port's near field and calling it a line property. The rival is written down because the data force it, not because it saves an earlier band.
+
+**The repeatability floor.** Same mesh, same frequency, captured twice: `passivity_power` 1.0849290726270013 in the cw anchor against 1.0967517700737275 at pulse bin 14 (`.scratch/m2/board_run_pw.npz`), which is about 1.1 per cent scatter at fixed mesh. Every band in 100.5 is widened to at least 1.1 per cent because of it; a test whose effect is smaller than this floor cannot be read.
+
+### 100.5 Pre-registration of the separating run, not run, priced, requiring the principal's go
+
+This supersedes 99.9 entirely. Nothing in this subsection has been run.
+
+**The quantity.** R is the end-to-end ratio of power at the last station to power at the first. At the anchor, cell 1e-4 with `n_sub` 16, R = 1.084742. At `n_sub` 32 the cell is 5e-5, and the R measured there is the number the rivals are scored against.
+
+**The three rivals, with bands.** Each band is the anchor value scaled to the cell and widened by the 1.1 per cent floor of 100.4.
+
+- **H, the rise is scale-free and not a mesh property.** R = 1.0847, band [1.0728, 1.0967].
+- **R-prime, second order in the cell.** R = 1 + 0.084742/4 = 1.0212, band [1.0101, 1.0324].
+- **L, first order in the cell.** R = 1 + 0.084742/2 = 1.0424, band [1.0310, 1.0538]. L is named although nothing on file predicts it, so that the gap between the other two bands is not later mistaken for an empty band.
+
+**Falsifiers, all decidable.**
+
+- R in the H band falsifies R-prime and L.
+- R in the R-prime band falsifies H and L.
+- R in the L band falsifies H and R-prime, and the defect is then first order in the cell, which none of the present rivals predicts.
+- R below 1.0101: the rise vanishes faster than cell squared and every named rival is falsified.
+- R above 1.0967: the rise grows with resolution and the run itself is suspect.
+- Any outcome in more than one band, or in no band, is a class (d) outcome, recorded as such rather than resolved by preference.
+- The R-prime and L bands overlap in [1.0310, 1.0324], so a reading in that window does not choose between them and is a class (d) outcome rather than assigned to the nearer point value.
+
+**The passivity defect is measured in the same run, on the same law.** Expected 1 + 0.0849290726270013/4 = 1.0212 under R-prime, unchanged at 1.0849 under H. Both quantities are recorded from the same capture, so a single run scores two questions.
+
+**Cost gate and status.** C5 is the only lever that produces this number. It is declared INADMISSIBLE AS IT STANDS: 12.98 GiB resident against a host whose cgroup limit is not honoured, about 7.9 h wall, 9.7 times the anchor run. It may not be launched without an explicit principal decision on host memory and time block.
+
+**The only cheap companion, and exactly what it is for.** C3 (`n_stations` 18) at a full anchor run, 2936.7 s and 2.68 GiB, run twice if C4 is added.
+
+C3 and C4 cannot separate H from R-prime, because both rivals are independent of station count and the endpoint stations sit at the same absolute x. Their purpose is narrow and is stated so that it cannot be widened afterwards: to certify that the turnover between stations 7 and 8 is a feature of the record and not of the sampling, and to bound the estimator's dependence on station count. If the principal wants a separating test it is C5 or nothing; if he wants the record certified it is C3.
+
+**The nsteps caveat, for whatever is launched next.** `board_run_cw.choose_nsteps` copied faithfully returns 6249, 1562 and 7.833380 GHz, whereas the anchor's recorded triple is 8034, 2008 and 7.833566 GHz. The recorded triple is reproduced only by a span-first rule, nsteps = round(4/3 x span/dt) with span = 6026 dt = 1.148902e-9 s. Any future run must state which rule it used, and the two rules must not be mixed across a comparison.
+
+### 100.6 Two corrections carried in this block
+
+**(a) The 97.10 sentence at `decisions.md:2991`.** It now reads that the power "rises by 8.4742 per cent end to end in power (4.1509 per cent in amplitude), not monotonically: it peaks at station 7 and eases 0.13 per cent into station 8, with no discontinuity at the strip interface, and both stored amplitude columns inherit that 4.15 per cent." Committed as `1e62cc7`.
+
+**(b) The sweep-wall driver's accessor at `.scratch/sweep_wall_driver.py:85`.** It now reads `float((d.get("backward_voltage") or {}).get("residual") or float("nan"))`. The payload key is a top-level `backward_voltage`; a module attribute of that name does not exist. Verified finite with no solve executed: W50 0.003819170022133151, W62 0.003666738032362844, S0_shift0 0.004334998826760911. The file is under the git-ignored `.scratch` tree, so the change is recorded here rather than committed.
+
+### 100.7 Status
+
+- **Open.** The passivity defect is unfixed, and the end-to-end rise is unresolved with three named rivals and a falsifier set that separates them.
+- **Closed.** 99.9, void by 100.1.
+- **Run in this block.** Nothing.
+- **Fence.** No run may be launched under this section without a fresh amendment and the principal's go. The Problem chapter remains deferred.
