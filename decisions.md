@@ -4358,14 +4358,39 @@ scale-free rise carries no length, so nothing about the port's position can ente
 see. A measured dependence of the size port-near predicts therefore kills H and leaves port-near
 standing; a null result, at the tolerance below, kills port-near and leaves H standing.
 
-**Tolerance.** The size of the `R` shift that counts as "depends" is **NOT YET AVAILABLE**. The
-quantity that would set it is the repeat-run resolution of `R` at one fixed configuration and one
-fixed port distance, two identical runs differenced, and the record holds no repeated identical run
-under this lever, so no such number can be cited. The only spread-like quantity on file is the width
-of the H band at 3345, [1.0728, 1.0967], which is 0.0239 in `R`; that is a spread across cells and
-estimators, not a repeat-run resolution, and it is used here only as an order-of-magnitude bound,
-explicitly as an import from another quantity and not as the tolerance. Until the tolerance is set
-this test is registered and cannot be scored.
+**Tolerance.** The repeat was run, and what it returned is **exactly zero**, not small. Same configuration,
+same container, same code except as noted below: RC 0, `END_UTC` 2026-10-24T20:57:22Z, wall 4560.1 s at
+0.5676 s/step, `MAXRSS` 3,591,028 KB, against GATE's 4474.8 s (`.scratch/tol/logs/TOL.launch`, `TOL.json`).
+All 30 compared configuration fields identical: `ix_port` 87, `ix_far` 322, `n_ref` 75, `n_line` 235,
+`n_strip` 30, cell `1e-4` m, box 322 x 200 x 76 cells, dt 1.9065748695309721e-13 s, `nsteps` 8034, `n_warm`
+2008, `n_acc` 6026, f 7833566197.718491 Hz, nine stations 10.4-20.0 mm. `R` = P_9/P_1 with
+P_k = 0.5 Re(v_k conj(i_k)) on the dumped per-station arrays gives 1.0847420002436303 in both runs:
+|dR| = 0.0 absolute and relative, all fifteen dumped arrays bitwise identical, and the two `.npz`
+byte-identical (md5 `2259ff08c637fb8e39299e723cf694c6`, 4154 B each; `.scratch/gate/logs/GATE.npz`,
+`.scratch/tol/logs/TOL.npz`).
+
+**What the zero does and does not buy.** A deterministic repeat cannot bound anything, so the zero is not a
+tolerance and must not be quoted as one. What it does establish is that run-to-run non-repeatability
+contributes nothing to a difference between two configurations, so a difference between two port planes is
+above repeat noise by construction. What it does not establish is estimator resolution, which needs a
+deliberate perturbation of the accumulation window (`n_warm` 2008, `n_acc` 6026, span
+1.1489020163793638e-09 s), and that experiment has not been run. The anchor's own rounding, 1.084742 at
+3341, sits 2.436302271036084e-10 (2.2e-10 relative) from `R`: a floor on claims made against the anchor as
+written, not a tolerance.
+
+**The sha straddle, stated and not glossed.** GATE ran `emfit/operators.py` at `a0458566...`
+(`.scratch/gate/logs/GATE.driver.out`) and TOL at `5a46ede5...`, because commit f065d26 landed at 17:04:53Z,
+after GATE finished and before TOL launched. The zero difference is nevertheless an operator-level result and
+not an assumption: the run's shim compared `curl_dual` and `curl_h_to_e` against their primals with nnz,
+indptr, indices and data all equal -- zero elements differing, csc (14891942, 14787272), sorted and
+canonical -- so the outcomes are bit-identical across the two operator shas. Two caveats worth their line:
+the shim's `nbytes` leg is vacuous (`expected_nbytes_le_0=0`, the known `csc_matrix.nbytes` `AttributeError`
+path), and no second unshimmed solve was run (`builds=1`, `primals=1`), so the equivalence rests on the
+operator comparison plus the artefacts and not on two full solves.
+
+**Still unregistered.** Everything else this paragraph used to leave open stays **NOT YET AVAILABLE** -- in
+particular the estimator-window resolution of `R`, without which no difference between two port planes can
+be called significant.
 
 **Why the existing lever is not reused.** C6d at 3301 moves `x_port` by +100 cells (`n_ref` 175,
 `n_line` 135) and is disqualified here because it collapses the stations to two layers: with two
@@ -4419,6 +4444,14 @@ score the cell-squared rival: it holds the cell, so it says nothing about R-prim
 carries the anchor's estimator unchanged. A positive result removes one rival, port-near, and leaves
 the anchor band where it stands; a null result makes port-near falsified in the same sense as any
 other hypothesis on this record.
+
+**Amendment, after the repeat.** The frozen block above requires that each shifted plane needs its own repeat
+before a difference is called significant. That requirement is superseded, because a repeat cannot establish
+significance: the repeat ran and returned exactly zero (Tolerance, above), so a per-plane repeat would return
+zero again and prove nothing. The operative criterion becomes this: a difference between two port planes is
+above run-to-run noise by construction, and what it is not yet above is the estimator-window effect, which is
+unmeasured and is **NOT YET AVAILABLE**. Nothing else in the frozen block moves -- the four planes, the held
+geometry, the station-row convention, the rationale, and the C6d exclusion all stand as written.
 
 #### 101.12.11 C5, amended pre-registration: what it can and cannot decide
 
