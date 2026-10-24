@@ -3227,6 +3227,16 @@ Frozen on writing. Nothing in this subsection has been run.
 
 The 5.9 dB discrepancy against the benchmark is a retired benchmark in both directions. It is no longer evidence that the solver is wrong, and it was never evidence that it is right: 97.2 retired it on its own grounds, before anything in this section was measured. The number must not be cited in either role. Cited as a fault it invites a defence that has nothing to do with the fault; cited as a clean bill of health it asserts something that section withdrew.
 
+**The figure has no artefact, and is marked accordingly.** No measurement of 5.9 dB exists in this
+tree. The only 5.9-family number with a record behind it is the per cent one: `eps_V`
+3.5418227632826453 at `.scratch/logs/L8.json:236`, against the static 3.343938310, gives a 5.9177
+per cent excess (2853, 2899). No line converts that to decibels, and the conversion is not 5.9: 10
+log10 of 1.059177 is 0.2497 dB, while no dB-valued record in the tree holds a figure near 5.9 at
+all. The figure is therefore marked unverified provenance, in the form used at 3057, and a figure
+so marked may not be cited in either direction -- which is what this section already required, now
+for the reason that no artefact stands behind it rather than only that the benchmark it was read
+against is retired.
+
 What is definitely wrong is the passivity defect. Two questions have been run together through this stretch of the record that 99 treated as one.
 
 - (i) Does the model satisfy passivity? Closed, and closed the wrong way: the defect is established and unfixed.
@@ -4155,11 +4165,18 @@ what fixes the bytes that were tested; the two agree by construction, not by mea
 #### 101.12.4 The saving, measured
 
 The eliminated allocation is 769356828 bytes at 4894400 cells, 157.19 bytes per cell, 733.66 MiB at
-the anchor mesh. At C5's 23699200 cells the same rate gives 3725640000 bytes, about 3.469 GiB.
+the anchor mesh. At C5's 23699200 cells 769356828 x 4.842105263 = 3725306746 bytes, about 3.469 GiB.
 
-The cell count 23699200 is the supervisor's and has no occurrence anywhere in this tree; a search
-for it returns nothing. The C5 number is therefore an extrapolation from a measured anchor-mesh
-number and not a measurement at C5, and it is to be quoted as such wherever it is used.
+The cell count occurs in this tree, and not only as prose. `.scratch/levers/price_levers.py:24-32`
+builds it out of the geometry: `nx` = `n_pml` + `n_ref` + `n_line` and `ny` = 2 x `n_pml` +
+`n_strip` + 2 x `n_clean` at `:29-30`, `nz` = `n_sub` + `n_air` + `n_top` at `:30`, and N = `nx` x
+`ny` x `nz` at `:32`. At the `n_sub` 32 call of `:56` with `n_pml` 12, `n_air` 48, `n_top` 12 that
+is 644 x 400 x 92 = 23699200 cells against the anchor's 322 x 200 x 76 = 4894400 from `:46`, a ratio
+of exactly 92/19 = 4.842105263157895. The digits are in this file as well, at 3297 and 3307 as
+23,699,200. The paragraph this replaces said the count had no occurrence anywhere in this tree and
+attributed it elsewhere; both statements were false and are withdrawn here. What the C5 number is
+not is a measurement: the 157.19 bytes per cell are measured at the anchor mesh only, so the
+3725306746 bytes are an extrapolation and are to be quoted as such wherever they are used.
 
 This is what replaces the paper calculation of 101.11.8. At the anchor mesh the number is now
 measured. At C5 it remains derived.
@@ -4210,7 +4227,70 @@ record does not read as though the clause was obeyed.
 #### 101.12.8 What remains open
 
 `divergence_dual()` still materialises its copy, and the same lever is available there. The C5
-passivity test remains pre-registered and unrun, at lines 3333-3345 and open at 3367, and three
-incompatible C5 prices are on file: 12.98 GiB and about 28430 s at 3287 and 3351, 16.556 GiB peak
-and 1.25 GiB short at 3414, and 41868 s, which is 11.63 h, at 3700. Those must be reconciled before
-any such run is authorised. The wall still needs a quiet window.
+passivity test remains pre-registered and unrun, at lines 3343-3355 and open at 3377, and three
+prices are on file for it, all of which reconcile once the rate and the rule behind each are named.
+
+1. **Steady memory: one lever, two rates.** 12.98 GiB at 3297 and 3361 is 588 B/cell, the bottom of
+the 588-591 band at 3303; the rate the measurement gives is 614.09 B/cell, 13.55 GiB at 3419, and
+614.51 B/cell gives 13.56 GiB. These are not rival prices for one lever but the same price read at
+the band's low end and at the measured rate, so 3361's INADMISSIBLE stands, on the higher figure.
+
+2. **Peak and shortfall: one product.** 16.556 GiB at 3421 is 3.41888 GiB x 4.842105 = 16.5546 GiB,
+and the 1.25 GiB short at 3424 is that peak against 15.31 GiB of host memory (16,050,128 kB =
+15.30659 GiB); the subtraction is 1.24798 GiB, so the digit and the deduction agree.
+
+3. **Wall time: one product, one open factor.** 28,430 s at 3297 is 2936.7 x 4.842105 x 2 =
+28,439.62 s, which 3435-3437 and 3550-3556 already carry; 41,868 s at 3710 is the same product on
+C3's 4323.36282 s wall, and whether that wall or 2936.7 s is the per-run cost of this host is the
+open question at 3705-3712, not a second price for the lever.
+
+4. **What may not be quoted yet.** The 7,110 s that 3555 attributes to the C5 row of the lever
+table is not in that row, which prints 28,430 s (7.9 h): 7,110 s is what `price_levers.py:33` gives
+as literally written, and it is withdrawn at 3276.
+`choose_nsteps` at `price_levers.py:14-23` returns the global best residual even when that row fails
+the rule's own 2 per cent span test: 6249 for the anchor, which matches the caveat at 3367, and
+10713 for C5, whose span is 0.667 of the 6026-dt target, so that rule prices a C5 solve at 18,966 s
+rather than 28,439.62 s.
+No C5 price is quoted until the step rule is fixed and a quiet-host anchor rerun settles the wall.
+
+5. **The rival that is written down and never scored.** 3331 forces a third rival: port-near field
+   contamination decaying with a length of about 2.8 mm, and 3333 draws the consequence, that the
+   record is measuring the port's near field and calling it a line property, written down "because
+   the data force it, not because it saves an earlier band". The C5 pre-registration at 3343 opens
+   "The three rivals, with bands" and scores H, R-prime and L only, at 3345-3347. Searching
+   3341-3410 for "port-near", "2.8 mm", "2.77 mm" and "contamination" returns nothing, so the rival
+   is named and dropped inside the same subsection, and no other line amends, folds, excludes or
+   retires it. A fourth band does not repair that: port-near predicts a spatial shape, the decay
+   measured out from the port and the turnover between stations, not a scaling of the endpoint ratio
+   with the cell, and at the anchor value it lands inside the H band, so C5 cannot fail it. C5
+   separates H from R-prime and L only and cannot close the port-near hypothesis at all. Its
+   discriminating observable is the station-to-station shape, which 3365 already declares the shape
+   test incapable of separating rivals on.
+
+6. **The post-lever position, stated as a price.** With the lever the saving is 157.19 bytes per
+   cell, 3.4695 GiB at C5's 23,699,200 cells. Steady memory becomes 614.51 - 157.19 = 457.32 bytes
+   per cell, which is 10.09 GiB at that count, and peak becomes 13.06 to 13.09 GiB, leaving 2.22 to
+   2.25 GiB against the 15.30659 GiB host limit. On those figures C5 fits with the lever. The peak
+   is derived and not measured -- no post-lever peak has been instrumented at C5's scale -- so it
+   carries that label wherever it is quoted.
+
+7. **The visual pass on this section is closed.** `.scratch/block_101_12.md` is 11095 bytes and 172
+   lines, md5 7f0f5f959b4be0fbdf6305397217d895, byte-identical to the pre-edit file's lines
+   4045-4216 and differing from its 4044-4216 only by the mandated blank separator at 4044; the
+   repairs recorded above are the only differences between that block and the text as it now stands.
+
+8. **A confound and a line shift.** (i) The confound: C5 is not a pure refinement, because `n_air`
+   and `n_top` are cell counts and not lengths, so the air slab halves from 4.8 to 2.4 mm and the z
+   extent falls from 7.6 to 4.6 mm, and 3298 rejects C6a as confounded for moving that same boundary
+   without flagging that C5 moves it too. (ii) The line shifts: repair A inserted ten lines at 3229,
+   so an absolute reference at or after 3230 in the pre-edit file sits ten lines lower here, and
+   repairs B and C add seventeen more for one at or after 4163, which is why this subsection's own
+   citations are post-shift; ten untouched lines in the surviving text still carry pre-shift
+   numbers, at 3406, 3407, 3408, 3413, 3435, 4001, 4015, 4041, 4047 and 4189, two of which, 3407 and
+   3413, were already inexact before the shift, both citing 3301 for text that sits at 3303; and
+   they are deliberately left alone rather than renumbered, because silently rewriting an earlier
+   citation is worse than disclosing the shift -- the pre-edit file is preserved at
+   `.scratch/decisions.bak.before_abc`, md5 5f08219264d7dcc59f120ce1ad000fe9, so any apparent
+   mismatch resolves against the backup.
+
+The wall still needs a quiet window.
