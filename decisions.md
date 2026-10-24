@@ -4504,3 +4504,147 @@ the host. The order of operations is fixed.
 This amendment lands first. Then the anchor wall is rerun in such a window and ANCHOR_WALL is
 settled from it. Then C5 is launched against this amended pre-registration, and a change to the
 claim after the launch is a further amendment on the record, not an edit to this one.
+
+#### 101.12.12 Supervisor's claims, withdrawn
+
+Every claim recorded in this subsection was made by the supervisor in a dispatch, and every one of the
+six was withdrawn after it was checked against the tree. They are kept in the order they were made,
+each with what the tree actually says, because a framing that was asserted and then withdrawn is part
+of the record of how this chapter was written and not a thing to be tidied out of it.
+
+**(a) "Strip-to-PML clearance: the board's PML is 6 cells."** The tree runs twelve. `n_pml` is 12 in
+the frozen configuration (`decisions.md:4403`, and again at 4143 and 4173). `n_pml` 6 is candidate
+C6c, priced at one run, 2.68 GiB and 2936.7 s, noted as common-mode and unrun (`decisions.md:3300`).
+The absorber count is a subtraction from the box, so at 6 and at 12 the grid is identical, 322 x 200 x
+76 (`decisions.md:3286`), which is exactly why C6c cannot separate the rivals: a PML sweep is
+common-mode for both of them. **WITHDRAWN.**
+
+**(b) "The fan-outs sit near the walls."** They are not near the walls; they are outside the solved
+span. The 2.0-to-3.0 mm fan-out runs over 4.5-8.65 mm and the 3.0-to-0.64 mm fan-out over 32.22-34.32
+mm, against a solved span of [8.7, 32.2] mm (`decisions.md:3162`). The correct framing is that both
+transitions are absent from the mesh at its two ends, not that they sit inside it near its boundaries.
+**WITHDRAWN**, reframed from proximity to absence.
+
+**(c) "3.667 GHz is clean."** Clean on one route only. Passivity at 3.666667 GHz is 1.00045543 on the
+CW column and 1.01677967 on the pulse bin (`decisions.md:1386`, table opened at 1378), and the record
+says in terms why the CW number at that frequency cannot be read as a rate at all -- it is a launch
+bump followed by a decay (`decisions.md:1389`). **WITHDRAWN AND NARROWED** to the CW column.
+
+**(d) "The stations are pinned at 10.4-20.0 mm."** They are requested, not guaranteed. The row is
+absolute on the `xmin` datum and snapped in cells, so 10.4-20.0 mm is requested and not guaranteed
+(`decisions.md:4428-4430`). At the +40 plane (`ix_port` 127, `x_port` 12.7 mm) the port is past
+`x_first` and the clip to [`ix_port` + 1, `nx` - 2] (`emfit/studies.py:2670`) collapses three stations
+onto 12.8 mm, so `R` there reads 12.8-20.0 mm; the chapter's own words are "the code's convention ...
+not pinned" (`decisions.md:4432-4433`). The station row is registered as the code's convention, not as
+pinned geometry. **WITHDRAWN.**
+
+**(e) "Energy conservation holds to 1e-15", and "a gap of fourteen orders".** The tests are looser than
+that by several orders and the gap is smaller by five. The energy tests assert 1e-6 relative drift over
+2000 steps (`tests/test_energy.py:125`) and 1e-10 over 1000 steps (`tests/test_energy.py:157`);
+nothing in the suite asserts 1e-15. The excess the record prints is 8.4742e-2 in passivity, which is
+four orders above the looser of those two bounds and eight to nine above the tighter one, not fourteen
+on any reading. **WITHDRAWN.**
+
+**(f) "Pseudo-waves."** The phrase is not in the tree. A search of the Python, Markdown and TeX returns
+no occurrence of "pseudo-wave" or "pseudo wave". What the tree does say is narrower: `z0` enters only
+where a caller wants an absolute power wave, never in a ratio (`emfit/ports.py:31`), and the two rows
+that statement leaves side by side are the amplitude route at `emfit/studies.py:1990` and the
+station-power route at `emfit/studies.py:2004`. There is no third object for the phrase to name.
+**WITHDRAWN AS INVENTED.**
+
+The chapter at `docs/report/sec_openproblem.tex` was written against the tree and carries the tree's
+version of all six, with one exception recorded here rather than repaired there: its lower-band item
+quotes the CW passivity and calls the band clean, which is claim (c) in its narrowed form, and it is
+left standing as written because a chapter already committed is not edited silently. The supervisor's
+framing came from reasoning from summaries of the record rather than from the files, which is the
+failure this record exists to catch.
+
+#### 101.12.13 The ordered window perturbation, and why it cannot launch
+
+**(i) The order.** Two runs at fixed `nsteps` 8034: `n_warm` 2028 with `n_acc` 6006, and `n_warm` 1988
+with `n_acc` 6046. The reasoning was that the total stays at 8034 steps while the accumulation window
+moves twenty steps earlier or later -- the start by 20 dt, the span by about the same 20 dt, 3.8e-12 s
+on 1.149e-9 s, 0.33 per cent -- so `R` would be read at a window displaced by a known, small amount,
+and that displacement read as the estimator's perturbation at fixed everything else. Nothing in this
+subsection has been run.
+
+**(ii) The check, and why neither run can launch.** `f0` is not a free choice beside the window; it is
+a DFT bin of the window. `span = n_acc*dt` and `f0 = max(1, round(f_target*span))/span`
+(`emfit/studies.py:2659-2665`), so the window's length sets the frequency the record is read at. At
+`n_acc` 6006, `span` is 1.1450888666403019e-09 s and `f0` is 7859651999.242695 Hz, which is +26.35 MHz
+from the driver's `F_TARGET` 7833300000.0 (`.scratch/tol/tol_driver.py:102`). At `n_acc` 6046, `span`
+is 1.1527151661184257e-09 s and `f0` is 7807652978.40748 Hz, which is -25.65 MHz. The driver aborts
+when `|f0 - F_TARGET| > 1.0e6` (`.scratch/tol/tol_driver.py:207`), and that guard is evaluated before
+the solve call at `.scratch/tol/tol_driver.py:214`. The two ordered windows miss it by 26.4 and 25.6
+times its tolerance, so both stop in the driver with no step taken. This is not a run that failed; it
+is a run that cannot be described to the driver at the anchor's frequency at all.
+
+**(iii) The structural reason, which is the finding.** The window is not a free estimator parameter,
+and the order treated it as one. There are two locks. First, its length sets the analysis frequency, as
+in (ii): a change of window length *is* a change of frequency, so "window at fixed frequency" is not a
+point in this parameter space. Second, its start sets the length of the excitation ramp:
+`ramp = min(1.0, (n + 1)/max(n_warm, 1))` (`emfit/studies.py:2759`), applied to the drive at `:2760`,
+with accumulation beginning only after `n_warm` steps (`emfit/studies.py:2762-2763`). Moving the
+window's start moves the ramp's end, which is a change of drive history and not only of analysis
+window. Neither can be moved alone, so the ordered 0.33 per cent is not a small perturbation of one
+thing: it is a simultaneous perturbation of the frequency and of the drive. That is a property of the
+model, not a defect of the order.
+
+**(iv) What is admissible.** Length can change only onto the lattice the driver's guard admits: `f0`
+must round to `k/span` within 1 MHz of `F_TARGET`, which puts `n_acc` on multiples of about 669.5556,
+300 such values in [1000, 40000]. The only one in [5500, 6500] is 6026, the anchor's own count, and the
+nearest neighbours are 5356, 5357 and 6695, 6696. The smallest length change available is therefore one
+drive period, about 11 per cent, and the ordered 0.33 per cent does not exist in this space. A
+translation at fixed span and fixed `f0` is reachable, but only by raising `nsteps` and `n_warm`
+together so the split still lands on 6026: `nsteps` 8054 with `n_warm` 2028, or `nsteps` 8014 with
+`n_warm` 1988, both leaving `n_acc` 6026 and `span` unchanged at 1.1489020163793638e-09 s. That needs
+`n_warm` to be passed through, and it cannot be: `microstrip_wave` takes `n_warm`
+(`emfit/studies.py:2295`) but `microstrip_wave_board` does not (`emfit/studies.py:3490-3515`), and the
+call site passes explicit keywords with no `n_warm` among them (`emfit/studies.py:3592-3622`). The fix
+is two lines -- the parameter in the signature and the keyword at the call -- and it is **not made**,
+because `emfit/` is out of bounds for this record.
+
+**(v) The estimator spread already on file, for nothing.** `R` = `P9/P1` is the power route's S21
+squared exactly: `s21_power**2` is 1.0847420002436303 and `R` is 1.0847420002436303, a residual of 0.0
+in double precision, and `passivity_power` less `s11_measured**2` lands on the same number. The same
+solve, at the same frequency and the same window, gives a different S21 squared on the amplitude route,
+1.0796354351593416 (passivity 1.0798225075427126), and the gap between the routes is 0.00510656508428875
+in the passivity scale. That is not noise; it is a definitional difference between two estimators the
+library carries side by side and refuses to reconcile: the power row "deliberately does not touch `s21`
+above" (`emfit/studies.py:1997-1999`), and the docstring says the station-to-station power is equal to
+|S21| only when the span is reflectionless, and is quoted beside the amplitude figure rather than
+instead of it (`emfit/studies.py:1848-1855`). The consequence is stated no wider than it is: a
+tolerance smaller than that gap cannot be defended while both routes are quoted, so the 0.0024
+resolution in `R` that the order asks for sits below the floor this record already has evidence for --
+measured on one solve, one frequency and one window, at no cost, before any window was perturbed.
+
+**(vi) Frozen, and blocked.** The corrected design is frozen here, in pre-registration form, as three
+variants, each stating what it would measure and what it would not.
+
+**(A) Translation at fixed span and fixed `f0`, by +/-20 steps.** `nsteps` 8054 with `n_warm` 2028 and
+`n_acc` 6026, or `nsteps` 8014 with `n_warm` 1988 and `n_acc` 6026. It would measure `R` at a window
+whose start is displaced twenty drive steps with the analysis frequency held, which is the perturbation
+the order asked for. It would not be clean: the ramp ends twenty steps earlier or later, so the drive
+history differs, and the window effect and the drive effect are confounded. It needs the two-line
+library change of (iv) and cannot be run from here.
+
+**(B) One-period length change, onto `n_acc` 6695 or 6696, with `nsteps` raised so `nsteps//4` supplies
+the split.** This one runs today with no code change. It would measure how far `R` moves when the window
+length changes by one drive period. It would not measure a window perturbation: length, start, bin and
+ramp all move at once, so at best it gives an upper-ish bound on estimator sensitivity and never a
+resolution. The step counts are 8926 with `n_warm` 2231 for 6695 and 8928 with `n_warm` 2232 for 6696,
+which at the repeat's measured 0.5676 s per step (`decisions.md:4362-4363`) come to 5065-5067 s, about
+85 min.
+
+**(C) Nothing.** The third variant is the honest one: the window is not measurable as a single
+parameter, and the cheapest admissible lever is confounded by construction.
+
+**The falsifier, written the right way round.** A measured |dR| is a lower bound on the estimator's
+sensitivity at the size that was perturbed: a difference at least that large is present, and a smaller
+one may be present unseen. So a SMALL result cannot certify a tolerance -- it can only floor one, at the
+size measured -- while a LARGE result refutes any tolerance below it. An earlier draft of this order
+had that backwards, proposing to certify a 0.0024 tolerance in `R` off a small measured difference; the
+reading is corrected here, and the correction is the order's own.
+
+**Status: BLOCKED.** The order awaits a ruling on which of the three variants is authorized. The window
+resolution of `R` is **NOT YET AVAILABLE**, and no number for it appears anywhere in this record.
