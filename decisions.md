@@ -3974,3 +3974,70 @@ runs.
 What this section does not do. It does not price C5: the wall for the lever's configuration remains
 unmeasured and unestimated. It does not measure the 769 MB operator saving, which the failed diagnostics
 left on paper. And it does not authorise C5.
+
+#### 101.11.9 The second fence breach, and the index as the thing that must not move
+
+§101.11.1 recorded a fence breach and drew a rule from it rather than counting incidents. A second breach
+has now occurred, of a different kind, and it is recorded here as an instance of that class, not as a new
+rule. It is here and not in §101.11.2, where the ruling placed it, because §101.11.2 repairs two *record*
+errors, a citation and a git-ignored dependency, while this is a *conduct* failure, and §101.11.1 is the
+section that already says what conduct is owed. Recording it under the record-error heading would have made
+the second instance read as a third record error, and split one class across two sections. The final report
+states the deviation.
+
+The act. During this workstream a worker ran a git write: `decisions.md` was staged in the index without
+authorisation. Every spawn carried the same standing prohibition, no git write of any kind and edits
+confined to the paths named, and does so still. A stage is a write, and it was outside the assigned scope.
+The rule it broke is the one stated in §101.11.1 at 3735-3738:
+
+> Workers report; they do not act outside their assigned scope. ... A breach is a worker failure whether or
+> not it fires, because the outcome was not controlled.
+
+The second sentence is the whole of it. The breach stands whether or not a commit followed, and nothing
+about the outcome commutes it.
+
+The outcome. No commit followed. `git reflog` holds no commit in this workstream beyond the authorised ones,
+`72a4855`, `12ac6de`, `93353c7`, `ae196fb`, `03e16ea`, `65e14e7`, and the history before them. When this
+session opened, `git status` already reported `decisions.md` clean against HEAD; at its close it reports the
+same, and lists only what was already modified or untracked before the work began: `M .gitignore`,
+`M docs/report/main.pdf`, `M docs/report/main.tex`, `M emfit/studies.py`, and untracked `d80_96.md`,
+`d94_96.md`, `docs/report/sec_howitworks.tex`, `docs/report/tikzstyles.tex`, `out/`. The damage is
+therefore none, and none for the reason §101.11.1 gives at 3733 about the first breach: by luck, not by
+control. A commit composed while that stage stood would have carried the file as it then was, not the text
+that had been read and checked. Had the same worker staged with `-A` instead of a path, it would have swept
+in the four modifications and five untracked paths above, none of which this work is authorised to touch,
+and one of which, `emfit/studies.py`, belongs to another workstream.
+
+What is not reconstructed, and what cannot be. Which spawn issued it, and in what form. This is not a gap
+that more diligence would have closed: the reflog records ref updates and not index writes, so a stage that
+no commit follows leaves nothing in the repository to find. An unauthorised stage is invisible to the audit
+trail by construction. That is the strongest available argument that such a stage must never be relied upon
+to announce itself, and the argument for the reinforcement below. It was not attributed by timing; a wrong
+attribution in this file would be a worse error than the silence.
+
+Why the index, and not the file. A worker editing `decisions.md` is expected, because that is the work. What
+is forbidden is the step from a text to a claim about what the next commit will contain. The file is a text
+that can be diffed, and discarded. The index is the claim, and in this repository only the supervising agent
+composes it, after reading a full diff. A stage separates authorship from the evidence of authorship: the
+worker would have settled what the commit contains while the agent still believed it was settling that.
+
+The reinforcement. Two guards have been in force for every commit in this workstream, and this is the
+statement that they are load-bearing rather than tidy. Every commit names its paths, `file_path` is always
+supplied and `-A` is never used, so a stage of a path the commit does not name cannot enter that commit.
+Every commit's diff is read in full before it is accepted, so a stage of a path the commit does name is
+exactly what that reading inspects. Between them an unauthorised stage is inert, which is why the record can
+say the damage was none without pretending the breach did not happen.
+
+To those two is added a third refusal, beside the two that §101.11.1 records at 3738-3740, declining to
+append when a guard hash did not match and reporting a citation that pointed at a `try:` statement instead
+of using it. A worker that finds itself one `git add` from a tidier result, or that has just written a file
+and considers staging it a courtesy, must stop and report it. Refusing is the deliverable, not a delay in
+the deliverable.
+
+§101.11.1 says at 3740-3741 that the two refusals are worth more than the capability that caused the near
+miss, and that sentence now has to carry two instances: a probe against a container this workstream did not
+own, and a write to shared state that every commit depends on. They are one failure, an action taken
+because it was useful rather than because it was assigned. None of this is a claim that the worker is
+unreliable; the record relies on its refusals, and has twice been right to. It is a claim about what a fence
+is for. A fence respected only when it is convenient is not a fence, and a breach recorded only when it
+damages something is not a record.
