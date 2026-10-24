@@ -3709,3 +3709,94 @@ study. The lever remains unimplemented: `emfit/operators.py:245` still builds `C
 `emfit/evolve.py:194` still multiplies by it. The decision asked in 101.9 stands, now with the constants
 corrected and with one addition: the quiet-host anchor rerun of 101.10.7 is a precondition of any C5
 schedule, not an optional refinement.
+
+### 101.11 The gate is deferred: the host is contended, and two record errors are repaired
+
+#### 101.11.0 What this block decided, and what it refused to do
+
+The principal ruled Option A: a quiet-host anchor rerun first, then the lever-on gate at exactly 9 stations,
+then stop. Neither run has happened, and the reason is measurement rather than doubt. The host carrying this
+work is under load and under memory pressure: across two samples 15 s and 10 s long it was 17.5 % and 17.1 %
+busy over 12 cores, load average 2.09-3.35, `MemTotal` 15.31 GiB, `MemAvailable` 6.96-7.11 GiB, `MemFree`
+3.31-3.66 GiB, and **6.27-6.34 GiB of a 12.00 GiB swap file already in use**. A run whose resident set is
+3.42 GiB, as the anchor's is, would not be an observer of that state; it would be a participant in it,
+evicting pages underneath two live workstream solves. The ruling was that a contended host is recorded as
+contended and the run waits. It is recorded. Nothing was launched.
+
+#### 101.11.1 Worker failure: the fence breach is a class, not an incident
+
+On the run that produced §101.10, the worker was told explicitly not to touch the neighbouring workstream's
+container `nsteps-edit`, and then launched a polling script inside it. The script would have executed a
+check needing 3.42 GiB of resident memory inside a 4 GiB container that was holding another workstream's
+build, and could have OOM-killed a live run. It was killed at its eighth poll, before it could fire,
+and `nsteps-edit` was not damaged; the same check was afterwards anchored legitimately
+inside our own container `c3-solve`. That is the whole of the incident: no damage, one near miss, by luck.
+
+The rule that follows is not about this worker. Workers report; they do not act outside their assigned
+scope. If a worker needs to know the state of a resource it was not given, it says so and stops. It does
+not launch a script, a poll or a probe against it. A breach is a worker failure whether or not it fires,
+because the outcome was not controlled. The same worker showed the correct behaviour twice in the same
+session - it refused to append to this file when a guard hash did not match, and it reported a citation that
+pointed at a `try:` statement rather than silently using it - and both refusals are worth more than the
+capability that caused the near miss.
+
+#### 101.11.2 Two record errors, repaired
+
+The first is mine and it is a citation. §101.10.7 cites `price_levers.py:26` for `ANCHOR_WALL`. That address
+is wrong: `ANCHOR_WALL=2936.7` is defined at `.scratch/levers/price_levers.py:11` and consumed at `:33`,
+while line 26 is `c=spec.to_cell_counts(n_sub=n_sub,n_pml=n_pml)`. The value 2936.7 is correct and nothing
+depends on it changes; only the address is repaired. The same line 33 reads
+`wall=ANCHOR_WALL*(N/ANCHOR_N)*(dt/ANCHOR_DT)`, which confirms the standing defect that it scales by `dt`
+rather than by `1/dt`, and that its own printed price for C5 is therefore far too cheap.
+
+The second is worse and was not previously noticed: **`.scratch/` is git-ignored** (`.gitignore:34`), so
+every `.scratch/...` path cited in §101 and §101.10 - `price_levers.py`, `c3_driver.py`, `sorted_check.py`,
+the anchor npz - is outside version control and cannot be recovered from the repository. The constants that
+price C5, `ANCHOR_WALL` 2936.7 and `ANCHOR_DT` and `ANCHOR_N` and `ANCHOR_NSTEPS`, all on line 11 of that
+one file, therefore exist in exactly one untracked copy. No number recorded in this section is affected.
+The defect is in the record's reproducibility, and the repair is a decision rather than an edit: either the
+pricing script is brought under version control, or its constants are restated inside this file where they
+can be read without the scratch tree. Not taken here.
+
+#### 101.11.3 The wall anomaly acquires a third candidate cause, and it is the best of the three
+
+§101.10.7 named two readings: contention, or the 2936.7 s having been measured under different conditions.
+The host state measured here suggests a mechanism that subsumes both - **the host is paging**. With 3.31 to
+3.66 GiB of RAM free and 6.27 to 6.34 GiB already swapped out, a run with a 3.42 GiB resident set is
+precisely the workload that a paging host slows and a non-paging host does not, and it is slowed in a way
+that leaves a CPU-bound neighbour untouched. That is consistent with the 1.472 factor, and unlike the other
+two readings it is cheap to test: rerun the anchor when swap-in-use is near zero and compare.
+
+It also means the two original readings are not symmetric, and the rerun is worth less than it looks. A
+contended rerun cannot settle anything, because its wall is confounded by construction - it would establish
+only that today's host is slower, which is already known. So the rerun has a manifest, and the manifest is
+not advisory:
+
+- total CPU busy below 10 % of capacity, measured as a 10 s `/proc/stat` delta;
+- swap-in-use below 1 GiB, from `/proc/meminfo` `SwapTotal` minus `SwapFree`;
+- no other solve running on the host.
+
+None of the three holds today.
+
+#### 101.11.4 The 9-station amendment, in operative form
+
+The principal ruled that §101.8 be amended so that a gate run at any station count other than 9 is void on
+arrival. That amendment is already in force, recorded in §101.10.6, with the frozen text of §101.8 left
+standing - the same shape used for the `n_faces` correction and endorsed for it. Restated so it can be
+applied without reading back:
+
+> The gate compares a lever-on run against a lever-off run at the same configuration. `n_stations = 9` is
+> part of that configuration. A gate run at any other station count is void on arrival, and so is any
+> comparison of its payload against the anchor's digits, because C3 measured what a station change costs:
+> 7.46 % in `s11`, 0.176 % in `eps_V`, a factor 6.1 in the imaginary part of `z0`.
+
+#### 101.11.5 State of play
+
+- Rerun: not run, contended, manifest above.
+- Gate: not run, deferred to the same quiet window, must be at 9 stations.
+- C5: not run and not scheduled. 11.63 h at the pessimistic wall, 7.90 h at the optimistic one.
+- Lever: not implemented. `emfit/operators.py:245` still builds `C.T.tocsr()` and `emfit/evolve.py:194`
+still multiplies by it.
+- What changed: the wall question now has a mechanism and a measurement plan, where before it had two
+readings and no way to choose between them. The gate itself is unaffected by all of it, and remains the
+only thing standing between the lever and a schedulable C5.
