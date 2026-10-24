@@ -4145,7 +4145,7 @@ anchor's: 322x200x76 cells, 4894400 of them, cell 1e-4, `n_sub` 16, `n_air` 48, 
 None. The run asserted the lever instead of assuming it: `shim_active` False, the source containing
 the zero-copy transpose and no longer containing `.T.tocsr()`, `curl_dual().format` `csc`,
 `np.shares_memory` True with an equal buffer address, and `emfit`'s own sha256 unchanged across the
-run. Wall 4229.8 s, 0.5265 s per step. That is not offered as a speed claim: the anchor's 4474.8 s
+run. Wall 4229.8 s, 0.5265 s per step. That is not offered as a speed claim: the gate run's 4474.8 s
 was measured under different contention, and the only quantity this run is evidence for is identity.
 
 > The receipt: the modified solve is bit-identical to the anchor on every recorded quantity, at zero
@@ -4262,10 +4262,13 @@ No C5 price is quoted until the step rule is fixed and a quiet-host anchor rerun
    is named and dropped inside the same subsection, and no other line amends, folds, excludes or
    retires it. A fourth band does not repair that: port-near predicts a spatial shape, the decay
    measured out from the port and the turnover between stations, not a scaling of the endpoint ratio
-   with the cell, and at the anchor value it lands inside the H band, so C5 cannot fail it. C5
-   separates H from R-prime and L only and cannot close the port-near hypothesis at all. Its
-   discriminating observable is the station-to-station shape, which 3365 already declares the shape
-   test incapable of separating rivals on.
+   with the cell. 3365 confines C3 and C4 to certifying "that the turnover between stations 7 and 8
+   is a feature of the record and not of the sampling", rules them unable to separate H from
+   R-prime, and closes "If the principal wants a separating test it is C5 or nothing" -- correct for
+   H against R-prime, and it does not reach port-near. C5 can falsify it, but only jointly with H:
+   at the anchor value it lands inside the H band, so a reading outside that band kills both rivals
+   and a reading inside it separates neither. What C5 cannot do is discriminate; the instrument that
+   can is the port-position test of 101.12.10.
 
 6. **The post-lever position, stated as a price.** With the lever the saving is 157.19 bytes per
    cell, 3.4695 GiB at C5's 23,699,200 cells. Steady memory becomes 614.51 - 157.19 = 457.32 bytes
@@ -4294,3 +4297,147 @@ No C5 price is quoted until the step rule is fixed and a quiet-host anchor rerun
    mismatch resolves against the backup.
 
 The wall still needs a quiet window.
+
+#### 101.12.9 Port-near: the rival that C5 cannot score
+
+**The label, withdrawn.** A rival was called "P" in conversation and in the dispatch for this
+subsection. No rival named P exists in this record or in the tree: the labels in use are H, R-prime
+and L at 3345-3347, and P already means power, as `P0` at 3327 and `P/P1` at 1390. "P" was chat
+shorthand and is withdrawn as a record term; the rival it pointed at is port-near contamination.
+
+**What the tree says.** 100.4 is headed "the third rival it forces" at 3319, and 3331 forces it:
+port-near field contamination decaying with a length of about 2.8 mm, "a property of the field near
+the port, not of the mesh, and it is not a scale-free estimator offset", written down at 3333
+"because the data force it, not because it saves an earlier band". One subsection later 3343 opens
+"The three rivals, with bands" and scores H at 3345, R-prime at 3346 and L at 3347 -- L included
+although nothing on file predicts it -- with port-near absent. A whole-file search before this
+subsection returns "port-near" on five lines (3331 and the four inside point 5 above), "2.8 mm" on
+three (3331, 4257, 4261), "2.77 mm" on three (3329, 3333, 4261) and "contamination" on five (303,
+313, 3331, 4257, 4261), 303 and 313 being corner contamination at a different boundary. Nothing
+amends, folds, excludes or retires it; point 5 above records the same finding from inside the
+3341-3410 window, not a second one.
+
+**Why a fourth band does not repair it.** 3313: "C5 is the only lever that changes the cell, and
+therefore the only direct test of the cell-squared rival." Port-near is defined by not being that
+(3331), so at the one cell C5 builds the two predict the same number: the stations are pinned
+absolutely at 10.4 mm to 20.0 mm (3315), refinement leaves the 9.6 mm span and the 2.77 mm decay of
+3333 where they are in metre space, and port-near's R at that cell is the anchor's 1.084742, inside
+the H band [1.0728, 1.0967] at 3345. A reading in the H band therefore leaves H and port-near
+standing together and a reading in the R-prime or L band falsifies both together; C5 can falsify
+port-near only jointly with H, never alone. No fourth band repairs this, because a band is a claim
+about R at one finer cell and port-near's claim about that cell is H's claim.
+
+**The instrument that can close it.** The observable is the station-to-station profile as a function
+of where the port sits, and C5 holds the port fixed: 3365 confines the cheap instrument to
+certifying "that the turnover between stations 7 and 8 is a feature of the record and not of the
+sampling" and closes "If the principal wants a separating test it is C5 or nothing", which is false
+for port-near. What separates it is the port-position test registered at 101.12.10, the port at a
+different distance from the stations, which a scale-free rise cannot feel. C6d at 3301 moves
+`x_port` by 100 cells and is disqualified for collapsing the stations to two layers, so this needs
+its own construction.
+
+**The consequence for the pre-registration.** 101.12.11 amends it and reduces the claim: C5
+separates H from R-prime and L, and it does not close the port question.
+
+#### 101.12.10 The port-position test, pre-registered
+
+**Frozen on writing. Nothing has been run.** The test compares the anchor configuration with the
+same configuration and the port moved to a different distance from the station row. The cell, the
+box, the estimator and the station count are held. The observable is the station-to-station profile
+-- the nine station values -- read as a function of port distance at a fixed drive, and reported as
+the same ratio the H band is stated on: `R`, the end-to-end ratio of power at the last station to
+power at the first (3341), against the anchor value 1.084742 and the bands at 3345-3347.
+
+**Prediction per rival, and which observation falsifies which.** Port-near, the rival that 100.4's
+heading "the third rival it forces" (3319) forces and that 3331-3333 state, is a field feature with
+a length of order 2.8 mm (3331) and the measured "(span 9.6 mm, decay 2.77 mm)" (3333): it says `R`
+**depends** on how far the port sits from the row, and that moving the port by a few millimetres
+changes the rise by an amount of order the rise itself. H says `R` is **invariant** to port
+distance, because it is scale-free -- "the rise is scale-free and not a mesh property" (3345): a
+scale-free rise carries no length, so nothing about the port's position can enter what the stations
+see. A measured dependence of the size port-near predicts therefore kills H and leaves port-near
+standing; a null result, at the tolerance below, kills port-near and leaves H standing.
+
+**Tolerance.** The size of the `R` shift that counts as "depends" is **NOT YET AVAILABLE**. The
+quantity that would set it is the repeat-run resolution of `R` at one fixed configuration and one
+fixed port distance, two identical runs differenced, and the record holds no repeated identical run
+under this lever, so no such number can be cited. The only spread-like quantity on file is the width
+of the H band at 3345, [1.0728, 1.0967], which is 0.0239 in `R`; that is a spread across cells and
+estimators, not a repeat-run resolution, and it is used here only as an order-of-magnitude bound,
+explicitly as an import from another quantity and not as the tolerance. Until the tolerance is set
+this test is registered and cannot be scored.
+
+**Why the existing lever is not reused.** C6d at 3301 moves `x_port` by +100 cells (`n_ref` 175,
+`n_line` 135) and is disqualified here because it collapses the stations to two layers: with two
+layers there is no station-to-station profile left to read, and the turnover between stations 7 and
+8 that C3 and C4 exist to certify (3365) has nowhere to sit. The port-position test needs its own
+construction: the same nine stations at the same absolute positions (3315), the same cell and box,
+the port displaced, nothing else moved.
+
+**Every parameter names its source.** Cell 1e-4 m, box 322 x 200 x 76 cells (4,894,400 of them),
+`n_sub` 16, `n_air` 48, `n_top` 12, `n_pml` 12, `n_stations` 9, `nsteps` 8034 and dt
+1.9065748695309721e-13 s are the anchor's and come from 4143-4144. The station positions, 10.4 mm to
+20.0 mm, are pinned absolutely at 3315. The alternative port distances are **NOT YET AVAILABLE**:
+the file records one port displacement only, C6d's +100 cells (3301), which at the anchor cell of
+1e-4 m is +10 mm (derived: 100 x 0.1 mm) and which the paragraph above disqualifies. The port datum
+itself is not fixed in this section either -- 518 records `x_port = 8.65` mm for the KiCad outline,
+and no line here ties the anchor's `x_port` to it. Any parameter not listed in this paragraph is
+**NOT YET AVAILABLE**.
+
+**What the pre-registration does not claim.** It is not a substitute for C5 and does not by itself
+score the cell-squared rival: it holds the cell, so it says nothing about R-prime or L, and it
+carries the anchor's estimator unchanged. A positive result removes one rival, port-near, and leaves
+the anchor band where it stands; a null result makes port-near falsified in the same sense as any
+other hypothesis on this record.
+
+#### 101.12.11 C5, amended pre-registration: what it can and cannot decide
+
+**Frozen on writing. Nothing has been run.** The amendment lands before the C5 run and is written to
+be read against the pre-registration at 3343, which stays on the record unaltered.
+
+**(a) The air-slab confound, registered before the run.** `n_air` and `n_top` are cell counts and
+not lengths: at the anchor's cell of 1e-4 m, `n_air` 48 cells is 4.8 mm and the 76-cell z extent is
+7.6 mm, while at the C5 cell, half the size, `n_sub` 32 against 16 (3297), the same 48 cells give
+2.4 mm and the 92-cell z extent there gives 4.6 mm (both derived from the counts). The geometry
+therefore moves with the cell, which is the C6a class of defect already named at 3298, where `n_air`
+24 is rejected as confounded for moving the top boundary; C5 moves that same boundary, and this
+section already records the objection against itself at 4285-4287. The verdict is ambiguous in one
+direction: a null result cannot be read as "the cell does not matter", because the box changed with
+the cell. It is not clean in the other direction either -- a positive reading is confounded with the
+boundary move unless a paired boundary control is run at the anchor cell -- and that second half is
+written down here because leaving it out would overstate the instrument.
+
+**(b) The claim, reduced.** Subject to (a), C5 separates H from R-prime and from L. It is the only
+lever that changes the cell (3313), and a reading inside the R-prime band [1.0101, 1.0324] or the L
+band [1.0310, 1.0538] at 3346-3347 excludes the H band [1.0728, 1.0967] at 3345, because those bands
+do not overlap. It does not separate R-prime from L, whose bands do overlap between 1.0310 and
+1.0324, and it does not close the port-near rival: port-near is defined as a property of the field
+near the port and not of the mesh (3331), which is what 101.12.10 exists to test.
+
+**(c) What this supersedes.** It supersedes the pre-registration at 3343. That text stays on the
+record as written, and its bands for H, R-prime and L at 3345-3347 are retained exactly as they
+stand: they are not restated, not re-derived and not edited here. What changes is what C5 is claimed
+to decide, not what the bands are.
+
+**(d) `nsteps` is pinned, not chosen.** The `choose_nsteps` output is not used. It returns the
+global best residual even when the row fails the rule's own 2 per cent span test, giving 6249 steps
+for the anchor and 10713 for C5, whose span is 0.667 of the 6026-dt target, and that rule prices the
+C5 solve at 18,966 s instead of 28,439.62 s (4250-4253; the anchor caveat is at 3367). The pinned
+count is 16,068: 8034 doubled, because at `n_sub` 32 the cell halves, `dt` scales with the cell and
+`nsteps` doubles to hold the span (3551), 8034 being 2008 warm-up plus 6026 accumulation (3870). The
+doubling is arithmetic on those two statements and is labelled derived; the pinned count is what the
+run uses.
+
+**(e) Price.** Steady state is 10.09 GiB at 23,699,200 cells (3479, 4275). Peak is 13.06 to 13.09
+GiB, **derived and not measured** -- no post-lever peak has been instrumented at C5's scale --
+leaving 2.22 to 2.25 GiB of margin against the 15.30659 GiB host limit (4275-4276). Wall is
+conditional: at ANCHOR_WALL 2936.7 s and the same cells/dt rule it is 28,439.6 s, 7.90 h, for C5
+plus the 2936.7 s gate (3865, 3551), and it stays conditional until the anchor is rerun in a quiet
+window (4299). No C5 price is quoted as firm before that (4254).
+
+**Nothing here runs yet.** The gate the anchor rerun must satisfy, restated from the manifest at
+3785-3787: CPU under 10 per cent of capacity, swap-in under 1 GiB, and no other solve in flight on
+the host. The order of operations is fixed.
+This amendment lands first. Then the anchor wall is rerun in such a window and ANCHOR_WALL is
+settled from it. Then C5 is launched against this amended pre-registration, and a change to the
+claim after the launch is a further amendment on the record, not an edit to this one.
