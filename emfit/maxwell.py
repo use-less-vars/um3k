@@ -36,7 +36,7 @@ class FITSystem:
     material : Material
     M_eps, M_mu, M_sigma : MaterialMatrix
         Diagonal material matrices (see :mod:`emfit.materials`).
-    C, C_tilde : csr_matrix
+    C : csr_matrix, C_tilde : csc_matrix (zero-copy view sharing C.data)
         Primal curl ``(n_faces, n_edges)`` and its dual ``C.T``.
     pec : ndarray of bool, shape ``(n_edges,)``
         ``True`` where the edge voltage is pinned to zero by a PEC wall.

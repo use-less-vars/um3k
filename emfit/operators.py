@@ -240,9 +240,15 @@ class CellComplex:
     # duals
     # ------------------------------------------------------------------
     def curl_dual(self):
-        """``C_tilde`` (n_edges, n_faces) = ``C.T``: the dual curl (Ampere)."""
+        """``C_tilde`` (n_edges, n_faces) = ``C.T``: the dual curl (Ampere).
+
+        Deliberately a zero-copy view sharing ``C.data``, so it must not be mutated.
+        """
         if "C_tilde" not in self._cache:
-            self._cache["C_tilde"] = self.curl().T.tocsr()
+            # Zero-copy dual: a CSC view sharing C.data, not a duplicate. Safe only
+            # because no code path in emfit/ mutates a sparse data array in place;
+            # any future in-place use of C.data must copy here first.
+            self._cache["C_tilde"] = self.curl().transpose(copy=False)
         return self._cache["C_tilde"]
 
     def divergence_dual(self):
