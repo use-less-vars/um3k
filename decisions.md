@@ -3568,3 +3568,144 @@ asked of the principal: approve the bit-identity gate of 101.5 (checked first fo
 `emfit/operators.py:245`, then one lever-on anchor run at 2936.7 s) so that C5 can be re-priced from
 16.556 GiB of peak to 13.06 GiB of peak and run inside 15.31 GiB of host memory, or refuse the lever and
 shrink the geometry instead.
+
+### 101.10 Measured after the freeze: the anchor operator at full scale, and C3 returned
+
+#### 101.10.0 Status
+
+Everything below is measurement, added after 101.1-101.9 were frozen and committed (`ae196fb`). No line of
+101.1-101.9 has been edited: where a constant there is now known to be wrong, the correction is recorded
+here and the frozen text is left standing, so that the record shows the error and its repair side by side.
+Run in this block: one 4323.4 s anchor solve (C3, `n_stations` 18) and two full-scale operator builds with a
+12.8 s comparison; no line of `emfit/` was edited; C5 was not run; the lever is not implemented. NOT
+APPROVED remains in force.
+
+#### 101.10.1 The anchor curl operator, built and weighed at full scale
+
+`.scratch/sorted_check.py` builds the anchor mesh through `CellComplex` exactly as the solve does, and was
+run inside the idle `c3-solve` container after the solve exited. The recorded run is the second one (`RC 0`,
+12.8 s, `.scratch/logs/sorted_check.out`); the first died on a `NameError` at its own line 141 before the
+product comparisons, a defect of the check script and not of the operator.
+
+- grid 322 x 200 x 76, 4,894,400 cells, `n_edges` 14,891,942, **`n_faces` 14,787,272**, both asserted equal
+to the invariant line the solve itself printed.
+- `C = cc.curl()`: csr, float64, int32 indices, int32 indptr, **nnz 59,149,088 = 4 x `n_faces` exactly**,
+`has_sorted_indices=True`, `has_canonical_format=True`. No `sort_indices()` is called anywhere and none is
+needed: `coo_matrix.tocsr()` returns sorted canonical rows of exactly four ascending entries.
+- `cc.curl_dual()`: csr, same nnz, sorted and canonical, and `np.shares_memory` is **False for all three of
+data, indices and indptr** - the stored second operator is a genuinely independent second copy, measured
+rather than inferred.
+- `C.transpose(copy=False)`: **csc**, nnz 59,149,088, sorted, canonical, and `np.shares_memory` is **True
+for all three arrays** - the zero-copy claim of 101.2 and 101.3 is now measured on the real operator and not
+only on synthetic matrices.
+- bytes: `C` = 473,192,704 (data) + 236,596,352 (indices) + 59,149,092 (indptr, (`n_faces`+1) x 4) =
+**768,938,148 B = 157.106 B/cell**; `C_tilde` = the same data and indices with 59,567,772 (indptr,
+(`n_edges`+1) x 4) = **769,356,828 B = 157.191 B/cell**. The two copies are not the same size, because
+their indptr vectors are not the same length.
+- build cost 6.04 s and 0.75 s, RSS after both 1,595,437,056 B, `MAXRSS_KB` 3,541,336, `VmHWM`
+3,626,328,064 B.
+
+#### 101.10.2 Bit-identity on the real anchor operator - falsifier 2 is dead
+
+`C.T @ h`, `C_tilde @ h` and `C.transpose(copy=False) @ h` were compared on a real float64 face vector and a
+complex128 one, both of length 14,787,272, with a seeded generator:
+
+| route | dtype | `array_equal` | differing entries | max ULP |
+|---|---|---|---|---|
+| `C_tilde @ h` | float64 | True | 0 | 0 |
+| `C.transpose(copy=False) @ h` | float64 | True | 0 | 0 |
+| `C_tilde @ h` | complex128 | True | 0 | 0 |
+| `C.transpose(copy=False) @ h` | complex128 | True | 0 | 0 |
+
+101.6.2 therefore does not fire: the residual risk it names - unsorted rows in a COO-assembled matrix - does
+not exist here, because COO to CSR sorts. The lever's arithmetic is safe on the operator the solve actually
+uses, not merely on a 500 x 500 surrogate.
+
+#### 101.10.3 Corrections to the frozen ledger
+
+`n_faces` is **14,787,272, not 14,767,272** as 101.1 has it: the count is
+323 x 200 x 76 + 322 x 201 x 76 + 322 x 200 x 77 = 4,909,600 + 4,918,872 + 4,958,800 = 14,787,272, and the
+measured value matches. Consequently `nnz` = 4 x `n_faces` = **59,149,088, not 59,069,088** - an error of
+exactly 80,000, mine, an arithmetic slip in 101.1 that the build has now caught. Consequences, all
+second-order:
+
+| quantity | 101.1 / 101.3 as frozen | corrected |
+|---|---|---|
+| one CSR copy | 157.00 B/cell (768,396,828 B) | 157.106 B/cell for `C`, 157.191 for `C_tilde` |
+| the two CSR copies | 313.89 B/cell | 314.297 B/cell |
+| live set | 614.09 B/cell | 614.51 B/cell |
+| C5 steady | 13.55 GiB | 13.563 GiB |
+| saving at C5 | 3.46 GiB | 3.469 GiB |
+| post-lever steady | 457.09 B/cell = 10.089 GiB | 457.32 B/cell = 10.093 GiB |
+
+None of this moves the verdict: C5 is still 1.25 to 1.27 GiB short at 16.56 to 16.58 GiB of peak against
+15.31 GiB, and the lever still converts that into about 2.2 GiB of headroom. What does change is the standing
+of the enumeration: with the corrected `nnz` the itemised total is 3,007,530,434 B = 2.80135 GiB against a
+measured `VmRSS` of 2.79558 GiB, i.e. 0.21 % above the measurement rather than 0.13 % below it. That is
+still agreement, and the price list should be read as 614.5 B/cell rather than 614.09.
+
+#### 101.10.4 C3 returned
+
+The 18-station anchor solve finished: `RC 0`, `wall 4323.362820282986 s`, `maxrss_kb 3589172`, cgroup
+`memory.peak` 3,670,994,944 B (58.4 % of its 6 GiB cap) with `oom 0 / oom_kill 0 / oom_group_kill 0`, and
+`memory.current` fell to 40 MB on exit. The `maxrss_kb` is **byte-identical to the anchor run's `VmHWM` of
+3,589,172 kB**: the peak is a deterministic property of the mesh and is unmoved by the station count. That
+is the memory half of the estimator-only claim, confirmed at the byte.
+
+#### 101.10.5 C3's payload against the anchor - the estimator is not payload-neutral
+
+| key | anchor (9 stations) | C3 (18 stations) | difference |
+|---|---|---|---|
+| `f` | 7,833,566,197.718491 | 7,833,566,197.718491 | 0, bit-identical |
+| `s21` | 1.039055068395964 | 1.039078419038781 | +2.3351e-5 (+2.25e-5 rel) |
+| `passivity` | 1.0798225075427126 | 1.0798441561606251 | +2.165e-5 (+2.01e-5 rel) |
+| `passivity_power` | 1.0849290726270013 | 1.084902195492123 | -2.688e-5 |
+| `beta` | 314.03158662735785 | 313.755658470664 | -0.2759 (-8.79e-4 rel) |
+| `eps_V` | 3.658552575317196 | 3.6521261251971153 | -6.4265e-3 (-1.757e-3 rel) |
+| `s11_port` | 0.013677440673277025 | 0.012656826161905712 | -1.0206e-3 (-7.46e-2 rel) |
+| `z0` | 53.41247461887226 + 3.1557724449079396j | 52.86243912510467 + 19.35437995794326j | real -1.03 %, imaginary x6.13 |
+
+Two mechanisms account for all of it, and both are worth naming.
+
+The first is that `eps_V` is `beta` twice over. (`beta` c / 2 pi `f`)^2 reproduces 3.6585525753171959 from
+the anchor's own digits and 3.652126125197... from C3's, and the ratio
+(313.755658470664 / 314.03158662735785)^2 = 0.9982435 is the whole of the 0.176 %. There is no second
+discrepancy to chase: the difference is the station-set fit of `beta`, at a fixed window of 10.4 to 20.0 mm
+and a spacing changed from 1.2 mm to 0.5647 mm.
+
+The second is that `s11` is a small difference of large numbers. |`s11`| about 0.0137 means the reflected
+wave is 1.4 % of the incident, so a 2e-5 relative perturbation of the field moves |`s11`| by about 2e-3
+absolute, which is 7 % of itself, while `passivity` - dominated by |`s21`|^2 about 1.0797 - moves by 2e-5.
+The arithmetic is exactly that: 0.013677440673277025^2 + 1.039055068395964^2 = 1.0798225, and
+0.012656826161905712^2 + 1.039078419038781^2 = 1.0798442. `s11` is ill-conditioned by construction;
+`s21` and `passivity` are not.
+
+#### 101.10.6 What this does and does not do to the gate
+
+It does not weaken the gate. 101.5 compares a lever-on run with a lever-off run at the same configuration,
+where identical arithmetic gives identical bits no matter how ill-conditioned the reported quantity is. It
+does mean the gate run must be at exactly 9 stations, because the stored digits belong to a 9-station run
+and C3 has now measured what a station change costs: 7.5 % in `s11`, 0.176 % in `eps_V`, a factor 6 in the
+imaginary part of `z0`. 101.8's void list named the anchor configuration without naming `n_stations`. That
+omission is amended here: `n_stations` is part of the anchor configuration for the purposes of 101.8, and a
+gate run at any other station count is void on arrival.
+
+#### 101.10.7 The wall anomaly, recorded and not explained
+
+C3 took 4323.3628 s against the 2936.7 s `ANCHOR_WALL` at `price_levers.py:26`, a factor of 1.472. Two
+readings, and this block cannot separate them. One is contention: another workstream's container was active
+on the same host during the run, and the 18-station estimator cannot account for 1387 s, because its
+per-step work is a probe read of 18 stations and not a field update over 14.9 M edges. The other is that the
+2936.7 s was itself measured under different conditions, so the per-run cost on this host today is nearer
+4300 s. The consequence is that factor on the C5 price: 4323.3628 x 4.842105 x 2 = 41,868 s = 11.63 h, not
+28,439.6 s = 7.90 h, and gate plus C5 = 46,191 s = 12.83 h rather than 8.72 h. Nothing may be scheduled on
+the 8.72 h figure until a quiet-host anchor rerun settles which reading holds. That rerun is itself one
+anchor solve.
+
+#### 101.10.8 Still unrun, still unapproved
+
+No lever-on run, no gate run, no C3 at 9 stations, no quiet-host wall measurement, no `s11`-conditioning
+study. The lever remains unimplemented: `emfit/operators.py:245` still builds `C.T.tocsr()` and
+`emfit/evolve.py:194` still multiplies by it. The decision asked in 101.9 stands, now with the constants
+corrected and with one addition: the quiet-host anchor rerun of 101.10.7 is a precondition of any C5
+schedule, not an optional refinement.
