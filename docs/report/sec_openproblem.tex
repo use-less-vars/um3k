@@ -111,19 +111,19 @@ band (\texttt{decisions.md:3347}, \texttt{decisions.md:3357}).
 The lever is \texttt{n\_sub} $16 \to 32$: the cell halves to \SI{0.05}{mm}, the mesh becomes $644\times400\times92$
 -- $4.842$ times the anchor's cells -- and the steady resident set goes from $2.68$\,GiB to $12.98$\,GiB
 (\texttt{decisions.md:3297}, \texttt{decisions.md:3307}). The step count doubles with the cell's halving, $8034$ to
-$16\,068$ (\texttt{decisions.md:4452-4459}), so the wall time is $2936.7 \times 4.842 \times 2.0 = 28\,439.6$\,s,
+$16\,068$ (\texttt{decisions.md:4485-4492}), so the wall time is $2936.7 \times 4.842 \times 2.0 = 28\,439.6$\,s,
 $7.90$\,h, plus the gate, itself conditional on the anchor being re-run in a quiet window
-(\texttt{decisions.md:4464-4466}). One memory distinction, and we keep it: $12.98$\,GiB is the steady figure for
+(\texttt{decisions.md:4497-4499}). One memory distinction, and we keep it: $12.98$\,GiB is the steady figure for
 the run as registered, and the only peak on file, $13.06$ to $13.09$\,GiB, derived and not measured, is the
 post-lever peak, $10.09$\,GiB steady, leaving $2.22$ to $2.25$\,GiB against the $15.30659$\,GiB host limit
-(\texttt{decisions.md:3311}, \texttt{decisions.md:4461-4463}). At nine point seven times the anchor, the verdict on
+(\texttt{decisions.md:3311}, \texttt{decisions.md:4494-4496}). At nine point seven times the anchor, the verdict on
 file is that the run is inadmissible as it stands (\texttt{decisions.md:3361}).
 
 The amendment we then wrote is the part of this chapter we would most like attacked. What was claimed first stands
-as registered; what changed is what the test is said to decide (\texttt{decisions.md:4447-4450}). It decides H
+as registered; what changed is what the test is said to decide (\texttt{decisions.md:4480-4483}). It decides H
 against R$'$ and against L, whose bands do not overlap; it does not decide R$'$ against L, whose bands do; and it
 does not close the port rival, which the four displaced port planes exist to test
-(\texttt{decisions.md:4440-4445}). The bands were not redrawn, because a pre-registration edited after a result
+(\texttt{decisions.md:4473-4478}). The bands were not redrawn, because a pre-registration edited after a result
 exists has failed at its only job (\texttt{decisions.md:3090}). One run scores two questions: passivity is read
 from the same capture, $1.0212$ under R$'$ against $1.0849$ under H (\texttt{decisions.md:3359}). Only this lever
 moves the cell.
@@ -133,7 +133,7 @@ moves the cell.
 
 \begin{enumerate}[leftmargin=1.6em,itemsep=3pt]
   \item \textbf{Measure the absorber before trusting the wall.} The board runs twelve cells of it at \SI{0.1}{mm}
-        (\texttt{decisions.md:4378}), under the twenty-cell default of a layer whose measured table calls twenty
+        (\texttt{decisions.md:4403}), under the twenty-cell default of a layer whose measured table calls twenty
         cells modest and forty what a real absorber wants (\texttt{emfit/pml.py:32-36}). What is its reflection?
   \item \textbf{Price the fan-outs the mesh leaves out.} The strip is one uniform width, $30$ cells
         (\texttt{decisions.md:1369}), while the copper fans \SI{2.0}{mm} to \SI{3.0}{mm} before the port plane and
@@ -150,9 +150,10 @@ moves the cell.
         reach: the staircased strip, the port excitation, the strip and interface assignment
         (\texttt{decisions.md:2343}). The extractor reads a gap voltage there (\texttt{emfit/studies.py:2766-2767}).
   \item \textbf{Move the port, not the mesh.} Four port planes at $\pm 2$ and $\pm 4$\,mm are written down and
-        none has been run (\texttt{decisions.md:4393}); the near field decays over \SI{2.8}{mm}, so \SI{4}{mm} moves
-        it by its own size (\texttt{decisions.md:4413}), and scoring them needs a resolution we do not have
-        (\texttt{decisions.md:4361-4368}).
+        none has been run (\texttt{decisions.md:4418}); the near field decays over \SI{2.8}{mm}, so \SI{4}{mm} moves
+        it by its own size (\texttt{decisions.md:4435}); the repeat ran and returned exactly zero, so scoring
+        them needs a resolution bought from the estimator window instead
+        (\texttt{decisions.md:4361-4393}).
 \end{enumerate}
 
 \subsection{The request}
