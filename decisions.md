@@ -4380,8 +4380,14 @@ the port displaced, nothing else moved.
 20.0 mm, are pinned absolutely at 3315. The alternative port distances are **NOT YET AVAILABLE**:
 the file records one port displacement only, C6d's +100 cells (3301), which at the anchor cell of
 1e-4 m is +10 mm (derived: 100 x 0.1 mm) and which the paragraph above disqualifies. The port datum
-itself is not fixed in this section either -- 518 records `x_port = 8.65` mm for the KiCad outline,
-and no line here ties the anchor's `x_port` to it. Any parameter not listed in this paragraph is
+is fixed, and the record supplies it even though this section does not. The anchor's `x_port` is
+`8.700` mm -- index 87 of the 322 cells, at the anchor cell of `1e-4` m -- which is the solver's
+port plane (812, and 3162's `x_port` 8.7 mm, `ix_port` 87). Line 518's `x_port = 8.65` mm is not a
+rival datum but a different quantity: it is where the uniform `3.0` mm run begins (209-210), the
+8.65 mm to 32.22 mm track run that `emfit/board.py:542-543` snaps to `ix_port` 87 and `ix_far` 322
+(3162, 3166-3168), so its 0.05 mm offset from the port plane is one half cell and a snap, not a
+disagreement. Any alternative port distance is therefore expressible as a signed cell count from
+index 87, though none is registered here, and any parameter not listed in this paragraph is
 **NOT YET AVAILABLE**.
 
 **What the pre-registration does not claim.** It is not a substitute for C5 and does not by itself
