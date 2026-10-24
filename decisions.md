@@ -3009,7 +3009,7 @@ One preregistration slip, recorded for completeness: the addendum's `§A7` says 
 
 ## 98. R1: dispersion closures and the +5.9 per cent -- the excess is the dispersion increment
 
-**Section 97 is reserved and unwritten.** It is the doc chapter and stays parked until R1 and section 97 both land; nothing has been moved into it. R1 is written here as section 98, appended after 96.6, and it is dated 2026-10-24. It is a record of accepted artefacts, not a solve: no run was made, no source file was edited, `emfit/studies.py` is untouched, and nothing was committed.
+**Section 97 is no longer reserved: it is written and sits immediately above at lines 2885-3009.** It is the doc chapter and stays parked until R1 and section 97 both land; nothing has been moved into it. R1 is written here as section 98, appended after 96.6, and it is dated 2026-10-24. It is a record of accepted artefacts, not a solve: no run was made, no source file was edited, `emfit/studies.py` is untouched, and nothing was committed.
 
 ### 98.1 Verdict
 
