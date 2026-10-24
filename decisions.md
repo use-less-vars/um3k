@@ -3801,6 +3801,47 @@ still multiplies by it.
 readings and no way to choose between them. The gate itself is unaffected by all of it, and remains the
 only thing standing between the lever and a schedulable C5.
 
+#### 101.11.6 The wall price is deferred, not measured
+
+`ANCHOR_WALL=2936.7` (`.scratch/levers/price_levers.py:11`) is the only wall figure in this record, and it
+is a wall for exactly one configuration: the anchor mesh of 4894400 cells, 8034 steps,
+`dt=1.906574869530972e-13` s. The four constants and their provenance are in 101.11.7 and are not restated
+here.
+
+A wall for any other configuration cannot be obtained from it by scaling. Cost per step is not linear in
+the cell count: the operator apply is memory-bound in practice, and its effective bandwidth depends on how
+much of the sparse operator stays resident, so a mesh that fits differently in cache, or a step count that
+changes how many times the fields are streamed, moves the seconds per step by an amount that no ratio of
+cell counts predicts. A wall quoted from a scaled anchor would be an estimate wearing a measurement's
+clothes, and the ruling is that such a number is not to be written down at all.
+
+What a wall would require. A wall that is to be quoted as a price must be measured on a host satisfying
+all three of the following, simultaneously:
+
+- CPU busy below 10 per cent, measured as a 10 s delta of `/proc/stat` rather than a load average;
+- swap in use below 1 GiB of 12.00 GiB, since a solve of this size sits at the edge of physical memory and
+  swap turns a bandwidth measurement into a disk measurement;
+- no concurrent solve owned by this session.
+
+The manifest is a precondition, not advice. A run that misses it does not produce a wall; it produces a run.
+
+The host did not satisfy it. Measured on this host over successive 10 s `/proc/stat` deltas: 17.5 and 17.1
+per cent busy across 12 cores, loadavg 2.09-3.35, MemTotal 15.31 GiB, MemAvailable 6.96-7.11 GiB, MemFree
+3.31-3.66 GiB, and 6.27-6.34 GiB of the 12.00 GiB swap in use. Every one of the three conditions fails, two
+of them by a wide margin.
+
+> The wall price is deferred. No wall figure for any configuration other than the anchor is claimed in this
+> ruling, and none is to be inferred from `ANCHOR_WALL` by scaling.
+
+The deferral is not a gap in the argument. What the lever claims is an arithmetic saving, and arithmetic is
+what the gate in 101.11.5 tests. A contended host changes the wall of a run; it does not change a single bit
+of what that run computes. That asymmetry is why the gate was run under contention while the wall was not
+measured: the two measurements need different things from the host, and only one of them needed a quiet one.
+
+The gate run's own wall, when it is read from its JSON, is a contended wall. It is recorded as evidence that
+the run happened and that its cost was plausible; it is never to be quoted as the price, and it is not
+comparable to `ANCHOR_WALL` in either direction.
+
 #### 101.11.7 The four constants that price C5, restated where they can be read
 
 §101.11.2 concluded that `.scratch/` being git-ignored (`.gitignore:34`) is a defect in the record's
