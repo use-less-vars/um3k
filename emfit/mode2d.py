@@ -77,7 +77,8 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
-from scipy.sparse.linalg import eigsh
+from scipy.sparse.csgraph import connected_components
+from scipy.sparse.linalg import eigsh, spsolve
 
 from .grid import Grid
 from .materials import C0
@@ -86,6 +87,7 @@ __all__ = [
     "Mesh2D",
     "Mode2D",
     "assemble",
+    "eps_eff_laplace",
     "k0_from_freq",
     "mesh_from_grid",
     "pec_edge_mask",
@@ -791,3 +793,187 @@ def solve_modes(
         e_t=e_t,
         mesh=mesh,
     )
+
+
+# ----------------------------------------------------------------------
+# quasi-static Laplace capacitance
+# ----------------------------------------------------------------------
+def _p1_stiffness(mesh: Mesh2D, eps_t: np.ndarray) -> csr_matrix:
+    """Nodal ``P1`` stiffness ``K[i, j] = sum_t area_t eps_t grad_i . grad_j``."""
+    dot = np.einsum("tij,tkj->tik", mesh.grad, mesh.grad)      # (nt, 3, 3)
+    k_loc = (mesh.area * eps_t)[:, None, None] * dot
+    n = mesh.n_nodes
+    rows = np.repeat(mesh.tris, 3, axis=1).ravel()
+    cols = np.tile(mesh.tris, (1, 3)).ravel()
+    return coo_matrix((k_loc.reshape(-1), (rows, cols)), shape=(n, n)).tocsr()
+
+
+def _laplace_phi(k: csr_matrix, v1: np.ndarray, v0: np.ndarray) -> np.ndarray:
+    """``K phi = 0`` on the free nodes, ``phi = 1`` on ``v1`` and ``0`` on ``v0``."""
+    phi = np.zeros(k.shape[0])
+    phi[v1] = 1.0
+    fixed = v1 | v0
+    free = ~fixed
+    if not np.any(free):
+        raise ValueError("every node is a Dirichlet node; nothing to solve")
+    kff = k[free][:, free].tocsc()
+    kfc = k[free][:, fixed]
+    phi[free] = spsolve(kff, -(kfc @ phi[fixed]))
+    return phi
+
+
+def _dirichlet_groups(mesh: Mesh2D, boundaries=(), groups=None) -> tuple:
+    """``(v1, v0)`` node masks of the two conductors of a Laplace problem.
+
+    ``groups`` wins when given.  Otherwise the union of the PEC predicates is
+    split by mesh connectivity, which must give exactly two connected groups.
+    """
+    if groups is not None:
+        masks = [np.asarray(m, dtype=bool) for m in groups]
+        if len(masks) != 2:
+            raise ValueError(f"groups must be two node masks, got {len(masks)}")
+        for i, on in enumerate(masks):
+            if on.shape != (mesh.n_nodes,):
+                raise ValueError(
+                    f"groups[{i}] has shape {on.shape}, expected ({mesh.n_nodes},)"
+                )
+        if np.any(masks[0] & masks[1]):
+            raise ValueError("groups[0] and groups[1] overlap")
+        if not (np.any(masks[0]) and np.any(masks[1])):
+            raise ValueError("both groups must be non-empty")
+        return masks[0], masks[1]
+
+    if not boundaries:
+        raise ValueError(
+            "give boundaries= (PEC predicates, as for pec_edge_mask) or "
+            "groups= (explicit node masks)"
+        )
+    on = np.zeros(mesh.n_nodes, dtype=bool)
+    for index, predicate in enumerate(boundaries):
+        b = np.asarray(predicate(mesh.nodes), dtype=bool)
+        if b.shape != (mesh.n_nodes,):
+            raise ValueError(
+                f"boundary predicate {index} returned shape {b.shape}, "
+                f"expected ({mesh.n_nodes},)"
+            )
+        on |= b
+    if not np.any(on):
+        raise ValueError("the boundary predicates mark no nodes")
+
+    lo, hi = mesh.edges[:, 0], mesh.edges[:, 1]
+    inner = on[lo] & on[hi]
+    node = np.flatnonzero(on)
+    local = np.full(mesh.n_nodes, -1, dtype=np.int64)
+    local[node] = np.arange(node.size)
+    adj = coo_matrix(
+        (np.ones(int(inner.sum())), (local[lo[inner]], local[hi[inner]])),
+        shape=(node.size, node.size),
+    ).tocsr()
+    ncomp, label = connected_components(adj, directed=False)
+    if ncomp != 2:
+        raise ValueError(
+            f"the PEC boundary splits into {ncomp} connected groups, not 2; "
+            "pass groups=(mask_v1, mask_v0) explicitly"
+        )
+    full = np.full(mesh.n_nodes, -1, dtype=np.int64)
+    full[node] = label
+    parts = [on & (full == c) for c in range(2)]
+    # ``phi = 1`` on the upper conductor; the other way round gives the same
+    # capacitance, so this only fixes which one is "high".
+    parts.sort(key=lambda m: -float(mesh.nodes[m, 1].mean()))
+    return parts[0], parts[1]
+
+
+def eps_eff_laplace(mesh: Mesh2D, eps_t, *, boundaries=(), groups=None) -> dict:
+    """Effective permittivity from the quasi-static capacitance of a section.
+
+    Weak form
+    ---------
+    Find a continuous ``P1`` potential ``phi`` satisfying
+
+        INT eps_t grad(phi) . grad(v) dA = 0
+
+    for every test function ``v`` vanishing on the Dirichlet nodes, i.e. the
+    Galerkin discretisation of ``div(eps_t grad phi) = 0``.  With
+
+        K[i, j] = sum_t area_t eps_t[t] grad(lambda_i) . grad(lambda_j)
+
+    the free-node equations are ``K phi = 0``; the stiffness is assembled from
+    the same ``mesh.grad`` / ``mesh.area`` the full-wave assembler uses, and
+    ``eps_t`` is sampled per triangle exactly as :func:`assemble` does it.
+
+    Boundary convention
+    -------------------
+    * **Dirichlet (essential)**: ``phi = 1`` on conductor ``v1`` and ``phi = 0``
+      on conductor ``v0`` -- rows *and* columns eliminated, never a penalty.
+      The two groups come from the PEC predicates via mesh connectivity when
+      they split in two, else from explicit caller masks (``groups``).
+    * **Neumann (natural)**: everywhere else.  Nothing is imposed and no
+      boundary term appears in the weak form, so the outer walls are symmetry
+      planes, not conductors.
+
+    At ``V = 1`` the stored charge equals the Dirichlet energy
+
+        C = phi^T K phi = INT eps_t |grad phi|^2 dA      (eps0 = 1).
+
+    ``eps_eff`` is the **capacitance ratio**
+
+        eps_eff = C(eps_t) / C(eps_t = 1 everywhere)
+
+    on the same mesh and the same Dirichlet data, so the two solves differ only
+    in the right-hand side (one matrix pattern, two ``spsolve`` calls).
+    Dividing by ``C0`` is what makes this general: it is correct both for two
+    plates of equal width and for a microstrip, where the strip and the ground
+    plane have different widths.
+
+    The field-energy quotient ``INT eps |E|^2 / INT |E|^2`` -- the ``e^T M_eps
+    e / e^T M_mu e`` functional of the full-wave pencil in this module -- is a
+    **different** functional and must not be used as ``eps_eff``: for a section
+    with unequal conductors it weights the field by the modal profile rather
+    than by the charge, and it does not reduce to ``C / C0``.
+
+    Parameters
+    ----------
+    mesh : Mesh2D
+    eps_t : scalar, (nt,) array or callable
+        Relative permittivity per triangle, same layout as ``assemble``
+        (a callable is evaluated at ``mesh.centroid``).
+    boundaries : sequence of callables, optional
+        PEC node predicates, exactly as for :func:`pec_edge_mask`.  Their union
+        must split, through the mesh connectivity, into exactly two connected
+        groups; those are the two conductors.
+    groups : (mask_v1, mask_v0), optional
+        Explicit Dirichlet node masks, for a conductor set that does not split
+        in two (a connected conductor with a gap, three surfaces, ...).
+
+    Returns
+    -------
+    dict
+        ``eps_eff`` (``C / C0``), ``C``, ``C0`` (both with ``eps0 = 1``),
+        ``phi`` (``(nn,)`` the solved potential), ``v1`` / ``v0`` (the node
+        masks used) and ``n_free`` (free nodal DOFs).
+    """
+    eps = _per_triangle(eps_t, mesh, "eps_t")
+    if np.any(eps <= 0.0):
+        raise ValueError("eps_t must be positive")
+    v1, v0 = _dirichlet_groups(mesh, boundaries, groups)
+
+    k = _p1_stiffness(mesh, eps)
+    k_unit = _p1_stiffness(mesh, np.ones(mesh.n_tris))
+    phi = _laplace_phi(k, v1, v0)
+    phi0 = _laplace_phi(k_unit, v1, v0)
+
+    c = float(phi @ (k @ phi))
+    c0 = float(phi0 @ (k_unit @ phi0))
+    if not (np.isfinite(c) and np.isfinite(c0)) or c0 <= 0.0:
+        raise RuntimeError(f"degenerate capacitances C = {c!r}, C0 = {c0!r}")
+
+    return {
+        "eps_eff": c / c0,
+        "C": c,
+        "C0": c0,
+        "phi": phi,
+        "v1": v1,
+        "v0": v0,
+        "n_free": int(mesh.n_nodes - np.count_nonzero(v1 | v0)),
+    }
