@@ -5912,3 +5912,92 @@ inscribed.
 **(i) Status.** Reflection only. No run, no re-pricing, no unblocking. M3c
 implementation is the next block's work, after the principal has read the
 amended 101.12.18.H.
+
+### 101.14 Three subsystems and a seam without a contract
+
+Dated 2026-10-25.
+
+**(a) The three subsystems.**
+
+1. **Field.** Geometry, materials, boundaries, FIT core, sources. Verified --
+   integer curl operators exact, energy ~1e-10, cavity second-order, CFL
+   sharp. Not to be touched in the current work.
+2. **Instrument.** Ports, observables, estimators, de-embedding, S-parameters,
+   impedances. Where the bug lives. Currently a convention, not a contract.
+3. **Study.** Sweeps, frequency lists, convergence criteria, output artifacts.
+   Currently six drivers, each re-wiring its own call site: `tol_driver.py`,
+   `tol_driver_armc.py`, `c3_driver.py`, `gate_driver.py`, `run_real.py`,
+   `sweep3.py`. This is why adding `poynting=True` was two kwargs at one call
+   site that no driver passed.
+
+**(b) The contracts that need to exist.**
+
+1. **Field contract.** Input geometry+materials+sources; output field state
+   over time; verification = analytic anchors (parallel-plate TEM, rectangular
+   TE10, cavity modes). Satisfied.
+2. **Instrument contract.** Input observable+estimator+reference
+   frame+impedance; output quantity+units+assumptions+uncertainty;
+   verification = self-consistency (`Re(VI*)` constant along a uniform line for
+   a matched modal port; `|S11|` small for a matched port;
+   `|S21|^2+|S11|^2=1` for a lossless line to stated tolerance). The
+   self-consistency test would have caught the passivity bug on day one.
+3. **Study contract.** Input study definition as DATA (geometry ref, materials
+   ref, sources list, observables list, sweep spec, output spec); output
+   artifacts + manifest naming every parameter; verification = a known
+   S-parameter on a known geometry reproduces the known answer.
+
+**(c) The plan, five passes, each with a test a stranger can run.**
+
+1. **Pass 1 Instrument.** 2D eigenmode solver + `ModalPort` type (excitation +
+   observer + estimator + reference plane + impedance) + self-consistency
+   test.
+   Gate: `R_MODAL` within 1e-3 of `R_FLUX` at the anchor, `R_CIRC` stays wrong.
+   Closes the passivity bug.
+2. **Pass 2 Study.** One parameterised driver. Six drivers become study
+   definitions in a registry.
+   Test: every existing study reproduces its result through one driver.
+3. **Pass 3 Geometry.** Parametric primitives (line, stub, taper, via),
+   boolean ops, alongside KiCad import.
+   Test: same geometry via KiCad and via parametric reproduces the same mesh.
+4. **Pass 4 Observable.** Far-field monitor (spherical), 3D field views, Smith
+   charts, matching overlays.
+   Test: dipole far-field matches textbook pattern.
+5. **Pass 5 Applications.** Matching network extraction, optimisation hooks for
+   agentic workspace.
+   Test: known L-network on known load produces known S-parameters.
+
+Not on this plan: 3D FEM (compares two extractions rather than testing one),
+dispersive/anisotropic materials (standard microstrip is non-dispersive in
+working range), SPICE (later), rotating machines (not soon).
+
+**(d) The eigenmode solver's tests -- corrected.**
+
+The prior check (c) "agree with dispersive models within their spread" is not a
+test: the models disagree by 2.95% of static, so a 3% error passes. The prior
+check (d) "~+6% gap between Laplace and eigenmode" is wrong: the models give
++1.7% to +4.7%. Both withdrawn. Replacements:
+
+1. Parallel-plate TEM: analytic, exact to machine precision.
+2. Rectangular TE10: analytic, must be built from scratch
+   (`analytic_box_modes` at `eigen.py:233` silently drops n=0 modes and cannot
+   produce TE10).
+3. Static limit: as f -> 0, eigenmode `eps_eff` approaches the static value,
+   second-order convergence.
+4. Self-consistency: `Re(VI*)` constant along a uniform line. Model-independent.
+   The property M3c needs.
+
+Dispersive models are recorded as informational comparison, not a gate.
+
+**(e) The book -- "HF engineer's guide through the galaxy".**
+
+Each pass adds a chapter teaching the concept and the machine. Pass 1:
+S-parameters, ports, passivity. Pass 2: studies and sweeps. Pass 3: geometry.
+Pass 4: far-field and Smith charts. Pass 5: matching. Not a textbook, not a
+manual -- enough theory to understand the tool, enough tool to answer the
+question.
+
+**(f) What this section does not do.**
+
+It authorises no run. It does not ratify M3c's gate (that is 101.12.18.H and
+remains pre-registered-not-ratified). It does not unblock C5. It does not touch
+the wall. It is design and reflection.
