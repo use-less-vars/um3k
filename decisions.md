@@ -6420,3 +6420,68 @@ ratifies no gate and unratifies none -- M3c stays where 101.12.18.H left it. No
 earlier record figure changes. The one claim that was to be inscribed here and
 is not -- that the mesh was verified by assertions that caught mesh bugs -- is
 false against the tree, and (c)(3) records what is there instead.
+## §101.16 — Test 3: the strip-mode search on the baseline mesh, and why the spectrum contains no strip mode
+
+Block scope: replaces the open question left at §101.15. Operator rulings 1-3 (101.15 accepted; the three flags accepted; the 101.14(c) amendment accepted) stand unchanged. Everything below is measured on the baseline mesh unless it is explicitly marked as a derivation, a mechanism, or a limit.
+
+### (a) The operator's framing correction (recorded as his, not as a result of mine)
+
+The operator's own correction to his "World A / World B" framing: the framing was incomplete. There is no mode with E_strip > 0.8 at any box size or frequency; the E_strip maximum is 0.2729 and it DECREASES with box size (0.2729 -> 0.2205 -> 0.1146 at c = 4.8 / 9.6 / 19.2 mm). Read plainly, that is "no strip mode in the spectrum" — neither World A (a selection-rule bug hiding a mode that is there) nor World B (the solver assembling a mode that should not exist), but a THIRD world: an error in the formulation or in the discretisation. This is the operator's correction and it is recorded as his. It is also the framing that Test 3 was commissioned to settle.
+
+### (b) What the formulation actually is (Test 1, quoted)
+
+`emfit/mode2d.py`, 793 lines, no edit. Line 15 asserts the ansatz `e_t = (e_x, e_y, 0), e_z := 0`. Lines 24-25 give the weak form, line 29 the pencil `C e = beta^2 B e` with `C = k0^2 M_eps - K_q` and `B = M_mu`, beta^2 the eigenvalue at fixed k0, and line 783 `eps_eff = beta_sq / (k0*k0)`. Lines 34-38 state in the module's own words that "the gradient null space of K_q gives beta^2 = k0^2 exactly"; C is indefinite. There is NO gauge, penalty, tree-cotree, divergence-cleaning, projection or lifting anywhere in the module — the single keyword hit at line 43 is the phrase "never a penalty". The only filter is a post-hoc one: `_CURL_RTOL = 1.0e-10` (lines 117-121), then `acceptable = |ratios| >= _CURL_RTOL*r_max` (759-761), `eligible = acceptable & (vals > 0)` (764), and `argmax(vals[eligible])` (772). The module defines no masks at all: `pec_edge_mask` (444-473) takes caller predicates and marks an edge PEC iff BOTH endpoints satisfy the SAME predicate (line 472); lines 459-460 say "Nothing here knows about plates, walls or microstrip". PEC elimination is a true restriction (`free = ~mask` at 716, submatrices at 723-724). The solve is `eigsh(c_free, k=n_k, M=b_free, sigma=sigma, which="LM")` (729) with no tol, maxiter or v0.
+
+### (c) Test 2: the assembly is exact to round-off; the formulation is not
+
+Harness `/tmp/c4.py` (292 lines, md5 `f72a1525df6876afc1ca74a3e1b2451e`), two-layer box 0.4 x 3.2 mm, h = 0.05 mm, eps = 4.4 below y = 1.6 mm and 1.0 above, n_dof 1592, n_pec 16.
+
+Assembly test (2b), on the exact layered TEM field with a known analytic energy, edge DOFs taken as midpoint value times length (exact for a linear field): `e^T M_mu e` = 6.730578512397e-07 against analytic 6.730578512397e-07, relative error 4.719e-16; `e^T M_eps e` = 7.854545454545e-07 against analytic 7.854545454545e-07, relative error 5.392e-16; `e^T K_q e` = 1.05e-14 against 0. A second, deliberately non-representable field gives `e^T K_q e` = 1.621e-14. The eps assembly, the centroid rule and the edge orientation signs are validated to round-off on the field in question.
+
+Representability test (2c), on the same box: the exact solution of the layered problem is NOT an eigenvector. beta^2* = 7.158256283916; its Rayleigh quotient is R = 5.126099121077, so R/k0^2 = 1.166994122702 (which reproduces the hand-derived integral ratio 23.76/20.36 to six decimals); the normalised pencil residual is ||C e* - beta^2* B e*|| / ||B e*|| = 3.810288; the best residual over the one-parameter scaling family is 3.225641; (R - beta^2*)/beta^2* = -2.838900e-01.
+
+Mechanism (mine, stated as a derivation, and confirmed in (d) below): the exact layered TEM field is curl-free, so K_q e* = 0 and the pencil collapses to `M_eps e* = eps_eff M_mu e*` for every test field — which holds only when eps is constant. The `e_z := 0` at line 15 is an ANSATZ, not an elimination; no step anywhere imposes div(eps E) = 0, so the hybrid content of a microstrip mode has nowhere to live. This also explains why the module's own earlier verifications passed: with UNIFORM eps even the physical TEM mode is a gradient with beta^2 = k0^2 eps exactly (the module says so itself at 695-699), and TE10 has e_z = 0. The first inhomogeneous case is the first case the ansatz does not cover.
+
+### (d) Test 3: the search, on the baseline mesh, at valid shifts
+
+Harness `/tmp/c6.py` (305 lines, md5 `82ce32cbff0087ccbc102de7d7b38fd5`), output `/tmp/c6.out`, 27 of 27 assertions PASS, no exception.
+
+Mesh: box 6.0 x 4.0 mm, 0.1 mm cells, x panels 14/32/14 with boundaries at 0 / 1.4 / 4.6 / 6.0 mm, y split at 1.6 mm with 16/24 subdivisions. 2501 nodes, 4800 triangles, 7300 edges (2460 x-edges, 2440 y-edges), n_dof 7208, n_pec 92 = 60 ground edges + 32 strip edges, 0 dual x-y edges on the PEC mask. eps_t takes exactly {1.0, 4.4} with 1920 of 4800 triangles in the substrate; band area 5.120000e-06 m^2 of box area 2.400000e-05 m^2, ratio 2.133333e-01. **The strip is PEC: 32 of its edges are eliminated.**
+
+Reference field: the module's own quasi-static profile, `microstrip_mode_profile(h=1.6e-3, w=3.2e-3, eps_r=4.4, n_sub=16, n_clean=14, n_air=24)`, whose 61 x 41 lattice coincides with the baseline mesh node-for-node (max |dx| 8.674e-19, max |dy| 4.337e-19; sampling by exact lattice index agrees with bilinear interpolation to 8.9e-15). Restricted to the free DOFs: `e^T K_q e` = +2.362062826417e-08, `e^T B e` = +3.719448159375e+02, `e^T M_eps e` = +1.454484835683e+03, `e^T M_band e` = +1.007356607111e+03, **curl_ratio = +6.350573324871e-11** (it is a discrete gradient, to machine precision), **E_strip = +6.925865312564e-01**, and Rayleigh quotient **R_A = +1.717706735195e+01, R_A/k0^2 = +3.910485570316e+00**.
+
+Four shift-invert solves, `eigsh(c_free, k=8, M=b_free, sigma, which="LM")`, all returned OK:
+
+| sigma | sigma/k0^2 | returned eps_eff | curl_ratio | E_strip |
+|---|---|---|---|---|
+| R_A = 17.17706735195 | 3.910485570316 | 4.39999997 .. 4.39999998 (8, one tight cluster) | 5e-10 .. 1.5e-8 | 0.1794392 .. **0.5997685** |
+| 3.343938310 k0^2 = 14.68847091718 | 3.343938310 | 2.70000015 .. 2.91332267 | 5.3e-7 .. 5.5e-5 | 1.4e-3 .. 0.2101247 |
+| 1.629629630 k0^2 = 7.158256285543 | 1.629629630 | 1.0000000286 .. 1.0000000333 (8) | -2e-8 .. -4e-8 | 2.5e-19 .. 7.1e-18 |
+| 2.7 k0^2 = 11.85992916131 | 2.700000000 | 2.7000000082 .. 2.7000000196 (8) | 4.6e-8 .. 7.0e-8 | 2.9e-6 .. 1.0e-4 |
+
+Across all 32 candidates: **0 exceed E_strip = 0.8**; exactly 2 exceed 0.5, and both come from one distinct beta_sq. The nearest eigenvalue to eps_eff = 3.343938310 anywhere in the four windows is 2.913322667827 (|d| = 4.306156e-01). The nearest to eps_eff = 1.629629630 is 1.000000033288 (|d| = 6.296296e-01). The nearest to R_A is 12.51800 % away in beta_sq. The 32 candidates are not independent: the population is two constant-eps gradient families at **exactly 1.0000000** and **exactly 4.4000000**, plus a pseudo-continuum near 2.7 that the shift picks members out of (S4 returns eps_eff = 2.7000000082 .. 2.7000000196, eight members within 1.1e-8 of each other).
+
+The two exact families are the mechanism of (c) made visible: on the gradient null space the pencil IS the generalised problem `M_eps e = mu M_mu e`, whose eigenvalues are the permittivities themselves, so a mode living entirely in vacuum returns exactly 1.0 and a mode living entirely in the substrate returns exactly 4.4. There is no third exact family — because there is no third constant-eps region — and the physical quasi-TEM mode, which straddles both regions, is a gradient but not an eigenvector of that pencil: it sits at R_A/k0^2 = 3.910 with pencil residual 5.111975112137 and no eigenvalue within 12.5 %.
+
+One attempt failed and is recorded as failed: an independent finite-volume Laplace solve on the baseline mesh (mine, intended as a second reference) produced a field with max|e| = 0.730 on PEC edges where it must be ~1e-16, e^T K_q e = +1.304167010122e+08 and curl_ratio = +2.628574027901e+05. The FV solve had assumed a row-major node ordering that `emfit/mode2d.py` does not use, so the projected field was not a discrete gradient. The check that caught it was the PEC self-consistency tripwire, put in for exactly this purpose. The field is void; it is reported here and not smoothed, and no number in (d) depends on it.
+
+### (e) Adjudication of the four cases
+
+1. **Selection rule is the bug, mode is there and is missed — REFUTED.** 0 of 32 candidates in four independent windows reach E_strip > 0.8. There is no mode to miss.
+2. **The strip is silently not PEC — REFUTED, by measurement.** n_pec = 92 with 60 ground and 32 strip edges, so the strip is eliminated exactly as the ground plane is.
+3. **The formulation cannot represent the mode — SUPPORTED, with mechanism.** `e_z := 0` is an ansatz with no div(eps E) = 0 constraint, and on the gradient null space the pencil degenerates to the permittivity-ratio problem whose only exact eigenvectors are constant-eps region gradients (observed at exactly 1.0000000 and 4.4000000 and nowhere else). The physical field, projected onto the same space, is curl-free and still not an eigenvector.
+4. **Discretisation or assembly is inaccurate — REFUTED at round-off.** 4.719e-16 on M_mu, 5.392e-16 on M_eps, on the exact field.
+
+So the third world is real, and it is (3): the mode is absent from the spectrum because the formulation cannot host it, not because it is hidden and not because the assembly is wrong.
+
+### (f) Two corrections to the framework this search was run under (flagged, for the operator to accept or reject)
+
+1. **The target 1.6296 was never a physical eps_eff.** 1.629629630 is the HARMONIC MEAN of 4.4 and 1.0 — literally the interface face value `harmonic(4.400, 1.0) = 1.629629629630`, printed as such by the harness itself. The physical expectation, from the module's OWN quasi-static solve, is eps_eff = 3.369118953 on the converged 43.3 x 21.7 mm box and 4.056086848 on the box-matched 6.1 x 4.1 mm call; Hammerstad-Jensen for w/h = 2 at eps_r = 4.4 gives 3.3425, and the module's docstring quotes 3.35001 against it. Earlier rounds were therefore measured against a number that was an artefact of the discretisation, not the physics. This changes no conclusion — nothing sits at 3.34, 3.37 or 4.06 either (nearest 2.913322667827) — but the framing must be corrected wherever 1.63 was quoted as the expected value.
+2. **E_strip > 0.8 is not a viable discriminator, and the threshold as stated would reject the true mode.** The module's own quasi-static microstrip field, sampled onto the baseline mesh, scores E_strip = 0.6925865312564 on exactly the metric the round-3b search used. Round-3b's observed maximum of 0.2729 is therefore not by itself evidence that no mode exists; it is evidence that nothing found came within 40 % of the physical reference on that metric. A discriminator calibrated above the reference value cannot separate anything. Recommend re-expressing the test as proximity to the reference field rather than an absolute threshold, and re-reading round 3b against 0.69.
+
+### (g) Limits of what has been shown
+
+- R_A/k0^2 = 3.910485570316 is the Rayleigh quotient of the quasi-static field SAMPLED onto this mesh, not an eps_eff measurement. It differs from the module's own 4.056086848 for the same box by 3.6 %, attributable to sampling a staggered-lattice field onto a different mesh, to centroid-eps against the module's dual-interface rule, and to the 6 x 4 mm box itself being unconverged (the module quotes 4.056 against 3.369 on a converged box). Do not quote 3.910 as a converged permittivity.
+- `eigsh` with k = 8 samples only the eight eigenvalues nearest each shift. Absence of a high-E_strip candidate in four windows is strong but is not a global proof; a wide sweep (k = 40, or a shift-free spectrum) has not been run.
+- Everything here is one frequency (0.1 GHz), one geometry (w = 3.2 mm, h = 1.6 mm, eps_r = 4.4) and one box (6.0 x 4.0 mm). The box is not converged, so eps_eff values are not comparable across box sizes.
+- The conclusion is about the pencil as formulated in `emfit/mode2d.py`. It says nothing about a correctly formulated 3D vector problem, and nothing about whether that module should be fixed, replaced, or scoped to its uniform-eps verification cases.
