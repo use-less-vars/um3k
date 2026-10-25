@@ -5955,6 +5955,18 @@ Dated 2026-10-25.
    test.
    Gate: `R_MODAL` within 1e-3 of `R_FLUX` at the anchor, `R_CIRC` stays wrong.
    Closes the passivity bug.
+
+   **Mode identification by energy fraction, not by eigenvalue index.** The
+   pass is not satisfied by a port that projects onto whatever eigenpair the
+   eigensolver hands back. Today's rule takes the largest `beta_sq` among the
+   curl-filtered candidates -- the module's own `solve_modes` sorts descending
+   at `emfit/mode2d.py:757-758` and takes `argmax` at `:775` -- and 101.15(g)
+   shows that this returns a box mode at every box size tried, at every
+   frequency where the box was still small. The contract therefore requires the
+   mode to be identified by its dielectric-weighted energy fraction under the
+   strip, and the `R_MODAL`/`R_FLUX` test above is run only on a mode so
+   identified. A design requirement of this pass, not a fix to the module.
+
 2. **Pass 2 Study.** One parameterised driver. Six drivers become study
    definitions in a registry.
    Test: every existing study reproduces its result through one driver.
@@ -6018,3 +6030,393 @@ carried the call form `eps_eff(2.0, 4.4, t=0)`, which does not exist: the
 signature at `emfit/microstrip.py:189` is
 `eps_eff(w_over_h, eps_r, t_over_h=0.0)`, where the third parameter is
 normalised thickness, so future briefs must write `t_over_h`.
+
+### 101.15 The 2D eigenmode solver: two anchors hold, the third does not
+
+Dated 2026-10-25.
+
+**(a) Purpose and scope.** 1. `emfit/mode2d.py` is a two-dimensional
+cross-section eigenmode solver: it meshes a cross-section, assembles a vector
+Helmholtz pencil, and returns `e_t` and `beta_sq`, from which `eps_eff` and in
+principle `Z_m` follow. It is the reference leg of M3c -- an independent check
+on the 3D solve, not a replacement for it and not a fit to it. Independence is
+the point, which is why `emfit/eigen.py` was not reused even where that would
+have been convenient ((k)(2)).
+
+2. The work was done with two files, and the boundary has to be stated because
+citation depends on it. The harness -- geometry, boundary conditions, mask
+construction, and the selection rule -- lived in `/tmp` scratch and is not in
+the tree. It is not under test here; the method is. `emfit/mode2d.py` supplies
+the mesh, the assembly, the edge masks, the eigensolver call and the field
+evaluation. Where a rule exists in both, the tree is cited, because the tree
+citation is durable and the `/tmp` one is not: the selection rule is such a
+rule and is cited to `emfit/mode2d.py` in (g)(5).
+
+**(b) Formulation.** 1. The eigenvalue problem is the transverse-curl vector
+Helmholtz weak form with `beta_sq` as the eigenvalue. The assembled pencil is
+`(k0_sq M_eps - K_q) e = beta_sq M_mu e`, built in `emfit/mode2d.py:431-433`
+from the element blocks at `:401-403` and `:413-415`; the harness forms
+`C = k0_sq m_eps - k_q` and `B = m_mu` at `/tmp/c3.py:91-92`. With `mu_r = 1`
+the relation `eps_eff = beta_sq / k0_sq` is exact, not an approximation. In
+general the identity is `beta_sq + curl_term = k0_sq <eps_r>_e`, where
+`<eps_r>_e` is the field-weighted dielectric average; the curl diagnostic is
+built on that identity, and what follows from it is in (c)(1).
+
+2. PEC is imposed by edge masking, not by elimination bookkeeping. The mask is
+`emfit/mode2d.py:463-471`: an edge lies on the conductor when both of its
+endpoints lie on the same one of the declared surfaces. The surface predicates
+were supplied by the caller, and the mask was applied by dropping the
+corresponding rows and columns (`/tmp/c3.py:89-95`); the reconstruction fills
+the dropped entries with zeros (`/tmp/c3.py:119-120`), so the PEC degrees of
+freedom are exactly zero. There is no path in which a full matrix is assembled
+and then blanked.
+
+3. The side walls and the lid are **Neumann by omission**, not by declaration.
+Only `[ground, strip]` was passed as PEC (`/tmp/c3.py:50`); the wall and lid
+edges remain free degrees of freedom and no natural boundary condition is
+imposed on them. The tree notes the same absence in a comment at
+`emfit/mode2d.py:457`. This is not an oversight awaiting a declared wall -- it
+is the choice that makes the box a legitimate eigenproblem. It also has a
+consequence that (g) is entirely about: with open side walls the returned
+`eps_eff` is a property of the box, not of the line.
+
+**(c) Discretisation.** 1. Lowest-order Nedelec edge elements. The exact
+discrete-gradient subspace sits in the kernel of `K_q` and therefore appears as
+`beta_sq = 0`, which the `beta_sq > 0` filter removes; that is all it removes.
+Near-gradient vectors with a small but non-zero curl survive, and the curl
+floor does not catch them: at 0.1 GHz the accepted candidates carried
+`curl_ratio` 2.9e-05 to 6.5e-04 against `k0_sq <eps_r>` of about 14.7, i.e. at
+most 5e-05 of the mass energy. A `beta_sq > 0` filter is not a spurious-mode
+filter, and a 1e-10 relative curl floor admits the whole near-gradient
+spectrum.
+
+2. The baseline mesh is the 6.0 x 4.0 mm cross-section: a 3.2 mm strip on a
+1.6 mm substrate with `eps_r = 4.4`, and 2.4 mm of air above. Cells of 0.10 /
+0.05 / 0.025 mm give 7208 / 28816 / 115232 degrees of freedom and 92 / 184 /
+368 PEC edges. The largest box used in (g) is 41.6 x 20.8 mm at 259760 degrees
+of freedom.
+
+3. **There is no mesh-verification discipline in the tree, and this section
+does not claim one.** `emfit/mode2d.py` contains zero `assert` statements, and
+so does the (g) harness. `n_dof` and `n_pec` were recorded (`/tmp/c3.py:122`)
+and never checked against anything. Nothing under `tests/` mentions the module.
+The only checks in the module are six `raise ValueError` guards --
+`emfit/mode2d.py:718-721`, `:727-728`, `:744-747`, `:766-771`, `:279-282`,
+`:465-468` -- and they are argument checks, not verification. The per-point
+mesh facts quoted in (e) and (g) were printed by a harness that no longer
+exists; they are carried on the authority of the run, not of the module. A test
+suite is outstanding work.
+
+**(d) Eigensolver choice.** 1. The solve is shift-invert Lanczos:
+`eigsh(C, k=nk, M=B, sigma=sigma, which="LM")` (`/tmp/c3.py:96-97`), which
+factorises `C - sigma B` sparsely and returns the `k` eigenvalues nearest
+`sigma`. Nothing is densified at any size used here, including 259760 degrees
+of freedom.
+
+2. The cost was measured, and measuring it is what justified not densifying.
+The nine-point (c) matrix at up to 115232 degrees of freedom took 155 s wall
+(148.18 s in process) with a peak resident set of 315.64 MiB. The cost is
+governed by `k`, not by assembly: at 259760 degrees of freedom `k = 4` took
+21.0 s at 682 MiB, while `k = 6` on the same matrix exceeded the 300 s cap and
+returned no data. That last is recorded as a budget outcome in (k)(5), not as a
+limit of the solver.
+
+3. The shift-invert property used as evidence must not be mistaken for a
+measurement. The returned set is the `k` eigenvalues nearest `sigma`; it
+follows that where the returned roots span an interval of `eps_eff`, everything
+inside that interval was returned. At 41.6 mm the interval was 3.097 to 3.506,
+and the argument in (g)(5) and (g)(6) rests on that and on nothing else.
+
+**(e) Verification (a): parallel-plate TEM -- passes.** The relative error is
+9.79e-12 at 9560 degrees of freedom. Two caveats travel with the number. First,
+the error grows with refinement: the sequence is consistent with exactness at
+the round-off floor, and it licenses no convergence rate. Second, 34.71% of the
+spectrum is degenerate, so selecting a mode by index alone is unsafe even in
+the one problem whose exact answer is in the space. That is why every later run
+recorded a discriminating functional. (g) is what happens when the functional
+recorded does not discriminate and the selection falls back on eigenvalue
+ordering.
+
+**(f) Verification (b): TE10 from scratch -- passes.** `analytic_box_modes` at
+`emfit/eigen.py:233` drops `n = 0` and so cannot produce TE10; the reference
+was built analytically instead, at `beta_sq = 3.85789445242474831e+04`.
+Relative errors are 2.74e-05 / 6.85e-06 / 1.71e-06, the pairwise rates
+`p = 2.0000`, the least-squares rate 2.000017. One warning travels with the
+pass: the nine-point profile slope of 1.000074 is a first-order quantity and
+must not be presented as `O(h^2)`. A pointwise profile norm is not the
+eigenvalue, and the two do not share a rate a priori.
+
+**(g) Verification (c): microstrip -- not established.**
+
+1. The target is 3.343938310, the Hammerstad-Jensen open-line value at
+`w/h = 2.0`, `eps_r = 4.4`, `t = 0` (`emfit/microstrip.py:189`, per 101.14(i)).
+The computed problem is a box with magnetic side walls 1.4 mm (0.875 h) from
+the strip edges and a magnetic lid 2.4 mm (1.5 h) above it. That mismatch is
+real and it is not the explanation for what follows: no strip-confined mode was
+found at any of the three boxes tried, so there was no measurement to compare
+with the target in the first place.
+
+2. Round one, nine points on the baseline box, `eps_eff` by cell size:
+
+   | f (GHz) | h = 0.10 mm | h = 0.05 mm | h = 0.025 mm |
+   |---|---|---|---|
+   | 0.1 | 2.9133227 | 2.9173295 | 2.9193583 |
+   | 1.0 | 2.9145726 | 2.9185977 | 2.9206355 |
+   | 5.83 | 2.9569088 | 2.9615177 | 2.9638419 |
+
+   with 7208 / 28816 / 115232 degrees of freedom. The deficit is constant, not a
+   stalled solve: the error does not fall with refinement, the linear fits give
+   limits 2.92136 and 2.92265 which agree to 4.4e-04, and a frequency-
+   independent limit is the static quantity. The offsets are -12.638% at 0.1 GHz
+   and -11.297% at 5.83 GHz. This is the measurement the rest of the section has
+   to interpret, and (g)(3) is why it cannot be read as a microstrip `eps_eff`.
+
+3. Field identification at the baseline box, `h = 0.05 mm`, 28816 degrees of
+freedom. On the line `y = 0.8 mm` the field has its **minimum** 17.324 at the
+strip centre `x = 3.0`, values 149.91 and 145.46 at the strip edges `x = 1.4`
+and `x = 4.6`, and a peak 321.53 at the side wall `x = 6.0`. The vertical cut
+at `x = 3.0` runs 1.596 at the ground, 17.324 at 0.8 mm, a minimum 4.033 at
+1.5 mm, 4.484 at the interface, and 85.095 at the lid. The under-strip mean is
+61.210 against 272.255 in the clearance, so `lateral_ratio = 0.223463`, and the
+shape is frequency-independent (0.219238 at 5.83 GHz). The field is smallest
+exactly where the line's field must be largest. The selected mode is a box
+mode.
+
+4. The box sweep, `h = 0.10 mm`, `k = 4`, `sigma = 3.343938310 k0_sq`, one
+process per box. The `eps_eff` column is the candidate the rule of (g)(5)
+returned, not a chosen one. At 0.1 GHz:
+
+   | c (mm) | n_dof | beta_sq | eps_eff | curl_ratio | lat | vert |
+   |---|---|---|---|---|---|---|
+   | 1.4 | 5398 | 13.2382046 | 3.0137745 | 4.4587e-05 | 0.18399 | 0.19737 |
+   | 4.8 | 24608 | 15.4533261 | 3.5180632 | 2.8576e-04 | 0.09640 | 0.09564 |
+   | 9.6 | 75344 | 16.8196542 | 3.8291178 | 6.5236e-04 | 0.05846 | 0.08342 |
+   | 19.2 | 259760 | 15.4024081 | 3.5064714 | 5.0516e-04 | 0.08933 | 0.24568 |
+
+   and at 5.83 GHz:
+
+   | c (mm) | n_dof | beta_sq | eps_eff | curl_ratio | lat | vert |
+   |---|---|---|---|---|---|---|
+   | 1.4 | 5398 | 45520.9625 | 3.0489900 | 5.3656e+02 | 0.18000 | 0.20820 |
+   | 4.8 | 24608 | 55274.8752 | 3.7023062 | 2.2560e+03 | 0.09399 | 0.12690 |
+   | 9.6 | 75344 | 54104.0870 | 3.6238869 | 2.67747e+03 | 1.48510 | 11.5678 |
+   | 19.2 | 259760 | 53135.4656 | 3.5590087 | 2.60703e+03 | 1.41308 | 19.2512 |
+
+   Box dimensions are `(3.2 + 2c) x (1.6 + c)` mm; the peak resident sets were
+   69 / 108 / 224 / 682 MiB at 0.09 / 8.55 / 14.9 / 21.0 s.
+
+   Three observations, all negative. `eps_eff` is not monotone: at 0.1 GHz it
+   walks 3.0138 -> 3.5181 -> 3.8291 -> 3.5065, so it passes the target rather than
+   converging to it, which removes "the box is too small" as an explanation.
+   `lateral_ratio` is below 1 at every box size at 0.1 GHz (0.184 / 0.096 / 0.058 /
+   0.089), i.e. no confinement at any size. `lateral_ratio` exceeds 1 only at
+   5.83 GHz for c of 9.6 mm and above, where `vertical_ratio` simultaneously
+   explodes to 11.57 and 19.25: at 41.6 mm the box is ten wavelengths across and
+   the mode is electrically large, not converged. The pass condition that the
+   round would have accepted was never met at a size where the box was still
+   small. `vertical_ratio` is defined differently here from round two and the two
+   columns are not comparable; only `lateral_ratio` is (0.2235 at h = 0.05 mm
+   against 0.185 at h = 0.10 mm, same sign, same conclusion).
+
+5. **The selection rule, quoted.** The harness takes the largest `beta_sq` among
+the curl-filtered candidates with `beta_sq > 0` -- not index 0, not the root
+nearest `sigma`, not the maximum curl. The module's twin rule is the durable
+citation: `solve_modes` sorts descending at `emfit/mode2d.py:757-758` and takes
+the `argmax` of the eligible values at `:775`, with the curl floor
+`_CURL_RTOL = 1.0e-10` at `:121`. The harness does not call `solve_modes`, but
+the rule is the same one. The consequence governs every `eps_eff` in this
+section: it is the largest-`beta_sq` root of its window, and the target was
+only ever the shift that placed the window. At 41.6 mm and 0.1 GHz the four
+roots were 3.097 / 3.185 / 3.346 / 3.506 and the rule returned 3.506. The rule
+does not merely fail to discriminate; it prefers the wrong root systematically,
+because the strip mode sits low in the window and raising `k` makes the
+preference worse. The contract consequence is the amendment to 101.14(c).
+
+6. Round three-b settled whether a confined mode exists at all, by energy
+fraction rather than by ordering. `E_strip` is the dielectric-weighted energy
+fraction in the substrate band under the strip, over the whole section:
+`int_{0 <= y <= h_sub, c <= x <= c + Ws} eps_r |e_t|^2 / int_section`, with the
+strip centre at `c + Ws/2`. It is area- and dielectric-weighted, so it cannot
+be gamed by normalising two line means, and it was applied identically to all
+four candidates with no `eps`-based selection. At c = 19.2 mm, `Ws/W = 0.0769`:
+
+   | cand | eps_eff | beta_sq | curl_ratio | E_strip | x share | E_sub | lat | decay |
+   |---|---|---|---|---|---|---|---|---|
+   | 0 | 3.09725 | 13.60490 | 1.63e-04 | 0.0884 | 1.15 | 0.8763 | 1.222 | 0.743 |
+   | 1 | 3.18546 | 13.99234 | 2.19e-04 | 0.0036 | 0.05 | 0.8879 | 0.132 | 31.21 |
+   | 2 | 3.34605 | 14.69774 | 3.31e-04 | 0.1146 | 1.49 | 0.9074 | 1.389 | 0.270 |
+   | 3 | 3.50647 | 15.40241 | 5.05e-04 | 0.0017 | 0.02 | 0.9251 | 0.089 | 40.63 |
+
+   at c = 9.6 mm, `Ws/W = 0.1429`:
+
+   | cand | eps_eff | beta_sq | curl_ratio | E_strip | x share | E_sub | lat | decay |
+   |---|---|---|---|---|---|---|---|---|
+   | 0 | 2.97827 | 13.08226 | 1.07e-04 | 0.1341 | 0.94 | 0.8596 | 1.118 | 1.129 |
+   | 1 | 3.09993 | 13.61664 | 1.72e-04 | 0.0082 | 0.06 | 0.8767 | 0.143 | 26.87 |
+   | 2 | 3.39835 | 14.92750 | 3.60e-04 | 0.2205 | 1.54 | 0.9133 | 1.459 | 0.308 |
+   | 3 | 3.82912 | 16.81965 | 6.52e-04 | 0.0015 | 0.01 | 0.9562 | 0.058 | 43.76 |
+
+   and at c = 4.8 mm, `Ws/W = 0.2500`:
+
+   | cand | eps_eff | beta_sq | curl_ratio | E_strip | x share | E_sub | lat | decay |
+   |---|---|---|---|---|---|---|---|---|
+   | 0 | 2.76484 | 12.14472 | 2.93e-05 | 0.1054 | 0.42 | 0.8261 | 0.737 | 1.088 |
+   | 1 | 2.80991 | 12.34272 | 4.43e-05 | 0.0262 | 0.10 | 0.8336 | 0.198 | 11.67 |
+   | 2 | 3.06153 | 13.44796 | 1.32e-04 | 0.2729 | 1.09 | 0.8714 | 1.249 | 0.907 |
+   | 3 | 3.51806 | 15.45333 | 2.86e-04 | 0.0080 | 0.03 | 0.9263 | 0.096 | 38.17 |
+
+   where `x share` is `E_strip` divided by the strip's geometric share `Ws/W`.
+
+   The discriminator was pre-registered before the run and it failed both of its
+   clauses. A box mode filling the section should put `E_strip` near the strip's
+   geometric share, 0.0769 / 0.1429 / 0.2500, and show no lateral decay. A strip
+   mode should put `E_strip` near 0.8 **and** decay laterally by far more than a
+   factor of order one. The largest `E_strip` anywhere is 0.2729, at the box where
+   the geometric share is already 0.2500; the best ratio to that share is 1.49 /
+   1.54 / 1.09, against the 3.2 / 5.6 / 10.4 that a value of 0.8 would imply.
+   `E_strip` falls 0.2729 -> 0.2205 -> 0.1146 as the box grows, while `eps_eff`
+   walks 2.7648 -> 3.3984 -> 3.3461: the field is spreading over more substrate,
+   not concentrating under the strip. Two candidates per box are plainly spurious
+   (`E_strip` 0.0015 to 0.0082, with `|e_t|` rising by a factor of 18 to 72
+   towards the side wall -- corner and gradient modes admitted by the curl floor).
+
+   The 21-point lateral profile settles the one number that could have been
+   misread. At c = 19.2 mm, from the strip centre to the side wall along
+   `y = 0.8 mm`, normalised at the centre: 1.000, 0.995, 0.883, 0.644, 0.401,
+   0.252, 0.416, 0.657, 0.882, 1.014, 1.060, 1.006, 0.868, 0.638, 0.397, 0.252,
+   0.419, 0.660, 0.884, 1.015, 1.060. It dips to 0.252 and then **recovers to
+   1.060 at the wall**, and the same recovery appears at the smaller boxes (1.051
+   at c = 9.6 mm, 1.163 at c = 4.8 mm). There is no lateral confinement at any box
+   size; the scalar decay of 0.270 is a local minimum of a pattern that fills the
+   box. That is why the decay is reported with the profile and never alone.
+
+   Harness integrity, after the container's `/tmp` was wiped and the harness
+   rebuilt: the rebuild reproduced round three's `eps_eff` to six figures
+   (3.50647 / 3.82912 / 3.51806), so the numbers in (g)(4) and (g)(6) are not
+   artefacts of the rebuild. The metric script's provenance is recorded because it
+   is new code: two bugs were found and fixed before any solve -- barycentric rows
+   summing to 4/3, and a transposed `einsum` index order, `(t,s,q,c)` written for
+   `(t,q,s,c)`, which produced up to 74% field error -- after which the validation
+   was exact: area integral 81.9200000000 mm^2, substrate 20.4800000000, strip
+   band 5.1200000000, dielectric integral 151.5520000000; quadrature against
+   `Mode2D.e_at` 2.7e-14, and quadrature total against `v^T M_eps v` 3.3e-16. The
+   round-three numbers came through a different path (`e_at`) and are unaffected.
+
+7. **Verdict.** This is an identification failure, not an accuracy failure. In
+the bracketing intervals of the windows actually searched -- 3.097 to 3.506 at
+41.6 mm, 2.978 to 3.829 at 22.4 mm, 2.765 to 3.518 at 12.8 mm -- no candidate
+qualifies as the strip mode by the energy criterion. There is therefore no
+measurement of a boxed `eps_eff` to set against 3.343938310, and neither the
+-12.6% of (g)(2) nor a 0.4% agreement is claimed in either direction. Two
+findings stay separate and neither licenses the other: that no strip-confined
+mode was found, and that consequently no boxed `eps_eff` claim can be made.
+
+8. **What is not claimed.** Not that the target is wrong: the open-line value is
+not like-for-like for this box, but nothing here shows the box limit is
+3.343938310, and the sweep does not converge. Not that the discretisation
+cannot represent the mode: the search was `k = 4` nearest `sigma` at
+`h = 0.10 mm`, and absence from three windows is not absence from the spectrum.
+Not that the module's discretisation is broken: the defects established are the
+selection rule and the absence of a confinement criterion, and both are
+contract defects, not assembly defects. And not that the candidate at 3.34605
+is the answer: it sits 0.06% from the target, but the roots span 0.1 to 0.2 in
+`eps_eff`, which is the size of every trend measured here, so selecting the
+nearest manufactures the agreement by construction. That is the same species of
+error as reading a 3% spread across dispersion models as validation, and it is
+the reason (i) below is informational and not a gate. Limits to state with the
+verdict: `h = 0.10 mm` only, `k = 4` nearest `sigma`, windows placed by the
+target, one element family.
+
+9. `curl_ratio` does not discriminate here, and the margin says why: chosen
+against runner-up 2.74x / 2.74x / 2.82x, against 1e13 for TE10. The reason is
+physical -- the microstrip mode is itself quasi-TEM, so the curl term is near
+zero for the mode the diagnostic was meant to find, as much as for the
+near-gradient modes it was meant to reject. The designation of a mode as "the
+microstrip mode" therefore rested on proximity to the target shift from the
+start. It was weakly evidenced from the start, and (g)(5) and (g)(6) are what
+that weakness cost.
+
+10. The low-frequency breakdown that this class of pencil is known for did not
+occur. `sigma` lay above the entire returned cluster at all nine points
+(nearest distance 1.8915 / 1.8739 / 1.8650 at 0.1 GHz), the sparse factorisation
+succeeded 9/9 with no offset needed and none added, no warning was raised, and
+four eigenvalues were returned every time. Pencil residuals were 2.284e-18 to
+6.226e-18 across the nine points, and 3.1313e-18 at the baseline round-two
+point. That the shift lay above the cluster is also what first made the missing
+root visible at all: there is no eigenvalue at 3.34 `k0_sq` in the `k = 4`
+neighbourhood, and (g)(4) is the search that followed.
+
+**(h) Verification (d): power consistency -- reserved, not run.** 1. What was
+specified: the voltage `V` as a line integral of `e_t` from the strip face to
+the ground plane along a mesh line; the current `I` as a closed contour of mesh
+edges verified by point-in-polygon to enclose the strip and nothing else;
+`P_flux` twice, once in the closed form `0.5 (beta/(omega mu0)) int |e_t|^2 dA`
+and once by direct cross-product quadrature, with disagreement treated as a
+finding rather than papered over; `P_circ = 0.5 V I` with the sign convention
+stated; `Z_pv = V^2/(2 P_flux)`, `Z_pc = 2 P_flux / I^2`, `Z_vi = V/I`, and the
+two scale-free ratios; plus an explicit question whether the relative
+difference shrinks with `h`, stays flat, or grows.
+
+2. It was not run. The box sweep and the wider-spectrum section consumed the
+budget, and the latter returned nothing. It is **reserved, not failed**, and its
+prerequisite is missing: with the field minimum under the strip (17.324 against
+321.53 at the wall, (g)(3)) both `V` and `I` would read the same box mode, so
+the test would compare two descriptions of a field that is not the line's field
+-- and `P_circ = P_flux` on such a field is algebra already verified to 1e-18.
+
+3. The convention this section does fix, because it is durable regardless:
+`Z_m = V/I` is a **convention** -- a choice of voltage path and current
+contour, not a derived quantity. Only the scale-free ratios `Z_vi/Z_pv` and
+`Z_vi/Z_pc` are checkable, and any absolute `Z_m` inherits the choice. That is
+the property M3c needs from the 2D reference, and the one this section does not
+supply.
+
+**(i) Dispersive comparison -- informational, not a gate.** The dispersion
+models at 5.83 GHz span `eps_eff` 3.38 to 3.48, a 2.95% spread (`beta_sq` 50463
+to 51956). The measured box values sit below that band at the baseline box
+(2.9569 to 2.9638) and on both sides of it in the sweep (3.0490 at c = 1.4 mm
+to 3.7023 at c = 4.8 mm). A 3% spread cannot grade a 1% test, so a dispersion
+model was not made the gate. Had it been, the 3.34605 candidate would have
+passed at 0.06% -- which is exactly the agreement that the circularity in (g)(8)
+manufactures, and the reason the gate is the energy identification instead.
+
+**(j) What this establishes and what it does not.** It establishes: that the
+element family reproduces an in-space field to 9.79e-12 (e); that `beta_sq` is
+second order and 1.71e-06 against an analytic TE10 built from scratch (f); that
+sparse shift-invert reaches 259760 degrees of freedom at 682 MiB with no
+densification (d); and that the microstrip problem returns box modes at every
+box size tried, with the mechanism cited in the tree rather than asserted,
+(g)(5) and (g)(6). It does not establish any microstrip `eps_eff` or `Z_m`;
+that the mode returned is the mode the 3D solver computes -- gate M3c, untouched
+by this section; that `Z_m` is absolutely correct, which is a convention, (h)(3);
+or that there is a discretisation defect, since the defects found are contract
+defects. The -12.6% of (g)(2) is not withdrawn; it is labelled for what it is, a
+measurement of an unidentified box mode.
+
+**(k) Rejected paths.** 1. The dense solver in `emfit/eigen.py`: `todense()` at
+`:186`, `sla.eigh` at `:196` and `:198`, and a guard that raises above
+`max_dense = 3000` at `:176-182`. It cannot reach 115232 or 259760 degrees of
+freedom, and it must not be refactored to try; 315.64 MiB and 155 s is the
+measured alternative, (d)(2). 2. Reusing `emfit/eigen.py` in any form for this
+leg: two independent paths are the entire purpose of a reference leg. 3. Making
+a dispersion model the gate: it would have concealed the identification
+question and passed 3.34605, (i). 4. Selecting the candidate nearest the
+target: agreement by construction, (g)(8). 5. Sweeping `sigma` for the missing
+root: the failure mode established in (g)(10) is root crowding near the shift,
+not a misplaced shift, so the sweep would not have found it; the wider-`k`
+attempt at the largest box exceeded 300 s with no data. Recorded, not re-run.
+
+**(l) Status.** 1. In the tree: `emfit/mode2d.py`, 793 lines, added by this
+block's commit, untracked before it. No test, no driver, no `ModalPort`. The
+harnesses were `/tmp` scratch, so the numbers in (e), (f) and (g) are
+reproducible from this record rather than from the repository. 2. Verified: (e)
+and (f). Not established: (g), carried as measured with its verdict and its
+limits stated. Reserved: (h), with its prerequisite named. Informational: (i).
+3. Consequences: M3c's 2D reference leg exists as code and as two verified
+anchors, not as a microstrip reference; the selection rule that a `ModalPort`
+would inherit from `solve_modes` is recorded against 101.14(c), with the design
+requirement that identification be by energy fraction; and this section
+ratifies no gate and unratifies none -- M3c stays where 101.12.18.H left it. No
+earlier record figure changes. The one claim that was to be inscribed here and
+is not -- that the mesh was verified by assertions that caught mesh bugs -- is
+false against the tree, and (c)(3) records what is there instead.
