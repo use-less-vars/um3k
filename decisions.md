@@ -4939,3 +4939,90 @@ There is no literal millimetre bound on x_port anywhere in the tree. The figures
 The board per-step figures 0.4154 and 0.4615 s/step used in 101.12.16-17's report were my arithmetic, not tree-recorded data; the tree-recorded walls are TOL 4560.1 s, P_m20 3707.8 s, P_p20 3336.9 s. They are retained as derived values and must not be cited as measurements.
 
 **(j) What the dispatch's numbers get right, checked one by one.** 521664 cells (132x104x38) and ~490 MB, confirmed; lambda_g/2 10.004 mm against the stated 10.0, confirmed; rung-8 13.666 mm against 13.7, confirmed; ratio 1.366 against 1.37, confirmed; beta spread 5.1919 % against 5.2, confirmed; eps_V spread 10.6532 % against 10.653, confirmed; s11 change 17.206 dB against 17.2, confirmed; Delta 13.372 % of R(-20) against 13.4, confirmed; and the stated identity R = passivity_power - s11**2 holds exactly, as shown at (c). The two figures that did not survive are the "0.014 per cent Yamashita agreement", which does not exist (d), and "leftward to -60 is available", which is true but not the limit, and which is not safe as stated (h).
+
+## 101.12.18.A DRAFT — port-position dependence: pre-registration, not ratified, no run authorised
+
+Status. Drafted on the dispatch that followed 101.12.17. Nothing has been run, nothing is authorised to run, and every number and rule below was fixed before any measurement of any point in the design. If the principal ratifies it, this text is frozen at the commit that carries it and any later deviation is recorded as a deviation in a new section, never by editing this one.
+
+Objective. Establish whether PP — the dependence of R, beta, eps_V and s11 on feed position recorded at 101.12.18(a) — is a standing-wave artefact of a soft source that does not absorb, or a local field effect with a length fixed in metres. This is a mechanism question, not a magnitude question. The port-near parametrisation was already falsified as a magnitude at 5.40x (predicted +0.384 % at the far station, measured +2.074 %), so the rival registered here is the class LF, not that parametrisation.
+
+**1. The two rivals, with predictions fixed in advance.**
+
+SW — standing wave. The source is soft and does not absorb; that is established, not assumed: no board arm is passive, passivity = s11**2 + s21**2 exceeds 1, and the excess is carried by |s21| > 1 rather than by |s11|**2 (101.12.18(c),(e)). A wave returning to the port is therefore not absorbed, a standing pattern exists on the line, and the lumped 0.5*Re(v*conj(i)) extraction samples that pattern at whatever phase the port position sets. Predictions: (i) each observable is non-monotone in delta, with an interior extremum where a node or antinode of the pattern crosses the extraction plane; (ii) feature positions scale with lambda_g, so the fractional change per millimetre is larger at the higher frequency by the ratio of guide wavelengths, 27.3316/20.0080 = 1.366; (iii) the far end matters, but only through the pattern it sets, so changing the line length at fixed port position is not null.
+
+LF — local field. A bounded region around the feed — evanescent contamination, the impedance step at the port plane, the mesh transition — changes as the feed moves, and the observables move monotonically with distance to whatever feature is nearby. Predictions: (i) monotone in delta over the admissible span; (ii) feature positions fixed in metres, so the fractional change per millimetre is the same at both frequencies, ratio 1.000; (iii) null in far-end position at fixed port position.
+
+Falsifiers, stated separately as the dispatch requires. SW is falsified if the shape is monotone in delta in both configs and the per-millimetre rate does not scale with frequency. LF is falsified if the shape has an interior extremum or a sign reversal and the feature positions scale with lambda_g. If neither is falsified, the finding is "both fail" and section 101.12.19 is opened: that number is reserved for the both-fail outcome and is deliberately not used for this pre-registration.
+
+**2. Design.**
+
+Two configs, the same physical offsets in millimetres, each observable referenced to that config's own anchor at the same port position. No absolute R is compared across configs, so none of the differences between the two line geometries — width 3.0 vs 3.2 mm, line length 32.2 vs 26.4 mm, cell, rung counts — enters the statistic. Only the shape of the response is compared.
+
+  arm        config       ix_port  n_ref  n_line  x_port   delta     clearance
+  anchor     board-7.83    87       75     235     8.7 mm    0         7.5 mm
+  new        board-7.83    71       59     251     7.1 mm   -1.6 mm    5.9 mm
+  new        board-7.83    55       43     267     5.5 mm   -3.2 mm    4.3 mm
+  new        board-7.83    39       27     283     3.9 mm   -4.8 mm    2.7 mm
+  duplicate  board-7.83    87       75     235     8.7 mm    0         7.5 mm
+  in hand    board-7.83    67       55     255     6.7 mm   -2.0 mm    5.5 mm
+  anchor     rung8-5.83    43       37      89     8.6 mm    0         7.4 mm
+  new        rung8-5.83    35       29      97     7.0 mm   -1.6 mm    5.8 mm
+  new        rung8-5.83    27       21     105     5.4 mm   -3.2 mm    4.2 mm
+  new        rung8-5.83    19       13     113     3.8 mm   -4.8 mm    2.6 mm
+  duplicate  rung8-5.83    43       37      89     8.6 mm    0         7.4 mm
+  probe      rung8-5.83    18       12     114     3.6 mm   -5.0 mm    2.4 mm
+  probe      rung8-5.83    13        7     119     2.6 mm   -6.0 mm    1.4 mm
+
+Board config: cell 1e-4 m, n_pml 12, x_far 32.2 mm, nx 322, eps_r 4.4, w 3 mm, h 1.6 mm, f 7.8336 GHz. nx is held at 322 by n_line = 322 - 12 - n_ref, which keeps x_far fixed and moves only the port. Assert 12 + n_ref + n_line = 322 after the config is built.
+Rung-8 config: cell 2e-4 m, n_pml 6, x_far 26.4 mm, nx 132, f 5827786408.327286 Hz, all other keys exactly as .scratch/logs/L8.json. nx is held at 132 by n_line = 132 - 6 - n_ref. Note that x_port is not a config key in this config — it is derived as ix_port*cell with ix_port = n_pml + n_ref (studies.py:3053) — so the sweep is expressed as pairs of (n_ref, n_line) overrides and the derived x_port must be asserted for each run.
+
+Why these anchors. Both place the port 8.6-8.7 mm from the domain's left face and leave the first station 1.7-1.8 mm downstream (board 8.7 to 10.4 mm; rung-8 8.6 to 10.4 mm), which reproduces the port-to-station separation already on the record instead of introducing a new one. Both keep all nine stations absolute and unclipped (board ix_port <= 103, i.e. x_port <= 10.3 mm; rung-8 ix_port <= 51, against station 0 at cell 52). Both hold n_line >= 89. The board anchor is the existing TOL arm and is reused rather than re-run, except for the duplicate. The rung-8 anchor is new, because the only rung-8 arm on the record sits at x_port 4.8 mm (.scratch/logs/L8.json) and would leave no room to travel leftward under the clearance floor.
+
+Rejected designs, with reasons. (i) delta out to -60 cells: leaves only 1.5 mm between the port plane and the absorber face, against a port near field of order lambda_0/2pi = 6.1 mm at 7.83 GHz, so the port would be sampling its own absorber and PML proximity would be confounded with port position. (ii) Any rightward point: x_port > 10.3 mm clips station 0 to ix_port + 1 (studies.py:2667-2675) and moves the reference plane of R, the defect recorded at 101.12.18(f). The existing +20 cell arm is excluded for that reason — not because its result is doubted, but because it is not like-for-like with the others. (iii) A sweep at fixed port position with a moving far end: does not move the port and so does not address PP at all; it appears below as a separate arm, for a different purpose.
+
+**3. Primary statistic.**
+
+S = [ (1/R_anchor) dR/ddelta ]_board at 7.8336 GHz divided by [ (1/R_anchor) dR/ddelta ]_rung8 at 5.8278 GHz, both chord slopes from an unweighted least-squares line through the four points at delta = 0, -1.6, -3.2, -4.8 mm, each normalised by its own anchor R.
+
+  SW predicts S = 1.366 = lambda_g(5.83)/lambda_g(7.83) = 27.3316/20.0080 mm.
+  LF predicts S = 1.000.
+
+Decision rule, fixed now. SW is falsified if S lies within 3 sigma of 1.000 and at least 3 sigma from 1.366. LF is falsified if S lies within 3 sigma of 1.366 and at least 3 sigma from 1.000. If S is more than 3 sigma from both, neither is falsified: section 101.12.19 is opened and no post-hoc variant of either rival is entertained.
+
+Power, estimated before the fact. The existing +/-20 pair implies 2.86e-2 in R per 1.6 mm, i.e. 1.79e-2 per mm at 7.83 GHz under either rival, and 1.31e-2 per mm at 5.83 GHz under SW. With per-point floors of 1.0e-3 relative and four points spanning 4.8 mm, sigma on each chord slope is of order 6e-4 per mm against a separation of 0.48e-2 per mm: about 8 sigma. The test is adequately powered if the response is near-linear over the span. If R(delta) is curved, S remains a ratio of two chords built the same way over the same delta and is still the discriminator, but its predicted value under SW is then only approximately 1.366, and the 3 sigma rule is applied to the measured sigma.
+
+**4. Secondary statistics, registered now so they cannot be chosen afterwards.**
+
+Monotonicity: the sign of the first difference of each observable must not change within a config. A reversal counts only if it exceeds three times the measured run-to-run scatter at that config's anchor.
+Curvature: sign of the second difference, and whether that sign agrees between the configs when the abscissa is millimetres (LF) or delta over lambda_g (SW).
+Observable set: R, beta, eps_V, s11 from the same runs. R is primary because it is dimensionless and because it is the passivity-linked quantity (101.12.18(c)). beta and eps_V are reported as blind tests: they come through a different extraction path and a mechanism that moves R should move them in the registered direction, but they carry the two audit caveats recorded at 101.12.18(e) — the eps_V both-ways check is tautological and two different z0 quantities share the name — so a disagreement there is not by itself a falsification of either rival.
+
+**5. Floors, set before the run.**
+
+Scatter is measured, not assumed. The anchor arms B1 and B2 of 101.12.16 already give run-to-run repeatability at delta = 0 on identical configs: R 1.0843286401655754 against 1.0843409625150389, a relative difference of 1.14e-5, and eps_V 3.650548148 against 3.650560235, 3.3e-6 relative. Provisional floors for a departure to count are 1.0e-3 relative on R, beta and eps_V — roughly 100 times the measured scatter and still far below the 2.86e-2 per 1.6 mm step implied by Delta = 0.1378 over 4 mm. If measured scatter at the duplicated anchors exceeds a floor, that floor is raised to three times the scatter and the change is recorded before the sweep is unblinded. The duplicated anchors exist for exactly this purpose.
+
+**6. What this design cannot do, stated in advance.**
+
+The admissible delta range under the 2.4 mm clearance floor is [-51, +16] cells = 6.7 mm, against lambda_g/2 = 10.004 mm at the board config and 13.666 mm at 5.83 GHz: 0.67 and 0.49 of a half-period. The period is therefore not identifiable, and this registration does not claim to measure one. What it claims is monotonicity, curvature and the cross-config slope ratio. A further consequence, also registered now: the phase of any standing pattern at each config's anchor is arbitrary, since the two line lengths are 32.2 and 26.4 mm and nothing fixes the pattern to the port. SW therefore predicts the shape only up to a phase offset, which is precisely why the primary statistic is a slope ratio and not the location of an extremum. Any analysis that ends up reasoning about where an extremum "should" be has stepped outside this registration.
+
+**7. Clearance probes.**
+
+Two extra rung-8 runs at n_ref 12 and n_ref 7 cells place the port 2.4 mm and 1.4 mm from the absorber face, inside the floor and then well inside it. They cost about five minutes of compute in total and convert the 2.4 mm floor from an assumption into a measurement: if the response at 1.4 mm departs from the trend set by the four in-span points while the 2.4 mm point does not, the floor is vindicated and the port-to-PML distance is shown not to be the driver; if the 2.4 mm point already departs, the sweep is contaminated at its leftward end and the four-point chord must be refitted on the shorter span before S is computed.
+
+**8. Supplementary arm C — the far-end null, and the cheapest single decisive run.**
+
+At fixed port position, change the far end by a quarter of a guide wavelength: board config, x_port 8.7 mm, n_ref 75, n_line 285, nx 372 (x_far 37.2 mm instead of 32.2). SW predicts a quarter-period shift of the pattern, i.e. a change in R of the same order as the whole PP modulation now on the record, 13.4 %. LF predicts null, since the far end is then 28.5 mm from the port and no local field reaches it. One run, about 5313 s at the TOL wall scaled by the 15.5 % cell increase. This arm tests prediction (iii) of both rivals directly, without a second config and without any cross-config normalisation, and it is recommended as the first run after ratification. It does not replace the primary statistic: a null here falsifies LF's prediction (iii) but leaves LF's prediction (i) and (ii) intact, and a non-null falsifies LF outright.
+
+**9. Design B — priced, not proposed.**
+
+If the principal wants the period measured rather than the mechanism classified, the domain must grow so that the port can travel a full half-wavelength while the clearance floor holds: x_first 13.7 mm, x_last 23.3 mm, x_far >= 33.3 mm, nx about 360, which buys 100 cells = lambda_g/2 of leftward travel and +11.8 % cells. Five runs at the TOL wall scaled by 1.118 is about 25700 s, roughly 7.1 h. It is priced here so that the choice between classifying and measuring is an explicit one, and it is not recommended.
+
+**10. Cost, Design A.**
+
+Board: three new runs (delta = -16, -32, -48 cells) plus one duplicate anchor, four runs. Tree-recorded walls for the existing board arms are TOL 4560.1 s, P_m20 3707.8 s, P_p20 3336.9 s (.scratch/tol/logs/), so budget 4 x 4600 = 18400 s. Rung-8: four new runs plus one duplicate plus two clearance probes, seven runs at the tree-recorded 143.0953140258789 s each, 1002 s. Arm C: 5313 s. Total about 24700 s, roughly 6.9 h of container wall, one solve at a time.
+Cheaper variant: drop the duplicated anchors and rely on B1/B2 for the scatter estimate, giving 13800 + 716 + 5313 = 19829 s, about 5.5 h.
+Priority order if only part is affordable: arm C first (one run, one binary prediction), then the four rung-8 in-span runs (12 minutes, half of the primary statistic), then the three board runs.
+
+**11. Launch gate.**
+
+No run until the principal has read this. On launch: freeze these line numbers; re-derive every derived key after config construction and assert it (ix_port, n_ref, n_line, nx, x_far, x_port); assert 12 + n_ref + n_line = nx for the board and 6 + n_ref + n_line = 132 for rung-8; confirm that n_clean and any other derived key still agree with its recomputation after n_ref and n_line are overridden, since a stale derived key would silently reintroduce the geometry being swept; and record any deviation as a deviation. Timing is not part of any statistic and no run may be judged by its wall.
