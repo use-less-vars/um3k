@@ -5026,3 +5026,23 @@ Priority order if only part is affordable: arm C first (one run, one binary pred
 **11. Launch gate.**
 
 No run until the principal has read this. On launch: freeze these line numbers; re-derive every derived key after config construction and assert it (ix_port, n_ref, n_line, nx, x_far, x_port); assert 12 + n_ref + n_line = nx for the board and 6 + n_ref + n_line = 132 for rung-8; confirm that n_clean and any other derived key still agree with its recomputation after n_ref and n_line are overridden, since a stale derived key would silently reintroduce the geometry being swept; and record any deviation as a deviation. Timing is not part of any statistic and no run may be judged by its wall.
+
+## 101.12.18(i-bis) The supervisor's two errors, recorded at his instruction
+
+Label note: this is not literally §101.12.18(i). That label is already taken by the rung-8 ε_V correction recorded above, and §101.12.18's subsection list (a)–(j) is closed. The supervisor asked for the record to land in §101.12.18(i), meaning the section rather than the letter; it lands here so that no existing subsection is renumbered and no committed text is rewritten.
+
+Two of his rulings failed against the tree. Both are recorded here as his, at his instruction, in the same register he has used for the agents' errors.
+
+**(1) The Yamashita 0.014% comparison is withdrawn. It was never in this tree.**
+
+The number — Yamashita predicting 3.54134 against a measured 3.54183, a +0.014% gap — came from an external LLM research report the supervisor pasted in the early blocks of the +5.9% work. It was never computed here. When the implementation of Yamashita 1979 was attempted, the agents refused it: the coefficients could not be defended from the source as available, and a comparison built on undefendable coefficients is worse than no comparison. In this file "Yamashita" appears only in two refusal rows (:3037 and :3049), both of which say in terms that quoting a number would mean quoting from memory. A scan of 111 occurrences of "0.014" in this file finds no Yamashita comparison; the percentage-attached ones are unrelated (α = 0.0141 dB/mm at :1496, :1516, :1725; |γ| 0.01419 at :94, :95; 0.0147 at :1338; 0.014723 at :1712; s11 = 0.0149215 at :4869, :4870). Nothing in docs/*.tex or out/** carries it.
+
+The error is not that the number was misremembered. It is that an external number was cited as though it were established in-tree evidence — the error class the handoff names — and it was cited after the non-existence had already been reported to him once. That is the supervisor's error, not an agent's.
+
+What this does to §98/R1: nothing. The conclusion was never carried by Yamashita. It stands on Getsinger B1 (+0.13%), B2 (−0.08%), and KJ (−0.8%, −5.4%), with the closure family spanning 3.3439–3.5465 and the measurement inside that span. The "~1% agreement" framing was withdrawn in §98 on its own grounds; the Yamashita leg of it never existed and is struck wherever he put it, §101.12.18(c) included — see that subsection, which already records the non-existence.
+
+**(2) "Leftward to −60 cells is available" is withdrawn.**
+
+Code-true and physically unsafe. The mesh bound does permit x_port to move leftward to −75 cells; at −60 the port sits 1.5 mm from the absorber, against a port near field of ~6.1 mm (λ₀/2π at the board point). A port that close is measuring its own absorber, not the periodic structure. The 2.4 mm clearance floor proposed by the agent — δ ≥ −51 cells — is correct and is adopted; the −60 figure was a reading of the mesh bound offered as a reading of the apparatus.
+
+**Nothing else in (a)–(j) required amendment.** §101.12.18.A, ratified in the same block, was already written against the corrected positions (slope ratio rather than an extremum, the 2.4 mm floor, P_p20 excluded as not like-for-like, arm C first) and needs no change.
