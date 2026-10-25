@@ -5245,3 +5245,437 @@ And the scope limit, stated plainly: **only the anchor arm was given planes.** T
 **(n) Carried, unchanged.** C5 remains **BLOCKED**, third reason on the record and still the narrow phrasing of §101.12.18.D(g): extraction drift may dominate what C5 measures. `docs/report/sec_openproblem.tex` read-debt remains **OPEN**: 172 lines, subsections at `:8`, `:32`, `:68`, `:108`, and the one that needs the diff is `The test we registered, and what we admitted about it` at `:108`; not edited. Wall remains **deferred**: no quiet window was sought and nothing in this block depends on it.
 
 **(o) Reproduction.** Everything above is regenerable from `.scratch/tol/TOLFLUX.tables.txt` (85 lines, 4064 B, sha256 `ed780bf2dfec86626eb832873bd5d772a636b448e019c0a221b67a5d86bdba28`), produced by `.scratch/tol/tolflux_report.py` (267 lines) on top of the validated `.scratch/tol/tolflux_sigma.py` (241 lines), which imports the library's own `flux_from_phasors` rather than re-deriving it and exposes `load_planes`, `flux_reduction`, `load_circuit` and `relres`. All three are untracked under `.scratch/`, so like the driver amendment they cannot be committed and the sha256 above is the durable record. `M3c` is not this block: it is the block after it.
+## 101.12.18.G
+
+TOLFLUX: the two routes disagree, and the disagreement is the result. Findings
+recorded; one reading adopted against the record's own arithmetic.
+
+**(a) The capture.** Anchor configuration, unchanged: `nsteps` 8034, `n_z` 76,
+cell `1.0e-4` m, `dt` 1.906574869530972e-13 s, `N` 6026, `f` 7833566197.718491 Hz,
+`beta` 314.03158662735785 rad/m, wall 4210.484262826038 s, `maxrss` 3591580 kB.
+Nine stations at `station_x` = 0.0104, 0.0116, 0.0128, 0.0140, 0.0152, 0.0164,
+0.0176, 0.0188, 0.0200 m (`plane_station_x`, identical in all three captures),
+`plane_station_cells` 104 to 200. Span 9.6 mm; at `beta` that is 3.0147 rad of
+electrical length, 172.7 degrees, and half a standing-wave period is
+`pi/beta` = 10.004 mm, so the station span is just under one half-period and the
+stations do not resolve a full ripple period. That fact is load-bearing in (h).
+The seven scalars the report compares against the TOL capture (`f`, `eps_V`,
+`beta`, `s21`, `s11`, `passivity`, `passivity_power`) are `EXACT` on all seven,
+absolute difference 0.0 (`tolflux_report.py:207-234`). This is one calculation
+read a second way, not a second calculation.
+
+**(b) The field route.** `F_phys` = `4 * flux_from_phasors(...) / N**2`
+(`tolflux_report.py:92-95`) falls monotonically over all nine stations, from
+24090.371792902824 to 23336.851094665908, a net -3.12789152743 per cent, no
+reversal at any station. `R_FLUX` = `F_phys[-1]/F_phys[0]` = 0.9687210847256866
+(`tolflux_report.py:163`), `MFLUX` `True`. Recomputed this block from the plane
+arrays with the library's own `flux_from_phasors`, the column reproduces
+`TOLFLUX.tables.txt` with relative difference 0.0 at every station.
+
+**(c) The circuit route.** `P_circuit` = `0.5 * real(v * conj(i))`
+(`tolflux_report.py:101`) rises from 212759021179.7408 to 231096074611.05347 at
+station 7 and falls to 230788646204.38898 at station 8. `R_CIRC` =
+`P_circuit[-1]/P_circuit[0]` = 1.0847420002436303 (`tolflux_report.py:164`),
+`MCIRC` `False`, the single violation at k=8. The fall from station 7 to station
+8 is 3.0742840666e8, a relative 1.33207768978e-3 of the station-8 value. The peak
+rise is +8.61869608613 per cent at station 7. The rise is front-loaded: the
+largest single step is the first one, 6898722399.357086, which is 3.2425 per cent
+of the station-0 value and about 38 per cent of the whole rise in one interval.
+The largest field-side step is 120.69568611905197, at k=2 to 3.
+
+**(d) The scale column, and what it actually is.** `ratio` in
+`TOLFLUX.tables.txt` is not a flux ratio. It is
+`P_circuit / ((N**2/4) * sx_station)` with `N**2/4` = 9078169.0, the circuit
+product normalised to the stored time-domain station flux, and it should sit flat
+at 1 if the two routes agree on amplitude. It does not: 0.9728425206608858,
+1.0085379553690537, 1.0337289635421445, 1.0520071302625846, 1.0655267195628797,
+1.0753676146786535, 1.0821361948677695, 1.0863722574276906, 1.0887322563236184,
+a rise of +11.9124866771 per cent. `SIGMA_N2` is by construction the argmax of
+`|ratio - 1|`, 0.08873225632361836 at k=8, and is the same quantity viewed a
+second time. `SIGMA_RAW` argmax is 2.3109607461105347e11 at k=7; `SIGMA_CALIB` is
+0.07578308619448622 at k=0 with scale 1.0464763819370366e-07; `C_LS` is
+9540715.18095154. `sx_station` itself falls monotonically, 24090.575553614293 to
+23350.44094628178, -3.07229939644 per cent. The cross-section is shrinking as the
+line narrows, the field flux falls with it, and the circuit product rises anyway.
+
+**(e) What survives.** The sign conflict, and only the sign conflict. Two
+reductions of one field, on the same nine planes, disagree about whether the
+transmitted quantity decays (`R_FLUX` 0.9687210847256866, below 1) or grows
+(`R_CIRC` 1.0847420002436303, above 1). Their ratio is 1.1197671005073637, an
+11.976710050736372 per cent gap. The conflict is scale-free: each `R` is a ratio
+within its own column, so any factor common to both columns cancels and no shared
+amplitude calibration can manufacture or remove it. Closing the gap with a factor
+applied to one column alone would need a 12 per cent correction factor, and no
+such factor is on file for either route. The conflict therefore survives every
+normalisation hypothesis constructible without new field data. That is the finding
+this block records.
+
+**(f) Four corrections, adopted, one of them his.** The ruling adopts all four;
+they were raised against the draft and they stand.
+
+* `MCIRC` is `False` and the interior maximum is at station 7 with the fall at
+  station 8. A draft stated the peak at the terminal station. Corrected.
+* `SIGMA_RAW` argmax is station 7, 2.3109607461105347e11, not station 8. Corrected.
+* The agreement between `passivity` and `passivity_power` in `emfit/studies.py` is
+  a **tautology**, not a check: `studies.py:2014` compares two quantities that
+  `:2001-2004` has already made equal by construction. The only valid use of that
+  agreement is the inverted one already on the record, recovering the arm label
+  from which of the two is populated. That use is a method, and it is recorded as
+  a method. It is not evidence about the board, and it must not be cited as any.
+* "Two keywords away" was wrong. What is two *keyword arguments* away is the bin
+  dump, the flag is `EMFIT_BIN_DUMP`, and it has to be set at **two layers**
+  before a byte reaches disk. His adoption of the undersold framing is **his**
+  error, and it is recorded as his error in the same register as ours.
+
+**(g) The 5.82e-4 figure: re-derived, correctly this time, and it is the most
+useful number in the capture.** The ruling records that "the phasor reduction
+matches the in-loop accumulator to 5.82e-4". The figure is right and the
+description is not: there is no in-loop accumulator on file. All three npz
+captures were enumerated this block and none carries a per-step or per-station
+accumulator field (no key matching flux, acc, poy, accum or sigma); only the
+already-reduced nine-vectors `sx_station` and `sx_station_sub` are stored. The
+comparison that actually yields 5.82e-4 is the phasor reduction `F_phys` against
+that stored time-domain station value, and the signed per-station relative
+differences are -8.458109e-06, -3.658571e-05, -1.041247e-04, -2.137229e-04,
+-3.379408e-04, -4.306614e-04, -4.662390e-04, -4.813037e-04, -5.819955e-04. Max
+magnitude 5.819955e-04, at station 8.
+
+Two things follow, and both matter more than the number.
+
+First, the field route is internally consistent to 0.0582 per cent at its worst
+station, and the disagreement grows **monotonically with station index**. That is
+the terminal-station systematic already recorded at 101.12.18.F(f), where it
+reached 2.6 per cent on the 31-station longbox, now measured in this capture, and
+it puts the largest field-side discrepancy at exactly the station where the
+circuit column turns over.
+
+Second, the two routes can now be graded against each other on one axis. The
+field-side internal spread is 5.8e-4. The circuit-side departure from the field
+route is 8.5e-2. The defect is two orders of magnitude larger on the circuit side
+than anything the field reduction does to itself. The lumped `(v, i)` extraction
+is where the error lives and the phasor reduction is not implicated. That is the
+premise M3c rests on, and it is now measured rather than assumed.
+
+**(h) The standing-wave reading: adopted, and the record's arithmetic is against
+it.** The ruling reads the interior peak as "consistent with standing-wave
+contamination on the board, M3a confirmed". The ruling is accepted as the ruling.
+The reading does not survive the arithmetic, and the arithmetic is written down
+here so that no later block can cite the reading without it.
+
+`|s11|` for this capture is 0.013677440673277025. A single-frequency standing wave
+with that reflection coefficient modulates `|V|**2` by at most
+`((1+|s11|)/(1-|s11|))**2` = 1.0562376154872095, a peak-to-peak of 5.62376154872
+per cent, plus or minus 2.7734 per cent about the mean. Against that budget the
+observed feature fails at both ends:
+
+* the terminal fall is 1.33207768978e-3, a relative 0.1332 per cent, twenty times
+  smaller than the smallest ripple this standing wave could put on `|V|**2`, and a
+  standing wave has no reason to be more visible in a real-power product than in
+  `|V|**2`;
+* the monotone rise is 8.47420002436 per cent, which is 1.5069 times the entire
+  peak-to-peak `|V|**2` swing, i.e. strictly outside the standing-wave budget on
+  the most generous reckoning available.
+
+The exact statement is stronger than either bound. `P_circuit` is
+`0.5 * real(v * conj(i))` (`tolflux_report.py:101`). For a single-mode two-wave
+field whose `v` and `i` are consistent modal amplitudes, that product is
+**identically constant along the line**. Writing `V = V+ (e^{-jbz} + G e^{jbz})`
+and `I = (V+/Zm)(e^{-jbz} - G e^{jbz})`, the cross terms combine to
+`2j Im(G e^{2jbz})`, purely imaginary, so the real part is
+`(|V+|**2/Zm)(1 - |G|**2)`, a constant. Standing-wave interference is precisely
+the term that cancels in this product. It cannot produce a ramp and it cannot
+produce a dip; the only structure it leaves is in the modulus, and the modulus is
+not what this column computes.
+
+So the ramp in `P_circuit` is not interference. It is the distance between the
+extracted `(v, i)` and a consistent modal pair, and that distance is exactly what
+M3c is registered to close (101.12.18.H). The reading is therefore recorded as
+**adopted but unsupported by evidence**: it is the ruling, it is in the record, and
+the record also holds the numbers that contradict it.
+
+The cancellation has no loophole, and the reason it has none is the diagnosis. It
+needs the mode impedance implied by the extracted `(v, i)` to be real and
+station-independent. The reduction imposes neither condition, and the implied
+impedance in fact drifts 12 per cent down a line that is uniform in the model. A
+`(v, i)` pair whose implied impedance drifts 12 per cent is not a modal amplitude
+pair. `z0` is not used anywhere in this reduction (see (j)), so the cancellation is
+a statement about the numbers as computed and about nothing else.
+
+Two corrections to the reasoning, recorded so they are not repeated. First, a
+monotone traverse over the measured span is *not* by itself evidence against a
+standing wave: the span is 9.6 mm and half a ripple period at `beta` is 10.004 mm,
+so eight monotone intervals are geometrically permitted. The argument is amplitude
+and then exactness, never monotonicity. Second, an earlier drafting of this
+objection set the 8.47 per cent rise against the plus-or-minus 2.77 per cent
+half-swing and reported the excess as a factor of three; that is a mismatch of
+definitions. The consistent comparison is 8.4742 against the 5.6238 per cent
+peak-to-peak, a factor 1.5069, and the exact cancellation makes both moot. The
+correction is recorded because the record has to be able to audit its own
+arithmetic.
+
+**(i) The scope of the finding, at its narrowest.** Four limits, none softened.
+
+* **Only the anchor arm has a flux column.** P_m20, P_p20 and the ladder carry no
+  plane capture, so they have no field route to disagree with. The conflict is
+  established on the anchor and on nothing else.
+* **The disagreement is established at one port position.** `x_port` in the
+  capture is 0.008700000000000001 m, which is 1.7 mm below the first station at
+  0.0104 m. One plane. A disagreement at one plane is a disagreement at one plane.
+* **The port-scan dimension is inferred from the circuit side only.** No field
+  capture exists at any other port position, so the claim that the conflict
+  survives moving the port is an inference and not a measurement.
+* **Anything wider is extrapolation**, and is not claimed.
+
+**(j) Two quantities recorded open, deliberately unresolved.** `z0` is complex and
+differs by format: npz `53.41247461887226+3.1557724449079396j`, shape `(1,)`; json
+`[52.86243912510467, 19.35437995794326]`; the planes capture carries an empty
+`(0,)` array. `x_port` is absent from both jsons and is `0.0087`, shape `()`,
+float64, in every npz. Neither is used by any number in this section: `R_FLUX` and
+`R_CIRC` are ratios within a single column and are invariant to both. They are
+recorded **OPEN** and **UNUSED**, they will not be resolved speculatively, and
+101.12.18.H(g) states whether M3c needs them.
+
+**(k) Band.** The ruling places this in the **artefact** band, and the band is
+right. A disagreement between two reductions of one field is a statement about the
+reductions and not about the board. Nothing in this section is quotable as a
+physical S-parameter. Board S-parameters remain unquotable until M3c.
+
+**(l) C5.** Unchanged and **BLOCKED**, third reason standing as recorded in
+101.12.18.D(g): extraction drift may dominate what C5 measures. This block
+strengthens that reason without adding a new one, and the strengthening is worth
+one line. The two routes differ from each other by 11.98 per cent on the anchor,
+while the C5 sweep is designed to resolve departures against a floor of 1.0e-3
+relative (`decisions.md:5002`). While the routes disagree at 12 per cent, the
+choice of route is worth more than the entire signal C5 exists to measure, so C5
+cannot be read until the routes agree. The block lifts nothing. M3c does not touch
+C5 and C5 stays blocked (101.12.18.H(d)).
+
+**(m) `docs/report/sec_openproblem.tex` read-debt.** Still **OPEN**. The chapter
+is 172 lines and the subsection that needs the diff is
+`The test we registered, and what we admitted about it` at `:108`, with
+`\label{sec:openproblem-c5}` at `:109`. A proposed diff is prepared and returned
+with this block. It is **not applied**: the standing order forbids editing that
+file, and a proposed diff is a proposal and nothing more.
+
+**(n) Wall.** Deferred, unchanged. No quiet window was sought and nothing in this
+section depends on one. 101.12.18.H(e) records what the container question is, and
+it is not a wall question.
+
+**(o) Reproduction.** Every number above regenerates from
+`.scratch/tol/TOLFLUX.tables.txt` (85 lines, sha256
+`ed780bf2dfec86626eb832873bd5d772a636b448e019c0a221b67a5d86bdba28`), produced by
+`.scratch/tol/tolflux_report.py` (267 lines) on `.scratch/tol/tolflux_sigma.py`
+(241 lines, which exposes `load_planes`, `flux_reduction`, `load_circuit` and
+`relres` and imports the library's own `flux_from_phasors` rather than
+re-deriving it). Both are untracked under `.scratch/`, so the digest is the durable
+record. The run is one anchor solve at wall 4210.484262826038 s. No M3c run was
+made in this block and none is authorised by this section.
+
+**(p) Closing, in the framing the ruling asked to preserve.** The diagnosis is
+confirmed: the lumped circuit route and the field flux route disagree by 11.98 per
+cent on one capture and disagree in sign. The fix is identified: a modal projection
+at the port plane, pre-registered at 101.12.18.H, not run. The verification is
+pending. The port scan is unmeasured. Board S-parameters remain unquotable until
+M3c.
+## 101.12.18.H
+
+M3c: modal projection at the port plane. **DRAFT, not ratified, no run
+authorised.** Nothing in this section has been executed. It exists so that the
+run, if it is ever authorised, has a criterion written down before the number
+exists. A pre-registration edited after a result exists has failed at its only job
+(`decisions.md:3090`).
+
+**(a) What M3c changes, and what it must not touch.** Today the transmission
+reduction at a station is `P_circuit = 0.5 * real(v * conj(i))`
+(`tolflux_report.py:101`) on a lumped `(v, i)` pair extracted from the transverse
+field, and it returns `R_CIRC` = 1.0847420002436303 against the field-flux
+reduction `R_FLUX` = 0.9687210847256866, an 11.9767 per cent disagreement in sign
+(101.12.18.G(b),(c),(e)). M3c replaces that lumped pair **at the port plane** with
+a projection of the captured field onto the modal field of the line, and reads the
+forward and backward modal amplitudes from the projection instead of from a lumped
+voltage and current.
+
+Three constraints bind the change.
+
+* **The field route is not touched.** `flux_from_phasors` and the `4/N**2`
+  normalisation (`tolflux_report.py:92-95`) stay exactly as they are. The flux
+  column is the reference and it stays the reference.
+* **Both existing routes are preserved as diagnostics.** The lumped circuit route
+  and the flux route keep being computed and written at every station, unchanged.
+  M3c adds a third route; it deletes nothing. This is not sentiment: the two
+  diagnostics are how a later reader checks that the run is comparable to the
+  capture in 101.12.18.G.
+* **No other lever moves.** `nsteps`, `n_z`, cell, `n_sub`, `POY_WARM`, `POY_NACC`
+  and `f` are the anchor values in 101.12.18.G(a) or the run is not M3c.
+
+The premise is measured, not assumed. The field route is internally consistent to
+5.819955e-04 at its worst station and the disagreement with it grows monotonically
+with station index; the circuit route departs from the field route by 8.5e-2. The
+defect is two orders of magnitude larger on the circuit side than anything the
+field reduction does to itself (101.12.18.G(g)). And for a consistent modal pair
+the lumped product is identically constant along a uniform line, so the ramp is a
+direct measure of how far the extracted pair is from being modal
+(101.12.18.G(h)). M3c is the correction that premise points at.
+
+**(b) The verification gate at the anchor.** Three tests, all at the anchor
+configuration of 101.12.18.G(a), all before any number from the run is treated as
+a result.
+
+**(b-i) The field path is reproduced exactly.** The run must return `R_FLUX` =
+0.9687210847256866, to the last digit. This is a bit-for-bit requirement and not a
+tolerance, and it is defensible because exactness is already the established
+behaviour of this code: the TOL and TOLFLUX captures agree exactly on all seven
+conventional scalars, absolute difference 0.0 (`tolflux_report.py:207-234`), so a
+deterministic solve here reproduces its own planes, and `R_FLUX` is a function of
+those planes alone. If `R_FLUX` moves, the planes moved, and the field path moved
+with them.
+
+**(b-ii) The new reduction agrees with the field route.** Let `R_MODAL` be the
+transmission ratio read from the port-plane modal amplitudes, formed the same way
+`R_FLUX` and `R_CIRC` are formed: the last station's value over the first
+station's value. The gate is `|R_MODAL / R_FLUX - 1| <= 1.0e-3`, where the
+right-hand side is the registered tolerance of (c). It is a two-sided agreement
+test and not an improvement test. A projection that lands within ten per cent
+passes nothing; the lumped route already sits at 11.98 per cent, so the gate
+demands a factor 120 improvement on the present disagreement. That is deliberate.
+
+**(b-iii) The diagnostics are unchanged.** `R_CIRC` must still read
+1.0847420002436303 exactly and `R_FLUX` must still read 0.9687210847256866
+exactly. If either moves, a preserved route was altered and the run is not
+comparable to 101.12.18.G.
+
+**A ruling ambiguity, flagged before the run and not resolved by this block.** The
+ruling states (b-ii) as "R_CIRC within tolerance of R_FLUX, they must agree".
+Under (a) the lumped route is *preserved* unchanged, so `R_CIRC` will still be
+1.0847 after M3c and cannot agree with `R_FLUX` by construction; (b-ii) as
+literally worded would therefore fail every run that satisfies (a). Two readings
+are available. Reading one, registered above: the agreement test is on the new
+modal reduction `R_MODAL`, and `R_CIRC` is held fixed as a diagnostic (b-iii).
+Reading two: the lumped route is *replaced* rather than preserved, `R_CIRC` itself
+must move to within tolerance of `R_FLUX`, and (a)'s preservation clause is wrong.
+The two readings require different code. The registration is written to reading
+one because it is the reading consistent with (a) and with the ruling's own phrase
+"preserved as diagnostics"; the ambiguity is recorded so that it is settled by him
+before the run and not after it. **No run is authorised until it is settled.**
+
+**(c) The tolerance, and where it comes from.** 1.0e-3 relative on `R`, sourced to
+`decisions.md:5002` and not to the ruling. That line records the duplicate-anchor
+repeatability already on file: B1 and B2 of 101.12.16 at delta = 0 on identical
+configs give `R` 1.0843286401655754 against 1.0843409625150389, a relative
+difference of 1.14e-5, and `eps_V` 3.650548148 against 3.650560235, 3.3e-6
+relative; the provisional floors for a departure to count are **1.0e-3 relative on
+R, beta and eps_V**, roughly 100 times the measured scatter and far below the
+2.86e-2 per 1.6 mm step implied by Delta = 0.1378 over 4 mm. The same line
+pre-registers its own escalation: if measured scatter at the duplicated anchors
+exceeds a floor, the floor is raised to three times the scatter and the change is
+recorded before anything is unblinded.
+
+A second, looser floor is on file and must not be substituted for this one. At
+`decisions.md:3335` the passivity figure carries "about 1.1 per cent scatter at
+fixed mesh", `passivity_power` 1.0849290726270013 at the cw anchor against
+1.0967517700737275 in pulse bin 14 on `.scratch/m2/board_run_pw.npz` (restated at
+`:3343`, provenance re-verified at `:4874`). That is a cross-capture passivity-band
+floor and it is eleven times looser. **The governing figure for (b-ii) is 1.0e-3**,
+because it is the floor registered for `R` specifically and the tree already
+applies it to `R` comparisons. Choosing 1.1 per cent on the grounds that both
+quantities are amplitude-like would make the test vacuous: 11.98 per cent is
+almost eleven times 1.1 per cent, so the gate would pass on nearly any movement.
+
+One thing that is explicitly **not** a tolerance: the exact agreement between TOL
+and TOLFLUX. `decisions.md:4372-4375` rules that a deterministic repeat of zero
+"is not a tolerance and must not be quoted as one". It is used in (b-i) as evidence
+about determinism and for nothing else.
+
+**(d) M3c does not touch C5.** C5 is not run, not simulated, not re-priced and not
+unblocked by M3c. It stays **BLOCKED** on the third reason of 101.12.18.D(g), and
+101.12.18.G(l) has already added arithmetic that makes the block harder to lift
+rather than easier: the routes disagree at 11.98 per cent while C5's floor is
+1.0e-3, so the choice of route is worth more than the signal. If M3c succeeds,
+C5's inputs still need a registration of their own. If M3c fails, C5 is further
+away. Either way this section authorises nothing about C5.
+
+**(e) Cost, and the container.** The ruling prices M3c at about 4600 s, anchor
+only, in container `c3-solve`. The 4600 s is recorded as the ruling's estimate and
+not as a measurement, and the two anchor walls on file frame it:
+4210.484262826038 s for the TOLFLUX capture itself (`C3 DONE elapsed=4210.6 s`,
+`.scratch/tol/logs/`), and 2936.7 s, the figure the C5 chapter prices its lever
+from (`docs/report/sec_openproblem.tex:111-114`). The estimate sits above both,
+which is the right side for a run that adds a projection, and no stronger claim is
+made.
+
+`c3-solve` **is free as of this block**, checked directly rather than assumed: it
+is `running` and idle, with no live `python3` and no `tol_driver` argument vector
+in any process inside it, no write under `.scratch/tol/` since 2026-10-25T14:11:36Z,
+and every process other than the keepalive `tail -f /dev/null` in `Z` state. Its
+attached note describes the TOL repeat, which is the capture launched at
+2026-10-24T19:41:20Z and closed at 20:57:22Z with `RC 0`; that run is completed and
+not pending. Four other containers (`shiftproof`, `emfit-build`, `nsteps-edit`,
+`nsteps-tail`) are running and untouched by this block. Freeing the container is
+not a licence to use it: **this block launches nothing.**
+
+**(f) Falsifiers, and what voids the registration.**
+
+* **Void on (b-i).** If `R_FLUX` does not come back as 0.9687210847256866 exactly,
+  M3c has changed the field path. The pre-registration is **VOID** at that point
+  and the tree must be reverted before any further run. A voided registration does
+  not become valid by re-reading the number as "close enough". Bit-for-bit is the
+  criterion, and it was chosen before the number existed precisely so that this
+  branch is not a judgement call afterwards.
+* **M3c is not the fix.** If (b-i) and (b-iii) pass and (b-ii) fails, the
+  registration's own verdict is that the modal projection does not reconcile the
+  routes at the anchor. That verdict is recorded as stated, with no re-tuning: no
+  widening of the tolerance after seeing `R_MODAL`, no second projection basis, no
+  restricted station range, no selection of whichever stations suit. The next step
+  in that branch is a **new** registration, written before its own run.
+* **No mid-flight edit.** Any change to basis, plane or criterion voids this
+  section, and the replacement is registered before the run it governs
+  (`decisions.md:3090`).
+* **Environment lock.** The run must show the driver's own environment gate clean.
+  The TOL capture on file records `GATE: emfit_unchanged=True` and
+  `GATE: lever_took_effect=True` (`.scratch/tol/logs/TOL.log`); M3c must report the
+  same, and a dirty `emfit/` voids it in the same way a moved `R_FLUX` does.
+
+**(g) The two open quantities: whether M3c needs them.** The promise in
+101.12.18.G(j) was that this section would say. It says:
+
+* **`z0` is not needed.** The projection normalises by modal power, not by a stored
+  characteristic impedance, so neither the complex npz value
+  `53.41247461887226+3.1557724449079396j` nor the json list
+  `[52.86243912510467, 19.35437995794326]` enters the gate. It stays **OPEN** and
+  **UNUSED**.
+* **`x_port` may be needed, and is not resolved here.** The projection has to be
+  taken at a named plane, and the capture disagrees with itself about where the
+  port plane is: `x_port` is 0.008700000000000001 m in every npz while `station_x[0]`
+  is 0.0104 m, 1.7 mm downstream. If the projection is taken at the port plane the
+  run needs `x_port` settled; if it is taken at the first station it does not, and
+  the two choices are not the same test. **The registration does not choose.** It
+  records that the choice must be fixed, and recorded, before the run.
+
+**(h) What M3c would not establish, even if it passes.** It would not make the
+board's S-parameters quotable on its own. It would not measure the port scan: one
+anchor, one port position, nine stations. It would not decide C5, in either
+direction. It would not lift the finding out of the artefact band of
+101.12.18.G(k), because an agreement between two routes on one capture is still a
+statement about the routes. It would establish exactly one thing: that at the
+anchor, a modal projection at the port plane reconciles the transmission reduction
+with the field flux to within 1.0e-3. That is the claim, and the whole of the claim
+is the sentence before this one.
+
+**(i) Status and what would have to happen next.** **DRAFT, not ratified, no run
+authorised.** Three things must be settled by him before a run block exists: the
+ambiguity in (b) about which quantity the agreement test is on; the projection
+plane in (g); and the cost figure in (e), if 4600 s is meant as a budget rather
+than an estimate. Until all three are settled this section authorises nothing.
+When they are, the run block is a separate block with this section as its
+criterion, and its outcome is reported against (b-i), (b-ii), (b-iii) and (f), and
+against nothing else.
+
+**(j) Reproduction of this section.** No number here is new. `R_FLUX`, `R_CIRC`,
+`|s11|`, the seven `EXACT` comparisons, the station grid, `beta`, the walls and the
+container state all trace to `.scratch/tol/TOLFLUX.tables.txt` (sha256
+`ed780bf2dfec86626eb832873bd5d772a636b448e019c0a221b67a5d86bdba28`),
+`tolflux_report.py` lines 92-95, 101, 163-164 and 207-234, `decisions.md` lines
+3090, 3335, 3343, 4372-4375, 4874 and 5002,
+`docs/report/sec_openproblem.tex:111-114`, and `.scratch/tol/logs/TOL.log` with
+`TOL.launch`. The repeatability and passivity floors are quoted from the lines that
+hold them and were re-read this block.
