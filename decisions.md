@@ -5558,6 +5558,33 @@ one because it is the reading consistent with (a) and with the ruling's own phra
 "preserved as diagnostics"; the ambiguity is recorded so that it is settled by him
 before the run and not after it. **No run is authorised until it is settled.**
 
+**The ambiguity is settled: reading one is RATIFIED.** The principal has ruled,
+and the gate stands as registered above: `|R_MODAL / R_FLUX - 1| <= 1.0e-3`,
+where `R_MODAL` is the new mode-projected reduction. `R_CIRC` is **not** a gate
+quantity. It is preserved unchanged at 1.0847420002436303 as a diagnostic under
+(b-iii), exactly as (a) requires. Reading two is **REJECTED**: the lumped route
+is not replaced, and `R_CIRC` is not moved toward `R_FLUX`.
+
+The ruling is forced rather than chosen, and the forcing is worth recording,
+because it is why reading two could never have been registered. `R_CIRC` is the
+number **under suspicion** -- it is the phantom 8.47 per cent gain that M3c
+exists to explain. Requiring it to agree with `R_FLUX` within the same tolerance
+would ask the defect to certify its own repair: the test would pass exactly when
+the thing being tested had stopped being the thing being diagnosed. And
+simultaneously (a)'s preservation clause requires `R_CIRC` to stay at
+1.0847420002436303, so 5(b)(ii) read literally and 5(b)(a) cannot both hold. The
+ambiguity paragraph above stands as the record of that defect; the ruling here
+is what replaces it as instruction.
+
+**The earlier sentence is satisfied.** "No run is authorised until it is
+settled" no longer blocks anything in respect of the gate reading: the reading
+is settled by the ruling, and reading two is rejected rather than pending. The
+remaining two items are settled below as well -- the projection plane in (g) and
+the cost figure in (e). The section is therefore **no longer blocked on any
+ruling**. It remains **not ratified as a run**: no run is authorised by this
+block, and the block that would authorise one is a separate block with this
+section as its criterion.
+
 **(c) The tolerance, and where it comes from.** 1.0e-3 relative on `R`, sourced to
 `decisions.md:5002` and not to the ruling. That line records the duplicate-anchor
 repeatability already on file: B1 and B2 of 101.12.16 at delta = 0 on identical
@@ -5603,6 +5630,21 @@ from (`docs/report/sec_openproblem.tex:111-114`). The estimate sits above both,
 which is the right side for a run that adds a projection, and no stronger claim is
 made.
 
+**4600 s is an ESTIMATE, not a budget, and it is now falsifiable.** RULED. A
+price with no void condition is a licence to run indefinitely, so the falsifier
+is registered with the estimate rather than after the wall is known:
+
+* **The 2x falsifier.** A run whose wall exceeds twice the estimate -- 9200 s --
+  without a documented cause **VOIDS** the run and requires a **new**
+  pre-registration before any re-run. The void is recorded whether or not the
+  diagnostics look good. That is the point of a falsifier: it is not a warning
+  threshold, and a passing `R_MODAL` does not redeem a run that broke it.
+* **What the estimate rests on, as measured rather than asserted.** The TOLFLUX
+  repeat wall was 4210.5 s with `MAXRSS` 3591580 KB, and the driver's own line
+  was `C3 DONE elapsed=4210.6 s`, both on container `c3-solve`. The 4600 s sits
+  above a measured repeat of the same capture, which is the right side for a run
+  that adds a projection and a second plane.
+
 `c3-solve` **is free as of this block**, checked directly rather than assumed: it
 is `running` and idle, with no live `python3` and no `tol_driver` argument vector
 in any process inside it, no write under `.scratch/tol/` since 2026-10-25T14:11:36Z,
@@ -5635,7 +5677,7 @@ not a licence to use it: **this block launches nothing.**
   `GATE: lever_took_effect=True` (`.scratch/tol/logs/TOL.log`); M3c must report the
   same, and a dirty `emfit/` voids it in the same way a moved `R_FLUX` does.
 
-**(g) The two open quantities: whether M3c needs them.** The promise in
+**(g) The two port-plane quantities: `x_port` ruled, `z0` still open.** The promise in
 101.12.18.G(j) was that this section would say. It says:
 
 * **`z0` is not needed.** The projection normalises by modal power, not by a stored
@@ -5643,13 +5685,28 @@ not a licence to use it: **this block launches nothing.**
   `53.41247461887226+3.1557724449079396j` nor the json list
   `[52.86243912510467, 19.35437995794326]` enters the gate. It stays **OPEN** and
   **UNUSED**.
-* **`x_port` may be needed, and is not resolved here.** The projection has to be
-  taken at a named plane, and the capture disagrees with itself about where the
-  port plane is: `x_port` is 0.008700000000000001 m in every npz while `station_x[0]`
-  is 0.0104 m, 1.7 mm downstream. If the projection is taken at the port plane the
-  run needs `x_port` settled; if it is taken at the first station it does not, and
-  the two choices are not the same test. **The registration does not choose.** It
-  records that the choice must be fixed, and recorded, before the run.
+* **`x_port` is needed, and it is RULED.** The projection is taken at the port
+  plane, `x_port` = 0.0087 m (stored as 0.008700000000000001), and **not** at
+  `station_x[0]` = 0.0104 m. The disagreement inside the capture is recorded
+  above and stands: `x_port` is 0.008700000000000001 m in every npz while
+  `station_x[0]` is 0.0104 m, 1.7 mm downstream. The ruling is that the port
+  plane is the plane the projection is defined at, because the mode is launched
+  there and the lumped pair was extracted there.
+* **The consequence, stated plainly.** None of the three existing captures
+  contains a plane at `x_port`, so the mode projection **cannot be taken from
+  them as they stand**. Every capture on file starts its station grid at
+  `station_x[0]`, 1.7 mm downstream, and no other plane is stored. M3c must
+  therefore either add a monitor plane at `x_port`, or transport the nearest
+  plane to `x_port` by an explicit `beta * dx` phase.
+* **The first is preferred and is the registered course.** A monitor plane at
+  `x_port` measures the quantity at the plane the projection is defined at.
+  Transport reintroduces a phase assumption -- `beta` and the direction of
+  travel -- into the very measurement the run exists to check, and a run whose
+  correction assumes the phase evolution it is testing against is not a test.
+* **Whichever is chosen is fixed in the pre-registration BEFORE the run**, not
+  after, under the same discipline as (f)'s no-mid-flight-edit clause and
+  `decisions.md:3090`. The choice is part of the criterion, not part of the
+  analysis.
 
 **(h) What M3c would not establish, even if it passes.** It would not make the
 board's S-parameters quotable on its own. It would not measure the port scan: one
@@ -5662,13 +5719,27 @@ with the field flux to within 1.0e-3. That is the claim, and the whole of the cl
 is the sentence before this one.
 
 **(i) Status and what would have to happen next.** **DRAFT, not ratified, no run
-authorised.** Three things must be settled by him before a run block exists: the
-ambiguity in (b) about which quantity the agreement test is on; the projection
-plane in (g); and the cost figure in (e), if 4600 s is meant as a budget rather
-than an estimate. Until all three are settled this section authorises nothing.
-When they are, the run block is a separate block with this section as its
-criterion, and its outcome is reported against (b-i), (b-ii), (b-iii) and (f), and
-against nothing else.
+authorised.** As first drafted this paragraph required three things to be
+settled by him before a run block existed -- the ambiguity in (b) about which
+quantity the agreement test is on; the projection plane in (g); and the cost
+figure in (e), if 4600 s was meant as a budget rather than an estimate. That
+statement of the three items is kept as the record of what was unsettled when it
+was written. All three are now **settled by ruling**: the gate reading in (b-ii)
+at line 5561, the projection plane in (g) at line 5688, and the cost falsifier in
+(e) at line 5637.
+
+What remains is therefore not a ruling but a decision to run. M3c is
+pre-registered and **not ratified as a run**; no run is authorised by this block;
+implementation is the next block's work, after the principal has read this
+amended section. When that decision is taken, the run block is a separate block
+with this section as its criterion, and its outcome is reported against (b-i),
+(b-ii), (b-iii) and (f), and against nothing else.
+
+Two items remain genuinely open, and neither is a ruling this section can
+discharge. C5 stays **BLOCKED** on the third reason of 101.12.18.D(g) and is not
+unblocked by M3c in either direction: if M3c succeeds, C5's inputs still need a
+registration of their own; if M3c fails, C5 is further away. And the read-debt
+recorded in 101.12.18.G(m) is still **OPEN**; nothing in this section closes it.
 
 **(j) Reproduction of this section.** No number here is new. `R_FLUX`, `R_CIRC`,
 `|s11|`, the seven `EXACT` comparisons, the station grid, `beta`, the walls and the
@@ -5679,3 +5750,165 @@ container state all trace to `.scratch/tol/TOLFLUX.tables.txt` (sha256
 `docs/report/sec_openproblem.tex:111-114`, and `.scratch/tol/logs/TOL.log` with
 `TOL.launch`. The repeatability and passivity floors are quoted from the lines that
 hold them and were re-read this block.
+
+## 101.12.18.I
+
+Architecture reflection: where the defect sits, and what the layering should
+be. **Requested by the principal. This section is REFLECTION and DESIGN, not
+ruling.** Nothing in it is computed, measured or run. It does not change the
+status of C5 or of M3c, and it authorises no work. It is written down because a
+defect found by audit rather than by accident is worth generalising while the
+anatomy is still in view, and because the next block implements rather than
+diagnoses, which means the design has to exist before it starts.
+
+**(a) The seven layers.** The stack as it should read, with what each layer
+takes, what it returns, and what it is allowed to change. The order matters: a
+layer may only be wrong about its own contract.
+
+1. **Geometry.** Input: a KiCad file or a programmatic spec. Output: a
+   `CellComplex` -- cell counts, material map, PEC masks, port locations.
+   Contract: physical units in, integer cell counts out. This is the only layer
+   where a millimetre is a millimetre.
+2. **Operators.** Input: the `CellComplex`. Output: `C` and `C~`, integer and
+   exact, plus `M_eps` and `M_mu`, float and averaged at interfaces. Contract:
+   topology exact, material approximate, and never mutated after assembly.
+3. **State and timestepper.** Input: the operators and an initial state. Output:
+   time series of `e` (edge voltages) and `h` (face fluxes). Contract: leapfrog,
+   CFL-bounded, energy conserved to machine precision.
+4. **Sources.** Input: state, timestep and a source spec. Output: `j`. Contract:
+   soft sources add to the update, hard sources overwrite the state.
+5. **Monitors.** Input: state and timestep. Output: per-station phasors, plane
+   captures, flux integrals. Contract: pure read, no mutation of state.
+6. **Extraction.** Input: observed phasors. Output: S-parameters, `beta`,
+   `eps_eff`, `Z0`. Contract: names its estimator explicitly.
+7. **Study.** Input: everything above plus parameters. Output: artefacts.
+   Contract: one driver, parameter-driven.
+
+Layers 1 to 3 are the FIT core, and they are **verified** rather than assumed.
+The integer curl operators satisfy `C grad = 0` and `div C = 0` exactly; energy
+is conserved to about 1e-10 over thousands of steps; the cavity converges at
+second order; the stepper is CFL-bounded. None of those layers is in question
+here, and nothing below asks any of them to change.
+
+**(b) The finding.** The defect is **not inside any of the seven layers.** It
+sits at the seam between layers 4, 5 and 6 -- source, monitor, estimator -- and
+that seam is currently a **convention**, not a layer. A convention has no
+contract. Nothing was ever in a position to be violated, so nothing was ever
+found violated: that is why the defect survived every audit the core was given,
+and why the audits kept coming back clean while `R_CIRC` sat 11.98 per cent
+above `R_FLUX`. That is the finding of this section.
+
+**(c) The lumped port as a boundary condition that lies.** A lumped gap port
+does two things at once and conflates them.
+
+The first is excitation: layer 4 injects `j` on one edge at the port plane. The
+field around the port is still solved -- the port is a boundary condition
+rather than an object placed in the mesh -- and that is a legitimate way to
+launch a wave. The second is readout: layers 5 and 6 take `V = int E dl` along
+one edge and `I = int H dl` around one face, and report `Z = V/I`.
+
+Both are **point measurements**. `V` is one edge integral; `I` is one face loop;
+neither is a projection onto the mode, and the mode has a transverse profile
+that extends across the strip and into the substrate. The port therefore
+measures one point of that profile, and as the field evolves along x that point
+drifts relative to the modal amplitude. Put in one sentence: the lumped port is
+a boundary condition that looks like a port, and behaves like a port in the UI,
+and is not a mode -- a source at a point and a readout at a point, not a mode
+launch and a mode read.
+
+A wave port differs in kind rather than in degree. The excitation is obtained by
+solving the 2D eigenmode of the cross-section and setting the mode amplitude,
+with the 3D field projected onto the mode. The readout is projection
+coefficients onto the **same** mode, not `V/I` products. Returning waves are
+absorbed because the modal impedance is matched. The physical reason is plain: a
+real port **is** a mode. A coaxial connector launches a TEM mode, a microstrip a
+quasi-TEM mode; the mode is what propagates, and the local `V/I` at one point is
+not the mode. Every commercial tool that produces quotable S-parameters uses
+mode-matched ports, and not because of taste.
+
+The architectural answer follows. The port should be a boundary-condition
+**type** in layer 4 with a **matched observer** in layer 5 -- two objects with
+two contracts, one that knows how to launch a mode and one that knows how to
+read one -- and not a source-plus-readout pair welded into a single extraction.
+The present code conflates them, and layer 6 then treats a point measurement as
+a mode measurement, which is the conflation arriving at the last possible moment
+and doing its damage there.
+
+**(d) Reading wrong, not solution wrong.** This is the statement of
+101.12.18.G(e) and .G(h) restated with the mechanism, so that it is not read as
+a hedge. The field is fine: `R_FLUX` = 0.9687210847256866, monotone attenuation,
+internally consistent to 5.8e-4 at its worst station. The extraction is wrong:
+`R_CIRC` = 1.0847420002436303, a phantom gain with an interior peak at station
+7. The lumped element is the mechanism, and the algebra says so: for a modal
+pair, `Re(V I*) = (|V+|^2 / Z_m)(1 - |Gamma|^2)` is identically constant along a
+uniform line, because a standing wave **cancels** in the product rather than
+causing the ramp. The observed ramp is what a non-modal extracted pair produces
+when it is fed into that formula. The energy increase is not the solver creating
+power; it is the readout reporting a quantity that is not a power flux as
+though it were one.
+
+**(e) The lesson.** The core is verified to 1e-10 and the extraction was never
+audited to anything, because the extraction was assumed trivial. That is the
+second-order form of the trap, and it is the part worth carrying forward: the
+exactness of layers 1 to 3 makes the rest of the system look as though it should
+be exact too. A solver that conserves energy to ten digits invites the
+assumption that everything downstream inherits that exactness, when layer 6 is
+doing floating-point estimation and is precisely the layer that needed auditing.
+In the generalisable form: **verify the layer you think is trivial, because that
+is where the bug lives.**
+
+**(f) The 2D eigenmode solver -- part of M3c, not a separate project.** What M3c
+needs is a 2D full-wave eigenmode solver. Input: the cross-section at the port
+plane -- substrate, strip, air, box. Output: the transverse `E` and `H`
+profiles, the propagation constant `beta`, and the characteristic impedance
+`Z_m`. The method can be 2D finite elements, a 2D FIT eigenproblem or a spectral
+method; of order five hundred lines; verified against the closed-form
+microstrip mode for the geometries where a closed form exists.
+
+`mode_profile.py` is **not** that solver, and the distinction is why it cannot
+be reused. It performs a quasi-static Laplace solve on the cross-section: the
+electrostatic approximation. That yields `eps_eff` and `Z0` in the static limit,
+which is exactly why it served as the reference for the static comparisons and
+why it was trustworthy there. It does not carry the phase evolution, so it is
+not the mode M3c needs. The scope decision is that the solver is built **inside
+M3c**, not as a project of its own: it is a component of the study, and
+separating it would create an interface to maintain and a verification to
+duplicate for no gain.
+
+**(g) What this does not license.** No 3D FEM solver. The bug is not in the
+field solver; three independent verifications stand behind layers 1 to 3; a
+usable 3D FEM is months of work; and FEM has the same extraction problem, so
+comparing the two would compare two extractions rather than test one. No rewrite
+of layers 1 to 3. No change to C5's status, which remains **BLOCKED** on the
+third reason of 101.12.18.D(g). And no run of any kind this block.
+
+**(h) The three supervisor errors of this block, recorded.** These are the
+principal's, recorded here rather than silently absorbed, each with its
+correction, because the record is what carries the memory.
+
+1. **Standing-wave framing wrong.** `Re(V I*)` is identically constant for a
+   modal pair; the standing wave cancels rather than causing the ramp. The
+   correction, the algebra and the two derived comparisons -- the rise is 1.5069
+   times the free-space peak-to-peak, and the terminal dip is 20.8 times too
+   small to be the interference dip -- are in .G(h). The agent's algebra is
+   correct and the framing is not.
+2. **Ruling 5(b)(ii) self-contradictory.** As written it required `R_CIRC` to
+   agree with `R_FLUX` while 5(b)(a) required `R_CIRC` to be preserved unchanged.
+   Resolved in the amendment to (b-ii) above: `R_MODAL` is the gate and `R_CIRC`
+   is preserved as a diagnostic.
+3. **"5.82e-4 in-loop accumulator" wrong.** No capture contains an in-loop
+   accumulator: no key matching flux, acc, poy, accum or sigma exists in any of
+   the three npz, only the pre-reduced 9-vectors `sx_station` and
+   `sx_station_sub`. The **number** stands; the **description** does not. The
+   real comparison is `F_phys` against the stored `sx_station`, signed
+   per-station relative difference -8.458109e-06 to -5.819955e-04, monotone
+   increasing, maximum at station 8. Detail is in .G(g).
+
+Three of the principal's claims in one block were wrong, and they were caught by
+reading the tree. That is the two-layer model working rather than failing: the
+claims were made checkable, and the checking was done before the claims were
+inscribed.
+
+**(i) Status.** Reflection only. No run, no re-pricing, no unblocking. M3c
+implementation is the next block's work, after the principal has read the
+amended 101.12.18.H.
