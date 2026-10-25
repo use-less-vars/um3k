@@ -5076,7 +5076,7 @@ Measured, arm C against the anchor:
 1. The 37.2 mm of copper in arm C does not exist on the board. `board.py:392-404` reads x_far off the pad's own track run, which is 32.2 mm; the extra 5 mm is synthetic line contributed by the harness. Arm C is therefore a legitimate model experiment — it isolates the standing-wave null — but its S11 and S21 must never be quoted as a board measurement, and no number in (a) other than the R difference carries meaning outside the model.
 2. The station de-embed differs between the two arms: 10.4 − 8.7 = 1.7 mm for arm C against 5.6 mm for the anchor and 6.8 and 7.8 mm for the probes. The arms are therefore compared through R, a ratio of per-station powers at identical fixed x, and not through z_abs.
 3. Provenance. `.scratch` is gitignored, so the harness cannot be committed and no commit was forced against the ignore rule; the provenance rides in `.scratch/tol/logs/ARMC.launch` (DRIVER_SHA256, PID, container, Python 3.12.15, NumPy 2.5.4, SciPy 1.18.1, 12 CPUs), which is the convention `B1_n8926….launch` already set. The driver `.scratch/tol/tol_driver_armc.py` has sha256 `1a0351ef38c72d6957a95d8564b39456c6745086a7ee2bc0b1ddd10dbd081d23` and is `tol_driver.py`, sha256 `be0cf81bf4…`, untouched, with exactly three edits and one banner: x_far pinned by `dataclasses.replace(spec, x_far=1e-3*37.2)` after the `--x-port` replace and before `cropped_to_strip`; `ANCHOR_N` 4,894,400 → 5,654,400; `ANCHOR_GRID` (322,200,76) → (372,200,76). The probe harness `.scratch/logs/sweep3.py` has sha256 `115bc5231d9ebdd72cbdebfaef040e25e5e06dc4287ed7f7f0a90482934c8d29` and adds only the two RUNS entries P36 and P26.
-4. One container throughout: all three solves ran in `c3-solve` (24ed1f92b361), the only 6 GiB cgroup, at 4,132,332 kB peak for arm C and about 480 MB for each probe. No container was stopped, removed or pruned.
+4. One container throughout: all three solves ran in `c3-solve` (24ed1f92b361), the only 6 GiB cgroup, at 4,132,332 kB peak for arm C and about 480 MB for each probe. That figure is arm C's; the cgroup's own `memory.peak`, read inside `c3-solve` for this block, is 4,836,691,968 B (4.50 GiB) all-time, and the all-time peak -- not arm C's -- is the number C5's headroom calculation must use. No container was stopped, removed or pruned.
 
 ## 101.12.18.C The anchor's port plane corrected, what the port arms varied, and a sign conflict between the two apparatuses
 
@@ -5166,7 +5166,7 @@ Two of his numbers remain untraceable and are not adopted. "Port-near predicted 
 
 (f) **TOLFLUX: pre-check (a) FAILS. Not launched.** Three pre-checks were ordered; the result of each, against the tree:
     **(a) Driver accepts the flags — FAIL, as written.** `.scratch/tol/tol_driver.py` declares exactly three arguments, `--nsteps`, `--tag`, `--x-port`. The strings `poynting` and `plane_capture` occur nowhere in the file, so there is nothing to forward; they appear only at `.scratch/logs/sweep3.py:42`, the ladder harness.
-    **(b) c3-solve free — PASS.** No solver process is present: PID 1 is `tail -f /dev/null` and a `*python*` / `*tol_driver*` scan over `/proc` returns nothing; `MemAvailable` 7,780,032 kB inside the 6 GiB cgroup, `oom_killed: false`. The container note still warns against stopping while `python3 tol_driver.py` is alive — that process is gone and the note is stale. The container was not touched.
+    **(b) c3-solve free — PASS.** No solver process is present: PID 1 is `tail -f /dev/null` and a `*python*` / `*tol_driver*` scan over `/proc` returns nothing; `MemAvailable` 7,780,032 kB, `oom_killed: false`. The `MemAvailable` figure is a HOST reading, not a cgroup reading: `/proc/meminfo` inside `c3-solve` reports MemTotal 16,050,128 kB (15.31 GiB), which a 6 GiB cgroup cannot report, and there is no lxcfs; only the cgroup files (`memory.current`, `memory.max`, `memory.peak`, `memory.stat`, `memory.events`) describe the container. The container note still warns against stopping while `python3 tol_driver.py` is alive — that process is gone and the note is stale. The container was not touched.
     **(c) Nine station planes identical to the anchor — PASS, by construction.** One implementation decides them: `emfit/studies.py:2668` `wanted = np.linspace(x_first, x_last, n_stations)`, snapped to cells at `:2674`, with module defaults `MS_X_FIRST, MS_X_LAST = 10.4e-3, 20.0e-3` (`:1177`) and `MS_N_STATIONS = 9` (`:1179`), forwarded by the board wrapper at `:3604-3605`; `sweep3.py` BASE sets the same three numbers explicitly. A plane capture would land on exactly the nine circuit stations, so the comparison is like-for-like by construction rather than by assertion.
     A failed pre-check means stop and report, so **TOLFLUX was not launched**. No container was started, stopped or modified; `tol_driver.py` was not edited; nothing was created under `out/`.
 
@@ -5917,6 +5917,8 @@ amended 101.12.18.H.
 
 Dated 2026-10-25.
 
+**Numbering.** 101.13 is skipped; the section after 101.12.18 is 101.14.
+
 **(a) The three subsystems.**
 
 1. **Field.** Geometry, materials, boundaries, FIT core, sources. Verified --
@@ -6001,3 +6003,18 @@ question.
 It authorises no run. It does not ratify M3c's gate (that is 101.12.18.H and
 remains pre-registered-not-ratified). It does not unblock C5. It does not touch
 the wall. It is design and reflection.
+
+**(i) Status.**
+
+This section is design and reflection: three subsystems, three contracts that
+do not yet exist, five passes, and a book. It authorises nothing -- no run, no
+implementation, no edit to any driver or library file. It does not settle the
+M3c gate, which remains pre-registered and not ratified per 101.12.18.H, and it
+changes no record figure. One citation is resolved here so that it stops
+travelling: `eps_eff` 3.343938310 is correct for u = 2.0 (w/h = 3.2/1.6), and
+the 3.325455 figure came from u = 1.875 (w = 3.0 mm), both reproduced from
+`emfit/microstrip.py:189`; no record figure changed. The brief for this block
+carried the call form `eps_eff(2.0, 4.4, t=0)`, which does not exist: the
+signature at `emfit/microstrip.py:189` is
+`eps_eff(w_over_h, eps_r, t_over_h=0.0)`, where the third parameter is
+normalised thickness, so future briefs must write `t_over_h`.
