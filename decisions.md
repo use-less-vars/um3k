@@ -4829,3 +4829,46 @@ floor (see (vi)). It does not run variant A, REFUSED by the principal. And it ch
 
 **(x) Cost.** 2 x 8034 = 16068 steps: 9120 s = 152.0 min at 0.5676 s/step, 7825 s = 130.4 min at
 0.487 s/step.
+
+#### 101.12.16 Experiment B — result and scoring (clauses (vi) and (vii) of 101.12.14)
+
+**Clause (vi) verdict: PASS.** The pre-registration states its acceptance condition conjunctively, and every conjunct holds for both arms:
+
+| sub-check | required | B1_n8926 | B2_n8928 |
+|---|---|---|---|
+| dt anchor-equal | = 1.9065748695309721e-13 s | 1.9065748695309721e-13 | 1.9065748695309721e-13 |
+| k | 10 | 10 | 10 |
+| span digit-exact vs arm's own expectation | EQUAL | 1.2764518751509857e-09 (matches registered span at decisions.md:4676 and the run-log C3 ARM line verbatim) | 1.2766425326379389e-09 (matches the arm's EXPECT line verbatim: `C3 ARM EXPECT n_warm=2232 n_acc=6696 span=1.2766425326379389e-09 s k=10 f0=7833046247.7518301 Hz`) (registered at decisions.md:4677) |
+| \|offset_hz\| < 1e6 | < 1e6 | +916232.254855 → 916232.254855 | -253752.248170 → 253752.248170 |
+
+The conjunctive form is satisfied, so clause (vi) passes as written.
+
+**Clause (vii) verdict: PASS.** The falsifier is the two arms' R disagreeing beyond the 1.1 per cent floor. Measured spread:
+
+    |R_B2 - R_B1| / R_B1 * 100 = 0.0011364035779397668 %
+
+against a 1.1% floor — a margin factor of ≈968× (derived arithmetic: 1.1 / 0.0011364035779397668; the spread itself is as stated above, not derived here).
+
+**Clause (vi) is a validity gate, not a falsifier.** The reported f is `f0 = round(f_target*span)/span`, computed *before* the time loop, so clause (vi) is a function of `nsteps` alone and cannot fail once the run starts. Evidence, to full double precision: 10/1.2764518751509857e-09 = 7834216232.2548552 and 10/1.2766425326379389e-09 = 7833046247.7518301 — i.e. the reported f equals k/span exactly. The honesty point for the record: the +916232.254855 Hz guard figure was knowable without running anything; the 4083 s of arm 1 purchased beta, s11, s21 (and, with arm 2, the R comparison), not the offset.
+
+**Clause (vii)'s falsifier is well posed.** The two arms differ in `nsteps` by exactly two steps (8926 vs 8928), so their simulated windows differ by 2*dt = 3.8131497390619441e-13 s: T1 = 8926*dt = 1.7018087285433456e-09 s and T2 = 8928*dt = 1.7021900435172519e-09 s, i.e. (T2-T1)/T1*100 = 0.022406453058486823%. The pair therefore isolates step count to within 0.0224% of window length, and the 0.0011364035779397668% R spread sits roughly 970× inside the 1.1% floor. Caveat kept for the record: the anchor's window is shorter (8034*dt = 1.531742250181183e-09 s), so the anchor-to-B1 R shift of 0.03810676436996867% is not attributable to `nsteps` alone — only the B1/B2 pair is.
+
+**Arms.**
+
+| arm | p1 (station 0) | p2 (station 8) | R |
+|---|---|---|---|
+| TOL anchor (nsteps 8034) | 212759021179.7408 | 230788646204.38898 | 1.0847420002436303 |
+| B1_n8926 | 262459784834.31122 | 284592661587.5382 | 1.0843286401655754 |
+| B2_n8928 | 262544142148.30518 | 284687367799.77844 | 1.0843409625150389 |
+
+R is `_station_power(v[-1],i[-1])[station 8] / _station_power(v[0],i[0])[station 0]` on row 0 of each arm's npz, and is identical to `passivity_power - s11_measured**2` and to `s21_power**2` for all three arms.
+
+Supporting numbers as measured:
+
+- windows — anchor nsteps 8034 n_warm 2008 n_acc 6026 span 1.1489020163793638e-09; B1 nsteps 8926 n_warm 2231 n_acc 6695 span 1.2764518751509857e-09; B2 nsteps 8928 n_warm 2232 n_acc 6696 span 1.2766425326379389e-09. dt 1.9065748695309721e-13 identical in all three; f_target = 7833300000.0.
+- B1: beta 313.71389882570213, s21 1.038847908639896, s11 0.014921549220740415, passivity_power 1.0845512927967225, eps_V 3.6505481476605195, f0 7834216232.2548552.
+- B2: beta 313.667567, s21 1.038854, s11 0.014934, passivity_power 1.084564, eps_V 3.650560235, f0 7833046247.7518301.
+- anchor: beta 314.03158662735785, s21 1.039055068395964, s11 0.013677440673277025, passivity_power 1.0849290726270013, eps_V 3.658552575317196.
+- cost — B1 wall 4082.7 s (0.4574 s/step), MAXRSS_KB 3591828; B2 wall 4499.7 s (0.5040 s/step), MAXRSS_KB 3591872. B2 is 10% slower at an equal step count (host contention).
+
+**Provenance of the 1.1 per cent floor (verified verbatim in the tree, not inherited).** `decisions.md:3335` registers it as `passivity_power` 1.0849290726270013 in the cw anchor against 1.0967517700737275 at pulse bin 14 — "about 1.1 per cent scatter at fixed mesh" — and `decisions.md:3343` states "the 1.1 per cent floor of 100.4". It is a relative scatter, so the relative percentage used above is the like-for-like comparison.
