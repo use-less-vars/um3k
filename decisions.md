@@ -7065,3 +7065,122 @@ The tolerance is scope-asymmetric. `tolerance` in the job is one value for the w
 The provenance block as drafted is FDTD-shaped. `mesh_cells` and `cell_mm` are structured-grid quantities: a frequency-domain FEM has no `cell_mm`, and a surrogate has neither a mesh nor a cell. Left as written, the contract leaks the solver into the schema and defeats property (f) before the fast solver is even attempted. The repair is a small required core — solver, tolerance achieved, reference, commits, decisions section — plus an open solver-specific object, which has the further virtue of exercising the unknown-field tolerance on the tool's own output.
 
 The geometry is board-shaped. As noted in (b), only a file-backed geometry is specified. The parametric geometry is the one the tests use, so it is the one that would be exercised first, and it is the one the draft leaves as a word.
+
+## §101.20 — The pre-registered gate, as a standing rule: T1–T4, the first instance, with two tolerances reserved and one deferred
+
+### (a) The rule
+
+A capability that has been demonstrated but not gated has not been qualified. It has been shown to produce a number on one configuration, and nothing follows about the next one.
+
+The rule has three parts, and the order matters.
+
+**Every new capability gets a pre-registered gate before it is used to claim anything.** The gate is written in the record before the run, with its falsifier stated as a prediction about what would happen if the capability were not real. A gate invented after the numbers arrive is not a gate; it is a description of the numbers wearing a gate's clothes.
+
+**Tolerances are derived, not chosen.** A tolerance is a claim about how much of the measured quantity is noise, so it must trace to a measurement of that noise on this instrument: a repeatability floor, a null control, a prior stability series. Where the tree holds no measurement of the relevant noise, the absence is stated, the value is set on the weakest ground that survives, and the ground is named. Tightening to what feels small is the failure mode this part exists to forbid, because a tolerance that is too tight fails honestly and then gets relaxed privately, while one that is too loose passes silently and is never questioned again.
+
+**Each passing gate produces a qualification statement.** The statement has the form *given this configuration, we can guarantee X to tolerance Y, verified by Z*, with all three slots filled by something a stranger can run. A gate that passes without producing such a sentence has bought nothing.
+
+This is the same argument §101.19(i) makes about the resource contract — a design that claims to be finished before a line of it exists is not a design — moved from interfaces to measurements. A capability that claims to be trustworthy before its gate exists is not trustworthy.
+
+T1–T4 are the first instance of the rule in this record. They supersede the draft gate of §101.18(d.4) (`decisions.md:6893`), which was written under the older convention: a tolerance of 1e-3 chosen for the run rather than derived for the quantity.
+
+### (b) T1 — beta stability under a station-window change
+
+**Statement.** `|beta_a - beta_b| / beta_a <= T1_tol`, with `beta_a` fitted on the full station window and `beta_b` on the same window with the nearest station dropped. All stations, both bases, all three meshes.
+
+**Falsifier.** beta is a property of the window, not of the mode.
+
+**T1_tol is reserved at 0.5 per cent, and 1e-3 is explicitly not inherited.** The derivation follows; the number is reserved in this section and may not be revised after a run.
+
+#### (b.1) What the tree has already measured
+
+Test A (`decisions.md:2426`) swept four windows over the same nine phasors at the board configuration: all nine, drop the last, drop the first, drop both. Two of those are exactly T1's operation. On the two records:
+
+| window change | V record | I record |
+|---|---|---|
+| drop the last station | -0.114 rad/m (-0.049 %) | -0.004 rad/m (-0.002 %) |
+| drop the first station | +0.142 rad/m (+0.062 %) | +0.045 rad/m (+0.020 %) |
+
+The rad/m shifts are as stated at `decisions.md:2426`; the percentages are derived arithmetic against beta of about 230.7 rad/m, and that paragraph's own summary is that "the whole effect is under 0.06 per cent". Its larger figure is the four-window spread, 0.255 rad/m on V (0.111 per cent) and 0.049 rad/m on I (0.021 per cent).
+
+Two bigger perturbations are also on the record. Test B (`decisions.md:2430`) swept `nx` 59 / 66 / 73 / 80 / 87 — a 1.47-fold change of box — and beta drifted +0.22 per cent (V) and +0.09 per cent (I). §94.4 (`decisions.md:2736`) quadrupled the extraction window and moved beta by **+0.223 per cent** against a pre-registered 0.5 per cent threshold, on which it declared the 0.35 lambda_g span adequate.
+
+#### (b.2) Three misquotations, corrected before they propagate
+
+The prior stability data reached this section as "0.02 per cent under a two-wave refit, 0.22 per cent over a four-fold box length". Both halves are wrong in a way that matters.
+
+**The two-wave figure is record-specific, and 0.02 per cent is the friendlier record.** 0.021 per cent is the current record; the voltage record gives 0.111 per cent, five times larger. T1 runs on both and privileges neither, so the derivation must use 0.111 per cent.
+
+**Nothing in the tree is a four-fold box length.** Test B is a 1.47-fold change. §94.4 grew the box 2.1-fold (`nx` 66 to 140, x 26.4 to 56.0 mm) and quadrupled the *extraction window* (9 to 25 stations, 9.6 to 38.4 mm). The +0.22 per cent attaches to the extraction window (`decisions.md:2742`), which is the right quantity for T1 — but it is not a box-length figure and must not be quoted as one.
+
+**A third 0.022 per cent is in play and is a different quantity.** `decisions.md:2735` records a control comparison, 230.139920 against 230.190760, as -0.022 per cent, and `decisions.md:4854` records `(T2-T1)/T1*100 = 0.022406453058486823%`, the difference in window length between the B1 and B2 arms. Neither is a beta-stability figure. The 0.186 per cent quoted elsewhere (`decisions.md:102`) is a bar-to-bar drift over a 0.2 mm change, not a box change.
+
+#### (b.3) The derivation
+
+**T1_tol = 0.5 per cent**, on three grounds that agree.
+
+It is inherited rather than invented. 0.5 per cent is the threshold already in force at `decisions.md:2736` for precisely T1's question — does beta survive a change of extraction window — applied there to a perturbation far larger than dropping one station from nine. Adopting it for a smaller perturbation is the conservative direction.
+
+It clears the measured noise by an order of magnitude. 0.5 per cent is 8x the largest single-station-drop effect (0.062 per cent, V) and 4.5x the largest four-window spread (0.111 per cent, V). A tolerance below about 0.1 per cent would sit within a factor of 1.6 of an effect already classified as a reference-plane artefact rather than dispersion, and would risk failing T1 on a benign window change.
+
+It separates window drift from mode physics with room on both sides. The smallest effect T1 must not absorb is the 2.9 per cent degeneracy narrative §94.4 was run to test, or the 3.2 per cent axial excess of §84. The largest window-attributable movement measured is 0.111 per cent. The geometric centre of that gap is sqrt(0.111 x 2.9) = 0.57 per cent, which is 0.5 per cent to one significant figure.
+
+**Uncertainty, stated because the prior data do not support a number at better than this.** The derivation rests on one nine-station sweep at one geometry and one long-window experiment, neither repeated on the three meshes T1 will run on, and the two records differ by a factor of five. T1_tol = 0.5 per cent is defensible across 0.25 to 1.0 per cent and no tighter. What would tighten it is absent from the tree: no measurement exists anywhere of beta's own repeatability under a null change — the same window fitted twice on the same run. The 1.14e-5 floor of §101.12.16 is a repeatability floor for R and does not transplant. The null experiment is cheap, one run and two fits, and it should precede any attempt to tighten this number.
+
+**One axis carries no prior data at all.** The stability figures above are on the record axis, voltage against current. T1 also runs on both bases, mixed against analytic, and there is no beta-stability measurement on the basis axis anywhere in the tree. The tolerance transfers to that axis by assumption, and the assumption is recorded here as an assumption.
+
+#### (b.4) The falsifier, read strictly, is already partly established
+
+Test A found that dropping a station moves beta monotonically, in the direction a constant phase offset pushes it, and attributed the movement to the window rather than to dispersion. Read strictly, that is T1's falsifier firing at 0.06 per cent: beta does depend on the window, a little. The falsifier is therefore about magnitude and not about existence, and it must be read that way or it is untestable. What licenses the reading is the arithmetic already at `decisions.md:2426`: the axial excess sits 29 times (V) and 156 times (I) above the window spread that would have to explain it. T1 tests that the window term stays in the small column; it does not test that the window term is zero.
+
+**Status: RESERVED.** T1_tol = 0.5 per cent, pre-registered here, not run.
+
+### (c) T2 — extraction consistency, and where its tolerance comes from
+
+**Statement.** `|R_MODAL / R_FLUX - 1| <= 1e-3`, on the same field at `x_port`, R_MODAL and R_FLUX extracted by different routes from that one field.
+
+**Falsifier.** The two extractions disagree on the same field.
+
+**The derivation cites two numbers and takes the stricter basis.** 1e-3 is 88x the B1/B2 repeatability floor of 1.14e-5 and 17x the t1 accuracy deviation of 5.814e-5 (`decisions.md:6809`, §101.17(o)); both ratios are derived arithmetic here. Repeatability leads, and the reason is not a preference for the smaller number: an accuracy deviation bounds how far one measurement sits from truth, which is not the quantity a consistency test measures, while a repeatability floor bounds how far two measurements of the same thing can differ with nothing changed, which is exactly it. Taking the looser ratio and pairing it with the stricter basis is deliberate. Both figures are printed by the tests themselves, so either is re-derivable by running one file for about a second.
+
+#### (c.1) Provenance of 1.14e-5, established rather than assumed
+
+Searched once, with a plain grep and no campaign, as instructed. The quantity is in the tree, and the string that would be its natural spelling is not.
+
+The literal `1.1364e-5` appears nowhere in `decisions.md`: grep returns no match. The value is written three ways. As `0.0011364035779397668 %`, at `decisions.md:4848`, `:4850` and `:4854`. As prose, "a relative difference of 1.14e-5", at `decisions.md:5002` and again at `decisions.md:5592`. It was introduced by commit `f3859a736ff7d1e7c0e499253e07164a74b38805`, "decisions.md: 101.12.16 — experiment B result and scoring", 25 October 2026, which touched one file in one hunk, `@@ -4829,3 +4829,46 @@`, and whose body carries the three anchor values: R_TOL 1.0847420002436303 (nsteps 8034, k=9), R_B1 1.0843286401655754 (8926, k=10, +0.916 MHz), R_B2 1.0843409625150389 (8928, k=10, -0.254 MHz). It is tabulated again at line 16 of `reports/2026-10-25_03-00-35_101_12_16-17_Report__Experiment_B_and_the_port-pos.md`.
+
+The number is therefore not an estimate and not a derived convenience. It is the measured spread between the two arms of Experiment B at delta = 0 on identical configurations, and its domain is that board configuration: one geometry, one mesh, one frequency. That is the domain T2 runs in, so the transfer is a transfer of configuration rather than of physics.
+
+Two margin factors about this same number are on the record, and they are factors against different floors: 88x against 1e-3, derived here, and the ~968x already written at `decisions.md:4850` against that experiment's own 1.1 per cent clause (vii) floor. Quoting one as the other is an error of a factor of eleven.
+
+### (d) T3 — common-mode invariance
+
+**Statement.** Scale both fields by kappa in {0.5, 2.0}; R_MODAL unchanged to 1e-3.
+
+**Falsifier.** The extraction depends on absolute amplitude.
+
+**T3's tolerance is borrowed from T2, and is recorded as borrowed.** No experiment in the tree scales a field and re-extracts, so there is no independent derivation to be had. The 1e-3 transfers because the argument that produced it is the same argument: the ratio is a comparison of two extractions of one field, so the same repeatability floor applies to the same three-line combination. What T3 adds is a different perturbation, not a different statistic. A scaling by kappa is exact in the arithmetic, so the residual T3 tests is the extraction's nonlinearity rather than its noise; if that nonlinearity turns out to be the binding term, the tolerance is the wrong shape and should become relative to kappa rather than absolute. Recorded, not resolved.
+
+### (e) T4 — relative amplitude, deferred, and its placeholder bands withdrawn
+
+T4 ships no gate, and no acceptance criterion is drafted here. The bands that circulated with it, `R <= 1e-2` and `0.1 <= R <= 10`, are placeholders: derived from nothing, present in no implementation — `0.1 <=` has zero Python hits repo-wide and appears only as prose, at `reports/2026-10-26_13-52-03_Design_pass_1__modal_port_pipeline_ownership__and_.md:192` and `.scratch/design/modalport_ownership.md:181` — and shipping them would install a chosen tolerance under the new rule's name. They are withdrawn. T4 stays deferred until two things exist: an identification of which field component the quantity called `e_z` is, the open question recorded at §101.18(e.5) (`decisions.md:6960`) and still unanswered, and a measurement of the analytic ratio on the same lattice, which the tree does not provide. The acceptance criterion is reserved to the form the principal registered — the placed route's component ratio within X per cent of the analytic ratio on the same lattice, X from the resolution study — and no value of X is proposed in this section, because proposing one is the same error as the bands.
+
+### (f) What is preserved, what is demoted, and why that is not a contradiction
+
+**Preserved: `R_CIRC = 1.0847420002436303` is a diagnostic, not a gate.** It is computed and reported and never compared against a threshold. That is deliberate, and it is the contrast that makes T2 meaningful: one run produces both numbers and only one of them is a test.
+
+**Demoted: the archived `R_FLUX = 0.9687210847256866` is a cross-check, not a gate target.** Nothing here claims the absolute value of R_FLUX. That value carries a basis dependence the tree has not settled — the basis experiment of §101.18(b) returned a null result and is recorded so that it is not repeated — and pinning a gate to it would turn an open choice into a tolerance. Its only use in the tree as a numeric target is `.scratch/logs/s10118_basis.py:52`.
+
+**The two facts coexist, and the reconciliation belongs on the record rather than in a reader's head.** T2 tests agreement between two extractions of the same field. The demotion concerns the absolute value of one of them. A test that two numbers agree says nothing about whether either is right, and demoting a value as a target says nothing about whether the agreement is worth testing. This is the same distinction (b.4) draws between existence and magnitude.
+
+**No gate in this section exists in code, and that is part of the pre-registration.** `R_MODAL` appears in no module under `emfit/` or `tools/`; `R_FLUX` and `R_CIRC` are computed and printed at `.scratch/tol/tolflux_report.py:163` and `:164` and compared against nothing; `T4` appears in no markdown in the repository, and in Python only as plane-knob test labels at `tests/test_board_animation.py:9`, `:12` and `:19`, which are unrelated. The identifiers T1–T4 in this section name gates, not ticket numbers, and a collision already exists: at `decisions.md:4854`, `T1` and `T2` are window lengths, 8926*dt and 8928*dt. The collision is recorded here rather than left to confuse a later reader.
+
+### (g) What is not claimed
+
+That the absolute value of R_FLUX is settled. That mixed or analytic is the right basis. That any S-parameter produced under these gates is quotable outside the fixtures of §101.17. That any of T1–T4 has been run. That T1_tol is final, as opposed to reserved at a factor of two. That T2's 1e-3 transfers to a configuration other than Experiment B's board case. That R_CIRC or R_FLUX carries any meaning as a target rather than as a report.
+
+### (h) Status
+
+Nothing in this section has been run. T2 and T3 are derived and ready. T1's tolerance is reserved at 0.5 per cent with a factor-of-two uncertainty and one axis carrying an assumption rather than a derivation. T4 is deferred, with its placeholder bands withdrawn. This section supersedes §101.18(d.4).
+
+The discipline that makes the section worth anything is in (a): a tolerance changed after its run is not a change to this section, it is a new registration and a separate record. The first run of any of T1–T4 will be reported against this section, and the qualification sentence (a) demands will be written where the run is reported, not here. This section holds the promise. What the promise is worth is decided by the run, and until there is a run it is worth exactly the arithmetic in (b.3) and (c.1).
