@@ -2874,6 +2874,8 @@ The last two `eps_eff` entries are derived by me with the same formula and are p
 
 **C1 partial, and it turned up a provenance fact.** `plane_mode`, `modal_station_phasors` and `modal_line_quantities` **are not in `/workspace/emfit`**. Their only definitions are under `.scratch/wt-m3b-diag/emfit/modal.py:267, :372, :538`, and `sweep3.py:26-31` imports `emfit.modal`, so the projection route resolves against that shadow tree. **The third route was run on a copy of the package, not on the repository package.** Placement within the bigger grid is a pure integer zero-pad shift (`modal.py:292-303`): arrays are allocated as zeros and integer-sliced, with no interpolation and no resize, so resampling is excluded as a failure mode. Not yet determined: whether `ModeProfile.plane_window` (`mode_profile.py:452+`) places the mode on the true strip row; which grid the normalisation is computed on; whether the transfer is conservative or a plain elementwise multiply; and whether the projection sums over the whole plane or only the profile footprint.
 
+[**SUPERSEDED 2026-10-26:** `emfit/modal.py` was promoted into the package (39,846 bytes, sha256 `664bdced45b2e729a40c425fb2f9aef2e15adde8d0efd664d5d7ff33d9844d58`, byte-identical to `.scratch/wt-m3b-diag/emfit/modal.py`), and the `emfit.__path__.append` shim at `.scratch/logs/s10118_basis.py:42` was removed, so `sweep3.py:26-31` importing `emfit.modal` now resolves to `/workspace/emfit/modal.py` and no longer to the shadow tree. The historic claim above described the tree before that move and is retained as written; the third route itself was run against the scratch copy, and that is unchanged. The offsets `:267`, `:372`, `:538` remain valid in the promoted file: they still land on `plane_mode`, `modal_station_phasors` and `modal_line_quantities`, because the copy is byte-identical.]
+
 **C2 is negative.** 225.483558 appears only at `decisions.md:2678` and `:2682`. There is no script, no per-station phasor series, no station positions, no fit window, no absolute residual (only "x4.1 worse", with no base) and no covariance anywhere in the tree. **Its stability to better than 0.5 % cannot be established from stored artefacts**, so it should not be quoted as "the raw-field answer". By contrast the V route does carry its uncertainty: spread 6.8e-9 over ten starts and SVD ratio 7.3e-9 (`decisions.md:2565`).
 
 **A3 gains a second problem.** 3.363120 and 3.369119 have no stored output anywhere in the tree either — they are prose in `decisions.md:2629` and `:2822` with nothing behind them. That they are two discretisations of one quantity is still the right reading, but the record should note that they are currently unreproducible.
@@ -6860,6 +6862,8 @@ Two defects of the measurement remain open and are *not* physics results: `|S11|
 
 Reproducibility note carried forward: `/workspace/emfit/` contains **no** `modal.py`. `PlaneMode`, `plane_mode`, `modal_station_phasors`, `modal_line_quantities`, `ModalSparams` and `modal_sparams` exist only in `.scratch/wt-m3b-diag/emfit/modal.py` (`:197`, `:267`, `:372`, `:538`, `:596`, `:685`), reached by appending to `emfit.__path__`. `mode_profile.py` exists in both trees (`microstrip_mode_profile` at `:535`). Every modal number in 101.17 is therefore reproducible only from a scratch worktree, not from the package.
 
+[**SUPERSEDED 2026-10-26:** `emfit/modal.py` was promoted into the package (39,846 bytes, sha256 `664bdced45b2e729a40c425fb2f9aef2e15adde8d0efd664d5d7ff33d9844d58`, byte-identical to `.scratch/wt-m3b-diag/emfit/modal.py`), and the `emfit.__path__.append` shim at `.scratch/logs/s10118_basis.py:42` was removed, so bare `emfit.modal` now resolves from `/workspace/emfit/modal.py` under a clean environment. The historic claim above described the tree before that move and is retained as written. The scratch-tree offsets `:197`, `:267`, `:372`, `:538`, `:596`, `:685` remain valid in the promoted file: they still land on `PlaneMode`, `plane_mode`, `modal_station_phasors`, `modal_line_quantities`, `ModalSparams` and `modal_sparams` respectively, as the byte-identical copy requires. What the promotion does change is the closing sentence of the note above: a modal number in 101.17 is now reproducible from the package itself, not only from a scratch worktree.]
+
 ### (c) Route
 
 The archive needs no container, which is part of why it was chosen: 6/6 consuming containers, `ContainerStartTool` permitted but refused at quota, persistent containers operator-remove. `emfit-build` is idle (uptime 395539 s) and is the intended slot for any long run, reached via `ContainerExecTool`.
@@ -6943,7 +6947,7 @@ Against the analytic values 309.981864 and 3.564800282. The gap closes monotonic
 
 The 51 x 19 placed result does not exist. The run died with `ZeroDivisionError: 2.0/v_mode` at `v_mode = -0.0`; (e.4) explains why, and it is not a numerical accident.
 
-Two facts about this table, both established from source rather than from the numbers. First, `beta_placed == k0 * sqrt(eps_placed)` holds bit-for-bit at both meshes, because `emfit/modal.py:575-586` computes `eps_eff = (beta*C0/omega)**2` from the same `beta`. The placed route therefore has one degree of freedom, not two: the earlier reading of "+0.234 % on beta, +0.469 % on eps" treated those as two corroborating observations of agreement when they are one fact printed twice, related by `2 * dbeta/beta = deps/eps`. Second, every ratio in the (b) table (`decisions.md:6841-6849`) is computed over station planes 0.0104-0.020 and none of them is `R_MODAL`, which remains true and is unaffected by anything here.
+Two facts about this table, both established from source rather than from the numbers. First, `beta_placed == k0 * sqrt(eps_placed)` holds bit-for-bit at both meshes, because `modal.py:578` computes `epsilon_eff = (beta * C0 / omega) ** 2` from the same `beta`. That module is now PROMOTED: `emfit/modal.py` exists, copied byte-for-byte from the scratch copy at `.scratch/wt-m3b-diag/emfit/modal.py`, sha256 `664bdced45b2e729a40c425fb2f9aef2e15adde8d0efd664d5d7ff33d9844d58`, and the `emfit.__path__.append(...)` at `.scratch/logs/s10118_basis.py:42` that used to reach that copy has been removed. The bare library path now resolves, and the symbol at `modal.py:578` is `epsilon_eff`, not `eps_eff`. The placed route therefore has one degree of freedom, not two: the earlier reading of "+0.234 % on beta, +0.469 % on eps" treated those as two corroborating observations of agreement when they are one fact printed twice, related by `2 * dbeta/beta = deps/eps`. Second, every ratio in the (b) table (`decisions.md:6841-6849`) is computed over station planes 0.0104-0.020 and none of them is `R_MODAL`, which remains true and is unaffected by anything here.
 
 So `beta_placed` at 336.675 and 337.464 is pinned to 0.23 % across a 75 % increase in free edges. By the test (d.5) set, that is a defect. The eigen route's equivalent quantity moved 1.3 % over the same pair. The two routes must be judged separately and must not be averaged, cross-validated against each other, or treated as two measurements of one number.
 
@@ -6979,9 +6983,31 @@ These are the operator's, in the same sense as (a) and (d.1) (`decisions.md:6823
 
 First, the operator called this a convergence study and the meshes are not nested, so it is not one. The honest claim is the one in (e.6), and the discrepancy matters because a non-nested mesh set cannot support a convergence order while the phrase invites one to be computed. Caught by the orchestrator.
 
-Second, the operator treated `beta_placed` and `eps_placed` as two corroborating observations. They are one fact, related by `2 * dbeta/beta = deps/eps`, because the same `beta` produces both (`emfit/modal.py:575-586`). A single degree of freedom cannot corroborate itself.
+Second, the operator treated `beta_placed` and `eps_placed` as two corroborating observations. They are one fact, related by `2 * dbeta/beta = deps/eps`, because the same `beta` produces both. That module is now PROMOTED: `emfit/modal.py` exists, copied byte-for-byte from `.scratch/wt-m3b-diag/emfit/modal.py` with sha256 `664bdced45b2e729a40c425fb2f9aef2e15adde8d0efd664d5d7ff33d9844d58`, and the `emfit.__path__.append(...)` at `.scratch/logs/s10118_basis.py:42` that previously reached the scratch copy has been removed. The identifier the code actually uses is `epsilon_eff`, at `modal.py:578`, not `eps_eff`. A single degree of freedom cannot corroborate itself.
 
 Third, the operator's gate revision in (d.4) is blind to a common-mode scale error, which is precisely the defect in (e.5). A gate that tests `R_MODAL` against `R_FLUX` but does not test the relative amplitude of `e_y` and `e_z` would pass while measuring nothing. The revision is not approved and is not to be run.
+
+#### (e.8) The component-normalisation defect in the capture: MEASURED, PENDING OPERATOR CONFIRMATION
+
+**The measurement.** `sum(e_z^2) / sum(e_y^2)` is 2.72e6, and it reproduces exactly: 2722397.314568 on the 31 x 17 mesh, 2642977.869550 and 2536572.286604 on the other two.
+
+**The cause.** `e_y` is a field multiplied by CELL and `e_z` keeps no length factor, so the two blocks are dimensionally inhomogeneous and their squared ratio carries `1 / CELL^2 = 1e8` exactly. That single factor is the whole distance between the raw figure and the unit-repaired one: 2722397.314568 / 1e8 = 0.0272. The same `* CELL` is at `.scratch/logs/s10118_basis.py:315` in the basis builder, so the defect is in the basis and not only in the diagnostic that printed it.
+
+**Divide it out and the number is unremarkable.** The unit-repaired field ratio is 0.0272; in the pencil's own mass-matrix norm it is 0.0095; the quasi-TEM estimate `beta^2 <L^2>` gives 0.0039 to 0.25 across physical decay lengths. Those are one order of magnitude, which is what a correctly normalised pair should give.
+
+**Three explanations excluded before the remainder is recorded.** A global eigenvector scale provably cannot change the ratio: it is homogeneous of degree 0 in the eigenvector. An edge-singularity artefact is excluded by the numbers: no single cell holds more than 1 per cent of the `E_z` energy, and peak-to-rms is about 2.1 and stable under refinement. And the ratio is not a solver artefact at all, because the pencil's `beta`, `eps_eff` and eigenvector are self-consistent.
+
+**A second defect in the same script, recorded separately because it has a different consequence.** `v_mode` at the same builder is a plain sum over 16 nodal values, not an integral, and `i_mode = 2 / v_mode`. That is why `z0_power` reads 0.001989 against `discrete_power` 1.0. The two consequences are deliberately kept apart: fixing the unit contract will NOT fix the 4.52 per cent beta bias recorded at (b.5), and fixing the V and I integrals will NOT move 2.72e6. Each defect is bounded by the other being fixed, and neither is repaired here.
+
+**The weakest link, named.** After the unit repair a residual 2.86x gap remains between the field ratio 0.0272 and the mass-matrix ratio 0.0095. It is attributed to component staggering, and it has NOT been measured de-staggered. An attribution that was not measured is the weakest number in this subsection, and it is labelled as such rather than being presented as a result.
+
+**Status: PENDING OPERATOR CONFIRMATION.** Measured and reproducible. No code changed.
+
+#### (e.9) OPEN, NOT FIXED: `mode2d.py` documents a normalisation the code does not perform
+
+`emfit/mode2d.py:636` documents the normalisation as `e^T B e = 1`. The code at `:1127-1130` divides by the plain Euclidean 2-norm. The docstring is factually wrong about what the routine does, and the gap between them is a mass-matrix norm against a 2-norm, which is not a rounding difference.
+
+**Status: OPEN.** Not fixed here, and it must not be fixed here: the correction is a code change, this section is a record, and a docstring edited to match a norm that may itself be the thing at fault would hide which of the two is wrong. Recorded so that `e^T B e = 1` is not read as established by anyone working from this document.
 
 ## §101.19 — The resource interface: `emfit.job.v1` in, `emfit.result.v1` out, and a contract that authorises nothing
 
@@ -7068,6 +7094,22 @@ The geometry is board-shaped. As noted in (b), only a file-backed geometry is sp
 
 ## §101.20 — The pre-registered gate, as a standing rule: T1–T4, the first instance, with two tolerances reserved and one deferred
 
+### (0) Task B resolved before the rule: the captured `e_z` block is VERTICAL TRANSVERSE, not longitudinal
+
+Both (b) and T4 inherit an identification that was still open when this section was first drafted. It is closed here. The closure changes no tolerance and no gate in this section except T4's branch.
+
+**What was open.** `decisions.md:6960`, §101.18(e.5), records that the *name* `e_z` does not say which field component fills the slot. T4 below is deferred until that is answered, because its acceptance criterion is a comparison of a component ratio against the analytic ratio and the component must be named for the comparison to mean anything.
+
+**What the source says.** The capture carries two in-plane cross-section blocks and neither of them is longitudinal. `.scratch/logs/s10118_basis.py:303-305` and `:314-315` build `E_t[:,:,0] * CELL` on the half-integer-y / integer-z lattice, shape `(NY, NZN)` = 200 x 77, which is the array stored as `plane_Ey`; `:316-318` and `:357` build the node block on the integer-y / half-integer-z lattice, shape `(NYN, NZ)` = 201 x 76, which is the array stored as `plane_Ez`. Both arrays were loaded and their shapes confirmed: `plane_Ey` (9, 200, 77), `plane_Hz` (9, 200, 77), `plane_Ez` (9, 201, 76), `plane_Hy` (9, 201, 76). The library's own indexing states the same pairing — "`e_y` is `(nyn-1, nzn)`", "`e_z` is `(nyn, nzn-1)`" (`.scratch/wt-m3b-diag/emfit/modal.py:280-281`, `:290-293`) — and a 201 x 77 station plane is 200 y-cells by 76 z-cells, exactly the pair above. The stagger assignment runs this way and not the other way: `e_y` is the half-integer-y / integer-z block, `e_z` the integer-y / half-integer-z one.
+
+**Witnesses the file gets right, listed so this ruling is not read as a blanket distrust of it.** The slot *names* are the physical components, `Ey` and `Ez`. The stagger assignment above is stated correctly in the file's own array construction. The flux pairing is right: `Sx = E_y H_z - E_z H_y`, with `plane_Hz` taken on the `plane_Ey` lattice and `plane_Hy` on the `plane_Ez` lattice, which is the pairing a Poynting vector on a Yee lattice requires. What is wrong is one comment, at `:368-369`, which calls the node block longitudinal.
+
+**The residual edge, recorded rather than smoothed.** The library itself uses that word: `emfit/mode2d.py:580` reads "for the scalar potential and for the longitudinal ``e_z``", `:637-639` calls the block "nodal longitudinal field of the *mixed* formulation ... ``-i beta (k_zz - k0^2 m_zz)^{-1} c^T e_t``", and the error strings at `:1092` and `:1110` carry it too. The script's comment therefore repeats the library's usage rather than inventing it. Two things weigh against that usage for this capture. The script takes `E_t[:,:,0]` for `e_y` and the node solve for `e_z`, while `E_t[:,:,1]`, the vertical in-plane component that `e_at` returns, is never used at all. And the flux study at (d.1) below measures the `Ey` slot at 0.086 per cent of the Poynting flux with the `Ez` slot carrying the rest, which is the asymmetry a vertical-transverse identification predicts and a longitudinal one does not. The naming conflict between this paragraph and `mode2d.py`'s docstrings is left open here: what is ruled is the slot's content, not the word the library uses for it.
+
+**The ruling, for T4's use only.** The block called `e_z` in this capture is the VERTICAL TRANSVERSE component, not the longitudinal one, and T4's branch is VERTICAL TRANSVERSE accordingly. Nothing else in this section changes: no tolerance is proposed here, T4 still ships no gate, and the placeholder bands stay withdrawn. What the ruling buys is that T4's deferred question is now the narrower one of which component the analytic ratio is computed from, rather than an open identification.
+
+**Status: RESOLVED (slot content). T4 branch set to VERTICAL TRANSVERSE. No gate.**
+
 ### (a) The rule
 
 A capability that has been demonstrated but not gated has not been qualified. It has been shown to produce a number on one configuration, and nothing follows about the next one.
@@ -7107,7 +7149,7 @@ Test A (`decisions.md:2426`) swept four windows over the same nine phasors at th
 
 The rad/m shifts are as stated at `decisions.md:2426`; the percentages are derived arithmetic against beta of about 230.7 rad/m, and that paragraph's own summary is that "the whole effect is under 0.06 per cent". Its larger figure is the four-window spread, 0.255 rad/m on V (0.111 per cent) and 0.049 rad/m on I (0.021 per cent).
 
-Two bigger perturbations are also on the record. Test B (`decisions.md:2430`) swept `nx` 59 / 66 / 73 / 80 / 87 — a 1.47-fold change of box — and beta drifted +0.22 per cent (V) and +0.09 per cent (I). §94.4 (`decisions.md:2736`) quadrupled the extraction window and moved beta by **+0.223 per cent** against a pre-registered 0.5 per cent threshold, on which it declared the 0.35 lambda_g span adequate.
+Two bigger perturbations are also on the record. Test B (`decisions.md:2430`) swept `nx` 59 / 66 / 73 / 80 / 87 — a 1.47-fold change of box — and beta drifted +0.22 per cent (V) and +0.09 per cent (I). §94.4 (`decisions.md:2735`) quadrupled the extraction window and moved beta by **+0.223 per cent** against a pre-registered 0.5 per cent threshold, on which it declared the 0.35 lambda_g span adequate.
 
 #### (b.2) Three misquotations, corrected before they propagate
 
@@ -7117,13 +7159,13 @@ The prior stability data reached this section as "0.02 per cent under a two-wave
 
 **Nothing in the tree is a four-fold box length.** Test B is a 1.47-fold change. §94.4 grew the box 2.1-fold (`nx` 66 to 140, x 26.4 to 56.0 mm) and quadrupled the *extraction window* (9 to 25 stations, 9.6 to 38.4 mm). The +0.22 per cent attaches to the extraction window (`decisions.md:2742`), which is the right quantity for T1 — but it is not a box-length figure and must not be quoted as one.
 
-**A third 0.022 per cent is in play and is a different quantity.** `decisions.md:2735` records a control comparison, 230.139920 against 230.190760, as -0.022 per cent, and `decisions.md:4854` records `(T2-T1)/T1*100 = 0.022406453058486823%`, the difference in window length between the B1 and B2 arms. Neither is a beta-stability figure. The 0.186 per cent quoted elsewhere (`decisions.md:102`) is a bar-to-bar drift over a 0.2 mm change, not a box change.
+**A third 0.022 per cent is in play and is a different quantity.** `decisions.md:2733` records a control comparison, 230.139920 against 230.190760, as -0.022 per cent, and `decisions.md:4854` records `(T2-T1)/T1*100 = 0.022406453058486823%`, the difference in window length between the B1 and B2 arms. Neither is a beta-stability figure. The 0.186 per cent quoted elsewhere (`decisions.md:102`) is a bar-to-bar drift over a 0.2 mm change, not a box change.
 
 #### (b.3) The derivation
 
 **T1_tol = 0.5 per cent**, on three grounds that agree.
 
-It is inherited rather than invented. 0.5 per cent is the threshold already in force at `decisions.md:2736` for precisely T1's question — does beta survive a change of extraction window — applied there to a perturbation far larger than dropping one station from nine. Adopting it for a smaller perturbation is the conservative direction.
+It is inherited rather than invented. 0.5 per cent is the threshold already in force at `decisions.md:2735` for precisely T1's question — does beta survive a change of extraction window — applied there to a perturbation far larger than dropping one station from nine. Adopting it for a smaller perturbation is the conservative direction.
 
 It clears the measured noise by an order of magnitude. 0.5 per cent is 8x the largest single-station-drop effect (0.062 per cent, V) and 4.5x the largest four-window spread (0.111 per cent, V). A tolerance below about 0.1 per cent would sit within a factor of 1.6 of an effect already classified as a reference-plane artefact rather than dispersion, and would risk failing T1 on a benign window change.
 
@@ -7136,6 +7178,24 @@ It separates window drift from mode physics with room on both sides. The smalles
 #### (b.4) The falsifier, read strictly, is already partly established
 
 Test A found that dropping a station moves beta monotonically, in the direction a constant phase offset pushes it, and attributed the movement to the window rather than to dispersion. Read strictly, that is T1's falsifier firing at 0.06 per cent: beta does depend on the window, a little. The falsifier is therefore about magnitude and not about existence, and it must be read that way or it is untestable. What licenses the reading is the arithmetic already at `decisions.md:2426`: the axial excess sits 29 times (V) and 156 times (I) above the window spread that would have to explain it. T1 tests that the window term stays in the small column; it does not test that the window term is zero. The falsifier in (b) is registered in exactly that magnitude form, and deliberately: 0.062 per cent does not fail it, 0.5 per cent or more does.
+
+#### (b.5) The (b.3) basis is SUPERSEDED: fresh window sensitivities, and the margin against them
+
+Everything in (b.3) that bears on magnitude is superseded here. Its two numbers are kept visible rather than deleted, because the record of what was believed is part of the record: **SUPERSEDED — 0.062 per cent**, the largest single-station-drop effect on the record axis at V, and **SUPERSEDED — 0.111 per cent**, the largest four-window spread at V. The reading at `decisions.md:7171`, that 0.5 per cent is 8x the first and 4.5x the second, is withdrawn with them. Both were measured on one nine-station sweep, and that sweep is not the one T1 runs.
+
+**What replaces them, analytic basis.** Station-drop sensitivities recomputed from the current capture: dropping station 8 moves beta by 0.0700 per cent, dropping station 0 by 0.2338 per cent, and the span between the 0..7 and 1..8 windows is 0.164 per cent. Across all 21 windows the analytic span is 2.02 per cent, and the three-station end windows give 1.93 per cent and 0.890 per cent.
+
+**What replaces them, mixed basis.** The same quantities are far larger: 3.06 per cent and 2.99 per cent at the two ends, a span of 6.24 per cent, and 31.2 per cent across all 21 windows — 19x to 38x the analytic figures.
+
+**T1's margin, restated from the fresh numbers.** At T1_tol = 0.5 per cent the test passes against the worst-case analytic window sensitivity with a margin of 2.1x (0.5 / 0.2338 = 2.14). That is a thinner margin than (b.3) claimed and it is the correct one, because it is taken against a measured effect rather than against the arithmetic of an inherited threshold. The corrected claim is that 0.5 per cent clears the analytic worst case by 2.1x, not 8x.
+
+**The null experiment (b.3) records as deferred, run for the part that costs nothing.** A repeat fit on the same capture returns beta_delta = 0.0 bitwise. That is DETERMINISM of the post-processing and it is not a repeatability floor: it says the same binary on the same array does the same thing, which was never in doubt. The smallest non-zero null obtainable without a re-solve is 8.13e-11 relative, from BLAS thread count 1 against 4 on the same capture. A float32 round-trip of the captured fields gives 1.10e-10 and 9.87e-11. Taken together these bound post-processing noise at about 1e-10 and nothing above it; they do not bound the solver's own repeatability, which still requires the re-solve (b.3) describes.
+
+**The basis axis stays unresolved, and this subsection does not close it.** The mixed-versus-analytic beta gap is 5.46 per cent, which is smaller than the 6.24 per cent window span of the mixed basis alone. A quantity whose basis-induced disagreement is smaller than its own window-induced spread cannot discriminate between bases, so T1 cannot be run on the basis axis with beta as the discriminator. The basis-axis tolerance (b.3) records as transferred by assumption therefore remains an assumption. Only window-free quantities are admissible on that axis: `z0_power`, `s11` and `s21`, `mode_purity`, `power_ratio`.
+
+**One number recorded unexplained.** The fitted beta is 326.9107654423116 and the eigenvalue beta is 312.7827646322591, a disagreement of 4.52 per cent. No cause is attributed to it here. It is recorded because it is larger than every tolerance in this section, and because (c.2) below depends on the admission that it is unaccounted for.
+
+**Status: SUPERSEDED AND REPLACED, in part.** The magnitudes in (b.3) are no longer in force. T1_tol = 0.5 per cent stands, on the fresh margin of 2.1x, still RESERVED and still not run.
 
 **Status: RESERVED.** T1_tol = 0.5 per cent, pre-registered here, not run.
 
@@ -7157,6 +7217,16 @@ The number is therefore not an estimate and not a derived convenience. It is the
 
 Two margin factors about this same number are on the record, and they are factors against different floors: 88x against 1e-3, derived here, and the ~968x already written at `decisions.md:4850` against that experiment's own 1.1 per cent clause (vii) floor. Quoting one as the other is an error of a factor of eleven.
 
+#### (c.2) T2 is OPEN: 1e-3 sits below the disagreement it would have to test
+
+T2 as written cannot pass, and the reason is arithmetic rather than a bad run.
+
+**The tolerance is on the wrong side of the disagreement.** T2_TOL = 1e-3 is ~45x BELOW the measured 4.52 per cent fit-versus-eigenvalue disagreement recorded at (b.5), and below the 5.46 per cent mixed-versus-analytic gap on the basis axis. A consistency test whose tolerance is smaller than a known inconsistency fails by construction: it does not measure the two extractions against each other, it measures the fit against the eigenvalue, and it does so with two orders of magnitude of margin against passing.
+
+**The test also refuses rather than lying, which is the one thing it does right.** `TOLFLUX_planes.npz` stores beta with shape `(0,)`, so `T2_agree` raises `ValueError` loudly instead of comparing a placeholder against a number. That failure is intended and must not be suppressed: a capture without beta cannot support a T2 comparison, and the test says so instead of returning garbage.
+
+**Status: OPEN.** T2 needs a capture that carries beta before its tolerance can be set, and 1e-3 is withdrawn as a proposed value. What the tolerance becomes is not proposed here. The disagreement it must clear is 4.52 per cent, and a tolerance above that is a different test from the one (c) describes.
+
 ### (d) T3 — common-mode invariance, deferred pending the kappa-sensitivity measurement
 
 **Statement.** Scale both fields by kappa in {0.5, 2.0}, against the unscaled field at kappa = 1.0 as reference; R_MODAL unchanged to T3_tol, with T3_tol not yet set.
@@ -7168,6 +7238,20 @@ Two margin factors about this same number are on the record, and they are factor
 **The decision rule, registered before the measurement.** Measure `|R_MODAL(kappa) / R_MODAL(1) - 1|` for kappa in {0.5, 1.0, 2.0} on one existing capture, by post-processing the captured fields, with no new solve. Then: (i) a residual below 1e-10 sets T3_tol = 1e-10 and T3 is adopted, because that is the statement that the extraction is a ratio to machine precision; (ii) a residual between 1e-10 and 1e-3 sets T3_tol to ten times the measured value, with the derivation stated, and T3 is adopted; (iii) a residual above 1e-3 re-scopes T3 to the log-log slope form `d log R_MODAL / d log kappa` with a tolerance taken from the measurement, because at that size the absolute-change form is measuring something other than invariance. The branches are registered here, before the number exists, for the reason (a) gives: a tolerance chosen after its measurement is a description of the measurement wearing a gate's clothes. One subtlety the measurement must respect and report: the only capture available holds station planes 0.0104 to 0.020 and does not contain the ruled plane x_port = 0.0087, so the quantity whose kappa-sensitivity can be measured may not be R_MODAL at x_port. Whatever is actually measured must be named in the report, not silently substituted.
 
 **Status: DEFERRED.** No tolerance is in force for T3 and no T3 number is claimed.
+
+#### (d.1) Operator branch (b) measured and found DEGENERATE; T3 re-scoped, returned to the operator
+
+The decision rule in (d) registers three branches before the measurement. What the operator answered is not one of them: T3 was re-scoped to E-versus-H consistency, `|R_E / R_H - 1| <= T3_tol` at T3_tol = 1e-5, and that is branch (b). It was measured on the existing capture, and the tolerance as written is not implementable on it, for a reason that is structural rather than numerical.
+
+**The measurement.** The whole E block was scaled against H by each of {±1 per cent, ±10 per cent, +5 per cent, +25 per cent, +50 per cent, +100 per cent, −50 per cent} and R recomputed by both routes. R moved by at most one ulp across the entire set: a fitted slope of −2.45e-17 against a residual of 2.24e-16. Breaking H alone, rather than E against it, gives `|R_E − R_H| = 0.0` exactly. At 1e-5 the smallest E-versus-H break the gate could detect would be `|b| >= 4.1e11`.
+
+**Why, and why it is not a defect of the capture.** R is a ratio of per-station products `conj(E) * H`. A global factor applied to E cancels between numerator and denominator, so a gate on E-versus-H cannot see it at any tolerance a machine can resolve. The gate is not too loose; it has no signal to be loose about. **T3 as specified in branch (b) cannot be implemented**, and it is returned to the operator with that finding rather than adopted with a number attached.
+
+**Two non-degenerate re-definitions, both measured on the same capture, neither adopted.** (i) *Per-station E scale.* Breaking station 8 alone moves R by exactly `b`, slope 1.0, so 1e-5 there detects a 0.001 per cent break; breaking station 0 alone gives `1/(1+b)`, fitted slope −0.782. This is non-degenerate because it breaks the ratio's per-station structure rather than a global factor. (ii) *One named polarisation slot.* The earlier case-C measurement scaled only `plane_Ey` and read 8.591e-4. That number is not arbitrary: it is the `Ey` slot's share of the Poynting flux. In `Sx = E_y H_z - E_z H_y` the term `E_y H_z` carries 0.086 per cent of the flux, so a gate on the `Ey` slot is nearly blind, while the same gate on `Ez` has a slope near 0.999 and would see almost any break.
+
+**The asymmetry is independent support for (0).** A slot carrying 0.086 per cent of the flux and a slot carrying the remaining 99.9 per cent are not interchangeable, and the direction of the asymmetry matches a vertical-transverse identification of the `e_z` block rather than a longitudinal one. It also tells against reading §8(b) of the ownership document (`reports/2026-10-26_13-52-03_Design_pass_1__modal_port_pipeline_ownership__and_.md`, `.scratch/design/modalport_ownership.md`) as though the two components were symmetric parties to the ratio.
+
+**Status: OPEN, returned to the operator.** No T3 tolerance is in force. Branch (b) as specified is withdrawn as unimplementable. Definitions (i) and (ii) above are the two candidates and neither is adopted here.
 
 ### (e) T4 — relative amplitude, deferred, and its placeholder bands withdrawn
 
