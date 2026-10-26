@@ -6810,8 +6810,91 @@ Measured: python -m pytest tests/test_modalport.py gives 5 passed, 1 skipped in 
 
 Retraction. An earlier paragraph in §101.17 records |a(x2)/a(x1)| = 1.000018533819512, deviation 1.85e-05, on this same fixture. That figure is withdrawn here in favour of the 1.000058142136 measured above, and the reason is that it cannot be reproduced under any window convention that can be reconstructed. One solver run was re-analysed five ways on the same time series: the in-file gate gives 5.814e-05, bit-identical to the test; opening the gate at tau1 + RAMP instead gives 1.590e-01 with residual 3.07e-01, because it admits the drive's turn-on; closing it at flat_end + tau2 gives 1.914e-01 with residual 3.10e-01, because it admits the x = 0 echo; doing both gives 1.763e-04 with residual 2.6e-01, still leaky; and trimming the in-file gate a quarter period inward at each edge gives 1.478e-05 with residuals 1.5e-05 and 2.3e-04. None of the five returns 1.853e-5, so the harness behind that number used a window convention the record does not capture. With it goes the t1 margin study that accompanied it, whose values were 1.853e-5, 8.924e-6, -8.476e-7 and 1.754e-6 over margins of zero, a quarter, a half and one carrier period, and the t1 fine-sweep minima of 4.199e-7 at 0.95 T and 2.718e-7 at 0.75 T. What does survive from that same study, and is the reason the reconstruction of the fixture can be trusted at all, is the reflection figure: it recorded |Gamma_short| = 1.000324477232751, and the retargeted test prints 1.000324477233: the recorded figure rounds to exactly that at twelve decimals, so the two agree exactly at the precision the test reports, which is what distinguishes this figure from the withdrawn t1 one. The |Gamma| margin values 3.245e-4, 3.248e-4, 1.470e-4 and -3.491e-5 are therefore not withdrawn; only the t1 side of the study is.
 
-The secondary block inside t2 did not survive the change, and it is parked rather than weakened. The old t2 ended with a two-station forward/backward decomposition asserting |s11| = 1 to 1e-6 (tests/test_modalport.py:595). The plan was to move that assertion to the operator's 1e-3 along with the others; measurement says it would have failed there too. Across flat-top extensions of 150, 160, 170, 180, 190, 200 and 240 ps the decomposition returns |s11| = 391.895, 1571.717, 2754.510, 3855.913, 6115.462, 373.170 and 12.707, with |a_f| = 0.412, 0.103, 0.058, 0.042, 0.026, 0.432 and 13.02 against |a_b| near 161 throughout: in every one of those windows it reports an almost pure backward wave. Two further extensions tried, 120 ps and 140 ps, give lo > hi — an empty gate, before any solution is attempted. The mechanism is geometric. The two stations sit 0.1 L apart, which is 4.83 carrier wavelengths at 72 mm against 1.61 at 24 mm, so a relative error in beta enters the decomposition amplified by the station separation measured in wavelengths. Loosening the gate to 1e-3 would not have produced a passing test, it would have produced a failing one. So the block is split out into test_t2b_two_station_decomposition (tests/test_modalport.py:552), skipped, with those seven measured values and the arithmetic carried in the skip reason, and its 1e-6 assertion left untouched: parked, not weakened. Its comment was also wrong twice over after the retarget, having claimed the block ran its own longer simulation and needed a flat top longer than the 40.6 ps arrival period 2*x_s/v_g; at 72 mm that period is 121.9 ps, and the block's 30/60/30 ps drive is the same length as the parent test's, so it cannot supply the window it describes. Both statements are corrected in the file.
+The secondary block inside t2 did not survive the change, and it is parked rather than weakened. The old t2 ended with a two-station forward/backward decomposition asserting |s11| = 1 to 1e-6 (tests/test_modalport.py:598). The plan was to move that assertion to the operator's 1e-3 along with the others; measurement says it would have failed there too. Across flat-top extensions of 150, 160, 170, 180, 190, 200 and 240 ps the decomposition returns |s11| = 391.895, 1571.717, 2754.510, 3855.913, 6115.462, 373.170 and 12.707, with |a_f| = 0.412, 0.103, 0.058, 0.042, 0.026, 0.432 and 13.02 against |a_b| near 161 throughout: in every one of those windows it reports an almost pure backward wave. Two further extensions tried, 120 ps and 140 ps, give lo > hi — an empty gate, before any solution is attempted. The mechanism is geometric. The two stations sit 0.1 L apart, which is 4.83 carrier wavelengths at 72 mm against 1.61 at 24 mm, so a relative error in beta enters the decomposition amplified by the station separation measured in wavelengths. Loosening the gate to 1e-3 would not have produced a passing test, it would have produced a failing one. So the block is split out into test_t2b_two_station_decomposition (tests/test_modalport.py:555), skipped, with those seven measured values and the arithmetic carried in the skip reason, and its 1e-6 assertion left untouched: parked, not weakened. Its comment was also wrong twice over after the retarget, having claimed the block ran its own longer simulation and needed a flat top longer than the 40.6 ps arrival period 2*x_s/v_g; at 72 mm that period is 121.9 ps, and the block's 30/60/30 ps drive is the same length as the parent test's, so it cannot supply the window it describes. Both statements are corrected in the file.
 
-The t2b disposition is not settled and is put back to the operator with four options: give that block its own short line, so the two stations fall within a fraction of a carrier wavelength and the decomposition stops being ill-conditioned; move the station pair closer together on the canonical line, which requires _run_line to accept station indices instead of using the module constants; demote the block to a printed diagnostic with no assertion; or delete it outright on the grounds that the attribution-clean |Gamma_short| ratio retained in t2 is the measurement that does survive the fixture change. Until a ruling arrives the block stays skipped and its assertion stays at 1e-6, so unskipping it remains a one-line change.
+The t2b disposition is now ruled: the block stays skipped, with its measured values in the skip reason and the mechanism stated in the file as a property of the fixture rather than a defect of the code — the two-station decomposition amplifies relative error in beta by the station separation, 1.61 carrier wavelengths apart at 24 mm is benign, 4.83 at 72 mm is not (|s11| reaches 6115.462 against |a_b| near 161), and the code is correct while the fixture is not the one it needs. Building test infrastructure for the decomposition was rejected: a closer station pair, or a dedicated line, would be machinery for a measurement this geometry forbids, and the four options I put to the operator reduce by the ruling to a single deferred item — a dedicated short fixture, which would be the real test.
 
 One limit applies to every figure above: the full test suite cannot be completed in this container. It was killed by SIGKILL, exit 137, after 619 s and produced no output, and a 90 s cap produced 40 dots and no failures. Every number in this section therefore comes from a single named file run, never from a whole-suite result, and should be read that way.
+
+## §101.19 — The resource interface: `emfit.job.v1` in, `emfit.result.v1` out, and a contract that authorises nothing
+
+Status: design only. Nothing in this section has been implemented and nothing in it authorises a run. There is no schema file, no validator, no versioning machinery, and no code that emits either document below; the two JSON objects are specifications of intent, written down now because the ordering they imply is the whole of the argument. It is also why §101.18 is deliberately vacant: that section records the anchor gate result, the gate has not been run, and the numbering here follows the ruling rather than the writing order.
+
+### (a) What a resource is, and why the contract precedes the fast solver
+
+The tool is to become a resource for the orchestrating agent, not a codebase the agent reads and not a library it calls. The distinction is that a resource is defined by what crosses its boundary and by nothing else: the agent submits a job and receives a result, while the meshing, the time stepping, the iteration count and the choice of solver stay on the tool's side of the line. The tests recorded in §101.16 and §101.17 established that the core simulation can be trusted on the fixtures measured so far, which is the precondition for promising anything across a boundary at all. What follows fixes the shape of the promise, and it is fixed before the fast solver exists because a solver written ahead of its contract grows an output format of its own, and then the caller has to know which solver ran — which is exactly the coupling the contract exists to remove.
+
+### (b) Input: `emfit.job.v1`
+
+A job is a JSON object carrying the six things a caller must state and the one thing it may ask for.
+
+```json
+{
+  "schema": "emfit.job.v1",
+  "geometry": {"kind": "kicad", "path": "board.kicad_pcb"},
+  "materials": {"substrate_eps_r": 4.4, "substrate_h_mm": 1.6},
+  "sources": [{"kind": "modal_port", "name": "J1", "net": "RF_IN"}],
+  "observables": [{"kind": "sparam", "name": "S11"}, {"kind": "sparam", "name": "S21"}],
+  "frequencies_ghz": [2.4, 2.45, 2.5],
+  "tolerance": {"kind": "sparam_abs", "value": 1e-3}
+}
+```
+
+`geometry.kind` is shown with one value only. A parametric form is required as well, because every fixture in this repository is parametric — a line of stated length, a stated time step, stations at stated node indices — and a schema that can only accept a board file would be unable to express a single one of the tests that justify it. That gap is listed with the other defects below rather than papered over here.
+
+### (c) Output: `emfit.result.v1`
+
+```json
+{
+  "schema": "emfit.result.v1",
+  "status": "ok",
+  "artifacts": {"touchstone": "/path/to/result.s2p", "manifest": "/path/to/manifest.json"},
+  "provenance": {
+    "mesh_cells": 4894400, "cell_mm": 0.1, "solver": "fit-leapfrog",
+    "tolerance_achieved": {"S11": 4.2e-4, "S21": 3.1e-4},
+    "reference": "modal-flux-agreement",
+    "commits": {"emfit": "a1b2c3d"}, "decisions_section": "101.18"
+  },
+  "warnings": []
+}
+```
+
+`status` is three-valued: `ok`, `degraded`, `failed`. The numbers themselves do not live in this document; they live in the Touchstone file, whose path is an artifact. What the document carries is what a Touchstone cannot say — what was solved, on what mesh, against what reference, under which commit — and a manifest at the second artifact path carrying the same content for human readers.
+
+### (d) Five properties of the contract
+
+Versioned. Field names are a promise. A change to them is a version bump from `emfit.job.v1` to `emfit.job.v2`, never a silent reinterpretation of a field under the old name, because a caller that pinned v1 must keep working.
+
+Every number carries its provenance. This is the rule the project has already earned: every figure in §101.16 and §101.17 is quoted with its fixture, its mesh, its time step, its window and the run that produced it, and a result object that returns an S-parameter without those is a number the caller cannot check. The block names the mesh, the cell, the solver, the tolerance actually achieved, the reference the result was agreed against, the commits and the decisions section.
+
+Unknown fields tolerated, in both directions. A caller may send fields the tool does not use; the tool may return fields the caller does not read. Neither side fails on the other's additions. Without this, the version bump above becomes the only way to add anything and the schema dies of caution.
+
+Idempotent, with the input hash in provenance. The same job yields the same result, and a rerun is a comparison rather than a guess. The limit has to be stated with it: this is a claim about determinism that nothing in this repository currently supports, because the tests are reproducible on one machine and there is no evidence yet about another machine, another thread count or another BLAS build.
+
+Degraded is a first-class outcome. When the tolerance cannot be achieved the tool says so: status `degraded`, a warning naming the reason — mesh too coarse, frequency too high, geometry too complex — the best result it can produce, and the tolerance it actually achieved. It never returns a number that violates the request without saying so, because a silently wrong number is the one failure mode this contract exists to make impossible.
+
+### (e) What the agent does not need
+
+Shell scripts, file system manipulation, process management, and any judgment about the physics. The agent's whole job is to submit, to wait, and to read a schema. If using the tool requires an agent to know where to put a file, which command to type, or whether the answer looks physically plausible, then the interface has failed and the repair belongs in the tool rather than in the agent. This is also the test for whether a feature belongs in the contract at all: if it exists so that a caller can work around the tool, it is the tool that should change.
+
+### (f) The fast solver plugs in behind the contract
+
+A GPU FDTD, a frequency-domain FEM, and a surrogate model trained on FDTD results all produce `emfit.result.v1`, and the `solver` field in provenance is the only trace of which one ran. The surrogate is the case that makes the contract necessary rather than merely convenient: a trained model can be wrong in ways a direct solver cannot, so its result must carry its training provenance and the tolerance it was certified against, and it must be able to report `degraded` when a job falls outside the region it was trained for.
+
+### (g) The UI is a consumer of the same JSON
+
+The field data is already arrays — `plane_Ey`, `plane_Ez` and their siblings — the S-parameters are already in the Touchstone, and the provenance is already in the manifest. The UI reads the same documents the agent reads. Rendering is a software decision, and it must not become a second physics interface: if the UI needs a quantity, the quantity belongs in the contract, and the fix is an addition with a version bump rather than a private read of the solver's internals. This also settles when to build it. A UI written before the contract encodes the current data shapes, and those shapes change at every M3 milestone; a UI written after it reads `emfit.result.v1` and is stable.
+
+### (h) Sequencing
+
+The core simulation is trustworthy now, on the fixtures measured in §101.17. The interface becomes stable after M3c, once the anchor gate result of §101.18 is in. The fast solver follows the interface. The UI follows the interface. Each step carries a test that a stranger can run: the named-file test runs of §101.17 for the core, a schema-conformance test for the interface, and a comparison against the direct solver for the fast one. The order is the argument — the contract is what stops the fast solver from becoming a second interface, and what stops the UI from becoming a second truth about the physics.
+
+### (i) Three defects in this draft, recorded rather than fixed
+
+A design that claims to be finished before a line of it exists is not a design. These are the defects visible from inside the draft, and the section authorises nothing until they are settled.
+
+The tolerance is scope-asymmetric. `tolerance` in the job is one value for the whole job, while `tolerance_achieved` in the result is keyed per observable. A caller therefore cannot ask for 1e-3 on S11 and 1e-2 on S21, and where the request is global and the achievement is per observable there is no defined rule for reducing one to the other. The cheaper repair is to make the request per observable too, mirroring the result exactly.
+
+The provenance block as drafted is FDTD-shaped. `mesh_cells` and `cell_mm` are structured-grid quantities: a frequency-domain FEM has no `cell_mm`, and a surrogate has neither a mesh nor a cell. Left as written, the contract leaks the solver into the schema and defeats property (f) before the fast solver is even attempted. The repair is a small required core — solver, tolerance achieved, reference, commits, decisions section — plus an open solver-specific object, which has the further virtue of exercising the unknown-field tolerance on the tool's own output.
+
+The geometry is board-shaped. As noted in (b), only a file-backed geometry is specified. The parametric geometry is the one the tests use, so it is the one that would be exercised first, and it is the one the draft leaves as a word.
