@@ -6904,6 +6904,85 @@ Two entries in (b)'s table cannot be explained by interpolation, and the objecti
 
 These are quadrature or normalisation defects in the measurement path, and they are of a different kind from the resolution artefact suspected in `beta` (336.675159 against 312.7827646322591, +7.6 %) and `eps` (4.205181853 against 3.6295122080769704, +15.9 %), both tabulated at `decisions.md:6855`. The convergence study discriminates them without needing either diagnosis settled in advance: whatever stays pinned as resolution rises is a defect, and whatever decays is an artefact. No fix is proposed in this block. Note also that (d.4)'s 1e-3 check is a ratio of two extractions from one field and is blind to a common-mode normalisation error — so it can pass while these two defects stand, and that is the correct reading of a pass.
 
+### (e) The convergence study: three independent discretisations, one artefact, one defect, and one unowned fact
+
+(d.5) set the test and this block runs it: whatever stays pinned as resolution rises is a defect, and whatever decays is an artefact. Three meshes were solved, both extraction routes were read off each, and the answer separates cleanly. The eigen route's disagreement decays. The placed route's does not. That is the study's result, and it is the one thing here that is settled. Two of the three candidate repairs are refuted by it, and the third is not a repair at all but an architectural question.
+
+Paths, corrected, because earlier blocks of this section cite them inconsistently: the scripts live under `.scratch/logs/` (`.scratch/logs/s10118_basis.py` 20908 B, `.scratch/logs/s10118_mesh_study.py` 18993 B) while every data artefact lives at the top level of `.scratch/` (`.scratch/s10118_mixed_mode.npz` 411015 B, `.scratch/s10118_result.txt` 10489 B, `.scratch/s10118_mode_41x22.npz` 708845 B, `.scratch/s10118_mode_51x19.npz` 759043 B). No directory holds all of them, and `.scratch/s10118_basis.py` does not exist.
+
+#### (e.1) What was run, and what was held fixed
+
+The study was run by `.scratch/logs/s10118_mesh_study.py`, a copy of the frozen solve path in `.scratch/logs/s10118_basis.py` with mesh dimensions lifted to command-line arguments. Mesh construction was proved faithful before any number was read: at 31 x 17 the copy reproduces 527 nodes, 1486 edges, 1444 free edges and 42 PEC edges exactly, and `np.array_equal` of both axis vectors against the frozen module's `XS` and `ZS` is True. A convergence study whose mesh cannot be reproduced is a study of the copying error, so this check came first.
+
+| mesh | edges | free_e | n_dof | PEC | wall |
+|---|---|---|---|---|---|
+| 31 x 17 | 1486 | 1444 | 1927 | 42 | 111 s |
+| 41 x 22 | 2581 | 2525 | 3369 | 56 | 156.98 s |
+| 51 x 19 | 2768 | 2698 | 3595 | 70 | 196.84 s |
+
+Held fixed across all three: `k0 = 164.17940719617263` bit-identical, `sigma = 1.0`, the candidate window returning a single row at (1, 4), and eigen-residuals of 4.85e-18 / 8.75e-18 / 3.33e-18. The frozen inputs were verified unchanged before and after the study: `.scratch/logs/s10118_basis.py` sha256 `2d02fc01f51bc4cb535f1b0d4364cd3985c6af889e97b87887c36a72dfef6e80`, `.scratch/s10118_mixed_mode.npz` sha256 `8603e909dc2f99eff9505eae0cb344765b9d7628fc72ef28150fa197eacd2dff`. One mechanical hazard is worth recording because it will bite the next person: importing `.scratch/logs/s10118_basis.py` rewrites `.scratch/s10118_result.txt` at module import time, because the script's output write is at top level rather than under a main guard. The baseline file had to be restored from `.scratch/s10118_result.txt.bak_before_mesh_study` (both 10489 B) and is now sha256 `4e841289dc055012f7beed79ace7e87df76172ca0b6826c73ed1876147e21c84`.
+
+#### (e.2) The eigen route's disagreement decays: a resolution artefact
+
+| mesh | beta | eps_eff | beta gap | eps gap |
+|---|---|---|---|---|
+| 31 x 17 | 312.7827646322591 | 3.6295122080769704 | 0.9036 % | 1.8155 % |
+| 41 x 22 | 311.95534661849416 | 3.6103349900617117 | 0.6366 % | 1.2773 % |
+| 51 x 19 | 311.45817237981936 | 3.5988363238613514 | 0.4760 % | 0.9552 % |
+
+Against the analytic values 309.981864 and 3.564800282. The gap closes monotonically and roughly halves at each step, and all three meshes bracket `eps_eff` in [3.5988, 3.6295] against 3.5648. Whatever the eigenvalue solve is doing wrong, it is doing less of it as the mesh refines, which is the signature of a discretisation artefact and not of a modelling error. The eigen route is sound.
+
+#### (e.3) The placed route's disagreement does not decay: a defect, and it rests on one degree of freedom
+
+| | analytic | 31 x 17 | 41 x 22 | 51 x 19 |
+|---|---|---|---|---|
+| `beta_placed` | 309.981864 | 336.675159 | 337.464145 | no result |
+| `eps_placed` | 3.564800 | 4.205181853 | 4.224914330 | no result |
+| `mode_purity` | 0.013875 | 0.177850 | 0.185542 | no result |
+| `v_mode` | 9.9558 | 2.028639 | 5.340808 | -0.000000 |
+
+The 51 x 19 placed result does not exist. The run died with `ZeroDivisionError: 2.0/v_mode` at `v_mode = -0.0`; (e.4) explains why, and it is not a numerical accident.
+
+Two facts about this table, both established from source rather than from the numbers. First, `beta_placed == k0 * sqrt(eps_placed)` holds bit-for-bit at both meshes, because `emfit/modal.py:575-586` computes `eps_eff = (beta*C0/omega)**2` from the same `beta`. The placed route therefore has one degree of freedom, not two: the earlier reading of "+0.234 % on beta, +0.469 % on eps" treated those as two corroborating observations of agreement when they are one fact printed twice, related by `2 * dbeta/beta = deps/eps`. Second, every ratio in the (b) table (`decisions.md:6841-6849`) is computed over station planes 0.0104-0.020 and none of them is `R_MODAL`, which remains true and is unaffected by anything here.
+
+So `beta_placed` at 336.675 and 337.464 is pinned to 0.23 % across a 75 % increase in free edges. By the test (d.5) set, that is a defect. The eigen route's equivalent quantity moved 1.3 % over the same pair. The two routes must be judged separately and must not be averaged, cross-validated against each other, or treated as two measurements of one number.
+
+#### (e.4) The transpose at `.scratch/logs/s10118_basis.py:340`: real, fixed, and worth 3 of 8.6 points
+
+The assertion at `.scratch/logs/s10118_basis.py:328` checks `mesh.nodes[j*_nx + i] == (XS[i], ZS[j])` and passes, which proves the flat nodal `e_z_node` array is (nz, nx) row-major. Line 340 then executes `ez_grid = e_z_node.reshape(_nx, _nz)` with coordinate axes `(XS, ZS)`, which is a transposed reshape contradicting the assertion one line above it. The round-trip guard at `:342-347` cannot catch it: it compares the interpolator's answer against `ez_grid[i, j]`, the same array it was handed, so it is a measured tautology, True under both orderings and structurally incapable of failing. This is "a criterion that cannot fail is not a test" in its third form, after a gate against an undefined quantity (a) and a gate at an unreachable resolution (d): here a check against the quantity it is checking.
+
+The consequence is not cosmetic. Under the shipped ordering the y = 0.01 row of the sampled field reads the flat slice `e_z_node[475:494]` at 51 x 19, and 25 x 19 = 475 falls inside vertical row j = 9, which is the strip plane at ZS = 0.0016, spanning i = 16..34 entirely within the PEC strip window at i = 15..35. All 19 values are zero, `v_mode` is -0.0, and the division by it is a crash. One more or one fewer transverse cell gives garbage that is non-zero and does not crash, which is why the defect survived two meshes and only presented on the third. At 31 x 17 the same read hits row j = 8 with 13 of 17 zeros and a maximum of 12.36; at 41 x 22 it hits rows 10 and 11 with no zeros at all. The correlation between the two orderings is -0.056, -0.026, -0.038: they are unrelated fields, not a small perturbation of one another.
+
+The repair — reshape to `(_nz, _nx)`, axes `(ZS, XS)`, index `ez_grid[j, i]`, and query columns in (z, x) order — was applied to copies and re-measured. It is proven correct independently of the numbers it produces: under the repaired ordering the substrate strip-centre column is a smooth, symmetric, mesh-converging profile with peak -0.153 / -0.185 / -0.198 and symmetric ends -0.015 / -0.018 / -0.019, whereas under the shipped ordering it is a permutation artefact and exactly zero at 51 x 19. Physics does not go smoothly to a symmetric profile and then vanish.
+
+What the repair buys, stated as the attribution it is: `beta_placed` moves from +8.63 % to +5.46 % against analytic, and to +4.96 % against the solver's own 311.458. Of the 26.7 absolute offset, roughly 10 was the transpose. Roughly 17 remains, and that remainder is mesh-stable to 0.11 % across all three meshes. **The repair is therefore not the fix.** It removes a fatal crash, it removes a wrong field, and it accounts for about a third of the disagreement. What is left is a systematic model error, and no amount of mesh refinement will touch it.
+
+#### (e.5) The unowned fact: the relative amplitude of `e_y` and `e_z`
+
+A defect that is larger than either of the above, and that the ruled scope did not cover. `e_y` is built from `e_t`, L2-normalised per edge, with rms 0.0024. `e_z` is built from `|beta * z_free|`, with rms about 4.0. `sum(e_z^2) / sum(e_y^2)` is 2.72e6 / 2.64e6 / 2.54e6 on the three meshes. The two components share no normalisation.
+
+Everything downstream follows from that ratio by construction. The unit-discrete-power normalisation is 99.9999 % `e_z`, so `v_mode` of order 0.08 is not a measurement of anything, it is the arithmetic consequence of an arbitrary relative scale. `z0_power`, `passivity`, `mode_purity` and `amplitude_mismatch_max` are not physical quantities in either ordering until the relative amplitude is owned. The repaired ordering's `passivity` of 2.001381 / 2.000680 / 1.999854 — agreeing to 0.1 % across three meshes — is a clean factor-of-two signature, which is to say it is stable, and being stable is not the same as being right. Note the limits of that claim: `measure()`'s definition of `passivity` was not read, so the factor-two reading is inferred from the numbers and not from source.
+
+This is an architectural question and not a patch, and it must not be recorded as a bug to be fixed. The question is what owns the relative amplitude of the two field components, and where that ownership lives. The eigen route answers it by construction, because the eigenvector's amplitude is set by the eigenvalue equation. The placed route has no such constraint, and the measurement pipeline inherits the arbitrariness. That is an unowned fact in the architecture, and the instrument for it is a design pass on the modal port measurement pipeline, not a third repair attempt.
+
+It also lands directly on the gate. The draft in (d.4) (`decisions.md:6897`) requires `|R_MODAL / R_FLUX - 1| <= 1.0e-3` on two extractions from one field. Both extractions are functions of the same normalised field, so a common-mode scale error cancels in their ratio. The draft's closing caveat (`decisions.md:6905`) said exactly this and it is now confirmed as the live risk rather than a hypothetical: **the draft gate would pass while the measurement is meaningless.** (d.4) is therefore not approved and requires rework, which must add a second test — that the relative amplitude of `e_y` and `e_z` is defensible and sourced from the modal decomposition — before any run.
+
+#### (e.6) What may and may not be claimed
+
+The meshes are not nested. Node splits are y [9, 12, 9] / [12, 16, 12] / [15, 20, 15] and z [8, 4, 4] / [11, 5, 5] / [9, 5, 4]. z goes 17 nodes, then 22, then 19; substrate cells go 8, then 11, then 9. Resolution rises and then falls, and no mesh's coordinate set is a superset of another's. Split generation is largest-remainder proportional scaling of a frozen weighting, so strip edges and the substrate thickness stay put and the relative weighting is fixed at 30:40:30 transverse and 50:25:25 vertical across all three.
+
+Permitted claim: on three independent discretisations the solver-side `beta` and `eps_eff` move monotonically toward the analytic values, with the gaps tabulated in (e.2). Not permitted, and this is the whole of the discipline: no convergence order, no refinement ratio, no Richardson extrapolation, no statement about h -> 0, and no attribution of the 51 x 19 improvement to a particular axis. The word for this is three independent discretisations, not a convergence ladder. A related fact that should not be lost: the vertical region boundary at 0.0036 m is a hard-coded literal in both scripts (`.scratch/logs/s10118_basis.py:88`, `.scratch/logs/s10118_mesh_study.py:132`), is not in `TOLFLUX.json`, and carries no stated derivation.
+
+#### (e.7) Three errors of the operator, recorded rather than fixed
+
+These are the operator's, in the same sense as (a) and (d.1) (`decisions.md:6823`, `:6877`): instructions reasonable on their face, each of which one cheap check would have caught, and each recorded here so that the class is visible rather than the instance.
+
+First, the operator called this a convergence study and the meshes are not nested, so it is not one. The honest claim is the one in (e.6), and the discrepancy matters because a non-nested mesh set cannot support a convergence order while the phrase invites one to be computed. Caught by the orchestrator.
+
+Second, the operator treated `beta_placed` and `eps_placed` as two corroborating observations. They are one fact, related by `2 * dbeta/beta = deps/eps`, because the same `beta` produces both (`emfit/modal.py:575-586`). A single degree of freedom cannot corroborate itself.
+
+Third, the operator's gate revision in (d.4) is blind to a common-mode scale error, which is precisely the defect in (e.5). A gate that tests `R_MODAL` against `R_FLUX` but does not test the relative amplitude of `e_y` and `e_z` would pass while measuring nothing. The revision is not approved and is not to be run.
+
 ## §101.19 — The resource interface: `emfit.job.v1` in, `emfit.result.v1` out, and a contract that authorises nothing
 
 Status: design only. Nothing in this section has been implemented and nothing in it authorises a run. There is no schema file, no validator, no versioning machinery, and no code that emits either document below; the two JSON objects are specifications of intent, written down now because the ordering they imply is the whole of the argument. It is also why §101.18 was written after this one in time but numbered before it: that section records the anchor gate result, the gate has not been run, and the numbering follows the ruling rather than the writing order. What §101.18 holds at present is the definition of `R_MODAL` and a null basis experiment; the gate result is still owed.
