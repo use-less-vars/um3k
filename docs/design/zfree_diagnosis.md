@@ -1,0 +1,618 @@
+# `z_free` diagnosis — candidate ranking, decision rules, test plan
+
+Design note. **No implementation, no changes to `emfit/`, no new solves.** Everything below is either a
+byte-exact quote from source that already exists, a number already banked in an artefact, or arithmetic on
+those numbers. Nothing in this document was produced by running the solver, and nothing in it proposes a code
+change that should be applied before a specified test says so.
+
+Three preceding analysis passes are inputs to this one and are *not* re-derived here:
+`01_formulation_map` (what is computed, by which formula chain), `02_schur_and_coupling` (the elimination, the
+coupling sign, the coupling operator), `03_corr_gap` (where the wrongness enters). This note turns those into a
+ranked, costed decision programme.
+
+**The one thing this document decides.** The corruption is **not in the operator algebra** — not in the weak
+form's seven terms, and not in the Schur elimination that removes the nodal block (`S1`-`S4`, none of which is
+reopened here). It *is* still allowed to be in the **assembled coefficients**: the same algebra fed a wrong
+`m_eps`, a wrong local cell size, or the wrong eigenvector returns the wrong field, and two of the three live
+lines below are exactly of that kind. **Corrected** — an earlier version of this paragraph said the corruption
+was "not in the operator layer" without qualification; that is too strong, because C2 attacks the ε mass that
+`assemble_mixed` puts *into* the operator and L6 attacks the graded cell size of the pencil, so §6 is right to
+re-open the L1/L6 boundary. The defensible form is: **the operator's form is closed; the operator's coefficients
+are not.** Two candidates remain live (`C1`, `C2`) plus one bounded line (`C3`, demoted, <1 %); all three are
+*distinguishable for free*. Nothing should be "fixed" before that distinction is made.
+
+---
+
+## 0. The four questions asked, and the short answers
+
+The briefing questions Q1-Q4, answered here so that a reader who wants only the verdict does not have to
+reconstruct it from the body. Each answer names where it is argued.
+
+**Q1 — What is `z_free`, and is `e_z` reconstructed correctly?**
+**Yes, the reconstruction is correct.** `z_free` **is** the nodal potential `Φ` (the LU solve of the nodal block)
+and the library's own field is `e_z = iβΦ`; the capture driver reproduces it to machine precision and its
+`np.abs` is a no-op on this data (single-signed `z_free`). What is wrong is the **shape** of `Φ` — not the
+identity of the object, not the convention, not the arithmetic that turns it into `e_z`.
+→ `S7`-`S9`, `C5`.
+
+**Q2 — Is the Schur complement exact?**
+**Yes, by construction.** `B = m1 − c D cᵀ` (:1116) is the exact symbolic elimination of the code's own Hermitian
+two-field block (:995-996); the coupling matrix is mass-weighted and `tri_sign`-covariant. It is not reopened,
+and nothing in §6 touches it.
+→ `S1`, §6, §7.3.
+
+**Q3 — Is the coupling sign right?**
+**Yes, and it is forced.** `+iβ` in both slots is the unconjugated bilinear form and admits no real β². A flipped
+sign is not a live candidate at all — it drives β² *down* while the measurement is *up*. This was a hypothesis
+and it is **REFUTED**.
+→ `S3`, `S4`, §7.3.
+
+**Q4 — Where does the `corr_e_z` collapse come from?**
+**From the shape of `Φ`.** The legal operator reaches |0.770567| on the *analytic* `Φ` with one uniform global
+sign, but only |0.117277| = 15.2 % of that ceiling on the *solver's* `Φ`, and a per-column oracle buys just
++0.036 — so the residual is not sign, not scale, not units: it is **shape**. Of the candidate causes, `C1`
+(selector) and `C2` (interface ε / graded local cell size) are live; `C3` (the reference itself) is bounded
+below 1 % by arithmetic and demoted.
+→ §1, §3.1-3.2, §4, §5.
+
+---
+
+## 1. The two measured anomalies
+
+Both come from the same solve and the same selected eigenvector, on two meshes, from
+`.scratch/s10118_mixed_mode.npz` (31x17) and `.scratch/s10118_mode_41x22.npz` (41x22):
+
+| quantity | 31x17 | 41x22 | reference | verdict |
+|---|---|---|---|---|
+| `corr_e_z` (vs analytic E_z) | **0.119160432391** | **0.119317006502** | 1.0 | 0.13% mesh drift — *converged* and *bad* |
+| `corr_e_y` (vs analytic E_y) | +0.920770784811 | −0.938702180036 | 1.0 | global sign differs by mesh; magnitude fine |
+| `eps_eff` = β²/k₀², **eigenvalue route** | **3.6295122081** | **3.6103349901** | **3.3500085193** | +8.34% / +7.77% — *not converged* (0.53% drift) |
+| `eps_eff` = β²/k₀², **fit route** | 3.964798 | 3.969256 | 3.3500085193 | +18.35% / +18.48% — *converged-wrong* (0.11% drift); see §1.1 |
+| β [1/mm], eigenvalue route | 312.7827646323 | 311.9553466185 | 300.4980 = k₀√3.3500085193 | +4.09% / +3.81%; 0.265% mesh drift |
+| β [1/mm], fit route | 326.9107654423116 | 327.094486 | 300.4980 | +8.79% / +8.85%; see §1.1 |
+| `ratio_A` = Σe_z²/Σe_y² | 0.0272240 | 0.0264298 | 0.0272240 / 0.0264298 / 0.0253657 (unit-repaired, 3 meshes) | **7.0% mesh spread** — the anchor is *mesh-local*, not an invariant |
+
+**Corrected in this table.** (i) The `ratio_A` row previously printed `0.027223973` for **both** meshes. That is
+wrong: the record's unit-repaired ratios are **0.0272240 (31x17), 0.0264298 (41x22), 0.0253657 (51x19)**
+(`docs/design/normalization_scheme.md:86`; measured `.scratch/logs/corr_ez_followup.txt:60` and `:143`), i.e. a
+~7 % spread across meshes. The duplication is traceable to the evidence log's own annotation at `:143`, which
+prints the 41x22 measured value correctly (`0.026429779`) but carries a copy-pasted
+`(TASK 1 measured 0.027223973, target 0.0272240)` in the same line — the annotation, not the measurement, is what
+got copied into this note. (ii) The `eps_eff` row is now labelled **eigenvalue route**, because it is not the only
+route and the fit route gives a different, larger number.
+
+**Why the mesh-locality matters for §5.** T3's kill criterion is written as `Σe_z²/Σe_y² ≤ 0.0272`, and 0.0272 is
+correct **on the 31x17 cache**, where the anchor is 0.0272240. It is *not* a curve-wide threshold: transferred to
+41x22 (anchor 0.0264298) or 51x19 (anchor 0.0253657) it would kill every candidate including the good one. It
+therefore discriminates only as a **same-mesh comparison** — candidate ratio measured on the same mesh as the
+anchor it is compared against. Any read of T3 must honour that.
+
+Two facts about the *shape* of the discrepancy matter more than its size:
+
+1. **`E_y` is fine, `E_z` is not.** Same solve, same vector, same 0.92-class correlation available in the
+   transverse slot and 0.12 in the longitudinal slot. Whatever is wrong is (nearly) invisible in `x_t` and
+   fully visible in `Φ = D cᵀ x_t`.
+2. **The two anomalies are of different character.** The correlation is *mesh-converged* (0.13% drift); the
+   dielectric constant is *not* (7.77% from 8.34%, drift 0.53%). A single mechanism must produce both: a
+   converged-wrong *state* and a level offset in a *scalar*. §1.1 attaches a *second* route (the fit route) whose
+   failure has a third character — converged-wrong in the scalar too (0.11 % drift at +18.4 %).
+
+### 1.1 Two routes to ε, and two different percentage scales
+
+Every "ε_eff error" in the record needs two labels attached or it is not a number: **which route**, and **which
+scale**. This is the most confusable thing in the record, so it gets its own subsection.
+
+**Two routes.** `ε_eff = (β/k₀)²` holds by construction, so ε inherits whatever β is used — and the record
+carries two independent β for the same mode on the same mesh:
+
+| route | where β comes from | β 31x17 | β 41x22 |
+|---|---|---|---|
+| **eigenvalue** | the generalised eigenproblem's `λ = β²` (the selector at :1150/:1167 reads this) | 312.7827646323 | 311.9553466185 |
+| **fit** | `beta_fit = fit_beta(x, v)` (`emfit/modal.py:575`), the phase fit on the captured field | 326.9107654423116 | 327.094486 |
+
+The two differ by **+4.52 %** (31x17) and **+4.85 %** (41x22). That offset is not rounding and is not produced by
+anything in this note's candidate list; it is a standing systematic (`emfit/modal.py:575-578`, `:506-509`;
+`docs/design/modalport_ownership.md:124-125`; `docs/design/normalization_scheme.md:274`).
+
+**Two scales.** `ε = (β/k₀)²`, so a percentage on β is **not** the percentage on ε: `(1.0879)² = 1.1835` —
+**+8.79 % on β is +18.35 % on ε**. Every comparison must say which scale is printed:
+
+| route | β [1/mm] | ε = (β/k₀)² | vs β_analytic = 300.4980 | vs ε_analytic = 3.3500085193 |
+|---|---|---|---|---|
+| eigenvalue, 31x17 | 312.7827646323 | 3.6295122081 | +4.09 % (recorded as +4.12 %) | **+8.3434 %** |
+| eigenvalue, 41x22 | 311.9553466185 | 3.6103349901 | +3.81 % | **+7.7709 %** |
+| fit, 31x17 | 326.9107654423116 | 3.964798 | +8.79 % | **+18.35 %** |
+| fit, 41x22 | 327.094486 | 3.969256 | +8.85 % | **+18.48 %** |
+
+(The `+4.12 %` for the 31x17 eigen route is the figure on record; dividing the three banked numbers as printed
+gives `+4.09 %`. The 0.03-point difference is rounding in the recorded figure and is immaterial at these scales.)
+
+Three consequences that change how the evidence reads:
+
+1. **The "8 %" and the "18 %" are one defect on two scales, or two routes — never two findings.** They must not
+   be added, subtracted, or presented as independent evidence.
+2. **The fit route is *converged-wrong*; the eigen route is *not converged*.** Between the two meshes the fit
+   route moves 0.11 % (326.910765 → 327.094486) while the eigen route moves 0.53 % (312.783 → 311.955). A
+   mesh-stable route onto a mesh-stable error is **not** evidence of correctness — it is evidence that the fit
+   route's error is structural rather than discretisation.
+3. **C1 cannot repair both routes at once.** If C1 is right and the +4.52 % fit-vs-eigen offset *persists*, the
+   corrected pair would be β_eigen ≈ 300.5 and β_fit ≈ **314.1**, i.e. ε_fit ≈ **3.660** (+9.3 % against
+   3.3500). C1 alone therefore cannot close the fit-route gap: either something additional is wrong, or the
+   4.52 % offset is itself part of the defect.
+
+**One denominator, stated once.** Every percentage in this note is against the `microstrip_mode_profile`
+reference `ε = 3.3500085193` (`.scratch/logs/corr_ez_followup.txt:22`, key `eps_eff`, in the section
+"1. ANALYTIC REFERENCE (microstrip_mode_profile → plane_mode)"; earlier versions quoted the number without a
+locator — it is cited there explicitly; provenance and status in §8.1). The record also carries a *second* "analytic" ε of **3.564800282**
+(`docs/design/modalport_ownership.md:7`), and against that denominator the same eigen-route numbers read only
++1.8 % / +1.3 % instead of +8.3 % / +7.8 % — a change of several-fold in the size of the alleged defect, from the
+denominator alone. **Corrected:** that second figure is an **unreconciled discrepancy of 6.4 %**
+(`3.564800282 / 3.3500085193 = 1.0641`), not a second reading of the same reference. The two are **not
+interchangeable**, and the `modalport_ownership.md` note's own **"+11.2 %"** (built on 3.564800282) is therefore
+**provisional**. Deciding *which* ε is correct is **out of scope** here; what this note does instead is refuse to
+let the choice move the headline percentages. The T0 arithmetic in `C3` (§4) is what adjudicates: the
+Hammerstad/Jensen closed form gives **3.32546**, which is 0.74 % below 3.3500085193 and 7.2 % below
+3.564800282 — it agrees with the **primary** denominator 3.3500085193 and not with the 3.564800282 outlier, so
+the closed form is used here only as **corroboration**, not as a third candidate. The denominator used
+throughout is **3.3500085193** (primary); any percentage quoted against 3.564800282 needs that figure
+reconciled first (out of scope).
+
+---
+
+## 2. What is settled and must not be re-opened
+
+Short list, so that nobody spends another pass here. Each line is decided by measurement or by construction,
+not by preference.
+
+| # | Settled | Decided by |
+|---|---|---|
+| S1 | `B = m1 − c D cᵀ` (:1116) is the **exact** Schur complement of the code's own Hermitian block (:995-996) | symbolic elimination; `S/A22 = A11 − C A22⁻¹ Cᴴ` with `C = iβc`, `Cᴴ = −iβcᵀ` |
+| S2 | All **seven** weak-form terms match the analytic curl-curl form | term-by-term table (`02`, §b) |
+| S3 | The **coupling sign** and `i`-placement are correct and *forced* (anticipating: a form with `+iβ` in both slots is the unconjugated bilinear form and gives no real β²) | `02` §b; independently, the *direction* of the eps_eff error (high) is incompatible with a flipped sign (`02` §c, C1) |
+| S4 | The coupling-sign hypothesis is **REFUTED** — do not reopen | `02` §f, P1: a flipped sign drives β² *down*; measured is *up* |
+| S5 | `c_f` at :1175 **is the same matrix object** as `C` inside `B` — one `assemble_mixed` (:1052), one restriction (:1104), one LU (:1107) | construction, not measurement |
+| S6 | PEC row/column dropping is **exact** (dropped unknowns are homogeneous Dirichlet zeros) | `02` §e |
+| S7 | The stale `e^{−iβz}` comment at :15 is a **comment** bug, unobservable in the reported `e_z` magnitude, which is β·abs(Φ) (:641-642) | `02` §b, convention note |
+| S8 | The capture driver is **faithful**: its reconstruction equals the library's own `mode.e_z` magnitude to machine precision | `e_z_solver` vs abs(β·`z_free`): max rel diff **0.000e+00** (31x17), **8.484e-16** (41x22) |
+| S9 | The `np.abs` at the driver (**(:224)** — the `e_z_node[free_n] = np.abs(beta * z_free)` statement; cited as `:225` in `modalport_ownership.md:37` and in the `design_pass_1` report, which is an off-by-one against the 464-line capture driver, see §8.1) is a **no-op** for any sign-blind statistic on this data | `z_free` single-signed: min/max = (+0.0, +3.951804e-02) on 31x17, (−4.027261e-02, +0.0) on 41x22; rows 1/2a/2b/3c/5a/SOLV all give corr magnitude 0.119160432391 |
+| S10 | "Potential mistaken for a field ⇒ take the derivative" is **NOT TAKEN and refuted** — applying the legal operator to `z_free` does not repair anything | **the TE pair against the operator's own ceiling**: \|0.117276695\| vs \|0.770566870\| = **15.2 %** (31x17) and \|0.122104587\| vs \|0.772595941\| = 15.8 % (41x22). **Corrected:** the ratio-of-magnitudes (0.984192 / 1.023363, §8.1) was previously used here and cannot carry this conclusion — a magnitude ratio near 1 says nothing about whether the derivative *shape* route works, which is the actual claim |
+| S11 | Units are not the issue for any correlation (scale-free); the reported 2.72e6 energy ratio is a 1/CELL² artefact of one-sided `* CELL`, already documented | `docs/design/normalization_scheme.md` |
+
+The single number that carries most of the diagnostic weight, and the one to keep in front of any proposal:
+
+```
+corr( c[z-rows] @ φ_analytic , E_z_analytic )      = |0.770566870|   (31x17)   |0.772595941|  (41x22)
+corr( c[z-rows] @ z_free     , E_z_analytic )      = |0.117276695|   (31x17)   |0.122104587|  (41x22)
+                                                       15.2% of the operator's own ceiling, non-uniform sign pattern
+corr( z_free , φ_analytic )                        = +0.573448286090104
+```
+
+The operator *can* produce 0.77 with **one uniform global sign** (201/201 columns flip the same way). Fed the
+solver's `Φ`, the same operator produces 0.117 with a *non-uniform* sign pattern (124/201 and 78/201 columns
+flipped) and a per-column oracle that buys only +0.036. **The residual is SHAPE.** That is the whole
+diagnosis in one line: `Φ` — the output of the mixed solve's nodal block — does not have the `E_z` shape.
+
+---
+
+## 3. The comparison chain, and where a defect can still enter
+
+Audit of every join between "Maxwell" and "the number 0.119". `SURVIVES` means: no measurement currently
+excludes it.
+
+| L | Layer | Status | Decided by |
+|---|---|---|---|
+| L0 | Mesh, PEC masking, edge orientation (`tri_sign`) | excluded | 0.13% / 0.27% / 0.53% cross-mesh drift; `tri_sign` is a *global* `(lo,hi)` convention (:270), cannot flip per element |
+| L1 | Operator assembly (`c`, `q`, `k_zz`, `m_zz`, `m1`, `m_eps`) | **partly excluded** — the *form* is excluded by `S2` plus the 0.770567 ceiling with uniform sign; the *coefficients* are **not** excluded (`m_eps` built from nodal ε, graded `h_local` in the pencil) — that is the C2/L6 route | `S2`; §3.2 M1/M2; `02` §b |
+| L2 | Coupling sign / `i`-placement / Schur elimination | excluded | `S1`–`S4` |
+| L3 | PEC row+column dropping | excluded | `S6` |
+| L4 | **Input / model data** (does the solved geometry equal the reference geometry?) | **CLOSED THIS PASS — see §3.1** | static read |
+| L5 | **Mode selection rule** | **SURVIVES** | `03` §A/§B; only layer explaining the E_y-good / E_z-bad / eps_eff-high triad |
+| L6 | **Interface treatment / graded-cell size in the pencil** | **SURVIVES (new, see §3.2)** | the p ≈ 0.25 scaling argument is weaker than it looks on a *graded* mesh |
+
+### 3.1 L4 is closed, statically, for free
+
+Previously recorded as "untested alternative": the analytic reference vs the mesh actually solved. It is now
+settled by reading, with no compute:
+
+* `.scratch/tol/logs/TOLFLUX.json` geometry block: `"width": 0.02`, `"height": 0.0076`,
+  `"h": 0.0016`, `"w": 0.003`, `"eps_r": 4.4`, `"n_sub": 16`, `"ny": 200`, `"nz": 76`, `"cell": 0.0001`
+  — i.e. **h = 1.6 mm, w = 3.0 mm, eps_r = 4.4, n_sub = 16**, exactly the analytic reference.
+* `.scratch/logs/s10118_basis.py:67-71` unpacks that dict into `HSUB, WSTRIP, EPS_R` and derives the
+  conductor box from it (`Y0, Y1 = W/2 ∓ WSTRIP/2`).
+* the **same three variables** drive both sides of the comparison:
+  * the solve: `eps_of` (:97-98) and the `strip` predicate (:110-111) — `eps_of = np.where(p[:,1] <= HSUB + 1e-12, EPS_R, 1.0)`,
+    `strip = (p[:,1] == HSUB) & (Y0 <= p[:,0] <= Y1)`, and `solve_modes_mixed(mesh, K0, sigma=1.0, eps_r=eps_of, boundaries=BOUNDARIES)` (:172-173);
+  * the reference: `microstrip_mode_profile(HSUB, WSTRIP, EPS_R, n_sub=N_SUB)` (:385).
+
+**Conclusion.** A mismatch between the *solved* model and the *reference* model is **structurally impossible**:
+they consume the same literals from the same dict. L4 is closed. (What remains open is a different question —
+whether that geometry is the intended board — and it is a design-intent question, not a solver defect, and it
+cannot produce a solver-vs-reference discrepancy of any size.)
+
+This *promotes* L5 to the sole survivor of the original seven layers, and it is why L6 below had to be added:
+closing L4 removes the only alternative that the previous pass had left standing, so the argument must be
+checked against the one remaining discretisation-flavoured possibility.
+
+### 3.2 L6 — the one caveat that must be stated honestly (and is cheap to kill)
+
+`03` §C argued "not discretisation" from a cell-size ratio of 0.75 (30/40 and 16/21) and a fitted gap
+exponent p ≈ 0.25. **On a graded mesh that argument uses the wrong length.** The counts 30/40 and 16/21 are
+*average* cell counts across the box; what governs a boundary-layer error is the **local** cell size at the
+strip edge and at the dielectric interface. If the grading keeps the first cell near y = h fixed while adding
+points in the bulk, the local h barely changes between the two meshes, and an O(h_local) error would plateaus
+exactly as observed — while still being a discretisation effect.
+
+Two concrete interface mechanisms worth naming, both testable statically:
+
+* **M1 — interface-row ε attribution.** `eps_of` assigns ε by a **node** predicate with a `+1e-12` tolerance
+  (`p[:,1] <= HSUB + 1e-12`). Nodes *on* the metal plane (y = h) therefore carry ε = 4.4. If `assemble_mixed`
+  builds its ε mass from element-averaged nodal values, then every element immediately **above** the strip
+  inherits 4.4 at its interface vertices — the dielectric is effectively one element thicker than the board.
+  Direction of the error: **raises** ε_eff, i.e. matches the observed sign. Whether `assemble_mixed` averages
+  nodal ε at all is a static question, answered by reading `:470-533`.
+* **M2 — strip-on-node vs strip-on-edge convention.** The conductor is the node row `p[:,1] == HSUB`
+  (:110-111), so the strip is a Dirichlet *line* of nodes with the ε discontinuity attached to it. A
+  quasi-static reference that integrates the flux differently across that same line can disagree at the
+  percent level without either side being "wrong".
+
+Neither mechanism is asserted. Each is *cheap to exclude*, and must be excluded before L5 is declared the sole
+culprit, because both would raise ε_eff upward and both would leave `E_y` nearly untouched — the same
+fingerprint as the selection rule.
+
+---
+
+## 4. Candidate ranking
+
+Ranked by (evidence for) / (cost to decide). Nothing here is a proposal to change code.
+
+### C1 — Mode selection picks a non-fundamental candidate  *(rank 1 — primary)*
+
+**Statement.** `k* = argmax{ β² : finite, > 0, residual < 1e-3 }` (:1150, :1156-1160, :1167) selects the
+**largest** admissible β² from a spectrum whose ordering carries no mode information (`B` is indefinite,
+:1005-1013). The physical quasi-TEM mode has the **lowest** β of the guided set; the dielectric limit is the
+**highest**. The rule therefore aims, systematically and by construction, at the far end of the guided band.
+
+**Evidence for.**
+* Explains all three observations at once with one parameter-free mechanism: `E_y` survives a mis-pick
+  (transverse shape is nearly shared across candidates), `E_z` does not (hybrid/TM candidates differ
+  principally in `E_z`), ε_eff goes **up** (that is where the rule points).
+* The quantitative bridge is **arithmetic, and it is brutal** — see `C1.1` below. **Corrected:** an earlier
+  version of this bullet claimed that a **~1.5 % admixture** of an `E_z`-dominated candidate would collapse
+  corr(`e_z`) 0.92 → 0.12. That figure is wrong by **one to three orders of magnitude**. With corr(`e_z`)
+  suppressed from 0.92 to 0.12, the contaminant must be at least **87 %** of the good component (anti-phase
+  case; **corrected** from 77 % because the earlier quadratic dropped the −1.84a cross-term — see `C1.1`) and is
+  **760 %** if it is uncorrelated with the truth. The bridge is real; the number attached to it
+  was not, and `02` §c C3 carries the same error.
+* Reproduces the character split: a selector changes *which vector is reported*, so its damage is **converged**
+  under refinement — exactly the 0.13% drift of corr(`e_z`).
+* Consistent with the sign: max-β² can only err *upward*. Observed 3.63 ∈ (3.35, 4.40).
+
+**Evidence against.** None yet — it has never been tested. Prediction P2 (the chosen candidate is
+substrate-concentrated with inflated Σe_z²/Σe_y²) is untested; if the chosen candidate's ratio is *at or below*
+0.0272240 (the **31x17** anchor — mesh-local, §1), C1 dies.
+
+**Note on the two selection rules in play.** The library picks max eligible β² (:1167); the capture driver
+re-picks by **max `E_strip_t`** (`s10118_basis.py:196-208`, `cand.sort(key=lambda r: -r[3])`). The banked
+artefacts therefore contain **both** identifications, and `IDENTIFIED` (:207-208) records `col` and
+`solver_eps_eff` side by side. If the two rules agree on the same column, the selector is not the whole story;
+if they disagree, the disagreement itself is the discriminator. This comparison needs no solve.
+
+**Cost to decide.** Zero solves. Everything needed is in `.scratch/s10118_mixed_mode.npz`:
+`candidates` (8 rows of `col, beta_sq, eps_eff, E_strip_t`), plus `m1, m_eps_m, c, k_zz, m_zz, free_e, free_n`
+— so any Rayleigh quotient, any ε_eff, and any `Φ` for **any** candidate can be evaluated with `B` unchanged.
+
+**What would change my mind (C1).** (a) No candidate in the banked spectrum satisfies the `C1.1` shape
+requirement (corr_e_y ≥ 0.9 **with** corr_e_z ≤ 0.3) — then the selector cannot be the cause and C1 is retired
+on arithmetic, before T3. (b) The library's pick and the driver's pick (`T3b`) agree on the column → the
+selector is not the discriminator and C1 drops below C2. (c) The chosen candidate's `Σe_z²/Σe_y²` is at or
+below the *same-mesh* anchor → P2 fails.
+
+#### C1.1 The admixture arithmetic, done properly
+
+Everything below is scale-free (correlations only), so no normalisation or unit question enters. Write the
+reported longitudinal component as a two-term mixture
+
+```
+e_z = s + a·t,        corr(s, E_z) = 0.92,        t ⊥ E_z
+```
+
+where `s` is the "good" longitudinal part — assumed to correlate with the true `E_z` as well as the transverse
+slot does, corr_e_y = 0.9208 on 31x17 (**this is an assumption, and it is the one soft joint in the argument**; the
+measured value and its locator are in §8.1)
+— and `t` is the contaminating mode's longitudinal part, taken orthogonal to the truth. Set the observed
+corr(`e_z`, `E_z`) = 0.12 and `σ_t = σ_s`. There are only three cases:
+
+* **`t` uncorrelated with `s`** (generic): corr = 0.92/√(1+a²) = 0.12 ⇒ √(1+a²) = 0.92/0.12 = 7.667 ⇒
+  **a = 7.60**. The contaminant would have to be **7.6× the good component**.
+* **`t` perfectly ANTI-aligned with the truth** (the most favourable case that exists; cov → 0.92 − a):
+  the headline is the **minimum admissible root a ≈ 0.874 (87 %)**, obtained by carrying the −1.84a cross-term
+  in ‖e_z‖² (see the correction immediately below). The contaminant must therefore be **at least ~87 %** of the
+  good component — not the 77 % an earlier version of this bullet claimed.
+* **`t` aligned with the truth**: this branch is *empty* — with ρ_t = +1 the truth is inside `t` itself, so
+  corr can only be pushed *up* (the feasible minimum is 0.92 at a = 0). No value of `a` produces 0.12. That is
+  itself information: the contaminant must be largely **anti-phase** with the true `E_z`.
+
+**Corrected — the old "77-110 %" band.** An earlier version of this subsection headed the anti-aligned case
+with **a = 0.768 or a = 1.098, i.e. "77-110 %"**, read off `0.9856a² − 1.84a + 0.832 = 0`. That quadratic is
+mis-stated: it treats `t` as orthogonal to `s` while `ρ_t = −1`, but `ρ_t = −1` *forces* `corr(s, t) = −0.92`, so
+the −1.84a cross-term belongs in ‖e_z‖² and was dropped. Because of that omission the lower corner a = 0.768
+(77 %) is **not admissible**; carrying the cross-term through gives a **minimum a ≈ 0.874 (87 %)**, which is the
+figure used everywhere below. The band is **superseded** — it was never the operative number, and 77 % was an
+under-estimate of the floor. Reading the old "1.5 %" as an **energy** fraction instead of an amplitude fraction
+does not rescue it either: a = 0.1225 gives corr = 0.92/√(1.015) = 0.913.
+
+So **"1.5 %" is dead by factors of 58 to 507** — **1.8-2.7 orders of magnitude** — because the *minimum
+admissible* contaminant is **87 %** (87/1.5 = 58) and the decorrelated case is **760 %** (760/1.5 = 507), which
+bounds the range from above. The contaminant must be anti-phase. **This is an explicit correction of an earlier
+claim in this file and in `02` §c**; the earlier text read "factors of 51 to 507 ... ~77 %", where 51 was the
+superseded 77 % floor divided by 1.5.
+
+`ratio_A` then selects which branch is live. The measured ratio fixes |e_z|/|e_y| = √0.0272240 ≈ **0.165** on both
+meshes (the reference has the same ratio by construction), and it caps the *total* longitudinal content at 16.5 %
+of the transverse content — it does not move between branches:
+
+* The **orthogonal** branch (a = 7.60, or ≈ 8.0 with `t` also optimally anti-aligned to `s`'s transverse residual
+  — same order) needs |e_z| ≈ 7.6|s| ≈ 7.6 × 0.165|e_y| ≈ **1.25|e_y|**, i.e. a longitudinal part *larger* than
+  the transverse part. Measured: 0.165|e_y|. **Excluded by ratio_A.**
+* The **anti-aligned** branch (a ≈ 0.87) needs |e_z| = |s + a·t| with the two terms nearly cancelling: a
+  contaminant of *comparable magnitude*, largely anti-phase, leaves a small residual while destroying the
+  correlation. That is exactly what a fixed small ratio_A permits. **This is the operative branch.**
+
+**What this does to C1.** A contaminant of *comparable magnitude* is not an "admixture" — the reported vector is
+half-to-mostly a **different mode**. So the structural question C1 must answer is sharper than "does the selector
+pick the wrong candidate?":
+
+> Can the T3 spectrum hold a candidate whose **transverse** part nearly coincides with the fundamental's
+> (corr_e_y stays 0.92) while its **longitudinal** part is entirely different (corr_e_z collapses to 0.12)?
+
+That is a *strong* requirement, not a weak one — but it must be checked before T3's ε_eff arithmetic is read,
+because C1 can die on it. If no such candidate exists in the banked spectrum, **C1 dies on arithmetic before T3
+runs**, and the cost-ordering in §5 has to be re-justified. That is what **T3-pre** (§5) is for.
+
+### C2 — Interface ε attribution / graded local cell size  *(rank 2 — must be excluded before C1 is acted on)*
+
+**Statement.** §3.2. The ε_eff error is a boundary-layer artefact of (i) the node-predicate ε assignment at
+the metal plane and/or (ii) the local cell size at the interface not actually shrinking between the two meshes.
+
+**Evidence for.** ε_eff error is ~8% and *barely* shrinks with average refinement — the signature of a
+boundary layer whose *local* thickness did not shrink. Explains the level offset without touching `E_y`.
+Direction (upward) matches.
+
+**Evidence against.** It must *also* explain the **converged-wrong** `Φ` shape (corr(`e_z`) 0.119 on both
+meshes to 0.13%). A boundary-layer error that leaves `E_y` at 0.92 but rotates `E_z` into a different shape
+would have to be large and *stable*, which is a stronger requirement than C1 faces — but it is not impossible,
+since `Φ` is diffusive (`Φ = D cᵀ x_t`, i.e. a Helmholtz solve on the nodal block) and a locally wrong ε
+directly corrupts the operator producing it.
+
+**Cost to decide.**
+* C2a (**free, static**): read `assemble_mixed:470-533` for how nodal ε becomes element ε. If it is
+  element-averaged, M1 is *live*; if ε is evaluated at element centroids, M1 is dead.
+* C2b (**free, arithmetic on banked data**): both caches bank the grids themselves — `xs`, `zs`
+  (`.scratch/s10118_basis.py:240`). Compare the **local** spacing at y ≈ h between the two meshes. If it is
+  unchanged, the p ≈ 0.25 fit is an artefact of average counts and C2 is promoted to rank 1.
+
+**What would change my mind (C2).** (a) T1 finds ε evaluated per element (not from nodal values) → M1 is dead
+and C2 loses its main mechanism. (b) T2 finds the local h at y ≈ h *did* shrink by the average-count ratio →
+the boundary-layer story loses its premise. (c) C2 must explain the *converged-wrong* `Φ` **shape** as well as
+the scalar offset; if a localised interface error can be shown to be too weak to rotate `E_z` at fixed `E_y`
+correlation, C2 falls behind C1. Conversely, C2 becomes rank 1 the moment T2 shows local h unchanged **and**
+T1 shows element-averaged nodal ε, because then the ε mass in `assemble_mixed` — an *assembled coefficient*, not
+the operator's algebra (§ D5 correction in the abstract) — is wrong in a way that matches the observed sign.
+
+### C3 — The reference itself carries a few percent  *(rank 3 — cheap sanity check on the denominator)*
+
+**Statement.** `microstrip_mode_profile` is the repo's own quasi-static finite-difference solver with
+`n_sub = 16` vertical nodes. Its accuracy is **not benchmarked anywhere in this tree**; the entire "8% error"
+claim is measured against it. If the reference were 3% low, the defect being chased would be half the size.
+
+**Evidence for.** No independent validation of the reference was found. Its own self-consistency is excellent
+(`corr(analytic e_z, −d(analytic φ)/dz) = 1.000000000000000`), but self-consistency is not accuracy.
+
+**Evidence against — and it is now decisive.** **(a) The Hammerstad/Jensen bound, computed here by hand.**
+With u = w/h = 1.875, ε_r = 4.4: a = 1 + (1/49)ln[(u⁴ + (u/52)²)/(u⁴ + 0.432)] + (1/18.7)ln[1 + (u/18.1)³]
+= **0.999361**; b = 0.564[(ε_r − 0.9)/(ε_r + 3)]^0.053 = **0.542058**; 1 + 10/u = **6.333333**
+(= 19/3); exponent −a·b·ln(19/3) = −0.541711 × 1.845827 = **−0.999905**; factor = (19/3)^(−0.541711) = **0.367919**;
+ε_eff = (ε_r+1)/2 + (ε_r−1)/2 × factor = 2.7 + 1.7(0.367919) = **3.32546**. The reference `3.3500085193` is
+**+0.74 % above the closed form** — comfortably inside T0's >1 % kill criterion. **T0 is therefore predicted to
+pass**, and C3 is demoted from "candidate" to a **bounded nuisance**: a reference error below 1 % cannot produce
+an 8 % (β scale) or 18 % (ε scale) gap, so C3 cannot be the cause of the anomaly, while still being worth the
+formal check T0 already specifies (§1.1 also uses it to adjudicate between the two ε denominators in the record).
+**(b) Struck claim.** An earlier version of this bullet said the reference "reproduces the published `2.722397e6`
+energy anchor exactly". That is **not** evidence of accuracy and must not be quoted as such:
+`docs/design/normalization_scheme.md:85`/`:199` rules `2.722397e6` **VOID as a physical ratio** — the `1e8` in it
+is a class (ii) unit defect (`normalization_scheme.md:86` gives the repaired 0.0272240 / 0.0264298 / 0.0253657).
+Agreement on a void quantity carries no information.
+
+**Cost to decide.** **Arithmetic only, no run** — and it is already done above (3.32546 vs 3.3500085193,
++0.74 %). T0 stays in §5 as the **formal** check and as the mask on the denominator of every percentage in this
+file, but there is no longer a live question for it to settle: C3 is bounded below 1 % and demoted to rank 3.
+Its remaining value is negative-space evidence — it rules out the one escape hatch that would have shrunk the
+whole problem by a factor of ~20.
+
+**What would change my mind (C3).** T0 finding the reference more than 1 % from the closed form in the
+*direction that shrinks the gap* (i.e. reference too **high**) would restore C3 and re-base every target in §1;
+the hand computation above predicts +0.74 % and therefore predicts T0 passes. C3 is also reopened if the two
+ε denominators in §1.1 (3.3500085193 vs 3.564800282) cannot be reconciled — a factor-of-six ambiguity in the
+denominator is the one way a few-percent reference question becomes a first-order one.
+
+### C4 — Why none of this was caught (not a cause; a defect in the safety net)
+
+The block-residual guard (:1178-1188) rebuilds the two-field matrix from the *same* signs and checks
+`‖block·field‖ / (‖block‖_F‖field‖)`. It is **blind by construction** to any error that is self-consistent —
+a wrong selector, a flipped sign, a wrong mode. It validates arithmetic, not physics. Same for the anchors at
+:1015-1022, which are documented and never executed (§5). Recording this is not a candidate cause; it is the
+reason the defect survived to 0.119.
+
+### C5 — Excluded candidates (each with the number that excludes it)
+
+Do not re-test these; see `01` §Q6 for the full table. Summary: rectifier/`np.abs` (single-signed field,
+delta exactly 0.000000000); global sign/conjugation (|corr| invariant, and the eigenvector sign already differs
+between meshes: +0.9208 vs −0.9387 for the *same* code); gauge/constant offset (subtracting the mean makes it
+*worse*: +0.009491 / −0.002329); PEC gauge sign (3c bit-identical to baseline); numerical `−d(z)/dz` (worst
+option: −0.032886, and it moves Σe_z² by six orders); per-column sign scramble (oracle buys +0.036, and the
+control's oracle is uniform 201/201 — the control would look like TE if sign were the defect); lost phase/lost
+`i` (all arrays real by construction, `e_z = 1jβΦ` and the cache stores `|e_z|` — the `i` is not lost, it is the
+reason the stored array is a magnitude); different field in the driver (0.000e+00 / 8.484e-16); cached `c` is
+not the operator (max|diff| 0.000e+00); resampling bookkeeping (scatter determinism 0.000e+00; analytic
+self-check corr = 1.000000000000); mesh resolution (0.13% drift); the archived `0.14619976001754773`
+(matches none of the calculated variants — **still unexplained**, see §7).
+
+---
+
+## 5. The test plan, costed
+
+Ordered by cost. Each test is stated with **what it decides** and a **kill criterion**, so that a null result
+is informative rather than a shrug. No test below edits `emfit/`.
+
+| # | Test | Cost | Decides | Kill / pass criterion |
+|---|---|---|---|---|
+| **T0** | Hammerstad/Jensen closed form for w/h = 1.875, ε_r = 4.4 vs `microstrip_mode_profile`'s 3.3500085193 | arithmetic, minutes, no run | C3 — is the *denominator* of the 8% claim sound? | If the reference is off by >1%, re-base the ε_eff target before anything else |
+| **T1** | Read `assemble_mixed:470-533`: is nodal ε element-averaged? | static read, minutes | C2a / M1 live or dead | If ε is evaluated per element (not from nodes), M1 is **dead** and C2 loses its main mechanism |
+| **T2** | Compare **local** cell spacing at y ≈ h using the banked `xs`, `zs` on both meshes | arithmetic on two `.npz`, no solve | C2b — was the boundary layer actually refined? | If local h is unchanged (ratio ≈ 1.0), C2 is **promoted** and the p ≈ 0.25 argument in `03` §C is retracted as an average-counts artefact |
+| **T3-pre** | Structural screen on the banked spectrum, run **before** T3: does any candidate pair a near-fundamental transverse part (corr_e_y ≥ 0.9) with a decorrelated longitudinal part (corr_e_z ≤ 0.3)? | arithmetic on one `.npz`, no solve; a cheaper tier than T3 (shape screen only — no ε_eff arithmetic, no reassembly) | C1 — the precondition `C1.1` says T3 silently assumes | **Kill C1:** no candidate satisfies the shape pair ⇒ selector cannot reproduce the collapse, C1 **dies on arithmetic** and the cost-ordering **inverts** (C2/T1/T2 move ahead). Pass = screen non-empty ⇒ T3 is worth its arithmetic |
+| **T3** | Full-spectrum sweep: for **every** admissible candidate in the banked spectrum, recompute ε_eff and the `E_z` overlap, **B unchanged** | arithmetic on one `.npz`, no solve, no reassembly | C1, directly; P1 and P2 of `03` §A | **Pass:** some candidate reaches corr(`e_z`) ≥ 0.9 with ε_eff ≈ 3.3500 ⇒ selector is the fault, fix is one line at :1150/:1167. **Kill C1:** no candidate exceeds corr 0.5, or the chosen candidate's Σe_z²/Σe_y² ≤ 0.0272 |
+| **T3b** | In the same pass, compare the library's pick (:1167, max eligible β²) against the driver's pick (:200, max `E_strip_t`) — both are already banked as `col` and as `candidates` rows | free, same pass | whether the two rules agree | Disagreement is itself the discriminator; agreement weakens C1 |
+| **T4** | Promote `.scratch/mode2d/c2_slab2.py` to `tests/` as the first `mode2d` test | ~2.5 min runtime; ~1 h of build | permanent coverage of the **TM** defect class + a selector regression test | Assertions: (a) β²/k₀² within 0.5% of analytic, (b) the *chosen index* equals the analytic mode index, (c) `Σe_z² > 0` and `cᵀx_t ≠ 0` |
+| **T5** | A finer microstrip mesh | ~2 min/solve at 1444 free edges (measured 111 s); the whole exercise costs hours | confirm-only | **Deprioritised.** Predicted by `03` §C to still show ≈7.5%. Run last, and only after T1-T3 are clean, and only as a *convergence confirmation*, not as a diagnostic |
+
+**Why this order.** T0-T3 are free or near-free and each can independently terminate the investigation. T4 buys
+permanent coverage and is the only step that prevents the *next* recurrence. T5 is the only step that costs
+hours and the only one the evidence already predicts will be negative — it is listed so that it can be
+explicitly *declined*, not merely postponed.
+
+Three placements are worth stating rather than leaving implicit:
+
+* **T0 sits first because it is a masking test, not a candidate test.** It acts on the *denominator* of every
+  percentage in §1: until it certifies ε_eff = 3.3500085193 and the corresponding k₀, "8 % high" is a number
+  without a baseline. A T0 failure therefore does not invalidate any *candidate* — it invalidates the
+  *comparisons*, so it has to be resolved before any candidate verdict is read off.
+* **T3-pre sits between T2 and T3 because it is strictly cheaper and can retire C1 before T3's arithmetic is
+  spent.** It is a shape screen on the banked spectrum (corr_e_y ≥ 0.9 with corr_e_z ≤ 0.3) — no ε_eff
+  arithmetic, no reassembly. If the screen comes back empty, C1 is dead on arithmetic and the order inverts:
+  C2/T1/T2 move ahead of T3 instead of behind it.
+* **T4 is listed but not authorised by this note.** Promoting `.scratch/mode2d/c2_slab2.py` to
+  `tests/test_mode2d.py` costs ~1 h of build plus ~2.5 min runtime, and it must *first* pass its three
+  assertions (a)-(c) standalone against the slab anchors `(k₀, β²/k₀²)` = `(3.0, 4.298278227712)` and
+  `(2.095845021952, 4.196297158361)`. Nothing here authorises that promotion; T4 is a separate dispatch.
+
+---
+
+## 6. Decision tree
+
+```
+T0 ── reference >1% off? ──yes──► re-base the ε_eff target and re-run this table
+ │no
+ ├─► T2 (local cell size at y≈h unchanged?)
+ │        │no (local h did shrink)          │yes (local h ~unchanged)
+ │        ▼                                 ▼
+ │   C2 weakened → go to T3            C2 promoted → T1 (element-averaged ε?)
+ │                                          │live ──► C2 becomes rank 1; T3 in parallel
+ │                                          │dead ──► C2 needs another mechanism; go to T3
+ └─► T3-pre ── any candidate pairs corr_e_y ≥ 0.9 with corr_e_z ≤ 0.3?
+          │yes                                        │no
+          ▼                                           ▼
+    T3 ── some candidate has corr_e_z ≥ 0.9      C1 retired on arithmetic — no candidate
+    and ε_eff ≈ 3.35?                            can hold the shape pair at the ~87 %
+          │yes                       │no         minimum admixture ⇒ re-rank:
+          ▼                          ▼           C2/C3 promoted, T3 arithmetic not spent
+    C1 CONFIRMED: report selection defect;       C1 dying. Check T3b agreement;
+    fix is one line at :1150/:1167, gated on T4   then the defect is in the pencil's
+    landing first as a regression test            nodal block itself → re-open §3 L6/L1
+                                                  boundary, NOT the coupling sign (S4).
+```
+
+Nothing in this tree touches the coupling sign, the Schur complement, or the PEC masks.
+
+---
+
+## 7. Explicit non-scope, and known unknowns
+
+**Not proposed by this document.**
+1. Any change to the selection rule **before** T2/T3 report. Changing the rule first would destroy the banked
+   spectrum that T3 needs and would make the diagnostic unfalsifiable.
+2. A finer mesh as a *diagnostic*. It is a confirmation step at best (T5).
+3. Any revisiting of the coupling sign, the Schur elimination, `c_f` identity, or the PEC masks (`S1`-`S6`).
+4. Removing the `np.abs` at `s10118_basis.py:224`. It is a **no-op** on this data (`S9`); removing it changes
+   nothing except the tool's own narrative. **:224 is the correct locator** — that driver is 464 lines, and
+   `docs/design/modalport_ownership.md:37` cites :225, an **off-by-one**, reconciled exactly as in `S9`
+   (provenance in §8.1).
+5. Editing `emfit/`. T4 lands in `tests/`; the one-line selector change, if T3 confirms C1, is a separate,
+   later, explicitly-authorised dispatch.
+
+**Known unknowns.**
+* `0.14619976001754773` (the superseded correlation) — **CLOSED-UNRESOLVED.** It is recorded at
+  `decisions.md` §101.21(m)(3), and the archaeology scan is **negative** at
+  `.scratch/logs/corr_ez_followup.txt:117` and `:200` ("matches: none of the above reproduces
+  0.14619976001754773"). It stays a *re-openable locator*, not a number: the transverse correlations on the two
+  meshes are byte-identical to their reported values (`0.92077078481114205` at :43; `−0.93870218003589878` at
+  :126), so whatever produced 0.14619 came from a variant that is no longer in the tree. It is not explained
+  here and must **not** be quoted as a measurement.
+* The `e^{−iβz}` comment at :15 contradicts the derived convention (`S7`). Harmless for every reported number;
+  a trap for the next reader.
+* Whether `microstrip_mode_profile` is accurate to <1% is **unverified** (C3/T0). Until it is checked, "the
+  model is 8% high" is really "the model and this reference differ by 8%".
+* `ratio_A`'s unit repair (0.0272240 vs the printed 2.72e6) is a *documented* one-sided `* CELL`;
+  the scheme-A ratio stands, and this note does not touch scheme C (0.00951415).
+* **Zero test coverage.** `grep -rln "mode2d" tests --include=*.py` returns nothing, so no committed test
+  exercises the TM path at all. This is an already-established finding quoted here, not something re-run for
+  this note (this note executes nothing). It is why C4 is a standing risk and why T4 exists as a deliverable.
+
+**Why measure at all rather than "just fix the selector".** Because the selector rule is *plausible* and
+therefore cheap to believe. It has one testable consequence that has never been executed (T3), and C2 has an
+equally plausible competing story that also predicts an upward ε_eff bias. Both are free or near-free to
+separate. Fixing first would leave the ε_eff error in place with no way to tell which of the two produced it.
+
+---
+
+## 8. Provenance
+
+| artefact | identity |
+|---|---|
+| `emfit/mode2d.py` | `9b74d83d7b2c6b0df5b362a391df39dd8940378195b5faef1efe14d84febe032`, 1390 lines |
+| `tools/corr_ez_101_20.py` | `a8cc0e9c4785211c957a81b0902c95015785026c2f6151124700f73b588e5456`, 729 lines |
+| `.scratch/s10118_mixed_mode.npz` (31x17) | `8603e909dc2f99eff9505eae0cb344765b9d7628fc72ef28150fa197eacd2dff` |
+| `.scratch/s10118_mode_41x22.npz` (41x22) | `b8e5c58a459b4230b03e26e77752b78c701dc1f47cf22d590491193278d7c4db` |
+| evidence log | `.scratch/logs/corr_ez_followup.txt` (296 lines, 26 Oct 18:34) |
+| capture driver | `.scratch/logs/s10118_basis.py` (464 lines) |
+| geometry source | `.scratch/tol/logs/TOLFLUX.json` (`geometry`: h 0.0016, w 0.003, eps_r 4.4, n_sub 16) |
+| ready-made TM harness | `.scratch/mode2d/c2_slab2.py` — `solve_modes_mixed` on a slab, `LX, LY = 0.4, 3.2`, `SUB_Y = 1.6`, `EPS_SUB, EPS_AIR = 4.4, 1.0`, 1608 edges / `free_e` 1592 / `free_n` 567, CASES `(k₀, β²/k₀²)` = `(3.0, 4.298278227712)`, `(2.095845021952, 4.196297158361)` |
+| other scratch harnesses | `c2_ident.py` (independent elimination, `:396-397`), `c2_oldunits.py`, `c2_power.py`, `c2_static.py`, `c2_div.py` |
+
+Line references are to `emfit/mode2d.py` unless another file is named. Key constants:
+`_CURL_RTOL = 1.0e-10` (:131), `_MIXED_RESIDUAL_TOL = 1.0e-3` (:150), `_MIXED_DENSE_MAX = 3000` (:151).
+Measured sizes: 31x17 — 1486 edges / 527 nodes / `c` (1486, 527) nnz 5852 / 496 vertical edge rows;
+41x22 — 2581 edges / 902 nodes / `c` (2581, 902) nnz 10202 / 861 vertical edge rows.
+
+### 8.1 Cited-value provenance (value · where used · source file:line · status)
+
+Every number the argument turns on, with its locator and its standing. "measured" means read out of the banked
+logs listed above; nothing in this table was recomputed for this note. A bare `:NNN` is a line in
+`.scratch/logs/corr_ez_followup.txt` (the evidence log identified above).
+
+| value | where used | source file:line | status |
+|---|---|---|---|
+| `3.3500085193` | the denominator of every % in §1, §1.1, §4 | `corr_ez_followup.txt:22` (key `eps_eff`) | **primary, reconciled** — the denominator used throughout |
+| `3.564800282` | §1.1, as the alternative denominator | `docs/design/modalport_ownership.md:7` | **UNRECONCILED**, +6.4 % against the primary; percentages built on it are provisional |
+| `3.32546` | `C3` / T0, §4 | §4 `C3` hand computation (Hammerstad/Jensen, w/h = 1.875, ε_r = 4.4) | closed form, 0.74 % below the primary — **corroboration only** |
+| `0.0272240` / `0.0264298` / `0.0253657` | `ratio_A`, §1 and §1.1 | `:60` / `:143`; `docs/design/normalization_scheme.md:86` | measured, unit-repaired, mesh-local — never mixed across meshes |
+| `0.119160432391` | corr_e_z, 31x17 — §1, `S9` | `:205` | measured |
+| `+0.920770784811` | corr_e_y, 31x17 — the `C1.1` assumption | `:43` | measured |
+| `−0.938702180036` | corr_e_y, 41x22 | `:126` | measured |
+| `+0.0` / `+3.951804e-02` | min/max of `z_free`, 31x17 — `S9` | `:39` | measured |
+| `0.0000` | fraction of negative entries, 31x17 — `S9` | `:40` | measured |
+| `0.000e+00` | `S8`, faithful operator, 31x17 | `:42` | measured |
+| `8.484e-16` | `S8`, 41x22 | `:125` | measured |
+| `+0.573448286090104` | corr(`z_free`, φ_analytic) — §2 | `:64` | measured |
+| `0.122104587` | TE overlap, 41x22 — `S10` | `:169` / `:199` | measured |
+| `0.772595941` | operator ceiling, 41x22 — `S10` | `:177` | measured |
+| `0.984192` / `1.023362806` | ratio of magnitudes — `S10` | `:258` / `:181` | measured, but **not used as evidence** (see the `S10` correction) |
+| `0.14619976001754773` | §C5, §7 | `:117` / `:200` — scan negative | **CLOSED-UNRESOLVED** — never quote as a measurement |
+| `311.9553466185` | β, 41x22 — §1, §1.1 | `:120` | measured |
+
+**Line-number reconciliation (`:224` vs `:225`).** `.scratch/logs/s10118_basis.py` is **464 lines**, and the
+`np.abs` call sits at **:224**. `docs/design/modalport_ownership.md:37` cites `:225`; that is an **off-by-one**
+against the 464-line file, i.e. the same reconciliation recorded for `S9` and the same conclusion (the `np.abs`
+is a no-op on this data). Where a locator here and a locator in another note differ by exactly one line, this
+note's is authoritative by construction — every line number in it was read against the file sizes recorded in
+the table above.
+
