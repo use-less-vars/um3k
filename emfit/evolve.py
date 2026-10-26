@@ -65,7 +65,7 @@ def ricker(t, t0, fmax):
     return (1.0 - 2.0 * a * a) * np.exp(-a * a)
 
 
-def cfl_dt(grid, c: float = C0, safety: float = 0.99) -> float:
+def cfl_dt(grid, *, c: float = C0, safety: float = 0.99) -> float:
     """Courant-limited time step ``safety / (c sqrt(sum_axis 1/d_axis^2))``.
 
     ``d_axis`` is the *smallest* cell width on that axis.  The leapfrog
