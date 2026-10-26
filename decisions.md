@@ -7450,3 +7450,88 @@ with both `flux_detected` and `slot_detected` routed through it, and `b_min` mad
 
 **Status of this section, after (m).** §101.21 carries D2, FLAG 2, the same two items owed to the operator from (l), and one new blocking item. Five things are now settled that were not: the equality-case caveat in (h) is closed as a fixed gate defect rather than an ill-posed question; the two non-reproductions in (i) are withdrawn in favour of the figures; the `0.1462` archaeology is closed unresolved against a byte-identical `corr_e_y`; the `~7 %` between-mesh spread is ranked as the dominant systematic and deferred behind the z_free repair; and the z_free repair itself is promoted from background to blocking.
 
+
+## The two analytic eps are different quantities; percentages are quoted like-for-like
+
+- **Decision.** The record carries two analytic `eps_eff` values for the same 31x17 geometry - **pair A**
+  (`beta` 300.498268 = `k0*sqrt(A)`, `eps` 3.3500085193, from `.scratch/logs/corr_ez_followup.txt:22`) and
+  **pair B** (`beta` 309.981864, `eps` 3.564800282, from `docs/design/modalport_ownership.md:7` and the rows at
+  this file `:6846` / `:6847`). Each pair is internally closed under `eps = (beta/k0)^2` with
+  `k0 = 164.17940719617263`, so they are **two different analytic constructions**, not one number and one error.
+  B/A = +6.41 % on `eps`, i.e. +3.16 % on `beta` (309.981864/300.498268 = 1.031566). Every percentage in the
+  record is now quoted **like-for-like** - same route, same pair - and the following cross-pairings are
+  **withdrawn**: `+8.79 % / +18.35 %` (fit route against A's `beta` and A's `eps`), `+8.85 % / +18.48 %`,
+  and `+1.8 % / +1.3 %` (eigen route against B, which is `modalport_ownership.md:9`'s `+1.82 % / +1.28 %`).
+  The surviving like-for-like figures are: eigen route on **A** = `+4.09 % / +8.35 %`; fit route on **B** =
+  `+5.46 % / +11.22 %` (31x17) and `+5.52 % / +11.3 %` (41x22). `modalport_ownership`'s `+11.2 %` is correct
+  like-for-like and is not withdrawn. The narrowed open problem is **which analytic construction is physically
+  correct**, which is out of scope for the design note.
+- **Strongest argument against.** Two closed, internally consistent pairs invite the simplest reading: one of
+  them must be wrong, and the record should pick a winner before quoting any percentage at all. On that reading
+  this entry is bookkeeping that postpones a decision.
+- **Why that argument does not win.** The evidence in hand does not discriminate between the constructions, and
+  it does discriminate on a *different* axis: the Hammerstad/Jensen closed form `3.32546` sits 0.74-0.76 % from
+  **A** and 6.7 % from **B**, which corroborates A without establishing B as an error (a 1 %-class band cannot
+  reach a 6.7 % question). Declaring a winner would convert an honest "two quantities" into an unfounded claim.
+  Meanwhile the numbering error the withdrawal fixes - `8.61 - 5.46 = 3.15` - survives intact, so nothing
+  quantitative is lost by quoting like-for-like.
+- **Evidence.** `corr_ez_followup.txt:22` (pair A); `docs/design/modalport_ownership.md:7` and this file
+  `:6846` (`| beta | 336.675159 | 309.981864 |`) / `:6847` (`| eps | 4.205181853 | 3.564800282 |`) (pair B);
+  `300.498268` at `docs/design/zfree_diagnosis.md:71` and `:120`; closed-form arithmetic in the same document's
+  `C3` block; like-for-like percentages from `docs/design/modalport_ownership.md:9` and `:124-125`. **Citation
+  drift to fix when convenient:** `modalport_ownership.md:7` cites this file `:6844`, but the two rows it means
+  are `:6846` and `:6847`.
+
+## Supervisor error: an inverted inequality in an instruction
+
+- **Decision.** An instruction was written with an inequality pointing the wrong way, and the pattern is now
+  named: **read the direction of the inequality before writing the fix.** Two instances are recorded. (i) A
+  *minimum*-admixture floor (the contaminant must be **at least** ~87 % of the good component before
+  `corr(e_z)` collapses from 0.92 to 0.119) was mistaken for an upper bound, and a "~1.5 % admixture" estimate
+  was written on the strength of it - wrong by 1.8-2.7 orders of magnitude (58x to 507x). (ii) A correction was
+  instructed as `corr_e_z >= 0.3` when the bound the argument needs is `corr_e_z <= 0.3` (small longitudinal
+  correlation = decorrelated; the screen is `corr_e_y >= 0.9` **with** `corr_e_z <= 0.3`).
+- **Strongest argument against.** Both are typos in prose, immediately visible on re-reading, and each was
+  caught before it propagated into a number that matters. Recording them as a named pattern over-weights a
+  clerical slip.
+- **Why that argument does not win.** Instance (i) *did* propagate: it put a "1.5 %" admixture figure into the
+  document and derived a factor-of-~20 from it. The cost of the class is that a flipped inequality silently
+  inverts the evidential direction of a test - a `>=` screen passes exactly the candidates a `<=` screen kills -
+  and the committed document contains three separate screens built on this bound. The committed document is
+  **correct** at `docs/design/zfree_diagnosis.md:304-305`, `:472` and `:490`, and this pass did not change them;
+  the error was in the instruction, not in the artefact.
+- **Evidence.** `docs/design/zfree_diagnosis.md:312-315` (the 1.5 % retraction and the 87 % / 760 % arithmetic);
+  `:337-338` (`corr_e_y >= 0.9` with `corr_e_z <= 0.3`); `:472`, `:490` (the bound as committed);
+  `tools/corr_ez_101_20.py:181-184` and `.scratch/logs/s10118_basis.py:385-387` for the measured correlations
+  (`corr_e_z` 0.119160432391; `corr_e_y` +0.920770784811 / -0.938702180036) the bound is applied to.
+
+## D0 passes and D3-pre is data-insufficient
+
+- **Decision.** Two test outcomes are recorded as final for this block. **`D0` (the reference check) = PASS**,
+  converted from "predicted to pass": the hand Hammerstad/Jensen value `3.32546` sits 0.74 % below the reference,
+  the recorded `3.325455` (`README_mode_profile.md:63`) 0.7385 %, the value in §8.1 `3.325474` 0.7385 %, and an
+  independent recomputation `3.324878` 0.756 % - all inside a **1 %-class band only**, which certifies the
+  denominator but does **not** adjudicate pair A vs pair B (B is 6.7 % from the closed form). The code's own
+  statement (`emfit/mode_profile.py:586-595`, "+0.74 % off the Hammerstad-Jensen fit") agrees but is not counted
+  as independent. **`D3-pre` (the C1 shape screen) = DATA-INSUFFICIENT**, explicitly **not** a failure and **not**
+  a C1 kill: the caches lack the field vectors on the mesh the criterion is written for.
+- **Strongest argument against.** Calling `D3-pre` "insufficient" rather than "failed" looks like a way to keep
+  C1 alive without evidence, and it costs an extra solve; the cheaper reading is that an unrunnable test is a
+  dead end.
+- **Why that argument does not win.** "Failed" and "insufficient" license opposite conclusions - a failure
+  retires C1 and inverts the cost ordering; insufficiency retires nothing. Only one of those is supported by the
+  data. What the caches actually hold: `.scratch/s10118_mixed_mode.npz` (411,015 B) has `m1, m_eps_m, c, k_zz,
+  m_zz, free_e, free_n` plus a `candidates` array of shape **(1, 4)** (`col` 738, `beta_sq` 9.783306e4, `eps`
+  3.629512, `E_strip_t` 0.5921932) and **no `vecs`**; `.scratch/s10118_mode_41x22.npz` (708,845 B) banks one
+  candidate row (`col` 1318, `beta_sq` 9.731614e4, `eps` 3.610335, `E_strip_t` 0.6106299) and no vectors;
+  vectors exist only in `.scratch/s10118_mode_41x22_raw.npz` (102,102,788 B, `vecs` (2525,2525) complex128,
+  `lam` (2525,)) and `.scratch/s10118_mode_51x19_raw.npz` (116,566,068 B, `vecs` (2698,2698)). There is **no
+  31x17 raw counterpart**, and the 0.0272240 anchor the screen's kill criterion uses is a 31x17 number - so the
+  test cannot run on the mesh it was specified for.
+- **Evidence.** Closed form and four supports as above; `emfit/mode_profile.py:22` (`Φ` `[431, 217]`, default
+  box), `:554-559` (interface rule and `n_sub`), `:586-595`, `:597-609` (window normalisation); npz sizes and
+  array shapes listed above; `emfit/mode2d.py:151` (`_MIXED_DENSE_MAX = 3000`). **Prerequisites for re-running:**
+  default box locked (`n_clean = n_air = 200`, 43.0 x 21.6 mm), banked geometry (`h = 0.0016`, `w = 0.003`,
+  `eps_r = 4.4`, `n_sub = 16`), no edits under `emfit/`. **Costed unblock:** one 31x17 re-solve (1486 edges,
+  dense) with `vecs` and `lam` persisted, ~35 MB of new artefact.
+

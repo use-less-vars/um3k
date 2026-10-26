@@ -67,9 +67,9 @@ Both come from the same solve and the same selected eigenvector, on two meshes, 
 | `corr_e_z` (vs analytic E_z) | **0.119160432391** | **0.119317006502** | 1.0 | 0.13% mesh drift — *converged* and *bad* |
 | `corr_e_y` (vs analytic E_y) | +0.920770784811 | −0.938702180036 | 1.0 | global sign differs by mesh; magnitude fine |
 | `eps_eff` = β²/k₀², **eigenvalue route** | **3.6295122081** | **3.6103349901** | **3.3500085193** | +8.34% / +7.77% — *not converged* (0.53% drift) |
-| `eps_eff` = β²/k₀², **fit route** | 3.964798 | 3.969256 | 3.3500085193 | +18.35% / +18.48% — *converged-wrong* (0.11% drift); see §1.1 |
+| `eps_eff` = β²/k₀², **fit route** | 3.964798 | 3.969256 | 3.3500085193 (**A**); like-for-like against **B** = 3.564800282: +11.2% / +11.3% (§1.1) | +18.35% / +18.48% against A is a **withdrawn cross-pairing**; **+11.2% / +11.3%** against **B**; *converged-wrong* (0.11% drift) either way |
 | β [1/mm], eigenvalue route | 312.7827646323 | 311.9553466185 | 300.4980 = k₀√3.3500085193 | +4.09% / +3.81%; 0.265% mesh drift |
-| β [1/mm], fit route | 326.9107654423116 | 327.094486 | 300.4980 | +8.79% / +8.85%; see §1.1 |
+| β [1/mm], fit route | 326.9107654423116 | 327.094486 | 300.4980 (**A**); like-for-like **B** = 309.981864 (§1.1) | +8.79% / +8.85% against **A** — **withdrawn cross-pairing**; **+5.46% / +5.52%** against **B** |
 | `ratio_A` = Σe_z²/Σe_y² | 0.0272240 | 0.0264298 | 0.0272240 / 0.0264298 / 0.0253657 (unit-repaired, 3 meshes) | **7.0% mesh spread** — the anchor is *mesh-local*, not an invariant |
 
 **Corrected in this table.** (i) The `ratio_A` row previously printed `0.027223973` for **both** meshes. That is
@@ -86,6 +86,10 @@ correct **on the 31x17 cache**, where the anchor is 0.0272240. It is *not* a cur
 41x22 (anchor 0.0264298) or 51x19 (anchor 0.0253657) it would kill every candidate including the good one. It
 therefore discriminates only as a **same-mesh comparison** — candidate ratio measured on the same mesh as the
 anchor it is compared against. Any read of T3 must honour that.
+
+**Retraction of an earlier reading.** An earlier reading of this note treated `ratio_A` as a curve-wide
+invariant guarded by a curve-wide threshold; the ~7 % between-mesh spread (0.0272240 / 0.0264298 /
+0.0253657) retires that reading — `ratio_A` is mesh-local.
 
 Two facts about the *shape* of the discrepancy matter more than its size:
 
@@ -130,7 +134,10 @@ gives `+4.09 %`. The 0.03-point difference is rounding in the recorded figure an
 Three consequences that change how the evidence reads:
 
 1. **The "8 %" and the "18 %" are one defect on two scales, or two routes — never two findings.** They must not
-   be added, subtracted, or presented as independent evidence.
+   be added, subtracted, or presented as independent evidence. **Corrected (see the resolution below):** the
+   "+8.79 % / +18.35 %" pair came from crossing the **fit** route against **A**'s β and **A**'s ε and is
+   **withdrawn**; like-for-like it is **+5.46 % / +11.22 %** on **B**. The eigenvalue route reads **+4.09 % /
+   +8.35 %** on **A**.
 2. **The fit route is *converged-wrong*; the eigen route is *not converged*.** Between the two meshes the fit
    route moves 0.11 % (326.910765 → 327.094486) while the eigen route moves 0.53 % (312.783 → 311.955). A
    mesh-stable route onto a mesh-stable error is **not** evidence of correctness — it is evidence that the fit
@@ -146,16 +153,46 @@ reference `ε = 3.3500085193` (`.scratch/logs/corr_ez_followup.txt:22`, key `eps
 locator — it is cited there explicitly; provenance and status in §8.1). The record also carries a *second* "analytic" ε of **3.564800282**
 (`docs/design/modalport_ownership.md:7`), and against that denominator the same eigen-route numbers read only
 +1.8 % / +1.3 % instead of +8.3 % / +7.8 % — a change of several-fold in the size of the alleged defect, from the
-denominator alone. **Corrected:** that second figure is an **unreconciled discrepancy of 6.4 %**
-(`3.564800282 / 3.3500085193 = 1.0641`), not a second reading of the same reference. The two are **not
-interchangeable**, and the `modalport_ownership.md` note's own **"+11.2 %"** (built on 3.564800282) is therefore
-**provisional**. Deciding *which* ε is correct is **out of scope** here; what this note does instead is refuse to
-let the choice move the headline percentages. The T0 arithmetic in `C3` (§4) is what adjudicates: the
-Hammerstad/Jensen closed form gives **3.32546**, which is 0.74 % below 3.3500085193 and 7.2 % below
-3.564800282 — it agrees with the **primary** denominator 3.3500085193 and not with the 3.564800282 outlier, so
-the closed form is used here only as **corroboration**, not as a third candidate. The denominator used
-throughout is **3.3500085193** (primary); any percentage quoted against 3.564800282 needs that figure
-reconciled first (out of scope).
+denominator alone. **Resolved in this pass — and the earlier framing was wrong.** An earlier version of this
+paragraph called that second figure an "**unreconciled discrepancy of 6.4 %**" (`3.564800282 / 3.3500085193 =
+1.0641`). That framing is **withdrawn**: the second figure is not a second *reading* of the first. The record
+carries **two self-consistent analytic pairs**, each closed under ε = (β/k₀)² with k₀ = 164.17940719617263:
+
+| pair | β [1/mm] | ε = (β/k₀)² | provenance | pairs with |
+|---|---|---|---|---|
+| **A** — the profile reference | 300.4980 | **3.3500085193** | `corr_ez_followup.txt:22`, key `eps_eff` | the **eigenvalue** route (§1 table) |
+| **B** — the §101.18 table's analytic column | 309.981864 | **3.564800282** | `docs/design/modalport_ownership.md:7`; `decisions.md:6846`-`:6847` | the **fit** route (§1 table) |
+
+B/A = **+6.41 %** on ε is **+3.16 %** on β (`309.981864 / 300.498268 = 1.031566`), so a re-paired percentage is
+not a smaller version of the same defect — it is the same defect measured against a **different analytic
+construction**. Two consequences, both of which change numbers in §1 and in `modalport_ownership.md`:
+
+1. **Percentages are quoted like-for-like, and the cross-pairings are withdrawn.** The fit route is **+5.46 %** on
+   β (`326.9107654423116` vs `309.981864`) and **+11.22 %** on ε (`3.964798` vs `3.564800282`) — *not*
+   "+8.79 % / +18.35 %", which paired the fit route's β and ε against **A**'s β and **A**'s ε. The eigenvalue
+   route stays on **A**: **+4.09 %** on β (`312.7827646323` vs `300.498268`) and **+8.35 %** on ε
+   (`3.6295122080769704` vs `3.3500085193`). The "+1.8 % / +1.3 %" quoted two paragraphs above is a cross-pairing
+   of the same kind — eigenvalue route against **B**, recorded as +1.82 % / +1.28 % at `modalport_ownership.md:9` —
+   and carries no evidential weight. `modalport_ownership.md`'s **"+11.2 %"** is, on this reading, **correct
+   like-for-like** (11.22 % against **B**) and is no longer "provisional" as *arithmetic*; only its denominator's
+   standing is open (next paragraph).
+2. **The headline is pair-dependent, and that is now stated rather than hidden.** "8 % high" is the eigenvalue
+   route on **A** (8.35 % on ε, 4.09 % on β); "8.6 % high" is `modalport_ownership.md`'s **fit** route on **B**
+   (8.61 % on β, from `336.675159` vs `309.981864`). Its "the repair is therefore worth about 3.1 of the 8.61
+   points" survives this correction untouched, because it is arithmetic *inside* the B pair: `8.61 − 5.46 = 3.15`.
+
+**What remains open — and it is narrower than before.** Not "which of two numbers is 6.4 % wrong", but "**which
+analytic construction is the physically correct reference**": **A** (the repo's own `microstrip_mode_profile`,
+electrostatic, on its own converged box) or **B** (the construction behind `modalport_ownership.md:7`, whose β is
+3.16 % higher and whose derivation is not recorded in this tree). That decision is **out of scope** here. What *is*
+in scope, and is now done, is that no percentage in this note can move because of it: each route is quoted against
+its own pair, and the cross-pairings are withdrawn. Corroboration — not adjudication — comes from the closed form
+in `C3` (§4): Hammerstad/Jensen gives **3.32546** (recorded as 3.325455 at `README_mode_profile.md:63` and 3.325474
+in §8.1; independently recomputed 3.324878), i.e. **0.74-0.756 %** from **A** and **6.7 %** from **B** (equivalently
+B is 7.2 % *above* the closed form — the direction was inverted in an earlier wording of this sentence). The closed
+form sides with **A**, and is used here only as **corroboration**, never as a third candidate. This paragraph also
+no longer needs `D0` to *adjudicate* anything: on the two-pair reading there is no arithmetic ambiguity left for it
+to settle, only the (out-of-scope) question of which construction is right.
 
 ---
 
@@ -297,9 +334,11 @@ artefacts therefore contain **both** identifications, and `IDENTIFIED` (:207-208
 `solver_eps_eff` side by side. If the two rules agree on the same column, the selector is not the whole story;
 if they disagree, the disagreement itself is the discriminator. This comparison needs no solve.
 
-**Cost to decide.** Zero solves. Everything needed is in `.scratch/s10118_mixed_mode.npz`:
-`candidates` (8 rows of `col, beta_sq, eps_eff, E_strip_t`), plus `m1, m_eps_m, c, k_zz, m_zz, free_e, free_n`
-— so any Rayleigh quotient, any ε_eff, and any `Φ` for **any** candidate can be evaluated with `B` unchanged.
+**Cost to decide.** **One re-solve, not zero.** `.scratch/s10118_mixed_mode.npz` holds
+`candidates` (shape (1, 4), i.e. one row of `col, beta_sq, eps_eff, E_strip_t`), plus `m1, m_eps_m, c, k_zz,
+m_zz, free_e, free_n`, and **no `vecs`**: only the selected row is banked, so the selector **cannot be audited
+post hoc from the cache**. The audit needs a re-solve that persists every candidate *and* its vector — which is
+what the 41x22 and 51x19 raw caches already carry (`vecs`, `lam`) and the 31x17 cache does not.
 
 **What would change my mind (C1).** (a) No candidate in the banked spectrum satisfies the `C1.1` shape
 requirement (corr_e_y ≥ 0.9 **with** corr_e_z ≤ 0.3) — then the selector cannot be the cause and C1 is retired
@@ -413,9 +452,11 @@ With u = w/h = 1.875, ε_r = 4.4: a = 1 + (1/49)ln[(u⁴ + (u/52)²)/(u⁴ + 0.4
 = **0.999361**; b = 0.564[(ε_r − 0.9)/(ε_r + 3)]^0.053 = **0.542058**; 1 + 10/u = **6.333333**
 (= 19/3); exponent −a·b·ln(19/3) = −0.541711 × 1.845827 = **−0.999905**; factor = (19/3)^(−0.541711) = **0.367919**;
 ε_eff = (ε_r+1)/2 + (ε_r−1)/2 × factor = 2.7 + 1.7(0.367919) = **3.32546**. The reference `3.3500085193` is
-**+0.74 % above the closed form** — comfortably inside T0's >1 % kill criterion. **T0 is therefore predicted to
-pass**, and C3 is demoted from "candidate" to a **bounded nuisance**: a reference error below 1 % cannot produce
-an 8 % (β scale) or 18 % (ε scale) gap, so C3 cannot be the cause of the anomaly, while still being worth the
+**+0.74 % above the closed form** — comfortably inside T0's >1 % kill criterion. **`D0` therefore PASSES** — hand `3.32546` (−0.74 %), recorded `3.325455` (`README_mode_profile.md:63`, +0.7385 %),
+§8.1's `3.325474` (+0.7385 %) and an independent recomputation `3.324878` (+0.756 %); the code says the same at
+`emfit/mode_profile.py:586-595` ("+0.74 % off the Hammerstad-Jensen fit") but is not independent. **Band: 1 %-class
+only — it does not adjudicate `A` vs `B` (pair B is 6.7 % from the closed form).** C3 is demoted from "candidate" to a **bounded nuisance**: a reference error below 1 % cannot produce
+a **4.09 %** (β scale) or **8.35 %** (ε scale) gap, so C3 cannot be the cause of the anomaly, while still being worth the
 formal check T0 already specifies (§1.1 also uses it to adjudicate between the two ε denominators in the record).
 **(b) Struck claim.** An earlier version of this bullet said the reference "reproduces the published `2.722397e6`
 energy anchor exactly". That is **not** evidence of accuracy and must not be quoted as such:
@@ -424,14 +465,14 @@ is a class (ii) unit defect (`normalization_scheme.md:86` gives the repaired 0.0
 Agreement on a void quantity carries no information.
 
 **Cost to decide.** **Arithmetic only, no run** — and it is already done above (3.32546 vs 3.3500085193,
-+0.74 %). T0 stays in §5 as the **formal** check and as the mask on the denominator of every percentage in this
++0.74 %). `D0` stays in §5 as the **formal** check and as the mask on the denominator of every percentage in this
 file, but there is no longer a live question for it to settle: C3 is bounded below 1 % and demoted to rank 3.
 Its remaining value is negative-space evidence — it rules out the one escape hatch that would have shrunk the
 whole problem by a factor of ~20.
 
 **What would change my mind (C3).** T0 finding the reference more than 1 % from the closed form in the
 *direction that shrinks the gap* (i.e. reference too **high**) would restore C3 and re-base every target in §1;
-the hand computation above predicts +0.74 % and therefore predicts T0 passes. C3 is also reopened if the two
+the hand computation above gives +0.74 %, on which `D0` has since **passed** (1 %-class band only). C3 is also reopened if the two
 ε denominators in §1.1 (3.3500085193 vs 3.564800282) cannot be reconciled — a factor-of-six ambiguity in the
 denominator is the one way a few-percent reference question becomes a first-order one.
 
@@ -461,6 +502,37 @@ self-check corr = 1.000000000000); mesh resolution (0.13% drift); the archived `
 
 ## 5. The test plan, costed
 
+**Naming.** This section numbers the tests `T0`-`T5`, as first written; later text and `decisions.md` call the
+same items `D0`-`D5`. The mapping is fixed here once, so that no reader has to re-derive it:
+
+| §5 as written | `D`-name used elsewhere | standing |
+|---|---|---|
+| `T0` | `D0` | executed in this pass — **PASS** (see `C3`) |
+| — | `D1` | new, design only — the section after this one |
+| — | `D2` | new, design only — the section after this one |
+| `T3-pre` | `D3-pre` | **DATA-INSUFFICIENT** — see the placement note below |
+| `T3` | `D3` | not executed |
+| `T3b` | `D3b` | not executed |
+| `T4` | `D4` | not executed; not authorised by this note |
+| `T5` | `D5` | declined, not postponed |
+
+`D1` and `D2` are **additions, not renamings**: nothing below is renumbered, reordered or re-scoped, and the
+cost ordering of this section is unchanged.
+
+**Placement: `D3-pre`.** Executed this pass, outcome **DATA-INSUFFICIENT** — neither a pass nor a kill. It is
+not a `C1` kill and `C1` is neither confirmed nor retired by it; the cost ordering is therefore **not**
+inverted. The prerequisite the screen needs is the analytic `Phi`, `E_y`, `E_z` it correlates against, and that
+is **not on disk**: there is no analytic `.npy` anywhere under `.scratch`, and it is rebuilt at run time
+(`tools/corr_ez_101_20.py:181-184`, `.scratch/logs/s10118_basis.py:385-387`). Only scalars were banked: `Phi`
+shape `[431, 217]` (`corr_ez_followup.txt:22`), corr_e_y `+0.920770784811` at 31x17 (`:43`), `-0.938702180036`
+at 41x22 (`:126`), corr_e_z `0.119160432391` (`:205`). Second blocker: `candidates` is shape (1, 4) in both
+caches, so a **per-candidate** screen cannot be run post hoc either. **Costed unblock:** rebuilding the analytic
+reference needs **no eigensolve** (deterministic quasi-static FD plus `plane_mode`, seconds); screening the 31x17
+candidates additionally needs an eigensolve re-run (1486 edges, dense below `_MIXED_DENSE_MAX = 3000`, ~35 MB,
+~35 s class), because that cache banks no `vecs`. "Failed" and "insufficient" point in opposite directions — a
+failure retires `C1` and inverts the ordering, insufficiency retires nothing — and only the second is what the
+data supports.
+
 Ordered by cost. Each test is stated with **what it decides** and a **kill criterion**, so that a null result
 is informative rather than a shrug. No test below edits `emfit/`.
 
@@ -469,9 +541,9 @@ is informative rather than a shrug. No test below edits `emfit/`.
 | **T0** | Hammerstad/Jensen closed form for w/h = 1.875, ε_r = 4.4 vs `microstrip_mode_profile`'s 3.3500085193 | arithmetic, minutes, no run | C3 — is the *denominator* of the 8% claim sound? | If the reference is off by >1%, re-base the ε_eff target before anything else |
 | **T1** | Read `assemble_mixed:470-533`: is nodal ε element-averaged? | static read, minutes | C2a / M1 live or dead | If ε is evaluated per element (not from nodes), M1 is **dead** and C2 loses its main mechanism |
 | **T2** | Compare **local** cell spacing at y ≈ h using the banked `xs`, `zs` on both meshes | arithmetic on two `.npz`, no solve | C2b — was the boundary layer actually refined? | If local h is unchanged (ratio ≈ 1.0), C2 is **promoted** and the p ≈ 0.25 argument in `03` §C is retracted as an average-counts artefact |
-| **T3-pre** | Structural screen on the banked spectrum, run **before** T3: does any candidate pair a near-fundamental transverse part (corr_e_y ≥ 0.9) with a decorrelated longitudinal part (corr_e_z ≤ 0.3)? | arithmetic on one `.npz`, no solve; a cheaper tier than T3 (shape screen only — no ε_eff arithmetic, no reassembly) | C1 — the precondition `C1.1` says T3 silently assumes | **Kill C1:** no candidate satisfies the shape pair ⇒ selector cannot reproduce the collapse, C1 **dies on arithmetic** and the cost-ordering **inverts** (C2/T1/T2 move ahead). Pass = screen non-empty ⇒ T3 is worth its arithmetic |
-| **T3** | Full-spectrum sweep: for **every** admissible candidate in the banked spectrum, recompute ε_eff and the `E_z` overlap, **B unchanged** | arithmetic on one `.npz`, no solve, no reassembly | C1, directly; P1 and P2 of `03` §A | **Pass:** some candidate reaches corr(`e_z`) ≥ 0.9 with ε_eff ≈ 3.3500 ⇒ selector is the fault, fix is one line at :1150/:1167. **Kill C1:** no candidate exceeds corr 0.5, or the chosen candidate's Σe_z²/Σe_y² ≤ 0.0272 |
-| **T3b** | In the same pass, compare the library's pick (:1167, max eligible β²) against the driver's pick (:200, max `E_strip_t`) — both are already banked as `col` and as `candidates` rows | free, same pass | whether the two rules agree | Disagreement is itself the discriminator; agreement weakens C1 |
+| **T3-pre** | Structural screen on the banked spectrum, run **before** T3: does any candidate pair a near-fundamental transverse part (corr_e_y ≥ 0.9) with a decorrelated longitudinal part (corr_e_z ≤ 0.3)? | arithmetic on one `.npz` **plus one deterministic rebuild of the analytic reference**, which is not on disk — see the `D3-pre` placement note; cheaper than T3, shape screen only, no ε_eff arithmetic, no reassembly | C1 — the precondition `C1.1` says T3 silently assumes | **Kill C1:** no candidate satisfies the shape pair ⇒ selector cannot reproduce the collapse, C1 **dies on arithmetic** and the cost-ordering **inverts** (C2/T1/T2 move ahead). Pass = screen non-empty ⇒ T3 is worth its arithmetic |
+| **T3** | Full-spectrum sweep: for **every** admissible candidate in the banked spectrum, recompute ε_eff and the `E_z` overlap, **B unchanged**. **Caveat:** not executable as written on 31x17, that cache banks no `vecs` | arithmetic on one `.npz` **once the 31x17 cache carries `vecs`** — i.e. one 31x17 re-solve, no reassembly | C1, directly; P1 and P2 of `03` §A | **Pass:** some candidate reaches corr(`e_z`) ≥ 0.9 with ε_eff ≈ 3.3500 ⇒ selector is the fault, fix is one line at :1150/:1167. **Kill C1:** no candidate exceeds corr 0.5, or the chosen candidate's Σe_z²/Σe_y² ≤ 0.0272 |
+| **T3b** | In the same pass, compare the library's pick (:1167, max eligible β²) against the driver's pick (:200, max `E_strip_t`) — both are already banked as `col` and as `candidates` rows. **Caveat:** the cache banks one candidate row, so a per-candidate statement needs a re-solve | free, same pass | whether the two rules agree | Disagreement is itself the discriminator; agreement weakens C1 |
 | **T4** | Promote `.scratch/mode2d/c2_slab2.py` to `tests/` as the first `mode2d` test | ~2.5 min runtime; ~1 h of build | permanent coverage of the **TM** defect class + a selector regression test | Assertions: (a) β²/k₀² within 0.5% of analytic, (b) the *chosen index* equals the analytic mode index, (c) `Σe_z² > 0` and `cᵀx_t ≠ 0` |
 | **T5** | A finer microstrip mesh | ~2 min/solve at 1444 free edges (measured 111 s); the whole exercise costs hours | confirm-only | **Deprioritised.** Predicted by `03` §C to still show ≈7.5%. Run last, and only after T1-T3 are clean, and only as a *convergence confirmation*, not as a diagnostic |
 
@@ -494,6 +566,109 @@ Three placements are worth stating rather than leaving implicit:
   `tests/test_mode2d.py` costs ~1 h of build plus ~2.5 min runtime, and it must *first* pass its three
   assertions (a)-(c) standalone against the slab anchors `(k₀, β²/k₀²)` = `(3.0, 4.298278227712)` and
   `(2.095845021952, 4.196297158361)`. Nothing here authorises that promotion; T4 is a separate dispatch.
+
+---
+
+## D1 and D2 -- design only (not executed this block)
+
+Two items are called `D1` and `D2` in later discussion and have no row in the table above. **Neither was executed
+in this pass.** They are recorded here as designs, with their inputs pinned and their pass/kill criteria fixed
+*before* anyone runs them, so that neither can be retro-fitted to whatever it returns. Both test the **same
+candidate, `C2`** -- that the discrepancy is produced by the *solver* rather than by the reference -- and they
+split it along its two independent mechanisms: **`C2a`**, the attribution of dielectric contrast to the lattice at
+the strip interface, and **`C2b`**, the resolution of the singular field at the strip edge by a uniform structured
+lattice. Note what that means: `D1` and `D2` are tests of **`C2`**, not of the reference `A`. The reference's own
+accuracy is `D0`'s question and `D0` has passed; the profile's normalisation bookkeeping is settled in §1.1. An
+earlier draft of this section made that substitution -- it tested the interface rule's effect on the `+0.74 %`
+residual and the 1.164852 % window normalisation -- and both of those are 0.3-1.2 % questions that cannot address
+a 4.09-11.22 % gap.
+
+**Prerequisites shared by both.** The default box, not a plane-sized one: `n_clean = n_air = 200`,
+`43.0 x 21.6` mm, `Phi` of shape `[431, 217]` (`emfit/mode_profile.py:22`); banked geometry `h = 0.0016`,
+`w = 0.003`, `eps_r = 4.4`, `n_sub = 16` (`.scratch/tol/logs/TOLFLUX.json`). No test below edits `emfit/`
+unless it says so explicitly and is authorised separately.
+
+### D1 -- does dielectric interface attribution explain the solver's epsilon deficit? (`C2a`)
+
+**What it tests.** `C2a`, not the reference's accuracy. The mixed block builds its permittivity term `m_eps_m`
+at `emfit/mode2d.py:995-996`, where dielectric contrast is assigned cell-by-cell on the 31x17 mixed lattice; the
+interface rule available to that code is the library's (`emfit/materials.py:241`, default `interface="dual"`,
+alternative `"point"` at `:248-250`). A singular-contrast interface assigned to a half-cell, a full cell, or a
+weighted average of the two produces **different discrete operators for the same physical problem**, and the
+difference is a solver artefact of exactly the kind `C2a` claims. The claim is quantitative, not qualitative: the
+artefact has to be a substantial fraction of the observed gap -- **4.09 %** on `beta` and **8.35 %** on `eps` for
+the eigen route on pair **A**, **5.46 % / 11.22 %** for the fit route on pair **B** (§1.1).
+
+**Proposal.** Hold everything except the attribution fixed -- same 31x17 mesh, same `k0`, same frequency, same
+geometry, same eigensolver settings -- and recompute the mixed block under **every admissible attribution**:
+`interface="dual"` (baseline, which must reproduce the banked `3.6295122081`), `interface="point"` from each
+side, and the arithmetic average. Report the `eps_eff` spread, and the eigenvectors if the routine exposes them,
+so that the spread can be attributed to interface cells rather than to solver path.
+
+**Plumbing caveat -- establish this before costing anything.** It is **not** established that the `interface`
+option reaches `m_eps_m` the way it reaches the profile builder; `mode2d.py:995-996` may hard-wire its own
+averaging. The first step is therefore to read that term and the array it consumes and record whether the
+attribution is selectable at all. If it is hard-wired, this design acquires a one-line scratch patch, and that
+changes its standing under the no-edit rule -- in which case say so before running it.
+
+**What it decides.** Whether the `eps` gap is an artefact of **interface attribution** -- in which case it is a
+solver-configuration defect with a one-parameter fix and both §1 routes shrink together -- or whether it survives
+attribution unchanged, in which case `C2a` is **dead** and the gap has to come from `C2b`, or from `C1`/`C3`
+being reopened.
+
+**Cost.** One solve per attribution on a mesh whose operators are already banked and small (31x17, 1486 edges,
+dense below `_MIXED_DENSE_MAX = 3000`, ~35 s class): three to four solves, no new geometry work.
+
+**Pass / kill.** The band is set **relative to the gap the test must explain**, not chosen for comfort. `C2a`
+survives only if the attribution spread is a substantial fraction of **4.09 %** (the smallest `beta` gap it is
+offered against). **Kill `C2a` if the spread is <= ~0.4 %** -- an order of magnitude below that gap, arithmetically
+unable to produce it. Between ~0.4 % and 4.09 % the result is partial: report the fraction and re-rank `C2a`
+against `C2b` instead of declaring a verdict. **A spread larger than the gap itself** means the baseline
+attribution is not the one that produced the banked number -- that is a provenance finding, not a `C2a`
+confirmation, and it must be reported before any percentage in §1 is re-read.
+
+### D2 -- does the uniform lattice under-resolve the strip-edge singularity? (`C2b`)
+
+**What it tests.** `C2b`, not the profile's normalisation. The 31x17 mixed mesh is a *uniform* structured
+lattice: its cell boundaries do not fall on the strip edge, and the quasi-static TMo field carries an `r^-1/2`
+class singularity there, so a discrete `eps_eff` converges from one side as cells shrink. `C2b` claims the
+observed 4 %-class `beta` gap is that convergence error evaluated at a coarse mesh, not a modelling error.
+
+**Proposal.** Hold the box, the geometry and the physics fixed and vary **only the cell size near the strip edge**
+-- either a graded mesh that refines toward `y = +-w/2, z = h` while leaving the far field coarse, or a nested
+local refinement of the edge cells. Report, over a 3-4 point family: `eps_eff`, `beta`, and -- the part that
+matters for the record -- a **shape** metric for `Phi` (the banked `corr_e_y` / `corr_e_z` and `ratio_A`, so the
+result is directly comparable with §1). Fit the sequence and report the **extrapolated limit**, not the finest
+run, so that "converged" means Richardson-extrapolated rather than "stopped moving".
+
+**What it decides.** Whether the gap is a **discretisation error that shrinks as the edge is resolved** -- in
+which case it is a mesh-resolution finding, the fix is grading or sub-celling rather than physics, and §1's
+percentages are mesh artefacts that must be re-based -- or whether it **persists at the extrapolated limit**, in
+which case `C2b` is **dead** and the discrepancy is a genuine model difference between solver and reference.
+
+**Standing under the no-edit rule.** This is the **only** item in §5 that cannot be run as specified without
+touching the grid: `mode2d` builds its lattice uniformly, so a graded or nested edge refinement is a prototype
+change, not a parameter. It is recorded as **design only and not authorised** for that reason, and it must not be
+started before `D1`'s plumbing question is answered -- if `D1` shows the gap is attribution-dominated, `D2` is not
+worth its prototype.
+
+**Cost.** A convergence family, not one run: 3-4 solves **plus the grid prototype**. The solves are cheap
+(31x17 class, ~35 s); the prototype is the whole cost, and it is the reason this test is deferred rather than
+scheduled.
+
+**Pass / kill.** **Kill `C2b` if `eps_eff` and the `Phi` shape metric are both flat to <= ~0.5 % across the
+family** -- 0.5 % being an order of magnitude below the 4.09 % gap, so a flat sequence cannot produce it. `C2b`
+**survives** if the extrapolated limit moves `eps_eff` by a substantial fraction of the gap *while the shape
+metric stays put*: that is the signature of a field-singularity artefact rather than a different mode, and it
+re-bases every percentage in §1.
+
+**What neither test does.** Neither can adjudicate the `A` vs `B` question of §1.1 -- `D1` measures a spread
+across attribution rules on one construction, `D2` measures convergence of one construction, and the `A`/`B` split
+is **6.41 %** on `eps`, larger than either band and a question about which analytic construction is physically
+correct. Equally, neither test can **confirm** `C2`: a large spread or a slow convergence shows the solver is
+attribution- or mesh-sensitive, not that this sensitivity accounts for the whole gap, which could still be
+partly model difference. Both tests are **one-sided** -- they can kill `C2a` / `C2b` cleanly, but they can only
+make `C2` more plausible, never establish it.
 
 ---
 
@@ -549,13 +724,16 @@ Nothing in this tree touches the coupling sign, the Schur complement, or the PEC
   here and must **not** be quoted as a measurement.
 * The `e^{−iβz}` comment at :15 contradicts the derived convention (`S7`). Harmless for every reported number;
   a trap for the next reader.
-* Whether `microstrip_mode_profile` is accurate to <1% is **unverified** (C3/T0). Until it is checked, "the
-  model is 8% high" is really "the model and this reference differ by 8%".
+* Whether `microstrip_mode_profile` is accurate to <1% is **checked, and it is** — **`D0` = PASS** (see `C3`):
+  the hand closed form `3.32546`, the recorded `3.325455` (`README_mode_profile.md:63`) and an independent
+  recomputation `3.324878` all agree to **0.74-0.76 %** on pair **A**. The band is **1 %-class only**: it
+  certifies the denominator, it does not adjudicate `A` vs `B` (pair **B** is 6.7 % from the closed form). Read
+  the §1 numbers as "the model and this reference differ by **4.09 % on β / 8.35 % on ε**" (eigenvalue route).
 * `ratio_A`'s unit repair (0.0272240 vs the printed 2.72e6) is a *documented* one-sided `* CELL`;
   the scheme-A ratio stands, and this note does not touch scheme C (0.00951415).
 * **Zero test coverage.** `grep -rln "mode2d" tests --include=*.py` returns nothing, so no committed test
   exercises the TM path at all. This is an already-established finding quoted here, not something re-run for
-  this note (this note executes nothing). It is why C4 is a standing risk and why T4 exists as a deliverable.
+  this note (this note executes nothing). It is why C4 is a standing risk and why `D4` exists as a deliverable.
 
 **Why measure at all rather than "just fix the selector".** Because the selector rule is *plausible* and
 therefore cheap to believe. It has one testable consequence that has never been executed (T3), and C2 has an
@@ -592,8 +770,8 @@ logs listed above; nothing in this table was recomputed for this note. A bare `:
 | value | where used | source file:line | status |
 |---|---|---|---|
 | `3.3500085193` | the denominator of every % in §1, §1.1, §4 | `corr_ez_followup.txt:22` (key `eps_eff`) | **primary, reconciled** — the denominator used throughout |
-| `3.564800282` | §1.1, as the alternative denominator | `docs/design/modalport_ownership.md:7` | **UNRECONCILED**, +6.4 % against the primary; percentages built on it are provisional |
-| `3.32546` | `C3` / T0, §4 | §4 `C3` hand computation (Hammerstad/Jensen, w/h = 1.875, ε_r = 4.4) | closed form, 0.74 % below the primary — **corroboration only** |
+| `3.564800282` | §1.1, pair **B**'s ε | `docs/design/modalport_ownership.md:7`; `decisions.md:6847` (`\| eps \| 4.205181853 \| 3.564800282 \|`) | **reconciled — pair B**, not an unreconciled rival. Its β counterpart is `309.981864` (`decisions.md:6846`, `\| beta \| 336.675159 \| 309.981864 \|`), and the pair closes under ε = (β/164.17940719617263)². Pair B is +6.41 % above pair **A** on ε. Percentages may be quoted against it **like-for-like** (fit route: +11.2 % on ε) and must not be crossed with A's counterpart |
+| `3.32546` | `C3` / `D0`, §4 | §4 `C3` hand computation (Hammerstad/Jensen, w/h = 1.875, ε_r = 4.4) | closed form — **`D0` = PASS**. Recorded `3.325455` (`README_mode_profile.md:63`) and independently recomputed `3.324878` both sit **+0.7385 % / +0.756 %** below pair **A** (3.3500085193), i.e. inside a 1 %-class band. It is **0.74 % below A** and **6.7 % below pair B**, so it corroborates A's ε without adjudicating A vs B |
 | `0.0272240` / `0.0264298` / `0.0253657` | `ratio_A`, §1 and §1.1 | `:60` / `:143`; `docs/design/normalization_scheme.md:86` | measured, unit-repaired, mesh-local — never mixed across meshes |
 | `0.119160432391` | corr_e_z, 31x17 — §1, `S9` | `:205` | measured |
 | `+0.920770784811` | corr_e_y, 31x17 — the `C1.1` assumption | `:43` | measured |
