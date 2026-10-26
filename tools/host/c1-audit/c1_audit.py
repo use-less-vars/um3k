@@ -111,10 +111,49 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.sparse.linalg import splu
 
 # ---------------------------------------------------------------------------
-# repo layout: this file lives at <repo>/tools/host/c1-audit/c1_audit.py
+# repo layout: this file lives at <repo>/tools/host/c1-audit/c1_audit.py,
+# which is THREE levels below the repository root.  Never count ".." levels
+# here -- a fixed count used to yield <repo>/tools instead of <repo>, which is
+# why `import emfit` below failed with ModuleNotFoundError.  The root is
+# discovered (or handed over by run.sh via C1_REPO) and then validated.
 # ---------------------------------------------------------------------------
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(HERE))
+
+
+def _find_repo(start):
+    """Return the nearest ancestor of *start* that contains an ``emfit/`` dir.
+
+    Counting ``..`` components is deliberately avoided (see above).  ``None``
+    is returned if the walk reaches the filesystem root without a candidate.
+    """
+    cur = os.path.abspath(start)
+    while True:
+        if os.path.isdir(os.path.join(cur, "emfit")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:                      # hit the filesystem root
+            return None
+        cur = parent
+
+
+#: run.sh exports the root it discovered; only a direct invocation needs the
+#: local walk.  Either way the result is validated immediately below.
+_REPO_ENV = os.environ.get("C1_REPO", "").strip()
+REPO = _REPO_ENV if _REPO_ENV else _find_repo(HERE)
+EMFIT_DIR = os.path.join(REPO, "emfit") if REPO else None
+if not REPO or not os.path.isdir(EMFIT_DIR):
+    _hint = "" if not _REPO_ENV else (
+        "  NOTE: C1_REPO=%r came from the environment and looks stale.\n"
+        % (_REPO_ENV,))
+    raise SystemExit(
+        "cannot locate the repository root:\n"
+        "  REPO      = %r\n"
+        "  emfit dir = %r  (not a directory)\n"
+        "%s"
+        "run this audit through tools/host/c1-audit/run.sh, which discovers the\n"
+        "root (git rev-parse --show-toplevel, else walk up to emfit/) and exports\n"
+        "C1_REPO; do not invoke c1_audit.py directly.\n"
+        % (REPO, EMFIT_DIR, _hint))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
@@ -207,7 +246,8 @@ say("c1_audit.py -- full-spectrum audit of the mixed 2-D pencil vs the analytic 
 say("=" * 100)
 say("EXPECTED COST: dense QZ ~111 s on the 31x17 node mesh (1486 edges, 1444 free),")
 say("               ~1-2 GB RAM peak, per-mode loop ~10-20 s, TOTAL ~2-4 min.")
-say("repo       :", REPO)
+say("repo       :", REPO, "(from C1_REPO)" if _REPO_ENV else "(discovered)")
+say("emfit      :", EMFIT_DIR, "(FOUND)")
 say("python     :", sys.version.split()[0])
 say("numpy      :", np.__version__)
 say("scipy      :", scipy.__version__)

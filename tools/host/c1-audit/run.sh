@@ -55,7 +55,33 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
+
+# --- repository root -------------------------------------------------------
+# NEVER count ".." levels for this: the script lives THREE levels below the
+# root (<repo>/tools/host/c1-audit/run.sh), and counting was exactly the bug
+# that made REPO resolve to <repo>/tools, so `import emfit` in c1_audit.py
+# died with ModuleNotFoundError.  Discover the root instead, and fail loudly
+# rather than running against a bogus one.
+#   1. ask git (exact, and survives this file being moved)
+#   2. otherwise walk up from $HERE until a directory containing emfit/ is hit
+#   3. otherwise FATAL to stderr and exit 2
+REPO="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "${REPO:-}" ] || [ ! -d "$REPO/emfit" ]; then
+    REPO="$HERE"
+    while [ ! -d "$REPO/emfit" ]; do
+        if [ "$REPO" = "/" ]; then
+            echo "FATAL: cannot find the repository root." >&2
+            echo "       started at : $HERE" >&2
+            echo "       walked up  : to / without finding it" >&2
+            echo "       looked for : <dir>/emfit (an emfit/ package directory)" >&2
+            exit 2
+        fi
+        REPO="$(dirname "$REPO")"
+    done
+fi
+# One answer only: hand the discovered root to c1_audit.py so that it cannot
+# re-derive a different one.
+export C1_REPO="$REPO"
 OUT="$HERE/out"
 mkdir -p "$OUT"
 LOG="$OUT/run.log"
@@ -65,6 +91,11 @@ echo "               1486 edges / 1444 free after the PEC cut), ~1-2 GB RAM peak
 echo "               per-mode loop ~10-20 s, TOTAL ~2-4 min wall clock."
 echo "               A PROGRESS line is printed at least every 30 s."
 echo "repo     : $REPO"
+if [ -d "$REPO/emfit" ]; then
+    echo "emfit    : $REPO/emfit (FOUND)"
+else
+    echo "emfit    : $REPO/emfit (MISSING)"
+fi
 echo "out dir  : $OUT"
 echo "log      : $LOG"
 echo "started  : $(date -Is)"
