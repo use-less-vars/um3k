@@ -6485,3 +6485,288 @@ So the third world is real, and it is (3): the mode is absent from the spectrum 
 - `eigsh` with k = 8 samples only the eight eigenvalues nearest each shift. Absence of a high-E_strip candidate in four windows is strong but is not a global proof; a wide sweep (k = 40, or a shift-free spectrum) has not been run.
 - Everything here is one frequency (0.1 GHz), one geometry (w = 3.2 mm, h = 1.6 mm, eps_r = 4.4) and one box (6.0 x 4.0 mm). The box is not converged, so eps_eff values are not comparable across box sizes.
 - The conclusion is about the pencil as formulated in `emfit/mode2d.py`. It says nothing about a correctly formulated 3D vector problem, and nothing about whether that module should be fixed, replaced, or scoped to its uniform-eps verification cases.
+
+## §101.17 — The mixed two-component mode solver: criteria 2A, 2B and 2C, two defects in the criteria as I wrote them, and the retraction of the power-consistency test
+
+### (a) What was tested, and the verdicts first
+
+`emfit/mode2d.py` (1392 lines, uncommitted at the time of writing) now carries the out-of-plane component inside the pencil instead of imposing `e_z := 0`, which is the reduction §101.16 convicted. The gate was staged by the operator: **2A** the analytical limits, **2B** a dispersion curve, **2C** identification of the boxed microstrip mode and a power-consistency check. The fences were: no lumped port, no `ModalPort`, no M3c gate, no C5, no wall, and no content change to `emfit/eigen.py` or `emfit/studies.py`.
+
+The verdicts come first, because this section is long and three of them are not what was asked for.
+
+1. **2A — PASS.** Three analytical limits reproduced, one of them to nine significant figures against the transverse solver.
+2. **2B — PASS** on magnitude, **with the `O((k0 h)^2)` clause of the criterion refuted.** The clause named a convergence mechanism the data does not show. The agreement is real — every one of the seven points lands within 3.15e-5 relative of the transcendental branch — but it is not a `(k0 h)^2` trend and no observed order `p` could be obtained, for a structural reason given in (d).
+3. **2C part 1, identification — PASS**, but only after a units defect in my own specification was found and corrected, and only when scored against an independent Laplace field rather than against any energy fraction.
+4. **2C part 2, power consistency — RETRACTED.** The criterion `|P_circ|/P_flux → 1` is ill-posed for a formulation whose returned eigenvector is transverse-only. This is not a solver defect and not a quadrature defect: the test asks the field to carry something the Schur complement removed.
+5. **§101.16's conclusion survives re-testing in correct units.** The old transverse formulation, run at the same 0.1 GHz and the same `k0` the mixed solver used, does not find the mode: the maximum `corr_x` over all 12 distinct positive candidates is 0.471931074797841, and zero candidates lie within ±5 % of the static reference 4.071596.
+
+Two things are recorded rather than smoothed. First, the 2B mesh comparison turned out never to have been run at all — the numbers I had been carrying forward were the **analytic reference column**, not mesh output. It was run from scratch for this section, and the seven rows in (d) are that run's. Second, the provenance of 2A is weaker than its result: it survives only as prose inside the working document `.thoughtmachine/working_docs/11dd0e416b67.json`, key `step6_record`, entry `[2026-10-26 00:34:21]`. No 2A harness output was ever written to disk, so those three numbers cannot be re-derived without re-running, and they are quoted below as recorded, at the precision their author stored.
+
+### (b) The formulation, and the pencil in the form finally used
+
+The pencil is a two-parameter generalised eigenproblem in `lambda = beta^2`:
+
+```
+A x = lambda B x
+A = k0^2 * m_eps - k_q
+B = m1 - C D C^T
+D = inv(k_zz - k0^2 * m_zz)
+```
+
+`B` is **indefinite** — on the 1592-dof slab problem 565 of 1592 of its eigenvalues are negative — so `scipy.linalg.eigh` refuses it and the dense QZ `scipy.linalg.eig` is used. The candidate gate is a scale-aware backward error, `||Ax - lambda Bx|| / ((||A||_F + |lambda| ||B||_F) ||x||) <= _MIXED_RESIDUAL_TOL` with `_MIXED_RESIDUAL_TOL = 1.0e-3` (`emfit/mode2d.py:152`, applied at `:1161` and `:1166`). Residuals actually observed on accepted candidates are of order 1e-16 to 1e-17 — the gate is loose by eleven decades and is not what is doing the selecting.
+
+One structural consequence governs everything after this point. **The eigenvector returned by the pencil is transverse-only.** `e_z` is not part of the returned vector: the Schur complement eliminated it analytically into `D`. So `E_strip_tot` is identically `E_strip_t`, the energy metric is directly comparable with the old solver's, and — the point that matters in (i) — there is no `e_z` in hand to form a longitudinal current from.
+
+Two capability limits are also part of the formulation's contract and both bit during this work: `_MIXED_DENSE_MAX = 3000` caps the dense path, and `solve_modes_mixed(dense=False)` raises `NotImplementedError` ("iterative path pending: A - sigma*B is dense through C D C^T"). The mixed solver is therefore **dense-only and capped at 3000 free edges**, which is why the mesh ladder in (d) and (l) stops where it does.
+
+### (c) 2A — the three analytical limits: PASS
+
+Quoted as stored in the working document, at its stored precision.
+
+| case | quantity | value | error |
+|---|---|---|---|
+| homogeneous `eps = 1.0`, pp mesh | `beta^2/k0^2` | 1.000000000001 | rel 1.10e-12 |
+| homogeneous `eps = 4.4`, same mesh | `beta^2/k0^2` | 4.399999999999 | rel 1.27e-13 |
+| TE10, `box_mesh(2.0,1.0,20,10)`, 4 PEC walls, `k0 = 2.095845021952` | `beta^2/k0^2`, mixed | 0.438663157181 | see below |
+| same | `beta^2/k0^2`, transverse solver | 0.438663157181 | identical to 9 s.f. |
+| same | analytic `1.925165/k0^2` | 0.438270 | rel 8.97e-4 both |
+| regression, `solve_modes` | `beta^2` | 4.392566356 | residual 3.98e-12, unchanged |
+
+Three things are worth extracting from that table rather than letting it pass as a tick.
+
+1. The homogeneous limits are exact to machine precision at both `eps`, and `||e_z||/||e_t||` came out at 1.5e-11 and 7.0e-12 — the eliminated component is not leaking back.
+2. The TE10 case is **not** at ratio 1.0, and that is the point of including it: the enclosure's `k_q` term is genuinely present and genuinely contributing. A pencil that had collapsed to the scalar Helmholtz would have returned 1.0 here.
+3. The TE10 relative error 8.97e-4 is shared exactly between the mixed and the transverse solvers, so it is pure discretisation, `k0 h = 0.105`. Two independent formulations making the identical error against the analytic value is the strongest available statement that the mixed assembly has not perturbed the discretisation.
+
+**2A: PASS.**
+
+### (d) 2B — the two-layer slab against the transcendental branch: PASS, and the `(k0 h)^2` clause refuted
+
+The problem is a two-layer slab, `eps = 4.4` below `y = 1.6` and `eps = 1.0` above, in a box `LX = 0.4`, `LY = 3.2`, PEC plates at `y = 0` and `y = 3.2` **only**, side walls Neumann by omission. Mesh `box_mesh(0.4, 3.2, 8, 64)`: 585 nodes, 1024 triangles, 1608 edges, 16 PEC edges, `free_e = 1592`, `free_n = 567`, `h = 0.05`. The interface at `y = 1.6` is exactly a grid line (`1.6 / 0.05 = 32`), so there is no staircase at the material jump.
+
+The reference column is the quasi-TEM branch of the two-layer transcendental condition, obtained by a scan of `beta` over `(0, 8]` on 400001 points with bisection to 90 iterations: `G(beta) = eps1*ky2*cos(ky1*d1)*sin(ky2*d2) + eps2*ky1*sin(ky1*d1)*cos(ky2*d2)`. Its `k0 -> 0` limit is `44/27 = 1.6296296`.
+
+Solver: `emfit.mode2d.solve_modes_mixed(mesh, k0, sigma=..., eps_r=callable, boundaries=PLATES, k=8)` — the mixed pencil of (b), dense QZ, one solve per `k0`.
+
+| `k0` [1/mm] | `k0*h` | `beta^2` mesh | `eps_eff` mesh = `beta^2/k0^2` | `(mesh - analytic)/analytic` | abs `beta^2` error | residual | wall [s] |
+|---|---|---|---|---|---|---|---|
+| 0.05 | 0.0025 | 0.0040834282175599155 | 1.6333712870239658 | −2.4826160233713399e−09 | −1.0137584348e−11 | 1.80e−16 | 67.5 |
+| 0.1 | 0.005 | 0.016448456979480955 | 1.6448456979480952 | −4.1826355952009682e−08 | −6.8797904526e−10 | 1.39e−16 | 81.3 |
+| 0.2 | 0.01 | 0.067788570039695156 | 1.6947142509923785 | −7.3167893245939757e−07 | −4.9599504851e−08 | 8.61e−17 | 89.8 |
+| 0.5 | 0.025 | 0.5615913431957571 | 2.2463653727830284 | −3.1410448387464818e−05 | −1.7640389993e−05 | 2.82e−17 | 79.0 |
+| 1.0 | 0.05 | 3.5869797104681451 | 3.5869797104681451 | −2.2348080506735579e−05 | −8.0163902855e−05 | 2.46e−17 | 67.9 |
+| 2.095845021952 | 0.10479225109760 | 18.432452800875737 | 4.1962832901832154 | −3.3048607526243745e−06 | −6.0916891158e−05 | 5.58e−17 | 67.5 |
+| 3.0 | 0.15 | 38.684478143015681 | 4.2982753492239647 | −6.6968397192624705e−07 | −2.5906392324e−05 | 9.77e−17 | 67.8 |
+
+The analytic column, for reference, at the eight values the criterion named: 0.05 → 1.633371291079, 0.1 → 1.644845766746, 0.2 → 1.694715490980, 0.5 → 2.246435934343, 1.0 → 3.587059874371, **1.5 → 4.014727075078 (not run)**, 2.095845021952 → 4.196297158361, 3.0 → 4.298278227712, asymptote 4.4.
+
+**Maximum relative deviation: 3.1410448387464818e−05, at `k0 = 0.5`.** Every deviation is negative — the mesh always sits below the transcendental branch — and the magnitude is non-monotone in `k0`, peaking in the middle of the sweep.
+
+The written criterion asked for `tol O((k0 h)^2) ~ 1e-4 rel`. The magnitudes satisfy 1e-4 comfortably. The mechanism does not hold: `|rel|/(k0 h)^2` takes the values, in ascending `k0`, 3.972e−04, 1.673e−03, 7.317e−03, 5.026e−02, 8.939e−03, 3.010e−04, 2.976e−05 — a spread of about 1700×, rising and then falling, with no power law in `k0 h`. And the absolute `beta^2` errors, −1.01e−11, −6.88e−10, −4.96e−08, −1.76e−05, −8.02e−05, −6.09e−05, −2.59e−05, do not collapse with `k0` either. What the data show is agreement at the 1e-5 level on one mesh, not a verified convergence rate.
+
+And the rate cannot be measured with this solver. `box_mesh(0.4,3.2,16,128)` has `free_e = 4208 > _MIXED_DENSE_MAX = 3000`, and `dense=False` raises `NotImplementedError`. **No observed order `p` exists for 2B, and none can exist until the iterative mixed path is implemented.** That is a statement about the module, not about the test.
+
+The decisive result in this subsection is not a number in the table. At every one of the seven `k0`, `family_counts = {air: 0, substrate: 0}`: **not one constant-`eps` family eigenvalue appears in the positive spectrum**, and the positive-eigenvalue count is 5, 4, 2, 1, 1, 1, 1 as `k0` falls. The mixed pencil does not merely survive the slab test; it is structurally free of the pathology §101.16 identified, where the exact `eps = 1.0` and `eps = 4.4` families were the only positive eigenvectors at small `k0`. In the mixed formulation the interface mode is the only thing there, so the selection rule never had to exclude anything: at all seven points the analytic-nearest diagnostic and the solver's own pick coincide.
+
+One more corroboration, inadvertently obtained. An earlier attempt drove the **transverse** `e_z := 0` pencil on this same slab and returned, at `k0 = 0.05` and `0.1`, `no non-family positive candidate` among the 20 eigenvalues nearest a shift placed exactly on the analytic branch. The transverse formulation cannot host this mode; the mixed one recovers it to 2.5e−09 at the same `k0`. The two-layer slab's `k0 -> 0` limit `44/27` is a series capacitance, i.e. a field normal to the `y`-interfaces, and it is the mixed pencil that carries it.
+
+**2B: PASS on magnitude; the `O((k0 h)^2)` clause REFUTED; order `p` not obtained and not obtainable with the dense path.**
+
+### (e) 2C part 1 — the boxed microstrip, identified: PASS
+
+The geometry is the baseline box: 6.0 × 4.0 mm, substrate 1.6 mm of `eps = 4.4`, air to a lid at `y = 4.0`, ground PEC at `y = 0`, strip PEC at `y = 1.6` for `x` in `[1.4, 4.6]` (width 3.2 mm), walls and lid Neumann by omission. `h = 0.20` gives a 30 × 20 mesh with 1804 free edges and conforms; `h = 0.125` does not conform and is refused cleanly with exit code 2; `h = 0.10` gives 60 × 40 and 7208 free edges, conforms, but exceeds `_MIXED_DENSE_MAX` and needs an explicit bypass.
+
+| frequency | units | `beta^2` | `eps_eff` | `E_strip` | `corr_x` | `corr_y` | positive candidates |
+|---|---|---|---|---|---|---|---|
+| 0.1 GHz | correct (1/mm) | 1.7883866506e−05 | 4.071598 | 0.679447 | 0.9902 | 0.9891 | 1 of 1804 |
+| 5.83 GHz | correct (1/mm) | 0.0608996574 | 4.079259 | 0.682652 | 0.9905 | 0.9886 | 1 of 1804 |
+| 0.1 GHz | metres | — | 4.347595 | 0.793830 | — | — | 40 |
+| 5.83 GHz | metres | — | 4.399977 | 0.821456 | — | — | 1804 |
+
+At 0.1 GHz the pencil's residual on the chosen candidate is 1.7e−16, and the mode has `lateral_ratio = 1.582` with a wall rebound of 0.454 — i.e. it is laterally confined, not a wall mode. Exactly one propagating candidate exists in the whole spectrum at both frequencies.
+
+`corr_x` and `corr_y` are correlations with the field shape of an independent scalar Laplace solve on the same boxed geometry. That is the criterion, and it is the one §101.16 recommended when it declared "proximity to the reference field rather than an absolute threshold".
+
+### (f) Defect 1 — the units. Geometry in millimetres, `k0` in per-metre
+
+This is a defect in my own specification, and it invalidated a substantial amount of earlier work.
+
+The geometry is given in millimetres. The wavenumber was computed as `k0 = 2*pi*f/c` in units of 1/m. A 6.0 × 4.0 mm box with a 1.6 mm substrate therefore described, for every microstrip run before this correction, a **6 m × 4 m box with a 1.6 m substrate**. The discriminator is unmistakable: the same geometry returned `eps_eff = 4.347595` at `k0*h = 3.35` and `4.071598` at `k0*h = 3.35e-3`, a 6.8 % difference, with the far field of the latter matching the static value (section (h)) to 5.7e−07.
+
+The corrected form is `k0 = 2*pi*f/c/1000` in 1/mm. With the project's `C_LIGHT = 2.998e8` this gives `k0 = 2.095792297258034e-03` at 0.1 GHz and `0.12218469093014339` at 5.83 GHz, and `k0 * h_strip = 0.19549550548822944`. All mixed-solver and old-solver results quoted in this section use that same project constant, so the comparison between them is internally consistent even though it differs from the `c = 3e8` value 2.0944e-3 by 0.07 %.
+
+What this does and does not overturn. It **does** overturn the earlier reading that the spectrum contains no confined strip mode: in metre units the solver was being asked about a box three orders of magnitude too large, and the "no confined mode" conclusion was an artefact of that. It does **not** by itself vindicate the old formulation, because the old formulation had not been re-run in correct units at the time; it has been now, and the result is in (j).
+
+### (g) Defect 2 — "largest `E_strip`" is not a selector, and would have chosen a spurious mode
+
+Criterion 7 as I wrote it asked for the candidate with the largest `E_strip`. In metre units that rule selects, out of the 40 propagating candidates, a mode with
+
+| rank | `beta^2` | `E_strip` | `corr_x` | verdict |
+|---|---|---|---|---|
+| 26 | 3.445940 | 0.925286 | 0.3398 | spurious |
+| 103 | 65611.822 | 0.924972 | 0.6963 | spurious |
+
+The true mode scores **0.679447** — below both. So the `E_strip`-maximising rule rejects the physical mode in favour of a high-`beta^2` near-field artefact whose correlation with the Laplace field is 0.34. §101.16 had already warned that an absolute `E_strip` threshold would reject the true mode, since the module's own quasi-static field scores 0.6925865312564. This is the stronger statement: it is not that the threshold is set too high, it is that **the energy fraction alone carries no information about which root is physical**. The discriminating quantity is agreement with the independently obtained field shape.
+
+The same failure reappears in correct units, from the other direction, in (j): there the old formulation's largest-`beta^2` and largest-`E_strip` rules both select the `eps = 4.4` family mode, `eps_eff = 4.400000002696391`, `corr_x = 0.471931074797841`.
+
+### (h) The independent cross-validation: the mixed solve against a scalar Laplace solve
+
+The value of this comparison is that the two formulations share nothing but the mesh. `eps_eff_laplace` (committed separately at `91dcfc2`) solves a scalar electrostatic problem on the same triangulation; the mixed pencil solves a vector eigenproblem. Agreement between them is a statement about the physics, not about the code.
+
+| `h` | `eps_eff_static` (Laplace) | `E_strip_static` |
+|---|---|---|
+| 0.20 | 4.071596135702222 | 0.679446 |
+| 0.10 | 4.056086848 | 0.692587 |
+| 0.05 | 4.048386 | 0.700268 |
+| Richardson | ~4.045 | — |
+
+Homogeneity control: uniform `eps = 4.4` returns 4.399999999999924.
+
+Against the mixed eigensolver on the **same** mesh at `h = 0.20`: `eps_eff` 4.071598 versus 4.071596135702222, a relative gap of **5.7e−07**, and `E_strip` 0.679447 versus 0.679446, a gap of **1.4e−06**. Two unrelated formulations, agreeing to six digits, on the one quantity both can compute.
+
+A geometry statement, recorded as geometry and not as a pass or a fail: the boxed static value 4.048 exceeds the Hammerstad-Jensen **open**-microstrip value 3.343938310 by **+21 %**. The sign and rough size are what the boundary conditions demand — magnetic walls 0.875 `h` from the strip edges and a magnetic lid 1.5 `h` above it raise the effective permittivity substantially relative to an open line. The comparison is therefore not evidence about either number; it is evidence that the box is not the open problem, and the two must not be quoted against each other as if they were.
+
+### (i) 2C part 2 — the power-consistency criterion, and why it is RETRACTED
+
+#### (i.1) The test as written, and the algebra that makes it a geometric functional
+
+With the convention `e^{-j beta z}` and a real transverse `e_t`, the transverse magnetic field is `H_t = (beta / (omega mu0)) (z_hat cross e_t)` and the power flux is `P_flux = 0.5 (beta / (omega mu0)) * integral |e_t|^2 dA`. The voltage is `V = integral e_t . y_hat dy` on the mesh line `x = 3.0` (computed both edge-exactly and by Gauss-Legendre). The current was taken as `I = contour integral H_t . dl` on the closed mesh-edge rectangle `xL = 1.2, xR = 4.8, yB = 0.4, yT = 2.0`, with a point-in-polygon check confirming the strip inside and the ground, lid and walls outside; an alternate contour `(1.0, 5.0, 0.2, 2.4)` was used as a control.
+
+The whole test collapses to a single scale-invariant functional, because **`beta / (omega mu0)` cancels**:
+
+```
+R = |V * closed-loop-integral(z_hat cross e_t) . dl| / integral |e_t|^2 dA
+```
+
+`R` depends on nothing but the transverse field's shape. It can be evaluated on **any** field, including a field no eigensolver produced, which is what makes the controls below possible.
+
+#### (i.2) The measurement
+
+| case | `R` | `R_alt` |
+|---|---|---|
+| mode, `h = 0.20`, 0.1 GHz | 1.108554520966275 | 1.0718808057875735 |
+| mode, `h = 0.20`, 5.83 GHz | 1.1051290615181466 | 1.0695434300840825 |
+| Laplace field, `h = 0.20` | 1.1085556891787143 | 1.0718816427075237 |
+| Laplace field, `h = 0.10` | 1.1027066815152076 | 1.0662479585380369 |
+| Laplace field, `h = 0.05` | 1.0998084379396973 | 1.0634570142417223 |
+
+The criterion asked for `R -> 1`. It is 1.1085 at the reference mesh, and the gap between the eigenvector and the Laplace field — a field with no `e_z` term to speak of and no `beta` at all — is **1.1682124392287108e−06 absolute, 1.0538159532383078e−06 relative** (`R_alt` relative gap 7.8079572440541e−07).
+
+Supporting numbers at 0.1 GHz: `V` path-independent across `x = 2.8 / 3.0 / 3.2` to 4.7e−14; `P_flux` invariant over four quadratures to 4.4e−16; `I_mean = −7.709955999174108e−06`; per-side currents bottom −0.798, right −0.229, top −0.183, left −0.229; normal-field jumps 6.3124 % horizontal and 15.9233 % vertical; `Z_pv = 55495.0`, `Z_pc = 45158.5`, `Z_vi = −50060.7`. At 5.83 GHz: `beta = 0.24677855934473064`, residual 1.87e−16, Rayleigh quotient matching `lambda` to 1.14e−12, `P_flux = 1.3431323842208753e−06`, `V = −0.3887667863142793` (spread 1.22e−7), `I_mean = +7.63611853440952e−06`, jumps 6.267812 % and 15.930946 %, `Z_pv = 56263.856011783086`, `Z_pc = 46068.43867243206`, `Z_vi = −50911.57039567113`. That `V * I < 0` is invariant under `e_t -> -e_t`, so it is a port-direction convention and not a sign defect.
+
+#### (i.3) Frequency flatness — the argument that the residual is not physical
+
+Between 0.1 GHz and 5.83 GHz, `(k0 h)^2` grows from 1.1244404104310039e−05 to 0.03821849266609835, a factor of 3399. `R` moves from 1.1085545209662753 to 1.1051290615181466 — a shift of 0.35 percentage points — and the field jumps move from 6.31 % to 6.27 % and 15.92 % to 15.93 %.
+
+A quasi-TEM dispersion defect would grow with `(k0 h)^2`. This does not move at all. The 11 % is not dispersion, and it is not a frequency effect.
+
+#### (i.4) The homogeneous control — the machinery is exact, and my hypothesis was wrong
+
+With uniform `eps` (both 4.4 and 1.0) in the same box with the same boundary conditions, `R = 1` to machine precision at every mesh:
+
+| `h` | `eps = 4.4` | `eps = 1.0` |
+|---|---|---|
+| 0.20 | 1.0000000000000018 | 0.9999999999999876 |
+| 0.10 | 0.9999999999999614 | 1.0000000000000049 |
+| 0.05 | 0.9999999999999715 | 0.9999999999999284 |
+
+and in the same runs `integral |e|^2 dA = Q_enc / eps` to 1e−14. So the contour integration, the line integrals, the area quadrature and the unweighted `integral |e|^2` flux functional are all **exact**. The machinery is not the defect.
+
+I had expected the opposite, and the expectation was wrong in a specific and useful way. The tempting repair — weight the denominator by `eps_r` — is refuted by this table: an `eps` weight would give `1/4.4 = 0.2273` for the `eps = 4.4` column, not 1.0000000000000018. Whatever `R` is measuring, it is computed correctly.
+
+#### (i.5) The identity, and what the closed loop actually measures
+
+The closed loop is an identity in disguise:
+
+```
+closed-loop-integral (z_hat cross e_t) . dl = - closed-loop-integral e_t . n_hat ds = - integral integral div e_t dA
+```
+
+The per-triangle divergence of the returned field is zero to a maximum of 4.16e−14, so the closed-loop value must equal the sum of the edge normal jumps times edge length. Checked on the mesh: side (ii) gives 3.9658095748504105 at `h = 0.20` against side (i) 3.7296204311707823, and the excess `ratio - 1` runs 6.333e−2 → 3.169e−2 → 1.580e−2 across `h = 0.20 / 0.10 / 0.05`. That is exactly **O(h)** in the one-sided normal ambiguity of a contour drawn along mesh lines, and side (ii) always lies within `[I_min, I_max]`. The identity is confirmed.
+
+The consequence is what retracts the criterion. Because `div e_t = 0` on every triangle and the loop is a divergence integral, **the closed-loop "current" is measuring the charge on the contour's interior divided by `eps` — the normal-jump flux — not the conductor current.** The true transverse current requires
+
+```
+H_t = (beta / (omega mu0)) (z_hat cross e_t) + (1 / (j omega mu0)) grad_t e_z cross z_hat
+```
+
+and the second term is the `e_z` that the Schur complement eliminated and that the power harness's `make_mode` / `mode_stand_in` fills with **zeros**. `R = 1` holds only in the uniform-`eps` case, where the normal-jump sum vanishes, which is precisely what the control in (i.4) measures to 1e−14.
+
+Attribution of the jumps at `h = 0.20`, total 3.9658: the `y = 1.6` sheet contributes 3.3530734792267416 (84.6 %), of which 2.969362563814638 (74.9 %) is under the PEC strip and 0.38371091541210334 (9.7 %) is in the gap strips beside it; the rest of the box contributes 0.612736095623669 (15.4 %) and shrinks as O(h). The gap-strip share is nonzero in the **homogeneous** control too, at 0.34059045529054777, so it is the charge sheath at the strip ends and not an `eps`-interface flux.
+
+#### (i.6) The hugging contour moves `R` away from 1, not toward it
+
+The requested hugging contour `(1.3, 4.7, 1.5, 1.7)` is not mesh-aligned at `h = 0.20`, and the harness raised `IndexError` — that is recorded as a failure, nothing was fabricated for it. Mesh-aligned `(1.2, 4.8, 1.4, 1.8)` gives 1.1027066815152051 at `h = 0.20`, 1.1027066815152051 at `h = 0.10`, 1.0998084379396893 at `h = 0.05`. The originally requested box, once the finer mesh makes it alignable, gives 1.1210998355689379 at `h = 0.10` and 1.1181503078952337 at `h = 0.05`.
+
+Shrinking the contour by a factor of five in area moves `R` **away** from 1. If the residual were a shrinking interface term, hugging the strip would have reduced it. Contour dependence of 3.3082728120191196 %, flat in `h`, is a definition problem.
+
+#### (i.7) The defect does not vanish under refinement
+
+The implied orders between meshes are `p = 0.07990529831150558` (0.20 → 0.10) and `p = 0.041296345068420774` (0.10 → 0.05). The exponent **halves** as `h` halves, which is the signature of a defect that tends to a **nonzero limit**, not to zero. `O(h)` Richardson gives `R_inf = 1.096910194364187` and `R_alt_inf = 1.0606660699454078`. The residual does not go away with resolution.
+
+#### (i.8) Adjudication
+
+Three explanations were on the table: **(A)** the eigenvector is wrong; **(B)** the diagnostic is wrong; **(C)** the criterion is wrong. The verdict is **C**.
+
+1. **A is ruled out by (i.2).** The independent Laplace field — no eigensolver, no `beta`, no pencil — produces the same 11 %, to 1.05e−06 relative. An artefact of the eigensolve cannot appear in a field the eigensolve never saw.
+2. **B is ruled out by (i.3) through (i.6).** All four quadratures agree to 1.3e−16 on the area integral; `V` is path-independent to 4.7e−14 and equals −1.0 exactly for the Laplace field; side (ii) lies inside `[I_min, I_max]`; and the residual is flat in `h` and flat over a factor of 3399 in `(k0 h)^2`.
+3. **C is forced.** With a transverse-only field, `contour-integral H_t . dl` is `contour-integral e_t . n_hat ds`, a charge divided by `eps`, and not a current. `R = 1` is true only for uniform `eps`. The criterion `|P_circ| / P_flux -> 1` asks a transverse-only field to satisfy a condition that only holds when there is no `eps` contrast at all, so it can never be satisfied by the very geometry it was written for.
+
+**The power-consistency criterion is RETRACTED, not failed.**
+
+#### (i.9) What replaces it
+
+A replacement criterion, call it (v'), has to do three things the original did not: fix the contour in advance and quote `R` for that contour only; include `e_z`, which is recoverable as `e_z = (1 / (j beta eps)) div_t (eps e_t)` and which the pencil computes internally before eliminating it, so the harness must be given it rather than zero; and carry the homogeneous control of (i.4) in the same table as the machinery's calibration. Two further points belong in the record: `R` computed for a scalar Laplace field is a free and very sharp control, and any quantity that is flat over a factor of 3399 in `(k0 h)^2` cannot be a discretisation error.
+
+### (j) §101.16 re-tested in correct units: the conclusion survives
+
+§101.16 concluded that the absence of the strip mode was a matter of **formulation**, not of selection rules or assembly. That conclusion was reached in the metre-unit regime, so it was re-tested at `f = 0.1 GHz` with `k0 = 2.095792297258034e−03` 1/mm — the same frequency and the same constant at which the mixed solver finds the mode with `corr_x = 0.9902`.
+
+Method: the old transverse `e_z := 0` pencil, 11 shifts spanning the static reference and the slab limits (`4.071596`, `1.6296296`, `1.0`, `2.7`, `4.4`, plus the eps-form conversions), `k = 24`, giving 264 raw candidates and **12 distinct positive** eigenvalues. Recorded as `kind = "old_formulation_correct_units"` in `.scratch/mode2d/c2_ident.jsonl`.
+
+1. **Maximum `corr_x` over all candidates: 0.471931074797841.** Against the mixed solver's 0.9902 on the same geometry and frequency. The mode is not there.
+2. **Candidates within ±5 % of 4.071596: zero.** The nearest values are 4.400000002696391 and 2.9055.
+3. **The exact constant-`eps` families are present and exact.** Two shifts land precisely on eigenvalues and make `splu` report `Factor is exactly singular`: `sigma = 4.392345353246108e−06 = 1.0 * k0^2` and `sigma = 1.9326319554282877e−05 = 4.4 * k0^2`. The module's own `solve_modes` call at `sigma = 4.4 * k0^2` refused verbatim with `RuntimeError: Factor is exactly singular`; nudged by 1e−7 it returned `beta_sq = 1.932631955654788e−05`, `eps_eff = 4.400000000515671`, residual 2.1325301987423504e−09, choosing the `eps = 4.4` family.
+4. **Both old selection rules pick the same wrong candidate.** Largest `beta^2` and largest `E_strip` both return `beta_sq = 1.9326319566126356e−05`, `eps_eff = 4.400000002696391`, `E_strip = 0.9529192093736789`, `E_sub = 0.9999999999999988`, `corr_x = 0.471931074797841`. The `eps = 1.0` family sits at `eps_eff = 1.0000000022`, `corr_x = 0.3031513138106417`, with `E_strip = 1.6869393563863185e−20`.
+5. **A cluster of near-degenerate modes sits at `eps_eff` 2.700000, 2.700004, 2.700007, 2.700424, 2.701015, 2.747971, 2.747986, 2.905519, 2.905523** — none of them the physical mode, all of them eliminated by the correlation metric.
+
+**§101.16 stands, in correct units.** The transverse formulation's positive spectrum at 0.1 GHz consists of the exact constant-`eps` families and a cluster of optical artefacts; the interface mode is absent, and no selection rule could recover it. The units defect changed the numbers everywhere but did not change this conclusion.
+
+### (k) The measured cost of the dense path
+
+The `h = 0.10` eigen-solve on the microstrip (7208 free edges) was **attempted and abandoned**, and the abandonment is the measurement:
+
+| quantity | value |
+|---|---|
+| CPU time at kill | utime 81894 ticks = 818.94 s + stime 7.49 s = **826.43 s** |
+| wall clock | ~**832 s** (13.87 min) |
+| peak VmRSS | **2 205 844 kB** |
+| threads | 23 |
+| output produced | **none** — no eigenvalue, no npz, print buffered |
+| SIGTERM honoured | no, 3 s grace expired |
+
+Dense QZ is `O(n^3)`: `n = 7208` against 1804 is a factor 64 on the ~100 s `h = 0.20` cost, i.e. about 1.8 h. The measured cost of the mixed dense path is therefore ~68–90 s per `k0` at 1592 dof (the 2B sweep) and ~100 s at 1804 dof, and it is structurally capped at 3000 dof by `_MIXED_DENSE_MAX`.
+
+The contrast with the independent reference is stark and worth stating: the **three-rung static Laplace ladder** — `h = 0.20`, 0.10, 0.05, giving `eps_eff` 4.071596135702222, 4.056086848, 4.048386 — costs **1.36 s** in total. The eigensolver is roughly 600× more expensive per useful number than the reference it was being validated against. That is not a criticism of the solver; it is the reason the validation strategy was to compare against the reference rather than to refine the solve.
+
+Not retried, and not to be retried on this hardware: the `h = 0.10` dense solve.
+
+### (l) Limits of what has been shown
+
+1. **One geometry, one box, one strip width.** Every identification number in this section belongs to the 6.0 × 4.0 mm box with a 3.2 mm strip on a 1.6 mm substrate. Nothing here shows that a different box, strip width or substrate would behave the same.
+2. **Two frequencies**, 0.1 GHz and 5.83 GHz, both in correct units. The frequency-flatness argument in (i.3) is what gives those two points their force, but it is still two points.
+3. **Not converged.** `h = 0.20` is the only mesh on which the microstrip mode was solved; `h = 0.10` was abandoned at 826.43 s CPU; the mixed path refuses anything above 3000 free edges. The static ladder in (h) converges to about 4.045 by Richardson, and the mixed value agrees with the coarsest rung to 5.7e−07, so the coarse-mesh answer is not obviously displaced — but that is an argument, not a convergence study.
+4. **No order `p` for 2B, and none obtainable** with the present dense-only path.
+5. **No theoretical proof** that the mixed pencil's spectrum is free of the constant-`eps` pathology in general. It was observed to be free of it on the slab at seven `k0`, and on the microstrip at two frequencies (one positive candidate in 1804), and the mechanism is understood — the families are absent because the Schur complement's `D` couples the two components — but no general statement is claimed.
+6. **The power-consistency test was never performed as intended**, because the `e_z` needed for the true current is not in the returned vector and the harness substituted zeros. Its retraction is a statement about the test, not an exoneration of the solver's current-carrying behaviour, which remains untested.
+7. **2A's provenance is prose.** Its three numbers cannot be re-derived from any artifact on disk without re-running the harness, which was deleted.
+
+### (m) Transferable lessons
+
+1. **A single stored number is not a criterion.** The `k0 -> 0` target `1.629629630` that §101.16 corrected was the harmonic mean of 4.4 and 1.0, and it survived in the record long enough to mis-grade a correct solver. The 2B dispersion curve — seven points, a known asymptote, a known limit and a known sign of approach — could not be satisfied by accident. Curves are criteria; points are coincidences.
+2. **Check `k0 * h` before believing any dispersion result.** A run with `k0 * h = 3.35` is not a discretisation of the same problem as one with `k0 * h = 3.35e-3`, and the two differ by 6.8 % in `eps_eff`. The unit of the geometry and the unit of the wavenumber must be stated together, in the same line of the spec, and a dimensionless `k0 * h` must be printed by the harness itself.
+3. **An energy fraction is not a selector.** `E_strip = 0.9253` on a candidate whose correlation with the physical field is 0.34, against 0.6794 on the true mode. Selecting on the fraction picks the artefact. The only reliable selector used in this work was proximity to an independently computed field shape, and it should be the default rather than the fallback.
+4. **When a test fails, compute the same functional on a field that shares nothing with the failing path.** `R` evaluated on the scalar Laplace field settled in one measurement what three rounds of quadrature checks could not: the defect was in the criterion. Field functionals that are scale-invariant can be evaluated on anything, and a control that costs nothing should be run first.
+5. **A homogeneous control is the cheapest and sharpest test in the set.** `R = 1` to 7.2e−14 at three meshes and two permittivities established in a few seconds that the machinery was exact and that my proposed repair (an `eps` weight) was wrong. Building the control before the measurement would have saved the round trip.
+6. **Report attempts, not just outcomes.** The `h = 0.10` solve, the non-conforming `h = 0.125`, the `IndexError` on the non-mesh-aligned contour, the transverse pencil's failure to find the slab mode, and the 2B figure that turned out to be analytic all cost real time. Recorded as failures with their costs, they are the most reusable content in the section: they are what tells the next person not to spend 826 s finding out.
