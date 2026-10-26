@@ -2274,6 +2274,15 @@ def microstrip_wave(
     n_top: int = MS_N_TOP,
     n_strip: int = MS_N_STRIP,
     n_clean: int = MS_N_CLEAN,
+    # SHIFT-IMPL: the lateral clearance, split into its two sides.  ``n_clean``
+    # is the both-sides shorthand and the only thing a caller has to name;
+    # these two default to ``None`` and resolve back to it, so an unset pair is
+    # the symmetric grid every earlier run drew.  They exist because
+    # ``j0 = n_pml + n_clean`` ties the strip's y-origin to its clearance:
+    # moving the strip across the cell grid at fixed physical clearance is the
+    # grid-origin aliasing test, and separating those two needs two numbers.
+    n_clean_lo: int | None = None,
+    n_clean_hi: int | None = None,
     n_pml: int = MS_N_PML,
     n_ref: int = MS_N_REF,
     n_line: int = MS_N_LINE,
@@ -2481,6 +2490,10 @@ def microstrip_wave(
     n_sub, n_air, n_strip = int(n_sub), int(n_air), int(n_strip)
     n_top = int(n_top)
     n_clean, n_pml, n_ref, n_line = int(n_clean), int(n_pml), int(n_ref), int(n_line)
+    # SHIFT-IMPL: ``None`` has to survive the coercion -- it is the "unset,
+    # keep the symmetric n_clean" marker, not a zero.
+    n_clean_lo = None if n_clean_lo is None else int(n_clean_lo)
+    n_clean_hi = None if n_clean_hi is None else int(n_clean_hi)
     n_stations, nsteps = int(n_stations), int(nsteps)
     # The excitation is a choice between two runs, not a slider on one: "cw"
     # is the tone every number this study has quoted was taken at, "pulse" is
@@ -2521,9 +2534,27 @@ def microstrip_wave(
             f"share the lateral thickness. Pass n_top={n_pml} (or 0 for a "
             f"plain PEC lid)")
 
+    # --- SHIFT-IMPL: one clearance, or one on each side --------------------
+    # One side named and the other not is refused rather than completed by
+    # symmetry: a silent guess would move the strip and change the clearance
+    # in the same step, and keeping those two apart is the whole point of the
+    # pair.  Unset resolves to the symmetric n_clean, bit for bit.
+    if (n_clean_lo is None) != (n_clean_hi is None):
+        raise ValueError(
+            f"n_clean_lo and n_clean_hi must be given together, or neither "
+            f"(neither keeps the symmetric n_clean={n_clean} on both "
+            f"sides); got n_clean_lo={n_clean_lo!r}, "
+            f"n_clean_hi={n_clean_hi!r}")
+    if n_clean_lo is None:
+        n_clean_lo = n_clean_hi = n_clean
+    if n_clean_lo < 1 or n_clean_hi < 1:
+        raise ValueError(
+            f"n_clean_lo and n_clean_hi must be at least 1, got "
+            f"{n_clean_lo!r} and {n_clean_hi!r}")
+
     cell = float(h) / n_sub
     nx = n_pml + n_ref + n_line
-    ny = 2 * n_pml + n_strip + 2 * n_clean
+    ny = 2 * n_pml + n_strip + n_clean_lo + n_clean_hi  # SHIFT-IMPL
     nz = n_sub + n_air + n_top
     grid = Grid.uniform(nx, ny, nz, nx * cell, ny * cell, nz * cell)
     cc = CellComplex(grid)
@@ -2534,10 +2565,12 @@ def microstrip_wave(
     # --- where everything is ------------------------------------------------
     ix_port = n_pml + n_ref                  # node layer of the port plane
     k_strip = n_sub                          # node layer of the strip (z = h)
-    j0 = n_pml + n_clean                     # first y point layer of the strip
+    j0 = n_pml + n_clean_lo                  # first y point layer (SHIFT-IMPL)
     j1 = j0 + n_strip                        # one past the last one
     j_centre = j0 + n_strip // 2
-    y_half = 0.5 * (n_strip + 2 * n_clean) * cell   # physical strip extent
+    # SHIFT-IMPL: the physical extent does not see the split -- lo + hi is
+    # the total clearance either way, 42 + 34 = 38 + 38.
+    y_half = 0.5 * (n_strip + n_clean_lo + n_clean_hi) * cell
 
     # --- the plane the map is cut on ----------------------------------------
     # ``k_slice`` is the integer index the ``E_z`` accumulation below is cut on,
@@ -3230,6 +3263,7 @@ def microstrip_wave(
         "h": float(h), "w": float(w), "eps_r": float(eps_r),
         "n_sub": n_sub, "n_air": n_air, "n_top": n_top, "n_strip": n_strip,
         "n_clean": n_clean, "n_pml": n_pml, "n_ref": n_ref, "n_line": n_line,
+        "n_clean_lo": n_clean_lo, "n_clean_hi": n_clean_hi,  # SHIFT-IMPL
         "ix_port": ix_port, "ix_far": nx, "k_strip": k_strip,
         "k_mid": k_mid, "z_mid": k_mid * cell, "keep_slice": bool(keep_slice),
         "k_slice": k_slice, "z_slice": k_slice * cell,
