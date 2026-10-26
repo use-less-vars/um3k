@@ -14,6 +14,11 @@ local web page. What it still cannot do: drive a port or an antenna, import geom
 dispersive materials, or scatter anything other than a z-invariant PEC cross-section; and its eigenmode path is
 dense, stopping at 3000 free edges.
 
+For how the machine got here -- the order the pieces were built in, the measurement that forced
+each turn, and the numbers that were withdrawn along the way -- see [`HISTORY.md`](HISTORY.md).
+It is the narrative these documents imply when read together; this file stays the statement of
+where things stand.
+
 ## Where we are
 
 **Works today**

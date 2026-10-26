@@ -467,6 +467,9 @@ README.md
   profile, the wavelength sizing law, and the measured stall.
 - [`docs/report/`](docs/report/) -- the technical report: `main.tex` plus the seven
   `sec_*.tex` sections, with the compiled `main.pdf` (963 KiB) checked in.
+- [`docs/HISTORY.md`](docs/HISTORY.md) -- how the machine got here: the order the pieces were
+  built in, the measurement that forced each turn, the numbers that were believed and then
+  withdrawn, and what the record is evidence for.
 - [`docs/OUTLINE.md`](docs/OUTLINE.md) -- the living project outline: milestone tracker,
   numbers board, dated research log with the reasons behind each finding, open questions,
   and the deferred-work list. Its milestone table shares its rows and first five columns
