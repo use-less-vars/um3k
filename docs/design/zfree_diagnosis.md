@@ -590,42 +590,75 @@ unless it says so explicitly and is authorised separately.
 
 ### D1 -- does dielectric interface attribution explain the solver's epsilon deficit? (`C2a`)
 
-**What it tests.** `C2a`, not the reference's accuracy. The mixed block builds its permittivity term `m_eps_m`
-at `emfit/mode2d.py:995-996`, where dielectric contrast is assigned cell-by-cell on the 31x17 mixed lattice; the
-interface rule available to that code is the library's (`emfit/materials.py:241`, default `interface="dual"`,
-alternative `"point"` at `:248-250`). A singular-contrast interface assigned to a half-cell, a full cell, or a
-weighted average of the two produces **different discrete operators for the same physical problem**, and the
-difference is a solver artefact of exactly the kind `C2a` claims. The claim is quantitative, not qualitative: the
-artefact has to be a substantial fraction of the observed gap -- **4.09 %** on `beta` and **8.35 %** on `eps` for
-the eigen route on pair **A**, **5.46 % / 11.22 %** for the fit route on pair **B** (§1.1).
+**Corrected in this pass -- the mechanism as previously written was wrong, and so was the test.** An earlier
+version of this subsection claimed that the mixed block's permittivity term was selectable at
+`emfit/mode2d.py:995-996` via the library's `interface="dual"` / `"point"` option, and that `C2a` was therefore
+testable by flipping a keyword argument. Both halves of that are false, and both are settled by static read:
 
-**Proposal.** Hold everything except the attribution fixed -- same 31x17 mesh, same `k0`, same frequency, same
-geometry, same eigensolver settings -- and recompute the mixed block under **every admissible attribution**:
-`interface="dual"` (baseline, which must reproduce the banked `3.6295122081`), `interface="point"` from each
-side, and the arithmetic average. Report the `eps_eff` spread, and the eigenvectors if the routine exposes them,
-so that the spread can be attributed to interface cells rather than to solver path.
+* **`mode2d.py` contains the token `interface` zero times.** There is no such keyword anywhere in the module, and
+  `solve_modes_mixed`'s signature (:935-945) takes no attribution argument at all.
+* The `interface="point"|"dual"` switch exists **only** in `emfit/materials.py` -- `_check_interface` (:174),
+  `_sampled` (:182), `material_matrices` (:241-254) and its three matrix builders `M_eps` (:354), `M_mu` (:363),
+  `M_sigma` (:372) -- with callers `emfit/raster.py:489` and `emfit/quasistatic.py` (docstring :40-46). It is a
+  **quasi-static / raster** option. Nothing carries it into the modal path.
+* **`:995-996` is inside `solve_modes_mixed`'s docstring, not code.** Those two lines are the block sketch
+  `[ [beta^2 m1 + k_q - k0^2 m_eps, i beta c], [-i beta c^T, k_zz - k0^2 m_zz] ][x_t, x_z] = [0]`. Citing a
+  docstring as the assembly site is exactly what produced the false premise. The real assembly is `:1051-1052`:
+  `k_q, m_mu, m_eps = assemble(...)` and `m1, m_eps_mixed, c, k_zz, m_zz = assemble_mixed(...)`. The matrix this
+  subsection used to call `m_eps_m` is therefore `m_eps_mixed`, returned by `assemble_mixed` (:469).
 
-**Plumbing caveat -- establish this before costing anything.** It is **not** established that the `interface`
-option reaches `m_eps_m` the way it reaches the profile builder; `mode2d.py:995-996` may hard-wire its own
-averaging. The first step is therefore to read that term and the array it consumes and record whether the
-attribution is selectable at all. If it is hard-wired, this design acquires a one-line scratch patch, and that
-changes its standing under the no-edit rule -- in which case say so before running it.
+**The real mechanism -- and it is narrower than "which rule did you pick".** In **both** assembly paths the
+permittivity is **centroid-sampled**, not averaged from nodes: `assemble` (:397) builds `eps_t =
+_per_triangle(eps_r, mesh, "eps_r")` at :416, and `assemble_mixed` does the same at :505-506; `_per_triangle`
+(:378-394) evaluates `eps_r` at `mesh.centroid` (:382). There is exactly **one** attribution rule in the modal
+path, and it is a **per-element, one-point rule**. `C2a` is therefore not the question "dual or point?" -- it is
+the question **"does a one-point centroid rule mis-attribute dielectric contrast at the strip interface, and by
+how much?"** A dual/Hodge or edge-averaged attribution of the kind `materials.py` offers does not exist in this
+code today, so there is nothing to switch.
+
+**What the claim has to be worth.** `C2a` is quantitative, not qualitative: the attribution artefact has to be a
+substantial fraction of the observed gap -- **4.09 %** on `beta` and **8.35 %** on `eps` for the eigen route on
+pair **A**, **5.46 % / 11.22 %** for the fit route on pair **B** (§1.1).
+
+**Proposal -- a code patch, not a flag run.** Test `C2a` by adding a second, deliberately different attribution
+rule and measuring its spread against the centroid baseline. The patch surface is bounded, and it is listed here
+so that its size can be judged before it is authorised:
+
+1. a **per-edge** (or per-triangle averaged) eps rule in or alongside `_per_triangle` (:378-394), returning a
+   second `eps_t` variant without disturbing the centroid one;
+2. a keyword plumbed through `assemble` (:397 call site, :416 use) and `assemble_mixed` (:469, :505-506);
+3. the same keyword threaded through `solve_modes_mixed` (:935-945 signature) and its two assemble calls
+   (:1051-1052), and through whatever thin wrapper the 31x17 driver uses;
+4. **a decision about the consistency guard.** `:1053-1069` cross-checks `m_eps` against `m_eps_mixed` and forces
+   them equal to 1e-12 relative. A patched build must either apply the alternative rule to *both* paths (guard
+   left intact) or relax the guard deliberately and say so in the report -- relaxing it silently would remove the
+   one check that proves the two paths describe the same operator.
+
+**Standing under the no-edit rule -- BLOCKED.** This is **not** a run of an existing option and cannot be executed
+under the current fence: it is a multi-site edit under `emfit/`. It is recorded as **design only, not authorised,
+and blocked** until re-authorised explicitly as a code change, with the guard decision taken first. The plumbing
+question the earlier draft left open ("does the option reach `m_eps_m` like it reaches the profile builder?") is
+now **answered**: it does not, and it cannot without this patch.
 
 **What it decides.** Whether the `eps` gap is an artefact of **interface attribution** -- in which case it is a
 solver-configuration defect with a one-parameter fix and both §1 routes shrink together -- or whether it survives
 attribution unchanged, in which case `C2a` is **dead** and the gap has to come from `C2b`, or from `C1`/`C3`
 being reopened.
 
-**Cost.** One solve per attribution on a mesh whose operators are already banked and small (31x17, 1486 edges,
-dense below `_MIXED_DENSE_MAX = 3000`, ~35 s class): three to four solves, no new geometry work.
+**Cost -- re-based.** The earlier costing assumed three to four runs of an existing flag. That is not the shape of
+this test. It is **one patched build plus N solves**: one build (items 1-3 above, plus the guard decision), then
+two solves on the banked 31x17 mesh (1486 edges, dense below `_MIXED_DENSE_MAX = 3000`, ~35 s class) -- the
+centroid baseline, which must still reproduce the banked `3.6295122081`, and the alternative rule -- with a third
+only if the first two separate. The build, not the linear algebra, is the cost, and the build is what the no-edit
+rule currently forbids.
 
-**Pass / kill.** The band is set **relative to the gap the test must explain**, not chosen for comfort. `C2a`
-survives only if the attribution spread is a substantial fraction of **4.09 %** (the smallest `beta` gap it is
-offered against). **Kill `C2a` if the spread is <= ~0.4 %** -- an order of magnitude below that gap, arithmetically
-unable to produce it. Between ~0.4 % and 4.09 % the result is partial: report the fraction and re-rank `C2a`
-against `C2b` instead of declaring a verdict. **A spread larger than the gap itself** means the baseline
-attribution is not the one that produced the banked number -- that is a provenance finding, not a `C2a`
-confirmation, and it must be reported before any percentage in §1 is re-read.
+**Pass / kill.** The band is set **relative to the gap the test must explain**, not chosen for comfort, and the
+correction above does not move it. `C2a` survives only if the attribution spread is a substantial fraction of
+**4.09 %** (the smallest `beta` gap it is offered against). **Kill `C2a` if the spread is <= ~0.4 %** -- an order
+of magnitude below that gap, arithmetically unable to produce it. Between ~0.4 % and 4.09 % the result is
+partial: report the fraction and re-rank `C2a` against `C2b` instead of declaring a verdict. **A spread larger
+than the gap itself** means the baseline attribution is not the one that produced the banked number -- that is a
+provenance finding, not a `C2a` confirmation, and it must be reported before any percentage in §1 is re-read.
 
 ### D2 -- does the uniform lattice under-resolve the strip-edge singularity? (`C2b`)
 
@@ -739,6 +772,76 @@ Nothing in this tree touches the coupling sign, the Schur complement, or the PEC
 therefore cheap to believe. It has one testable consequence that has never been executed (T3), and C2 has an
 equally plausible competing story that also predicts an upward ε_eff bias. Both are free or near-free to
 separate. Fixing first would leave the ε_eff error in place with no way to tell which of the two produced it.
+
+### 7.1 The 3.16 % placement beta -- open problem, design only (nothing run)
+
+**Status.** A *known unknown*, recorded after §7's list. This subsection is **entirely design**: no solve, no
+extraction and no re-placement was performed to write it, and it exists so that the question is asked with its
+falsifiers attached *before* anyone spends a run on it. All three candidates below are **deferred behind the
+`C1` audit** (the `T3-pre`/`T3` screen and the full-spectrum re-solve that audit needs) and **none is authorised
+this block**.
+
+**The quantity.** Two `beta` values for the same physical mode, from two different constructions of the
+reference:
+
+| pair | beta [1/mm] | how it was obtained |
+|---|---|---|
+| **A** | 300.498268 | converged `microstrip_mode_profile` on its own converged **431x217** box |
+| **B** | 309.981864 | `plane_mode` placement of that profile onto the **200x77** archive box, then station phasors, then a travelling-wave least-squares phase slope |
+
+B/A = **+3.16 %** on `beta`, which is **+6.41 %** on `eps` = `(beta/k0)^2` (§1.1). Every percentage in this note
+is quoted against one of these two, so a 3.16 % offset *inside the reference pair itself* is not a detail: it is
+the same order as the 4.09 % `beta` gap the whole note is about, it is above the ~0.4 % floor used to kill
+`C2a`, and it decides **which pair is the analytic reference**.
+
+**What is already ruled out.** The tempting first explanation -- "`beta` runs 4-5 % high on a plane-sized box"
+-- describes **a configuration that was never executed**. `plane_mode` only *places* the profile onto the target
+box by index offset (`emfit/mode_profile.py:591-593`); it does **not** re-solve on the smaller box. No
+smaller-box eigen-solve exists that could have produced such a bias. The only placement number on record is
+**1.164852 %** from the 201x77 window normalisation (`emfit/mode_profile.py:597-600`), an order of magnitude too
+small to carry 3.16 %. **The mechanism is therefore UNIDENTIFIED**, and the three candidates below are a search
+space, not a ranking of known causes.
+
+**Candidate (i) -- index-offset downsampling / aliasing.**
+* *Prediction.* 431x217 -> 200x77 selects a subset of samples, so the phase slope is fitted on an under-resolved
+  copy of the field. `beta_B` should then depend on **which** sub-window is selected and on the box origin, not
+  only on box size.
+* *Data needed.* Re-placement only: the same `Phi` placed at different offsets / window sizes at fixed 200x77.
+  No eigen-solve.
+* *Falsifier.* **Invariance to window offset at fixed size** kills it.
+* *Cost.* Cheapest of the three in work; still needs the placement driver re-run per offset.
+
+**Candidate (ii) -- phase-slope estimator bias.**
+* *Prediction.* The travelling-wave least-squares fit over station phasors is biased by **station count and fit
+  span**: the slope drifts systematically as either is varied.
+* *Data needed.* Arithmetic on **already-banked phasors**. No solve, no re-placement.
+* *Falsifier.* LS slope **flat to better than ~0.2 %** across station subsets kills it (0.2 % being an order of
+  magnitude below the 3.16 % it must explain).
+* *Cost.* **Cheapest overall -- recommended FIRST.**
+
+**Candidate (iii) -- genuine box-size effect.**
+* *Prediction.* The 200x77 archive box **truncates** the field, so the estimator is genuinely measuring a
+  different (truncated) mode. The same estimator applied on 431x217 should then also return ~309.98.
+* *Data needed.* Station phasors on 431x217: one extraction, and possibly one eigen-solve.
+* *Falsifier.* The same estimator on 431x217 returning **~300.50** puts the offset in the placement route, not
+  in the box.
+* *Cost.* Most expensive of the three. **Not authorised.**
+
+**What each answer would imply for the reference.** If **(i) or (ii)** is true, the 3.16 % lives in **B's
+construction** -- placement or estimator -- so **pair A** is the analytic reference: the §1 percentages quoted
+against A (eigenvalue route, 4.09 % on `beta` / 8.35 % on `eps`) stand, and the like-for-like re-pairing against
+B is the artefact, not the measurement. If **(iii)** is true, B's `beta` is measuring a truncated mode and
+*neither* pair is a clean reference until the box question is settled -- the honest statement then is that the
+denominator is undecided at the 3 %-class and every percentage in §1 needs a box label. If **all three are
+falsified**, the offset sits in the shared mode construction used by both (i.e. in A's own eigensolve), and
+§1.1's "which construction is physically correct" question becomes the only question left.
+
+**Order and cost.** **(ii), then (i), then (iii).** (ii) is arithmetic on banked phasors and can retire the
+estimator explanation for the price of a script; (i) is a re-placement sweep at fixed size, no linear algebra;
+(iii) needs new phasors on 431x217 and possibly an eigen-solve, so it is last and is the only one with a solve
+in it. **None of the three is authorised this block.** All three are **deferred behind the `C1` audit**: if `C1`
+is confirmed, the selection defect is the larger term and this 3.16 % reduces to a denominator question that the
+audit's own full-spectrum artefacts will make cheaper to answer.
 
 ---
 

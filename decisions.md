@@ -7535,3 +7535,89 @@ with both `flux_detected` and `slot_detected` routed through it, and `b_min` mad
   `eps_r = 4.4`, `n_sub = 16`), no edits under `emfit/`. **Costed unblock:** one 31x17 re-solve (1486 edges,
   dense) with `vecs` and `lam` persisted, ~35 MB of new artefact.
 
+## Inequality direction, stated in prose before the operator is written
+
+- **Decision.** The pattern named in the entry above ("read the direction of the inequality before writing the
+  fix") is given a concrete procedure, because a name alone did not stop it recurring: **state the inequality
+  direction in prose, against the falsifier's own logic, *before* writing the comparator.** For the shape screen
+  `corr_e_y >= 0.9` **AND** `corr_e_z <= 0.3`, each direction is justified by asking *"which direction would make
+  this test FAIL to detect the thing I suspect?"*. The floor on `corr_e_y` exists because the suspected defect is
+  a mode that is *nearly* right transversely but wrong longitudinally, so a high transverse correlation is the
+  population we want. The **ceiling** on `corr_e_z` exists because the suspected defect is *decorrelation*, which
+  shows up as a **small** |`corr_e_z`| — so `corr_e_z >= 0.3` would select precisely the modes the screen exists
+  to kill. Two instances now produced with an inverted comparator (the `~1.5 %` admixture floor, and this one),
+  which makes it a **recurring class, not a slip**.
+- **Correction to the entry above — its locators are wrong, and were checked line by line this pass.** That entry
+  cites the committed bound at `docs/design/zfree_diagnosis.md:304-305`, `:472` and `:490`, and the pair form at
+  `:337-338`. **None of those is an occurrence.** Verified: `:304` and `:472` are blank lines, `:305` is the
+  `### C1` heading, `:490` is a line inside `### C5` about global sign/conjugation. The file also writes the
+  bound with U+2264 (`≤`), never ASCII `<=`, which is why a `<=` search finds nothing. The comparison
+  `corr_e_y ≥ 0.9` **with** `corr_e_z ≤ 0.3` actually occurs at **four** lines: **`:344`** (the C1 requirement
+  sentence), **`:544`** (the `T3-pre` table row), **`:562`** (the `T3-pre` ordering bullet), **`:686`** (the
+  decision-tree node; `:719` after the §7.1 insertion in this pass). The *content* is correct at all four; the
+  citations had drifted by 7 to 200 lines.
+- **Strongest argument against.** Adding a procedure after the fact is retrospective rule-writing, and the second
+  instance was caught before it reached any number — so the class has cost nothing yet beyond re-reading.
+- **Why that argument does not win.** The first instance *did* reach a number (`~1.5 %` admixture, wrong by
+  1.8-2.7 orders of magnitude), and both errors were in the *instruction*, where no artefact could catch them:
+  the committed document was right all along, so the safety net that caught this one was re-reading, not a test.
+  A one-line prose obligation ahead of the comparator is cheaper than that re-reading and applies exactly where
+  no test can.
+- **Evidence.** `docs/design/zfree_diagnosis.md:344`, `:544`, `:562`, `:686`/`:719` (the bound, verified
+  verbatim this pass); `:304-305`, `:472`, `:490` (what the earlier entry's locators actually point at);
+  `docs/design/zfree_diagnosis.md:312-315` (the `1.5 %` retraction and the 87 % / 760 % arithmetic) for instance
+  (i); `tools/corr_ez_101_20.py:181-184` and `.scratch/logs/s10118_basis.py:385-387` for the measured
+  correlations the bound is applied to.
+
+## `C1` root-cause prerequisite: bank the whole spectrum, not the selected row
+
+- **Decision.** Recorded as a **prerequisite for auditing the selector, and for any future selection heuristic**:
+  a run must persist the **entire** eigen-spectrum (`vecs`, `lam`) **plus the per-candidate selection scores**,
+  not only the candidate the rule picked. The banked caches store only a chosen row — a `candidates` array of
+  shape **(1, 4)** (`col`, `beta_sq`, `eps`, `E_strip_t`) in `.scratch/s10118_mixed_mode.npz` and one candidate
+  row in `.scratch/s10118_mode_41x22.npz`, with **no `vecs`** in either — which is precisely why the selector
+  cannot be audited after the fact and why `D3-pre`/`T3` must **re-solve** to see the population the rule chose
+  from. Any selection heuristic written from here on must persist the full spectrum and the scores that drove the
+  choice, or the same blind spot recurs at the next fix.
+- **Strongest argument against.** The raw artefacts are large — `vecs` `(2525,2525)` complex128 is 102,102,788 B
+  for 41x22 and 116,566,068 B for 51x19, against a quoted ~35 MB for a 31x17 dense re-solve — and a spectrum is
+  mostly irrelevant to the answer being reported.
+- **Why that argument does not win.** The cost is disk, once; the cost of *not* banking it is a second solve plus
+  a rebuild of the analytic reference every time the selection is questioned, which is what happened this block.
+  A result whose selection cannot be re-examined is not evidence about the selection rule at all — it is one
+  number with an unauditable provenance, which is the defect `C1` names.
+- **Evidence.** `decisions.md`, the `D0`/`D3-pre` entry above, for the array shapes, file sizes and the missing
+  `vecs`; `emfit/mode2d.py:1150` and `:1167` (the selector), `:151` (`_MIXED_DENSE_MAX = 3000`, the dense
+  ceiling that makes the re-solve affordable); `docs/design/zfree_diagnosis.md` §5 `T3`/`T3-pre` rows
+  (`:544`, `:562`) for the audit these artefacts must feed.
+
+## Open problem: the 3.16 % placement beta (cost-estimated, deferred behind `C1`)
+
+- **Decision.** A new open problem is recorded, design only: `docs/design/zfree_diagnosis.md` §7.1, **"The 3.16 %
+  placement beta"** (heading at `:776`). Two `beta` for the same mode and two constructions of the reference —
+  pair **A** `300.498268` (converged 431x217 box) and pair **B** `309.981864` (`plane_mode` placement onto the
+  **200x77** archive box, station phasors, travelling-wave LS phase slope) — so B/A is **+3.16 %** on `beta` and
+  **+6.41 %** on `eps`. The tempting explanation ("`beta` runs 4-5 % high on a plane-sized box") describes a
+  configuration **never executed**: `plane_mode` places by index offset only (`emfit/mode_profile.py:591-593`) and
+  never re-solves on the smaller box, and the only placement number on record is that same 1.164852 % window
+  normalisation (`:597-600`). **Mechanism UNIDENTIFIED.** Three candidates, each with a falsifier: (i) index-offset
+  downsampling/aliasing (falsified if `beta_B` is invariant to window offset at fixed size); (ii) phase-slope
+  estimator bias (falsified if the LS slope is flat to better than ~0.2 % across station subsets); (iii) genuine
+  box-size truncation (falsified if the same estimator on 431x217 returns ~300.50). Order **(ii), (i), (iii)**.
+- **Standing.** **Cost estimates only — nothing was run, extracted or re-placed to write this entry**, and none of
+  the three candidates is authorised this block. All three are **DEFERRED behind the `C1` audit**: if `C1` is
+  confirmed the selection defect is the larger term, and the audit's full-spectrum artefacts make this a cheaper
+  denominator question to answer afterwards.
+- **Strongest argument against.** A 3.16 % question about the *denominator* can be read as postponing the real
+  work — the note already carries two self-consistent analytic pairs (§1.1), and one more open problem adds
+  bookkeeping without retiring either candidate.
+- **Why that argument does not win.** The offset is the same order as the 4.09 % gap the whole note is about, and
+  it decides **which pair is the analytic reference**: if the offset lives in B's placement or estimator, pair A
+  is the reference and the §1 percentages against A stand; if it is a genuine box-size effect, neither pair is
+  clean at the 3 %-class and every §1 percentage needs a box label. Leaving it unrecorded would let the
+  denominator be chosen by convenience later.
+- **Evidence.** `docs/design/zfree_diagnosis.md` §7.1 (`:776` onward) and §1.1 (the A/B pair table and
+  `B/A = +3.16 %` on `beta` / `+6.41 %` on `eps`); `emfit/mode_profile.py:591-593` (index-offset placement) and
+  `:597-600` (1.164852 % window normalisation); pair B's provenance `docs/design/modalport_ownership.md:7` and
+  this file `:6846`-`:6847`.
+
