@@ -35,7 +35,10 @@ THE THREE GATES (scopes as re-ruled by decisions.md 101.20, c.2)
                statistic ``rho = sum conj(Ey)Hz / sum conj(Ez)Hy``, whose
                response is 1:1.  A flux-ratio gate cannot see this break at all
                (1.0256e-8 at b=1e-5, see T3_TOL), which is exactly why the slot
-               has to be checked directly.
+               has to be checked directly.  Detection is the half-open side
+               ``statistic >= tol * (1 - _DETECT_RTOL)``, so a break of size
+               ``tol`` reads as detected even though the double representation
+               of ``(1+b)`` lands the statistic ~3.8e-11 below ``tol``.
 
 Why the split: everything in Part A is arithmetic on an existing record, so a
 typo costs a second; a T1/T2 run costs a full solve, so it must not be
@@ -195,6 +198,18 @@ T2_TOL = 0.005
 #    floor is absent; the only real floor is the record's reproducibility,
 #    measured 1.1e-10 (float32 round-trip, T1_TOL's table) -- five decades below
 #    1e-5.
+#
+#    THAT 3.8e-11 IS A SIGN, NOT A CURIOSITY.  At ``b == tol`` the statistic
+#    lands 3.8e-11 *below* the threshold, which a bare ``>= tol`` reads as "not
+#    detected" -- the exact break the gate exists to catch would be called
+#    clean.  The shortfall is a few ulp of the ratio (one ulp of 1.0 is 2.2e-16,
+#    i.e. 2.2e-11 relative at 1e-5), so it can fall either side depending on the
+#    data; the comparison therefore carries an explicit slack
+#    ``_DETECT_RTOL = 1e-9`` (26x the measured shortfall, and a threshold shift
+#    of ``tol*1e-9 = 1e-14``, four decades below the record's 1.1e-10
+#    reproducibility floor) and detection is ``statistic >= tol*(1-1e-9)``.
+#    Without it the promise "fires on a break of size tol" would hold only
+#    accidentally.
 #
 # So 1e-5 IS supported -- by the slot statistic, not by the flux ratio.  1e-5 is
 # chosen because it is the smallest break the chosen statistic resolves with
@@ -644,6 +659,27 @@ def _break_slot(blocks, b, slot):
     return arrs
 
 
+#: Relative slack on the ``>=`` side of T3's detection comparisons.  The break
+#: is carried as ``(1+b)`` in double, so the statistic at ``b == tol`` lands a
+#: few ulp away from ``tol`` -- measured 3.8e-11 *below* it on the cached
+#: capture (see T3_TOL, note 2).  A bare ``>=`` would therefore report the
+#: threshold break as undetected.  1e-9 is 26x the measured shortfall, and at
+#: ``tol = 1e-5`` it shifts the threshold by 1e-14 -- four decades below the
+#: record's 1.1e-10 reproducibility floor -- so it changes no real detection,
+#: it only makes the boundary deterministic.
+_DETECT_RTOL = 1e-9
+
+
+def _detected(statistic, tol):
+    """``|statistic| >= tol``, half-open with the ``_DETECT_RTOL`` slack.
+
+    ``tol`` is inclusive up to ``tol * _DETECT_RTOL`` relative, which is what
+    makes "a break of size ``tol`` is detected" true rather than dependent on
+    which side of the threshold the double arithmetic happens to land.
+    """
+    return bool(abs(float(statistic)) >= float(tol) * (1.0 - _DETECT_RTOL))
+
+
 def _t3_statistics(blocks, n_samples, b, slot="plane_Ey"):
     """``(flux_ratio_statistic_input, ey_slot_input)`` at break level ``b``.
 
@@ -693,6 +729,14 @@ def T3_ey_slot(capture, *, tol=T3_TOL, ladder=T3_BREAK_LADDER,
     ``(1+b)``, measured at 3.8e-11) *and* both zero-break responses to be exactly
     zero, i.e. the gate fires on a break of size ``tol`` and stays silent on
     clean data.  A missing capture raises rather than passing silently.
+
+    Detection is the half-open side, ``statistic >= tol * (1 - _DETECT_RTOL)``:
+    at ``b == tol`` the statistic lands ~3.8e-11 *below* ``tol`` (the double
+    representation of ``(1+b)``), so a bare ``>=`` would call exactly the break
+    the gate exists to catch *undetected*.  The slack is 1e-9 relative (26x
+    that shortfall; 1e-14 absolute at ``tol = 1e-5``, four decades below the
+    record's 1.1e-10 reproducibility floor), so it moves no real detection --
+    it only settles the boundary.
     """
     if slot != "plane_Ey":
         raise ValueError(
@@ -716,8 +760,8 @@ def T3_ey_slot(capture, *, tol=T3_TOL, ladder=T3_BREAK_LADDER,
             "b": float(b),
             "flux_statistic": float(abs(xf / x0_flux - 1.0)),
             "slot_statistic": float(abs(xr / x0_rho - 1.0)),
-            "flux_detected": bool(abs(xf / x0_flux - 1.0) >= tol),
-            "slot_detected": bool(abs(xr / x0_rho - 1.0) >= tol),
+            "flux_detected": _detected(abs(xf / x0_flux - 1.0), tol),
+            "slot_detected": _detected(abs(xr / x0_rho - 1.0), tol),
         })
 
     bs = np.asarray([r["b"] for r in rows], dtype=float)
@@ -728,8 +772,11 @@ def T3_ey_slot(capture, *, tol=T3_TOL, ladder=T3_BREAK_LADDER,
     null_flux = float(abs(x0_flux / x0_flux - 1.0))
     null_slot = float(abs(x0_rho / x0_rho - 1.0))
 
-    b_min_flux = (tol / abs(m_flux)) if m_flux else float("inf")
-    b_min_slot = (tol / abs(m_slot)) if m_slot else float("inf")
+    # the effective threshold is the one _detected() uses, so "smallest
+    # detectable b" is the smallest break this gate actually calls detected
+    thr = float(tol) * (1.0 - _DETECT_RTOL)
+    b_min_flux = (thr / abs(m_flux)) if m_flux else float("inf")
+    b_min_slot = (thr / abs(m_slot)) if m_slot else float("inf")
     passed = bool(abs(m_slot) >= 1.0 - 1e-9 and null_slot == 0.0
                   and null_flux == 0.0)
 
