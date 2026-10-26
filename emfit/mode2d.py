@@ -76,9 +76,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.sparse import coo_matrix, csr_matrix
+from scipy.linalg import eig as _dense_eig
+from scipy.sparse import coo_matrix, csr_matrix, hstack, vstack
 from scipy.sparse.csgraph import connected_components
-from scipy.sparse.linalg import eigsh, spsolve
+from scipy.sparse.linalg import (
+    eigsh,
+    splu,
+    spsolve,
+)
 
 from .grid import Grid
 from .materials import C0
@@ -87,11 +92,14 @@ __all__ = [
     "Mesh2D",
     "Mode2D",
     "assemble",
+    "assemble_mixed",
     "eps_eff_laplace",
     "k0_from_freq",
     "mesh_from_grid",
     "pec_edge_mask",
+    "pec_node_mask",
     "solve_modes",
+    "solve_modes_mixed",
     "structured_mesh",
 ]
 
@@ -126,6 +134,21 @@ _CURL_RTOL = 1.0e-10
 #: point sitting exactly on a cell boundary (which is where a quadrature node of
 #: the neighbouring cell lives) is accepted instead of rejected.
 _LOCATE_RTOL = 1.0e-9
+
+#: ``(3, 3)`` pattern of the consistent ``P1`` nodal mass matrix on a triangle:
+#: ``INT phi_i phi_j dA = (area / 12) * _P1_MASS_PATTERN[i, j]``.
+_P1_MASS_PATTERN = np.array([[2.0, 1.0, 1.0], [1.0, 2.0, 1.0], [1.0, 1.0, 2.0]])
+
+#: Largest scale-aware relative backward error
+#: ``||A x - lambda B x|| / ((||A||_F + |lambda| ||B||_F) ||x||)`` a candidate
+#: of the *mixed* formulation may carry and still be selected by
+#: :func:`solve_modes_mixed`.  The naive ``||A x - lambda B x|| / ||B x||``
+#: normalisation is not usable: ``B = m1 - C D C^T`` is strongly indefinite
+#: (565 of 1592 eigenvalues negative on the parallel-plate mesh), so ``||B x||``
+#: is not a valid denominator and a ``1e-6`` threshold on that ratio is
+#: unreachable even for exact eigenpairs.
+_MIXED_RESIDUAL_TOL = 1.0e-3
+_MIXED_DENSE_MAX = 3000
 
 
 # ----------------------------------------------------------------------
@@ -441,6 +464,76 @@ def assemble(mesh: Mesh2D, eps_r=1.0, mu_r=1.0) -> tuple:
 
 
 # ----------------------------------------------------------------------
+# mixed (e_t + e_z) assembly
+# ----------------------------------------------------------------------
+def assemble_mixed(mesh: Mesh2D, eps_r=1.0, mu_r=1.0) -> tuple:
+    """Assemble ``(m1, m_eps, c, k_zz, m_zz)`` -- the blocks of the mixed pencil.
+
+    With ``q(v) := d_x v_y - d_y v_x``, ``W_e`` the Whitney 1-form of edge ``e``
+    and ``phi_i`` the nodal hat function of vertex ``i``::
+
+        m1[e, f]    = INT (1/mu_r) W_e . W_f dA            (edge x edge)
+        m_eps[e, f] = INT eps_r W_e . W_f dA               (edge x edge)
+        c[e, i]     = INT (1/mu_r) W_e . grad phi_i dA     (edge x node, ne x nn)
+        k_zz[i, j]  = INT (1/mu_r) grad phi_i . grad phi_j dA
+        m_zz[i, j]  = INT eps_r phi_i phi_j dA
+
+    ``m1`` and ``m_eps`` are exactly the ``m_mu`` / ``m_eps`` of :func:`assemble`
+    and are taken from there instead of being re-assembled: the ``beta^2`` term
+    of the mixed weak form carries the ``1/mu_r``, so ``m_mu`` *is* ``m1`` even
+    when ``mu_r != 1``.
+
+    The three new blocks use the same scatter / orientation idiom as
+    :func:`assemble`: a triangle's ``3 x 3`` local block is scattered through
+    ``mesh.tri_edges`` (rows) and ``mesh.tris`` (columns), and the edge row of
+    ``c`` carries ``mesh.tri_sign`` so that ``c`` is expressed in the *global*
+    edge orientation ``(lo, hi)``.  The node column carries no sign.  The
+    per-triangle values are::
+
+        c_local[s, j] = (area / 3) (grad phi_b - grad phi_a) . grad phi_j / mu
+        k_zz_local    = area (grad phi_i . grad phi_j) / mu
+        m_zz_local    = (area / 12) * _P1_MASS_PATTERN * eps
+
+    all exact for the polynomial degrees that appear (the ``c`` and ``k_zz``
+    integrands are piecewise constant, ``m_zz`` is the consistent ``P1`` mass
+    matrix).
+
+    Returns five real ``csr_matrix`` objects: ``m1``, ``m_eps`` ``(ne, ne)``,
+    ``c`` ``(ne, nn)``, ``k_zz`` and ``m_zz`` ``(nn, nn)``, all on the **full**
+    node / edge lists so that the caller does the PEC deletion.
+    """
+    _k_q, m1, m_eps = assemble(mesh, eps_r=eps_r, mu_r=mu_r)
+    eps_t = _per_triangle(eps_r, mesh, "eps_r")
+    inv_mu = 1.0 / _per_triangle(mu_r, mesh, "mu_r")
+
+    g = mesh.grad                                           # (nt, 3, 2)
+    dg = g[:, _LOCAL_B, :] - g[:, _LOCAL_A, :]              # (nt, 3, 2)
+
+    # c: (nt, s, j), s the local edge slot, j the local node slot
+    c_loc = (mesh.area / 3.0)[:, None, None] * np.einsum("tsc,tjc->tsj", dg, g)
+    c_loc = c_loc * inv_mu[:, None, None] * mesh.tri_sign[:, :, None]
+
+    dot = np.einsum("tij,tkj->tik", g, g)                   # (nt, 3, 3)
+    k_zz_loc = (mesh.area * inv_mu)[:, None, None] * dot
+    m_zz_loc = (mesh.area * eps_t / 12.0)[:, None, None] * _P1_MASS_PATTERN[None]
+
+    ne, nn = mesh.n_edges, mesh.n_nodes
+    e_rows = np.repeat(mesh.tri_edges, 3, axis=1).ravel()
+    e_cols = np.tile(mesh.tri_edges, (1, 3)).ravel()
+    n_rows = np.repeat(mesh.tris, 3, axis=1).ravel()
+    n_cols = np.tile(mesh.tris, (1, 3)).ravel()
+
+    c = coo_matrix((c_loc.reshape(-1), (e_rows, n_cols)), shape=(ne, nn)).tocsr()
+    k_zz = coo_matrix(
+        (k_zz_loc.reshape(-1), (n_rows, n_cols)), shape=(nn, nn)
+    ).tocsr()
+    m_zz = coo_matrix(
+        (m_zz_loc.reshape(-1), (n_rows, n_cols)), shape=(nn, nn)
+    ).tocsr()
+    return m1, m_eps, c, k_zz, m_zz
+
+
+# ----------------------------------------------------------------------
 # boundary conditions
 # ----------------------------------------------------------------------
 def pec_edge_mask(mesh: Mesh2D, boundaries=()) -> np.ndarray:
@@ -472,6 +565,36 @@ def pec_edge_mask(mesh: Mesh2D, boundaries=()) -> np.ndarray:
                 f"expected ({mesh.n_nodes},)"
             )
         mask |= on[lo] & on[hi]
+    return mask
+
+
+def pec_node_mask(mesh: Mesh2D, boundaries=()) -> np.ndarray:
+    """Boolean mask of *nodes* lying on any PEC surface.
+
+    The nodal counterpart of :func:`pec_edge_mask`: same ``boundaries`` argument
+    (a sequence of predicates mapping the ``(nn, 2)`` node array to a boolean
+    node mask), deliberately **different** combination rule.
+
+    * a **node** is PEC iff it lies on **any one** of the predicates -- a plain
+      union of the masks -- because a node on a conductor is a Dirichlet node
+      for the scalar potential and for the longitudinal ``e_z``;
+    * an **edge** is PEC iff **both** endpoints lie on the **same** predicate
+      (see :func:`pec_edge_mask`), so the gap edge joining two different
+      conductors keeps its DOF.
+
+    Using the node union for the edges instead would delete exactly the ``E_y``
+    DOFs the parallel-plate mode lives on; that is why the two masks are not
+    derived from one another.
+    """
+    mask = np.zeros(mesh.n_nodes, dtype=bool)
+    for index, predicate in enumerate(boundaries):
+        on = np.asarray(predicate(mesh.nodes), dtype=bool)
+        if on.shape != (mesh.n_nodes,):
+            raise ValueError(
+                f"boundary predicate {index} returned shape {on.shape}, "
+                f"expected ({mesh.n_nodes},)"
+            )
+        mask |= on
     return mask
 
 
@@ -511,6 +634,13 @@ class Mode2D:
 
         e_t         (ne,)   the eigenvector on the *full* edge list, normalised
                             so that ``e^T B e = 1``, zero on every PEC edge
+        e_z         (nn,)   nodal longitudinal field of the *mixed* formulation
+                            (:func:`solve_modes_mixed`) as a complex phasor
+                            ``-i beta (k_zz - k0^2 m_zz)^{-1} c^T e_t``; ``None``
+                            for the ``e_t``-only solve.  For a propagating mode
+                            it is purely imaginary, so ``abs(e_z)`` is the
+                            physical amplitude.  :meth:`e_at` does *not*
+                            include it -- see the note there.
         mesh        Mesh2D  the triangulation; ``nodes``, ``tris`` and ``edges``
                             are properties onto it
 
@@ -533,6 +663,7 @@ class Mode2D:
     n_pec: int
     e_t: np.ndarray
     mesh: Mesh2D
+    e_z: np.ndarray | None = None
 
     # -- geometry pass-throughs -------------------------------------------
     @property
@@ -623,6 +754,12 @@ class Mode2D:
         single-valued there; on a PEC edge the DOF is zero and the tangential
         component vanishes on that edge only (the normal component is *not*
         constrained, which is what the essential condition means).
+
+        This is the **transverse** field only.  A mode from
+        :func:`solve_modes_mixed` also carries the nodal longitudinal field
+        :attr:`e_z`; it is not interpolated here because a nodal field lives on
+        the ``P1`` basis, not on the Whitney one -- read ``mode.e_z`` directly
+        (see the class docstring for its sign convention).
         """
         pts = np.ascontiguousarray(points, dtype=float)
         tri = self._locate(pts)
@@ -792,6 +929,280 @@ def solve_modes(
         n_pec=int(mask.sum()),
         e_t=e_t,
         mesh=mesh,
+    )
+
+
+def solve_modes_mixed(
+    mesh: Mesh2D,
+    k0: float,
+    sigma: float = 1.0,
+    *,
+    eps_r=1.0,
+    mu_r=1.0,
+    boundaries=(),
+    k: int = 8,
+    dense: bool | None = None,
+) -> Mode2D:
+    """Solve the mixed ``(e_t, e_z)`` pencil ``A x = beta^2 B x``.
+
+    Parameters
+    ----------
+    mesh:
+        The triangulation.
+    k0:
+        Vacuum wavenumber [rad/m].
+    sigma:
+        Recorded on the result only.  This is a dense QZ solve of the
+        *linear-in-``beta^2``* pencil, so there is no shift to choose; the
+        argument is kept for signature symmetry with :func:`solve_modes`.
+    eps_r, mu_r:
+        Per-triangle material, as for :func:`assemble`.
+    boundaries:
+        PEC predicates.  The **edge** mask of :func:`pec_edge_mask` cuts
+        ``e_t`` and the **node** mask of :func:`pec_node_mask` cuts ``e_z``;
+        the two combination rules deliberately differ -- see that function.
+    k:
+        Recorded for signature symmetry; the dense path returns the complete
+        spectrum in ``candidates``, so ``k`` truncates nothing.
+    dense:
+        ``None`` (default) takes the dense path when the number of free edges
+        is at most ``_MIXED_DENSE_MAX``.  ``dense=False`` raises
+        ``NotImplementedError`` -- see the Notes.
+
+    Returns
+    -------
+    Mode2D
+        With ``e_z`` filled in, ``n_dof = n_free_edges + n_free_nodes`` and
+        ``residual`` the *two-field block* residual (see Notes).
+
+    Notes
+    -----
+    Weak form (fields ``~ exp(-i beta z)``, ``q(v) = d_x v_y - d_y v_x``)::
+
+        INT (1/mu)[ q(e_t) q(w_t) + grad(e_z).grad(w_z) + beta^2 e_t.w_t
+                    + i beta ( grad(e_z).w_t - e_t.grad(w_z) ) ] dA
+            = k0^2 INT eps [ e_t.w_t + e_z w_z ] dA
+
+    in the blocks of :func:`assemble_mixed` plus ``k_q`` from
+    :func:`assemble`: ``m1``, ``k_q``, ``m_eps`` (edge x edge), ``c``
+    (edge x node, ``c[e, i] = INT (1/mu) grad(phi_i).w_e``), ``k_zz`` and
+    ``m_zz`` (node x node).  ``k_q`` is the curl-curl term and it **does**
+    belong in the pencil: ``q`` is a purely transverse operator, so ``k_q`` is
+    ``beta``-independent, and that is exactly why the block system below is
+    linear in ``beta^2``.  Without it the pencil is a quasi-TEM-only operator
+    (``beta^2 = k0^2 eps_r`` is then an identity, not a result)::
+
+        [ [ beta^2 m1 + k_q - k0^2 m_eps ,  i beta c       ] [x_t]   [0]
+          [ -i beta c^T                  ,  k_zz - k0^2 m_zz ] [x_z] = [0]
+
+    Row 2 gives ``x_z = i beta D c^T x_t`` with
+    ``D = (k_zz - k0^2 m_zz)^{-1}`` -- factored **once** per ``k0`` (``D`` is
+    ``beta``-independent) and reused both for the pencil and for the
+    reconstruction of ``e_z`` -- and row 1 becomes the linear pencil::
+
+        A x_t = beta^2 B x_t ,   A = k0^2 m_eps - k_q ,   B = m1 - c D c^T .
+
+    The eigenvalue **is** ``beta^2``: no reciprocal ``1 / beta^2`` side is ever
+    formed, which keeps the ``k0 -> 0`` end of a dispersion sweep well-posed.
+    ``B`` is genuinely **indefinite** (it is the transverse operator of
+    :func:`solve_modes` after elimination, hence negative on the
+    above-cutoff/evanescent part of the discrete spectrum), so
+    ``scipy.linalg.eigh`` is not applicable; the dense path uses
+    ``scipy.linalg.eig`` (QZ), which returns the complete spectrum and accepts
+    an indefinite ``B``.  Only eigenvalues with
+    ``|Im(lambda)| <= 1e-6 max(1, |lambda|)`` are kept.
+
+    What the homogeneous anchors can and cannot see: for a uniform transverse
+    field ``q(e_t) = 0`` **and** ``c^T e_t = 0`` hold exactly, so
+    ``A x = k0^2 m_eps x``, ``B x = m1 x`` and ``beta^2 / k0^2 = eps_r`` to
+    machine precision *whether or not* ``k_q`` is present.  Anchors (i)/(ii)
+    therefore validate the plumbing (masks, assembly, elimination,
+    reconstruction) only.  The load-bearing anchor is a **curling** mode:
+    ``TE10`` in a PEC box, where ``q(e_t) != 0`` and a missing ``k_q`` shows up
+    as ``beta^2 / k0^2 = 1.0`` instead of ``0.4383``.
+
+    ``residual`` on the result is the relative *two-field* residual
+    ``||M(beta^2) [x_t; x_z]|| / (||M||_F ||[x_t; x_z]||)`` of the block system
+    above, rebuilt from the returned fields: it is a *diagnostic* of the
+    coupling sign of ``c`` (measured O(1e-1 .. 1) on this pencil), **not** a
+    pass/fail guard.
+    Candidate selection separately uses the scale-aware relative backward
+    error ``||A x - lambda B x|| / ((||A||_F + |lambda| ||B||_F) ||x||)``
+    against ``_MIXED_RESIDUAL_TOL``, then takes the largest positive
+    ``beta^2``; the whole candidate list is returned either way so the choice
+    can be audited.  Normalising by ``||B x||`` instead is not usable here:
+    ``B = m1 - C D C^T`` is strongly indefinite, so ``||B x||`` can be orders
+    of magnitude below ``||A x - lambda B x||`` on a genuine eigenpair and
+    that ratio is unattainable.
+
+    Remaining work: an iterative path.  ``A - sigma B`` is **dense** through
+    ``c D c^T``, so the ARPACK shift-invert route used by :func:`solve_modes`
+    is not available here as it stands; ``dense=False``, or a mesh with more
+    than ``_MIXED_DENSE_MAX`` free edges, raises ``NotImplementedError``
+    instead of returning something silently wrong.
+    """
+    k0 = float(k0)
+    sigma = float(sigma)
+    if not np.isfinite(k0) or k0 <= 0.0:
+        raise ValueError(f"k0 must be positive and finite, got {k0!r}")
+    if not np.isfinite(sigma):
+        raise ValueError(f"sigma must be finite, got {sigma!r}")
+
+    k_q, m_mu, m_eps = assemble(mesh, eps_r=eps_r, mu_r=mu_r)
+    m1, m_eps_mixed, c, k_zz, m_zz = assemble_mixed(mesh, eps_r=eps_r, mu_r=mu_r)
+    if m1.shape != k_q.shape or m1.shape != m_eps.shape:
+        raise RuntimeError(
+            f"assemble() gives {k_q.shape} but assemble_mixed() gives "
+            f"{m1.shape}; the two edge numberings do not agree"
+        )
+    gap_mu = np.abs(m1 - m_mu).max() if (m1 - m_mu).nnz else 0.0
+    if gap_mu > 1e-12 * float(np.abs(m1).max()):
+        raise RuntimeError(
+            f"assemble() and assemble_mixed() disagree on 1/mu mass "
+            f"(max |m_mu - m1| = {gap_mu:g})"
+        )
+    gap_eps = np.abs(m_eps - m_eps_mixed).max() if (m_eps - m_eps_mixed).nnz else 0.0
+    if gap_eps > 1e-12 * float(np.abs(m_eps).max()):
+        raise RuntimeError(
+            f"assemble() and assemble_mixed() disagree on eps mass "
+            f"(max |m_eps - m_eps_mixed| = {gap_eps:g})"
+        )
+
+    # --- k_q sanity: a uniform transverse field is curl-free ----------------
+    tangent = mesh.nodes[mesh.edges[:, 1]] - mesh.nodes[mesh.edges[:, 0]]
+    uniform = tangent[:, 1]                                  # tangent . y_hat
+    curl_leak = float(np.linalg.norm(k_q @ uniform)) / (
+        float(np.abs(k_q).max()) * float(np.linalg.norm(uniform))
+    )
+    if curl_leak > 1e-8:
+        raise RuntimeError(
+            "k_q is not the curl-curl operator of the edge numbering in use: "
+            f"|k_q @ uniform| / (|k_q|_max |uniform|) = {curl_leak:g}"
+        )
+
+    edge_pec = pec_edge_mask(mesh, boundaries)
+    node_pec = pec_node_mask(mesh, boundaries)
+    free_e = np.flatnonzero(~edge_pec)
+    free_n = np.flatnonzero(~node_pec)
+    n_e = int(free_e.size)
+    n_n = int(free_n.size)
+    if n_e < 3:
+        raise ValueError(f"only {n_e} free edge DOFs after the PEC cut")
+    if n_n < 1:
+        raise ValueError("every node is a PEC node; no longitudinal DOFs left")
+
+    use_dense = (n_e <= _MIXED_DENSE_MAX) if dense is None else bool(dense)
+    if not use_dense:
+        raise NotImplementedError(
+            "iterative path pending: A - sigma*B is dense through C D C^T; "
+            "dense QZ only"
+        )
+
+    m1_f = m1[free_e][:, free_e].tocsc()
+    m_eps_f = m_eps[free_e][:, free_e].tocsc()
+    k_q_f = k_q[free_e][:, free_e].tocsc()
+    c_f = c[free_e][:, free_n].tocsc()
+    h = (k_zz[free_n][:, free_n] - k0 * k0 * m_zz[free_n][:, free_n]).tocsc()
+    try:
+        lu_h = splu(h)
+    except RuntimeError as exc:
+        raise ValueError(
+            f"the longitudinal block k_zz - k0^2 m_zz is singular at "
+            f"k0 = {k0!r} ({exc}); nudge k0 off the nodal Dirichlet eigenvalue"
+        ) from exc
+
+    d_dense = lu_h.solve(np.eye(n_n))              # D = inv(k_zz - k0^2 m_zz)
+    a_dense = k0 * k0 * m_eps_f.toarray() - k_q_f.toarray()
+    b_dense = m1_f.toarray() - (c_f @ d_dense) @ c_f.toarray().T
+    a_dense = 0.5 * (a_dense + a_dense.T)
+    b_dense = 0.5 * (b_dense + b_dense.T)
+
+    lam, vecs = _dense_eig(a_dense, b_dense)
+    lam = np.asarray(lam)
+    n_cand = int(lam.size)
+    lam_real = np.real(lam)
+    real_enough = np.abs(np.imag(lam)) <= 1e-6 * np.maximum(1.0, np.abs(lam))
+
+    # --- per-candidate normalisation, pencil residual and curl ratio --------
+    normalised = np.real(vecs)
+    norms = np.linalg.norm(normalised, axis=0)
+    norms[norms == 0.0] = 1.0
+    normalised = normalised / norms
+    norm_a = float(np.linalg.norm(a_dense))
+    norm_b = float(np.linalg.norm(b_dense))
+    numer = np.linalg.norm(
+        a_dense @ normalised - (b_dense @ normalised) * lam_real, axis=0
+    )
+    denom_scale = norm_a + np.abs(lam_real) * norm_b
+    residuals = np.full(n_cand, np.inf)
+    live = denom_scale > 0.0
+    residuals[live] = numer[live] / denom_scale[live]
+    m1x = np.einsum("ij,ij->j", normalised, m1_f @ normalised)
+    ratios = np.full(n_cand, np.nan)
+    live = np.abs(m1x) > 0.0
+    ratios[live] = (
+        np.einsum("ij,ij->j", normalised, k_q_f @ normalised)[live] / m1x[live]
+    )
+
+    beta_sq = np.where(real_enough, lam_real, np.nan)
+
+    # --- mode selection ---------------------------------------------------
+    order = np.argsort(-beta_sq)
+    beta_sq = beta_sq[order]
+    residuals = residuals[order]
+    ratios = ratios[order]
+    normalised = normalised[:, order]
+
+    eligible = (
+        np.isfinite(beta_sq)
+        & (beta_sq > 0.0)
+        & (residuals < _MIXED_RESIDUAL_TOL)
+    )
+    if not np.any(eligible):
+        raise ValueError(
+            "no candidate has a finite positive beta^2 with a relative residual "
+            f"below {_MIXED_RESIDUAL_TOL:g}: beta^2 = {beta_sq.tolist()}, "
+            f"residuals = {residuals.tolist()}"
+        )
+    chosen = int(np.flatnonzero(eligible)[np.argmax(beta_sq[eligible])])
+
+    x = normalised[:, chosen]
+    beta = float(np.sqrt(beta_sq[chosen]))
+    e_t = np.zeros(mesh.n_edges)
+    e_t[free_e] = x
+
+    e_z = np.zeros(mesh.n_nodes, dtype=complex)
+    e_z[free_n] = 1j * beta * lu_h.solve(c_f.T @ x)
+
+    # --- guard: the rebuilt two-field block system must be satisfied --------
+    block = vstack(
+        [
+            hstack([beta * beta * m1_f + k_q_f - k0 * k0 * m_eps_f, 1j * beta * c_f]),
+            hstack([-1j * beta * c_f.T, h]),
+        ]
+    ).tocsc()
+    field = np.concatenate([x, e_z[free_n]])
+    block_norm = float(np.sqrt(np.sum(np.abs(block.data) ** 2)))
+    block_residual = float(np.linalg.norm(block @ field)) / (
+        block_norm * float(np.linalg.norm(field))
+    )
+
+    return Mode2D(
+        freq=float(k0 * C0 / (2.0 * np.pi)),
+        k0=k0,
+        beta=beta,
+        beta_sq=float(beta_sq[chosen]),
+        eps_eff=float(beta_sq[chosen] / (k0 * k0)),
+        residual=block_residual,
+        candidates=tuple((float(b), float(b / (k0 * k0))) for b in beta_sq),
+        curl_ratio=tuple(float(r) for r in ratios),
+        chosen=chosen,
+        sigma=sigma,
+        n_dof=n_e + n_n,
+        n_pec=int(edge_pec.sum()),
+        e_t=e_t,
+        mesh=mesh,
+        e_z=e_z,
     )
 
 
