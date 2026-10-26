@@ -6816,9 +6816,61 @@ The t2b disposition is now ruled: the block stays skipped, with its measured val
 
 One limit applies to every figure above: the full test suite cannot be completed in this container. It was killed by SIGKILL, exit 137, after 619 s and produced no output, and a 90 s cap produced 40 dots and no failures. Every number in this section therefore comes from a single named file run, never from a whole-suite result, and should be read that way.
 
+## §101.18 — R_MODAL: the definition, and the basis experiment that did not settle it
+
+### (a) The definition, and who failed to write it
+
+`R_MODAL` was never operationally defined. `decisions.md:5533-5536` fixed the comparator and the tolerance — "the last station's value over the first station's value", gated by `|R_MODAL / R_FLUX - 1| <= 1.0e-3` — but never fixed the operand, the plane, or the mode rule. A gate against an undefined number is not a gate; it is a wish. This is the same error class as "checks (c) and (d) are not tests": a criterion that cannot be evaluated because the quantity is undefined. Recorded as the operator's error, not as a defect of the code.
+
+Confirmed on the tree at the time of the ruling: `grep -rn --include='*.py' -e R_MODAL -e r_modal` returned zero hits. `R_FLUX`, by contrast, is fully operational — `F_phys[-1]/F_phys[0]` through `flux_from_phasors` with the `4/N**2` convention (`decisions.md:5270`, `:5492`, `tolflux_report.py:27,93`), value `0.9687210847256866 = 23336.851094665908 / 24090.371792902824` (`decisions.md:5233`).
+
+A second premise of the ruling was also wrong against the tree, and belongs on the same record: the ruling located the basis inside `ModalPort.from_mode2d`. That method (`emfit/modalport.py:194`, its error string at `:217`) has **zero call sites**. The live basis is set at call sites — `.scratch/logs/sweep3.py:170` `microstrip_mode_profile(...)` then `:172` `plane_mode(...)`, and the same pair in `_sweep3_before.py:136/138`, `_w1_probe.py:42/43`, `_p2_probe.py:34/35`, `run_m3b_test.py:728/729` and `:951/953`, `tests/test_modal.py:43/91`. Editing `from_mode2d` would have produced a diff with no behavioural effect. Specifying a fix site without verifying it is the same error class as specifying a gate without a quantity.
+
+The ruled definition, which supersedes the operative part of `:5533-5536`:
+
+- **Operand**: the modal power ratio `P(plane_last) / P(plane_first)`, where `P = 0.5 Re(a . conj(b))` with `a` and `b` the forward and backward modal amplitudes at that plane. This is the quantity conserved along a lossless line by the algebra in 101.17(g) — the same algebra that made the lumped V/I wrong. `|v|`, `|i|`, `|a|` and forward-only `a+` are not conserved along a line under the same algebra; they are the operands that made the lumped route drift.
+- **Plane**: `x_port = 0.0087 m`, not `station_x[0] = 0.0104 m`. The port plane is where the source is; projecting at the first station puts a phase assumption back into the measurement that the run exists to test.
+- **Mode rule**: the mixed solver's mode from `mode2d`, identified by energy fraction, not the analytic `microstrip_mode_profile`.
+
+### (b) The basis experiment: null result, recorded so it is not repeated
+
+The archive decomposition was run with the mixed solver's mode as the basis, against the analytic basis in the same process through the same three functions. It took one 111 s dense QZ solve plus 13 s per iteration thereafter; no FDTD steps.
+
+| | mixed | analytic |
+|---|---|---|
+| `mode_purity` | 0.17784983167186771 | 0.013875360260712512 |
+| `amplitude_mismatch_max` | 38613.435 | 14907.727 |
+| `z0_power` | 2.057687 | 49.558941 |
+| `beta` | 336.675159 | 309.981864 |
+| `eps` | 4.205181853 | 3.564800282 |
+| `passivity` | 1.851476914 | 1.014289959 |
+| `v` magnitude last/first | 1.7994577755 | 0.9611670902 |
+| `i` magnitude last/first | 1.1723878865 | 0.9844948049 |
+| modal power last/first | 2.1378930740 | 0.9462657670 |
+
+None of the ratios is `R_MODAL`: all are computed over station planes 0.0104..0.020, because the ruled plane `x_port = 0.0087` lies outside the capture. `decisions.md:5239` already records the gap.
+
+**Verdict: `mode_purity > 0.95` is NO.** The mixed basis is 12.8x better than analytic on purity and worse on every other measure: `amplitude_mismatch_max` rose, `passivity` went from 1.014 to 1.851, and the powered ratio moved from 0.946 to 2.138 against `R_FLUX = 0.9687210847256866`.
+
+The diagnosis, which is the useful part. The mixed mode was solved on a 527-node graded mesh (31 x 17, 1444 free edges, against `_MIXED_DENSE_MAX 3000`) and then interpolated onto the archive's 200 x 77 lattice. That is a 4.5x upsample per axis onto a lattice four times finer than the mesh that produced it, and a strip-edge field cannot survive it. The evidence that the assembly itself is implicated, independently of resolution: the placed `PlaneMode` measures `beta` 336.675159 against the solver's own `beta` 312.7827646322591, +7.6 %, and `eps` 4.205 against the solver's `eps_eff` 3.6295122080769704. A basis that does not reproduce the eigenvalue it was built from is not yet a basis. The transverse/nodal stitch is *not* implicated — the `e_z` reconstruction matched the solver's own `e_z` exactly (`corr 1.0`, `rel 0.0`) once a complex-cast regression was removed.
+
+So the experiment as designed cannot answer the basis question. It confounds the choice of mode with the resolution the mode was solved at. Recorded so that it is not run again in this form. What it would take: solve the mode on the archive's own port section at or near cell resolution, or accept a basis defined only on the coarse lattice and compare like with like.
+
+Two defects of the measurement remain open and are *not* physics results: `|S11|` and `|S21|` were not extracted (`modal_sparams` returned a value — `passivity` came through — but the extractor probed `s11`/`s21` on the type rather than the instance); and an earlier `corr None / rel 8.3e301` for the `e_z` comparison was a complex-cast regression of a script rewrite, not a measurement.
+
+Reproducibility note carried forward: `/workspace/emfit/` contains **no** `modal.py`. `PlaneMode`, `plane_mode`, `modal_station_phasors`, `modal_line_quantities`, `ModalSparams` and `modal_sparams` exist only in `.scratch/wt-m3b-diag/emfit/modal.py` (`:197`, `:267`, `:372`, `:538`, `:596`, `:685`), reached by appending to `emfit.__path__`. `mode_profile.py` exists in both trees (`microstrip_mode_profile` at `:535`). Every modal number in 101.17 is therefore reproducible only from a scratch worktree, not from the package.
+
+### (c) Route
+
+The archive needs no container, which is part of why it was chosen: 6/6 consuming containers, `ContainerStartTool` permitted but refused at quota, persistent containers operator-remove. `emfit-build` is idle (uptime 395539 s) and is the intended slot for any long run, reached via `ContainerExecTool`.
+
+Block B must not run the anchor gate until the basis question is settled or the gate is redefined to a basis that is actually available. Running 4560 s against a basis already shown not to reproduce its own eigenvalue would spend 76 minutes producing a number whose disagreement could not be attributed to the solve rather than the basis.
+
+`tmp_job2/` cleanup, authorised: `traces.npz` is kept. It is the raw time series behind the five-window-convention study in 101.17(o); the committed t1/t2 values are reproducible from pytest but the sweep values are not, so deleting it would discard the ability to re-run that retraction analysis. The three scripts are removed.
+
 ## §101.19 — The resource interface: `emfit.job.v1` in, `emfit.result.v1` out, and a contract that authorises nothing
 
-Status: design only. Nothing in this section has been implemented and nothing in it authorises a run. There is no schema file, no validator, no versioning machinery, and no code that emits either document below; the two JSON objects are specifications of intent, written down now because the ordering they imply is the whole of the argument. It is also why §101.18 is deliberately vacant: that section records the anchor gate result, the gate has not been run, and the numbering here follows the ruling rather than the writing order.
+Status: design only. Nothing in this section has been implemented and nothing in it authorises a run. There is no schema file, no validator, no versioning machinery, and no code that emits either document below; the two JSON objects are specifications of intent, written down now because the ordering they imply is the whole of the argument. It is also why §101.18 was written after this one in time but numbered before it: that section records the anchor gate result, the gate has not been run, and the numbering follows the ruling rather than the writing order. What §101.18 holds at present is the definition of `R_MODAL` and a null basis experiment; the gate result is still owed.
 
 ### (a) What a resource is, and why the contract precedes the fast solver
 
