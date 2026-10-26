@@ -548,6 +548,9 @@ def test_t2_short_circuit_reflection():
     "bution-clean |Gamma_short| ratio asserted in the test above is the me"
     "asurement that does survive the fixture change.  This block is"
     " parked, not weakened: its 1e-6 assertion is left untouched."
+    " The code is correct; the fixture is not the one it needs.  A dedicated"
+    " short fixture -- option 1 in decisions.md 101.17(o) -- would be the real"
+    " test, and it is deferred."
 ))
 def test_t2b_two_station_decomposition():
     """Two-station forward/backward decomposition at the x = 0 plane.
