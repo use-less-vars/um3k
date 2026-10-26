@@ -6999,9 +6999,9 @@ Third, the operator's gate revision in (d.4) is blind to a common-mode scale err
 
 **A second defect in the same script, recorded separately because it has a different consequence.** `v_mode` at the same builder is a plain sum over 16 nodal values, not an integral, and `i_mode = 2 / v_mode`. That is why `z0_power` reads 0.001989 against `discrete_power` 1.0. The two consequences are deliberately kept apart: fixing the unit contract will NOT fix the 4.52 per cent beta bias recorded at (b.5), and fixing the V and I integrals will NOT move 2.72e6. Each defect is bounded by the other being fixed, and neither is repaired here.
 
-**The weakest link, named.** After the unit repair a residual 2.86x gap remains between the field ratio 0.0272 and the mass-matrix ratio 0.0095. It is attributed to component staggering, and it has NOT been measured de-staggered. An attribution that was not measured is the weakest number in this subsection, and it is labelled as such rather than being presented as a result.
+**The weakest link, named.** After the unit repair a residual 2.86x gap remains between the field ratio 0.0272 and the mass-matrix ratio 0.0095. It is attributed to component staggering, and it has NOT been measured de-staggered. An attribution that was not measured is the weakest number in this subsection, and it is labelled as such rather than being presented as a result. [**FALSIFIED 2026-10-26:** the de-staggered measurement has now been made — Falsifier #8 of `docs/design/normalization_scheme.md`, reported at §101.21(d). Every de-staggered value sits within about 1.5 per cent of the unit-repaired ratio and still about 2.9x above the mass-matrix ratio, so the residual gap is **not** a component-staggering artefact and the attribution is withdrawn. The route/order band it was attributed to is about 2.5 per cent, smaller than the ~7 per cent per-mesh spread of the unit-repaired ratio itself (§101.21(e)).]
 
-**Status: PENDING OPERATOR CONFIRMATION.** Measured and reproducible. No code changed.
+**Status: PENDING OPERATOR CONFIRMATION.** Measured and reproducible. No code changed. [**SUPERSEDED 2026-10-26:** the confirmation is recorded and this subsection closes. D1 is confirmed as a class (ii) unit defect, Falsifier #8 is measured and fails, D2 is resolved in favour of the unit-repaired ratio as the reference definition, and the mass-matrix ratio (`0.0095`) is withdrawn as a competing one; FLAG 1 and FLAG 2 are carried forward as open concerns with FLAG 2 diagnosed as a solve-side defect. See the status paragraph of §101.21.]
 
 #### (e.9) OPEN, NOT FIXED: `mode2d.py` documents a normalisation the code does not perform
 
@@ -7104,7 +7104,7 @@ Both (b) and T4 inherit an identification that was still open when this section 
 
 **Witnesses the file gets right, listed so this ruling is not read as a blanket distrust of it.** The slot *names* are the physical components, `Ey` and `Ez`. The stagger assignment above is stated correctly in the file's own array construction. The flux pairing is right: `Sx = E_y H_z - E_z H_y`, with `plane_Hz` taken on the `plane_Ey` lattice and `plane_Hy` on the `plane_Ez` lattice, which is the pairing a Poynting vector on a Yee lattice requires. What is wrong is one comment, at `:368-369`, which calls the node block longitudinal.
 
-**The residual edge, recorded rather than smoothed.** The library itself uses that word: `emfit/mode2d.py:580` reads "for the scalar potential and for the longitudinal ``e_z``", `:637-639` calls the block "nodal longitudinal field of the *mixed* formulation ... ``-i beta (k_zz - k0^2 m_zz)^{-1} c^T e_t``", and the error strings at `:1092` and `:1110` carry it too. The script's comment therefore repeats the library's usage rather than inventing it. Two things weigh against that usage for this capture. The script takes `E_t[:,:,0]` for `e_y` and the node solve for `e_z`, while `E_t[:,:,1]`, the vertical in-plane component that `e_at` returns, is never used at all. And the flux study at (d.1) below measures the `Ey` slot at 0.086 per cent of the Poynting flux with the `Ez` slot carrying the rest, which is the asymmetry a vertical-transverse identification predicts and a longitudinal one does not. The naming conflict between this paragraph and `mode2d.py`'s docstrings is left open here: what is ruled is the slot's content, not the word the library uses for it.
+**The residual edge, recorded rather than smoothed.** The library itself uses that word: `emfit/mode2d.py:580` reads "for the scalar potential and for the longitudinal ``e_z``", `:637-639` calls the block "nodal longitudinal field of the *mixed* formulation ... ``-i beta (k_zz - k0^2 m_zz)^{-1} c^T e_t``", and the error strings at `:1092` and `:1110` carry it too. The script's comment therefore repeats the library's usage rather than inventing it. Two things weigh against that usage for this capture. The script takes `E_t[:,:,0]` for `e_y` and the node solve for `e_z`, while `E_t[:,:,1]`, the vertical in-plane component that `e_at` returns, is never used at all. And the flux study at (d.1) below measures the `Ey` slot at 0.086 per cent of the Poynting flux with the `Ez` slot carrying the rest, which is the asymmetry a vertical-transverse identification predicts and a longitudinal one does not. The naming conflict between this paragraph and `mode2d.py`'s docstrings is left open here: what is ruled is the slot's content, not the word the library uses for it. [**NOT REPRODUCED 2026-10-26:** the `0.086` per cent `Ey`-slot share is not the measured one — the `Ey*Hz` term carries **19.38 per cent** of the Poynting flux at station 0 falling to **19.28 per cent** at station 8, with the `Ez` slot carrying the rest (§101.21(i)). The direction of the asymmetry, and so the argument made from it here, survives.]
 
 **The ruling, for T4's use only.** The block called `e_z` in this capture is the VERTICAL TRANSVERSE component, not the longitudinal one, and T4's branch is VERTICAL TRANSVERSE accordingly. Nothing else in this section changes: no tolerance is proposed here, T4 still ships no gate, and the placeholder bands stay withdrawn. What the ruling buys is that T4's deferred question is now the narrower one of which component the analytic ratio is computed from, rather than an open identification.
 
@@ -7167,7 +7167,7 @@ The prior stability data reached this section as "0.02 per cent under a two-wave
 
 It is inherited rather than invented. 0.5 per cent is the threshold already in force at `decisions.md:2735` for precisely T1's question — does beta survive a change of extraction window — applied there to a perturbation far larger than dropping one station from nine. Adopting it for a smaller perturbation is the conservative direction.
 
-It clears the measured noise by an order of magnitude. 0.5 per cent is 8x the largest single-station-drop effect (0.062 per cent, V) and 4.5x the largest four-window spread (0.111 per cent, V). A tolerance below about 0.1 per cent would sit within a factor of 1.6 of an effect already classified as a reference-plane artefact rather than dispersion, and would risk failing T1 on a benign window change.
+It clears the measured noise by an order of magnitude. 0.5 per cent is 8x the largest single-station-drop effect (0.062 per cent, V) and 4.5x the largest four-window spread (0.111 per cent, V). A tolerance below about 0.1 per cent would sit within a factor of 1.6 of an effect already classified as a reference-plane artefact rather than dispersion, and would risk failing T1 on a benign window change. [**SUPERSEDED 2026-10-26:** the 8x and 4.5x margins are withdrawn; §101.21(f) records the corrected figure. The honest margin is **2.1x** (0.5 per cent / 0.2338 per cent = 2.14) against the fresh analytic worst-case window sensitivity, and `T1_TOL` stays at 0.005 — the tolerance is unchanged, only the claim made for it is corrected.]
 
 It separates window drift from mode physics with room on both sides. The smallest effect T1 must not absorb is the 2.9 per cent degeneracy narrative §94.4 was run to test, or the 3.2 per cent axial excess of §84. The largest window-attributable movement measured is 0.111 per cent. The geometric centre of that gap is sqrt(0.111 x 2.9) = 0.57 per cent, which is 0.5 per cent to one significant figure.
 
@@ -7201,7 +7201,7 @@ Everything in (b.3) that bears on magnitude is superseded here. Its two numbers 
 
 ### (c) T2 — extraction consistency, and where its tolerance comes from
 
-**Statement.** `|R_MODAL / R_FLUX - 1| <= 1e-3`, on the same field at `x_port`, R_MODAL and R_FLUX extracted by different routes from that one field.
+**Statement.** `|R_MODAL / R_FLUX - 1| <= 1e-3`, on the same field at `x_port`, R_MODAL and R_FLUX extracted by different routes from that one field. [**SUPERSEDED 2026-10-26:** §101.21(g) replaces this statement. T2 now compares `beta_fit` with `beta_eigen` at tolerance **0.005**, and the `R_MODAL`/`R_FLUX` comparison is demoted to the non-gate diagnostic `aux_rmodal_rflux`.]
 
 **Falsifier.** The two extractions disagree on the same field.
 
@@ -7225,7 +7225,7 @@ T2 as written cannot pass, and the reason is arithmetic rather than a bad run.
 
 **The test also refuses rather than lying, which is the one thing it does right.** `TOLFLUX_planes.npz` stores beta with shape `(0,)`, so `T2_agree` raises `ValueError` loudly instead of comparing a placeholder against a number. That failure is intended and must not be suppressed: a capture without beta cannot support a T2 comparison, and the test says so instead of returning garbage.
 
-**Status: OPEN.** T2 needs a capture that carries beta before its tolerance can be set, and 1e-3 is withdrawn as a proposed value. What the tolerance becomes is not proposed here. The disagreement it must clear is 4.52 per cent, and a tolerance above that is a different test from the one (c) describes.
+**Status: OPEN.** T2 needs a capture that carries beta before its tolerance can be set, and 1e-3 is withdrawn as a proposed value. What the tolerance becomes is not proposed here. The disagreement it must clear is 4.52 per cent, and a tolerance above that is a different test from the one (c) describes. [**SUPERSEDED 2026-10-26:** the OPEN status recorded here, and in the (c.2) heading above it, is closed by §101.21(g): a tolerance is now set — **0.005**, on the re-scoped `beta_fit` versus `beta_eigen` comparison — so `1e-3` is superseded by a value rather than left merely withdrawn.]
 
 ### (d) T3 — common-mode invariance, deferred pending the kappa-sensitivity measurement
 
@@ -7233,11 +7233,11 @@ T2 as written cannot pass, and the reason is arithmetic rather than a bad run.
 
 **Falsifier.** The extraction depends on absolute amplitude.
 
-**1e-3 is not adopted, and T3 is deferred.** The earlier text borrowed T2's 1e-3 on the ground that the same extraction is involved and therefore the same repeatability floor applies. That argument does not survive contact with what T3 is: a test that ought to pass trivially. If the extraction is a pure ratio of the two fields, scaling both leaves R_MODAL unchanged bit for bit, T3 passes at machine precision, and 1e-3 is seven orders of magnitude too loose to distinguish one state from the other. If instead the extraction carries a nonlinear term of order 1e-3, then 1e-3 cannot tell "is a ratio" from "has a 1e-3 absolute term", which is the only question T3 was written to ask. The borrowed number is the right size for neither branch, and a tolerance that is right for neither branch is not a tolerance.
+**1e-3 is not adopted, and T3 is deferred.** The earlier text borrowed T2's 1e-3 on the ground that the same extraction is involved and therefore the same repeatability floor applies. That argument does not survive contact with what T3 is: a test that ought to pass trivially. If the extraction is a pure ratio of the two fields, scaling both leaves R_MODAL unchanged bit for bit, T3 passes at machine precision, and 1e-3 is seven orders of magnitude too loose to distinguish one state from the other. If instead the extraction carries a nonlinear term of order 1e-3, then 1e-3 cannot tell "is a ratio" from "has a 1e-3 absolute term", which is the only question T3 was written to ask. The borrowed number is the right size for neither branch, and a tolerance that is right for neither branch is not a tolerance. [**SUPERSEDED 2026-10-26:** T3 is re-scoped rather than left deferred. §101.21(h) replaces the common-mode/kappa question with fault detection in the named `plane_Ey` slot at `T3_TOL = 1e-5`, using `rho = sum conj(Ey)Hz / sum conj(Ez)Hy`, with the tolerance derived from the measured break curve.]
 
 **The decision rule, registered before the measurement.** Measure `|R_MODAL(kappa) / R_MODAL(1) - 1|` for kappa in {0.5, 1.0, 2.0} on one existing capture, by post-processing the captured fields, with no new solve. Then: (i) a residual below 1e-10 sets T3_tol = 1e-10 and T3 is adopted, because that is the statement that the extraction is a ratio to machine precision; (ii) a residual between 1e-10 and 1e-3 sets T3_tol to ten times the measured value, with the derivation stated, and T3 is adopted; (iii) a residual above 1e-3 re-scopes T3 to the log-log slope form `d log R_MODAL / d log kappa` with a tolerance taken from the measurement, because at that size the absolute-change form is measuring something other than invariance. The branches are registered here, before the number exists, for the reason (a) gives: a tolerance chosen after its measurement is a description of the measurement wearing a gate's clothes. One subtlety the measurement must respect and report: the only capture available holds station planes 0.0104 to 0.020 and does not contain the ruled plane x_port = 0.0087, so the quantity whose kappa-sensitivity can be measured may not be R_MODAL at x_port. Whatever is actually measured must be named in the report, not silently substituted.
 
-**Status: DEFERRED.** No tolerance is in force for T3 and no T3 number is claimed.
+**Status: DEFERRED.** No tolerance is in force for T3 and no T3 number is claimed. [**SUPERSEDED 2026-10-26:** a tolerance is in force — `T3_TOL = 1e-5` on the `plane_Ey`-slot statistic, derived from the measured response reproduced in full at §101.21(h).]
 
 #### (d.1) Operator branch (b) measured and found DEGENERATE; T3 re-scoped, returned to the operator
 
@@ -7247,11 +7247,11 @@ The decision rule in (d) registers three branches before the measurement. What t
 
 **Why, and why it is not a defect of the capture.** R is a ratio of per-station products `conj(E) * H`. A global factor applied to E cancels between numerator and denominator, so a gate on E-versus-H cannot see it at any tolerance a machine can resolve. The gate is not too loose; it has no signal to be loose about. **T3 as specified in branch (b) cannot be implemented**, and it is returned to the operator with that finding rather than adopted with a number attached.
 
-**Two non-degenerate re-definitions, both measured on the same capture, neither adopted.** (i) *Per-station E scale.* Breaking station 8 alone moves R by exactly `b`, slope 1.0, so 1e-5 there detects a 0.001 per cent break; breaking station 0 alone gives `1/(1+b)`, fitted slope −0.782. This is non-degenerate because it breaks the ratio's per-station structure rather than a global factor. (ii) *One named polarisation slot.* The earlier case-C measurement scaled only `plane_Ey` and read 8.591e-4. That number is not arbitrary: it is the `Ey` slot's share of the Poynting flux. In `Sx = E_y H_z - E_z H_y` the term `E_y H_z` carries 0.086 per cent of the flux, so a gate on the `Ey` slot is nearly blind, while the same gate on `Ez` has a slope near 0.999 and would see almost any break.
+**Two non-degenerate re-definitions, both measured on the same capture, neither adopted.** (i) *Per-station E scale.* Breaking station 8 alone moves R by exactly `b`, slope 1.0, so 1e-5 there detects a 0.001 per cent break; breaking station 0 alone gives `1/(1+b)`, fitted slope −0.782. This is non-degenerate because it breaks the ratio's per-station structure rather than a global factor. (ii) *One named polarisation slot.* The earlier case-C measurement scaled only `plane_Ey` and read 8.591e-4. That number is not arbitrary: it is the `Ey` slot's share of the Poynting flux. In `Sx = E_y H_z - E_z H_y` the term `E_y H_z` carries 0.086 per cent of the flux, so a gate on the `Ey` slot is nearly blind, while the same gate on `Ez` has a slope near 0.999 and would see almost any break. [**NOT REPRODUCED 2026-10-26, both figures:** the `8.591e-4` case-C response is not reproduced — the measured flux-route slope is `1.0236729418436417e-3`, a ratio of `1.19` to the earlier figure — and the `0.086` per cent share is not reproduced either: the measured `Ey*Hz` share is **19.38 per cent** at station 0 falling to **19.28 per cent** at station 8 (§101.21(i)). The qualitative point survives and is stronger — the flux route is three orders too insensitive to a slot break — but the "nearly blind" arithmetic above is replaced.]
 
-**The asymmetry is independent support for (0).** A slot carrying 0.086 per cent of the flux and a slot carrying the remaining 99.9 per cent are not interchangeable, and the direction of the asymmetry matches a vertical-transverse identification of the `e_z` block rather than a longitudinal one. It also tells against reading §8(b) of the ownership document (`reports/2026-10-26_13-52-03_Design_pass_1__modal_port_pipeline_ownership__and_.md`, `.scratch/design/modalport_ownership.md`) as though the two components were symmetric parties to the ratio.
+**The asymmetry is independent support for (0).** A slot carrying 0.086 per cent of the flux and a slot carrying the remaining 99.9 per cent are not interchangeable, and the direction of the asymmetry matches a vertical-transverse identification of the `e_z` block rather than a longitudinal one. It also tells against reading §8(b) of the ownership document (`reports/2026-10-26_13-52-03_Design_pass_1__modal_port_pipeline_ownership__and_.md`, `.scratch/design/modalport_ownership.md`) as though the two components were symmetric parties to the ratio. [**NOT REPRODUCED 2026-10-26:** the measured shares are `19.38` per cent at station 0 falling to `19.28` per cent at station 8 against the `Ez` slot carrying the rest, not `0.086` per cent against `99.9` per cent (§101.21(i)). The "not interchangeable" conclusion survives at the corrected ratio; the three-order asymmetry quoted here does not.]
 
-**Status: OPEN, returned to the operator.** No T3 tolerance is in force. Branch (b) as specified is withdrawn as unimplementable. Definitions (i) and (ii) above are the two candidates and neither is adopted here.
+**Status: OPEN, returned to the operator.** No T3 tolerance is in force. Branch (b) as specified is withdrawn as unimplementable. Definitions (i) and (ii) above are the two candidates and neither is adopted here. [**SUPERSEDED 2026-10-26:** definition (ii) — the one named polarisation slot — is adopted at `T3_TOL = 1e-5` and the item is no longer with the operator (§101.21(h) and §101.21(j) P2). The branch (b) withdrawal stands.]
 
 ### (e) T4 — relative amplitude, deferred, and its placeholder bands withdrawn
 
@@ -7273,8 +7273,156 @@ That the absolute value of R_FLUX is settled. That mixed or analytic is the righ
 
 ### (h) Status
 
-Nothing in this section has been run. T2 is derived and ready. T3 is deferred: the borrowed 1e-3 is withdrawn and the kappa-sensitivity measurement registered in (d) is what will set its tolerance. T1's tolerance is reserved at 0.5 per cent with a factor-of-two uncertainty and one axis carrying an assumption rather than a derivation. T4 is deferred, with its placeholder bands withdrawn. This section supersedes §101.18(d.4).
+Nothing in this section has been run. T2 is derived and ready. T3 is deferred: the borrowed 1e-3 is withdrawn and the kappa-sensitivity measurement registered in (d) is what will set its tolerance. T1's tolerance is reserved at 0.5 per cent with a factor-of-two uncertainty and one axis carrying an assumption rather than a derivation. T4 is deferred, with its placeholder bands withdrawn. This section supersedes §101.18(d.4). [**SUPERSEDED 2026-10-26 in part:** T2 is no longer "derived and ready" at `1e-3` — it is re-scoped to `beta_fit` versus `beta_eigen` at 0.005 — and T3 is re-scoped to the `plane_Ey`-slot check at 1e-5 rather than deferred; §101.21(g) and (h) carry the replacement statements. The T1 and T4 sentences here stand.]
 
 The discipline that makes the section worth anything is in (a): a tolerance changed after its run is not a change to this section, it is a new registration and a separate record. The first run of any of T1–T4 will be reported against this section, and the qualification sentence (a) demands will be written where the run is reported, not here. This section holds the promise. What the promise is worth is decided by the run, and until there is a run it is worth exactly the arithmetic in (b.3) and (c.1).
 
-**Disposition of the rulings of 26 October 2026.** T1 was accepted at 0.5 per cent with three conditions, all three now written into (b): the magnitude form of the falsifier, the basis-axis transfer stated as an assumption with its attribution tool, and the deferral of the null-change experiment. T2 was accepted at 1e-3 with repeatability leading, unchanged from (c). T3's borrowed 1e-3 was rejected and T3 deferred, with the four-branch rule now registered in (d). T4 stays deferred. Two of the four gates are ready, and as (a) states, a partial pass is not a pass.
+**Disposition of the rulings of 26 October 2026.** T1 was accepted at 0.5 per cent with three conditions, all three now written into (b): the magnitude form of the falsifier, the basis-axis transfer stated as an assumption with its attribution tool, and the deferral of the null-change experiment. T2 was accepted at 1e-3 with repeatability leading, unchanged from (c). T3's borrowed 1e-3 was rejected and T3 deferred, with the four-branch rule now registered in (d). T4 stays deferred. Two of the four gates are ready, and as (a) states, a partial pass is not a pass. [**SUPERSEDED 2026-10-26 in part:** the T2 and T3 rulings recorded here are superseded. T2 is re-scoped to `beta_fit` versus `beta_eigen` at 0.005, not accepted at `1e-3` (§101.21(g) and §101.21(j) P3), and T3's four-branch rule was replaced by the `plane_Ey`-slot check at 1e-5 after the E-versus-H branch measured degenerate (§101.21(h) and §101.21(j) P2). The T1 and T4 rulings here stand.]
+
+## §101.21 — Normalisation closed as far as it can be: D1 confirmed as a class (ii) unit defect, FLAG 2 diagnosed as a solve-side defect, Falsifier #8 run and failed, and T1–T3 re-scoped
+
+This section continues §101.20 and keeps its namespace and its discipline. It carries the two operator flags that rode with the D1 confirmation, diagnoses the second of them, reports the first measurement of Falsifier #8, resolves D2 in favour of Scheme A, and re-scopes T1, T2 and T3 without withdrawing any of them. Where an earlier claim is now superseded the old claim is printed and followed by an inline clause; nothing is dropped silently. Every number below is copied from the measurement records named in (k), not re-derived here.
+
+### (a) D1 confirmed: 2722397.314568 is a class (ii) unit defect, and only that
+
+The question put to the operator was which of three classes the raw ratio belonged to: (i) an amplitude-pinning artefact, (ii) a unit defect, i.e. two incommensurable components compared, (iii) a singular or divergent quantity. **D1 resolves to class (ii), and only to class (ii).**
+
+The ratio `2722397.314568` is an eight-order unit error. It is not an ownership question — which is what §8(b) of the ownership document was read as, and what §101.18(e.8) had left standing — and it is not a normalisation constant. The factor is exactly `1/CELL^2 = 1e8`, with `CELL = 1e-4 m`: `e_y` carries a spurious `* CELL` that `e_z` does not, introduced at `s10118_split_check.py:24` and `s10118_basis.py:315`. Dividing the factor out gives the unit-repaired ratio **0.0272240**, measured `0.027223973`, relative deviation `-9.9e-07` against the stated literal — the literal is a seven-significant-figure rounding of the measurement, not a second measurement.
+
+Class (i) is excluded by degree-0 homogeneity in the eigenvector scale: a ratio of two components of one eigenvector is homogeneous of degree zero, so no global amplitude pin can move it, and the pinning that §101.18(e.8) excluded is excluded for the same reason here. Class (iii) is excluded by peak/rms stability under refinement: neither the numerator nor the denominator shows the peak growth or rms collapse a singular quantity would show as the mesh is refined.
+
+### (b) Two operator flags, recorded as open concerns riding with the confirmation
+
+The confirmation in (a) is a statement about *which class* the number belongs to. It is not a statement that `0.027` is the physically correct ratio, and the operator attached two flags to it. Both are recorded here as open concerns, because a confirmation that arrives with them is weaker than one that arrives without them, and the record should show that.
+
+**FLAG 1: `0.027` is physically suspicious, and the unit diagnosis can be right while `0.027` is the wrong number.** For a ~50 ohm microstrip (`h/w ~= 0.53`, `eps_r 4.4`) the vertical component `E_z` should dominate `E_y` in integrated energy by roughly 10x. `0.027` says `E_y` dominates by 37x. That is backwards by nearly three orders. A unit error of the right size in the right component would produce exactly this kind of inverted reading, so the flag does not weaken (a) — it is the reason (a) is plausible — but it does mean `0.0272` must not be quoted as a physical energy ratio. (c) explains why.
+
+**FLAG 2: `corr_e_z = 0.1192` against `corr_e_y = 0.9208`.** Two components of what is supposed to be one field, one of which correlates with its reference at 0.92 and one at 0.12. This is independent of the `1e8` factor — a constant scale cannot move a correlation — so it could not be dismissed as part of the unit story, and it had to be resolved before any scheme was finalised.
+
+### (c) FLAG 2 diagnosed: a solve-side defect in the longitudinal block
+
+This is the session's main scientific result. `corr_e_z = 0.1192` is a **solve-side defect in the longitudinal block**. It is *not* a reconstruction bug, not a sign bug, not a phase bug, not a gauge bug, and not a reading of §8(b). Each of those was tested and excluded, and the exclusions are the evidence:
+
+- **Sign is not the cause.** `z_free` is *single-signed* on every mesh: 0 of 483 negative entries at 31x17, and 483 of 483 negative at 41x22 — a pure global sign, not a mixed-sign pattern. The `np.abs` at `s10118_basis.py:225` is therefore *inert*, and restoring the sign moves `corr_e_z` by exactly `0.000000000`.
+- **Gauge is not the cause.** The gauge variants change the *energy* — `0.006735411` and `0.008582176` against the baseline `0.027223973` — and each is independently rejected by its own correlation, `0.009491` and `0.050802`.
+- **No sign convention reaches 0.92.** A per-column sign-aligned *oracle* bound, which is allowed to choose the sign that maximises correlation column by column, reaches only `0.197856` at 31x17 and `0.199096` at 41x22.
+- **The legal discrete operator does not recover the field either.** Discrete `E-dot-dl` on z-edges, `c[z-rows] @ z_free`, gives `corr = -0.117276695` — only 15.2 per cent of the operator's own *ceiling*. Against that, the control, the exact analytic `phi` pushed through the same `c`, reaches `0.770566870` (in-range restriction `0.767188080`, `201/201` entries flipped), and the analytic derivative control is `1.000000000000000`. So the operator is capable; the field is what fails it.
+- **The reconstruction violates an identity the reference obeys exactly.** `e_z` is single-signed and does *not* decay to the top wall — top-row mean `7.5e-3` against a mean of `9.5e-3` — which violates `integral(e_z dz) = -(phi(H) - phi(0)) = 0` outside the strip. The analytic reference obeys that identity exactly (496 negative / 1860 positive entries under the strip). A field that does not satisfy the boundary identity is not merely noisy; it is not the right pattern.
+- **The defect is mesh-independent.** `0.119160432` at 31x17 against `0.119317007` at 41x22: refining the mesh moves the fifth decimal, so this is not a discretisation artefact that refinement will heal by itself.
+
+**The energy-invariance consequence, stated explicitly, because it is what protects (a) and what limits it.** The ratio `sum(e_z^2)/sum(e_y^2)` survives *bit-identically* — `0.027223973` — under every *legal* repair: baseline, both sign conventions, the PEC gauge, and the oracle. It changes only under an offset or under a change of formula. So `0.0272` stands **arithmetically**: it is the correct value of the quantity the pencil computes, and (a)'s unit diagnosis survives intact. But it must **not** be presented as the physical `E_z`/`E_y` energy ratio, because the longitudinal block does not carry the `E_z` pattern — the 15.2-per-cent-of-ceiling result is the direct measurement of that. This is exactly FLAG 1's suspicion, now with a mechanism attached rather than a hand-wave.
+
+### (d) Falsifier #8: run, and it fails
+
+The 2.86x gap between Schemes A and C had been *attributed* to component staggering and had never been measured de-staggered. §101.18(e.8) named this as "the weakest link" and §6 item 8 of `docs/design/normalization_scheme.md` recorded it as an open item left unmeasured. **It has now been measured, and it fails: de-staggering does not rescue C.** Measured with `tools/destagger_ratio_101_20.py` (read-only; prints the sha256 of every input; writes no file). Unit-repaired ratios, orders `linear`/`cubic`/`quintic`:
+
+`ROUTE-CC` — both components to cell centres `(200, 76)`, zero extrapolated nodes:
+
+| mesh | linear | cubic | quintic |
+|---|---|---|---|
+| 31x17 | 0.027444771 | 0.027257364 | 0.027203314 |
+| 41x22 | 0.026656703 | 0.026437482 | 0.026414072 |
+| 51x19 | 0.025668834 | 0.025412616 | 0.025372302 |
+
+`ROUTE-NN` — both components to cell vertices `(201, 77)`; 552 of 15477 nodes are half-cell extrapolations and are reported both full-grid and strictly interior:
+
+| mesh | linear | cubic | quintic |
+|---|---|---|---|
+| 31x17 (full) | 0.028007207 | 0.027501403 | 0.027417597 |
+| 31x17 (interior) | 0.027759044 | 0.027257658 | 0.027174566 |
+| 41x22 | 0.027257634 | 0.026726671 | 0.026647078 |
+| 51x19 | 0.026244508 | 0.025655640 | 0.025557701 |
+
+The staggering effect itself — the route/order spread *within* a mesh — is about 2.5 per cent, and the interpolation order is monotone, so the order choice is not hiding anything: going to a higher order moves the ratio in the direction of A, not towards C.
+
+The raw anchor reproduces: `2722397.314567553` against the published `2722397.314568`, which matches at 6 decimal places. Exact float equality is **false** by `4.470e-07` absolute, i.e. `1.6e-13` relative, because the published literal is a rounding of the measurement and not the measurement. Per-mesh raw anchors: `2642977.8695502086` (41x22), `2536572.286604414` (51x19).
+
+**Verdict: the A-versus-C gap is not a staggering artefact.** Every de-staggered value sits within about 1.5 per cent of A and still about 2.9x above C. Scheme C is **excluded**.
+
+### (e) D2 resolved: Scheme A confirmed, Scheme C withdrawn
+
+The pre-registered rule was that if the de-staggered measurement matched A within the fit uncertainty, A stands. It does, so **Scheme A is CONFIRMED** — it moves from provisional to confirmed — and **Scheme C is WITHDRAWN**, excluded on the evidence in (d) rather than merely disfavoured.
+
+One caveat must be recorded with the confirmation, because it is the larger of the two uncertainties: the fit uncertainty here is dominated by **mesh convergence**, not by staggering. The unit-repaired A-ratio is `0.0272240` / `0.0264298` / `0.0253657` across the three meshes — about a 7 per cent spread, which is larger than the ~2.5 per cent staggering band the falsifier tested. So (d) settles *which of two schemes* the data prefer; it does not settle A's own convergence. And per (c), what A's value describes is the pencil's *current longitudinal block*, not a validated physical `E_z`.
+
+### (f) T1: the 8x margin is withdrawn; 2.1x is the honest figure
+
+§101.20(b.3) put T1's margin at "8x the largest single-station-drop effect ... 4.5x".
+
+[**SUPERSEDED 2026-10-26:** the 8x margin is withdrawn. The correct figure is **2.1x**. `T1_TOL` **stays at 0.005**: 0.5 per cent / 0.2338 per cent = 2.14x is defensible, 0.25 per cent would be 1.07x — too thin to be a margin at all — and 1 per cent loses sensitivity. The tolerance is unchanged; only the claim made *for* it is corrected.]
+
+The disposition also fixes a misreading that the beta-null encouraged: the `8.13e-11` null demonstrates **determinism** — the same run twice, bitwise — not **repeatability** across the configuration changes a gate has to survive. The `0.2338` per cent window-sensitivity figure is the datum T1 actually needs, and it is the number the margin is now computed against.
+
+### (g) T2 re-scoped, not withdrawn
+
+T2 no longer compares `R_MODAL` with `R_FLUX`. It compares `beta_fit` with `beta_eigen`, at tolerance **0.005**.
+
+The reason is arithmetic and was recorded against T2 in §101.20(c.2) without being acted on: `T2_TOL = 1e-3` sat about **45x below** the 4.52 per cent disagreement the gate was being asked to clear, so it failed *by construction* and said nothing about whether the two extractions agreed. The mechanism is that computing `R_MODAL` with `beta_fit` inherits the fit-versus-eigenvalue discrepancy into the quantity being compared — the confound is in the comparison, not in the field.
+
+[**SUPERSEDED 2026-10-26:** the old `T2_TOL = 1e-3` is superseded by `0.005` — superseded, not merely annotated as withdrawn. The statement `|R_MODAL/R_FLUX - 1| <= 1e-3` (§101.20(c), `decisions.md:7204`) is superseded by `|beta_fit - beta_eigen| / |beta_eigen| <= 0.005`.]
+
+Using `beta_eigen` removes the confound, and T2 now tests **extraction consistency** — its actual purpose — instead of beta-fit quality, which is T1's job. `beta_fit = 326.9107654423116` against `beta_eigen = 312.7827646322591` is **4.52 per cent**, so **T2 still fails, and that is intended**: the failure is now a named fix target rather than a tolerance that was never reachable. The old comparison is demoted to `aux_rmodal_rflux`; it is not a gate and must not be used as one.
+
+### (h) T3 re-scoped to the `Ey`-slot fault-detection check at 1e-5
+
+The old T3 branch — E-versus-H consistency — is **degenerate and replaced**. A global `E` scale cancels inside a ratio of per-station `conj(E)*H` products: fitted slope `-2.45e-17` against residual `2.24e-16`, and an H-only break gives `|R_E - R_H| = 0.0` exactly. A gate whose statistic cannot move is not a gate.
+
+T3 is now fault detection in the one named `plane_Ey` slot, at tolerance **1e-5**, using that slot's own statistic `rho = sum conj(Ey)Hz / sum conj(Ez)Hy`. The tolerance is derived from the measured curve, which is reproduced here in full (break level → flux statistic → slot statistic):
+
+| break b | `|R(b)/R(1)-1|` (flux) | `|rho(b)/rho(1)-1|` (Ey slot) |
+|---|---|---|
+| 1e-2 | 1.023655e-05 | 1.000000e-02 |
+| 1e-3 | 1.025440e-06 | 1.000000e-03 |
+| 1e-4 | 1.025619e-07 | 1.000000e-04 |
+| 1e-5 | 1.025637e-08 | 1.000000e-05 |
+| 1e-6 | 1.025639e-09 | 1.000000e-06 |
+| 1e-7 | 1.025637e-10 | 1.000000e-07 |
+
+Fitted slopes: flux `1.0236729418436417e-3` (max residual `1.77e-9`), slot `0.9999999999999735` (max residual `5.3e-16`). The zero-break response is `0.0` exactly on both routes. Smallest detectable `|b|` at tolerance 1e-5: flux `9.77e-3` — about 1000x worse than required — and slot `1.0000000000000267e-05`.
+
+So the **slot route is the gate** and the flux route **cannot reach 1e-5**. That is recorded as an expected, documented fact (`flux_route_reaches_tol = False`) and not as a failure, because a flux-based statistic is the wrong instrument for a break in one component of the flux: the response is the station-to-station difference of that component's share, which is three orders smaller than the share itself, as (i) makes explicit.
+
+One boundary display caveat belongs on the record: at `b = tol` exactly the slot row reads "no", because detection is strict `>=` and the fitted slope is `2.6e-14` short of 1. The tolerance is not wrong; the equality case is.
+
+### (i) Two numbers from the previous dispatch that do not reproduce
+
+Recorded openly, because this is precisely why T3's tolerance is derived from a measurement rather than from an earlier figure.
+
+The earlier claim that case C's `Ey`-slot response was **`8.591e-4`** does not reproduce.
+
+[**NOT REPRODUCED 2026-10-26:** the measured flux-route slope is `1.0236729418436417e-3`; ratio to the earlier figure `1.19`.]
+
+The earlier claim that the `Ey*Hz` term carries **`0.086` per cent** of the Poynting flux does not reproduce.
+
+[**NOT REPRODUCED 2026-10-26:** the measured share is **19.38 per cent** at station 0 falling to **19.28 per cent** at station 8, and the ~`1.02e-3` flux slope is the *station-to-station difference* of that ~19 per cent share, not the share itself. The `0.086` per cent figure also drives the "nearly blind" argument in §101.20(d.1) and the "slot carrying 0.086 per cent of the flux" asymmetry argument in the same subsection; both are restated by this clause.]
+
+The **qualitative conclusion** the ruling rested on survives, and is in fact **stronger** than the figure it was argued from: a break in `Ey` *is* invisible to a flux-based gate — that route is three orders too insensitive — while a dedicated `Ey`-slot check catches it 1:1 down to the float32 floor. The T3 re-scope stands; only its supporting arithmetic changes.
+
+The **`corr_e_z` archaeology is unresolved** and is recorded as unresolved. `.scratch/s10118_result.txt:105` carries `0.11916043239134175`; four mesh logs — `mesh41.log`, `mesh51.log`, `mesh51b.log` and `s10118_mesh_study.log`, all at line 18 — carry `0.14619976001754773`. No candidate reconstruction reproduces `0.1462`, and `corr_e_y` is byte-identical across both, which locates the change in the scratch script's own mixed-`e_z` construction and **not** in `emfit/mode_profile.py`. `.scratch/` is unversioned, so the old revision is not recoverable and the question closes as unresolved rather than as settled.
+
+### (j) Dispositions of problems 1–5
+
+- **P1** — de-staggering was accepted as required work and is now **done**: see (d).
+- **P2** — T3 is degenerate: **option (ii) adopted**, the `Ey`-slot check; see (h).
+- **P3** — T2 is unreachable at 1e-3: **re-scoped, not withdrawn**; see (g).
+- **P4** — T1's margin: corrected from 8x to 2.1x with the tolerance held; see (f).
+- **P5** — R2's staggering placement was **transposed in prose**. `e_y` sits on half-integer `y` / integer `z` and the nodal `e_z` on integer `y` / half-integer `z`, the opposite of what R2 said. R2's shape tuple and conclusion stand and the correction is cosmetic. The word "longitudinal" is the library's, not the script author's: it is used at `emfit/mode2d.py:580`, `:637-639`, `:1092` and `:1110`, so the script comment repeats the library rather than inventing a term.
+- **R6** — its **premise is falsified** by (a), and its **conclusion survives**. The vertical-transverse identification rests on the shapes and the name, both of which stand. What fails is R6's *justification*, and only in this sense: `corr 0.92` against `corr 0.12` means the `e_z` block is not yet behaving like a component of the same field, so the ratio's current value cannot be defended as a physical energy split even though the identification of the component survives.
+
+### (k) New artefacts, and what changed in the existing one
+
+`tools/destagger_ratio_101_20.py` (Falsifier #8; prints the sha256 of every input, asserts the inputs are unchanged after the run, and writes no file) and `tools/corr_ez_101_20.py` (the `corr_e_z` investigation, including the discrete-operator test that produced the 15.2-per-cent-of-ceiling result in (c)) are new. Both are read-only and neither solves anything.
+
+`tools/gates_101_20.py` is re-scoped per (g) and (h): `T2_TOL = 0.005`, `T3_TOL = 1e-5`, a new `T3_ey_slot`, `aux_rmodal_rflux` (demoted, not a gate), and a `--t3` CLI flag; every T1/T2/T3 entry point stays acknowledgement-gated behind `--i-understand-this-needs-a-solve`, because each needs a fresh plane capture and none is reachable by accident.
+
+Part A of that file still reproduces bit-exactly on the cached capture: `P0 = 24090.371792902824`, `P8 = 23336.851094665908`, `R(1) = 0.9687210847256866`, worst relative deviation **0.0** against `REPRO_RTOL = 1e-12`. The re-scope touched no arithmetic in Part A.
+
+### (l) What is still owed to the operator
+
+Two items, stated so that this record is self-contained:
+
+1. **Whether `0.0272` may be quoted as a physical `E_z`/`E_y` energy ratio.** The answer recorded here is **no**, pending repair of the longitudinal solve, for the reasons in (c): the value is arithmetically correct and physically uninterpretable at the same time, and the 15.2-per-cent-of-ceiling correlation is the measurement that says so.
+2. **Repair of the longitudinal block / the `z_free` solve.** This is now the single blocking item for finalising any normalisation scheme. Scheme A is confirmed *as a definition of the quantity the pencil computes* (e), and it cannot be confirmed as a physical ratio until this is fixed.
+
+**Status of this section.** Everything measured here has been run and is reported above against the tolerances that were in force when it ran; nothing is projected. §101.18(e.8) closes: D1 is confirmed as a class (ii) unit defect, with FLAG 1 and FLAG 2 carried forward as open concerns, FLAG 2 diagnosed as a solve-side defect, Falsifier #8 measured and failed, D2 resolved in favour of A, and T1–T3 re-scoped. The one thing this section does not do is certify a normalisation scheme for use as a physical quantity, and (l) names what would.
+

@@ -139,7 +139,7 @@ graded mesh (`mode2d.py:647-649`), so the honest edge-voltage partner of `E_z*CE
 wrong per edge.
 
 **Prediction:** `R_A = 0.0272240` (31x17), `0.0264298` (41x22), `0.0253657` (51x19)
-= the printed numbers / 1e8.
+= the printed numbers / 1e8. [**SUPERSEDED 2026-10-26:** the provisional status of this prediction is superseded by confirmation — Scheme A is the reference definition (§101.21(e)). The unit-repaired ratio reproduces at `0.0272240` / `0.0264298` / `0.0253657` on the three meshes — but that is a ~7 per cent mesh spread, wider than the ~2.5 per cent staggering band the A-versus-C gap was tested against, so A's own convergence is not settled and what is confirmed is the *definition*, not the last digit (§101.21(d), (e)).]
 
 ### Scheme B — single co-located lattice with dual-cell weights
 
@@ -155,7 +155,7 @@ weighted ratio converges to `INT|E_z|^2 dA / INT|E_y|^2 dA` independently of the
 Scheme C (factor 2.86, below) is *not* a weighting error — it is a **staggering** error (`E_y`
 sampled at z-*nodes*, `E_z` at z-*cell-centres*), which no choice of weights can remove. The
 real repair in this family is co-location (sample both components at the same points, or
-de-stagger one of them), not re-weighting.
+de-stagger one of them), not re-weighting. [**FALSIFIED 2026-10-26:** the staggering attribution made above — and the co-location repair recommended with it — are falsified. De-staggering both components onto common points (both routes `ROUTE-CC` (200, 76) and `ROUTE-NN` (201, 77), all three interpolation orders linear/cubic/quintic, all three meshes) moves the ratio only within a ~2.5 per cent band and leaves it ~2.9x above Scheme C, so no de-staggered sampling reaches C and staggering is not the explanation of the 2.86x gap; Scheme C is withdrawn and Scheme A is the confirmed reference definition (§101.21(d), (e) of `decisions.md`). What stands here is the narrower point: Scheme B coincides with Scheme A on this uniform lattice, so re-weighting alone cannot move the number.]
 
 ### Scheme C — mesh-exact discrete ratio (mass matrices)
 
@@ -174,7 +174,7 @@ the quantity the variational problem itself uses.
 **Prediction:** `R_C = 0.00951415` (31x17), i.e. `rms E_z / rms E_y = 0.09753`,
 `L = sqrt(R_C)/beta = 0.312 mm`, `beta L = 0.0977`. (Note `m_zz` carries `eps_r`, so
 `R_C` is the *stored-electric-energy* ratio, not the free-space one; it is larger than the
-bare-field ratio by up to `max eps_r = 4.4` in the substrate.)
+bare-field ratio by up to `max eps_r = 4.4` in the substrate.) [**SUPERSEDED 2026-10-26:** Scheme C is superseded and withdrawn as the reference definition — excluded on the de-staggered measurement of Falsifier #8, which removes staggering as the explanation of the A-versus-C gap without bringing C any closer to A (§101.21(d), (e)). One caveat attaches to the surviving number as it does to Scheme A: the longitudinal block is not a validated `E_z`, so `0.0272` describes the pencil's current longitudinal block and not a physical energy ratio (§101.21(c), (l)).]
 
 ### Scheme D — analytic quasi-TEM closed form (independent cross-check)
 
@@ -190,21 +190,21 @@ R ≈ beta^2 <L^2>          (quasi-TEM, isotropic-scaling estimate)
 `L = 0.2 mm` (thinnest substrate cell) -> `R = 0.0039`; `L = h = 1.6 mm` -> `R = 0.2505`;
 `L = h/2` -> `R = 0.0626`. The physical bracket is therefore
 **`R in [3.9e-3, 2.5e-1]`**, and `L = 0.312 mm` (from Scheme C) sits inside it at
-`R = 0.0095`. Scheme D never predicts anything within 7 orders of magnitude of `2.72e6`.
+`R = 0.0095`. Scheme D never predicts anything within 7 orders of magnitude of `2.72e6`. [**SUPERSEDED 2026-10-26:** the `L = 0.312 mm` anchor used above is Scheme C's, and Scheme C is withdrawn (§101.21(e)); the `R in [3.9e-3, 2.5e-1]` bracket itself is a property of Scheme D and is unaffected — Scheme A's `0.0272` sits inside it — but the A-versus-C placement is no longer the open question it was, C being excluded on measurement (§101.21(d)).]
 
 ### Summary of predictions, all schemes
 
-| scheme | R (31x17) | comment |
-|---|---|---|
-| as printed | 2.722397e6 | = 1e8 x Scheme A; dimensionally inhomogeneous |
-| A unit repair | 0.0272240 | removes the 1e8 exactly; still staggered + no metric |
-| B dual-cell weights | 0.0272240 | identical to A on a uniform lattice (weights all equal) |
-| C mesh-exact | 0.00951415 | the variational problem's own norm |
-| D quasi-TEM | 0.0039 ... 0.2505 | bracket; `L = 0.312 mm` -> 0.0095 |
+| scheme | R (31x17) | comment | status (recorded 2026-10-26) |
+|---|---|---|---|
+| as printed | 2.722397e6 | = 1e8 x Scheme A; dimensionally inhomogeneous | VOID as a physical ratio — the 1e8 is the class (ii) unit defect |
+| A unit repair | 0.0272240 | removes the 1e8 exactly; still staggered + no metric | **CONFIRMED as the reference definition** (§101.21(e)) |
+| B dual-cell weights | 0.0272240 | identical to A on a uniform lattice (weights all equal) | not adopted separately — coincides with A on this lattice |
+| C mesh-exact | 0.00951415 | the variational problem's own norm | **WITHDRAWN** — excluded on the de-staggered measurement (§101.21(d), (e)) |
+| D quasi-TEM | 0.0039 ... 0.2505 | bracket; `L = 0.312 mm` -> 0.0095 | bracket only — never a candidate definition |
 
 A and C disagree by 2.86x, and both are within the D bracket. **The spread across all
 legitimate schemes is a factor 2.9; the printed number is a factor 2.9e5 above the largest of
-them.** That is the whole finding.
+them.** That is the whole finding. [**SUPERSEDED 2026-10-26:** the "factor 2.9 spread across all legitimate schemes" sentence above is superseded. Scheme A (unit repair, `0.0272240`) is the **confirmed reference definition** and Scheme C (`0.00951415`) is **withdrawn** — excluded on measurement rather than disfavoured. The 2.86x A-versus-C gap is no longer an unexplained staggering question: de-staggering was run and it does **not** close the gap — on all three meshes, both routes (`ROUTE-CC` (200, 76) and `ROUTE-NN` (201, 77)) and interpolation orders linear/cubic/quintic, every de-staggered ratio lands within ~1.5 per cent of A and still ~2.9x above C — so the staggering explanation is **falsified** and C is excluded (§101.21(d), (e) of `decisions.md`). Two caveats ride with the surviving number: the fit uncertainty is dominated by **mesh convergence** rather than staggering (per-mesh A-ratios `0.0272240` / `0.0264298` / `0.0253657`, a ~7 per cent spread, against a ~2.5 per cent staggering band), and the longitudinal block is not yet a validated `E_z`, so `0.0272` describes the pencil's current longitudinal block rather than a physical `E_z`/`E_y` energy ratio (§101.21(c), (e), (l)). The other half of the sentence — the printed number sits 2.9e5 above the largest legitimate value — is unaffected.]
 
 ---
 
@@ -242,13 +242,13 @@ the direction of the substrate grading). That is a *normal* interpolation error 
 mesh, of the same order as the 4.52% beta discrepancy seen in T1_stab — i.e. **the ratio is
 too noisy at this mesh density to distinguish schemes B/C/D at the 10% level, and this noise is
 a second, independent reason not to read `2.72e6` as a physical statement.** It is not evidence
-of an edge singularity.
+of an edge singularity. [**SUPERSEDED 2026-10-26:** the A-versus-C question this noise was said to leave open is now resolved far outside any 10 per cent band: de-staggered ratios across both routes, three interpolation orders and three meshes sit within ~1.5 per cent of Scheme A and ~2.9x above Scheme C, so the schemes are distinguishable and C is withdrawn (§101.21(d), (e) of `decisions.md`). The interpolation-error point stands — it is a reason not to quote the printed `2.72e6`, and it is why Scheme A's confirmation is a statement about *definition* rather than about convergence.]
 
 **(c) The two fields do not even correlate.** The basis run prints, over the whole box,
 `mixed-vs-analytic overlap {'corr_e_y': 0.9208, 'corr_e_z': 0.1192}`. `E_y` agrees with the
 analytic profile at the 92% level; `E_z` at 12%. A component-wise ratio of two arrays that
 correlate with the reference at 0.92 and 0.12 respectively is not a like-for-like comparison of
-two components of one field, no matter how it is normalised.
+two components of one field, no matter how it is normalised. [**SUPERSEDED 2026-10-26:** `corr_e_z = 0.1192` is no longer unexplained. It is diagnosed as a solve-side defect in the longitudinal block, with each alternative excluded: `z_free` is single-signed (a pure global sign, and restoring it moves the correlation by exactly `0.000000000`); the gauge variants are rejected by their own correlations (`0.009491`, `0.050802`); a per-column sign-aligned oracle, free to pick the best sign column by column, reaches only `0.197856` at 31x17; the legal discrete `E-dot-dl` operator gives `corr = -0.117276695`, 15.2 per cent of its own ceiling, while the analytic control through the same operator reaches `0.770566870`; `e_z` violates the `integral(e_z dz) = 0` identity the reference obeys exactly (top-row mean `7.5e-3` against a mean of `9.5e-3`); and the defect is mesh-independent (`0.119160432` at 31x17 against `0.119317007` at 41x22) (§101.21(c)). The ratio itself survives *bit-identically* (`0.027223973`) under every legal repair, so it is arithmetically correct but must not be quoted as a physical `E_z`/`E_y` energy ratio; which revision produced the other `0.1462` figure remains unresolved (§101.21(i)).]
 
 ---
 
@@ -268,7 +268,7 @@ the *interpolated nodal* `E_z`, not a divergent edge term. Moreover, all three l
 schemes agree with each other to within a factor 2.9 while sitting 5-9 orders of magnitude below
 the printed value, so the fault is **not** upstream in the pencil: the pencil's `beta`, `eps_eff`
 and eigenvector are self-consistent; the fault is entirely in the comparison script (and in the
-same unit policy wherever else it is applied).
+same unit policy wherever else it is applied). [**SUPERSEDED 2026-10-26:** the "all three legitimate schemes agree with each other to within a factor 2.9" sentence above is superseded. Scheme A (`0.0272240`) is the CONFIRMED reference definition; Scheme C (`0.00951415`) is WITHDRAWN — excluded on measurement rather than disfavoured — and the 2.86x gap is no longer an open staggering question: de-staggering was run (both routes `ROUTE-CC` (200, 76) and `ROUTE-NN` (201, 77), orders linear/cubic/quintic, all three meshes) and it does not close the gap, since every de-staggered ratio lands within ~1.5 per cent of A and still ~2.9x above C, so the staggering explanation is falsified (§101.21(d), (e) of `decisions.md`). The class (ii) diagnosis and the "not upstream in the pencil" conclusion stand. Two caveats: fit uncertainty is dominated by mesh convergence, not staggering (per-mesh A-ratios `0.0272240` / `0.0264298` / `0.0253657`, ~7 per cent spread, against a ~2.5 per cent band); and the longitudinal block is not yet a validated `E_z`, so `0.0272` describes the pencil's current longitudinal block rather than a physical `E_z`/`E_y` energy ratio (§101.21(c), (e), (l)).]
 
 **Does `2.72e6` share a root cause with the mixed-basis window sensitivity (T1_stab: fitted
 beta 326.9107654423116 vs eigenvalue 312.7827646322591, +4.52%; mixed-span 6.24% vs
@@ -332,11 +332,14 @@ regression test must assert on Scheme A/B/C-style ratios, never on the printed o
 7. **Falsifies Scheme C as the reference:** show that `m_zz` is assembled without the `eps_r`
    weight on this mesh (then `R_C` is a free-space ratio and must be compared with `R_A`, and
    the 2.86x gap becomes an eps-weighting artifact rather than a staggering artifact).
+
+   [**FALSIFIED 2026-10-26:** Falsifier 7 presupposed a *staggering* explanation for the scheme-A/C discrepancy. Falsifier #8 was run (`tools/destagger_ratio_101_20.py`, recorded in `decisions.md` §101.21(d)) and FAILED: removing the half-cell stagger does not rescue Scheme C. De-staggered, unit-repaired A-ratios are `0.0272240` / `0.0264298` / `0.0253657` across the 31x17, 41x22 and 51x19 meshes (`ROUTE-CC`, zero extrapolated nodes); `ROUTE-NN` with 552 of 15477 half-cell-extrapolated nodes gives `0.027759044` / `0.027257634` / `0.026244508` at linear order. The staggering band is ~2.5 % and interpolation order varies the result monotonically, but every variant remains within ~1.5 % of A and ~2.9x above C. Scheme A is therefore CONFIRMED and Scheme C is WITHDRAWN on measurement, so the scheme-A/C gap is NOT a staggering artifact — the eps-weighting reading in this falsifier is falsified along with the staggering reading. The residual mesh-convergence spread (~7 %) exceeds the staggering band (~2.5 %) and is now the dominant systematic. See `decisions.md` §101.21(d) and (e).]
+
 8. **Falsifies the staggering explanation of the 2.86x gap (A vs C):** a de-staggered sampling
    (both components at the same points, exact same weights) that still disagrees with `R_C` by
    more than the ~7% mesh-drift band. *Open item: I ran out of budget before measuring the
    de-staggered variants and `R_C` on the 41x22/51x19 caches, so item 8 is currently the
-   weakest link in this note — it should be measured before any implementation decision.*
+   weakest link in this note — it should be measured before any implementation decision.* [**SUPERSEDED 2026-10-26:** this open item is superseded by measurement, and the falsifier fires. The de-staggered variants and `R_C` were measured — both routes, `ROUTE-CC` (both components to cell centres `(200, 76)`) and `ROUTE-NN` `(201, 77)`, at linear/cubic/quintic order, on 31x17/41x22/51x19. Every de-staggered value sits within about 1.5 per cent of Scheme A and still about 2.9x above `R_C`, while the route/order spread *within* a mesh is only about 2.5 per cent: the staggering explanation of the 2.86x gap is falsified and Scheme C is excluded (§101.21(d), (e)). The "weakest link" caveat above is discharged, not still open.]
 
 ---
 

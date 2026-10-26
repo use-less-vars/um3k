@@ -12,11 +12,30 @@ relative, then perturbs the captured phasors and re-reads the ratio.
 
 WRITTEN BUT GATED (needs a solve)
 ---------------------------------
-``T1_stab`` and ``T2_agree`` are implemented here in full, but neither can run
-without a *fresh* plane capture: they consume blocks that only a solve
-produces.  The CLI therefore refuses them unless
+``T1_stab``, ``T2_agree`` and ``T3_ey_slot`` are implemented here in full, but
+none can run without a *fresh* plane capture: they consume blocks that only a
+solve produces.  The CLI therefore refuses them unless
 ``--i-understand-this-needs-a-solve`` is passed, and prints the estimated cost
 with the refusal.  Nothing in this module solves anything by itself.
+
+THE THREE GATES (scopes as re-ruled by decisions.md 101.20, c.2)
+---------------------------------------------------------------
+``T1_stab``    drop-one-station stability of the fitted beta.  Tolerance 0.005,
+               the *measured* window sensitivity (see T1_TOL).  Analytic basis
+               only; ``basis='mixed'`` raises NotImplementedError.
+``T2_agree``   EXTRACTION CONSISTENCY: beta from the station phase fit versus
+               beta from the eigenvalue the capture carries.  Tolerance 0.005
+               (0.5 %).  It FAILS on today's record -- the measured gap is
+               4.52 % -- and that failure is intended: the gap is real and is
+               the fix target.  It no longer gates the flux route; the old
+               R_MODAL-versus-R_FLUX number survives only as the demoted
+               :func:`aux_rmodal_rflux`, which is not a gate.
+``T3_ey_slot`` FAULT DETECTION at 1e-5: inject a multiplicative break into the
+               ONE named ``plane_Ey`` slot and detect it with that slot's own
+               statistic ``rho = sum conj(Ey)Hz / sum conj(Ez)Hy``, whose
+               response is 1:1.  A flux-ratio gate cannot see this break at all
+               (1.0256e-8 at b=1e-5, see T3_TOL), which is exactly why the slot
+               has to be checked directly.
 
 Why the split: everything in Part A is arithmetic on an existing record, so a
 typo costs a second; a T1/T2 run costs a full solve, so it must not be
@@ -109,35 +128,90 @@ DETECT_THRESHOLD = 1e-5
 T1_TOL = 0.005
 
 # ---------------------------------------------------------------------------
-# T2_TOL -- tolerance in force for T2_agree (two extractions of one field).
+# T2_TOL -- tolerance in force for T2_agree (two extractions of ONE field).
 #
-# STATUS: **measured, not derived.**  As above: transcribed from the beta-null
-# harness, not integrated from a model.
+# SCOPE (re-ruled by decisions.md 101.20 c.2): T2 tests EXTRACTION
+# CONSISTENCY -- beta_fit (station phase slope) against beta_eigen (the
+# eigenvalue the capture carries) -- not the quality of the beta fit.  The
+# quality of the fit is T1's subject; conflating the two is what made the old
+# T2 pass/fail mean nothing.
+#
+# STATUS: **derived from the measured gap, not invented.**
+#
+#   measured on the s10118 mixed-basis record
+#     beta_fit    = 326.9107654423116
+#     beta_eigen  = 312.7827646322591
+#     |gap|/|beta_eigen| = 4.52 %
 #
 #   null floor that T2 must simply not trip:
 #     repeat x2                            0.0        (bitwise identical)
 #     BLAS threads 1 vs 4                  8.13e-11
 #     float32 round-trip of input fields   1.10e-10 (ana) / 9.87e-11 (mix)
 #     H-destagger toggle                   0.0        (scalar phase)
-#   NOT a null -- the real disagreement T2 exists to see:
-#     fit beta vs eigenvalue beta on the same field   4.52 %
 #
-# 1e-3 is ~7 orders above the measured null floor and ~45x *below* the measured
-# 4.52 % fit/eigenvalue disagreement.  So a T2 run comparing the fit route with
-# the eigenvalue route FAILS on today's record by a factor ~45.  Both numbers
-# are recorded as measured; no tolerance recommendation is made here.
+# 0.005 (0.5 %) sits between the two: 8 orders above the null floor and 9x
+# *below* the 4.52 % gap, so on today's record T2 still FAILS -- by design and
+# correctly.  The old value was 1e-3, which sat ~45x below a disagreement it was
+# being asked to clear, so it failed by construction and said nothing about
+# whether the extractions agreed; 0.005 replaces it (the 1e-3 value is
+# superseded, not merely annotated as withdrawn).  0.5 % is also the resolution
+# at which the two routes WOULD have to agree for the 4.52 % gap to be a fit
+# artefact rather than a real disagreement -- that is the number the fix has to
+# move.
 # ---------------------------------------------------------------------------
-T2_TOL = 1e-3
-# WITHDRAWN as a proposed gate value by decisions.md 101.20 (c.2): 1e-3 sits ~45x
-# below the 4.52 % fit-vs-eigenvalue disagreement T2 has to clear, so T2 cannot pass
-# at this tolerance.  Retained only as the value (c) pre-registered; no replacement
-# tolerance is proposed there.  T1_TOL (0.005) is unaffected and still stands.
+T2_TOL = 0.005
+
+# ---------------------------------------------------------------------------
+# T3_TOL -- tolerance in force for T3_ey_slot (fault detection in the plane_Ey
+# slot).
+#
+# STATUS: **derived from the measured sensitivity curve**, not invented.  The
+# curve below is what T3_ey_slot() produces on the cached capture
+# ``.scratch/tol/logs/TOLFLUX_planes.npz`` (arithmetic on an existing record;
+# no solve).  One record, ``plane_Ey`` scaled by (1+b), two statistics:
+#
+#   break b   |R(b)/R(1)-1|  [flux route]   |rho(b)/rho(1)-1|  [Ey slot]
+#   1e-2        1.023655e-05                   1.000000e-02
+#   1e-3        1.025440e-06                   1.000000e-03
+#   1e-4        1.025619e-07                   1.000000e-04
+#   1e-5        1.025637e-08                   1.000000e-05
+#   1e-6        1.025639e-09                   1.000000e-06
+#   1e-7        1.025637e-10                   1.000000e-07
+#
+# What the curve says, in the order it matters:
+#
+# 1. THE FLUX ROUTE CANNOT REACH 1e-5, and no tolerance choice fixes that.  Its
+#    slope is 1.0236e-3 per unit relative Ey break -- that is the station-to-
+#    station DIFFERENCE of the Ey*Hz share of Sx (measured share 0.193803 at
+#    station 0 vs 0.192777 at station 8), because a common scale almost cancels
+#    in R = F8/F0.  At b=1e-5 the flux statistic therefore reads 1.0256e-8,
+#    i.e. 975x below a 1e-5 threshold: blind.
+#
+# 2. THE Ey-SLOT STATISTIC REACHES IT WITH ROOM.  rho = sum conj(Ey)Hz /
+#    sum conj(Ez)Hy responds 1:1 (measured relative response 1.000000000 at
+#    every level down to 1e-7; the 3.8e-11 shortfall at 1e-5 is the double
+#    representation of (1+b), not physics), because the break scales only the
+#    numerator.  Its zero-break response is 0.0 exactly, so the arithmetic
+#    floor is absent; the only real floor is the record's reproducibility,
+#    measured 1.1e-10 (float32 round-trip, T1_TOL's table) -- five decades below
+#    1e-5.
+#
+# So 1e-5 IS supported -- by the slot statistic, not by the flux ratio.  1e-5 is
+# chosen because it is the smallest break the chosen statistic resolves with
+# five decades of margin, and it is exactly the operator's target.  It is NOT
+# chosen because it was asked for: had the slot statistic come in at 1e-3, the
+# tolerance would have been 1e-3.
+# ---------------------------------------------------------------------------
+T3_TOL = 1e-5
+
+#: Break levels swept by T3_ey_slot; the ladder the curve above was measured on.
+T3_BREAK_LADDER = (1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7)
 
 # ---------------------------------------------------------------------------
 # Cost text printed with every refusal of T1/T2.
 # ---------------------------------------------------------------------------
 COST_TEXT = """\
-estimated cost of a T1/T2 run, from the cached record:
+estimated cost of a T1/T2/T3 run, from the cached record:
   * one board_run_pw solve of the s10118 station-flux geometry:
     wall_s = 4210.484 s = 70.2 min
     (measured, /workspace/.scratch/tol/TOLFLUX.tables.txt line 58)
@@ -147,13 +221,17 @@ estimated cost of a T1/T2 run, from the cached record:
 """
 
 REFUSAL = """\
-REFUSED: T1/T2 are written but deliberately unrunnable by accident.
+REFUSED: T1/T2/T3 are written but deliberately unrunnable by accident.
 They need a fresh plane capture, which means running a solve.
 If that is really what you want, add --i-understand-this-needs-a-solve
 (and --capture <npz>):
 
     python3 tools/gates_101_20.py --t1 --capture CAP.npz \\
         --i-understand-this-needs-a-solve
+
+T1 = drop-one-station beta stability (tol 0.005)
+T2 = extraction consistency, beta_fit vs beta_eigen (tol 0.005, expected to FAIL)
+T3 = plane_Ey slot fault detection at 1e-5 (inject-and-detect, not a ratio gate)
 """
 
 
@@ -437,11 +515,17 @@ def T2_agree(capture, *, tol=T2_TOL):
     Route 1 is the station phase slope (:func:`_beta_from_phase_slope`); route 2
     is the eigenvalue beta the capture carries in ``beta`` (the modal route).
     The gate is ``|beta_fit - beta_eig| / |beta_eig| <= tol`` with ``tol``
-    defaulting to the module-level :data:`T2_TOL` (1e-3) -- a *measured* floor,
-    see the comment above it: 1e-3 is seven orders above the measured null
-    floor and ~45x below the measured 4.52 % fit/eigenvalue disagreement, so
-    this comparison fails on today's record.  ``tolerance_in_force`` reports the
-    number actually used.
+    defaulting to the module-level :data:`T2_TOL` (0.005).  This is the
+    *extraction consistency* test re-ruled by 101.20 c.2: the measured gap is
+    4.52 % (beta_fit 326.9107654423116 vs beta_eigen 312.7827646322591), 9x the
+    tolerance, so this gate FAILS on today's record -- expected and correct,
+    because the gap is the fix target, not a measurement artefact to be
+    tolerated.  ``tolerance_in_force`` reports the number actually used.
+
+    The old statistic (R_MODAL versus R_FLUX at 1e-3) is NOT withdrawn as a
+    number but IS withdrawn as a gate: it sat ~45x below the 4.52 % it had to
+    clear and inherited the fit-versus-eigenvalue discrepancy by construction.
+    It survives as :func:`aux_rmodal_rflux`, which returns ``gate=False``.
 
     Raises:
         ValueError: If the capture carries no ``beta`` array (nothing to agree
@@ -465,6 +549,7 @@ def T2_agree(capture, *, tol=T2_TOL):
     rel = abs(beta_fit - beta_eig) / abs(beta_eig)
     return {
         "gate": "T2_agree",
+        "scope": "extraction consistency: beta_fit vs beta_eigen",
         "beta_fit": beta_fit,
         "beta_eigenvalue": beta_eig,
         "relative_difference": rel,
@@ -473,6 +558,220 @@ def T2_agree(capture, *, tol=T2_TOL):
         "n_eigenvalue_entries": int(eig.size),
         "note": ("first 'beta' entry used when the array holds several "
                  "stations" if eig.size > 1 else "single eigenvalue beta"),
+    }
+
+
+def aux_rmodal_rflux(capture):
+    """DEMOTED, NOT A GATE: the pre-101.20 T2 statistic, kept auditable only.
+
+    ``R_FLUX`` is the measured station flux ratio ``F[8]/F[0]``.  ``R_MODAL``
+    is the lossless modal prediction of the same ratio for a propagating mode:
+    the record carries no attenuation, so ``|R_MODAL| = 1`` exactly (any phase
+    factor cancels in the magnitude).  The number this returns is therefore
+    ``|R_FLUX - 1|`` -- and it is reported here only so that the old T2 statistic
+    stays computable.
+
+    It is NOT a gate and must never be used as one: at the old ``T2_TOL = 1e-3``
+    it failed by construction (~45x below the 4.52 % beta fit-versus-eigenvalue
+    gap it was being asked to clear) and it measures the *flux* route, i.e.
+    exactly the thing T2 no longer claims to test.  The gate is
+    :func:`T2_agree`, on beta_fit vs beta_eigen.
+
+    Returns:
+        dict: ``R_MODAL``, ``R_FLUX``, ``relative_difference``, ``gate=False``.
+    """
+    blocks, x = _capture_planes(capture)
+    d = _load_capture(capture)
+    try:
+        n_samples = int(np.asarray(d["plane_n_samples"]).ravel()[0])
+    except (KeyError, IndexError):
+        n_samples = 1
+    flux = _phys_flux(blocks["plane_Ey"], blocks["plane_Ez"],
+                      blocks["plane_Hy"], blocks["plane_Hz"], n_samples)
+    r_flux = float(flux[-1] / flux[0])
+    r_modal = 1.0
+    return {
+        "gate": False,
+        "role": "demoted auxiliary (pre-101.20 T2 statistic); not a gate",
+        "R_MODAL": r_modal,
+        "R_FLUX": r_flux,
+        "relative_difference": abs(r_flux / r_modal - 1.0),
+        "n_stations": int(np.asarray(x).size),
+        "note": ("|R_MODAL| = 1 for a propagating mode (no attenuation in the "
+                 "record), so this is |R_FLUX - 1|; use T2_agree instead"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# T3 -- fault detection in ONE named polarisation slot
+# ---------------------------------------------------------------------------
+def _capture_blocks(capture):
+    """``(blocks, n_samples)`` -- no station geometry needed by T3."""
+    d = _load_capture(capture)
+    blocks = {}
+    for k in BLOCK_KEYS:
+        try:
+            blocks[k] = np.asarray(d[k], dtype=complex)
+        except KeyError:
+            raise ValueError(
+                f"T3_ey_slot: the capture carries no {k!r} block, so no slot "
+                f"can be checked (have: {sorted(d.files) if hasattr(d, 'files') else '?'})")
+    try:
+        n_samples = int(np.asarray(d["plane_n_samples"]).ravel()[0])
+    except (KeyError, IndexError):
+        n_samples = 1
+    return blocks, n_samples
+
+
+def _ey_slot_terms(blocks):
+    """The two ``Sx`` product terms, station by station.
+
+    ``plane_phasor`` writes ``P = 0.5 Re(sum conj(E_y) H_z - sum conj(E_z) H_y)``,
+    so ``t_eyhz`` is the term the ``plane_Ey`` slot feeds and ``t_ezhy`` is the
+    term it does not.  Their station-to-station ratio drift is the whole reason
+    a flux-ratio gate is nearly blind to the slot, and their ratio is the slot
+    statistic itself.
+    """
+    t_eyhz = np.sum(np.conj(blocks["plane_Ey"]) * blocks["plane_Hz"], axis=(-2, -1))
+    t_ezhy = np.sum(np.conj(blocks["plane_Ez"]) * blocks["plane_Hy"], axis=(-2, -1))
+    return t_eyhz, t_ezhy
+
+
+def _break_slot(blocks, b, slot):
+    """A copy of ``blocks`` with exactly one slot scaled by ``(1+b)``."""
+    arrs = {k: np.array(blocks[k], dtype=complex, copy=True) for k in BLOCK_KEYS}
+    arrs[slot] *= (1.0 + b)
+    return arrs
+
+
+def _t3_statistics(blocks, n_samples, b, slot="plane_Ey"):
+    """``(flux_ratio_statistic_input, ey_slot_input)`` at break level ``b``.
+
+    Returns the two *raw* quantities the statistics are ratios of, so the
+    caller can form ``|x(b)/x(1) - 1|`` against the same record at ``b=0``.
+    """
+    arrs = _break_slot(blocks, b, slot)
+    flux = _phys_flux(arrs["plane_Ey"], arrs["plane_Ez"],
+                      arrs["plane_Hy"], arrs["plane_Hz"], n_samples)
+    t_eyhz, t_ezhy = _ey_slot_terms(arrs)
+    return complex(flux[-1] / flux[0]).real, complex(np.sum(t_eyhz) / np.sum(t_ezhy))
+
+
+def T3_ey_slot(capture, *, tol=T3_TOL, ladder=T3_BREAK_LADDER,
+               slot="plane_Ey", out=None):
+    """Fault detection: inject a break into ONE named slot, resolve it at ``tol``.
+
+    This is the T3 re-scoped by 101.20 c.2.  It is a *fault-injection
+    sensitivity* gate, not a ratio gate: one record is the reference, the same
+    record with ``slot`` scaled by ``(1+b)`` is the fault, and the statistic is
+    the **response**
+
+        flux route :  | R(b)/R(1) - 1 |      R = F[8]/F[0]
+        slot route :  | rho(b)/rho(1) - 1 |  rho = sum conj(Ey)Hz / sum conj(Ez)Hy
+
+    Both are computed and printed at every level, so the two can never be
+    confused -- the entire point of the gate is that they differ by ~1000x.
+
+    Why ``plane_Ey`` and not ``plane_Ez``: the Ez slot carries ~80 % of Sx, so
+    its response is already saturated (slope ~0.999) and it cannot resolve a
+    small break in itself with any margin.  The Ey slot's *flux* response is the
+    station-to-station difference of its Sx share, measured slope 1.0236e-3, so
+    a 1e-5 break reads 1.0256e-8 -- 975x below threshold, i.e. invisible to a
+    flux-based gate.  Its *slot* response is 1:1, which is why the slot has to
+    be checked directly.  See :data:`T3_TOL` for the measured curve.
+
+    REPLACES the degenerate E-versus-H branch
+    ----------------------------------------
+    The old T3 compared ``R_E`` with ``R_H``.  A *global* E scale cancels inside
+    a ratio of per-station products ``conj(E)H``, so the fitted slope came out
+    -2.45e-17 against a residual of 2.24e-16, and an H-only break gave
+    ``|R_E - R_H| = 0.0`` exactly: the branch was measuring its own
+    cancellation, not a fault.  It is removed, not retuned.
+
+    ``pass`` requires the slot statistic to have unit sensitivity
+    (``|slope| >= 1 - 1e-9``; the slack is the double representation of
+    ``(1+b)``, measured at 3.8e-11) *and* both zero-break responses to be exactly
+    zero, i.e. the gate fires on a break of size ``tol`` and stays silent on
+    clean data.  A missing capture raises rather than passing silently.
+    """
+    if slot != "plane_Ey":
+        raise ValueError(
+            f"T3_ey_slot(slot={slot!r}): only 'plane_Ey' is gated -- the Ez "
+            f"slot's response is saturated (slope ~0.999) and Hy/Hz are the "
+            f"reference terms of the slot statistic")
+    blocks, n_samples = _capture_blocks(capture)
+    if blocks["plane_Ey"].size == 0:
+        raise ValueError("T3_ey_slot: the capture's plane_Ey block is empty; "
+                         "there is no slot to test")
+
+    x0_flux, x0_rho = _t3_statistics(blocks, n_samples, 0.0, slot)
+    if x0_rho == 0.0:
+        raise ValueError("T3_ey_slot: sum conj(Ez)Hy is zero on this capture, "
+                         "so the slot statistic is undefined")
+
+    rows = []
+    for b in ladder:
+        xf, xr = _t3_statistics(blocks, n_samples, b, slot)
+        rows.append({
+            "b": float(b),
+            "flux_statistic": float(abs(xf / x0_flux - 1.0)),
+            "slot_statistic": float(abs(xr / x0_rho - 1.0)),
+            "flux_detected": bool(abs(xf / x0_flux - 1.0) >= tol),
+            "slot_detected": bool(abs(xr / x0_rho - 1.0) >= tol),
+        })
+
+    bs = np.asarray([r["b"] for r in rows], dtype=float)
+    y_flux = np.asarray([r["flux_statistic"] for r in rows], dtype=float)
+    y_slot = np.asarray([r["slot_statistic"] for r in rows], dtype=float)
+    m_flux, resid_flux = _fit_through_origin(bs, y_flux)
+    m_slot, resid_slot = _fit_through_origin(bs, y_slot)
+    null_flux = float(abs(x0_flux / x0_flux - 1.0))
+    null_slot = float(abs(x0_rho / x0_rho - 1.0))
+
+    b_min_flux = (tol / abs(m_flux)) if m_flux else float("inf")
+    b_min_slot = (tol / abs(m_slot)) if m_slot else float("inf")
+    passed = bool(abs(m_slot) >= 1.0 - 1e-9 and null_slot == 0.0
+                  and null_flux == 0.0)
+
+    if out is not None:
+        w = out.write
+        w("== T3: plane_Ey slot fault detection (inject-and-detect) ==\n")
+        w(f"tolerance in force {tol!r} (see T3_TOL);  slot {slot!r};  "
+          f"{len(rows)} break levels\n")
+        w(f"{'b':>9} | {'flux |R/R1-1|':>16} {'det':>4} | "
+          f"{'slot |rho/rho1-1|':>18} {'det':>4}\n")
+        for r in rows:
+            w(f"{r['b']:>9.0e} | {r['flux_statistic']:>16.6e} "
+              f"{'YES' if r['flux_detected'] else ' no':>4} | "
+              f"{r['slot_statistic']:>18.6e} "
+              f"{'YES' if r['slot_detected'] else ' no':>4}\n")
+        w(f"slope (through origin): flux {m_flux!r}, slot {m_slot!r}\n")
+        w(f"max|resid|:              flux {float(np.max(np.abs(resid_flux)))!r}, "
+          f"slot {float(np.max(np.abs(resid_slot)))!r}\n")
+        w(f"zero-break response:     flux {null_flux!r}, slot {null_slot!r}\n")
+        w(f"smallest detectable |b| at {tol:g}: flux {b_min_flux!r}, "
+          f"slot {b_min_slot!r}\n")
+
+    return {
+        "gate": "T3_ey_slot",
+        "scope": "fault detection: one named slot, inject-and-detect",
+        "slot": slot,
+        "tolerance_in_force": float(tol),
+        "rows": rows,
+        "slope_flux": m_flux,
+        "slope_slot": m_slot,
+        "resid_flux": float(np.max(np.abs(resid_flux))),
+        "resid_slot": float(np.max(np.abs(resid_slot))),
+        "null_response_flux": null_flux,
+        "null_response_slot": null_slot,
+        "smallest_detectable_b_flux": float(b_min_flux),
+        "smallest_detectable_b_slot": float(b_min_slot),
+        "flux_route_reaches_tol": bool(b_min_flux <= tol),
+        "n_stations": int(blocks["plane_Ey"].shape[0]),
+        "pass": passed,
+        "note": ("replaces the degenerate E-vs-H branch (global E scale cancels "
+                 "in a ratio of per-station conj(E)H products, so that branch "
+                 "had slope -2.45e-17 and |R_E - R_H| = 0.0 exactly)"),
     }
 
 
@@ -493,13 +792,15 @@ def _build_parser():
                         f"{PLANES_NPZ})")
     g = p.add_argument_group(
         "gated (need a fresh solve)",
-        "T1/T2 need a plane capture that only a solve produces. They are "
+        "T1/T2/T3 need a plane capture that only a solve produces. They are "
         "refused unless --i-understand-this-needs-a-solve is also given, and "
         "the refusal prints the estimated cost.")
     g.add_argument("--t1", action="store_true", help="run T1_stab on --capture")
     g.add_argument("--t2", action="store_true", help="run T2_agree on --capture")
+    g.add_argument("--t3", action="store_true",
+                   help="run T3_ey_slot fault-detection curve on --capture")
     g.add_argument("--capture", default=None,
-                   help=".npz capture for --t1/--t2")
+                   help=".npz capture for --t1/--t2/--t3")
     g.add_argument("--drop-station", default="nearest",
                    help="T1: 'nearest', None or an int (default: nearest)")
     g.add_argument("--basis", default="analytic",
@@ -507,18 +808,19 @@ def _build_parser():
                         "NotImplementedError")
     g.add_argument("--tol", type=float, default=None,
                    help="override the gate tolerance (T1 default 0.005, T2 "
-                        "default 1e-3); reported back as tolerance_in_force")
+                        "default 0.005, T3 default 1e-5); reported back as "
+                        "tolerance_in_force")
     g.add_argument("--i-understand-this-needs-a-solve", action="store_true",
                    dest="ack",
-                   help="required to reach T1/T2; a T1/T2 run costs a solve "
-                        "(see the cost estimate below)")
+                   help="required to reach T1/T2/T3; a T1/T2/T3 run costs a "
+                        "solve (see the cost estimate below)")
     return p
 
 
 def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
-    if not (args.part_a or args.t1 or args.t2):
+    if not (args.part_a or args.t1 or args.t2 or args.t3):
         parser.print_help()
         return 0
 
@@ -526,12 +828,12 @@ def main(argv=None):
         result = part_a(args.planes)
         print(f"\nPART A done: {json.dumps({k: float(v) for k, v in result.items()})}")
 
-    if args.t1 or args.t2:
+    if args.t1 or args.t2 or args.t3:
         if not args.ack:
             sys.stderr.write(REFUSAL + "\n" + COST_TEXT)
             return 2
         if not args.capture:
-            sys.stderr.write("--t1/--t2 need --capture <npz>\n")
+            sys.stderr.write("--t1/--t2/--t3 need --capture <npz>\n")
             return 2
         ds = args.drop_station
         if isinstance(ds, str) and ds.isdigit():
@@ -545,6 +847,11 @@ def main(argv=None):
         if args.t2:
             out = T2_agree(args.capture,
                            tol=T2_TOL if args.tol is None else args.tol)
+            print(json.dumps(out, indent=2, default=float))
+        if args.t3:
+            out = T3_ey_slot(args.capture,
+                             tol=T3_TOL if args.tol is None else args.tol,
+                             out=sys.stdout)
             print(json.dumps(out, indent=2, default=float))
     return 0
 
