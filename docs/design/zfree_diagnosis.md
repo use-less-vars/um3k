@@ -1257,6 +1257,127 @@ head of `## 8`) and are unaffected. The document's one *self*-reference, `§8.1 
 subsection and must be re-read against the shifted file; it already pointed at the blank line under `## 8.
 Provenance` rather than at the §8.1 row it cites.
 
+**Second shift, and it is this subsection's own.** The passage above accounts for one insert only. §7.5 was inserted
+at :1260 of the 1,313-line file, exactly where that file's `---` stood, and occupies **112** lines here (:1269-:1380,
+trailing blank included). This addendum is a second insert above it, of **9** lines (blank separator included), so
+every line at or after the insert point has moved 112 + 9, and the three identities close: 1,313 + 112 + 9 = 1,434
+lines in the file; 1,260 + 112 + 9 = :1381 for the `---` and 1,262 + 112 + 9 = :1383 for `## 8. Provenance`;
+and the original (pre-first-insert) file's `---`, at :1081, is now at 1,081 + 179 + 112 + 9 = :1381. The
+179-shifted lines above this subsection (:1081-:1259 of the 1,313-line file) have moved 179 only, and the
+*self*-reference `§8.1 `:1084`` at :995 lies above both insert points, unaffected by either.
+
+### 7.5 The two defects, decomposed -- one measured, one unowned
+
+**Retraction.** An earlier phrasing of this diagnosis called the 21-28x rms ratio a second, *amplitude* defect -- the
+extracted field 20-30x "too large". That framing is **withdrawn as wrong**, and §7.4 already refuses to make it (its
+amplitude bullet, :1247-:1248). The two numbers are 3.999873 / 0.1409797 = **28.4x** (PMC) and 3.049101 / 0.1409797 =
+**21.6x** (PEC) (`mode_plot.log:22`, `:28`, both `# derived`). Neither side of that ratio is on a physical scale:
+
+* The extracted side is an eigenvector put on a **unit two-norm**, twice over: once per candidate in
+  `emfit/mode2d.py:1127-1130` (`np.linalg.norm(..., axis=0)`, then divide), once on the edge vector in
+  `tools/host/c1-audit/c1_audit.py:455-459` (`nxv = float(np.linalg.norm(x))`, then `x = x / nxv`). The longitudinal
+  block inherits that scale and multiplies it by `beta` (`c1_audit.py:473`, `e_z_node[free_n] = beta * z_free`) with no
+  re-normalisation anywhere downstream. So `e_z`'s magnitude is `beta` times an arbitrary constant; nothing in the
+  pipeline ever asserts what it should be.
+* The analytic side stands on `M.plane_mode`'s own convention. **OPEN ITEM:** that convention has never been read in
+  this diagnosis. Until it is, `A_ez`'s rms of 1.409797e-01 (`mode_plot.log:22`, `:28`, identical in both panels per
+  `:29`) has no stated meaning either.
+
+A ratio of two conventions measures neither. The "20-30x excess" is not a physical claim that is merely unproven -- it
+is the arithmetic of a unit-norm vector against an unrelated normalisation, so there is nothing there to prove.
+
+**What the ratio does still say.** 3.999873 / 3.049101 = **+31.18 %** (`# derived` from `mode_plot.log:22`, `:28`). The
+first version of this paragraph justified that as scale-free by pointing at `:29`, the shared analytic array, and the
+justification was **wrong**: this quotient is extracted against extracted, so the analytic array is not in it and
+cancels nothing. What cancels is the extraction's *own* arbitrary constant, and only because both extracted arrays were
+put on unit two-norm by the same rule (`c1_audit.py:455-459`) and multiplied by the same post-factor (`:473`) before the
+rms was taken -- one code, one run (`git HEAD 295f344`, `mode_plot.log:8`). **INFERENCE** -- +31.18 % is therefore a
+statement about the two extracted norms *relative to each other*, inside one normalisation rule; it is neither absolute
+amplitude nor physics. The one factor that does **not** cancel is `beta`, which moves +0.324 % between the panels
+(below).
+
+**The shape defect is untouched by all of this.** It is measured, it is what `C2b` is built to test, and it is
+scale-invariant by construction: `corr` is a normalised inner product (`tools/host/mode_plot/mode_plot.py:206`), so
+neither argument's scale enters it. `corr_e_z` = +0.119160 (PMC, `mode_plot.log:20`) and +0.147291 (PEC, `:26`) are
+therefore as valid after the retraction as before it; correspondingly 1 - |corr| = 0.881 / 0.853 (`# derived`). The
+retraction removes one of the two defects from the book; it neither re-opens nor re-grades the other, and §7.4's
+STATUS block (:1083-:1096) is unchanged.
+
+**The one piece of positive localising evidence, which the first version of this subsection omitted.** `corr_e_y` =
+**+0.920771** (PMC, `mode_plot.log:20`) and **+0.912343** (PEC, `:26`) -- the same log lines as `corr_e_z`, on the same
+two columns. The transverse component is recovered to ~0.92 while the longitudinal one sits at ~0.12-0.15: `1 - |corr|`
+is **0.079** and **0.088** for `e_y` against **0.881** and **0.853** for `e_z` (`# derived` from `:20`, `:26`).
+**INFERENCE** -- this is the only *localising* evidence the run contains. `e_y` and `e_z` come off one eigenvector, one
+mesh, one gauge sign (`mode_plot.log:21`, `:27`) and one comparison code (`mode_plot.py:206`), so a failure common to
+the extraction would pull `corr_e_y` down with `corr_e_z`; it does not. The defect is therefore not "the extracted mode
+is wrong", it is confined to the longitudinal leg -- the extra solve `c1_audit.py:470-473` layers on top of `e_y` --
+which is the most a correlation pair can say about location.
+**Explicit limit, and it is a hard one.** This is **not** a defect location. The two correlations are not two
+measurements of one quantity: `e_y` is the unit-two-norm edge vector (`c1_audit.py:455-459`) and `e_z` is one further
+solve plus `beta` away from it (`:473`), so 0.92 and 0.12 are agreements of two *different* fields with two *different*
+analytic components, and their gap bounds nothing numerically -- it is a qualitative contrast (component A survives,
+component B does not), not a calibrated one. Both are bulk statistics over the whole 201 x 76 window, so neither says
+*where* in the cross-section `e_z` departs, and §7.4 measured no band, quadrant or region statistic for `e_y` --
+`mode_plot.py:201-206` keeps none. And 0.079 is not zero: `e_y` carries its own unexplained residual, with no noise
+floor against which to call it small (§7.3 Step 0). Localise the *component*, not the term.
+
+**INFERENCE -- the two objects are independent.** Shape lives in the direction of the array, amplitude in its norm.
+`corr` is invariant to the scale of *either* argument (`mode_plot.py:206`), so a run can move `corr_e_z` with the norm
+untouched, or move the norm with `corr_e_z` untouched. Nothing in the pipeline couples them except the normalisation
+convention, and that convention is arbitrary (above). Consequence for the plan: a `C2b` result on `corr_e_z` is silent
+about amplitude, and no number of refinement levels discharges an amplitude question. §7.4 question 4 states the same
+split as a question; this subsection is the answer to the half of it that can be answered without new data.
+
+**What the wall change tells us, and what it does not.** PMC vs PEC, all measured (`mode_plot.log:30`-`:32`):
+|corr(e_z PMC, e_z PEC)| = 0.932705, rel_rms = 0.366866, max|delta| = 0.926972; `corr_e_z` rel_delta = +23.61 %;
+`eps_eff` rel_delta = -0.645 %; `beta` 311.772112 -> 312.782765 = **+0.324 %** (`# derived` from `:25`, `:19`).
+* It *tells* us the shape statistic is strongly wall-sensitive: +23.61 % in `corr_e_z` and 36.69 % in rms for a
+  wall-only change, against -0.645 % in `eps_eff` and +0.324 % in `beta`. The wall is a first-order term for the shape
+  defect, not a rounding detail.
+* It *does not* tell us what the shape defect is made of: mask, mesh and QZ column stay confounded, exactly as §7.4
+  records (:1245-:1246).
+* It *does not* tell us anything absolute about amplitude. Even the relative +31.18 % carries a scale caveat:
+  **INFERENCE** -- `beta` enters `e_z` multiplicatively (`c1_audit.py:473`) and itself stepped by +0.324 % between the
+  panels, so a clean relative statement would hold `beta` fixed. At 0.324 % against 31.18 % that term cannot account
+  for the move, but it is present and unremoved.
+
+**What would make amplitude measurable.** Nothing here is a solver change; every item is a comparator or a piece of
+bookkeeping.
+1. **Read `M.plane_mode`'s normalisation** and state it beside the extraction rule. This closes the OPEN ITEM above and
+   needs no run at all.
+2. **Put `e_z` on one documented convention and apply it to both arrays at the comparison site** (unit power, unit peak
+   or unit two-norm -- whichever the physics requires), not inside either solver, so the two sides are commensurable by
+   construction instead of by hope.
+3. **Print a scale-provenance line.** The log prints rms only (`:22`, `:28`) and never says which norm was applied
+   where; one such line would have prevented the retracted claim.
+4. **Compare against a case with a closed-form amplitude** -- the PEC box's standing wave has a known peak, so a ratio
+   against it is a real excess rather than a mismatch of conventions. This is the only item that turns 28.4x / 21.6x
+   into a measurement.
+5. **For the wall term specifically: same mesh, one normalisation, both walls.** Otherwise the +31.18 % stays
+   uninterpretable for the reason in the last bullet above, and remains confounded with the mesh term.
+
+Cost: items 1 and 3 are a code read and a print line; the spectra item 5 needs are already on disk (`mode_plot.log:17`,
+`:23`); the rest are one re-run on the scale of the plot itself (1.6 s, `mode_plot.log:35`). No new eigensolve is
+implied by any of them.
+
+**What this subsection does not establish.**
+* Nothing about `C2b`. No refinement was run, no `corr_e_z` noise floor exists (§7.3 Step 0), and the +23.61 % is one
+  three-way perturbation with no repeat; this subsection re-reads §7.4's numbers and adds no measurement.
+* Nothing about the shape defect's *cause*. Mask, mesh and QZ column stay confounded, as §7.4 records (:1245-:1246),
+  and the `e_y`/`e_z` contrast above localises the defect to the longitudinal *leg* only -- not to a term inside it.
+* Nothing absolute about amplitude in either direction. The retraction removes a claim; it does not replace it with a
+  measurement, and `M.plane_mode`'s normalisation remains an **OPEN ITEM** until it is read.
+* Nothing about the transverse amplitude either: `corr_e_y` is scale-free for the same reason `corr_e_z` is, so ~0.92 is
+  a shape statement about `e_y` and says nothing about its magnitude.
+* Nothing about the +31.18 % beyond the caveat stated with it: `beta` is not held fixed across the two runs, and the
+  runs differ in mesh, mask and QZ column as well, so neither factor is isolated.
+* Nothing from the figures. `c2b_shapes.pdf` and `.png` (`mode_plot.log:33`, `:34`) were never opened by this author
+  (§7.4), and no claim above rests on them.
+
+**Status of this subsection.** Bookkeeping: it withdraws a framing, separates two objects that were being reported as
+one, and lists what a measurement of the second would require. **No code was changed and nothing was run to produce
+it** -- the container is stopped, and every number above is read from `mode_plot.log` or marked `# derived`.
+
 ---
 
 ## 8. Provenance
