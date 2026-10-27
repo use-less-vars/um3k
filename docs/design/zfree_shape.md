@@ -1,5 +1,13 @@
 # `z_free` shape — why the extracted longitudinal field has no node where the reference has one
 
+> **SUPERSEDED — the metric this file's hypothesis was built on compared the vertical component of the analytic
+> reference against the longitudinal component of the mixed pencil. They are different physical quantities.
+> Same-component correlation is 0.935/0.948 (see `decisions.md`
+> [2026-10-27 — SUPERSESSION PASS](../../decisions.md#2026-10-27--supersession-pass-over-every-conclusion-in-this-file-that-rested-on-the-mis-paired-corr_ez)). The file is retained as a record of a
+> pre-registered hypothesis that was tested and found to be untestable — the metric was wrong before the
+> hypothesis was ever relevant. Sections M1–M10 are re-classified in
+> [Appendix — M1–M10 re-classification](#appendix--m1m10-re-classification-2026-10-27).**
+
 Design note. **No implementation, no change to `emfit/` or `tools/`, no run.** Every number below is either a
 byte-exact quote from source, a number already banked in an artefact, or arithmetic on those numbers. The single
 measurement this note names is *specified*, not executed; nothing in this note was produced by running anything.
@@ -75,6 +83,13 @@ both citing `s10118_basis.py:369`); `c` is `assemble_mixed`'s edge×node block.
 | M8 | **The extraction's sign *relative to the reference* reverses at the strip boundary; the control's does not** | baseline: `corr(.,A_ez)` under strip `-0.199469783`, outside `+0.384180074`; legal operator TE: `-0.260462501` / `+0.334639628`; **control `c@φ`: `-0.878900532` / `-0.911779324`** | `corr_ez_followup.txt:155-157`, `:185-186` |
 | M9 | Sign is not the cause: a global sign moves nothing | restoring the sign changes `corr_e_z` by exactly `0.000000000`; a per-column oracle buys only `0.161983870`/`0.199096` from `0.119`/`0.147` | `decisions.md:7306`, `:7308`; `corr_ez_followup.txt:138`, `:171` |
 | M10 | The reconstruction equals the library's own field to machine precision, so this is not a capture bug | max rel diff `0.000e+00` (31x17), `8.484e-16` (41x22) | `zfree_diagnosis.md:213` (S8) |
+> **[VOID 2026-10-27]** class (c) — M1: the two `corr_e_z` legs behind this row are the mis-paired statistic (vertical analytic reference against longitudinal extraction), so 'converged-wrong on two independent meshes' is not established and must be re-derived. See `decisions.md` §4 row `:7311`.
+> **[VOID 2026-10-27]** class (b) — M2: only the first half stands, because `corr_e_y` is a same-component comparison and was sound all along; 'the defect is longitudinal', which is what this row was used to conclude, is withdrawn. See `decisions.md` §4 row `:7300`.
+> **[VOID 2026-10-27]** class (c) — M4: this ceiling is the forward `c` map applied to the analytic potential and correlated against `A_ez`, a longitudinal route against a vertical reference, so it prices no route the extracted vertical field is scored on and must be re-derived. See `decisions.md` §4 row `:7309`.
+> **[VOID 2026-10-27]** class (a) — M6: the analytic-vs-analytic identity `1.000000000000000` touched neither the extracted field nor the reference pairing, so 'the lattice bookkeeping is not the suspect' survives; the `-0.811883637859104` beside it is only an operator statement on the cross-component route. See `decisions.md` §4 row `:7743`.
+> **[VOID 2026-10-27]** class (c) — M7: the census that makes this row reads `z_free`, the longitudinal solution, and sets it against a vertical field's expected behaviour, so both 'single-signed' and the integral violation must be re-asked against the vertical component. See `decisions.md` §4 row `:7310`.
+> **[VOID 2026-10-27]** class (c) — M8: the under-strip/outside reversal is a property of correlations taken against `A_ez` on the longitudinal route, not evidence of a longitudinal-block defect, and the two-region census has to be re-derived on the same-component pair. See `decisions.md` §4 row `:7304`.
+> **[VOID 2026-10-27]** class (c) — M9: the per-column oracle bought its `0.161983870`/`0.199096` out of the mis-paired quantity, and a per-column sign repair on a field that already reads `0.935` has almost nothing left to buy; only the `0.000000000` invariance survives, and trivially. See `decisions.md` §4 row `:7308`.
 
 **M8 is the most specific fact in the file, and it is the one the brief's question is really about.** Applied to the
 *analytic* potential, the same operator keeps one sign in both regions (`-0.879` under the strip, `-0.912`
@@ -106,6 +121,7 @@ now `H4`, old `H4` is now `H5`, `H2` has gained a half it did not have, and `H3`
 * **Predicts for the across-strip profile.** A *different but well-formed* profile: `n_sc` (sign changes along y
   through rows 85-115) ≠ 1, and `n_sc` **varies with the z-column** (a mode, not a smooth response), while
   `corr_e_y` stays ≈ 0.92.
+> **[VOID 2026-10-27]** class (a) — `corr_e_y` ≈ 0.92 is a same-component comparison against the analytic in-plane field and was never carried by the mis-paired pair, so this discriminator for H1 stands as written. See `decisions.md` §4 row `:7751`.
 * **Would refute it.** `n_sc == 0` in every column of the extraction (`Φ` is a smooth single-lobe response, not a
   mode) — no candidate with a near-fundamental transverse part can be node-free in `y` and still be a mode of this
   pencil. Also refuted by any column whose three-sign tuple is `(s, s, s)` with `s` fixed, uniformly in z.
@@ -114,12 +130,14 @@ now `H4`, old `H4` is now `H5`, `H2` has gained a half it did not have, and `H3`
 
 **The walls half of this hypothesis is already dead, by numbers in the record.** A wall-set change is a *level*
 term: the two `corr_e_z` values that make it are printed at `mode_plot.log:20` (`banked=+0.119160432391342`, PMC)
+> **[VOID 2026-10-27]** class (b) — the conclusion that a wall-set change is a level term and cannot be the shape cause stands, but the `0.028131014553288` / 23.6 % / `179.7x` figures it was argued from are the mis-paired difference; corrected it is `+0.0016429867310159274` (`+0.1757 %`, `~10.5x` the floor, `134x` smaller), so the bound holds for a different reason and at a different size. See `decisions.md` §4 row `:7678`.
 and `:26` (`banked=+0.147291446944630`, PEC); their difference `0.147291446944630 - 0.119160432391342` =
 `0.028131014553288` is written out at `c2b_preregistration.md:33` as 23.6 % relative and `179.7`, i.e. `~180x`, the
 mesh floor `F = 1.5657e-4` (`c2b_preregistration.md:29`), which is the noise level behind the `2F` = `3.1315e-4`
 detection criterion at `:44`. It is also *fixed* in everything this note
 measures — §4's census runs on banked arrays from one wall set — and it leaves the transverse field intact:
 `corr_e_y` is `0.920770784811142` / `0.912343044811209` on the two panels (`zfree_diagnosis.md:1108`) while
+> **[VOID 2026-10-27]** class (b) — this `0.9123` panel and the mode identification it carries stand on their real evidence and get stronger under the correction, but the contrast with `corr_e_z` that the next line sets up is void: the extraction's vertical field reads `0.935`, not `0.12`. See `decisions.md` §4 row `:7672`.
 `corr_e_z` is `0.119160432391342` / `0.147291446944630` (`:1109`). Those two panels also agree with each other
 (`|corr| = 0.932705`, `:1119-1123`) and disagree with the reference *together*. The analytic array itself is not a
 function of the walls at all: `mode_plot.log:29` records `max|A_ez(PMC) - A_ez(PEC)| = 0.000e+00`. Because the banked
@@ -228,6 +246,7 @@ of the *shape*. What remains open inside `C2` is strip-local; it is listed below
   is measured by applying `c` **forwards** to `φ_analytic` — `corr(c@φ, A_ez)` — whereas the code's `Φ` is the
   **inverse** route `lu.solve(Cᵀ x)`. The two statements "the operator can reach 0.77" and "the field fails the
   operator" therefore compare a forward map against an inverse map, and the 15.2 %/15.8 % ratio does not bound the
+> **[VOID 2026-10-27]** class (b) — the forward-versus-inverse distinction is right and now compounds: the `0.77` ceiling was taken against `A_ez`, the vertical reference, on the longitudinal route, so neither map in this file was ever priced against the quantity the extraction actually scores on. See `decisions.md` §4 row `:7309`.
   route the code actually takes. `zfree_diagnosis.md:215` (S10) reads that ratio as proof the *field* is at fault;
   H5 says the ratio is silent about the field, because the ceiling was never measured on the map in use.
   *(This note does not claim H5 is true — only that it is implied by the code and is discriminated by the
@@ -304,6 +323,7 @@ follow-up has to clear, and it is already written down: two meshes give an inter
 noise level is `F = 1.5657e-4` and the threshold is `2F` = `3.1315e-4` (0.26 % relative) —
 `docs/design/c2b_preregistration.md:29` — and applied to this very statistic at `:44`:
 `||corr_e_z|_patched - |corr_e_z|_baseline|` must exceed `3.1315e-4` absolute. Two consequences. The wall term
+> **[VOID 2026-10-27]** class (c) — the mesh floor `F` and the `2F` threshold are properties of the meshes and stand, but this bar is stated on the retired `|corr_e_z|`; the statistic it gates has to be restated same-component before any candidate fix can be said to clear it. See `decisions.md` §4 row `:7506`.
 clears that bar by `180x` (`0.028131014553288`, `:44`), so it is measurable and therefore has to be held fixed
 (this is what H2's walls paragraph does with it). And any later candidate fix — a redone census, a `C2b` step,
 a re-extraction — that moves `|corr_e_z|` by less than `3.1315e-4` at fixed walls is not evidence for anything,
@@ -407,6 +427,48 @@ measurement can buy.
 | `BOUNDARIES = (ground, strip)`, `ground(p) = p[:, 1] == 0.0`, `strip(p) = (p[:, 1] == HSUB) & (Y0 - 1e-12 <= p[:, 0] <= Y1 + 1e-12)` | `tools/host/c1-audit/c1_audit.py:278-286` |
 | the same LU route re-implemented three times (`lu.solve(c_f.T @ x)`, then `e_z_node[free_n] = beta * z_free`), on the Schur-reduced `h_blk`; driver comment "-- but SIGNED" | `tools/host/c1-audit/c1_audit.py:470-473`, `tools/host/mode_plot/mode_plot.py:318-334`, `tools/host/c1-audit/pecbox_variant.py:410-419` |
 | `c[e, i] = INT (1/mu_r) W_e . grad phi_i dA` (edge x node), `e_z[free_n] = 1j * beta * lu_h.solve(c_f.T @ x)` | `emfit/mode2d.py:477`, `:1175` |
+> **[VOID 2026-10-27]** class (a) — in the `0.119160432391342` / `0.147291446944630` (`corr_e_z`) row above: both values are still the numbers their runs produced and the attribution is untouched, but they are the mis-paired statistic, so their evidential reading is withdrawn, not their provenance. See `decisions.md` §4 row `:7743`.
+> **[VOID 2026-10-27]** class (c) — in the `F = 1.5657e-4` row above: the floor and the `2F` threshold stand, but the `corr_e_z` criterion and the `~180x` wall term are quoted on the mis-paired metric; corrected, the wall term is `~10.5x` the floor. See `decisions.md` §4 row `:7682`.
 
 **No code was changed and nothing was run to produce this document.** It adds one file,
 `docs/design/zfree_shape.md`, and specifies — but does not execute — one measurement.
+
+---
+
+## Appendix — M1–M10 re-classification (2026-10-27)
+
+**This file is retained, not withdrawn.** It is **VOID**, and void is not falsified: *falsified* means the hypothesis was tested and failed, so something was learned and the hypothesis is dead; *void* means the hypothesis was never tested, because the instrument that would have tested it was measuring a different physical quantity. Every conclusion in §2 and §4 that rode on `corr_e_z` rode on a correlation between the **vertical** component of the analytic reference `A_ez` and the **longitudinal** component of the extracted mixed-pencil field. A correlation between those two is not a fidelity measure and cannot be made into one by rescaling. The hypotheses in §3 were never asked, so they are not dead — they are unasked, and they are askable now that a same-component metric is banked (`decisions.md` §1).
+
+**Class key.** Each row carries one class, and the classes describe the *finding*, not the number.
+
+- **(a) stands.** The observation was correct and was never carried by the mis-paired metric. The wrong number sat nearby; it was not the evidence.
+- **(b) stands, but for a reason that survives the correction.** The conclusion is true; the stated reason is not the operative one. The surviving reason is named in the verdict.
+- **(c) must be re-derived.** Not decidable from the record — neither established nor refuted. Re-derivation is possible now (the corrected metric is banked) and has not been done.
+
+| # | what it claimed | the field it actually measured | the field it was compared against | class | verdict |
+|---|---|---|---|---|---|
+| M1 | the shape defect is real and converged-wrong, on two independent meshes | the **longitudinal** extraction: `beta * z_free` through the mixed pencil's inverse map, and `c @ z_free` for the legal-operator baseline | the **vertical** component of the analytic reference, `A_ez` | **(c)** | both legs are the mis-paired statistic, and the `0.147291446944630` leg is `corr_ez[0]` of a 31x17 npz rather than a 41x22 run (`decisions.md` §6) — re-derive |
+| M2 | the transverse leg is not broken, so the defect is longitudinal | the extracted **transverse (in-plane)** field `E_y` | the analytic **in-plane** field `A_ey` — same component | **(b)** | the transverse leg is sound and was always a like-for-like comparison; what dies is the inference drawn from it, that the defect is therefore longitudinal |
+| M3 | `beta` and `eps_eff` barely move between the two meshes, so this is not resolution | no field at all: the eigenpair scalars `eps_eff` (from `beta^2/k0^2`) and `beta` | the same two scalars on the other mesh | **(a)** | survives entire: a scalar-against-scalar mesh comparison, in which no correlation and no field pairing enters |
+| M4 | the operator's forward application to the exact analytic potential is the ceiling, and it is single-signed | the mixed pencil's **forward** map `c @ phi_analytic` — a mass-weighted area integral on the longitudinal route | the **vertical** reference `A_ez` | **(b)/(c)** | the `0.77` stands as a property of `c` — a forward map scored against the vertical reference, which §4 row `:7309` grants; any fidelity reading of it, the `15.2 %` included, was taken on the longitudinal-over-vertical pairing and must be re-derived same-component |
+| M5 | the ceiling is not 1.0 and cannot be, by construction | no field at all: a statement about the operator, `c@phi` being a mass-weighted area integral rather than the edge integral | nothing — the claim is about the map, not a pair of fields | **(a)** | survives entire: `c@phi` was never the edge integral, whatever was correlated against it |
+| M6 | the analytic derivative control is 1.0, so the lattice bookkeeping is not the suspect | `-d(phi_analytic)/dz` pushed through the same map, and separately the analytic vertical `e_z` against analytic `-d(phi)/dz` | `A_ez` for the map number; itself for the `1.0` identity | **(a)** | the analytic-against-analytic `1.000000000000000` never touched the extracted field or the reference, so it stands; the `-0.811883637859104` beside it is only an operator statement |
+| M7 | the extraction is single-signed; the reference is not | the **longitudinal** solution's sign census over `z_free` (`fraction of free nodes with z_free < 0`) | the **vertical** reference's sign counts under and outside the strip | **(c)** | a vertical field's expected sign behaviour was applied to the longitudinal solution; 'single-signed' and the integral violation must both be re-asked against the vertical component |
+| M8 | the extraction's sign relative to the reference reverses at the strip boundary, and the control's does not | the **longitudinal** extraction's per-region correlation (baseline and legal-operator legs), plus the control's forward map | the **vertical** reference `A_ez` | **(c)** | the reversal is a property of the pairing, not of the extraction; the two-region census has to be re-derived on the same-component pair, which is what §5.3 of `decisions.md` starts |
+| M9 | sign is not the cause: a global sign moves nothing, and a per-column oracle buys almost nothing | the **longitudinal** correlation under a global sign flip and under a per-column sign oracle | the **vertical** reference `A_ez` | **(c)** | the `0.199` oracle bound was bought out of the mis-paired quantity and is void; the `0.000000000` invariance survives and is trivial for any pairing |
+| M10 | the reconstruction equals the library's own field to machine precision, so this is not a capture bug | the extracted arrays themselves, reconstruction against the library's own field | itself — two code paths, with `A_ez` nowhere in the comparison | **(a)** | survives entire: a capture check that never touched the reference and cannot be affected by which component was paired with which |
+
+**The corrected numbers.** Same-component correlation, vertical extraction against the vertical reference, read from the solver's own transverse field (`tools/host/c1-audit/c1_audit.py:510-511`): `0.935286730348765` (31x17, PMC), `0.948530101525844` (41x22, PMC), `0.936929717079781` (31x17, PEC). Superseded, the values quoted throughout this file and retained under the name `corr_ez_superseded_longitudinal`: `0.119160432391342`, `0.119317006502073`, `0.147291446944630`. Those three are the names of what was measured; they are not defect sizes, not ceilings, and not anything a screen may be set on. Signs are LAPACK-arbitrary, so every screen is on `|corr|`.
+
+**The corrected metric is what gates selection now.** `CORR_EZ_VV_MIN = 0.90` (provisional) replaces the retired `corr_e_z <= 0.30` clause, which could not fail and therefore could not select. The selected columns are unchanged by the correction: 738 (PMC) and 699 (PEC).
+
+**What this pass did not touch, and what still stands.** Recorded so that the banner above is not read as a general amnesty.
+
+- The node argument of §1 is untouched: for this 2-D cross-section `E_z` is proportional to `partial_y E_y`, so a node at the strip centre is the physically required structure and the reference carries it. No part of that argument used `corr_e_z`.
+- The geometry, the array conventions and the index arithmetic of §1 (rows = axis 0 = y, columns = axis 1 = z, strip edges at rows 85/115, interface at columns 15-16) are untouched.
+- M2, M3, M5, M6 and M10 above stand: the transverse leg, the `beta`/`eps_eff` mesh comparison, the structural reason the `c` route cannot reach 1.0, the analytic derivative control, and the capture check.
+- The code readings in §3 — the shape of the right-hand side in H3, the inverse-versus-forward map in H5, and their `Lives in` citations — are observations about source lines rather than about `corr_e_z`, and they are not affected.
+- §4's census specification, the reductions it names (the per-column three-sign tuple and `n_sc`), and the cost table in §4.2 are untouched. The census is still the cheapest measurement named in this file; it is now a same-component question rather than a question about a number that was never a fidelity measure.
+- §4.1's noise floor `F = 1.5657e-4` and the `2F` detection bar stand as properties of the meshes; only the statistic they were applied to changes, and the corrected statistic is now available to apply them to.
+- §7's attributions stand, with the one exception this file already carried: `0.119317007` is used here as the 31x17 legal-operator baseline and in `decisions.md` as the 41x22 leg of the mis-paired metric, and both attributions cannot hold (`decisions.md` §6).
+- Outside this file and outside this pass: the passivity bug (`R_CIRC` phantom gain, `+8.47 %`), `R_MODAL` (undefined, never coded), the `R_FLUX` versus `R_CIRC` sign conflict, `corr_e_y = 0.92`, and the mode selection itself all stand on their own measurements and none of them was ever carried by `corr_ez` (`decisions.md` §8).
