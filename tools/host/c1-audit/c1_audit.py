@@ -104,6 +104,12 @@ Mesh and output knobs (environment only -- this script has no argument parser)
   refinement study is a different mesh ON PURPOSE, and without this the run is
   refused.  Banked column unknown then, so the reproduction check runs on the
   best-|corr_e_y| column and is EXPECTED to fail -- loud, not fatal.
+* ``C1_Y_AIR_CELLS`` -- cells in EACH of the two air bands of the first axis,
+  the 9 | 9 either side of the strip.  Default 9, the banked mesh; the strip
+  band (``C1_STRIP_CELLS``) is untouched, so the family stays symmetric.
+* ``C1_Z_CELLS`` -- cells in the three bands of the second axis, substrate |
+  interface | air, as three comma-separated ints.  Default ``8,4,4``, the
+  banked mesh; each value must be >= 1.
 
 Unset, all of them leave the mesh and both paths exactly as they were.
 
@@ -324,16 +330,41 @@ def axis(edges, cells):
 #: strip-band resolution only: 12 is the banked mesh (31 x 17 nodes) and
 #: ``C1_STRIP_CELLS`` overrides it.  The 9 | 9 air cells and the 8 | 4 | 4
 #: substrate do NOT move, so a sweep over this knob is a one-parameter family.
+#: ``C1_Y_AIR_CELLS`` (both 9s, kept symmetric) and ``C1_Z_CELLS`` (the
+#: 8 | 4 | 4 triple) give the same one-parameter treatment to the two bands
+#: that were never varied alone; unset, they reproduce the banked mesh.
 _STRIP_CELLS = int(os.environ.get("C1_STRIP_CELLS", "").strip() or 12)
 if _STRIP_CELLS < 1:
     raise SystemExit(f"C1_STRIP_CELLS must be >= 1, got {_STRIP_CELLS}")
-XS = axis([(0.0, Y0), (Y0, Y1), (Y1, W)], [9, _STRIP_CELLS, 9])
-ZS = axis([(0.0, HSUB), (HSUB, 0.0036), (0.0036, H)], [8, 4, 4])
+_Y_AIR = int(os.environ.get("C1_Y_AIR_CELLS", "").strip() or 9)
+if _Y_AIR < 1:
+    raise SystemExit(f"C1_Y_AIR_CELLS must be >= 1, got {_Y_AIR}")
+_Z_RAW = os.environ.get("C1_Z_CELLS", "").strip() or "8,4,4"
+_Z = []
+for _tok in _Z_RAW.split(","):
+    try:
+        _v = int(_tok.strip())
+    except ValueError:
+        raise SystemExit(
+            f"C1_Z_CELLS must be three comma-separated ints >= 1, got "
+            f"{_Z_RAW!r} (bad value {_tok.strip()!r})")
+    if _v < 1:
+        raise SystemExit(
+            f"C1_Z_CELLS must be three comma-separated ints >= 1, got "
+            f"{_Z_RAW!r} (bad value {_v})")
+    _Z.append(_v)
+if len(_Z) != 3:
+    raise SystemExit(
+        f"C1_Z_CELLS must be exactly three comma-separated ints, got "
+        f"{_Z_RAW!r} ({len(_Z)} values)")
+XS = axis([(0.0, Y0), (Y0, Y1), (Y1, W)], [_Y_AIR, _STRIP_CELLS, _Y_AIR])
+ZS = axis([(0.0, HSUB), (HSUB, 0.0036), (0.0036, H)], list(_Z))
 mesh = m2.structured_mesh(XS, ZS)
 _nx, _nz = int(XS.size), int(ZS.size)
 say("mesh       :", dict(nodes=mesh.n_nodes, tris=mesh.n_tris,
                          edges=mesh.n_edges, xs=_nx, ys=_nz,
-                         strip_cells=_STRIP_CELLS))
+                         strip_cells=_STRIP_CELLS, y_air_cells=_Y_AIR,
+                         z_cells=list(_Z)))
 
 
 def eps_of(p):
