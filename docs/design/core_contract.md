@@ -39,7 +39,7 @@ requirement wearing a core's name.
 (`emfit/mode2d.py:795`), `solve_modes_mixed` (`:935`), returning `class Mode2D` objects (`:605`) carrying
 `freq`/`k0`/`beta`/`beta_sq`/`eps_eff`/`residual`/`candidates`/`e_t`. The microstrip profile used by the
 audit path is likewise imported separately (`from emfit.mode_profile import microstrip_mode_profile`,
-`tools/host/c1-audit/c1_audit.py:160-162`). A core that knew about port modes could not be replaced by one
+`tools/host/c1-audit/c1_audit.py:139-141`). A core that knew about port modes could not be replaced by one
 that does not have them.
 
 **Stations.** Forbidden. A station is a geometric line segment at which a one-time-sample Poynting flux is
@@ -58,7 +58,7 @@ produces a result document and is a different kind of thing (`decisions.md:7075`
 
 **Pencils.** Forbidden to the 3D core; owned by the 2D core. The generalised eigenproblem is `mode2d`'s
 business (`emfit/mode2d.py:795`, `:935`), and it has its own contract, its own diagnostics (`residual`,
-`:1024-1027`) and its own anchor (`tools/host/c1-audit/pecbox_variant.py:561-620`). "Core" in this
+`:1024-1027`) and its own anchor (`tools/host/c1-audit/pecbox_variant.py:544-603`). "Core" in this
 document is a family, not a single class: today there is a 3D time-domain member (`emfit/evolve.py`) and a
 2D eigenproblem member (`emfit/mode2d.py`), and §5 uses exactly that fact.
 
@@ -82,7 +82,7 @@ The table answers each concern explicitly rather than by implication.
 
 | Concern | Owner | Justification (swappability) |
 |---|---|---|
-| Port modes | Extraction | A 2D eigenproblem in `emfit/mode2d.py` (`:795`, `:935`) and a profile function imported separately (`tools/host/c1-audit/c1_audit.py:160-162`). A core that had to carry mode-solver code could not be swapped for a pure time-domain or GPU kernel. |
+| Port modes | Extraction | A 2D eigenproblem in `emfit/mode2d.py` (`:795`, `:935`) and a profile function imported separately (`tools/host/c1-audit/c1_audit.py:139-141`). A core that had to carry mode-solver code could not be swapped for a pure time-domain or GPU kernel. |
 | Station phasors | Extraction | `DftAccumulator` (`emfit/ports.py:564`) integrates the time series at chosen edges (`:609`); it needs time samples, not a core. A frequency-domain core has no time series to hand it, so the concern cannot be core-side without excluding that core shape. |
 | S-parameters | Extraction | Ratios of derived phasors at a reference plane (`emfit/ports.py:727`, `:745`). Any core that owned S-parameters would subsume the extraction layer and could not be replaced by a core that did not. |
 | Frequency sweep | Split: the set is contract-level, the consumption is not | The frequency set is a job field already (`frequencies_ghz`, `decisions.md:7031`), and §101.19(f) asserts that a frequency-domain FEM, a GPU FDTD and a surrogate all produce the same result document (`decisions.md:7075`). A time-domain core must be told the set only so the extraction knows what to accumulate; a frequency-domain core must be told it because it solves there. Keeping the set in the contract and the consumption solver-side is the only arrangement in which both are true. |
@@ -243,8 +243,8 @@ document makes no line-level claim about the ones not in the table above.
 **Decision:** four concerns consolidate into one place each, and the consolidation is a prerequisite for
 the swap, not a follow-up to it.
 
-1. **Root discovery.** Today it is reimplemented at `tools/host/c1-audit/c1_audit.py:123-137`,
-   `tools/host/c1-audit/pecbox_variant.py:118-146` (whose own comment at `:120` admits it copies
+1. **Root discovery.** Today it is reimplemented at `tools/host/c1-audit/c1_audit.py:117-137`,
+   `tools/host/c1-audit/pecbox_variant.py:118-129` (whose own comment at `:120` admits it copies
    `run.sh`), and hard-coded as `/workspace` in `.scratch/tol/tol_driver.py:41`, `.scratch/c3_driver.py:30`,
    `.scratch/lever/run_real.py:30` and `tools/gates_101_20.py:58`. One function, one behaviour.
 2. **Cache keying.** Today it is literal strings — `("31x17", ...)`, `("41x22", ...)` at
@@ -284,9 +284,9 @@ and explicitly "a *formulation* validation, not a *problem* validation".
 
 Measured value: `rel_delta` = 1.022e-4 on `beta^2/k0^2` = 0.438322827 against 0.438278
 (`decisions.md:7666-7668`; the code is `_self_test_anchor()` at
-`tools/host/c1-audit/pecbox_variant.py:561-620`, which builds `np.linspace(0,W_BOX,31)` by
-`np.linspace(0,H_BOX,17)`, calls `m2.structured_mesh`, prints `rel_delta` at `:618` and
-`SELF_TEST_ANCHOR = PASS/FAIL` at `:619`, wired at `:624`; constants `C0`, `K0_REF`, `W_BOX=0.020`,
+`tools/host/c1-audit/pecbox_variant.py:544-603`, which builds `np.linspace(0,W_BOX,31)` by
+`np.linspace(0,H_BOX,17)`, calls `m2.structured_mesh`, prints `rel_delta` at `:601` and
+`SELF_TEST_ANCHOR = PASS/FAIL` at `:602`, wired at `:607`; constants `C0`, `K0_REF`, `W_BOX=0.020`,
 `H_BOX=0.0076`, `F_SELF_TEST=10.0e9`, `SELF_TEST_BETA_TOL=0.02` at `:97-102`).
 
 The two cores are the ones that already exist. Core A is the 2D eigenproblem member
@@ -303,7 +303,7 @@ Identical inputs. Same physical box and frequency: `W_BOX=0.020`, `H_BOX=0.0076`
 vacuum, PEC on all walls (`tools/host/c1-audit/pecbox_variant.py:97-102`).
 
 Matched discretisation. Same transverse node placement, 31 along x and 17 along y over the same physical
-extent (`:561-620`). Core B's step must come from `cfl_dt` on a grid of the same cell widths
+extent (`:544-603`). Core B's step must come from `cfl_dt` on a grid of the same cell widths
 (`emfit/evolve.py:68-79`), and the value used must be reported rather than assumed — that is item 2 of §3,
 and it is the difference between a test and a coincidence.
 
