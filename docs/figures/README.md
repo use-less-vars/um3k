@@ -32,8 +32,8 @@ draw unless all three banked correlations reproduce to `1e-6`.
 
 | file | what it shows | where used | reader test |
 | --- | --- | --- | --- |
-| `mode_shape_mispaired_before.pdf` `mode_shape_mispaired_before.png` | The superseded picture. `e_z` row = analytic vertical reference vs extracted longitudinal field (`corr_ez_superseded` `+0.1192` PMC / `+0.1473` PEC). Difference rows `max abs Δ` `11.14` / `11.12`, `rms(Δ)/rms` `1.33` / `1.31`, i.e. full-scale. `e_y` row unchanged. | `docs/report/sec_modes.tex`, `fig:mode_shape_mispaired` | Every `e_z` difference panel is bright everywhere, so that row cannot be read as a statement about mode shape. Then check the `e_y` row against the corrected figure: it is the same picture, so only the `e_z` row moved. |
-| `mode_shape_corrected.pdf` `mode_shape_corrected.png` | The corrected picture. `e_z` row = vertical vs vertical (`corr_ez_vv` `+0.9353` / `+0.9369`). Difference rows `max abs Δ` `6.74` / `6.72`, `rms(Δ)/rms` `0.36`. Cross-run PMC-vs-PEC correlation on this metric `+0.9990` (on the superseded one, `+0.9327`). | `docs/report/sec_modes.tex`, `fig:mode_shape_corrected` | The `e_z` difference panels are near-blank with a rim at the strip edges and at the substrate interface — a boundary effect at the two places the discretisation is thinnest, not a shape error. Compare with the before figure at the same place: same panels, same limits, opposite reading. |
+| `mode_shape_mispaired_before.pdf` `mode_shape_mispaired_before.png` | The superseded picture. `e_z` row = analytic vertical reference vs extracted longitudinal field (`corr_ez_superseded` `+0.1192` PMC / `+0.1473` PEC). Difference rows `max abs Δ` `11.14` / `11.12`, `rms(Δ)/rms` `1.33` / `1.31`, i.e. full-scale. `e_y` row unchanged. | `— (superseded; see note below)` | Every `e_z` difference panel is bright everywhere, so that row cannot be read as a statement about mode shape. Then check the `e_y` row against the corrected figure: it is the same picture, so only the `e_z` row moved. |
+| `mode_shape_corrected.pdf` `mode_shape_corrected.png` | The corrected picture. `e_z` row = vertical vs vertical (`corr_ez_vv` `+0.9353` / `+0.9369`). Difference rows `max abs Δ` `6.74` / `6.72`, `rms(Δ)/rms` `0.36`. Cross-run PMC-vs-PEC correlation on this metric `+0.9990` (on the superseded one, `+0.9327`). | `— (superseded; see note below)` | The `e_z` difference panels are near-blank with a rim at the strip edges and at the substrate interface — a boundary effect at the two places the discretisation is thinnest, not a shape error. Compare with the before figure at the same place: same panels, same limits, opposite reading. |
 
 ## Provenance
 
@@ -68,3 +68,10 @@ one, not the mis-paired one, whatever the old name suggests), `docs/design/mispa
 (the *before* figure) and `docs/report/figures/c2b_mode_shape_corrected.pdf` / `.png` (the generator's raw output
 directory) are copies of the four files above. The PDFs and PNGs here match their sources byte for byte; verify with
 `md5sum docs/figures/mode_shape_*.{pdf,png}`.
+
+**Superseded, retained for provenance.** The `mode_shape_mispaired_before.*` and `mode_shape_corrected.*` pages
+above are the earlier single-page form of the mode-shape pair, drawn from the same banked solves.
+`docs/report/sec_modes.tex` now includes `fig_ez_before_after.pdf` and `fig_ey_before_after.pdf` instead, under the
+labels `fig:mode-ez-pairing` and `fig:mode-ey-pairing`; the labels `fig:mode_shape_mispaired` and
+`fig:mode_shape_corrected` no longer exist in that chapter. Do not cite either `mode_shape_*` file as current.
+Nothing is deleted.
