@@ -1,0 +1,780 @@
+% ---------------------------------------------------------------------------
+%  sec_howitworks.tex -- how the machine works: the bricks, the unknowns and
+%  the curl matrix. Sits between the aims and the formal FIT section.
+% ---------------------------------------------------------------------------
+\section{How the machine works}\label{sec:howitworks}
+
+This section is the tour we would give a colleague who wants to know what the solver does before reading the
+formal statement of it. It describes the geometry the program sees, the numbers it stores on that geometry, and
+the single matrix that turns a statement about one loop into a statement about every loop at once. There is no
+derivation here and nothing is measured: the derivation is in Section~\ref{sec:theory}, and the evidence that
+back the claims below is in the section on the discrete energy identity and in the section on the cavity
+resonances. Nothing in this section is approximate except one thing, which we will point at when we come to it,
+and that thing is the material. The topology -- what touches what, which edge bounds which face, what a loop
+integral means -- is either right or wrong, and in this discretisation it is right.
+
+\subsection{A box, cut into bricks}\label{sec:hiw:bricks}
+
+The computational domain is a box, and the first decision, the one everything else follows from, is to cut it
+into bricks. A brick is $\Delta x$ by $\Delta y$ by $\Delta z$; the three spacings may differ, and they may
+differ from one brick to the next, but every brick is a box and every internal brick face is shared, whole, with
+the face of exactly one neighbour. There is no other geometry in the program. The solver does not know that the
+thing inside the box is a cavity with a fillet in one corner or a patch of laminate; it knows the bricks, the
+numbering of their edges and faces, and which faces have been marked as conductor. When we say that a structure
+has been discretised, this is the entirety of what we mean.
+
+A single brick has eight corners, twelve edges and six faces. Interior faces are shared by two bricks and
+interior edges by four, and it is that sharing rather than the brick itself which fixes the counts. For a mesh
+of $N$ bricks there are, to within boundary terms that do not change the picture, $N$ corners, $3N$ edges and
+$3N$ faces. The corners are the vertices, the edges join them, the faces are spanned by the edges and the bricks
+are the cells the faces enclose; Figure~\ref{fig:hiw:brick} draws one brick in this reading.
+
+Two of those counts are equal, and that is the first thing worth pausing on. A mesh with $3N$ edges has $3N$
+faces, not approximately and not only when the bricks are cubes. It is the discrete form of the exact sequence
+that runs vertices to edges to faces to cells in the continuum, where the boundary of a face is a loop of edges
+and the boundary of a cell is a closed surface of faces, and where there is nothing left over at either end.
+The practical consequence is that there are no spare slots and no choice about where the field goes. It has to
+live on the edges and on the faces, because those are the entities whose counts match; an electric field held
+at the corners would be short of unknowns by a factor of three in every direction, and there would be no loop
+for Faraday's law to be written on.
+
+What the solver knows of geometry is therefore the mesh and nothing else. A perfect electric conductor is a set
+of faces marked as such, and the four edges bounding each of those faces are known quantities rather than
+extrapolated ones. There is no analytic surface anywhere in the code to be intersected or sampled, which is why
+the same code path takes a mesh with unequal spacings in all three directions without any change of
+formulation. The shape of the object enters once, through the mesh; given the mesh, everything below is exact.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % the shaded face: the top of the brick
+  \draw[face] (0,2.2) -- (3.6,2.2) -- (5.1,3.3) -- (1.5,3.3) -- cycle;
+  % the three edges hidden behind the body, left thin
+  \draw[mesh thin] (0,0) -- (1.5,1.1);
+  \draw[mesh thin] (1.5,1.1) -- (5.1,1.1);
+  \draw[mesh thin] (1.5,1.1) -- (1.5,3.3);
+  % the nine visible edges
+  \draw[primal] (0,0) -- (3.6,0) -- (3.6,2.2) -- (0,2.2) -- cycle;
+  \draw[primal] (3.6,0) -- (5.1,1.1) -- (5.1,3.3);
+  \draw[primal] (3.6,2.2) -- (5.1,3.3);
+  \draw[primal] (0,2.2) -- (1.5,3.3) -- (5.1,3.3);
+  % one edge unknown
+  \draw[edof] (0.35,0) -- (3.25,0);
+  \node[lbl, anchor=south] at (1.8,0.12) {$e=\int_L \vec E\cdot \mathrm{d}\vec l\ (\si{\volt})$};
+  % one face unknown and the direction of its normal
+  \draw[harrow] (2.55,2.75) -- (2.55,3.78);
+  \node[lbl, anchor=west] at (2.65,3.72) {$b=\iint_A \vec B\cdot \mathrm{d}\vec A\ (\si{\weber})$};
+  % dimensions
+  \draw[dimline] (0,-0.7) -- (3.6,-0.7);
+  \node[lbl, anchor=north] at (1.8,-0.8) {$\Delta x$};
+  \draw[dimline] (-0.7,0) -- (-0.7,2.2);
+  \node[lbl, anchor=east] at (-0.8,1.1) {$\Delta y$};
+  \draw[dimline] (4.1,-0.75) -- (5.65,0.4);
+  \node[lbl, anchor=west] at (5.75,0.45) {$\Delta z$};
+\end{tikzpicture}
+\caption{One brick of a structured mesh, drawn in cabinet projection with the three hidden edges left thin so
+that all twelve are accounted for. The unknown attached to an edge is the line integral of the electric field
+along the whole edge, marked in red, and the unknown attached to a face is the flux of the magnetic field
+through that face, marked in blue on the shaded top face. Neither mark is a point sample: the red arrow stands
+for a definite integral along an edge, and the blue arrow gives the direction of a surface normal, nothing
+more.}
+\label{fig:hiw:brick}
+\end{figure}
+
+\subsection{What lives on an edge, and what lives on a face}\label{sec:hiw:dofs}
+
+The unknown we store on an edge is not the electric field at some point of that edge. It is the line integral of
+the electric field along the edge,
+\begin{equation}
+  e_i = \int_{L_i} \vec E \cdot \mathrm{d}\vec l ,
+  \label{eq:hiw-e}
+\end{equation}
+in volts, and the unknown we store on a face is the surface integral of the magnetic flux density through it,
+\begin{equation}
+  b_j = \iint_{A_j} \vec B \cdot \mathrm{d}\vec A ,
+  \label{eq:hiw-b}
+\end{equation}
+in webers. These two choices are the heart of the method, and they are not a convenience adopted to make the
+algebra tidy.
+
+Faraday's law is a statement about a loop and the surface the loop bounds; Ampere's law is a statement about a
+loop and the surface that pierces it. If the unknowns are the integrals those laws are written in terms of,
+then each law becomes a relation between unknowns with nothing in between: no quadrature, no interpolation, no
+Taylor expansion, no assumption that the field is smooth across a brick. Note what the first equation is not. It
+is not a point value of $E$ multiplied by a length; $E$ may vary arbitrarily along the edge and the integral
+still means exactly what it says. The single number $e_i$ is all the solver ever knows about the field on that
+edge, and on a given mesh it is all the solver needs.
+
+There is a practical argument for the same choice. A voltmeter returns a line integral, and a loop of wire
+returns the rate of change of a flux through a surface, so the quantities a measurement hands us are the
+quantities stored here. A point value would be an interpolant, manufactured from the integrals whenever a plot
+wanted one; the solver itself never needs it, because it goes from edge integrals to face integrals and back to
+edge integrals without ever evaluating $E$ at a point. When we do draw a field map, the interpolation happens in
+the plotting code, where it can be seen for what it is.
+
+The two sets of unknowns do not share a home. The $e$ unknowns live on the edges, which form one lattice; the
+$b$ unknowns live at the face centres, which form a second lattice displaced by half a brick in each of the
+three directions. In two dimensions this is exactly the staggered grid of elementary finite-difference practice,
+and Figure~\ref{fig:hiw:staggered} draws the two lattices on the same patch. Nothing is collocated: no $e$ and
+no $b$ occupy the same location, and no two unknowns of any kind sit at the same point. This is a feature and
+not an accident of implementation. The offset is what allows a difference of two neighbouring values to stand
+for a derivative without ever pretending that two quantities defined at the same place can differ.
+
+The offset also makes boundary conditions answerable. A perfect electric conductor is a set of marked faces, the
+tangential electric field vanishes on those faces, and in these unknowns that is four numbers set to zero -- a
+statement about a loop which is true by construction and needs no extrapolation from the interior.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  \def\s{0.8}
+  % (a) the primal lattice and its edge unknowns
+  \foreach \i in {0,...,4}{
+    \draw[primal] ({\i*\s},0) -- ({\i*\s},{4*\s});
+    \draw[primal] (0,{\i*\s}) -- ({4*\s},{\i*\s});
+  }
+  \foreach \j in {0,...,4}{
+    \foreach \i in {0,...,3}{
+      \node[edot] at ({(\i+0.5)*\s},{\j*\s}) {};
+      \node[edot] at ({\j*\s},{(\i+0.5)*\s}) {};
+    }
+  }
+  \draw[edof] ({1.1*\s},{1*\s}) -- ({1.9*\s},{1*\s});
+  \draw[edof] ({2*\s},{1.1*\s}) -- ({2*\s},{1.9*\s});
+  \draw[edof] ({1.9*\s},{2*\s}) -- ({1.1*\s},{2*\s});
+  \draw[edof] ({1*\s},{1.9*\s}) -- ({1*\s},{1.1*\s});
+  \node[lbl, anchor=north] at ({2*\s},-0.18) {(a) primal lattice: $e$ on every edge};
+  % separator
+  \draw[mesh thin] (4.0,-0.35) -- (4.0,{4*\s+0.05});
+  % (b) the dual lattice, shifted by half a cell
+  \begin{scope}[xshift=4.8cm]
+    \foreach \i in {0,...,3}{
+      \draw[dual] ({(\i+0.5)*\s},{0.5*\s}) -- ({(\i+0.5)*\s},{3.5*\s});
+      \draw[dual] ({0.5*\s},{(\i+0.5)*\s}) -- ({3.5*\s},{(\i+0.5)*\s});
+    }
+    \foreach \j in {0,...,3}{
+      \foreach \i in {0,...,3}{
+        \node[bdot] at ({(\i+0.5)*\s},{(\j+0.5)*\s}) {};
+      }
+    }
+    \draw[dual] ({1.5*\s},{2.5*\s}) circle (3.6pt);
+    \node[bdot] at ({1.5*\s},{2.5*\s}) {};
+    \node[lbl, anchor=north] at ({2*\s},-0.18) {(b) dual lattice: $b$ on every face};
+    \node[lbl, anchor=north] at ({2*\s},-0.62) {ringed dot: normal out of the page};
+  \end{scope}
+\end{tikzpicture}
+\caption{The two lattices in two dimensions, on the same four-by-four patch and at the same scale. In (a) the
+primal lattice carries the field on every edge: the arrows are drawn on the edges of one cell and the dots sit
+at the midpoints of all of them. In (b) the dual lattice, displaced by half a cell, carries the flux at the
+centre of every face, one of which is ringed to show its normal pointing out of the page. The thing to look at
+is that no red dot and no blue dot coincides.}
+\label{fig:hiw:staggered}
+\end{figure}
+
+\subsection{The matrix whose entries are only ever plus one, minus one, or zero}\label{sec:hiw:curl}
+
+Take one face of one brick and the four edges that bound it. Faraday's law for that face, written in the
+integrals we have chosen, reads
+\begin{equation}
+  e_1 + e_2 + e_3 + e_4 = -\frac{\mathrm{d}}{\mathrm{d}t} \, b ,
+  \label{eq:hiw-faraday-face}
+\end{equation}
+where the left-hand side is the circulation of $\vec E$ round the loop provided each $e_i$ is taken in the sense
+in which the loop is traversed. Each edge of the mesh has a positive direction fixed once and for all by the
+grid axes, so an edge whose stored direction agrees with the traversal contributes $+e_i$ and an edge that runs
+against it contributes $-e_i$. That is the entire origin of the signs in this method. A sign is either right or
+wrong; there is no third possibility for it to approximate.
+
+Now do it for every face at once. Collect the edge unknowns into a column vector $\mathbf{e}$, one entry per
+edge, and the face unknowns into a column vector $\mathbf{b}$, one entry per face. Each of the equations above
+is a sum of a few entries of $\mathbf{e}$ with signs, and a sum of that kind is one row of a matrix multiplying
+$\mathbf{e}$. The matrix is $\Cmat$: one row per face, one column per edge, with
+\begin{equation}
+  \Cmat_{ji} =
+  \begin{cases}
+    +1 & \text{edge $i$ bounds face $j$ and runs with its orientation,}\\
+    -1 & \text{edge $i$ bounds face $j$ and runs against it,}\\
+     0 & \text{edge $i$ does not bound face $j$,}
+  \end{cases}
+  \label{eq:hiw-C}
+\end{equation}
+and the whole of Faraday's law, for every face simultaneously, is the single equation
+\begin{equation}
+  \Cmat \mathbf{e} = -\frac{\mathrm{d}}{\mathrm{d}t}\,\mathbf{b} .
+  \label{eq:hiw-faraday}
+\end{equation}
+Nothing has been truncated on the way to this line. It is the discrete statement, not a discretisation of one.
+
+Ampere's law uses the same matrix read the other way,
+\begin{equation}
+  \Cmat^{\!\top} \mathbf{h} = \frac{\mathrm{d}}{\mathrm{d}t}\,\mathbf{d} + \mathbf{j} ,
+  \label{eq:hiw-ampere}
+\end{equation}
+with $\mathbf{h}$ on the dual edges that pierce the primal faces, $\mathbf{d}$ on the dual faces that cross the
+primal edges, and $\mathbf{j}$ the current through those dual faces. The transpose is not a second operator that
+happens to look similar. It is the same incidence counted from the other side, because the two complexes
+interlace: a dual edge pierces a primal face, and the four dual faces that cross the primal edges bounding that
+face are exactly the dual faces which that dual edge bounds. The set of incidences is one set, and the entries
+of $\Cmat^{\top}$ are the entries of $\Cmat$ -- still $\pm 1$, still zero.
+
+Everything now follows from the sparsity pattern, and this is where the method earns its keep. Write $\Gmat$ for
+the matrix that takes values at the vertices to differences along the edges; its entries are also only $\pm 1$
+or $0$. Go round any closed loop of edges: each vertex is entered once and left once, so each vertex value is
+added once and subtracted once, and the sum telescopes to nothing. Therefore
+\begin{equation}
+  \Cmat \Gmat = \mathbf{0} \qquad \text{and, one complex over,} \qquad \Smat \Cmat = \mathbf{0} ,
+  \label{eq:hiw-identities}
+\end{equation}
+identically, for any mesh, with no remainder and no error term. These are the discrete curl-grad and div-curl
+identities, and they are properties of the matrices rather than statements that become truer as the mesh is
+refined. \emph{The topology is exact; the only approximation is the material.} The material is where the
+approximation lives because the constitutive relations are the only place where a continuum has to be replaced
+by a number: the entries of the material matrices are averages over a brick, and an average is a judgement about
+a shape that the mesh resolves only coarsely.
+
+The consequences are not separate results, they are that same sentence said three ways. The discrete energy
+identity holds term by term rather than to within a truncation error, because the work done by the curl term
+telescopes across the mesh exactly; in a lossless cavity the measured relative drift of the discrete energy is
+at the level of $10^{-15}$, which is round-off and nothing else, as reported in Section~\ref{sec:energy}. The
+cavity eigenvalues converge at second order, with a measured rate of $0.507$ against a predicted $0.510$ in
+Section~\ref{sec:eigen}. We refer to those sections rather than repeat them, because the point being made here
+is the shape of the argument: exact algebra, an error that can only enter through the material numbers, and a
+convergence rate that follows.
+
+It is fair to ask what all this buys, since on a Cartesian mesh the arithmetic that comes out is the arithmetic
+Yee wrote down in 1966 -- the same neighbours, the same stencil, later the same leapfrog update. If a stencil
+were all that was wanted, the finite-difference reading would have got there first and more cheaply. What the
+integral derivation buys is meaning. Each unknown is a definite physical quantity with a unit attached, so a
+boundary condition is a statement about a surface or a loop rather than about the first row of a stencil, and
+averaging a material over a brick is a well-posed question with a right answer rather than an accident of which
+point the stencil happened to sample. And the algebra survives a change of mesh shape: the same incidence
+matrices, with the same identities, describe distorted or non-orthogonal cells, and only the material matrices
+change. The finite-difference reading has no such continuation, because its stencil was written for a Cartesian
+grid in the first place.
+
+\begin{figure}[htbp]
+\centering
+\begin{minipage}[c]{0.50\linewidth}
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  \draw[face] (0,0) -- (3.0,0) -- (3.6,2.0) -- (0.6,2.0) -- cycle;
+  \draw[primal] (0,0) -- (3.0,0) -- (3.6,2.0) -- (0.6,2.0) -- cycle;
+  \draw[edof] (0.2,0) -- (2.8,0);
+  \draw[edof] (3.057,0.192) -- (3.543,1.808);
+  \draw[edof] (3.4,2.0) -- (0.8,2.0);
+  \draw[edof] (0.543,1.808) -- (0.057,0.192);
+  \node[lbl, anchor=north] at (1.5,-0.12) {$e_1$};
+  \node[lbl, anchor=west]  at (3.68,1.0) {$e_2$};
+  \node[lbl, anchor=south] at (2.1,2.12) {$e_3$};
+  \node[lbl, anchor=east]  at (0.02,1.0) {$e_4$};
+  \draw[dual] (1.8,1.0) circle (3.6pt);
+  \node[bdot] at (1.8,1.0) {};
+  \node[lbl, anchor=south west] at (1.95,1.12) {$\vec n$ out of the page};
+  \node[callout, anchor=north] at (1.8,-0.75) {fingers with the arrows, thumb along $\vec n$};
+\end{tikzpicture}
+\end{minipage}\hfill
+\begin{minipage}[c]{0.46\linewidth}
+\centering
+{\small
+\[
+\begin{bmatrix} +1 & +1 & -1 & -1 \end{bmatrix}
+\begin{bmatrix} e_1 \\ e_2 \\ e_3 \\ e_4 \end{bmatrix}
+= \oint_{\partial A} \vec E \cdot \mathrm{d}\vec l
+\]}
+{\footnotesize the four non-zeros of one row of $\Cmat$; every other column is zero.\par}
+\end{minipage}
+\caption{One face of a brick and the four edges that bound it, traversed anticlockwise as seen from the tip of
+the normal. Faraday's law for this face is the scalar equation above: the four edge integrals added in the sense
+of the arrows equal minus the rate of change of the flux through the face. Because each edge has a positive
+direction fixed by the grid axes, two of the four run against their stored sense and enter with a minus sign,
+and the row of $\Cmat$ beside the picture records that pattern. Reading the row against the edge vector
+reproduces the circulation; stacking one row per face gives the matrix equation in the text.}
+\label{fig:hiw:faraday}
+\end{figure}
+
+The three subsections above are the whole of the discretisation, and Figure~\ref{fig:hiw:sequence} puts them
+into a single line. The entities form a chain -- vertices, edges, faces, cells -- and the operators run along it:
+the gradient takes vertex values to differences along the edges, the curl takes edge integrals to face fluxes,
+the divergence takes face fluxes to the net outflow from a cell. Every arrow in that chain is exact, in the sense
+that its image is precisely the kernel of the next one; that is what the two identities assert, and each arrow is
+a matrix whose entries are $+1$, $-1$ or $0$ and nothing else. That is the claim the rest of this report leans
+on, and it is a claim about incidence rather than about resolution.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  \node[callout] (nd) at (0,0) {nodes $\approx N$};
+  \node[callout] (ed) at (3.3,0) {edges $\approx 3N$};
+  \node[callout] (fd) at (6.6,0) {faces $\approx 3N$};
+  \node[callout] (cd) at (9.9,0) {cells $N$};
+  \draw[oparrow] (nd.east) -- (ed.west);
+  \draw[oparrow] (ed.east) -- (fd.west);
+  \draw[oparrow] (fd.east) -- (cd.west);
+  \node[lbl, anchor=south] at (1.5,0.10) {$\Gmat$: grad};
+  \node[lbl, anchor=south] at (4.8,0.10) {$\Cmat$: curl};
+  \node[lbl, anchor=south] at (8.1,0.10) {$\Smat$: div};
+  \draw[oparrow] ($(nd.south)+(0,-0.05)$) .. controls ($(nd.south)+(0,-1.1)$) and ($(fd.south)+(0,-1.1)$) .. ($(fd.south)+(0,-0.05)$);
+  \node[lbl, anchor=north] at (3.3,-1.05) {$\Cmat\Gmat=\mathbf{0}$: the loop telescopes};
+  \draw[oparrow] ($(ed.south)+(0,-0.05)$) .. controls ($(ed.south)+(0,-2.0)$) and ($(cd.south)+(0,-2.0)$) .. ($(cd.south)+(0,-0.05)$);
+  \node[lbl, anchor=north] at (6.6,-1.95) {$\Smat\Cmat=\mathbf{0}$: nothing leaks out of a closed surface};
+\end{tikzpicture}
+\caption{The chain of entities and the three operators that run along it, each with its matrix. The two
+compositions underneath vanish identically. Read the picture as a statement about incidence and nothing else:
+the loop integral of a gradient telescopes edge by edge, and the net flux of a curl out of a closed surface is
+zero, for every mesh, because of what bounds what -- not because the mesh is fine.}
+\label{fig:hiw:sequence}
+\end{figure}
+
+\subsection{Marching in time}\label{sec:hiw:leapfrog}
+
+The two matrix equations have a property that is easy to miss and is the reason this is a time-domain method at
+all. Faraday's law gives the rate of change of the face fluxes from the edge voltages and from nothing else;
+Ampere's law gives the rate of change of the edge voltages from the face fluxes and the currents and from nothing
+else. Each equation needs only the other family. So the two can be advanced in alternation: from the voltages at
+one instant we update the fluxes, and from the updated fluxes we update the voltages. Neither half requires the
+solution of a linear system, because the material matrices are diagonal, so every update is a division by a
+number per unknown rather than an inversion of a matrix.
+
+This is the trade the whole method makes, and it is worth naming the other side of it. A frequency-domain solver
+inverts a large sparse matrix once per frequency and then has the whole spectrum; marching in time pays nothing
+per step but must be run until the transient is over. What the time-domain route buys is the two things an
+engineer usually wants from a structure of this kind: the response at every frequency at once, from one run, and
+a field that can be watched while it evolves.
+
+Written out, with $\mathbf{h}$ the magnetic field on the dual edges, $\mathbf{j}$ the current, and $\Delta t$ the
+step,
+\begin{equation}
+  \begin{aligned}
+    \mathbf{h}^{n+1/2} &= \mathbf{h}^{n-1/2} - \frac{\Delta t}{\mu}\,\Cmat\,\mathbf{e}^{n},\\
+    \mathbf{e}^{n+1} &= \mathbf{e}^{n} + \frac{\Delta t}{\eps}\left(\Cmat^{\!\top}\mathbf{h}^{n+1/2}
+       - \mathbf{j}^{n+1/2}\right).
+  \end{aligned}
+  \label{eq:hiw-leapfrog}
+\end{equation}
+The two families are offset by half a step -- the $\mathbf{h}$ values sit at $n\pm 1/2$ and the $\mathbf{e}$
+values at $n$ -- which is where the name leapfrog comes from, and no unknown is ever updated from itself. That
+is what keeps the scheme explicit and the storage down to two vectors per family.
+
+The order of accuracy is second in time and second in space: halve the step and the brick and the error falls by
+a factor of four. That is a statement about the method, and it is the reason the time step and the mesh have to
+be refined together if the accuracy is to mean anything.
+
+The step is not free. It is limited by the time light takes to cross the smallest brick, and in three dimensions
+it is the diagonal of the brick that matters,
+\begin{equation}
+  \Delta t < \frac{\Delta x}{c\sqrt{3}} .
+  \label{eq:hiw-courant}
+\end{equation}
+This bound is sharp, and it is worth being precise about how sharp. Measured on the implementation here, a run at
+$1.01$ times the limit was stable and a run at $1.02$ times the limit diverged; Figure~\ref{fig:hiw:courant}
+marks the two. Sharpness is a physical statement, not a numerical curiosity: below the bound the scheme does not
+merely fail to blow up, it passes energy around consistently, one brick at a time; above it the update amplifies
+what it is given and the field grows without bound.
+
+The cost then follows by arithmetic rather than by measurement. In three dimensions, halving the brick gives
+eight times the unknowns and halves the time step, so sixteen times the work per unit of simulated time. That is
+the honest reason a method of this kind is used for one-off transient problems and for structures of a few
+wavelengths, and not inside optimisation loops.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  \node[edot] (e1) at (2.0,1.0) {};
+  \node[edot] (e2) at (4.4,1.0) {};
+  \node[edot] (e3) at (6.8,1.0) {};
+  \node[lbl, anchor=south] at (2.0,1.12) {$\mathbf{e}^{n-1}$};
+  \node[lbl, anchor=south] at (4.4,1.12) {$\mathbf{e}^{n}$};
+  \node[lbl, anchor=south] at (6.8,1.12) {$\mathbf{e}^{n+1}$};
+  \node[bdot] (h1) at (3.2,0) {};
+  \node[bdot] (h2) at (5.6,0) {};
+  \node[lbl, anchor=north] at (3.2,-0.12) {$\mathbf{h}^{n-1/2}$};
+  \node[lbl, anchor=north] at (5.6,-0.12) {$\mathbf{h}^{n+1/2}$};
+  \draw[oparrow] (e1) -- (h1);
+  \draw[oparrow] (h1) -- (e2);
+  \draw[oparrow] (e2) -- (h2);
+  \draw[oparrow] (h2) -- (e3);
+  \node[lbl, anchor=east] at (1.35,1.0) {primal edges};
+  \node[lbl, anchor=east] at (2.55,0) {dual edges};
+  \draw[oparrow] (1.4,-1.05) -- (7.9,-1.05);
+  \node[lbl, anchor=west] at (7.95,-1.05) {$t$};
+  \node[lbl, anchor=west] at (1.4,-1.75) {$\mathbf{h}^{n+1/2}=\mathbf{h}^{n-1/2}-\frac{\Delta t}{\mu}\,\Cmat\,\mathbf{e}^{n}$};
+  \node[lbl, anchor=west] at (1.4,-2.45) {$\mathbf{e}^{n+1}=\mathbf{e}^{n}+\frac{\Delta t}{\eps}\left(\Cmat^{\!\top}\mathbf{h}^{n+1/2}-\mathbf{j}^{n+1/2}\right)$};
+\end{tikzpicture}
+\caption{The two families on a time axis. The magnetic field sits at half-integer levels, the electric field at
+integer ones, and each staircase arrow consumes only the other family: no arrow starts and ends in the same row.
+Read the figure as the reason the update is explicit -- there is never a moment at which an unknown is asked for
+its own future value.}
+\label{fig:hiw:leapfrog}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+\begin{axis}[
+  width=0.85\linewidth, height=0.18\linewidth,
+  xmin=0, xmax=1.25, ymin=0, ymax=1,
+  hide y axis, axis y line=none, ytick=\empty,
+  xlabel={$\Delta t\,/\,(\Delta x/(c\sqrt{3}))$},
+  tick label style={font=\scriptsize}, label style={font=\small},
+  axis line style={draw=black!70}, tick style={draw=black!70},
+  enlargelimits=false, clip=false,
+]
+  \fill[softgrey] (axis cs:0,0) rectangle (axis cs:1,1);
+  \node[lbl] at (axis cs:0.42,0.5) {stable};
+  \node[lbl, anchor=west] at (axis cs:1.04,0.5) {divergent};
+  \draw[ref line] (axis cs:1,0) -- (axis cs:1,1);
+  \addplot[only marks, mark=*, mark size=2.2pt, draw=efield, fill=efield]
+    coordinates {(1.01,0.25) (1.02,0.75)};
+  \node[lbl, anchor=west, font=\scriptsize] at (axis cs:1.04,0.25) {stable};
+  \node[lbl, anchor=west, font=\scriptsize] at (axis cs:1.04,0.75) {diverged};
+\end{axis}
+\end{tikzpicture}
+\caption{The stability bound as a hard edge rather than a rule of thumb. Everything to the left of the dotted
+line is stable and nothing to the right of it is, as the two marks show: the time step that was stable sat at
+$1.01$ times the limit and the next one, at $1.02$ times, diverged. There is no gradual degradation to trade
+against -- the scheme either passes energy around consistently or it amplifies.}
+\label{fig:hiw:courant}
+\end{figure}
+
+\subsection{What the machine is allowed to get wrong}\label{sec:hiw:materials}
+
+The material enters the discrete problem through exactly two maps, $\mathbf{d}=\Em\mathbf{e}$ and
+$\mathbf{b}=\Mm\mathbf{h}$, and nothing else. For a uniform material filling the whole box both matrices are
+diagonal, and the update stays a division per unknown. Their entries are not simply the material constant,
+however. In the diagonal case each entry carries the permittivity of its brick multiplied by a geometric factor,
+the ratio of a face area to an edge length -- the cross-section of the dual cell to its length. That factor is
+why a coarse mesh is wrong by a finite amount and a fine mesh converges: the material map is where the mesh
+resolution actually enters the answer, and it is the only place it does.
+
+An interface is where the difficulty sits. Put a brick of substrate against a brick of air and the edges lying in
+the shared face belong to both; the discrete problem has one number to give each of them and they must be given
+an average. Which average is a modelling decision, not a consequence of Maxwell's equations, and the choice is
+visible in the result: two rules give answers that differ by amounts which do not shrink as the mesh is refined
+unless the rule is the right one. The discontinuity in Figure~\ref{fig:hiw:interface} is real; the single value
+the grid hands to an edge straddling it is a decision we make on the reader's behalf and should declare.
+
+\emph{Every other ingredient on these pages is exact topology, and this is the only place where the discrete
+problem is not the continuum problem.} Refining the mesh converges to the answer implied by the averaging rule
+one has chosen, which is not necessarily the answer to Maxwell's equations.
+
+That is not a technicality to be filed away. It is the question the later sections keep having to ask about
+boxes and boundaries: the microstrip work in Section~\ref{sec:microstrip} cannot report a number without saying
+what it did at the conductor edge, and the reference box in Section~\ref{sec:msres} is an attempt to make the
+consequence of that choice measurable rather than assumed.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  \draw[brick] (0,0) rectangle (2,1.6);
+  \node[lbl] at (1,0.8) {substrate, $\eps_r$};
+  \draw[mesh] (2,0) rectangle (4,1.6);
+  \node[lbl] at (3,0.8) {air};
+  \draw[mesh] (2,1.6) rectangle (4,3.2);
+  \node[lbl] at (3,2.4) {air};
+  \fill[face] (1.92,0) rectangle (2.08,3.2);
+  \draw[edof] (2,0.38) -- (2,1.22);
+  \node[edot] at (2,0.8) {};
+  \node[callout, anchor=south] at (2,3.55) {one number must be chosen here};
+  \draw[oparrow] (2,3.42) -- (2,3.12);
+  % inset: eps against z across the interface
+  \draw[mesh] (5.3,0.5) -- (5.3,2.4);
+  \draw[mesh] (5.3,0.5) -- (8.0,0.5);
+  \node[lbl, anchor=east] at (5.2,2.35) {$\eps_r$};
+  \node[lbl, anchor=west] at (8.05,0.42) {$z$};
+  \draw[primal] (5.5,2.0) -- (6.3,2.0) -- (6.3,0.95) -- (7.8,0.95);
+  \draw[edof] (5.95,1.5) -- (6.65,1.5);
+  \node[lbl, anchor=west] at (6.75,1.45) {what the edge receives};
+\end{tikzpicture}
+\caption{A cross-section through three bricks with a substrate on the left and air on the right and above, and
+the edge that lies in the interface picked out in red. The grid has exactly one number to hand that edge, drawn
+as the dashed horizontal value in the inset, while the permittivity it is trying to represent jumps. Everything
+that can be wrong in this method is in this picture; nothing in the topological half of it can be.}
+\label{fig:hiw:interface}
+\end{figure}
+
+\subsection{Driving it: what a source is}\label{sec:hiw:source}
+
+A source is nothing more than a current term. The update displayed in Section~\ref{sec:hiw:leapfrog} advances
+the electric field from a curl of the magnetic field plus a current on the same edges, and the term
+$\mathbf{j}^{n+1/2}$ in it is the whole of the mathematics. There is no excitation module, no injection
+operator and no port object in the discrete problem: whatever launches a wave -- a feed, a line port, a plane
+wave introduced through a total-field boundary -- arrives in the update as a current on a set of edges or, in
+the dual update, as a magnetic current on a set of faces. The physics does not care which notation was used to
+write that current down. The numbers do, because the two obvious ways of adding it behave differently towards
+what comes back.
+
+The first way is a hard source: overwrite the unknown on the driven edges with a prescribed value at every
+step, so that the value on them is what was said and not what the neighbours computed. It is the shortest thing
+to write in a test and it is a lie about the physics. An edge whose value is dictated cannot respond to the
+field around it, and a tangential electric field held fixed at every instant is the boundary condition of a
+perfect conductor by definition. The driven edge is a metal wall of our choosing: it radiates, which is why the
+lie is easy to live with and why the run looks like a wave leaving a source, and it reflects everything that
+returns to it. Use it to check a code against a closed-form answer -- the prescribed value is then a function
+whose analytic field is already known -- and never to measure a device.
+
+The second way is a soft source: add the current and leave the update alone. The value on the driven edge is
+still computed from its neighbours; the current is one more term in the sum that produces it. The edge
+therefore still obeys Maxwell, still feels the field that comes back to it, and is pushed back on by the wave
+it launched. The consequence that matters is this: a soft source has an impedance, and it does not absorb what
+comes back. Whatever travels back through the driven edge is reflected by it a second time, in phase or out of
+it depending on that impedance, and re-radiated. A run driven by a soft source inside a closed test window
+contains a standing wave by construction -- not because the solver is wrong, but because the source is in the
+box with the wave.
+
+Figure~\ref{fig:hiw:hardsoft} draws the two side by side. Neither behaviour is a defect to be repaired: it is
+what the words ``driven by a source at this point'' mean. It does mean two things have to be declared wherever
+a trace is shown, namely which of the two ways was used and where the source sat relative to every surface the
+wave could return from. Section~\ref{sec:sp-definition} is where the same difficulty reappears in the language
+of measurement: a scattering parameter is defined only when the incident wave is the only one arriving at the
+port, and the terminations and reference planes are what make that true.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % ---------------- (a) hard source ----------------
+  \draw[mesh thin] (0.05,0.2) -- (0.05,2.4);
+  \draw[edof] (1.9,0.3) -- (1.9,2.3);
+  \node[edot] at (1.9,1.3) {};
+  \node[lbl, anchor=west] at (2.05,2.15) {$e=\mathrm{fixed}$};
+  \draw[edof] (0.4,1.3) -- (1.78,1.3);
+  \node[lbl, anchor=south] at (1.05,1.38) {prescribed};
+  \draw[meshgrey, line width=0.7pt, -{Stealth[length=2.6pt]}] (1.8,0.8) -- (0.55,0.8);
+  \node[lbl, anchor=north] at (1.18,0.68) {reflected};
+  \draw[mesh, densely dotted] (2.45,1.75) .. controls (2.15,1.6) .. (1.95,1.32);
+  \node[lbl, anchor=west] at (2.05,1.78) {nothing crosses};
+  \node[lbl, anchor=north] at (1.55,-0.1) {(a) hard: the wall dictates};
+  % ---------------- (b) soft source ----------------
+  \draw[mesh thin] (5.75,0.2) -- (5.75,2.4);
+  \fill[face] (6.85,1.0) rectangle (7.45,1.7);
+  \draw[edof] (7.15,0.85) -- (7.15,1.95);
+  \node[lbl, anchor=west] at (7.3,2.0) {$\mathbf{j}$};
+  \draw[harrow] (7.6,1.95) -- (9.6,1.95);
+  \node[lbl, anchor=south] at (8.55,2.02) {launched};
+  \draw[meshgrey, line width=0.7pt, -{Stealth[length=2.6pt]}] (9.55,0.75) -- (5.85,0.75);
+  \node[lbl, anchor=north] at (8.3,0.63) {returns, and passes through};
+  \node[callout, align=center, anchor=north] at (7.8,-0.1)
+    {the source has an impedance;\\it does not absorb what comes back};
+  \node[lbl, anchor=north] at (7.15,-1.15) {(b) soft: the source participates};
+\end{tikzpicture}
+\caption{The two ways of putting current into the update, drawn on the same edge. In (a) the value is
+prescribed, so the edge is a metal wall: the field behind it cannot reach the unknown and what returns is
+reflected. In (b) the current is added and the edge computes its own value, so the charge on it obeys its own
+update and the returning wave passes through the source and continues rather than bouncing off it.}\label{fig:hiw:hardsoft}
+\end{figure}
+
+\subsection{Walls: what a box does to a wave}\label{sec:hiw:walls}
+
+Every calculation in this report happens in a box, and a box has walls. A wall is a modelling decision of
+exactly the same standing as the material average of Section~\ref{sec:hiw:materials}: the physics that comes
+out is the physics of the box that was chosen, and a box is not free space. The walls are not a wrapper around
+the real problem, added for the convenience of the solver; they are part of the problem, and a number taken
+inside them is a number about the box as much as about the device.
+
+Three kinds of wall are used, and each is worth stating twice -- once as what it does to the fields at the
+wall, once as what it does to a wave arriving normally.
+
+A perfect electric conductor sets the tangential electric field to zero. Nothing penetrates it, the surface
+carries a current sheet, and the wave is reflected entirely with coefficient $\Gamma=-1$: the electric field of
+the reflected wave points opposite to that of the incident one. A box lined with these is a cavity, so its
+spectrum is discrete rather than continuous. On the grid the wall is the cheapest object there is: set the
+tangential edges that lie on it to zero and never update them.
+
+A perfect magnetic conductor sets the tangential magnetic field to zero instead. It is an open circuit rather
+than a short, $\Gamma=+1$, and the electric field comes back in phase. No material is a magnetic wall at
+microwave frequencies, and precisely that is what makes one useful. A structure symmetric about a plane can be
+cut in half and the plane replaced by a wall -- which of the two walls it becomes depends only on whether the
+drive is symmetric or antisymmetric about that plane. The full answer is then the half answer continued
+across, at half the cost, and the wall is exact rather than approximate, because it encodes a symmetry of the
+problem and not a property of any material.
+
+A perfectly matched layer is not a boundary condition at all. It is a region of artificial loss, ideally
+reflectionless, made by continuing the coordinates into the complex plane -- a complex coordinate stretch. The
+reason it works is that a wave travelling in a coordinate with an imaginary part is attenuated while its
+wavelength is unchanged, and because the stretch carries no frequency of its own the match is not tuned to a
+band: it holds for whatever arrives, and the reflection does not grow as the layer is approached from any
+angle. What the code implements is a conductivity profile whose strength ramps up over a few cells, with the
+electric and magnetic losses held in the ratio that preserves the impedance of the medium; that ratio, not the
+shape of the profile, is what does the matching.
+
+A layer is only as good as its profile and its thickness, and both are choices rather than consequences. The
+ramp in this work spans ten cells, which sits at the thin end of what is usual -- practice is commonly ten to
+twenty -- and the thickness of the layer has never been swept here. That sentence is a statement about what has
+not been measured, not about something known to be wrong, and it is the honest reason a wall reflection is
+worth looking for in every trace.
+
+Which is the practical point of this subsection. A wall reflection does not look like a phase error. It looks
+like a standing wave: a ripple in the amplitude, with a period set by a length in the box rather than by
+anything in the device, and it moves if the wall moves. A phase offset, by contrast, is a property of a
+reference plane and travels with it. The diagnostic therefore needs no model at all -- if a curve ripples at a
+period that matches a distance to a wall, the wall is talking, and the answer is a thicker layer or a farther
+wall rather than a better description of the device. Figure~\ref{fig:hiw:walls} sets the three walls beside
+one another; only the third returns nothing, and only the third is an approximation.
+
+The formal treatment of the absorbing layer, its profile and the reflection it is measured to achieve, is in
+Section~\ref{sec:res-pml}; the one-way condition it is compared against throughout is in
+Section~\ref{sec:res-abc}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % ---------------- PEC ----------------
+  \draw[edof] (0.25,1.5) -- (2.15,1.5);
+  \node[lbl, anchor=south] at (1.15,1.58) {incident};
+  \fill[pattern=north east lines, pattern color=black!50] (2.25,0.15) rectangle (2.5,2.4);
+  \draw[primal] (2.25,0.15) -- (2.25,2.4);
+  \draw[edof] (2.1,0.85) -- (0.35,0.85);
+  \node[lbl, anchor=north] at (1.2,0.72) {reflected, $\mathbf{E}$ reversed};
+  \node[lbl, anchor=west] at (0.2,2.6) {$\hat{n}\times\mathbf{E}=0$};
+  \node[lbl] at (1.4,-0.3) {$\Gamma=-1$};
+  \node[lbl, anchor=south] at (1.4,3.05) {PEC};
+  % ---------------- PMC ----------------
+  \draw[edof] (4.05,1.5) -- (5.95,1.5);
+  \node[lbl, anchor=south] at (4.95,1.58) {incident};
+  \draw[dual] (6.05,0.15) -- (6.05,2.4);
+  \node[lbl, anchor=west, align=left] at (6.12,2.1) {magnetic\\wall};
+  \draw[edof] (5.9,0.85) -- (4.15,0.85);
+  \node[lbl, anchor=north] at (5.0,0.72) {reflected, in phase};
+  \node[lbl, anchor=west] at (4.0,2.6) {$\hat{n}\times\mathbf{H}=0$};
+  \node[lbl] at (5.2,-0.3) {$\Gamma=+1$};
+  \node[lbl, anchor=south] at (5.2,3.05) {PMC};
+  % ---------------- PML ----------------
+  \draw[edof] (7.95,1.5) -- (9.35,1.5);
+  \node[lbl, anchor=south] at (8.55,1.58) {incident};
+  \shade[left color=softgrey, right color=white] (9.45,0.15) rectangle (10.75,2.4);
+  \draw[mesh] (9.45,0.15) rectangle (10.75,2.4);
+  \draw[edof, dash pattern=on 2pt off 1.6pt] (9.5,1.5) -- (10.6,1.5);
+  \node[lbl, anchor=west] at (7.85,2.6) {coordinate stretch};
+  \node[lbl] at (9.5,-0.3) {$\Gamma\approx 0$};
+  \node[lbl, anchor=south] at (9.5,3.05) {PML};
+  \node[callout, align=center, anchor=north] at (10.1,-0.7) {ramp over\\a few cells};
+  \draw[oparrow] (10.1,-0.68) -- (10.1,-0.05);
+\end{tikzpicture}
+\caption{Three walls and one wave arriving at each. The conductor reverses the electric field, the magnetic
+wall returns it in phase, and the lossy ramp sends it into a coordinate that has an imaginary part and brings
+nothing back. The first two are exact and visible in the answer; the third is the only one intended to be
+invisible, and it is the only one that is an approximation.}\label{fig:hiw:walls}
+\end{figure}
+
+
+\subsection{Reading a number out: ports}\label{sec:hiw:ports}
+
+A port is the place where it is decided what went in and what came out. There are two waves at a port, one
+travelling in and one travelling out, and the measurement is the ratio of their amplitudes. Everything about
+whether a number is quotable comes down to one question: can the port separate those two waves? If it cannot,
+the ratio it reports is a mixture, and no amount of solver accuracy repairs a mixture.
+
+The cheap construction is the lumped gap port. Leave a gap in the conductor, drive a current across it, read
+the voltage as one line integral of the electric field across the gap -- a single edge -- and the current as
+one loop integral of the magnetic field around the strip at that plane -- a single face loop. The impedance is
+their ratio, $Z=V/I$, as drawn in Figure~\ref{fig:hiw:lumpedport}. This is a real measurement of the actual
+fields at that plane, taken on the same unknowns the update produces; nothing is interpolated, fitted or
+invented, and there is no hidden model between the field and the number.
+
+It is not yet a scattering parameter, and the reason is intrinsic rather than numerical. $V$ and $I$ are two
+different integrals over two different objects, an edge and a face loop, and their ratio equals the impedance
+of a mode only if the field across the gap has exactly the transverse profile of that mode. A gap does not
+excite a single profile. It excites a mixture, and the mixture evolves as it propagates: the components travel
+at their own velocities and disperse, so the profile at the gap plane keeps changing, and it changes in
+response to whatever comes back through it. $V/I$ therefore drifts as the profile evolves, and the drift is
+contaminated by every other thing present at that plane, including whatever the box returns. That is a
+statement about the port, not about the solver. The number is honest; it is simply not the number the device
+is being asked about.
+
+The construction that does give a scattering parameter is the modal port. Take the known transverse profile of
+the mode, project the computed field at the port plane onto it -- a scalar product, an overlap integral -- then
+inject only that amplitude going in and extract only that amplitude coming out. Now $V$ and $I$ are defined by
+the projection rather than by one edge and one loop, and their ratio is a property of the mode rather than of
+the gap. A modal port keeps one coefficient and discards the rest, and that discarding is what makes the
+answer attributable to the device. The price is that the mode has to be known before the port can be built:
+the profile calculation discussed with the power flow in Section~\ref{sec:sp-powerflow} is the thing that has
+to have been done first, and in a guiding structure with an interface the profile is not something the
+geometry alone will tell you.
+
+One consequence has to be stated, because it governs how much a measured ratio can mean. Section~\ref{sec:hiw:source}
+established that a soft source does not absorb the wave returning through it; inside a closed test window it
+re-reflects that wave, so a forward and backward decomposition carried out in the same window sits on top of a
+standing wave rather than on top of a travelling one. Any backward-to-forward ratio obtained that way is a
+property of the source and the window as much as of the device between them, and the ambiguity does not
+resolve with effort -- a finer mesh and a longer run both resolve the standing wave better without making it
+smaller. What removes it is a port that separates the two waves by construction, together with walls that do
+not return anything measurable (Section~\ref{sec:hiw:walls}).
+
+The consequence for reading any number in this report is short. A scattering parameter is only as good as the
+port that produced it, and ``the solver agreed with the analytic result'' has to mean the same port and the
+same box on both sides of the comparison; otherwise the agreement is between two different questions that
+happen to have similar answers.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % ---------------- the strip and its gap, seen from above ----------------
+  \fill[brick] (0.3,1.25) rectangle (3.6,2.05);
+  \fill[brick] (4.2,1.25) rectangle (7.5,2.05);
+  \node[lbl, anchor=north] at (1.95,1.18) {strip};
+  \node[lbl, anchor=north] at (5.85,1.18) {strip};
+  \node[lbl, anchor=south] at (3.9,2.12) {gap};
+  % one edge carries the voltage
+  \draw[edof] (3.62,1.65) -- (4.18,1.65);
+  \node[edot] at (3.9,1.65) {};
+  \node[lbl, anchor=south] at (2.05,2.35) {$V=\int\mathbf{E}\cdot d\mathbf{l}$};
+  \draw[oparrow] (2.55,2.28) -- (3.7,1.78);
+  % one face loop carries the current
+  \draw[dual] (3.9,1.65) ellipse [x radius=0.42, y radius=1.3];
+  \draw[harrow] (4.3,2.6) -- (4.05,2.82);
+  \node[lbl, anchor=west, align=left] at (4.35,2.85) {$I=\oint\mathbf{H}\cdot d\mathbf{l}$\\[-1pt]\scriptsize one face loop};
+  \node[callout] at (3.9,0.55) {$Z=V/I$};
+  \draw[oparrow] (3.9,0.72) -- (3.9,1.2);
+  % ---------------- inset: the profile it assumes, and the one it has ----------------
+  \draw[mesh] (9.1,0.55) -- (13.0,0.55);
+  \draw[mesh] (9.1,0.55) -- (9.1,2.5);
+  \draw[model line] plot[smooth] coordinates {(9.25,0.58) (9.95,2.3) (10.65,0.58)};
+  \draw[efield, line width=0.7pt]
+    plot[smooth] coordinates {(9.25,0.62) (9.55,1.55) (9.8,1.15) (10.05,2.1) (10.3,1.3) (10.65,0.66)};
+  \node[lbl, anchor=west] at (10.7,2.15) {ideal mode profile};
+  \node[lbl, anchor=west] at (10.7,1.0) {field at the gap};
+  \node[lbl, anchor=east] at (9.02,2.42) {amplitude};
+  \node[lbl, anchor=north] at (11.05,0.5) {transverse coordinate};
+  \node[callout, align=center, anchor=north] at (11.05,-0.05)
+    {these are not the same function,\\so $V/I$ is not the mode impedance};
+\end{tikzpicture}
+\caption{A lumped gap port. The voltage is one line integral across the gap and the current one loop integral
+around the strip in the same plane, both taken on single grid objects, and the impedance is their ratio. The
+inset is the assumption that ratio silently makes: that the profile at the gap is the profile of the mode. It
+is not, which is why the number can be honest and still not be the one being asked for.}\label{fig:hiw:lumpedport}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % ---------------- (1) whatever the field happens to be ----------------
+  \draw[mesh] (1.1,0.35) -- (1.1,2.65);
+  \draw[efield, line width=0.8pt]
+    plot[smooth] coordinates {(1.15,0.5) (1.55,1.5) (1.85,1.05) (2.15,2.2) (2.45,1.2) (2.75,0.55)};
+  \node[lbl, anchor=north, align=center] at (1.95,0.25) {field on the plane,\\whatever it is};
+  % ---------------- (2) the basis and its coefficients ----------------
+  \node[lbl] at (3.55,1.5) {$=$};
+  \foreach \k/\y/\a in {1/2.05/0.55, 2/1.35/0.3, 3/0.65/0.15} {
+    \draw[mesh thin] (4.0,\y) -- (6.1,\y);
+    \draw[model line] plot[smooth] coordinates
+      {(4.1,\y) (4.55,{\y+\a}) (5.0,\y) (5.45,{\y-\a*0.8}) (5.9,\y)};
+    \node[lbl, anchor=west] at (6.15,\y) {$c_{\k}\,\phi_{\k}$};
+    \node[lbl, anchor=east] at (3.92,\y) {\scriptsize mode \k};
+  }
+  % ---------------- (3) one coefficient kept ----------------
+  \node[lbl] at (7.35,1.5) {$\longrightarrow$};
+  \draw[mesh] (8.15,0.35) -- (8.15,2.65);
+  \draw[model line] plot[smooth]
+    coordinates {(8.2,0.5) (8.85,2.4) (9.5,0.5)};
+  \draw[edof] (7.6,2.15) -- (8.05,2.15);
+  \node[lbl, anchor=south] at (7.75,2.2) {inject};
+  \draw[edof] (8.25,0.8) -- (7.6,0.8);
+  \node[lbl, anchor=south] at (7.78,0.85) {extract};
+  \node[lbl, anchor=north, align=center] at (8.85,0.2)
+    {keep $c_{1}$ and discard the\\rest: the port now has\\a mode, and an impedance};
+\end{tikzpicture}
+\caption{The modal port as a projection. The field actually present on the plane is an arbitrary function; the
+mode basis resolves it into coefficients, of which the port keeps exactly one. Injecting and extracting that
+one coefficient -- and refusing to see the others -- is what turns a pair of integrals into a property of the
+mode, and it is why the mode has to be known before the port can be built.}\label{fig:hiw:modalport}
+\end{figure}
+

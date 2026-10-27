@@ -5,6 +5,7 @@
 \usepackage{amssymb}
 \usepackage{amsthm}
 \usepackage{graphicx}
+\input{tikzstyles}
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{xcolor}
@@ -52,6 +53,7 @@ what is currently verified, what is known to fail, and what is merely planned.
 \lstdefinestyle{python}{language=Python,basicstyle=\ttfamily\small,showstringspaces=false,frame=single,breaklines}
 
 \input{sec_intro}      % \section{Aims and scope}
+\input{sec_howitworks} % \section{How the machine works}
 \input{sec_theory}     % \section{The finite integration technique}
 \input{sec_energy}     % \section{Time stepping: the discrete energy identity}
 \input{sec_eigen}      % \section{Cavity resonances: the generalised eigenproblem and its null space}
@@ -64,7 +66,9 @@ what is currently verified, what is known to fail, and what is merely planned.
 \input{sec_method}     % \section{Measuring a number you can defend}
 \input{sec_worked}     % \section{Four numbers, and what happened to them}
 \input{sec_loads}      % \section{Lumped elements at a transverse cut}
+\input{sec_modes}      % \section{Mode shape: a cross-section field, and a comparison that was wrong}
 \input{sec_results}    % \section{Results}
+\input{sec_openproblem} % \section{An open problem: an 8\% passivity excess on a graded mesh}
 \input{sec_outlook}    % \section{Outlook}
 \input{sec_glossary}   % \section{Glossary}
 
