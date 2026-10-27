@@ -3,6 +3,15 @@
 Design note only. No code is changed by this note; every recommendation below is
 unanchored until it is implemented and gated.
 
+> **ERRATUM (measured, see section 4.2).** The enlarged pencil of section 4,
+> `K = [[A, -c], [-c^T, h]]`, `M = diag(m1_f, 0)`, does **not** condense to the
+> code's pencil. Its `w`-elimination gives `(A - c D c^T) x = lambda m1_f x` — a
+> different problem — and at `sigma = 1` it returns `lambda = 26953.0` instead of
+> `9.78e4`. The corrected enlargement keeps the rank-one term on the **mass**
+> side; it is derived, measured and benchmarked against a dense shift-invert in
+> **section 4.2**, which supersedes section 4 as an implementation recipe.
+> Section 4 is left standing as the record of the defect.
+
 ## 1. Scope, and what this note is not
 
 `solve_modes_mixed` (`emfit/mode2d.py:935`) currently has exactly one working
@@ -172,6 +181,124 @@ Because `K - sigma M` is symmetric, a *symmetric* factorisation is admissible
 same LU), and — more importantly — `eigsh`'s documented contract becomes
 satisfiable (section 6), which it is not for `(A, B)`.
 
+### 4.2 CORRECTION (measured): the auxiliary belongs on the mass side
+
+Section 4 is wrong as an implementation recipe, and the factorisation numbers in
+section 5.2 were measured on the wrong matrix. The substitution there is
+`sigma`-free but not *side*-free: eliminating `w` from `K - lambda M` with
+`M = diag(m1_f, 0)` gives
+
+```
+h w = c^T x  =>  w = D c^T x,
+A x - c w = lambda m1_f x  =>  (A - c D c^T) x = lambda m1_f x .
+```
+
+That is `(A - c D c^T) x = lambda m1_f x`: the mass matrix is `m1_f`, **not** the
+code's `B = m1_f - c D c^T` (`emfit/mode2d.py:1006-1008`). The sentence "which is
+exactly the reduced pencil" misreads its own substitution — the rank-one term
+landed on the stiffness side. The two pencils do not share a spectrum.
+
+**The defect is large, and it is measured.** Section 4 implemented as written
+(`splu(K - M)` at `sigma = 1.0`, `eigsh(K, k=1, M=M, sigma=1, which="LM")`,
+`maxiter=5000`, threads = 1, no row scaling), on both audit rungs:
+
+| quantity | rung0 (`sc=12`) | rung1 (`sc=24`) | reference (dense QZ) |
+|---|---|---|---|
+| `lambda` of section 4's pencil at `sigma = 1` | 26953.009476 | 26953.002674 | 97833.057911 / 97328.308109 |
+| `R` of that eigenvector | 1830.467943 | 1930.608798 | 4.048979116 / 3.780331872 |
+| mode overlap with the reference mode, `abs(corr_ey)` | 0.363 | 0.369 | 0.921 / 0.938 |
+
+`sigma = 1` is wrong by 5 orders of magnitude in the shift, and the returned
+mode is not the wanted one. Moving the shift onto the target
+(`sigma = 0.999 * beta_sq`) does not repair it, because the defect is the
+pencil, not the shift: `lambda = 98360.714617 / 98375.319219` (+0.54 % / +1.08 %
+off), `R = 5.860010 / 5.874036`, `abs(corr_ey) = 0.55`. **MEASURED.**
+
+#### The corrected pencil
+
+Keep the auxiliary unknown, but couple it on the **mass** side:
+
+```
+K_C = [[ A   , 0 ],        M_C = [[ m1_f, -c ],
+       [ 0   , 0 ]]               [ -c^T ,  h ]]
+```
+
+acting on `z = [x; y]`. Block row 2 of `K_C z = lambda M_C z` reads
+
+```
+0 = lambda (-c^T x + h y)   =>   h y = c^T x   =>   y = D c^T x ,   (lambda != 0)
+```
+
+— the elimination is **lambda-free**, so it holds for the shifted system as
+well. Block row 1 then reads
+
+```
+A x = lambda (m1_f x - c y) = lambda (m1_f - c D c^T) x = lambda B x ,
+```
+
+which is the code's pencil exactly, for every `sigma`. `K_C` and `M_C` are both
+symmetric; `M_C` is symmetric but **indefinite** (it inherits the indefinite
+`-c D c^T` block) and nonsingular, so the enlarged pencil has no infinite
+eigenvalues to filter and `n_dof = free_e + free_n` counts only finite ones.
+The shifted matrix
+
+```
+K_C - sigma M_C = [[ A - sigma m1_f ,  sigma c ],
+                   [ sigma c^T      , -sigma h ]]
+```
+
+is **sparse** — it is the entire point of the correction — and has the same
+block pattern as section 4.1's `S`, so its fill is the section-5.2 fill with a
+better-behaved `A - sigma m1_f` diagonal block.
+
+Consistency of the two unknowns is measurable, not assumed: `x_2 - D c^T x_1`,
+relative on `[x; y]`, is `8.09e-12` (rung0) and `2.05e-13` (rung1); the residual
+in the enlarged pencil is `2.59e-15` / `8.49e-18` and in the reference pencil
+`2.67e-15` / `9.23e-18`, so the eigenvalue returned by `(K_C, M_C)` *is* the
+reference `beta^2` (no Rayleigh-quotient detour is needed to compare it).
+**MEASURED.**
+
+One contract caveat, recorded rather than glossed: `eigsh`'s `M=` argument is
+documented for a positive-definite `M`, and `M_C` is indefinite. It converged
+anyway on both rungs (21 `OPinv` calls each, `t_eigsh = 0.01 s`), but the
+portable route stays the one recommended in section 6 — an explicit
+`LinearOperator` for `(K_C - sigma M_C)^{-1} M_C` built from a single
+`splu(K_C - sigma M_C)`.
+
+#### Per-route status, measured on both audit rungs
+
+| route | pencil | reproduces reference | `lambda` digits rung0/rung1 | `R` digits rung0/rung1 | nnz(S) rung1 | fill/row rung0 -> rung1 |
+|---|---|---|---|---|---|---|
+| A | `eigsh(A, M=B)` on the dense `B` | yes | 9.2 / 12.5 | 11.4 / 7.5 | 5,779,216 (`= n^2`) | 1445 -> 2405 |
+| B | `K = [[A,-c],[-c^T,h]]`, `M = diag(m1_f,0)`, `sigma = 1` | **no** | -0.1 / -0.1 | -2.7 / -2.7 | 35,351 | 56.5 -> 67.5 |
+| B2 | as B, `sigma = 0.999 * beta_sq` | **no** | 2.3 / 2.0 | 0.3 / 0.3 | 35,351 | 55.7 -> 67.6 |
+| **C** | **`K_C = [[A,0],[0,0]]`, `M_C = [[m1_f,-c],[-c^T,h]]`, `sigma = 0.999 * beta_sq`** | **yes** | **12.2 / 12.5** | **12.5 / 12.7** | **35,351** | **55.1 -> 66.9** |
+
+Route C on rung1: `n = 3207 = 2404 + 803`, `nnz(K_C) = 11,716`,
+`nnz(M_C) = nnz(S_C) = 35,351` (`0.00344 n^2`), `splu` `0.0076 s`,
+`nnz(L+U) = 214,641` (fill/row 66.9, `6.07x` over `nnz(S)`), factor memory
+`2.6e-3 GB`. Route A on the same rung: `nnz(S) = 5,779,216 = n^2` exactly,
+`splu` `0.62-0.63 s`, `nnz(L+U) = 5,781,620`, fill/row 2405, i.e. dense.
+
+#### Extrapolated to the audit target (`free_e = 30000`)
+
+| route | n | nnz(L+U) | factor memory | `splu` |
+|---|---|---|---|---|
+| A | 30000 | 8.99e8 | 10.8 GB | 343 s |
+| C | 40021 (30000 transverse + 10021 auxiliary) | 7.03e6 | 0.084 GB | 0.16 s |
+
+The fill/row growth exponents are 1.00 (route A, i.e. `O(n^2)` fill) against
+0.38 (route C). Route A is **128x** larger in factor entries and memory at the
+matched transverse count, and the gap widens with `n`. **MEASURED** at `sc = 12,
+24`; the target column is an extrapolation, flagged as such in the evidence
+file.
+
+Provenance: `tools/host/sparse-probe/sparse_solver_test.py` (routes A, B, B2, C
+in one run, `threads = 1`), evidence in
+`tools/host/sparse-probe/evidence/sparse/rung01_sparse_report.json` under
+`rungs.*.route_C`, `extrapolation.route_C` and
+`extrapolation.comparison_at_target`.
+
 ## 5. Measurements
 
 ### 5.1 Assembly blocks: the sparsity is fixed-stencil
@@ -294,6 +421,10 @@ singular-`M` question in (b) never arises), it keeps the 12.82 ms per-apply cost
 visible in our own code, and it lets us reject `mu = 0` before it becomes an
 inf. The `M=` route is the fallback if the operator route shows restart
 pathology.
+
+**Apply this to the corrected pencil of section 4.2**, `(K_C, M_C)` with the
+auxiliary on the mass side — not to section 4's `(K, M)`, which returns a
+different mode (measured: `lambda = 26953.0` vs `97833.1`).
 
 `eigsh` remains the right *driver family* where `(K, M)` is used directly,
 because `K` and `M` are real symmetric and the wanted eigenvalues of a symmetric

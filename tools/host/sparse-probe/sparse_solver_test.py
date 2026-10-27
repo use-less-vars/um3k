@@ -19,9 +19,13 @@ banked dense records (rung-0 31x17, rung-1 41x21).  Three routes are measured:
   Route B  the enlarged (block) pencil from docs/design/sparse_eigenmode.md,
            ``K = [[A, -c], [-c^T, h]]``, ``M = diag(m1, 0)``, ``sigma = 1``,
            whose shift is structurally sparse.
-  Route C  intentionally SKIPPED: plain shift-invert on the *transverse*
-           operator with a diagonal mass is the wrong pencil, because
-           ``B = m1 - c D c^T`` is not ``diag(m1)``.  Recorded, not run.
+  Route C  the CORRECTED enlarged pencil: the auxiliary variable is carried
+           on the MASS side, ``K = [[A, 0], [0, 0]]``,
+           ``M = [[m1, -c], [-c^T, h]]``, which block-eliminates back to
+           ``A x = lam (m1 - c D c^T) x`` -- the reference pencil itself.  This
+           supersedes the earlier "route C = plain shift-invert with a diagonal
+           mass" entry, which stays on record as a skip (``B`` is not
+           ``diag(m1)``; see ``route_C.earlier_skip_record``).
 
 Route B2 (diagnostic, NOT in the design note) is the SAME enlarged pencil as
 route B with the shift placed just below the dense target instead of
@@ -131,6 +135,9 @@ MAX_REL_RESIDUAL = 1e-8
 # re-runs the IDENTICAL enlarged matrix with the shift just below the target;
 # it is a diagnostic that separates "wrong shift" from "wrong pencil".
 B2_SHIFT_FACTOR = 0.999
+# Route C is a shift-invert run as well (on the CORRECTED enlarged pencil), so
+# it needs a shift near the wanted mode: same 0.999 * beta_sq placement.
+C_SHIFT_FACTOR = 0.999
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -777,16 +784,161 @@ def run_rung(key, cfg, ctx, ref):
                                   f"|cz|={abs(scal2['corr_ez_vv']):.12f}", flush=True)
         result["route_B2"] = route_b2
 
-    # --- Route C: documented skip -----------------------------------------
-    result["route_C"] = {
+    # --- Route C: CORRECTED enlarged pencil (auxiliary on the MASS side) ---
+    # The reference pencil is  A x = lam (m1 - c D c^T) x ,  D = h^-1.
+    # Route B's enlargement  K = [[A,-c],[-c^T,h]],  M = diag(m1, 0)  eliminates
+    # to  (A - c D c^T) x = lam m1 x, which is a DIFFERENT problem.  Carrying
+    # the auxiliary variable on the MASS side instead:
+    #
+    #     K_C = [[A, 0], [0, 0]],      M_C = [[m1, -c], [-c^T, h]]
+    #
+    # block row 2:  0 = lam (-c^T x + h y)  =>  h y = c^T x  (lam != 0), i.e.
+    #               y = D c^T x, independent of lam;
+    # block row 1:  A x = lam (m1 x - c y) = lam (m1 - c D c^T) x  -- exactly
+    #               the reference pencil, and the elimination is
+    #               sigma-independent, so it holds for the shifted system too.
+    # Every block is sparse, so the shifted matrix
+    #     K_C - sigma M_C = [[A - sigma m1, sigma c], [sigma c^T, -sigma h]]
+    # is sparse: that is the entire point of the correction.
+    sig_c = C_SHIFT_FACTOR * float(target["beta_sq"])
+    route_c = {
         "route": "C",
-        "status": "skipped",
-        "reason": ("plain shift-invert on A with a DIAGONAL mass is the wrong "
-                   "pencil: B = m1 - c h^-1 c^T is not diag(m1), so the "
-                   "eigenvalues of the diagonal-mass problem are not the "
-                   "beta^2 of the mixed formulation. Recorded as a decision, "
-                   "not run."),
+        "sigma": sig_c,
+        "definition": "K=[[A,0],[0,0]], M=[[m1,-c],[-c^T,h]]",
+        "expected_elimination": "A x = lam (m1 - c h^-1 c^T) x",
+        "note": ("corrected enlargement: the auxiliary/rank-one term is carried "
+                 "on the MASS side, so condensation returns the reference "
+                 "pencil; route B carries it on the stiffness side and "
+                 "condenses to (A - c D c^T) x = lam m1 x"),
+        "earlier_skip_record": ("an earlier version of this route skipped "
+                                "'shift-invert on A with a DIAGONAL mass'. That "
+                                "decision still stands (B = m1 - c D c^T is "
+                                "not diag(m1)), and is why route C uses the "
+                                "enlarged block mass M_C rather than a "
+                                "diagonal one."),
     }
+    try:
+        KC, route_c["t_build_K_s"] = timed(
+            lambda: sp.block_diag([A, zero_nn], format="csc"))
+        MC, route_c["t_build_M_s"] = timed(
+            lambda: sp.vstack([sp.hstack([m1_f, (-c_f).tocsc()], format="csc"),
+                               sp.hstack([(-c_f.T).tocsc(), h_blk],
+                                         format="csc")], format="csc"))
+        S_C, route_c["t_build_shifted_s"] = timed(
+            lambda: (KC - sig_c * MC).tocsc())
+    except Exception as exc:                            # pragma: no cover
+        route_c["build_error"] = exception_text(exc)
+        print(f"  [C] build FAILED: {exception_text(exc)}", flush=True)
+        result["route_C"] = route_c
+        return result
+
+    bigC = float(S_C.shape[0])
+    route_c.update({
+        "n": int(S_C.shape[0]),
+        "n_transverse": int(n_e), "n_auxiliary": int(n_n),
+        "nnz_K": int(KC.nnz), "nnz_M": int(MC.nnz), "nnz_S": int(S_C.nnz),
+        "nnz_S_of_n2": float(S_C.nnz) / (bigC * bigC),
+        "S_density": float(S_C.nnz) / (bigC * bigC),
+    })
+    try:
+        lu_C, t_lu_C = timed(lambda: splu(S_C))
+    except Exception as exc:                            # pragma: no cover
+        route_c["splu_error"] = exception_text(exc)
+        print(f"  [C] splu FAILED: {exception_text(exc)}", flush=True)
+        result["route_C"] = route_c
+        return result
+
+    factC = int(lu_C.L.nnz + lu_C.U.nnz)
+    route_c.update({
+        "t_splu_s": t_lu_C,
+        "factor_nnz": factC,
+        "fill_ratio_factor_over_S": factC / float(max(S_C.nnz, 1)),
+        "fill_per_row": factC / bigC,
+        "factor_is_effectively_dense": bool(factC > 0.2 * bigC * bigC),
+        "factor_memory_gb_measured": factC * BYTES_PER_NNZ / 1e9,
+    })
+
+    op_C = CountedSolve(lu_C, S_C.shape)
+    lam_c = None
+    xf_c = None
+    try:
+        (w_c, v_c), route_c["t_eigsh_s"] = timed(lambda: eigsh(
+            KC, k=1, M=MC, sigma=sig_c, which="LM",
+            OPinv=op_C.operator(), maxiter=5000,
+            v0=deterministic_v0(KC.shape[0])))
+        lam_c = float(np.real(w_c[0]))
+        route_c["eigenvalue"] = lam_c
+        xf_c = np.asarray(v_c[:, 0], dtype=float)
+    except ArpackNoConvergence as exc:
+        route_c["eigsh_error"] = exception_text(exc)
+        route_c["partial_eigenvalues"] = [float(np.real(z))
+                                          for z in np.atleast_1d(exc.eigenvalues)]
+        try:
+            xf_c = np.asarray(exc.eigenvectors[:, 0], dtype=float)
+        except Exception:
+            xf_c = None
+        print(f"  [C] eigsh NO CONVERGENCE ({op_C.calls} calls): "
+              f"{exception_text(exc)}", flush=True)
+    except Exception as exc:
+        route_c["eigsh_error"] = exception_text(exc)
+        print(f"  [C] eigsh FAILED: {exception_text(exc)}", flush=True)
+    route_c["opinv_calls"] = op_C.calls
+
+    if xf_c is not None and np.all(np.isfinite(xf_c)):
+        nfc = float(np.linalg.norm(xf_c)) or 1.0
+        z_c = xf_c / nfc
+        x_c = z_c[:n_e]
+        n1c = float(np.linalg.norm(x_c))
+        x2_exp = None
+        if np.isfinite(n1c) and n1c > 0.0:
+            xn = x_c / n1c
+            x2_exp = d_dense @ (c_f.T @ xn)
+            x2_got = z_c[n_e:]
+            route_c["x2_matches_DcTx1_rel"] = float(
+                np.linalg.norm(x2_got / (np.linalg.norm(x2_got) or 1.0)
+                               - x2_exp / (np.linalg.norm(x2_exp) or 1.0)))
+            if lam_c is not None:
+                kfro = math.sqrt(float(KC.multiply(KC).sum()))
+                mfro = math.sqrt(float(MC.multiply(MC).sum()))
+                route_c["residual_in_enlarged_pencil"] = float(
+                    np.linalg.norm(KC @ z_c - lam_c * (MC @ z_c))
+                    / ((kfro + abs(lam_c) * mfro) * np.linalg.norm(z_c)))
+                ax = np.asarray(A @ xn).ravel()
+                bx = np.asarray(B @ xn).ravel()
+                route_c["rayleigh_true_pencil"] = float(xn @ ax / (xn @ bx))
+                route_c["residual"] = float(
+                    np.linalg.norm(ax - lam_c * bx)
+                    / ((a_fro + abs(lam_c) * b_fro) * np.linalg.norm(xn)))
+                route_c["beta_sq"] = lam_c
+                route_c["eps_eff"] = lam_c / k0 ** 2
+                mode_c, _ = mode2d_of(x_c, lam_c, route_c["residual"], sig_c,
+                                      mesh, ctx, n_e, free_e)
+                if mode_c is None:
+                    route_c["field_error"] = "unusable eigenvector (zero/NaN norm)"
+                else:
+                    scal_c = field_scalars(mode_c, ctx, ref)
+                    route_c["R"] = scal_c["R"]
+                    route_c["corr_ey"] = scal_c["corr_ey"]
+                    route_c["corr_ez_vv"] = scal_c["corr_ez_vv"]
+                    route_c["comparison"] = compare_to_dense(scal_c, lam_c,
+                                                             target, k0)
+                    route_c["comparison_note"] = (
+                        "route C's eigenvalue IS the beta^2 of the reference "
+                        "pencil (exact block elimination), so it is compared "
+                        "directly, without a Rayleigh-quotient detour")
+                    cc = route_c["comparison"]
+                    print(f"  [C sigma={sig_c:.6g}] nnz(S)={S_C.nnz} "
+                          f"({route_c['nnz_S_of_n2']:.5f} n^2) fact={factC} "
+                          f"fill/row={route_c['fill_per_row']:.1f} "
+                          f"splu={t_lu_C:.2f}s eig={route_c['t_eigsh_s']:.2f}s "
+                          f"({op_C.calls} calls) lam={lam_c:.6f} "
+                          f"d={cc['digits_beta_sq']:.1f} "
+                          f"R={scal_c['R']:.12f} d={cc['digits_R']:.1f} "
+                          f"|cy|={abs(scal_c['corr_ey']):.12f} "
+                          f"|cz|={abs(scal_c['corr_ez_vv']):.12f} "
+                          f"x2dev={route_c['x2_matches_DcTx1_rel']:.2e}",
+                          flush=True)
+    result["route_C"] = route_c
     return result
 
 
@@ -815,7 +967,8 @@ def extrapolate(res0, res1, big_free_e=30000.0):
     nB_big = big_free_e * node_ratio
     out["enlarged_dim_ratio_rung1"] = node_ratio
     out["dims"] = {"A": {"n0": nA0, "n1": nA1, "n_big": nA_big},
-                   "B": {"n0": nB0, "n1": nB1, "n_big": nB_big}}
+                   "B": {"n0": nB0, "n1": nB1, "n_big": nB_big},
+                   "C": {"n0": nB0, "n1": nB1, "n_big": nB_big}}
 
     def route_block(entries0, entries1, dims, label):
         block = {}
@@ -858,6 +1011,31 @@ def extrapolate(res0, res1, big_free_e=30000.0):
                                   [res1.get("route_B2", {})],
                                   out["dims"]["B"],
                                   "enlarged sparse pencil, shift at target")
+    out["route_C"] = route_block([res0.get("route_C", {})],
+                                  [res1.get("route_C", {})],
+                                  out["dims"]["C"],
+                                  "corrected enlargement (auxiliary on MASS)")
+    # The number that decides the project: route A's factor is n_e^2 by
+    # construction (measured: fill/row == n_e + 1), route C's is fill/row * n.
+    fa = out["route_A"].get("factor_nnz_at_big")
+    fc = out["route_C"].get("factor_nnz_at_big")
+    if fa and fc:
+        out["comparison_at_target"] = {
+            "basis": ("free_e = %d transverse unknowns (the rung ladder's "
+                      "next target)" % int(big_free_e)),
+            "route_A": {"n": out["dims"]["A"]["n_big"],
+                        "factor_nnz": fa,
+                        "factor_memory_gb": out["route_A"]["factor_memory_gb"],
+                        "splu_s": out["route_A"].get("splu_time_at_big_s")},
+            "route_C": {"n": out["dims"]["C"]["n_big"],
+                        "factor_nnz": fc,
+                        "factor_memory_gb": out["route_C"]["factor_memory_gb"],
+                        "splu_s": out["route_C"].get("splu_time_at_big_s")},
+            "route_A_over_route_C_factor_nnz": (fa / fc if fc else None),
+            "route_A_over_route_C_memory": (
+                out["route_A"]["factor_memory_gb"]
+                / out["route_C"]["factor_memory_gb"] if fc else None),
+        }
     out["design_note_anchors"] = {
         "source": "docs/design/sparse_eigenmode.md",
         "fill_per_row": [{"n": 1431, "fill_per_row": 53.7},
@@ -937,16 +1115,33 @@ def print_table(results, ext):
                   f"{b2.get('nnz_S_of_n2', float('nan')):8.5f} "
                   f"{b2.get('factor_nnz', 0):9d} ..      ..      ..     "
                   f"FAILED: {b2.get('splu_error') or b2.get('eigsh_error')}")
+        c3 = res.get("route_C", {})
+        if "R" in c3:
+            cc = c3["comparison"]
+            print(f"{key:6s} {'C':5s} {c3['sigma']:12.6g} {c3['n']:5d} "
+                  f"{c3['nnz_S']:9d} {c3['nnz_S_of_n2']:8.5f} {c3['factor_nnz']:9d} "
+                  f"{c3['fill_per_row']:8.1f} {c3['t_splu_s']:7.2f} "
+                  f"{c3['t_eigsh_s']:6.2f} {c3['opinv_calls']:5d} "
+                  f"{c3['eigenvalue']:14.6f} {cc['digits_beta_sq']:5.1f} "
+                  f"{c3['R']:16.12f} {cc['digits_R']:5.1f} "
+                  f"{abs(c3['corr_ey']):12.9f} {abs(c3['corr_ez_vv']):12.9f}")
+        else:
+            print(f"{key:6s} {'C':5s} {c3.get('sigma', float('nan')):12.6g} "
+                  f"{c3.get('n', 0):5d} {c3.get('nnz_S', 0):9d} "
+                  f"{c3.get('nnz_S_of_n2', float('nan')):8.5f} "
+                  f"{c3.get('factor_nnz', 0):9d} ..      ..      ..     FAILED: "
+                  f"{c3.get('build_error') or c3.get('splu_error') or c3.get('eigsh_error')}")
     print("-" * 132)
-    print("route C: skipped by design (B is not diag(m1); see JSON 'route_C')")
     print("note: for route B/B2 the beta_sq column is the Rayleigh quotient in the")
     print("      route-A pencil (A x = lam (m1 - c D c^T) x); for route A it is the")
     print("      returned eigenvalue of that same pencil.  B2 = route B's own enlarged")
     print("      pencil with the shift moved onto the target (diagnostic).")
+    print("      Route C = CORRECTED enlargement, auxiliary on the MASS side: its")
+    print("      eigenvalue IS the reference beta_sq, so it is compared directly.")
     print("=" * 132)
     print("\nEXTRAPOLATION to free_e ~ 30000")
     for label, dim_key in (("route_A", "A"), ("route_B", "B"),
-                           ("route_B2", "B")):
+                           ("route_B2", "B"), ("route_C", "C")):
         blk = ext[label]
         if "factor_nnz_at_big" in blk:
             print(f"  {label} ({blk['label']}): fill/row {blk['fill_per_row_rung0']:.1f} "
@@ -957,6 +1152,19 @@ def print_table(results, ext):
                   f"splu ~{blk.get('splu_time_at_big_s', float('nan')):.1f} s")
         else:
             print(f"  {label}: {blk}")
+    cmp_t = ext.get("comparison_at_target")
+    if cmp_t:
+        ba, bc = cmp_t["route_A"], cmp_t["route_C"]
+        print(f"\n  SAME-TARGET COMPARISON ({cmp_t['basis']}):")
+        sa = ba['splu_s'] if ba['splu_s'] is not None else float('nan')
+        sc = bc['splu_s'] if bc['splu_s'] is not None else float('nan')
+        print(f"    route A: n={ba['n']:.0f} factor_nnz {ba['factor_nnz']:.3e} "
+              f"~{ba['factor_memory_gb']:.1f} GB splu ~{sa:.0f} s")
+        print(f"    route C: n={bc['n']:.0f} factor_nnz {bc['factor_nnz']:.3e} "
+              f"~{bc['factor_memory_gb']:.2f} GB splu ~{sc:.1f} s")
+        print(f"    -> route A needs "
+              f"{cmp_t['route_A_over_route_C_factor_nnz']:.1f}x more factor "
+              f"entries / {cmp_t['route_A_over_route_C_memory']:.1f}x more memory")
     print()
 
 
@@ -1000,7 +1208,9 @@ def main():
                          "this probe never runs a dense QZ/eig on them"),
         "routes": {"A": "eigsh(A, M=B, sigma, OPinv=splu(A-sigma*B)) -- B dense",
                    "B": "enlarged K=[[A,-c],[-c^T,h]], M=diag(m1,0), sigma=1",
-                   "C": "skipped (wrong pencil: B != diag(m1))"},
+                   "C": ("CORRECTED enlargement: K=[[A,0],[0,0]], "
+                         "M=[[m1,-c],[-c^T,h]], sigma=0.999*beta_sq; condenses "
+                         "to the reference pencil A x = lam (m1 - c D c^T) x")},
         "rungs": results,
         "extrapolation": ext,
         "wall_seconds": time.perf_counter() - t_start,
@@ -1026,7 +1236,8 @@ def main():
     verdict = {"thresholds": {"min_digits_beta_sq": MIN_DIGITS_BETA_SQ,
                               "min_digits_R": MIN_DIGITS_R,
                               "max_rel_residual": MAX_REL_RESIDUAL},
-               "route_A": {}, "route_B": {}, "route_B2": {}, "overall": {}}
+               "route_A": {}, "route_B": {}, "route_B2": {}, "route_C": {},
+               "overall": {}}
     for key in ORDER:
         res = results[key]
         e = best_A(res)
@@ -1064,6 +1275,26 @@ def main():
                     b.get("factor_is_effectively_dense"),
                 "error": b.get("build_error") or b.get("splu_error")
                          or b.get("eigsh_error")}
+        c3 = res.get("route_C", {})
+        st, c = status_of(c3)
+        verdict["route_C"][key] = {
+            "status": st, "sigma": c3.get("sigma"),
+            "eigenvalue": c3.get("eigenvalue"),
+            "beta_sq": c3.get("beta_sq"),
+            "digits_beta_sq": (c or {}).get("digits_beta_sq"),
+            "R": c3.get("R"), "digits_R": (c or {}).get("digits_R"),
+            "rel_residual_reference_pencil": c3.get("residual"),
+            "rel_residual_enlarged": c3.get("residual_in_enlarged_pencil"),
+            "x2_matches_DcTx1_rel": c3.get("x2_matches_DcTx1_rel"),
+            "n": c3.get("n"), "nnz_S": c3.get("nnz_S"),
+            "nnz_S_of_n2": c3.get("nnz_S_of_n2"),
+            "factor_nnz": c3.get("factor_nnz"),
+            "fill_per_row": c3.get("fill_per_row"),
+            "t_splu_s": c3.get("t_splu_s"),
+            "factor_is_effectively_dense": c3.get("factor_is_effectively_dense"),
+            "error": c3.get("build_error") or c3.get("splu_error")
+                     or c3.get("eigsh_error"),
+        }
 
     a_all = all(v["status"] == "REPRODUCES_REFERENCE"
                 for v in verdict["route_A"].values())
@@ -1071,15 +1302,22 @@ def main():
                 for v in verdict["route_B"].values())
     b2_all = all(v["status"] == "REPRODUCES_REFERENCE"
                  for v in verdict["route_B2"].values())
-    exit_code = 0 if (a_all or b2_all) else 1
+    c_all = all(v["status"] == "REPRODUCES_REFERENCE"
+                for v in verdict["route_C"].values())
+    exit_code = 0 if (a_all or b2_all or c_all) else 1
     verdict["overall"] = {
         "route_A_reproduces_reference": bool(a_all),
         "route_B_reproduces_reference": bool(b_all),
         "route_B2_reproduces_reference": bool(b2_all),
-        "any_sparse_route_reproduces_reference": bool(a_all or b2_all),
+        "route_C_reproduces_reference": bool(c_all),
+        "any_sparse_route_reproduces_reference": bool(a_all or b2_all or c_all),
         "factor_effectively_dense_route_A": [
             results[k]["route_A"][0].get("factor_is_effectively_dense")
             for k in ORDER],
+        "factor_effectively_dense_route_C": [
+            results[k].get("route_C", {}).get("factor_is_effectively_dense")
+            for k in ORDER],
+        "extrapolated_at_target": ext.get("comparison_at_target"),
         "exit_code": exit_code,
     }
     payload["verdict"] = verdict
@@ -1106,6 +1344,12 @@ def main():
                   f"sigma={vb['sigma']} lam={vb['eigenvalue']} "
                   f"digits_beta_sq={vb['digits_beta_sq']} "
                   f"x2dev={vb['x2_matches_DcTx1_rel']}")
+        vc = verdict["route_C"][key]
+        print(f"  {key}  C      : {vc['status']:20s} "
+              f"sigma={vc['sigma']} lam={vc['eigenvalue']} "
+              f"beta_sq {vc['beta_sq']} digits_beta_sq={vc['digits_beta_sq']} "
+              f"digits_R={vc['digits_R']} fill/row={vc['fill_per_row']} "
+              f"x2dev={vc['x2_matches_DcTx1_rel']}")
     print(f"  exit_code = {exit_code} (0 = a sparse route reproduces the "
           f"committed reference at both rungs)")
     print(f"wrote {OUT_JSON}")
