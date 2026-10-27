@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# tools/host/mode_plot/run.sh -- draw the C2b picture (docs/design/c2b_shapes.*)
+# tools/host/mode_plot/run.sh -- draw the C2b pictures, metric named explicitly
 #
-# WHAT IT PRODUCES
-#   docs/design/c2b_shapes.pdf   the figure (vector, for the report)
-#   docs/design/c2b_shapes.png   200 dpi raster of the same figure
-#   tools/host/mode_plot/out/run.log   this script's full output
+# WHAT IT PRODUCES (no argument = --metric both, three PDFs + three PNGs)
+#   docs/report/figures/c2b_mode_shape_corrected.pdf  corr_ez_vv + corr_ey  (the metric
+#                                                     that is actually right)
+#   docs/design/mispaired_metric_before.pdf           corr_ez_superseded + corr_ey (the
+#                                                     SUPERSEDED pairing, same panels,
+#                                                     same axes, same colour limits)
+#   docs/design/c2b_shapes.pdf                        a second copy of the corrected
+#                                                     figure at the historical path
+#   each .pdf also gets a sibling .png (200 dpi)
+#   tools/host/mode_plot/out/run.log                  this script's full output
+#
+#   The metric is chosen by --metric {corrected,before,both} on mode_plot.py; it is
+#   never inferred, and corr_ez (the npz compatibility alias of the superseded
+#   number) is never plotted.  Pass flags through: REPO=/path $0 --help
 #
 # EXPECTED COST
 #   a few seconds: no eigensolve.  Two sparse assemblies (31x17 mixed pencil,
@@ -85,7 +95,9 @@ else
     echo "emfit     : MISSING ($REPO/emfit) -- mode_plot.py will not import"
 fi
 echo "out dir   : $OUT"
-echo "outputs   : $REPO/docs/design/c2b_shapes.pdf + .png"
+echo "outputs   : $REPO/docs/report/figures/c2b_mode_shape_corrected.pdf + .png  (corrected)"
+echo "            $REPO/docs/design/mispaired_metric_before.pdf + .png           (before)"
+echo "            $REPO/docs/design/c2b_shapes.pdf + .png                        (corrected, historical path)"
 echo "log       : $LOG"
 echo "started   : $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 echo "git HEAD  : $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout')"
@@ -94,7 +106,7 @@ printf '%s\n' "-----------------------------------------------------------------
 
 # tee, but report python's status (not tee's): ${PIPESTATUS[0]}
 set +e
-python3 -u "$HERE/mode_plot.py" 2>&1 | tee -a "$LOG"
+python3 -u "$HERE/mode_plot.py" "$@" 2>&1 | tee -a "$LOG"
 STATUS="${PIPESTATUS[0]}"
 set -e
 
