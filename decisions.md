@@ -7670,12 +7670,16 @@ In log-share terms: **~71% analytic-internal, ~20% box clearance, ~9% wall type*
 ## PEC-walled variant: C1 falsified in both pencils
 
 **PEC-walled variant: C1 falsified in both pencils.** 31×17 node mesh, 1382 free edges (was 1444), 104 PEC edges (was 42, +62 matching pre-registration). N_PROPAGATING = 2: quasi-TEM at col 699 (β²/k₀² = 3.606, corr_e_y 0.9123, **corr_e_z 0.1473**) and a box mode at col 704 (β²/k₀² = 0.280, corr_e_y 0.426). The second mode is faster than light (v_phase = 1.89c at 7.83 GHz), does not have the quasi-TEM shape, and is correctly rejected by the screen. **The selector correctly picks col 699.** No better mode exists for the port in either pencil. C1 dead.
+
 **Three corr_e_z values, three contexts, not to be conflated:**
 - **0.1473** (0.147291446944630) = PEC pencil, this run. Genuine, new measurement.
 - **0.1462** (0.14619976001754773) = `.scratch/logs/mesh*.log` value, **RETRACTED** per §8.1, do not quote.
 - **0.1192** (0.11916043239134175) = PMC pencil, banked baseline (`s10118_result.txt:105`). Correct for that box.
 Whether the **0.028 PEC-vs-PMC shift** is a real wall-treatment effect or an artefact of the closed-box solve has **not been established**. C2b's premise (that corr_e_z is a stable, physics-carrying quantity) needs that shift checked against the mesh noise floor before it can be validated. Step 0 of the C2b pre-registration (§7.3) addresses this.
+
 Note: `c1_audit`'s own REPRO lines read FAIL on the closed box because its anchors (corr_e_y 0.9208, corr_e_z 0.1192) belong to the open-top geometry. This is expected, not a defect.
+
+**Subsequently established.** The `0.028` shift is a wall effect at fixed mesh, not a mesh or code-path difference. `tools/host/c1-audit/pecbox_variant.py` builds no mesh: it wraps only `emfit.mode2d.pec_edge_mask` and `pec_node_mask` (`:366-367`), restores them (`:374-375`), and then executes the audit itself with `import c1_audit` (`:371`), so the mesh comes from `c1_audit.py`'s own `structured_mesh` (`:287-289`). `tools/host/c1-audit/out/pecbox_run.log:36` and `:53` report the identical `nodes 527 / tris 960 / edges 1486 / xs 31 / ys 17`, with only the free set moving, `free_edges` `1444 -> 1382`. The shift is `0.147291446944630 - 0.119160432391342` = `0.028131014553288` absolute, `23.6 %` relative, `179.7` times the `1.5657e-4` mesh floor. One caveat stands and is not retracted: the box figure is its best-`|corr_e_y|` propagating mode, column `699`, not the PMC run's column `738`, which is unavailable under the walls (`out/pecbox_run.log:84`, `:86`), so `23.6 %` is an upper bound on a pure wall effect. Consequence: `corr_e_z` is mesh-stable (`0.13 %` across `31x17 -> 41x22`) and wall-sensitive (`~24 %`), so it is usable as an observable only within one wall set. Recorded in `docs/design/c2b_preregistration.md` and `docs/design/zfree_diagnosis.md` §7.3.
 
 ## Pre-registration node-count prediction was off by 4
 
