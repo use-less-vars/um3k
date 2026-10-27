@@ -998,6 +998,16 @@ must report the same statistic for the patched build and the spread must be read
 scan is negative (`.scratch/logs/corr_ez_followup.txt:117`, `:200`), and it is a re-openable locator, never a
 measurement.
 
+**Three values, three contexts -- and the difference between them is left standing.** The `corr_e_z` this section
+gates on is the PMC pencil, **0.11916043239134175** (`.scratch/s10118_result.txt:105`); the PEC pencil
+(`tools/host/c1-audit/pecbox_variant.py`) reads **0.147291446944630**, a genuine new measurement and not a corrected
+version of the first; **0.14619976001754773** is retracted and cited nowhere. PMC mesh scatter is small -- 0.119160432391342
+(31x17) against 0.119317006502073 (41x22), spread **1.5657e-4** (`.scratch/logs/corr_ez_followup.txt:205`, `:212`) --
+but the PEC-minus-PMC shift is **0.028131014553288**, roughly 180x that spread, and it is **unresolved**: established
+neither as a wall effect nor as a closed-box or convention artefact (the two pencils also differ in mesh, 1382 vs 1444
+free edges). C2b's premise -- that `corr_e_z` is a stable, physics-carrying quantity able to carry an acceptance
+threshold -- is therefore **not yet validated**, and it is settled, if at all, in `docs/design/c2b_preregistration.md`.
+
 **Item 3 -- the guard, and the decision that keeps it exact.** `solve_modes_mixed` calls **both** assemblers and then
 cross-checks them (`:1051-1052` then `:1053-1069`). Three checks: the edge numberings must agree (`:1053-1057`,
 comparing `k_q.shape` against `m1.shape` and `m_eps.shape`); the `1/mu` mass must agree to **`1e-12` relative** --

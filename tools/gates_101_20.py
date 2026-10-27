@@ -51,6 +51,7 @@ import argparse
 import json
 import os
 import sys
+import warnings
 
 import numpy as np
 
@@ -442,6 +443,22 @@ def _beta_from_phase_slope(blocks, x, mask=None):
         xx = xx[mask]
     if xx.size < 2:
         raise ValueError(f"a beta fit needs 2 or more stations, got {xx.size}")
+    # ESTIMATOR MISMATCH -- deliberate, do not "fix" it here.
+    # This is NOT the estimator the gate baseline was measured with: the analytic
+    # reference beta comes from ``fit_beta(x, v)`` with ``n_wave=1``
+    # (``emfit/ports.py:861-976``, reached via ``emfit/modal.py:575-578``), a
+    # one-wave complex fit, not an unweighted least-squares line on unwrapped
+    # phase.  Every gate run through this path is cross-estimator with the
+    # baseline by construction.  The fix is deferred until the attribution run
+    # says whether ``fit_beta`` is itself biased; no number here changes.
+    warnings.warn(
+        "gates_101_20: beta is estimated by an unweighted least-squares fit on "
+        "unwrapped phase, but the gate baseline was estimated by "
+        "fit_beta(x, v) with n_wave=1 (emfit/ports.py:861-976). This result is "
+        "therefore cross-estimator with the baseline it is gated against.",
+        UserWarning,
+        stacklevel=2,
+    )
     return abs(float(np.polyfit(xx, phi, 1)[0])), phi
 
 
