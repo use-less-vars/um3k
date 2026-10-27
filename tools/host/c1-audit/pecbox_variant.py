@@ -8,7 +8,7 @@
 #   c1_audit.py solves the mixed (e_t, e_z) pencil on the 31 x 17 node
 #   cross-section of the banked TOLFLUX geometry with
 #
-#       BOUNDARIES = (ground, strip)          # c1_audit.py:307
+#       BOUNDARIES = (ground, strip)          # c1_audit.py:286
 #
 #   -- the ground plane at z = 0 and the 3 mm strip at z = 1.6 mm are PEC, the
 #   three remaining outer walls of the 20 mm x 7.6 mm cross-section are OPEN
@@ -25,8 +25,8 @@
 #
 # HOW THE OVERRIDE IS DONE (and why it is not a copy of c1_audit.py)
 #   c1_audit.py is a flat script: no main(), no functions around its steps, and
-#   `BOUNDARIES` is a module-level constant consumed immediately at line 314
-#   (pec_edge_mask), 315 (pec_node_mask) and 387 (solve_modes_mixed).  There is
+#   `BOUNDARIES` is a module-level constant consumed immediately at line 293
+#   (pec_edge_mask), 294 (pec_node_mask) and 366 (solve_modes_mixed).  There is
 #   therefore NO caller-side seam *inside* c1_audit.py -- by the time anything
 #   of ours could touch a module attribute, the solve has already run.
 #
@@ -40,7 +40,7 @@
 #   identical by construction.  This module wraps those two functions for the
 #   duration of `import c1_audit`, appending the three wall predicates, then
 #   restores them.  c1_audit.py is imported and executed, never edited or
-#   copied: no line of its ~686 lines is reproduced here, and emfit/ is never
+#   copied: no line of its ~665 lines is reproduced here, and emfit/ is never
 #   modified on disk (the wrappers live on the in-memory module object only).
 #
 # SAFEGUARDS (all fatal on failure, exit non-zero)
@@ -155,7 +155,7 @@ def _sha256(path):
 # the three walls that c1_audit.py leaves open
 # ---------------------------------------------------------------------------
 # The predicates take the (nn, 2) node array and use column 0 = y, column 1 = z
-# (c1_audit.py:299-304 ground/strip read p[:, 1] = z and p[:, 0] = y).  The wall
+# (c1_audit.py:278-283 ground/strip read p[:, 1] = z and p[:, 0] = y).  The wall
 # coordinates are taken from the mesh itself, so nothing here has to agree with
 # a hard-coded millimetre figure.
 _WALL_TOL = 1e-12
@@ -402,7 +402,7 @@ say("#" * 100)
 def _reconstruct(j, bsq, beta, eps_eff, resid):
     """e_y / e_z for QZ column j, on the audit's own planes.
 
-    Mirrors c1_audit.py:476-514 (same LU route, same +-sign, same lattices) and
+    Mirrors c1_audit.py:455-493 (same LU route, same +-sign, same lattices) and
     is verified against c1_audit's stored correlations by the caller.
     """
     x = np.real(vecs_all[:, j])
