@@ -121,6 +121,22 @@ FS_TICK = RCPARAMS["xtick.labelsize"]
 FS_HEAD = RCPARAMS["figure.titlesize"]
 FS_NOTE = 9.0                                 # footnote; still >= 9 pt
 
+#: Text that carries a mathtext subscript ("$e_z$", "$e_y$") is set larger than
+#: the rest, because matplotlib's script factor is 0.7: a subscript only reaches
+#: 8 pt when its parent is >= 8/0.7 = 11.43 pt.  Every other element keeps its
+#: size -- the tick labels, the note lines, the "y/z [mm]" axis labels and the
+#: DIFFERENCE-row titles carry no subscript and already passed at 9-10 pt, so
+#: they are deliberately left alone and the layout moves only where it must.
+#:
+#: 12.0 pt was tried first (subscript 8.40 pt) and is NOT clean: on the e_z
+#: figure the two duplicated row-0 headings "BEFORE  superseded, mis-paired" are
+#: 2.736 in wide on a 2.737 in panel pitch, so they touch -- 0.1 px clearance on
+#: the exact font metrics, and an outright 4.9 px overlap as rendered, with each
+#: title spilling 17.5 px past its panel edge.  11.8 pt is the largest size that
+#: leaves a real gap (4.7 px = 1.2 mm on the metrics, 12.1 px as rendered) and
+#: still puts the subscript at 0.7 * 11.8 = 8.26 pt, i.e. above the 8 pt floor.
+FS_SUB = 11.8
+
 OUT_DIR = os.path.join(mp.REPO, "docs", "figures")   # what \\includegraphics
                                                      # ../figures/ resolves to
                                                      # from docs/report
@@ -146,12 +162,18 @@ def overlay(ax, geo):
         ax.axvline(ye, color="0.35", lw=0.5, ls=(0, (1, 2)), zorder=4)
 
 
+def fs_for(text, base):
+    """12 pt when the string carries a mathtext subscript, else ``base``."""
+    return FS_SUB if "$" in text else base
+
+
 def panel(ax, f, yc, zc, ext, title, vmax, show_x, show_y):
     ax.imshow(f.T, origin="lower", extent=ext, cmap=CMAP, vmin=-vmax, vmax=+vmax,
               interpolation="nearest", aspect="equal", zorder=1)
     ax.set_xlim(ext[0], ext[1])
     ax.set_ylim(ext[2], ext[3])
-    ax.set_title(title, fontsize=FS_TITLE, linespacing=1.35, pad=3.0)
+    ax.set_title(title, fontsize=fs_for(title, FS_TITLE),
+                 linespacing=1.35, pad=3.0)
     ax.tick_params(labelsize=FS_TICK)
     ax.tick_params(labelbottom=show_x, labelleft=show_y)
     if show_x:
@@ -161,7 +183,8 @@ def panel(ax, f, yc, zc, ext, title, vmax, show_x, show_y):
 
 
 def finish(fig, out_stem, head, note):
-    fig.text(0.5, 0.985, head, fontsize=FS_HEAD, ha="center", va="top")
+    fig.text(0.5, 0.985, head, fontsize=fs_for(head, FS_HEAD), ha="center",
+             va="top")
     fig.text(0.5, 0.022, note, fontsize=FS_NOTE, ha="center", va="bottom",
              color="0.25", linespacing=1.3)
     pdf = os.path.join(OUT_DIR, out_stem + ".pdf")
