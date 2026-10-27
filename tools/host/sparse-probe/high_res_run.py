@@ -63,7 +63,14 @@ USAGE
     ./high_res_run.sh --rungs 0,1,2,3,4
     ./high_res_run.sh --include-rung4
     ./high_res_run.sh --max-gb 12 --timeout 7200
+    ./high_res_run.sh --rungs 3,4 --resume   # control validated from a PREVIOUS pass
     python3 -u high_res_run.py --help
+
+A ladder is scored against the banked control, so a selection that does not start at
+rung 0 is REFUSED unless ``--resume`` validates the rung-0 capture already on disk;
+with ``--resume`` the control is produced from a previous pass and the report says so.
+A selection with a hole in it is refused outright, and a pass with no usable control
+produces NO verdict (``T4_amp: NOT EVALUATED``) and exits non-zero.
 
 The audit itself is invoked once per rung, in its own process, with its
 environment built from scratch (every inherited ``C1_*`` is dropped first, so a
@@ -241,6 +248,53 @@ def check_mesh_arithmetic(r, c, data):
     return bad
 
 
+def control_gate(data):
+    """The rung-0 gate, in ONE place: (ok, relative, detail).
+
+    |R - R_REGISTERED| / |R_REGISTERED| <= CONTROL_RTOL AND n_eligible == 1.  Both
+    constants are used, never retyped.  An absent/unreadable capture fails.
+    """
+    if data is None:
+        return False, float("inf"), "no readable npz: the control gate cannot be evaluated"
+    rel = abs(data["R_extracted"] - R_REGISTERED) / abs(R_REGISTERED)
+    rel_ok = rel <= CONTROL_RTOL
+    one_ok = data["n_eligible"] == 1
+    detail = ("R_extracted %.17g vs registered %.17g -> relative %.3e (gate %.0e) %s;"
+              " n_eligible %d (gate: exactly 1) %s"
+              % (data["R_extracted"], R_REGISTERED, rel, CONTROL_RTOL,
+                 "PASS" if rel_ok else "FAIL", data["n_eligible"],
+                 "PASS" if one_ok else "FAIL"))
+    return (rel_ok and one_ok), rel, detail
+
+
+def validate_control_capture(ctrl_dir):
+    """Validate a rung-0 capture written by a PREVIOUS pass.  -> (ok, note, why).
+
+    Five refusals, each naming itself: directory absent, npz absent, npz not loadable,
+    free_e not rung 0's, control gate not passed (the gate test includes n_eligible == 1).
+    free_e and n_eligible are read out of the npz itself, so none of this is taken on
+    faith: c1-audit/c1_audit.py:857 stores ``n_eligible``, and the npz key ``free_e`` is
+    the INDEX ARRAY of the free edges, so its SIZE is the count.  The directory is
+    located by rung_dirname(0) + out_root upstream; this function never lists out_root.
+    """
+    if not os.path.isdir(ctrl_dir):
+        return False, None, "the rung-0 directory is absent: %s" % ctrl_dir
+    reason = []
+    data = read_rung_npz(ctrl_dir, reason)
+    if data is None:
+        return False, None, (reason[0] if reason else
+                             "the rung-0 capture could not be read: %s" % ctrl_dir)
+    if data["free_e"] != CONTROL_FREE_E:
+        return False, None, ("its free_e is %d, not rung 0's %d: that capture is a different"
+                             " mesh, not the banked control" % (data["free_e"], CONTROL_FREE_E))
+    ok, _rel, detail = control_gate(data)
+    if not ok:
+        return False, None, "the control gate fails on it: %s" % detail
+    note = ("rung 0 (banked control) was NOT run in this pass: the control is the capture"
+            " already on disk in\n  %s\n  validated now -- %s" % (ctrl_dir, detail))
+    return True, note, None
+
+
 def est_seconds(free_e, base=CONTROL_SECONDS):
     return base * (float(free_e) / CONTROL_FREE_E) ** QZ_POWER
 
@@ -355,11 +409,26 @@ def run_one(r, out_dir, env, timeout, log_path):
 # stdout that the npz carries; nothing is inferred from the npz that only stdout
 # carries (elapsed, banked_src and repro live only in the log).
 # ---------------------------------------------------------------------------
-def read_rung_npz(out_dir):
+def _why(reason, msg):
+    """Record why a capture could not be read (a no-op when no sink was passed)."""
+    if reason is not None:
+        reason.append(msg)
+
+
+def read_rung_npz(out_dir, reason=None):
     p = os.path.join(out_dir, "c1_spectrum.npz")
     if not os.path.exists(p):
+        _why(reason, "c1_spectrum.npz is absent from %s" % out_dir)
         return None
-    d = np.load(p, allow_pickle=False)
+    try:
+        d = np.load(p, allow_pickle=False)
+    except Exception as exc:                     # report it, never crash the ladder on it
+        # c1-audit/c1_audit.py:816 writes this npz with np.savez, which is NOT atomic:
+        # a kill mid-write leaves a truncated zip.  That is a REPORTED condition here,
+        # not an uncaught exception that takes the whole pass down with it.
+        _why(reason, "c1_spectrum.npz in %s does not load (%s: %s)"
+             % (out_dir, type(exc).__name__, exc))
+        return None
     g = lambda k, dv=None: (d[k] if k in d.files else dv)
     res = {
         "npz": p,
@@ -669,22 +738,36 @@ def fit_block(results):
     return "\n".join(L)
 
 
-def rule_block(results):
+def rule_block(results, blocker=None, blocker_detail=None):
+    """The registered reading, applied without adjustment.
+
+    A VERDICT REQUIRES A CONTROL, and there are exactly two ways to have one: rung 0 ran
+    in THIS pass, or a rung-0 capture from an EARLIER pass was validated by --resume (such
+    an entry sits in ``results`` carrying no ``run``, which is how provenance is read
+    here).  Otherwise the ladder is UNANCHORED and the verdict steps are not executed at
+    all.  ``blocker`` is a short reason set by main() when the in-pass control gate
+    FAILED -- the same refusal, for a different cause.
+    """
     L = ["=" * 100, "THE REGISTERED READING, APPLIED WITHOUT ADJUSTMENT (two outcomes, no third)", "=" * 100]
     meas = [(e["rung"]["rung"], e["data"]) for e in results if e["data"]]
     if not meas:
         L.append("  no rung produced numbers: nothing is read, and nothing is softened.")
+        L.append("  T4_amp: NOT EVALUATED (no numbers)")
         return "\n".join(L)
     devs = [(rr, abs(d["R_extracted"] - R_ANALYTIC)) for rr, d in meas]
+    ctrl_entry = next((e for e in results
+                       if e["rung"]["rung"] == 0 and e["data"] is not None), None)
+    ctrl = ctrl_entry["data"] if ctrl_entry is not None else None
+    from_previous = ctrl_entry is not None and ctrl_entry.get("run") is None
     L.append("  step 1 -- the control.")
-    ctrl = dict(meas).get(0)
     if ctrl is None:
-        L.append("     rung 0 did not run: the ladder is unanchored and nothing below applies.")
+        L.append("     rung 0 did not run in this pass, and no rung-0 capture from an earlier")
+        L.append("     pass was validated with --resume: the ladder is UNANCHORED.")
     else:
-        rel = abs(ctrl["R_extracted"] - R_REGISTERED) / abs(R_REGISTERED)
+        gate_ok, rel, gate_detail = control_gate(ctrl)
         rel_ok = rel <= CONTROL_RTOL
         one_ok = ctrl["n_eligible"] == 1
-        ok = rel_ok and one_ok
+        ok = gate_ok
         L.append("     rung 0 R_extracted %.17g vs registered %.17g -> relative %.3e"
                  % (ctrl["R_extracted"], R_REGISTERED, rel))
         L.append("       gate: relative <= %.0e  -> %s" % (CONTROL_RTOL,
@@ -700,6 +783,40 @@ def rule_block(results):
         L.append("       8e-13.  So it is never a mode identifier and never a gate.")
         L.append("     control verdict: %s" % ("PASSED -- the rungs below are scorable" if ok
                                               else "FAILED -- harness fault, not physics"))
+        L.append("     control source: %s" % ("a PREVIOUS pass -- validated with --resume; rung 0"
+                                              " was NOT re-run in this pass" if from_previous
+                                              else "rung 0, run in this pass"))
+    reason = None
+    detail = None
+    if ctrl is None:
+        reason = "unanchored"
+        detail = ("there is no control in this pass: rung 0 was not run and no rung-0 capture"
+                  " was validated with --resume")
+    elif blocker is not None:
+        reason = blocker
+        detail = blocker_detail or blocker
+    if reason is not None:
+        L.append("")
+        L.append("  NO VERDICT WAS PRODUCED.")
+        L.append("     %s." % detail)
+        L.append("     The bar |Q - 1| <= 0.10 is scored against the banked control, so with no")
+        L.append("     usable control there is nothing to score: Q is not computed, the band is")
+        L.append("     not compared, and the (d1)/(d2) diagnostic is not read.  Steps 2-5 below")
+        L.append("     are deliberately NOT executed, and nothing above is a T4_amp reading.")
+        L.append("")
+        L.append("  T4_amp: NOT EVALUATED (%s)" % reason)
+        L.append("")
+        L.append("  remedy:")
+        if ctrl is None:
+            L.append("     run rung 0 in the same pass:   ./high_res_run.sh --rungs 0,1,2,3,4")
+            L.append("     or validate a previous pass's rung-0 capture (it must pass the control")
+            L.append("     gate on disk) and resume above it:")
+            L.append("                                    ./high_res_run.sh --rungs <rungs> --resume")
+        else:
+            L.append("     a failed control is a HARNESS fault, not physics: no rung is scored")
+            L.append("     against it.  Re-run rung 0 (--force, or move its directory aside) and")
+            L.append("     find out why the control moved before any rung of this ladder is read.")
+        return "\n".join(L)
     last_rr, last = meas[-1]
     Q = last["R_extracted"] / R_ANALYTIC
     L.append("  step 2 -- the operand at the last completed rung (rung %d)." % last_rr)
@@ -716,6 +833,9 @@ def rule_block(results):
     L.append("  step 4 -- the diagnostic (pre-registered (d1)/(d2)), which is read even when FAIL.")
     L.append("     |R - R_analytic| per rung: %s" %
              ", ".join("r%d %.6f" % x for x in devs))
+    if from_previous:
+        L.append("     (this chain covers only the rungs run in THIS pass: rung 0 is the")
+        L.append("      validated capture from a previous pass, not one of these steps)")
     mono = all(devs[i][1] >= devs[i + 1][1] for i in range(len(devs) - 1))
     L.append("     non-increasing with refinement: %s" % ("YES" if mono else "NO"))
     L.append("     -> branch %s" % ("(d1) discretisation is the mechanism, in SHAPE" if mono else
@@ -789,6 +909,10 @@ def main(argv=None):
                     help="per-rung wall-clock cap in seconds; 0 = no cap (default)")
     ap.add_argument("--force", action="store_true",
                     help="allow a rung to run into a non-empty output directory")
+    ap.add_argument("--resume", action="store_true",
+                    help="permit a rung selection that does NOT start at rung 0, provided the"
+                         " rung-0 capture already on disk validates against the control gate;"
+                         " the control is then reported as coming from a PREVIOUS pass")
     ap.add_argument("--solver", default="dense", choices=("dense", "sparse"),
                     help="'dense' is the only implemented path")
     a = ap.parse_args(argv)
@@ -817,6 +941,51 @@ def main(argv=None):
     sel = [r for r in RUNGS if r["rung"] in sel_idx]
     out_root = os.path.abspath(a.out_root)
 
+    # ----------------------------------------------------------------------
+    # the control is the ANCHOR of the ladder.  A selection that is not a
+    # contiguous run starting at rung 0 cannot be scored against anything, so it
+    # is refused HERE -- before a directory is made, before a rung is run.  The
+    # alternative is what this driver used to do: run the rungs, then emit a
+    # verdict from a report whose step 1 says the ladder is unanchored.
+    # ----------------------------------------------------------------------
+    rung_ids = [r["rung"] for r in sel]
+    holes = [i for i in range(rung_ids[0], rung_ids[-1] + 1) if i not in set(rung_ids)]
+    if holes:
+        raise SystemExit(
+            "--rungs %s has a GAP at %s.  A ladder is a SEQUENCE of refinements: the\n"
+            "registered (d1)/(d2) reading is a statement about consecutive mesh steps, and a\n"
+            "hole is a jump, not a step.  Name every rung from %d to %d, or trim the\n"
+            "selection to a contiguous run.  Nothing was created and nothing was run."
+            % (",".join(str(v) for v in rung_ids), ",".join(str(v) for v in holes),
+               rung_ids[0], rung_ids[-1]))
+    resume_note = None
+    ctrl_dir = None
+    if rung_ids[0] != 0:
+        if not a.resume:
+            raise SystemExit(
+                "--rungs %s does not start at rung 0: the ladder would be UNANCHORED.\n"
+                "  Rung 0 is the CONTROL -- the banked mesh, the gate that says these runs come\n"
+                "  off the same pipeline as the registered capture.  A verdict scored against no\n"
+                "  control is not a verdict, so the selection is refused before any rung runs.\n"
+                "  Either include rung 0 in the same pass:\n"
+                "      ./high_res_run.sh --rungs 0,%s\n"
+                "  or validate the rung-0 capture already on disk and resume above it:\n"
+                "      ./high_res_run.sh --rungs %s --resume\n"
+                "  Nothing was created and nothing was run."
+                % (",".join(str(v) for v in rung_ids),
+                   ",".join(str(v) for v in rung_ids),
+                   ",".join(str(v) for v in rung_ids)))
+        ctrl_dir = os.path.join(out_root, rung_dirname(RUNGS[0]))
+        vok, resume_note, vwhy = validate_control_capture(ctrl_dir)
+        if not vok:
+            raise SystemExit(
+                "--resume REFUSED: the rung-0 capture in\n"
+                "  %s\n"
+                "failed validation: %s.\n"
+                "  --resume exists to CARRY a control forward, not to assume one.  Nothing was\n"
+                "  run: including rung 0 in this pass is the other way to have a control."
+                % (ctrl_dir, vwhy))
+
     print(PREREG)
 
     if a.dry_run:
@@ -839,12 +1008,27 @@ def main(argv=None):
     print("out root   : %s" % out_root)
     print("max peak   : %.1f GB (a rung above it is SKIPPED and reported, never shrunk to fit)" % a.max_gb)
     print("timeout    : %s" % ("none" if not a.timeout else "%.0f s per rung" % a.timeout))
+    print("control    : %s" % ("rung 0 from a PREVIOUS pass (--resume, validated against the"
+                               " control gate on disk)"
+                               if resume_note is not None else "rung 0 runs in this pass"))
     print("")
 
     os.makedirs(out_root, exist_ok=True)
     results = []
     base_seconds = CONTROL_SECONDS
     control_fault = None
+
+    if resume_note is not None:
+        # the control is a PREVIOUS pass's rung-0 capture, validated above.  It enters
+        # ``results`` as a rung-0 entry carrying data but NO ``run``: that absence is how
+        # rule_block reads its provenance, and it is labelled as such in every block.
+        c0 = mesh_counts(RUNGS[0]["strip"], RUNGS[0]["yair"], RUNGS[0]["z"])
+        results.append({"rung": RUNGS[0], "counts": c0, "data": read_rung_npz(ctrl_dir),
+                        "run": None, "parsed": None,
+                        "skipped": "not run in this pass: control validated from a previous"
+                                   " pass (%s)" % ctrl_dir})
+        print("control    : rung 0 is a PREVIOUS pass's capture, validated now -- not re-run")
+        print("  " + resume_note.replace("\n", "\n  "))
 
     for r in sel:
         c = mesh_counts(r["strip"], r["yair"], r["z"])
@@ -885,10 +1069,8 @@ def main(argv=None):
                                                ",".join(str(v) for v in r["z"])))
 
         if r["rung"] == 0:
-            rel = (abs(data["R_extracted"] - R_REGISTERED) / abs(R_REGISTERED)
-                   if data else float("inf"))
-            ok = (data is not None and rel <= CONTROL_RTOL and data["n_eligible"] == 1
-                  and not badm)
+            ok_gate, rel, gate_detail = control_gate(data)
+            ok = ok_gate and not badm
             print("== rung 0 CONTROL: R_extracted=%s (relative %.3e, gate %.0e) "
                   "n_eligible=%s (gate 1) -> %s"
                   % ((data["R_extracted"] if data else "n/a"), rel, CONTROL_RTOL,
@@ -934,10 +1116,42 @@ def main(argv=None):
     lines.append(cross_rung_block(results))
     lines.append(stability_block(results))
     lines.append(fit_block(results))
-    lines.append(rule_block(results))
+    # a verdict needs a control under it, and there are two ways to have none: the
+    # in-pass gate FAILED, or there was no rung-0 capture at all.
+    verdict_blocker = None
+    verdict_blocker_detail = None
+    if control_fault:
+        verdict_blocker = "control failed"
+        verdict_blocker_detail = control_fault
+    anchored = any(e["rung"]["rung"] == 0 and e["data"] is not None for e in results)
+    no_verdict = (verdict_blocker is not None) or (not anchored)
+
+    lines.append(rule_block(results, verdict_blocker, verdict_blocker_detail))
     if control_fault:
         lines.append("=" * 100)
         lines.append("STOPPED: " + control_fault)
+        lines.append("=" * 100)
+    if no_verdict:
+        lines.append("=" * 100)
+        lines.append("NO VERDICT PRODUCED: %s." %
+                     ("the in-pass control gate FAILED" if control_fault else
+                      "the ladder is UNANCHORED -- no rung-0 control in this pass"))
+        lines.append("T4_amp: NOT EVALUATED (%s)" % (verdict_blocker or "unanchored"))
+        lines.append("  The bar |Q - 1| <= 0.10 was NOT touched: no Q was computed and no band")
+        lines.append("  comparison was made, so nothing in this report is a T4_amp reading.  The")
+        lines.append("  bar is not scored against a control that does not exist, and it is not")
+        lines.append("  softened to fit the rungs that did run.")
+        if control_fault:
+            lines.append("  remedy: a failed control is a HARNESS fault, not physics.  Re-run")
+            lines.append("  rung 0 (--force, or move its directory aside) and find out why the")
+            lines.append("  control moved before any rung of this ladder is read.")
+        else:
+            lines.append("  remedy: run rung 0 in the same pass --")
+            lines.append("             ./high_res_run.sh --rungs 0,%s"
+                         % ",".join(str(r["rung"]) for r in sel))
+            lines.append("          or validate a rung-0 capture already on disk and resume:")
+            lines.append("             ./high_res_run.sh --rungs %s --resume"
+                         % ",".join(str(r["rung"]) for r in sel))
         lines.append("=" * 100)
     lines.append("")
     lines.append("RUN THIS: tools/host/sparse-probe/high_res_run.sh")
@@ -950,6 +1164,9 @@ def main(argv=None):
         fh.write(text + "\n")
     print("")
     print("summary written: %s" % summary)
+    if no_verdict:
+        print("DONE (no verdict)")
+        return 3
     print("DONE")
     return 0
 
