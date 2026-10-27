@@ -1,0 +1,826 @@
+{
+  "probe": "sparse formulations of the 2-D mixed mode pencil",
+  "script": "tools/host/sparse-probe/sparse_solver_test.py",
+  "environment": {
+    "python": "3.12.15",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "thread_env": {
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1"
+    }
+  },
+  "geometry": {
+    "W": 0.02,
+    "H": 0.0076,
+    "HSUB": 0.0016,
+    "WSTRIP": 0.003,
+    "EPS_R": 4.4,
+    "N_SUB": 16,
+    "K_STRIP": 16,
+    "J_CENTRE": 100,
+    "NY": 200,
+    "NZ": 76,
+    "CELL": 0.0001,
+    "FREQ": 7833566197.718491,
+    "Y0": 0.0085,
+    "Y1": 0.0115,
+    "ZZ1": 0.0036,
+    "k0": 164.17940719617263
+  },
+  "analytic_reference": {
+    "eps_eff": 3.3500085193372136,
+    "shape_e_y": [
+      200,
+      77
+    ],
+    "shape_e_z": [
+      201,
+      76
+    ]
+  },
+  "targets_note": "targets are hard-coded from the banked dense records; this probe never runs a dense QZ/eig on them",
+  "routes": {
+    "A": "eigsh(A, M=B, sigma, OPinv=splu(A-sigma*B)) -- B dense",
+    "B": "enlarged K=[[A,-c],[-c^T,h]], M=diag(m1,0), sigma=1",
+    "C": "skipped (wrong pencil: B != diag(m1))"
+  },
+  "rungs": {
+    "rung0": {
+      "key": "rung0",
+      "name": "rung0_s12_a9_z8-4-4",
+      "config": {
+        "y_air": 9,
+        "strip_cells": 12,
+        "z_split": [
+          8,
+          4,
+          4
+        ],
+        "n_x_nodes": 31,
+        "n_z_nodes": 17
+      },
+      "mesh_checks": {
+        "nodes": {
+          "measured": 527,
+          "expected": 527,
+          "ok": true
+        },
+        "tris": {
+          "measured": 960,
+          "expected": 960,
+          "ok": true
+        },
+        "edges": {
+          "measured": 1486,
+          "expected": 1486,
+          "ok": true
+        },
+        "free_edges": {
+          "measured": 1444,
+          "expected": 1444,
+          "ok": true
+        },
+        "free_nodes": {
+          "measured": 483,
+          "expected": 483,
+          "ok": true
+        },
+        "nnz_h": {
+          "measured": 3141,
+          "expected": 3141,
+          "ok": true
+        },
+        "nnz_c": {
+          "measured": 5431,
+          "expected": 5431,
+          "ok": true
+        },
+        "n_pec_edges": {
+          "measured": 42,
+          "expected": 42,
+          "ok": true
+        }
+      },
+      "mesh_checks_ok": true,
+      "assembly": {
+        "t_assemble_s": 0.0011373880552127957,
+        "t_assemble_mixed_s": 0.0017600520513951778,
+        "max_abs_m1_minus_m_mu": 0.0,
+        "max_abs_m_eps_m_minus_m_eps": 0.0
+      },
+      "blocks": {
+        "n_free_edges": 1444,
+        "n_free_nodes": 483,
+        "n_dense_pencil": 1444,
+        "n_dense_squared": 2085136,
+        "nnz_A": 6988,
+        "nnz_m1_f": 6988,
+        "nnz_m_eps_f": 6988,
+        "nnz_k_q_f": 6988,
+        "nnz_c_f": 5431,
+        "nnz_h": 3141,
+        "nnz_B_nonzero": 2085136,
+        "frac_B_nonzero_of_n2": 1.0,
+        "fro_A": 2048313564.1863825,
+        "fro_B": 22.410757801017535,
+        "t_form_A_s": 0.0003072810359299183,
+        "t_form_B_s": 0.11268602299969643
+      },
+      "longitudinal": {
+        "t_splu_h_s": 0.0007858490571379662,
+        "factor_nnz_h": 12920,
+        "t_solve_D_s": 0.004963902058079839
+      },
+      "dense_targets": {
+        "R": 4.0489791163950715,
+        "R_anchor_quoted": 4.0489791163982565,
+        "beta_sq": 97833.0578509992,
+        "beta": 312.7827646322591,
+        "eps_eff": 3.6295122080769704,
+        "corr_ey": 0.920770784810962,
+        "corr_ez_vv": 0.935286730348701,
+        "n_dof": 1927,
+        "n_pec": 42,
+        "n_eligible": null
+      },
+      "route_A": [
+        {
+          "route": "A",
+          "sigma": 1.0,
+          "t_build_shifted_s": 0.020351162063889205,
+          "n": 1444,
+          "nnz_S": 2085136,
+          "nnz_S_of_n2": 1.0,
+          "S_is_structurally_dense": true,
+          "S_density": 1.0,
+          "t_splu_s": 0.15624510997440666,
+          "factor_nnz": 2086580,
+          "fill_ratio_factor_over_S": 1.0006925207756232,
+          "fill_per_row": 1445.0,
+          "factor_is_effectively_dense": true,
+          "t_eigsh_s": 0.5155046939617023,
+          "opinv_calls": 151,
+          "eigenvalue": 946.5706938879558,
+          "rayleigh_true_pencil": -60950.21107577897,
+          "residual": 2.9176558740124416e-05,
+          "beta_sq": 946.5706938879558,
+          "eps_eff": 0.03511686095416403,
+          "R": 20.484581355927524,
+          "corr_ey": -0.04855706936705802,
+          "corr_ez_vv": 0.015433015969108345,
+          "comparison": {
+            "rel_err_beta_sq": 0.9903246334656165,
+            "digits_beta_sq": 0.004222418117417379,
+            "rel_err_R": 4.059196594267833,
+            "digits_R": -0.6084400854976527,
+            "rel_err_eps_eff": 0.9903246334656166,
+            "abs_diff_corr_ey": 0.8722137154439039,
+            "abs_diff_corr_ez_vv": 0.9198537143795926
+          }
+        },
+        {
+          "route": "A",
+          "sigma": 97735.22479314821,
+          "t_build_shifted_s": 0.05895277298986912,
+          "n": 1444,
+          "nnz_S": 2085136,
+          "nnz_S_of_n2": 1.0,
+          "S_is_structurally_dense": true,
+          "S_density": 1.0,
+          "t_splu_s": 0.1447071119910106,
+          "factor_nnz": 2086580,
+          "fill_ratio_factor_over_S": 1.0006925207756232,
+          "fill_per_row": 1445.0,
+          "factor_is_effectively_dense": true,
+          "t_eigsh_s": 0.07986872992478311,
+          "opinv_calls": 21,
+          "eigenvalue": 97833.05779040346,
+          "rayleigh_true_pencil": 97833.0578509313,
+          "residual": 3.222501458419495e-14,
+          "beta_sq": 97833.05779040346,
+          "eps_eff": 3.629512205828927,
+          "R": 4.04897911644105,
+          "corr_ey": -0.9207707848078716,
+          "corr_ez_vv": -0.9352867303512636,
+          "comparison": {
+            "rel_err_beta_sq": 6.193790519156848e-10,
+            "digits_beta_sq": 9.20804348705038,
+            "rel_err_R": 1.1355537020786683e-11,
+            "digits_R": 10.944792322505501,
+            "rel_err_eps_eff": 6.193789689161342e-10,
+            "abs_diff_corr_ey": 3.0904168113465857e-12,
+            "abs_diff_corr_ez_vv": 2.5626167854397863e-12
+          }
+        },
+        {
+          "route": "A",
+          "sigma": 97930.8909088502,
+          "t_build_shifted_s": 0.007078281952999532,
+          "n": 1444,
+          "nnz_S": 2085136,
+          "nnz_S_of_n2": 1.0,
+          "S_is_structurally_dense": true,
+          "S_density": 1.0,
+          "t_splu_s": 0.14058674697298557,
+          "factor_nnz": 2086580,
+          "fill_ratio_factor_over_S": 1.0006925207756232,
+          "fill_per_row": 1445.0,
+          "factor_is_effectively_dense": true,
+          "t_eigsh_s": 0.08091440703719854,
+          "opinv_calls": 21,
+          "eigenvalue": 97833.05791130669,
+          "rayleigh_true_pencil": 97833.05785093113,
+          "residual": 2.3728411683908253e-14,
+          "beta_sq": 97833.05791130669,
+          "eps_eff": 3.6295122103143203,
+          "R": 4.048979116379271,
+          "corr_ey": 0.9207707848121869,
+          "corr_ez_vv": 0.9352867303479592,
+          "comparison": {
+            "rel_err_beta_sq": 6.164326154545273e-10,
+            "digits_beta_sq": 9.21011439082125,
+            "rel_err_R": 3.90238962272867e-12,
+            "digits_R": 11.408669371908795,
+            "rel_err_eps_eff": 6.164326588997655e-10,
+            "abs_diff_corr_ey": 1.2249090630689352e-12,
+            "abs_diff_corr_ez_vv": 7.418510250545296e-13
+          }
+        }
+      ],
+      "route_B": {
+        "route": "B",
+        "sigma": 1.0,
+        "definition": "K=[[A,-c_f],[-c_f.T,h_blk]], M=diag(m1_f,0)",
+        "n": 1927,
+        "t_build_K_s": 0.0004904658999294043,
+        "t_build_M_s": 0.000967692001722753,
+        "t_build_shifted_s": 0.00012544600758701563,
+        "nnz_K": 20991,
+        "nnz_M": 6988,
+        "nnz_S": 20991,
+        "nnz_S_of_n2": 0.005652879128135428,
+        "S_density": 0.005652879128135428,
+        "zero_blocks_present": true,
+        "t_splu_s": 0.005077518057078123,
+        "factor_nnz": 108874,
+        "fill_ratio_factor_over_S": 5.186699061502549,
+        "fill_per_row": 56.49922158796056,
+        "factor_is_effectively_dense": false,
+        "t_eigsh_s": 0.028049092972651124,
+        "opinv_calls": 101,
+        "eigenvalue": 26953.009476470674,
+        "rayleigh_true_pencil": -31044.163866984276,
+        "residual_in_enlarged_pencil": 1.052944307126728e-13,
+        "x2_matches_DcTx1_rel": 5.576130335239623e-12,
+        "rayleigh_condensed_pencil": 26953.009476470685,
+        "residual": 1.808684463384814e-05,
+        "beta_sq_from_eigenvalue": 26953.009476470674,
+        "beta_sq_from_rayleigh": -31044.163866984276,
+        "R": 1830.4679427354088,
+        "corr_ey": 0.36319507564713316,
+        "corr_ez_vv": 0.06089853508668533,
+        "comparison": {
+          "rel_err_beta_sq": 1.3173177303142756,
+          "digits_beta_sq": -0.11969053720918052,
+          "rel_err_R": 451.0813494254645,
+          "digits_R": -2.65425487097035,
+          "rel_err_eps_eff": 1.3173177303142756,
+          "abs_diff_corr_ey": 0.5575757091638288,
+          "abs_diff_corr_ez_vv": 0.8743881952620157
+        },
+        "comparison_note": "beta_sq taken from the Rayleigh quotient of Route B's eigenvector in the mode2d pencil, because the design-note enlarged pencil is (A - c D c^T) x = lam m1 x, not A x = lam (m1 - c D c^T) x"
+      },
+      "route_B2": {
+        "route": "B2",
+        "sigma": 97735.22479314821,
+        "definition": "K=[[A,-c_f],[-c_f.T,h_blk]], M=diag(m1_f,0)",
+        "note": "diagnostic: identical enlarged pencil as route B, shift placed just below the dense target instead of the design note's sigma=1",
+        "t_build_shifted_s": 0.0002250169636681676,
+        "t_splu_s": 0.0045684060314670205,
+        "n": 1927,
+        "nnz_S": 20991,
+        "nnz_S_of_n2": 0.005652879128135428,
+        "factor_nnz": 107383,
+        "fill_per_row": 55.72548002075765,
+        "fill_ratio_factor_over_S": 5.115668619884713,
+        "factor_is_effectively_dense": false,
+        "t_eigsh_s": 0.006022950983606279,
+        "eigenvalue": 98360.71461657518,
+        "opinv_calls": 21,
+        "x2_matches_DcTx1_rel": 4.034092675622983e-10,
+        "residual_in_enlarged_pencil": 3.695233535275674e-14,
+        "rayleigh_true_pencil": 395633.5677531555,
+        "rayleigh_condensed_pencil": 98360.71461657518,
+        "residual_condensed_pencil": 5.637371107907619e-18,
+        "R": 5.860010288398877,
+        "corr_ey": -0.5519438783261614,
+        "corr_ez_vv": -0.6016822570511988,
+        "comparison": {
+          "rel_err_beta_sq": 0.0053934403888264305,
+          "digits_beta_sq": 2.2681341169585245,
+          "rel_err_R": 0.4472809367355348,
+          "digits_R": 0.34941961121028553,
+          "rel_err_eps_eff": 0.0053934403888264894,
+          "abs_diff_corr_ey": 0.36882690648480054,
+          "abs_diff_corr_ez_vv": 0.3336044732975022
+        }
+      },
+      "route_C": {
+        "route": "C",
+        "status": "skipped",
+        "reason": "plain shift-invert on A with a DIAGONAL mass is the wrong pencil: B = m1 - c h^-1 c^T is not diag(m1), so the eigenvalues of the diagonal-mass problem are not the beta^2 of the mixed formulation. Recorded as a decision, not run."
+      }
+    },
+    "rung1": {
+      "key": "rung1",
+      "name": "rung1_s16_a12_z10-5-5",
+      "config": {
+        "y_air": 12,
+        "strip_cells": 16,
+        "z_split": [
+          10,
+          5,
+          5
+        ],
+        "n_x_nodes": 41,
+        "n_z_nodes": 21
+      },
+      "mesh_checks": {
+        "nodes": {
+          "measured": 861,
+          "expected": 861,
+          "ok": true
+        },
+        "tris": {
+          "measured": 1600,
+          "expected": 1600,
+          "ok": true
+        },
+        "edges": {
+          "measured": 2460,
+          "expected": 2460,
+          "ok": true
+        },
+        "free_edges": {
+          "measured": 2404,
+          "expected": 2404,
+          "ok": true
+        },
+        "free_nodes": {
+          "measured": 803,
+          "expected": 803,
+          "ok": true
+        },
+        "nnz_h": {
+          "measured": 5309,
+          "expected": 5309,
+          "ok": true
+        },
+        "nnz_c": {
+          "measured": 9163,
+          "expected": 9163,
+          "ok": true
+        },
+        "n_pec_edges": {
+          "measured": 56,
+          "expected": 56,
+          "ok": true
+        }
+      },
+      "mesh_checks_ok": true,
+      "assembly": {
+        "t_assemble_s": 0.001467264024540782,
+        "t_assemble_mixed_s": 0.0024903130251914263,
+        "max_abs_m1_minus_m_mu": 0.0,
+        "max_abs_m_eps_m_minus_m_eps": 0.0
+      },
+      "blocks": {
+        "n_free_edges": 2404,
+        "n_free_nodes": 803,
+        "n_dense_pencil": 2404,
+        "n_dense_squared": 5779216,
+        "nnz_A": 11716,
+        "nnz_m1_f": 11716,
+        "nnz_m_eps_f": 11716,
+        "nnz_k_q_f": 11716,
+        "nnz_c_f": 9163,
+        "nnz_h": 5309,
+        "nnz_B_nonzero": 5779216,
+        "frac_B_nonzero_of_n2": 1.0,
+        "fro_A": 4438194235.160328,
+        "fro_B": 28.325167181164694,
+        "t_form_A_s": 0.00028996996115893126,
+        "t_form_B_s": 0.512728379922919
+      },
+      "longitudinal": {
+        "t_splu_h_s": 0.001301471027545631,
+        "factor_nnz_h": 25790,
+        "t_solve_D_s": 0.01616729109082371
+      },
+      "dense_targets": {
+        "R": 3.780331990015745,
+        "beta_sq": 97328.3081094,
+        "beta": 311.97485172,
+        "eps_eff": 3.610786479,
+        "corr_ey": 0.938008866588009,
+        "corr_ez_vv": 0.948121953787983,
+        "n_dof": 3207,
+        "n_pec": 56,
+        "n_eligible": 1
+      },
+      "route_A": [
+        {
+          "route": "A",
+          "sigma": 1.0,
+          "t_build_shifted_s": 0.10676793998572975,
+          "n": 2404,
+          "nnz_S": 5779216,
+          "nnz_S_of_n2": 1.0,
+          "S_is_structurally_dense": true,
+          "S_density": 1.0,
+          "t_splu_s": 0.6600556779885665,
+          "factor_nnz": 5781620,
+          "fill_ratio_factor_over_S": 1.0004159733777038,
+          "fill_per_row": 2405.0,
+          "factor_is_effectively_dense": true,
+          "t_eigsh_s": 1.3913155529880896,
+          "opinv_calls": 141,
+          "eigenvalue": 280.103054714883,
+          "rayleigh_true_pencil": -18044.500596067326,
+          "residual": 4.555532058759705e-05,
+          "beta_sq": 280.103054714883,
+          "eps_eff": 0.010391553519217086,
+          "R": 26.019761012527116,
+          "corr_ey": -0.05384592285234244,
+          "corr_ez_vv": -0.012794819816881223,
+          "comparison": {
+            "rel_err_beta_sq": 0.9971220803057622,
+            "digits_beta_sq": 0.001251666605703704,
+            "rel_err_R": 5.882930145089914,
+            "digits_R": -0.7695936915317436,
+            "rel_err_eps_eff": 0.9971220803058688,
+            "abs_diff_corr_ey": 0.8841629437356665,
+            "abs_diff_corr_ez_vv": 0.9353271339711018
+          }
+        },
+        {
+          "route": "A",
+          "sigma": 97230.9798012906,
+          "t_build_shifted_s": 0.21758963400498033,
+          "n": 2404,
+          "nnz_S": 5779216,
+          "nnz_S_of_n2": 1.0,
+          "S_is_structurally_dense": true,
+          "S_density": 1.0,
+          "t_splu_s": 0.6952528940746561,
+          "factor_nnz": 5781620,
+          "fill_ratio_factor_over_S": 1.0004159733777038,
+          "fill_per_row": 2405.0,
+          "factor_is_effectively_dense": true,
+          "t_eigsh_s": 0.2032807570649311,
+          "opinv_calls": 21,
+          "eigenvalue": 97328.30810943063,
+          "rayleigh_true_pencil": 97328.30810942546,
+          "residual": 4.656057158072696e-11,
+          "beta_sq": 97328.30810943063,
+          "eps_eff": 3.6107864788675554,
+          "R": 3.780331872341949,
+          "corr_ey": -0.9380088588725042,
+          "corr_ez_vv": -0.9481219551095912,
+          "comparison": {
+            "rel_err_beta_sq": 3.147263334864628e-13,
+            "digits_beta_sq": 12.502066917686095,
+            "rel_err_R": 3.112789997054532e-08,
+            "digits_R": 7.506850177806665,
+            "rel_err_eps_eff": 3.668029738860469e-11,
+            "abs_diff_corr_ey": 7.715504790617445e-09,
+            "abs_diff_corr_ez_vv": 1.3216081562461568e-09
+          }
+        },
+        {
+          "route": "A",
+          "sigma": 97425.63641750938,
+          "t_build_shifted_s": 0.060860699974000454,
+          "n": 2404,
+          "nnz_S": 5779216,
+          "nnz_S_of_n2": 1.0,
+          "S_is_structurally_dense": true,
+          "S_density": 1.0,
+          "t_splu_s": 0.6722974659642205,
+          "factor_nnz": 5781620,
+          "fill_ratio_factor_over_S": 1.0004159733777038,
+          "fill_per_row": 2405.0,
+          "factor_is_effectively_dense": true,
+          "t_eigsh_s": 0.21545033296570182,
+          "opinv_calls": 21,
+          "eigenvalue": 97328.3081094374,
+          "rayleigh_true_pencil": 97328.30810942616,
+          "residual": 4.2496189195605505e-11,
+          "beta_sq": 97328.3081094374,
+          "eps_eff": 3.610786478867807,
+          "R": 3.78033209749107,
+          "corr_ey": 0.9380088736522885,
+          "corr_ez_vv": 0.9481219525569777,
+          "comparison": {
+            "rel_err_beta_sq": 3.843997165765776e-13,
+            "digits_beta_sq": 12.415216941214922,
+            "rel_err_R": 2.843012872094103e-08,
+            "digits_R": 7.546221173982866,
+            "rel_err_eps_eff": 3.661068527106825e-11,
+            "abs_diff_corr_ey": 7.064279494706227e-09,
+            "abs_diff_corr_ez_vv": 1.231005297697152e-09
+          }
+        }
+      ],
+      "route_B": {
+        "route": "B",
+        "sigma": 1.0,
+        "definition": "K=[[A,-c_f],[-c_f.T,h_blk]], M=diag(m1_f,0)",
+        "n": 3207,
+        "t_build_K_s": 0.0004574420163407922,
+        "t_build_M_s": 0.00023381097707897425,
+        "t_build_shifted_s": 0.00012395798694342375,
+        "nnz_K": 35351,
+        "nnz_M": 11716,
+        "nnz_S": 35351,
+        "nnz_S_of_n2": 0.0034371919315490194,
+        "S_density": 0.0034371919315490194,
+        "zero_blocks_present": true,
+        "t_splu_s": 0.007681663031689823,
+        "factor_nnz": 216353,
+        "fill_ratio_factor_over_S": 6.120138044185454,
+        "fill_per_row": 67.4627377611475,
+        "factor_is_effectively_dense": false,
+        "t_eigsh_s": 0.03699079400394112,
+        "opinv_calls": 91,
+        "eigenvalue": 26953.002673845152,
+        "rayleigh_true_pencil": -30802.83062126846,
+        "residual_in_enlarged_pencil": 1.223038608217346e-13,
+        "x2_matches_DcTx1_rel": 8.58672218908689e-11,
+        "rayleigh_condensed_pencil": 26953.00267384332,
+        "residual": 7.923691769529238e-06,
+        "beta_sq_from_eigenvalue": 26953.002673845152,
+        "beta_sq_from_rayleigh": -30802.83062126846,
+        "R": 1930.6087979095062,
+        "corr_ey": -0.36861141372007045,
+        "corr_ez_vv": -0.06093677626026648,
+        "comparison": {
+          "rel_err_beta_sq": 1.3164837776348186,
+          "digits_beta_sq": -0.11941551188334083,
+          "rel_err_R": 509.6982146034918,
+          "digits_R": -2.7073131123228467,
+          "rel_err_eps_eff": 1.3164837776231102,
+          "abs_diff_corr_ey": 0.5693974528679385,
+          "abs_diff_corr_ez_vv": 0.8871851775277165
+        },
+        "comparison_note": "beta_sq taken from the Rayleigh quotient of Route B's eigenvector in the mode2d pencil, because the design-note enlarged pencil is (A - c D c^T) x = lam m1 x, not A x = lam (m1 - c D c^T) x"
+      },
+      "route_B2": {
+        "route": "B2",
+        "sigma": 97230.9798012906,
+        "definition": "K=[[A,-c_f],[-c_f.T,h_blk]], M=diag(m1_f,0)",
+        "note": "diagnostic: identical enlarged pencil as route B, shift placed just below the dense target instead of the design note's sigma=1",
+        "t_build_shifted_s": 0.00022380799055099487,
+        "t_splu_s": 0.007891856017522514,
+        "n": 3207,
+        "nnz_S": 35351,
+        "nnz_S_of_n2": 0.0034371919315490194,
+        "factor_nnz": 216859,
+        "fill_per_row": 67.62051761771126,
+        "fill_ratio_factor_over_S": 6.1344516421034765,
+        "factor_is_effectively_dense": false,
+        "t_eigsh_s": 0.00910657993517816,
+        "eigenvalue": 98375.31921914729,
+        "opinv_calls": 21,
+        "x2_matches_DcTx1_rel": 8.429511458584383e-10,
+        "residual_in_enlarged_pencil": 5.216042279005667e-14,
+        "rayleigh_true_pencil": 401442.05301228137,
+        "rayleigh_condensed_pencil": 98375.31921914684,
+        "residual_condensed_pencil": 4.553892302554045e-18,
+        "R": 5.874035659729895,
+        "corr_ey": -0.5505429908203227,
+        "corr_ez_vv": -0.6031850968801351,
+        "comparison": {
+          "rel_err_beta_sq": 0.010757518856388891,
+          "digits_beta_sq": 1.9682878839887519,
+          "rel_err_R": 0.5538412169205885,
+          "digits_R": 0.2566147271475304,
+          "rel_err_eps_eff": 0.010757518818995912,
+          "abs_diff_corr_ey": 0.3874658757676863,
+          "abs_diff_corr_ez_vv": 0.3449368569078479
+        }
+      },
+      "route_C": {
+        "route": "C",
+        "status": "skipped",
+        "reason": "plain shift-invert on A with a DIAGONAL mass is the wrong pencil: B = m1 - c h^-1 c^T is not diag(m1), so the eigenvalues of the diagonal-mass problem are not the beta^2 of the mixed formulation. Recorded as a decision, not run."
+      }
+    }
+  },
+  "extrapolation": {
+    "target_free_e": 30000.0,
+    "bytes_per_factor_nnz": 12,
+    "enlarged_dim_ratio_rung1": 1.334026622296173,
+    "dims": {
+      "A": {
+        "n0": 1444.0,
+        "n1": 2404.0,
+        "n_big": 30000.0
+      },
+      "B": {
+        "n0": 1927.0,
+        "n1": 3207.0,
+        "n_big": 40020.79866888519
+      }
+    },
+    "route_A": {
+      "fill_per_row_rung0": 1445.0,
+      "fill_per_row_rung1": 2405.0,
+      "fill_per_row_exponent": 0.9994577496495074,
+      "fill_per_row_at_big": 29971.42999194557,
+      "factor_nnz_at_big": 899142899.7583671,
+      "factor_memory_gb": 10.789714797100405,
+      "factor_memory_gb_dense_reference": 10.8,
+      "splu_time_exponent_vs_factor_nnz": 1.4956910158188919,
+      "splu_time_at_big_s": 1282.586729160683,
+      "label": "dense-B shift-invert"
+    },
+    "route_B": {
+      "fill_per_row_rung0": 56.49922158796056,
+      "fill_per_row_rung1": 67.4627377611475,
+      "fill_per_row_exponent": 0.3481713062867929,
+      "fill_per_row_at_big": 162.4518826614562,
+      "factor_nnz_at_big": 6501454.0893755,
+      "factor_memory_gb": 0.07801744907250599,
+      "factor_memory_gb_dense_reference": 19.219971913145308,
+      "splu_time_exponent_vs_factor_nnz": 0.6028853734843884,
+      "splu_time_at_big_s": 0.05976238782651403,
+      "label": "enlarged sparse pencil"
+    },
+    "route_B2": {
+      "fill_per_row_rung0": 55.72548002075765,
+      "fill_per_row_rung1": 67.62051761771126,
+      "fill_per_row_exponent": 0.3798287631647956,
+      "fill_per_row_at_big": 176.37692390068247,
+      "factor_nnz_at_big": 7058745.3612664975,
+      "factor_memory_gb": 0.08470494433519797,
+      "factor_memory_gb_dense_reference": 19.219971913145308,
+      "splu_time_exponent_vs_factor_nnz": 0.777791132216847,
+      "splu_time_at_big_s": 0.11847512632524058,
+      "label": "enlarged sparse pencil, shift at target"
+    },
+    "design_note_anchors": {
+      "source": "docs/design/sparse_eigenmode.md",
+      "fill_per_row": [
+        {
+          "n": 1431,
+          "fill_per_row": 53.7
+        },
+        {
+          "n": 1927,
+          "fill_per_row": 56.5,
+          "nnz_S": 20991,
+          "factor_nnz": 108906,
+          "splu_s": 0.008,
+          "solve_ms": 0.38
+        },
+        {
+          "n": 13583,
+          "fill_per_row": 58.7
+        },
+        {
+          "n": 60587,
+          "fill_per_row": 137.9,
+          "nnz_S": 687031,
+          "factor_nnz": 8352700,
+          "splu_s": 0.38,
+          "solve_ms": 12.82
+        }
+      ]
+    }
+  },
+  "wall_seconds": 9.044653272023425,
+  "verdict": {
+    "thresholds": {
+      "min_digits_beta_sq": 6.0,
+      "min_digits_R": 4.0,
+      "max_rel_residual": 1e-08
+    },
+    "route_A": {
+      "rung0": {
+        "status": "REPRODUCES_REFERENCE",
+        "sigma": 97930.8909088502,
+        "beta_sq": 97833.05791130669,
+        "digits_beta_sq": 9.21011439082125,
+        "R": 4.048979116379271,
+        "digits_R": 11.408669371908795,
+        "rel_residual": 2.3728411683908253e-14,
+        "nnz_S": 2085136,
+        "nnz_S_of_n2": 1.0,
+        "factor_nnz": 2086580,
+        "fill_per_row": 1445.0,
+        "factor_is_effectively_dense": true
+      },
+      "rung1": {
+        "status": "REPRODUCES_REFERENCE",
+        "sigma": 97230.9798012906,
+        "beta_sq": 97328.30810943063,
+        "digits_beta_sq": 12.502066917686095,
+        "R": 3.780331872341949,
+        "digits_R": 7.506850177806665,
+        "rel_residual": 4.656057158072696e-11,
+        "nnz_S": 5779216,
+        "nnz_S_of_n2": 1.0,
+        "factor_nnz": 5781620,
+        "fill_per_row": 2405.0,
+        "factor_is_effectively_dense": true
+      }
+    },
+    "route_B": {
+      "rung0": {
+        "status": "DISAGREES",
+        "sigma": 1.0,
+        "eigenvalue": 26953.009476470674,
+        "beta_sq_rayleigh_routeA": -31044.163866984276,
+        "beta_sq_rayleigh_condensed": 26953.009476470685,
+        "digits_beta_sq": -0.11969053720918052,
+        "digits_R": -2.65425487097035,
+        "rel_residual_routeA_pencil": 1.808684463384814e-05,
+        "rel_residual_enlarged": 1.052944307126728e-13,
+        "x2_matches_DcTx1_rel": 5.576130335239623e-12,
+        "nnz_S": 20991,
+        "factor_nnz": 108874,
+        "fill_per_row": 56.49922158796056,
+        "factor_is_effectively_dense": false,
+        "error": null
+      },
+      "rung1": {
+        "status": "DISAGREES",
+        "sigma": 1.0,
+        "eigenvalue": 26953.002673845152,
+        "beta_sq_rayleigh_routeA": -30802.83062126846,
+        "beta_sq_rayleigh_condensed": 26953.00267384332,
+        "digits_beta_sq": -0.11941551188334083,
+        "digits_R": -2.7073131123228467,
+        "rel_residual_routeA_pencil": 7.923691769529238e-06,
+        "rel_residual_enlarged": 1.223038608217346e-13,
+        "x2_matches_DcTx1_rel": 8.58672218908689e-11,
+        "nnz_S": 35351,
+        "factor_nnz": 216353,
+        "fill_per_row": 67.4627377611475,
+        "factor_is_effectively_dense": false,
+        "error": null
+      }
+    },
+    "route_B2": {
+      "rung0": {
+        "status": "DISAGREES",
+        "sigma": 97735.22479314821,
+        "eigenvalue": 98360.71461657518,
+        "beta_sq_rayleigh_routeA": 395633.5677531555,
+        "beta_sq_rayleigh_condensed": 98360.71461657518,
+        "digits_beta_sq": 2.2681341169585245,
+        "digits_R": 0.34941961121028553,
+        "rel_residual_routeA_pencil": null,
+        "rel_residual_enlarged": 3.695233535275674e-14,
+        "x2_matches_DcTx1_rel": 4.034092675622983e-10,
+        "nnz_S": 20991,
+        "factor_nnz": 107383,
+        "fill_per_row": 55.72548002075765,
+        "factor_is_effectively_dense": false,
+        "error": null
+      },
+      "rung1": {
+        "status": "DISAGREES",
+        "sigma": 97230.9798012906,
+        "eigenvalue": 98375.31921914729,
+        "beta_sq_rayleigh_routeA": 401442.05301228137,
+        "beta_sq_rayleigh_condensed": 98375.31921914684,
+        "digits_beta_sq": 1.9682878839887519,
+        "digits_R": 0.2566147271475304,
+        "rel_residual_routeA_pencil": null,
+        "rel_residual_enlarged": 5.216042279005667e-14,
+        "x2_matches_DcTx1_rel": 8.429511458584383e-10,
+        "nnz_S": 35351,
+        "factor_nnz": 216859,
+        "fill_per_row": 67.62051761771126,
+        "factor_is_effectively_dense": false,
+        "error": null
+      }
+    },
+    "overall": {
+      "route_A_reproduces_reference": true,
+      "route_B_reproduces_reference": false,
+      "route_B2_reproduces_reference": false,
+      "any_sparse_route_reproduces_reference": true,
+      "factor_effectively_dense_route_A": [
+        true,
+        true
+      ],
+      "exit_code": 0
+    }
+  }
+}
