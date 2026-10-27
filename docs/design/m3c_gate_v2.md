@@ -11,8 +11,8 @@ against v2, plus the tally they move.
    `T4_amp`'s "missing numerator" (§6.1) are both re-stated against arithmetic on banked arrays
    (`docs/design/t4_amp_ratio.md`). `T2_agree` is now a clause that fails on one of two fits; `T4_amp` now has its
    analytic ratio and still has no extracted ratio to compare it with.
-3. **The in-plane bar is in force, not proposed.** `CORR_EY_MIN = 0.89` at `c1_audit.py:172`, with its derivation in
-   the comment block above it (`:155-171`). The change moves one constant and, as a side effect, the floor of the
+3. **The in-plane bar is in force, not proposed.** `CORR_EY_MIN = 0.89` at `c1_audit.py:234`, with its derivation in
+   the comment block above it (`:216-233`). The change moves one constant and, as a side effect, the floor of the
    superseded `shape_pair_ok_legacy` screen; no recorded verdict flips.
 4. **Tally.** At v2, two of five clauses could not fail (§6). At v2.1, one cannot (`T4_amp`, §6.1) and one is
    red on the recorded population (`§101.20.T5_fringe_excess`, §6.2). The fringe clause changed verdict because
@@ -70,8 +70,8 @@ leaving it in a gate list, where it reads as coverage.
 
 The record contains two worked instances, one of each kind. They are not hypothetical.
 
-**(a) The legacy `|corr_ez| <= 0.30` screen** — `CORR_EZ_MAX = 0.30`, `c1_audit.py:173`, applied in the legacy
-criterion at `c1_audit.py:579-581`. The quantity it screens is `corr_ez_superseded_longitudinal`, the vertical
+**(a) The legacy `|corr_ez| <= 0.30` screen** — `CORR_EZ_MAX = 0.30`, `c1_audit.py:235`, applied in the legacy
+criterion at `c1_audit.py:728-730`. The quantity it screens is `corr_ez_superseded_longitudinal`, the vertical
 reference against the *longitudinal* field `beta*z_free`, and the recorded values on the mode of interest are
 `0.1192` (current) / `0.1462` (superseded run) / `0.197856` (31x17 per-column oracle) / `0.199096` (41x22)
 (`decisions.md:7308`, `:7917`; `docs/design/zfree_shape.md:84`). Every one of those sits a factor 1.5–2.5 *below*
@@ -163,23 +163,23 @@ naming contradiction, which is registered and real.
 
 ### 2.4 The two `corr_ez` clauses
 
-* **`corr_e_y` vs `CORR_EY_MIN`** (`c1_audit.py:172`; `0.90` when §2 was written, `0.89` in v2.1) — this is the clause that did the selecting
+* **`corr_e_y` vs `CORR_EY_MIN`** (`c1_audit.py:234`; `0.90` when §2 was written, `0.89` in v2.1) — this is the clause that did the selecting
   (`decisions.md:7938`). It can fail: `PEC col704` records `corr_e_y = −0.426418989`, i.e. `|·| = 0.426`, far below
   0.90. Falsifiable, with a witness. The constant's *value* is a round number and is superseded by the derived bar
   in §3.3; its *role* is sound.
-* **`corr_ez_vv` vs `CORR_EZ_VV_MIN = 0.91`** (`c1_audit.py:193`) — the corrected criterion at `:575-577`. This one
+* **`corr_ez_vv` vs `CORR_EZ_VV_MIN = 0.91`** (`c1_audit.py:255`) — the corrected criterion at `:724-726`. This one
   is now derived, not borrowed: `corr_ez_vv_threshold.md` §2 gives `S_good = 0.948530101525844 − 0.9352867303487647
   = 0.0132433711770793`, `T = L − 2·S_good = 0.9087999879946061`, rounded **up** to `0.91`; the rounding delta is
   `0.0012000120053939 = 0.0906·S_good`, a tightening. Falsifiable, with a witness: `PEC col704` records
-  `|corr_ez_vv| = 0.083134346`, which the comment block at `c1_audit.py:175-191` quantifies as sitting **62.4
+  `|corr_ez_vv| = 0.083134346`, which the comment block at `c1_audit.py:237-254` quantifies as sitting **62.4
   spreads below** the bar, against passing legs at 1.91 / 2.91 / 2.03 spreads above it. **This clause satisfies the
   rule**, and the shape of its derivation — population, spread, `k=2`, round-up — is the template §3.3 reuses.
 
 ### 2.5 `REPRO` — satisfies the rule, and is the one clause with a witness *in history*
 
-`c1_audit.py:740-751` recomputes `e_y` against `ANCHOR_CORR_EY` (`:151`, `0.9207707848111418`) and `e_z` against
-`ANCHOR_CORR_EZ` (`:152`, `0.11916043239134175`) and fails on a relative delta beyond `REPRO_RTOL = 1e-6`
-(`:182`). The comment at `:195-199` states the intent and the witness: the statue's own drift scale is **2e-2** —
+`c1_audit.py:977-985` recomputes `e_y` against `ANCHOR_CORR_EY` (`:191`, `0.9207707848111418`) and `e_z` against
+`ANCHOR_CORR_EZ` (`:192`, `0.11916043239134175`) and fails on a relative delta beyond `REPRO_RTOL = 1e-6`
+(`:262`). The comment at `:257-261` states the intent and the witness: the statue's own drift scale is **2e-2** —
 the superseded run records `0.1462` (`.scratch/logs/mesh51.log:18`) against the current `0.1192` — and a `1e-6`
 bar is four decades tighter than that. The drift happened, so the clause has been exercised; it is not merely
 believable, it is known-falsifiable. This is the standard the other clauses should be held to.
@@ -230,14 +230,14 @@ trigger, so that the bar is not silently re-measured into whatever the populatio
 | field | value |
 |---|---|
 | statement | `|corr(A_ey, e_y)| >= 0.89` |
-| quantity | `corr_e_y` as constructed at `c1_audit.py:430-450` / `:538-539` (analytic in-plane reference against the solver's own in-plane component, same lattice) |
+| quantity | `corr_e_y` as constructed at `c1_audit.py:679-694` / `:694` (analytic in-plane reference against the solver's own in-plane component, same lattice) |
 | threshold | **0.89**, derived: `0.9207707848111419 − 2 × 0.017931395224757 = 0.8849079943616279`, rounded up to 0.89 |
 | provenance | `docs/design/corr_ez_vv_threshold.md:303-307` (§9), which flags the value *"for the M3c gate; not changed here"* |
 | population | the **two PMC mesh legs**: `max|corr_e_y| = 0.938702180035899`, `min|corr_e_y| = 0.920770784811142` (`docs/design/zfree_shape.md:77`, row M2), both on the corrected metric |
 | failing witness | **`PEC col704`, `corr_e_y = −0.426418989`** → `|·| = 0.426`, i.e. **0.46 below** the bar (`corr_ez_vv_threshold.md` §2 population table) |
 | can pass | yes — the two PMC legs sit at 0.9208 / 0.9387, above 0.89 |
 | can fail | yes — with a recorded witness, by a wide margin, not a near-threshold artefact |
-| status | **in force**, not design-only. `CORR_EY_MIN = 0.89` at `c1_audit.py:172`, derivation in the comment block above it (`:155-171`), screen applied at `:575-581`. The side effect is stated in that comment: the same constant is the floor of the *superseded* `shape_pair_ok_legacy` screen, so that floor moves `0.90 → 0.89` with it; no recorded verdict flips (passing legs 0.92 / 0.94, witness 0.43) |
+| status | **in force**, not design-only. `CORR_EY_MIN = 0.89` at `c1_audit.py:234`, derivation in the comment block above it (`:216-233`), screen applied at `:724-730`. The side effect is stated in that comment: the same constant is the floor of the *superseded* `shape_pair_ok_legacy` screen, so that floor moves `0.90 → 0.89` with it; no recorded verdict flips (passing legs 0.92 / 0.94, witness 0.43) |
 
 **The 0.89 is reproducible, and it is a two-leg number.** Re-derive it: `0.938702180035899 − 0.920770784811142 =
 0.017931395224757` is exactly `max|corr_e_y| − min|corr_e_y|` over the **two PMC mesh legs** — the same population
@@ -258,7 +258,7 @@ clause). Two reasons not to adopt it:
   It is a **different, still-open** instance from the `0.119317007` case, which is settled and superseded (§4.1);
   the *shape* of the two defects is nonetheless the same — a label, not a measurement (`decisions.md:8012`).
 
-**Ruling, carried out.** 0.89 from the two clean PMC mesh legs is now the constant in the tree (`c1_audit.py:172`);
+**Ruling, carried out.** 0.89 from the two clean PMC mesh legs is now the constant in the tree (`c1_audit.py:234`);
 the `0.912343044811209` leg is pre-registered as a *future* re-base input, not used while its attribution is disputed.
 
 **Naming (revised in v2.1).** v2 adopted `§101.20.T3_ey` and described it as a *rename of a registered id*. That
@@ -270,7 +270,7 @@ two statistics would repeat the `T1`/`T2` collision already recorded at `decisio
 window lengths at `:4854`, `8926*dt` / `8928*dt`) — which is the concrete reason not to do it, not a matter of taste.
 
 **0.89 is the looser of the two correlation bars, and that is deliberate.** Since v2.1 the sibling clause
-`§101.20.T5_ez_corr` (§3.6) sits at `0.91` (`CORR_EZ_VV_MIN`, `c1_audit.py:193`). The pair invites the reading "0.89
+`§101.20.T5_ez_corr` (§3.6) sits at `0.91` (`CORR_EZ_VV_MIN`, `c1_audit.py:255`). The pair invites the reading "0.89
 and 0.91, so one is a typo or one is a tightening that was not carried across" — it is neither. The two numbers differ
 because *everything* behind them differs: the statistic (`corr_e_y` against the analytic in-plane reference vs
 `corr_ez_vv` against the corrected vertical reference), the population, and the spread (`S = 0.017931395224757` here
@@ -384,15 +384,15 @@ bar, and whether it belongs in some clause's population is an open question this
 | field | value |
 |---|---|
 | statement | `|corr(A_ez, e_z_vv)| >= 0.91` |
-| quantity | `corr_ez_vv`, the **same-component** vertical correlation: analytic `A_ez` against the solver's own vertical transverse field (`c1_audit.py:546-548`). **Not** `corr_ez_superseded_longitudinal`, the mis-paired number the legacy `0.30` screen still uses (§2.4) |
-| threshold | `CORR_EZ_VV_MIN = 0.91`, `c1_audit.py:193`; derived `T = L − k·S_good`, `k = 2`, round **up** to `0.01`: `S_good = 0.948530101525844 − 0.9352867303487647 = 0.0132433711770793`, `T = 0.9352867303487647 − 0.0264867423541586 = 0.9087999879946061 → 0.91` |
+| quantity | `corr_ez_vv`, the **same-component** vertical correlation: analytic `A_ez` against the solver's own vertical transverse field (`c1_audit.py:687-695`). **Not** `corr_ez_superseded_longitudinal`, the mis-paired number the legacy `0.30` screen still uses (§2.4) |
+| threshold | `CORR_EZ_VV_MIN = 0.91`, `c1_audit.py:255`; derived `T = L − k·S_good`, `k = 2`, round **up** to `0.01`: `S_good = 0.948530101525844 − 0.9352867303487647 = 0.0132433711770793`, `T = 0.9352867303487647 − 0.0264867423541586 = 0.9087999879946061 → 0.91` |
 | provenance | `docs/design/corr_ez_vv_threshold.md` §4 (derivation) and §9 (the cross-reference to the in-plane bar) |
 | population | the three passing legs: `31x17 PMC` `0.935286730348765` (col 738), `41x22 PMC` `0.948530101525844` (col 1318), `31x17 PEC` `0.936929717079781` (col 699) |
 | failing witness | `31x17 PEC col704`, `|corr_ez_vv| = 0.083134346` → **62.436 spreads below** the bar |
 | margins | passing legs at `+1.909`, `+2.909`, `+2.033` spreads above it. The round-up to `0.91` cost `0.0012000120053939 = 0.0906·S_good`, and **no banked leg lies in `[0.9087999879946061, 0.91)`**, so on this population the rounding costs nothing |
 | can pass | yes — all three population legs do |
 | can fail | yes — with a witness `62` spreads wide, not a near-threshold artefact |
-| status | **in force**, not a proposal: criterion at `c1_audit.py:575-577`, second use site `tools/host/c1-audit/pecbox_variant.py:511-513` |
+| status | **in force**, not a proposal: criterion at `c1_audit.py:724-726`, second use site `tools/host/c1-audit/pecbox_variant.py:511-513` |
 
 **This block is a registration, not a decision.** The statistic, the population and the bar all pre-date this note and
 are in force in code; v2.1 adds the id so that the register carries one row per gated quantity. Nothing about the gate
@@ -439,7 +439,7 @@ failure mode, and it must not be described as comfortable. The failure on the ot
 | # | the brief says | the record says | ruling for v2 |
 |---|---|---|---|
 | 1 | `T4_amp` has a band (`R <= 1e-2` / `0.1 <= R <= 10`) | both bands **withdrawn**: *"derived from nothing, present in no implementation"*; criterion reserved with **no X proposed** (`decisions.md:7256-7258`) | **the bands are not reinstated at any value.** `T4_amp` ships with no threshold |
-| 2 | `T3_ey`'s derived bar rests on a four-leg population | the derivation in the record is over the **two PMC mesh legs** (`corr_ez_vv_threshold.md:303-307`); the four-leg variant gives 0.86 and depends on a leg whose attribution is disputed | adopt **0.89**, two-leg — **done in v2.1**, `CORR_EY_MIN` at `c1_audit.py:172` (§3.3); the `0.86` wider-population variant is held pending attribution |
+| 2 | `T3_ey`'s derived bar rests on a four-leg population | the derivation in the record is over the **two PMC mesh legs** (`corr_ez_vv_threshold.md:303-307`); the four-leg variant gives 0.86 and depends on a leg whose attribution is disputed | adopt **0.89**, two-leg — **done in v2.1**, `CORR_EY_MIN` at `c1_audit.py:234` (§3.3); the `0.86` wider-population variant is held pending attribution |
 | 3 | `T5_fringe` threshold `0.86` | the `0.86` has **no lineage in the record at all**: it was a design proposal made in the brief, formed by rounding the observed `+0.8628` down to `0.86`. It is not a transcribed record number, not derived, and was never adopted. The only `0.86` strings in the tree are unrelated (a `0.86 deg` standing-wave bound, `decisions.md:30` / `:191`; a *"backward ratio of 0.86"* tied to SWR ≈ 13, `:2660`) | **`[untraced]`** — not adopted, and not re-derived. The clause was re-specified on a different statistic (§3.5), where `0.86` is not dimensionally expressible. See §5 |
 | 4 | `T3` is named `T3_ey` | registered as **`§101.20.T3_scale`** (`decisions.md:7129`); implemented as `T3_ey_slot` (`gates_101_20.py:713`) | adopt a **fresh** id, `§101.20.T5_ey_corr` (§3.3). v2's “rename of `T3_ey`” is **withdrawn**: `T3` keeps `§101.20.T3_scale`, a different statistic |
 | 5 | `T5_fringe` extends the registered set | `T4_amp` is a **reserved criterion only** — it carries no clause registration and no code (`decisions.md:7256-7258`, `:7268`); `T5_fringe` is registered nowhere | `T5_fringe_excess` (§3.5) is **new**, and the registration it needs is supplied in §9 (`§101.20.T5_fringe_excess`, *registered, no implementation*), which is authoritative here; `T5_ez_corr` (§3.6) is a **registration** of a bar already in force (`§101.20.T5_ez_corr`) |
@@ -566,9 +566,9 @@ justify `0.005` against a 4.1 % inter-fit spread or widen it and say what the wi
 * `§101.20.T5_ey_corr` at **0.89** — derived, population stated, and with a wide-margin failing witness (`PEC col704`,
   `|corr_e_y| = 0.426`). **Can fail.**
 * `§101.20.T5_ez_corr` (`corr_ez_vv`) at **0.91** — derived, population stated, failing witness at 62.4 spreads below the bar
-  (`c1_audit.py:175-191`). **Can fail.**
+  (`c1_audit.py:237-254`). **Can fail.**
 * `REPRO_RTOL = 1e-6` — falsifiable, and exercised in history by the `0.1462 → 0.1192` drift
-  (`c1_audit.py:195-199`). **Can fail.**
+  (`c1_audit.py:257-261`). **Can fail.**
 * `T1_stab` at `0.005` — can fail in principle; the bar needs a derivation or a re-base trigger, and the
   `basis='mixed'` branch needs to evaluate rather than raise (`:486-493`).
 
@@ -581,11 +581,11 @@ justify `0.005` against a 4.1 % inter-fit spread or widen it and say what the wi
 | `T1_stab` | `tools/gates_101_20.py:465` | `tools/gates_101_20.py:132` (`T1_TOL = 0.005`) | implemented, behind the solve flag (`:15`) |
 | `T2_agree` | `tools/gates_101_20.py:544` | `tools/gates_101_20.py:166` (`T2_TOL = 0.005`) | implemented; reachability defect at `:572-576` |
 | `§101.20.T3_scale` | `tools/gates_101_20.py:713` (`T3_ey_slot`) | `tools/gates_101_20.py:221` (`T3_TOL = 1e-5`) | implemented |
-| `§101.20.T5_ey_corr` | `c1_audit.py:430-450`, `:538-539` | `tools/host/c1-audit/c1_audit.py:172` (`CORR_EY_MIN = 0.89`) | **in force**, not design-only — adopted in this block (§3.3); the same constant is also the floor of the superseded legacy screen at `:579-581` |
-| `§101.20.T5_ez_corr` (`corr_ez_vv`) | `c1_audit.py:575-577` (criterion), arrays at `:651-652` | `tools/host/c1-audit/c1_audit.py:193` (`CORR_EZ_VV_MIN = 0.91`) | in force (§3.6); second use site `tools/host/c1-audit/pecbox_variant.py:511-513` |
-| `corr_e_y` (legacy) | `c1_audit.py:579-581` | `c1_audit.py:172` (`CORR_EY_MIN` — `0.90` when §2 was written, `0.89` in v2.1) | in force, superseded in value by §3.3 |
-| `corr_ez` (legacy, non-selecting) | `c1_audit.py:579-581` | `c1_audit.py:173` (`CORR_EZ_MAX = 0.30`) | in force, **non-selecting** (§1(a)); recorded at `decisions.md:7938` |
-| `REPRO` | `c1_audit.py:740-751` | `c1_audit.py:200` (`REPRO_RTOL = 1e-6`) | in force |
+| `§101.20.T5_ey_corr` | `c1_audit.py:679-694`, `:694` | `tools/host/c1-audit/c1_audit.py:234` (`CORR_EY_MIN = 0.89`) | **in force**, not design-only — adopted in this block (§3.3); the same constant is also the floor of the superseded legacy screen at `:728-730` |
+| `§101.20.T5_ez_corr` (`corr_ez_vv`) | `c1_audit.py:724-726` (criterion), arrays at `:824-825` | `tools/host/c1-audit/c1_audit.py:255` (`CORR_EZ_VV_MIN = 0.91`) | in force (§3.6); second use site `tools/host/c1-audit/pecbox_variant.py:511-513` |
+| `corr_e_y` (legacy) | `c1_audit.py:728-730` | `c1_audit.py:234` (`CORR_EY_MIN` — `0.90` when §2 was written, `0.89` in v2.1) | in force, superseded in value by §3.3 |
+| `corr_ez` (legacy, non-selecting) | `c1_audit.py:728-730` | `c1_audit.py:235` (`CORR_EZ_MAX = 0.30`) | in force, **non-selecting** (§1(a)); recorded at `decisions.md:7938` |
+| `REPRO` | `c1_audit.py:977-985` | `c1_audit.py:262` (`REPRO_RTOL = 1e-6`) | in force |
 | `T4_amp` | `s10118_basis.py:371-373` (R); no gate site | nowhere | deferred; **not registered**, no code (`decisions.md:7268`) |
 | `§101.20.T5_fringe_excess` (`ex_R > 2.0` fails) | deficit decomposition only, ad hoc, `decisions.md:7958-7972` | **nowhere** — no implementation in code | **registered in this block** (§3.5); registered on measured evidence, with no executable behind it, so it cannot fail as a build |
 
@@ -604,7 +604,7 @@ whether they are registered.
 
 Two further gaps belong here, because both are the kind that get mistaken for a measurement later.
 
-* **`CORR_EY_MIN = 0.89` is in code, but no gate run was done.** The constant at `c1_audit.py:172` moved from `0.90`
+* **`CORR_EY_MIN = 0.89` is in code, but no gate run was done.** The constant at `c1_audit.py:234` moved from `0.90`
   to `0.89` (§3.3) with no gate run behind the change. The banked npz artefacts carried `criterion = [0.90, 0.30]`
   and `criterion_ez_vv = [0.90, 0.90]` when this was written, and nothing in the tree compared those stored arrays
   against the constants meant to have written them; both banks were re-banked in this block and now carry
@@ -708,14 +708,63 @@ All three sweeps are recorded at `docs/design/t4_amp_ratio.md` §9.7 and §9.8; 
 
 * No gate-table row was added, removed or renumbered: `:632-640` is unchanged and `:630` is still literally true.
 * No verdict was flipped to PASS; no clause was deleted or weakened.
-* No tolerance changed: `T1_TOL = 0.005` (`tools/gates_101_20.py:132`), `T2_TOL = 0.005` (`:166`), `T3_TOL = 1e-5` (`:221`), `CORR_EY_MIN = 0.89` (`tools/host/c1-audit/c1_audit.py:199`) and `CORR_EZ_VV_MIN = 0.91` (`:220`) all stand, as does the `±10 %` amplitude band registered in `docs/design/t4_amp_ratio.md` §9.1-§9.6.
+* No tolerance changed: `T1_TOL = 0.005` (`tools/gates_101_20.py:132`), `T2_TOL = 0.005` (`:166`), `T3_TOL = 1e-5` (`:221`), `CORR_EY_MIN = 0.89` (`tools/host/c1-audit/c1_audit.py:234`) and `CORR_EZ_VV_MIN = 0.91` (`:255`) all stand, as does the `±10 %` amplitude band registered in `docs/design/t4_amp_ratio.md` §9.1-§9.6.
 * No solve, no gate run and no `.py` edit accompanied this section; every number in it is quoted from an already-banked artefact or is arithmetic on those numbers.
 * `docs/design/t4_amp_ratio.md` §9.6's revisit clause remains uninvoked, and §9.4 remains unimplemented.
 
 ### 10.8 Citation drift in the two constants this section relies on
 
-**The drift, measured.** The v2.1 header cites `tools/host/c1-audit/c1_audit.py:172` for `CORR_EY_MIN` at `:14`; the `§101.20.T5_ez_corr` and `§101.20.T5_ey_corr` rows of §9 cite `:193` for `CORR_EZ_VV_MIN` and `:172` for `CORR_EY_MIN` at `:637-638`. Each was correct when written and each is now stale by exactly 27 lines — `grep -n` puts `CORR_EY_MIN = 0.89` at `:199` and `CORR_EZ_VV_MIN = 0.91` at `:220`. The same stale pair appears at `:14`, `:166`, `:170`, `:240`, `:261`, `:273`, `:388`, `:442`, `:584-586` and `:607`, none of which is edited.
+**The drift, measured.** The v2.1 header cites `tools/host/c1-audit/c1_audit.py:172` for `CORR_EY_MIN` at `:14`; the `§101.20.T5_ez_corr` and `§101.20.T5_ey_corr` rows of §9 cite `:193` for `CORR_EZ_VV_MIN` and `:172` for `CORR_EY_MIN` at `:637-638`. Each was correct when written and each is now stale by exactly 27 lines — `grep -n` puts `CORR_EY_MIN = 0.89` at `:199` and `CORR_EZ_VV_MIN = 0.91` at `:220`. The same stale pair appears at `:14`, `:166`, `:170`, `:240`, `:261`, `:273`, `:388`, `:442`, `:584-586` and `:607`, none of which is edited. **Superseded by §11.** The `+27` arithmetic on this line is itself a stale snapshot: `grep -n` on the current tree puts `CORR_EY_MIN = 0.89` at `:234` and `CORR_EZ_VV_MIN = 0.91` at `:255`, i.e. `+62` each, because the code file grew again above the constants after this paragraph was written. Every citation this line lists as “none of which is edited” — `:14`, `:166`, `:170`, `:240`, `:261`, `:273`, `:388`, `:442`, `:584-586`, `:607` — has since been edited in place, within-line; §11 is the listing, with the symbol → old → new table and the hashes that prove nothing else moved.
 
 **Why it drifted, and that it is not an authoring error.** The file grew above the constants, twice: the `C1_STRIP_CELLS` knob first, then the `C1_Y_AIR_CELLS` / `C1_Z_CELLS` knobs, whose commit inserts 6 lines above `CORR_EY_MIN` (its diff offsets jump to `+6` from `@@ -104,6 +104,12 @@` onward). 172 + 21 + 6 = 199 and 193 + 21 + 6 = 220. The `+27` is measured from current `grep -n`; the `+6` is attributable to the mesh-knob commit. Citations written after those commits — `R_extracted` at `:738` and the `np.savez(` call at `:703`, both relied on in §10.6 — are current.
 
-**What was and was not edited.** The two citations in §10.7 are corrected. The header citation at `:14` and the §9 rows at `:637-638` are deliberately left as-is. A same-line-count replacement at `:14` would not move `:630`, so it is mechanically safe — and it is still not made, because this document's rule is that changes are listed rather than silently patched, and §10.8 is the listing.
+**What was and was not edited.** The two citations in §10.7 are corrected. The header citation at `:14` and the §9 rows at `:637-638` are deliberately left as-is. A same-line-count replacement at `:14` would not move `:630`, so it is mechanically safe — and it is still not made, because this document's rule is that changes are listed rather than silently patched, and §10.8 is the listing. **Superseded in part by §11.** The header citation at `:14` has since been edited in place (`172` → `234`, within-line, no change to the line count), so the sentence above that `:14` is left as-is no longer describes the file. The §9 rows at `:637-638` remain unedited on purpose: §9 is the registered clause list and this repair confines itself to prose that describes the code — §11 carries their corrected numbers instead.
+
+## 11. Citation repair: witness chain
+
+**What this section is.** §10.8 recorded a drift rather than patching it. This section *is* the patch, listed the same way §10 lists its own changes: every line it touched, what the citation said, what it says now, and the mechanical evidence that nothing else moved. The `CORR_EY_MIN` / `CORR_EZ_VV_MIN` citations in §10.7 were already correct and are not touched again here.
+
+**The drift is per-symbol, not one number.** `tools/host/c1-audit/c1_audit.py` is 1015 lines today. The constants sit at the following `grep -n` positions, and the offsets against the citations this document carried are not uniform — so no single `+N` could ever have repaired them:
+
+| symbol | cited in this document as | location today | offset |
+|---|---|---|---|
+| `ANCHOR_CORR_EY` | `c1_audit.py:151` | `c1_audit.py:191` | `+40` |
+| `ANCHOR_CORR_EZ` | `c1_audit.py:152` | `c1_audit.py:192` | `+40` |
+| `CORR_EY_MIN` derivation comment block | `c1_audit.py:155-171` (17 lines), also cited as `c1_audit.py:175-191` | `c1_audit.py:216-233` (18 lines) | head `+61`, tail `+62` |
+| `CORR_EY_MIN = 0.89` | `c1_audit.py:172`, and `:199` in §10.8's own measurement | `c1_audit.py:234` | `+62` |
+| `CORR_EZ_MAX = 0.30` | `c1_audit.py:173` | `c1_audit.py:235` | `+62` |
+| `CORR_EZ_VV_MIN` derivation comment block | `c1_audit.py:175-191` (17 lines), also cited as `c1_audit.py:195-199` at its tail | `c1_audit.py:237-254` (18 lines) | head `+62`, tail `+63` |
+| `CORR_EZ_VV_MIN = 0.91` | `c1_audit.py:193`, and `:220` in §10.8's own measurement | `c1_audit.py:255` | `+62` |
+| `REPRO_RTOL = 1e-6` | `c1_audit.py:182` (§2.5) and `c1_audit.py:200` (§9 table) | `c1_audit.py:262` | `+80` and `+62` |
+
+Two details in that table are worth stating rather than smoothing over. The two derivation comment blocks each grew by one line (17 → 18), so their head and tail offsets differ by one; and `REPRO_RTOL` was cited at two different old numbers `18` apart, which is itself the signature of two different snapshots of the file being quoted inside one document.
+
+**Code regions, resolved by symbol.** These are not constants, so they are resolved by what the code does, not by arithmetic:
+
+| region (durable) | cited in this document as | location today |
+|---|---|---|
+| `corr_e_y` construction: `e_y = E_t[:, :, 0] * CELL`, then `cy = corr(A_ey, e_y)` | `c1_audit.py:430-450`, corr call at `:538-539` | `c1_audit.py:679-694`, corr call at `:694` |
+| `corr_ez_vv` construction: `e_z_vv = E_tz[:, :, 1] * CELL`, then `cz_vv = corr(A_ez, e_z_vv)` | `c1_audit.py:546-548` | `c1_audit.py:687-695` |
+| corrected criterion `ok_arr` (`\|corr_e_y\| >= CORR_EY_MIN and \|corr_ez_vv\| >= CORR_EZ_VV_MIN`) | `c1_audit.py:575-577`, and `:575-581` where it was pooled with the legacy screen | `c1_audit.py:724-726`; pooled with the legacy screen, `:724-730` |
+| legacy criterion `ok_arr_legacy` (`\|corr_e_y\| >= CORR_EY_MIN and \|corr_ez\| <= CORR_EZ_MAX`) | `c1_audit.py:579-581` | `c1_audit.py:728-730` |
+| npz payload arrays `corr_ey` / `corr_ez_vv` | `c1_audit.py:651-652` | `c1_audit.py:824-825` |
+| `REPRO` recompute loop over both anchors | `c1_audit.py:740-751` | `c1_audit.py:977-985` |
+
+The `corr_e_y` region is the clearest case for why the whole repair had to be done by symbol: `430-450` is 21 lines and `679-694` is 16, because the block was refactored, not merely pushed down. No offset maps one onto the other.
+
+**What was edited, and that nothing else moved.** Twenty-seven lines were edited, listed here so that the change is auditable without a diff: `:14`, `:15`, `:73`, `:74`, `:166`, `:170`, `:174`, `:180`, `:181`, `:182`, `:233`, `:240`, `:261`, `:273`, `:387`, `:388`, `:395`, `:442`, `:569`, `:571`, `:584`, `:585`, `:586`, `:587`, `:588`, `:607`, `:711`. Every edit is **within-line**: the old citation string was replaced by the new one and not one character was added to or removed from any other part of the line. No line was inserted, deleted, split, joined or reflowed. The newline count is **721 before and 721 after**; the file still splits into 722 elements. The edit script matched each old string **exactly once on its designated line** and refused to write at all on any mismatch — the dry run and the write both reported zero problematic matches, and the post-write diff enumerated exactly the 27 lines above.
+
+**The line-630 guarantee, and the one hash that did change.** Line 630 is byte-identical before and after: `Seven entries, no more. Everything else in §§2–3 is an audit of what v1 already had, not a registration.`, sha256 of that line plus its newline `0d7cf7485cc954e931ae43f68ca1858322d92709f03319b3e79e2db7cee643b8`. That is the citation target of `docs/design/t4_amp_ratio.md` §9.5 and §9.7, and it still resolves to the same sentence.
+
+The head-630 prefix hash did **not** survive, and it is recorded here rather than quietly dropped: prefix sha256 `39bb7a7155f43859a46510468f63ee36052ed578c5ad9ac1388214c1a8ff39bb` before, `a03c78d43fd8077df2588281d00a97103e9115ecdc2b3be37326cad789583203` after. Ten of the 27 edited lines (`:14`, `:15`, `:73`, `:74`, `:166`, `:170`, `:174`, `:180`, `:181`, `:182`) lie inside that prefix, so the prefix hash had to change; a repair that leaves the citations in the head wrong would be the only way to keep it. The invariant this repair actually keeps is **line-630 identity plus unchanged line count**, both verified directly, and that is what the committed citations depend on. Whole-file sha256, for completeness: `447802cb3fd16de70c0fe09c3aa707c523c0841509432f4c1e50574136220909` before, `05d7fcf1bcecb1a242350c4469ff94c4156fbc21314eaaddbac83d84d9a3539f` after.
+
+**§10.8's own measurement is superseded here, not deleted.** §10.8 puts the drift at `+27`, reading `CORR_EY_MIN` at `:199` and `CORR_EZ_VV_MIN` at `:220`. Today `grep -n` puts them at `:234` and `:255`. The gap is not a contradiction: the code file grew again above those constants after §10.8 was written, so the `+27` reading was true of a snapshot that is now two snapshots old. The numbers in this section are the ones that resolve today.
+
+**Deliberately left stale.** Listed, so that "stale" is a recorded decision and not an oversight:
+
+* §6.5 (`:573`) resolves its `basis='mixed'` branch as `` `:486-493` `` — a bare range with no file name, and not a `c1_audit.py` citation; it lies outside the scope of this repair and is not re-resolved here.
+* §10.6 (`:703`, and the restatement at `:719`) cites `R_extracted` at `c1_audit.py:738` and the `np.savez(` call at `:703`. §10.8 called those two *current*; they have since drifted with the same file growth and now resolve to `c1_audit.py:766` and `c1_audit.py:816`. The doc lines are left as written and the correct numbers are here.
+* §9's registered table, rows at doc lines `:637-638`, still cites `c1_audit.py:193` / `:172` for the thresholds and `:575-577` / `:575-581` for the screens. Correct today: `c1_audit.py:255` / `:234` and `:724-726` / `:728-730`. Left unedited on purpose — §9 is the *registered* clause list, this repair confines itself to prose that describes the code, and §10.8 already names those two rows as stale. A second, contradicting patch trail is worse than one honest list.
+* §10.8 itself (`:717`) is left as written for the same reason — it is the record of what was believed, and what supersedes it is a clause appended to the end of that same line, not a rewrite of it.
+
+**Line numbers are volatile; symbols are durable.** Every citation this document makes into `c1_audit.py` should be resolved by the symbol (`grep -n '^CORR_EY_MIN *='`), never by the number printed beside it. The numbers in this section are correct as of this append and will drift again the next time the file grows above them; the symbols will not. That is why both tables above are keyed by symbol and by code region, and why the four items above are listed rather than silently normalised.
