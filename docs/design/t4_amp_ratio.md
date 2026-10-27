@@ -49,9 +49,9 @@ Not one script's oversight: every artefact that pairs the two fields normalises 
 - **Duplicate captures:** `TOLFLUX.json` and `TOL.json` carry identical `beta`/ephemera but differ on `poynting` (True/False) and `wall` (4210.48/4560.05).
 - **Open tension, unresolved here:** 4.52 % (fail by 9x) and 0.40 % (pass) are both "beta against 312.7827646322591". Which fit T2 is scored on is not settled by the banks; naming the estimator is a precondition, as `decisions.md:7680` already warns.
 
-## 9. `T4_amp`: the pass condition it will have to be scored against (design only)
+## 9. `T4_amp`: the pass condition it will have to be scored against (registered, not implemented)
 
-**Design only.** Nothing in this section is implemented, registered, or run: no `.py` file changes, no gate entry appears, and `m3c_gate_v2.md:630` still reads "Seven entries, no more." The section fixes what `T4_amp` will assert, and what it must establish before it is allowed to assert it. The bar proposed here is **a pre-registered engineering requirement, not a derived error budget** — nothing in the record measures the scatter of `R_extracted` on this design, so nothing in the record can derive a tolerance from it.
+**Registered, not implemented.** The bar has a ruling of record — §9.2 is ADOPTED and LOCKED and the entry is in `decisions.md` — so `T4_amp` is no longer a proposal. Nothing in this section is enforced: no `.py` file compares `R_extracted` against `tol_rel`, no gate entry appears, and `m3c_gate_v2.md:630` still reads "Seven entries, no more." The section fixes what `T4_amp` asserts, and what it must establish before it is allowed to assert it. The bar is **a pre-registered engineering requirement, not a derived error budget** — nothing in the record measures the scatter of `R_extracted` on this design, so nothing in the record can derive a tolerance from it.
 
 ### 9.1 The scored quantity
 
@@ -107,7 +107,7 @@ On the operand, with `R_analytic = 2.8101021387524523`, the adopted band require
 
 The bar is **a pre-registered engineering requirement, not a derived error budget**: no part of this document estimates what the disagreement *ought* to be, and with n = 1 and no empirical scatter there is nothing to derive one from — a "derived" tolerance would be a number chosen first and described as measured afterwards.
 
-**Not registered, not implemented.** §9 changes no `.py` file, adds no gate entry, and edits no decision record. `m3c_gate_v2.md:630` still reads "Seven entries, no more."; when `T4_amp` is registered it becomes the eighth, and that line must be edited deliberately, as a separate act.
+**Registered, not implemented.** The bar is registered and nothing enforces it: no `.py` file compares `R_extracted` against `tol_rel`, no gate entry appears, and `m3c_gate_v2.md:630` still reads "Seven entries, no more."; when `T4_amp` is implemented as a gate entry it becomes the eighth, and that line must be edited deliberately, as a separate act.
 
 ### 9.6 Revisit clause
 
