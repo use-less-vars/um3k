@@ -1,0 +1,22 @@
+# c1_audit.py -- every propagating eigenvector of the mixed 2-D pencil
+# vs the analytic plane basis (microstrip_mode_profile -> plane_mode)
+#
+# repo                 : /workspace
+# mesh                 : 31 x 17 nodes, 1486 edges, 1444 free after PEC
+# QZ columns           : 1444 (dense QZ, every eigenvector kept)
+# propagating columns  : 1 (real lambda, beta^2 > 0)
+# f0 / k0              : 7833566197.72 Hz / 164.179407196 rad/m
+# criteria             : ok = |corr_e_y| >= 0.89 and |corr_ez_vv| >= 0.91 and shapes match  (the |corr_ez_vv| bar is derived -- docs/design/corr_ez_vv_threshold.md)
+#                        the npz keys shape_pair_ok / shape_only_ok are the GEOMETRY flag alone
+#                        (shapes line up, no correlation bar) -- they are not this column and
+#                        never were; the column below is ok (the npz's ok)
+# criteria SUPERSEDED  : shape_pair_ok_legacy = |corr_e_y| >= 0.89 and |corr_ez| <= 0.3 on corr_ez_superseded_longitudinal
+# criterion uses |corr| because an eigenvector's sign is arbitrary; the
+# signed values are printed too, so nothing is hidden.
+# corr_ez_vv                       = vertical reference vs VERTICAL mode component (primary)
+# corr_ez_superseded_longitudinal  = vertical reference vs the LONGITUDINAL field beta*z_free (the mis-pairing, retained)
+# banked anchors       : corr_e_y 0.9207707848111418 / corr_e_z 0.11916043239134175  (both belong to the superseded pairing)
+# banked identified col: 738 (loaded)
+#
+  rank     col        beta_sq         beta    eps_eff     corr_e_y   corr_ez_vv  |corr_e_y|  |corr_ez_vv|     ok           corr_ez_superseded_longitudinal  |corr_ez_superseded|  shape_pair_ok_legacy
+     1     732   9.7833058e+04  3.12783e+02   3.629512   +0.9207708   +0.9352867   0.9207708    0.9352867   True                       +0.1191604            0.1191604   True

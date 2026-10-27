@@ -1,0 +1,56 @@
+====================================================================================================
+c1_audit.py -- full-spectrum audit of the mixed 2-D pencil vs the analytic basis
+====================================================================================================
+EXPECTED COST: dense QZ ~111 s on the 31x17 node mesh (1486 edges, 1444 free),
+               ~1-2 GB RAM peak, per-mode loop ~10-20 s, TOTAL ~2-4 min.
+repo       : /workspace (from C1_REPO)
+emfit      : /workspace/emfit (FOUND)
+python     : 3.12.15
+numpy      : 2.5.4
+scipy      : 1.18.1
+out dir    : /workspace/tools/host/sparse-probe/out/run_b/rung0_s12_a9_z8-4-4
+geometry   : {'W': 0.02, 'H': 0.0076, 'h': 0.0016, 'w': 0.003, 'eps_r': 4.4, 'ny': 200, 'nz': 76, 'cell': 0.0001, 'strip': [0.0085, 0.0115], 'n_sub': 16, 'k_strip': 16, 'j_centre': 100}
+mesh       : {'nodes': 527, 'tris': 960, 'edges': 1486, 'xs': 31, 'ys': 17, 'strip_cells': 12, 'y_air_cells': 9, 'z_cells': [8, 4, 4]}
+bin        : {'f0': 7833566197.718491, 'k0': 164.17940719617263}
+dof        : {'free_edges': 1444, 'free_nodes': 483, 'n_edges': 1486, 'n_nodes': 527, 'mixed_dense_max': 3000}
+node order : OK (4 probe nodes, layout j*nx+i)
+banked     : mesh reproduced (n_edges + xs/zs identical); identified column = 738 {'beta': 312.7827646322591, 'beta_sq': 97833.0578509992, 'eps_eff': 3.6295122080769704, 'residual': 4.849473685711963e-18, 'n_dof': 1927, 'n_pec': 42}
+solve_modes_mixed done in 19.31 s {'chosen': 0, 'beta': 312.7827646322418, 'eps_eff': 3.6295122080765694, 'residual': 4.335809269733319e-18, 'n_dof': 1927, 'n_pec': 42}
+spectrum   : {'QZ_columns': 1444, 'pencil': [1444, 1444], 'hook_restored': True}
+blocks     : {'h': [483, 483], 'c_f': [1444, 483], 'nnz_h': 3141, 'nnz_c': 5431}
+analytic   : 1.72 s e_y/h_z, y: 115 below, 115 beyond; e_y/h_z, z: 0 below, 140 beyond; e_z/h_y, y: 115 below, 115 beyond; e_z/h_y, z: 0 below, 140 beyond
+analytic   : {'e_z': [201, 76], 'e_y': [200, 77], 'profile_cell': 0.0001, 'eps_eff': 3.3500085193372136}
+ez layout  : OK (4 probe nodes, (nz, nx) grid, (ZS, XS)-ordered interpolator)
+loop done in 0.01 s for 1 propagating columns
+wrote /workspace/tools/host/sparse-probe/out/run_b/rung0_s12_a9_z8-4-4/c1_table.txt
+wrote /workspace/tools/host/sparse-probe/out/run_b/rung0_s12_a9_z8-4-4/c1_spectrum.npz
+
+======================================================================================================================
+  rank     col        beta_sq         beta    eps_eff     corr_e_y   corr_ez_vv  |corr_e_y|  |corr_ez_vv|     ok           corr_ez_superseded_longitudinal  |corr_ez_superseded|  shape_pair_ok_legacy
+----------------------------------------------------------------------------------------------------------------------
+     1     732   9.7833058e+04  3.12783e+02   3.629512   +0.9207708   +0.9352867   0.9207708    0.9352867   True                       +0.1191604            0.1191604   True
+======================================================================================================================
+
+----------------------------------------------------------------------------------------------------
+VERDICT
+  propagating modes considered (real lambda, beta^2 > 0) : 1
+  ok (criterion: |corr_e_y| >= 0.89 and |corr_ez_vv| >= 0.91, shapes match) : 1
+  their QZ columns                                      : [732]
+  shape_pair_ok_legacy SUPERSEDED (|corr_e_y| >= 0.89 and |corr_ez| <= 0.3 on corr_ez_superseded_longitudinal) : 1
+  their QZ columns                                      : [732]
+  best |corr_e_y| mode                                  : col 732  |corr_e_y| = 0.920770784810962  |corr_ez_vv| = 0.935286730348701  |corr_ez_superseded| = 0.119160432394625  beta^2 = 97833.057851  eps_eff = 3.629512208  residual = 3.606e-16  ok = True  shape_pair_ok_legacy = True
+  resolved propagating column                           : 732  [solver selection (matched by mode.beta_sq)]
+  banked / identified column                            : 738
+  best-|corr_e_y| column == banked column               : NO
+
+REPRODUCTION CHECK (column 732 [solver selection (matched by mode.beta_sq)])
+  |corr_e_y| = 0.92077078481096175   anchor 0.9207707848111418   delta = -1.801e-13
+  |corr_ez_superseded| = 0.11916043239462468   anchor 0.11916043239134175   delta = +3.283e-12
+  |corr_ez_vv| = 0.93528673034870069   (corrected same-component pairing; the banked anchor is the SUPERSEDED value, so no gate here)
+  signed     = (+0.920770784810962, +0.119160432394625, +0.935286730348701)  (e_y, e_z_superseded, e_z_vv; signs are LAPACK-arbitrary; the anchors are magnitudes)
+  REPRO e_y  banked = 0.9207707848111418  measured = 0.92077078481096175  rel_delta = 1.956e-13  tol = 1e-06 (relative)  PASS
+  REPRO e_z  banked = 0.11916043239134175  measured = 0.11916043239462468  rel_delta = 2.755e-11  tol = 1e-06 (relative)  PASS
+  REPRO R  R_extracted = 4.0489791163950715  (no anchor: resolved column 732 is not the cache's identified column 738; pecbox_spectrum.npz is expected to read 4.163656524825077 here)
+  REPRO overall: PASS
+----------------------------------------------------------------------------------------------------
+DONE c1_audit.py elapsed=21.1s modes_kept=1 ok=1 shape_pair_ok_legacy=1 best_col=732 best_abs_corr_ey=0.920770784810962 best_abs_corr_ez_vv=0.935286730348701 cache_col=738 bank_col=732 banked_src='solver selection (matched by mode.beta_sq)' repro=PASS repro_rtol=1e-06 npz=/workspace/tools/host/sparse-probe/out/run_b/rung0_s12_a9_z8-4-4/c1_spectrum.npz table=/workspace/tools/host/sparse-probe/out/run_b/rung0_s12_a9_z8-4-4/c1_table.txt

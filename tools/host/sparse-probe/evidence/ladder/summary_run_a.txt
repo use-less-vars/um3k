@@ -1,0 +1,154 @@
+
+====================================================================================================
+PRE-REGISTRATION -- read before the first rung; it was written before any rung of THIS ladder ran.
+====================================================================================================
+SCORED QUANTITY   Q = R_extracted / R_analytic,  R_analytic = 2.8101021387524523 (unchanged, §1).
+THE BAR (locked)  |Q - 1| <= 0.10 on the dimensionless ratio, equivalently
+                  0.90 <= Q <= 1.10, equivalently R_extracted in
+                  [2.52909192487721, 3.09111235262770].  Quoted verbatim from the ruling of record:
+                  "`T4_amp`'s pass condition is `|Q - 1| <= 0.10` on the scored quantity
+                   `Q = R_extracted / R_analytic`, equivalently `0.90 <= Q <= 1.10`.  ... The band is
+                   defined on the dimensionless ratio `Q`; the interval on `R_extracted` is a
+                   consequence of that definition and is not a second, separate bar."
+                  "Locked by pre-registration.  The bar was registered before any measurement was
+                   taken on the refined mesh, and it is not to be moved after that measurement:
+                   bar first, number second, verdict third."
+THE MECHANISM     This ladder IS the mechanism that docs/design/t4_amp_ratio.md §9.6 requires a
+                  revisit to name: "a re-meshed run".  Verbatim: "Any change is governed by the
+                  revisit clause at docs/design/t4_amp_ratio.md §9.6, which permits exactly one
+                  revisit, requires it to be pre-registered here with its tolerance, mechanism and
+                  date, and requires it to name a mechanism (a changed column-selection rule, a
+                  re-meshed run, a different leg, a resolved estimator question) rather than a new
+                  number."  No column-selection rule, leg or estimator is changed here; only the
+                  mesh.  If a rung ever reports n_eligible != 1, that is a FINDING reported as such
+                  and NOT a licence to re-select a column.
+THE READING       Exactly two outcomes.  No third branch.
+                  (1) If the last completed rung's Q lies inside [0.90, 1.10], T4_amp PASSES, and
+                      the ladder is the §9.6 revisit's measurement.
+                  (2) Otherwise T4_amp remains FAIL, the bar is untouched, the constraint binds, and
+                      no further mesh refinement is nameable as a mechanism until a DIFFERENT one
+                      is named.  A ladder that converges to something outside the band is a
+                      negative about the mesh, not a partial credit.
+                  The diagnostic reading is pre-registered too, because it is the branch that
+                  carries information even when (2) fires:
+                  (d1) |R_extracted - R_analytic| falls monotonically and the 1/n_free extrapolant
+                       lands inside the band  ->  the discrepancy is discretisation, and the bar
+                       can be met by a run at the fitted resolution;
+                  (d2) it is flat or non-monotone, or the extrapolant stays above 3.09111235262770
+                       ->  the mesh is NOT the mechanism, and the ladder has eliminated it.
+                  Rung 0 is a gate, not a data point: if it fails either half of the gate --
+                  n_eligible = 1, and |R - 4.0489791163982565| / 4.0489791163982565 <= 1e-6 --
+                  the run stops and reports a HARNESS fault.  No rung is scored against a control
+                  that failed.  The gate is on the number and on there being exactly one eligible
+                  column; it is NOT on which column index was selected.  QZ column ordering is not
+                  reproducible: on the identical rung-0 mesh the solver selects column 732 while
+                  the banked cache holds 738, for the same mode, with R agreeing to 8e-13.  A
+                  column index is a diagnostic here, never a mode identifier, never a gate.
+WHAT IS FIXED     geometry, f0 = 7833566197.718491 Hz, the criterion, column-selection rule,
+                  R_analytic, the bar, and the ordering of the readings above.  Only strip cells,
+                  first-axis air cells and the z triple move, together, per rung.
+POST-HOC USE OF A NUMBER FROM THIS LADDER TO MOVE THE BAR IS A BREACH, not a correction.
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+RUNG 0/4   banked control   strip=12  yair=9  z=8,4,4   (31 x 17 nodes)
+----------------------------------------------------------------------------------------------------
+  mesh       : {'nodes': 527, 'tris': 960, 'edges': 1486, 'xs': 31, 'ys': 17, 'strip_cells': 12, 'y_air_cells': 9, 'z_cells': [8, 4, 4]}
+  dof        : {'free_edges': 1444, 'free_nodes': 483, 'n_edges': 1486, 'n_nodes': 527, 'mixed_dense_max': 3000}
+  mesh (projected) : nodes 527, tris 960, edges 1486, n_pec 42, free_e 1444
+  exit             : rc=0   wall clock 20.2 s   audit self-report 19.8 s
+  npz              : free_e 1444, n_nodes 527, n_edges 1486, ok True
+  mesh arithmetic  : OK -- free_e 1444 = n_edges 1486 - n_pec 42, all recomputed from strip=12 yair=9 z=8,4,4
+  columns (DIAGNOSTIC ONLY -- never a gate, never a mode identifier):
+      identified_col 738, chosen_col 732, bank_col 732, n_eligible 1, eligible [732]
+      QZ column ordering is not reproducible: on this identical rung-0 mesh the solver
+      selects 732 while the banked cache holds 738 for the same mode, R agreeing to
+      8e-13.  These numbers identify this run on this machine and nothing else.
+  banked_src       : solver selection (matched by mode.beta_sq)
+  repro            : PASS
+  beta / eps_eff   : 312.782764632 / 3.629512208
+  R_extracted      : 4.048979116395071   ok=True   (T4_amp reads Q = 1.440865462)
+  eligible columns :
+         col            beta_sq           R_by_col      corr_ey   corr_ez_vv     ok
+         732      97833.0578510       4.0489791164  0.920770785  0.935286730   True
+====================================================================================================
+CROSS-RUNG  --  the operand against free edges (nothing here is a fit yet)
+====================================================================================================
+  rung   free_e    n_nodes          R_extracted     |R-R_an|    |R-R_reg|        Q    n_elig bank*    ok
+     0     1444        527       4.048979116395     1.238877     0.000000  1.44087         1   732  True
+  reference: R_analytic 2.810102138752452   R_registered 4.048979116398256   band [2.5290919248772, 3.0911123526277]
+  * bank* is the QZ column index this run happened to select.  It is a DIAGNOSTIC:
+    column ordering is not reproducible: on the identical rung-0 mesh the solver picks
+    732 while the banked cache holds 738, same mode, R agreeing to 8e-13 -- so it is
+    neither a gate nor a mode
+    identifier.  The rungs are compared by free_e, R_extracted and beta_sq only.
+====================================================================================================
+STABILITY  --  read by physics and by number, never by column index
+====================================================================================================
+  A QZ column index is not reproducible: on the identical rung-0 mesh the solver
+  selects column 732 while the banked cache holds 738, for the same mode, with R
+  agreeing to 8e-13.  So no column index below is evidence of anything, and none of
+  them is compared against anything.
+  What is checked instead, for every rung:
+    (1) exactly one criterion-passing column (n_eligible == 1);
+    (2) R_extracted varies smoothly with the free-edge count;
+    (3) the SELECTED mode's beta_sq (= eps_r * k0^2, k0^2 = 2.694e4, so of order
+        1.185e5) varies smoothly with the free-edge count -- the mode must not change
+        identity as the mesh refines, which a column index cannot report and beta_sq can.
+  Smoothness is the declared test in _smooth(): monotone, or no step above twice the
+  median step.  This is a structural reading only.  The bar of record is
+  |Q - 1| <= 0.10, it is untouched here, and nothing below is scored against it.
+
+  every eligible column of every rung (indices are diagnostics):
+  rung   free_e n_elig
+     0     1444      1
+        col    732  beta_sq      97833.0578510  R_by_col       4.0489791164  corr_ey +0.920770785  corr_ez_vv +0.935286730
+
+  the selected mode per rung -- these are the numbers that are compared:
+  rung   free_e            R_extracted              beta_sq
+     0     1444       4.04897911639507           97833.0579
+
+  every rung kept exactly one criterion-passing column.
+
+  verdict components:
+     n_eligible == 1 on every rung           : YES
+     R_extracted smooth in free_e            : YES  [fewer than 3 rungs: smoothness is not testable and is not claimed]
+     selected beta_sq smooth in free_e       : YES  [fewer than 3 rungs: smoothness is not testable and is not claimed]
+  verdict: STABLE -- one column is selected on every rung, and both the reading and the mode's eigenvalue move smoothly with the mesh.
+====================================================================================================
+FITS  --  diagnostics only; neither is a law and neither moves the bar
+====================================================================================================
+  fewer than two measured rungs: no fit, and no extrapolant may be quoted.
+====================================================================================================
+THE REGISTERED READING, APPLIED WITHOUT ADJUSTMENT (two outcomes, no third)
+====================================================================================================
+  step 1 -- the control.
+     rung 0 R_extracted 4.0489791163950715 vs registered 4.0489791163982565 -> relative 7.866e-13
+       gate: relative <= 1e-06  -> PASS
+     rung 0 n_eligible 1, gate: exactly 1 -> PASS
+     rung 0 columns, DIAGNOSTIC ONLY and not part of the gate: identified_col 738,
+       chosen_col 732, bank_col 732, eligible [732].  A QZ column index is this
+       run's ordering on this machine: on this identical mesh the solver picks 732
+       while the banked cache holds 738, for the same mode, with R agreeing to
+       8e-13.  So it is never a mode identifier and never a gate.
+     control verdict: PASSED -- the rungs below are scorable
+  step 2 -- the operand at the last completed rung (rung 0).
+     R_extracted = 4.048979116395071   Q = 1.440865461991   |Q-1| = 0.440865461991   band half-width 0.10
+  step 3 -- the verdict, from the bar fixed BEFORE these numbers existed.
+     R_extracted is OUTSIDE the band [2.5290919248772, 3.0911123526277]
+     T4_amp: FAIL
+     Over the band by 4.4087x the half-width (44.0865 % relative error against a 10 % allowance).
+  step 4 -- the diagnostic (pre-registered (d1)/(d2)), which is read even when FAIL.
+     |R - R_analytic| per rung: r0 1.238877
+     non-increasing with refinement: YES
+     -> branch (d1) discretisation is the mechanism, in SHAPE
+        SHAPE is not convergence: a monotone sequence whose last step has not
+        shrunk does not establish a limit (the same reading the warm-up scan got).
+  step 5 -- the bar.
+     |Q - 1| <= 0.10 on Q = R_extracted/R_analytic is UNMOVED; R_analytic is UNMOVED;
+     the column-selection rule is UNMOVED.  Bar first, number second, verdict third.
+     Nothing in this report may be used to re-open docs/design/t4_amp_ratio.md §9.6:
+     its one permitted revisit is the mechanism this ladder already is (a re-meshed
+     run), and it is spent by running it, not by failing it.
+
+RUN THIS: tools/host/sparse-probe/high_res_run.sh

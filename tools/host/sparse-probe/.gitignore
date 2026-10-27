@@ -1,0 +1,5 @@
+# Written by the sparse-probe harness: out/ holds one directory per rung and is
+# created by a real run (17-46 MB of npz per rung, plus logs).  The small text
+# artefacts that make a result checkable are copied into evidence/ instead, so a
+# checkout carries the provenance and not the binaries.  See evidence/README.md.
+out/
