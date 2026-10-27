@@ -7296,21 +7296,31 @@ Class (i) is excluded by degree-0 homogeneity in the eigenvector scale: a ratio 
 The confirmation in (a) is a statement about *which class* the number belongs to. It is not a statement that `0.027` is the physically correct ratio, and the operator attached two flags to it. Both are recorded here as open concerns, because a confirmation that arrives with them is weaker than one that arrives without them, and the record should show that.
 
 **FLAG 1: `0.027` is physically suspicious, and the unit diagnosis can be right while `0.027` is the wrong number.** For a ~50 ohm microstrip (`h/w ~= 0.53`, `eps_r 4.4`) the vertical component `E_z` should dominate `E_y` in integrated energy by roughly 10x. `0.027` says `E_y` dominates by 37x. That is backwards by nearly three orders. A unit error of the right size in the right component would produce exactly this kind of inverted reading, so the flag does not weaken (a) — it is the reason (a) is plausible — but it does mean `0.0272` must not be quoted as a physical energy ratio. (c) explains why.
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7298`. No earlier text was altered.
 
 **FLAG 2: `corr_e_z = 0.1192` against `corr_e_y = 0.9208`.** Two components of what is supposed to be one field, one of which correlates with its reference at 0.92 and one at 0.12. This is independent of the `1e8` factor — a constant scale cannot move a correlation — so it could not be dismissed as part of the unit story, and it had to be resolved before any scheme was finalised.
+> **[VOID 2026-10-27]** class (b) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7300`. No earlier text was altered.
 
 ### (c) FLAG 2 diagnosed: a solve-side defect in the longitudinal block
 
 This is the session's main scientific result. `corr_e_z = 0.1192` is a **solve-side defect in the longitudinal block**. It is *not* a reconstruction bug, not a sign bug, not a phase bug, not a gauge bug, and not a reading of §8(b). Each of those was tested and excluded, and the exclusions are the evidence:
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7304`. No earlier text was altered.
 
 - **Sign is not the cause.** `z_free` is *single-signed* on every mesh: 0 of 483 negative entries at 31x17, and 483 of 483 negative at 41x22 — a pure global sign, not a mixed-sign pattern. The `np.abs` at `s10118_basis.py:225` is therefore *inert*, and restoring the sign moves `corr_e_z` by exactly `0.000000000`.
+> **[VOID 2026-10-27]** class (a) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7306`. No earlier text was altered.
 - **Gauge is not the cause.** The gauge variants change the *energy* — `0.006735411` and `0.008582176` against the baseline `0.027223973` — and each is independently rejected by its own correlation, `0.009491` and `0.050802`.
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7307`. No earlier text was altered.
 - **No sign convention reaches 0.92.** A per-column sign-aligned *oracle* bound, which is allowed to choose the sign that maximises correlation column by column, reaches only `0.197856` at 31x17 and `0.199096` at 41x22.
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7308`. No earlier text was altered.
 - **The legal discrete operator does not recover the field either.** Discrete `E-dot-dl` on z-edges, `c[z-rows] @ z_free`, gives `corr = -0.117276695` — only 15.2 per cent of the operator's own *ceiling*. Against that, the control, the exact analytic `phi` pushed through the same `c`, reaches `0.770566870` (in-range restriction `0.767188080`, `201/201` entries flipped), and the analytic derivative control is `1.000000000000000`. So the operator is capable; the field is what fails it.
+> **[VOID 2026-10-27]** class (b) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7309`. No earlier text was altered.
 - **The reconstruction violates an identity the reference obeys exactly.** `e_z` is single-signed and does *not* decay to the top wall — top-row mean `7.5e-3` against a mean of `9.5e-3` — which violates `integral(e_z dz) = -(phi(H) - phi(0)) = 0` outside the strip. The analytic reference obeys that identity exactly (496 negative / 1860 positive entries under the strip). A field that does not satisfy the boundary identity is not merely noisy; it is not the right pattern.
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7310`. No earlier text was altered.
 - **The defect is mesh-independent.** `0.119160432` at 31x17 against `0.119317007` at 41x22: refining the mesh moves the fifth decimal, so this is not a discretisation artefact that refinement will heal by itself.
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7311`. No earlier text was altered.
 
 **The energy-invariance consequence, stated explicitly, because it is what protects (a) and what limits it.** The ratio `sum(e_z^2)/sum(e_y^2)` survives *bit-identically* — `0.027223973` — under every *legal* repair: baseline, both sign conventions, the PEC gauge, and the oracle. It changes only under an offset or under a change of formula. So `0.0272` stands **arithmetically**: it is the correct value of the quantity the pencil computes, and (a)'s unit diagnosis survives intact. But it must **not** be presented as the physical `E_z`/`E_y` energy ratio, because the longitudinal block does not carry the `E_z` pattern — the 15.2-per-cent-of-ceiling result is the direct measurement of that. This is exactly FLAG 1's suspicion, now with a mechanism attached rather than a hand-wave.
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7313`. No earlier text was altered.
 
 ### (d) Falsifier #8: run, and it fails
 
@@ -7338,6 +7348,7 @@ The staggering effect itself — the route/order spread *within* a mesh — is a
 The raw anchor reproduces: `2722397.314567553` against the published `2722397.314568`, which matches at 6 decimal places. Exact float equality is **false** by `4.470e-07` absolute, i.e. `1.6e-13` relative, because the published literal is a rounding of the measurement and not the measurement. Per-mesh raw anchors: `2642977.8695502086` (41x22), `2536572.286604414` (51x19).
 
 **Verdict: the A-versus-C gap is not a staggering artefact.** Every de-staggered value sits within about 1.5 per cent of A and still about 2.9x above C. Scheme C is **excluded**.
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7340`. No earlier text was altered.
 
 ### (e) D2 resolved: Scheme A confirmed, Scheme C withdrawn
 
@@ -7399,6 +7410,7 @@ The earlier claim that the `Ey*Hz` term carries **`0.086` per cent** of the Poyn
 The **qualitative conclusion** the ruling rested on survives, and is in fact **stronger** than the figure it was argued from: a break in `Ey` *is* invisible to a flux-based gate — that route is three orders too insensitive — while a dedicated `Ey`-slot check catches it 1:1 down to the float32 floor. The T3 re-scope stands; only its supporting arithmetic changes.
 
 The **`corr_e_z` archaeology is unresolved** and is recorded as unresolved. `.scratch/s10118_result.txt:105` carries `0.11916043239134175`; four mesh logs — `mesh41.log`, `mesh51.log`, `mesh51b.log` and `s10118_mesh_study.log`, all at line 18 — carry `0.14619976001754773`. No candidate reconstruction reproduces `0.1462`, and `corr_e_y` is byte-identical across both, which locates the change in the scratch script's own mixed-`e_z` construction and **not** in `emfit/mode_profile.py`. `.scratch/` is unversioned, so the old revision is not recoverable and the question closes as unresolved rather than as settled.
+> **[VOID 2026-10-27]** class (a) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7401`. No earlier text was altered.
 
 ### (j) Dispositions of problems 1–5
 
@@ -7488,6 +7500,7 @@ with both `flux_detected` and `slot_detected` routed through it, and `b_min` mad
   named: **read the direction of the inequality before writing the fix.** Two instances are recorded. (i) A
   *minimum*-admixture floor (the contaminant must be **at least** ~87 % of the good component before
   `corr(e_z)` collapses from 0.92 to 0.119) was mistaken for an upper bound, and a "~1.5 % admixture" estimate
+  > **[VOID 2026-10-27]** class (b) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7490`. No earlier text was altered.
   was written on the strength of it - wrong by 1.8-2.7 orders of magnitude (58x to 507x). (ii) A correction was
   instructed as `corr_e_z >= 0.3` when the bound the argument needs is `corr_e_z <= 0.3` (small longitudinal
   correlation = decorrelated; the screen is `corr_e_y >= 0.9` **with** `corr_e_z <= 0.3`).
@@ -7504,6 +7517,7 @@ with both `flux_detected` and `slot_detected` routed through it, and `b_min` mad
   `:337-338` (`corr_e_y >= 0.9` with `corr_e_z <= 0.3`); `:472`, `:490` (the bound as committed);
   `tools/corr_ez_101_20.py:181-184` and `.scratch/logs/s10118_basis.py:385-387` for the measured correlations
   (`corr_e_z` 0.119160432391; `corr_e_y` +0.920770784811 / -0.938702180036) the bound is applied to.
+  > **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7506`. No earlier text was altered.
 
 ## D0 passes and D3-pre is data-insufficient
 
@@ -7544,6 +7558,7 @@ with both `flux_detected` and `slot_detected` routed through it, and `b_min` mad
   this test FAIL to detect the thing I suspect?"*. The floor on `corr_e_y` exists because the suspected defect is
   a mode that is *nearly* right transversely but wrong longitudinally, so a high transverse correlation is the
   population we want. The **ceiling** on `corr_e_z` exists because the suspected defect is *decorrelation*, which
+  > **[VOID 2026-10-27]** class (b) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7546`. No earlier text was altered.
   shows up as a **small** |`corr_e_z`| — so `corr_e_z >= 0.3` would select precisely the modes the screen exists
   to kill. Two instances now produced with an inverted comparator (the `~1.5 %` admixture floor, and this one),
   which makes it a **recurring class, not a slip**.
@@ -7636,6 +7651,7 @@ with both `flux_detected` and `slot_detected` routed through it, and `b_min` mad
 ## Named pattern: shape-pair screen tautology
 
 **Named pattern: shape-pair screen tautology.** The C1 audit's screen (`corr_e_y ≥ 0.90 AND corr_e_z ≤ 0.30`) matched the current mode (column 738), reporting `shape_pair_ok = True`. Read literally, this confirms existence of a mode matching the screen — which is the mode the selector already picks. C1's requirement is a *different, better* mode, not the current one. A screen that matches the current mode does not confirm mis-pick; it confirms existence. Follow-on: any future screen for a defect must require the *defective* population to be matched, not the healthy one. Third instance of the "state the inequality direction in prose against the falsifier's logic" pattern.
+> **[VOID 2026-10-27]** class (b) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7638`. No earlier text was altered.
 
 ## Three different BVPs were being compared as one
 
@@ -7670,16 +7686,20 @@ In log-share terms: **~71% analytic-internal, ~20% box clearance, ~9% wall type*
 ## PEC-walled variant: C1 falsified in both pencils
 
 **PEC-walled variant: C1 falsified in both pencils.** 31×17 node mesh, 1382 free edges (was 1444), 104 PEC edges (was 42, +62 matching pre-registration). N_PROPAGATING = 2: quasi-TEM at col 699 (β²/k₀² = 3.606, corr_e_y 0.9123, **corr_e_z 0.1473**) and a box mode at col 704 (β²/k₀² = 0.280, corr_e_y 0.426). The second mode is faster than light (v_phase = 1.89c at 7.83 GHz), does not have the quasi-TEM shape, and is correctly rejected by the screen. **The selector correctly picks col 699.** No better mode exists for the port in either pencil. C1 dead.
+> **[VOID 2026-10-27]** class (b) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7672`. No earlier text was altered.
 
 **Three corr_e_z values, three contexts, not to be conflated:**
 - **0.1473** (0.147291446944630) = PEC pencil, this run. Genuine, new measurement.
 - **0.1462** (0.14619976001754773) = `.scratch/logs/mesh*.log` value, **RETRACTED** per §8.1, do not quote.
 - **0.1192** (0.11916043239134175) = PMC pencil, banked baseline (`s10118_result.txt:105`). Correct for that box.
+> **[VOID 2026-10-27]** class (a) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7677`. No earlier text was altered.
 Whether the **0.028 PEC-vs-PMC shift** is a real wall-treatment effect or an artefact of the closed-box solve has **not been established**. C2b's premise (that corr_e_z is a stable, physics-carrying quantity) needs that shift checked against the mesh noise floor before it can be validated. Step 0 of the C2b pre-registration (§7.3) addresses this.
+> **[VOID 2026-10-27]** class (b) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7678`. No earlier text was altered.
 
 Note: `c1_audit`'s own REPRO lines read FAIL on the closed box because its anchors (corr_e_y 0.9208, corr_e_z 0.1192) belong to the open-top geometry. This is expected, not a defect.
 
 **Subsequently established.** The `0.028` shift is a wall effect at fixed mesh, not a mesh or code-path difference. `tools/host/c1-audit/pecbox_variant.py` builds no mesh: it wraps only `emfit.mode2d.pec_edge_mask` and `pec_node_mask` (`:349-350`), restores them (`:357-358`), and then executes the audit itself with `import c1_audit` (`:354`), so the mesh comes from `c1_audit.py`'s own `structured_mesh` (`:266-268`). `tools/host/c1-audit/out/pecbox_run.log:36` and `:53` report the identical `nodes 527 / tris 960 / edges 1486 / xs 31 / ys 17`, with only the free set moving, `free_edges` `1444 -> 1382`. The shift is `0.147291446944630 - 0.119160432391342` = `0.028131014553288` absolute, `23.6 %` relative, `179.7` times the `1.5657e-4` mesh floor. One caveat stands and is not retracted: the box figure is its best-`|corr_e_y|` propagating mode, column `699`, not the PMC run's column `738`, which is unavailable under the walls (`out/pecbox_run.log:84`, `:86`), so `23.6 %` is an upper bound on a pure wall effect. Consequence: `corr_e_z` is mesh-stable (`0.13 %` across `31x17 -> 41x22`) and wall-sensitive (`~24 %`), so it is usable as an observable only within one wall set. Recorded in `docs/design/c2b_preregistration.md` and `docs/design/zfree_diagnosis.md` §7.3.
+> **[VOID 2026-10-27]** class (c) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7682`. No earlier text was altered.
 
 ## Pre-registration node-count prediction was off by 4
 
@@ -7733,6 +7753,7 @@ Offsets measured from `git show d8f5a72` (hunk header and file length are the co
 ## The picture earns its keep — a correlation is a detector, not a diagnosis
 
 **What 0.1192 can and cannot say.** `mode_plot.log:20` prints `corr_e_z banked=+0.119160432391342` and `:26` prints `+0.147291446944630`; an honest reading of those lines stops at "the extracted `e_z` and the analytic `A_ez` disagree, a lot". They do not say where the disagreement lives, which of the two fields carries the fault, or what kind of fault it is. The five hypotheses in `docs/design/zfree_shape.md` §3 — a propagating-mode selector that keeps a column it should drop, boundary attribution at the strip, a wrong right-hand side inside the extraction, a defect in the reference itself, and an inverse solve standing in for a differentiation — are all compatible with 0.1192, because a correlation is one scalar about a two-dimensional field. It is not merely coarse, it is blind in the directions that matter: invariant to a global sign reversal, insensitive to a nodal line as such, and indifferent to a field that changes sign on one side of the strip and not on the other. The structures that separate the five hypotheses are exactly the ones a correlation cannot see.
+> **[VOID 2026-10-27]** class (a) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7735`. No earlier text was altered.
 
 **What the shape showed.** Side by side, the analytic field and the extracted field differ in kind before they differ in magnitude. The analytic `e_z` has a sign change: under the strip, 496 of 2,356 points are negative and 1,860 positive; outside it, 10,046 are negative and 2,874 positive (`.scratch/logs/corr_ez_followup.txt:31-34`). The extraction has none: `z_free` runs `min = +0.000000e+00`, `max = +3.951804e-02`, fraction below zero `0.0000` (`.scratch/logs/corr_ez_followup.txt:39-40`), and that single-signedness holds on every mesh the audit has run — 0 of 483 negative at 31x17, 483 of 483 at 41x22. The field with the node is the reference. The single-signed one is the extraction, and the node is not an artefact: with the line uniform along x, `∂_x ≈ 0`, so `∇·E = 0` with `∂_z → −iβ` gives `E_z ∝ ∂_y E_y`, which vanishes where `E_y` turns over, at the strip centre. A reference without that node would be the field in error. So the figure put the defect on the side no quoted number had been asked about, and a sign census of already-banked output — no new solve — was enough to confirm it.
 
@@ -7741,6 +7762,7 @@ Offsets measured from `git show d8f5a72` (hunk header and file length are the co
 **The picture needs a definition before it may be cited, and this one was read backwards first.** The first reading of that image assigned the rows the other way round and concluded that the extraction carried the node while the reference was smooth. `docs/design/zfree_diagnosis.md` §7.4 records that its author had not seen the image, so the assignment there was inherited rather than observed; nothing in the record supports it and the sign census contradicts it. The conclusion drawn from the image survives and strengthens — the mismatch is structural rather than a resolution effect, and the pre-registered C2b target was the wrong object — but the attribution had to be corrected against the equations, not against the picture.
 
 **What moves, and what does not.** No quoted number moves: correlations are scale-free, so `+0.119160432391342`, `+0.147291446944630` and the `0.028131014553288` they differ by are still the measurements they were. What moves is what they are evidence for. And the picture could not have been replaced by a better statistic, because the discriminating feature is not a magnitude — it is the presence or absence of a nodal line, and the reversal of a sign at a boundary.
+> **[VOID 2026-10-27]** class (a) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7743`. No earlier text was altered.
 
 ## The amplitude retraction — a statistic is not a quantity until its definition is read
 
@@ -7749,6 +7771,7 @@ Offsets measured from `git show d8f5a72` (hunk header and file length are the co
 **The rule, and why it is not pedantry.** A number in a log is a claim about an array, and until the array is named the number is not evidence. The correction has been the same both times — *that number is X, not Y* — and it has cost a paragraph of argument on each occasion. The habit that avoids it is cheap: read the line that computes a value before quoting the line that prints it. In this file the two available numbers behave in opposite ways — the rms ratio looks decisive and carries no information, while the correlation `0.1192` looks weak and is the one that has to be explained. A statistic invariant to a normalisation you cannot see is worth more than one that moves with it.
 
 **The ceiling, and what it does and does not bound.** `.scratch/logs/corr_ez_followup.txt:177` prints `corr(c@phi_analytic, A_ez)           = -0.772595940918107   (|corr| 0.772595941)`, and `:173-176` says what that object is: `CONTROL -- the same operator applied to the EXACT analytic potential resampled onto the same mesh nodes: this is the operator's own ceiling on this mesh`. It is a *forward* application of `c`, not an inverse solve, and an earlier reading in this session scoped it as the latter. So the sentence at `decisions.md:7309` that quotes a ceiling — the legal discrete operator `c[z-rows] @ z_free` giving `corr = -0.117276695`, "only 15.2 per cent of the operator's own *ceiling*" — is like for like and stands: numerator and denominator are both forward applications of the same operator, differing in their input. What the ceiling does not do is bound the banked figure. `corr_e_z = 0.1192` is produced by the other route, `beta * z_free`, and "15.2 per cent" is not a statement about it.
+> **[VOID 2026-10-27]** class (a) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7751`. No earlier text was altered.
 
 **Two digits in `7309` that must not be merged with the log's.** The ceiling quoted in that sentence is `0.770566870`, in-range `0.767188080`, `201/201` entries flipped, with the analytic derivative control at `1.000000000000000`. The follow-up log's corresponding lines are `0.772595941` and `0.769644553` (`:177-178`), and its derivative control is `-0.811883638` (`:180`). Same objects, different mesh legs; the digits are not interchangeable, and the two derivative controls differ in value rather than in decimals. And `0.77` appears nowhere in `mode_plot.log` — a search for `0.7[0-9]` across all thirty-six lines finds nothing — so the ceiling cannot be sourced from the banked run at all, only from the follow-up log or from `7309` itself.
 
@@ -7816,8 +7839,10 @@ Threshold sensitivity is large: the row histogram is 0:132 / 1:69 at the structu
 **(b) Task 2's item 3 - "`z_free` is a potential" - is overruled** by section 2. That reading entered through `c@z_free`; a transverse gradient applied to a field is not a potential reconstruction, and its residual cannot testify to what `z_free` is.
 
 **(c) Operator-requested correction (i).** The M1 row "41x22 -> 0.147291446944630" is `corr_ez[0]` of a **31x17** npz. No 41x22 `corr_ez` leg is banked anywhere.
+> **[VOID 2026-10-27]** class (a) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7818`. No earlier text was altered.
 
 **(d) Operator-requested correction (ii).** `pecbox_spectrum.npz`'s `corr_ez` is a **2-vector `[0.14729145, 0.12092331]` with `ok = [True False]`**, so 0.14729 is not one settled number.
+> **[VOID 2026-10-27]** class (a) — rests on the mis-paired `corr_ez`; see "SUPERSESSION PASS" at the end of this file, §4 row `:7820`. No earlier text was altered.
 
 **(e) Operator-requested correction (iii).** `c1_audit.py:137`'s comment `# presence validated in find_repo()` points at a function that no longer exists.
 
@@ -7835,3 +7860,137 @@ Threshold sensitivity is large: the row histogram is 0:132 / 1:69 at the structu
 - An operator ruling: is `corr_ez` redefined as vertical-vs-vertical everywhere? Does that change the C2B verdict? Was the e_y >= 0.9 / e_z <= 0.3 screen ever load-bearing?
 - `docs/design/zfree_shape.md` section 4 gets the calibrated rule (node at z = h, zero-transparent convention, 30/30 strip rows, threshold named) - in this dispatch, as the transposed census alongside the one already there.
 - Anything downstream that quotes 0.12 as a defect of the extraction must be re-read against section 1.
+
+## 2026-10-27 — SUPERSESSION PASS over every conclusion in this file that rested on the mis-paired `corr_ez`
+
+**Append-only.** No earlier line in this file has been rewritten or deleted. Each affected line carries a one-line `[VOID 2026-10-27]` pointer beneath it naming its class and pointing back here; the evidence, the numbers and the reasoning live here once. `docs/design/zfree_shape.md` carries the matching banner and a per-measurement appendix (M1-M10).
+
+### 1. What changed
+
+Every `corr_ez` this repository had ever computed correlated the **vertical** component of the analytic reference `A_ez` against the **longitudinal** component of the extracted field. They are different physical quantities, of different dimensions; a correlation between them is not a fidelity measure and cannot be turned into one by rescaling. The metric is now same-component (vertical against vertical, the solver's own transverse field read at `c1_audit.py:510-511`), and the old number is retained under the name `corr_ez_superseded_longitudinal`. Committed values, signed, 15 significant digits:
+
+| leg | pencil | column | `corr_e_y` | `corr_ez_vv` (current) | superseded |
+|---|---|---|---|---|---|
+| 31x17 | PMC | 738 | `+0.920770784811142` | `+0.935286730348765` | `+0.119160432391342` |
+| 41x22 | PMC | 1318 | `-0.938702180035899` | `-0.948530101525844` | `-0.119317006502073` |
+| 31x17 | PEC | 699 | `+0.912343044811209` | `+0.936929717079781` | `+0.147291446944630` |
+| 31x17 | PEC | 704 | `-0.426418989` | `-0.083134346` | `+0.120923310` |
+
+`|corr_ez_vv| / |corr_e_y|` = 1.0158, 1.0105, 1.0270. Signs are LAPACK-arbitrary; every test screens on `|corr|`.
+
+**Selection is unchanged** — column 738 (PMC) and column 699 (PEC), as before. Column 704 fails both new tests. The old `corr_ez <= 0.30` clause *passed* it (`0.1209 <= 0.30`), and that is the clearest demonstration of what the clause was: a number with no magnitude is not a low number, it is an arbitrary one, and an upper bound on it can never be failed. It was a pass-through, not a test.
+
+**The wall effect collapses.** Corrected ratio `0.93692971707978068 / 0.93528673034876475 = 1.0017566663545021`, i.e. **+0.1757 %**, absolute `+0.0016429867310159274`. That is about `10.5x` the `1.5657e-4` mesh floor. The recorded `23.6 %` (`= 1.2360768082890228x`, absolute `0.028131014553288`) was computed on the mis-paired metric and is **134x too large**, and its quoted `179.7x` mesh floor becomes `~10.5x`. `corr_e_y` moves `+1.9474 %` across the same wall change. Cross-run correlation of the extracted `e_z_vv` field between the two wall treatments is `0.9990` corrected against `0.9327` superseded. Whatever the open-top-versus-closed-box question is, it is not a 23 %-scale effect on this field, and it is not what C2b was pre-registered to explain.
+
+### 2. C2b is VOID, not falsified
+
+The distinction is load-bearing and must not be flattened anywhere in this repository.
+
+- **Falsified**: the hypothesis was tested and failed. Something was learned — the physics said X, the measurement said not-X, X is dead.
+- **Void**: the hypothesis was never tested, because the instrument meant to test it was measuring something else. Nothing was learned about the hypothesis. It is not dead. It is unasked.
+
+C2b is the second. The pre-registration is retained in full as the record of what *would* have been tested, under a supersession banner. The C2b Step 0 plan — the programme designed to move `0.12` toward `1.0` — is void with it: there was no `0.12` to move, and the quantity it set out to raise is already `0.935`.
+
+What the wrong number did positively is worth recording, because it is the reason this pass exists: it aimed a two-session hunt at the **vertical** component, on the strength of `0.12` against `0.92`. The vertical component is the **healthier** of the two. `e_z_vv` reads `0.935`/`0.937` where `e_y` reads `0.921`/`0.912`. The component ordering implied by the old pair is exactly inverted, and every diagnosis that started from 'the vertical block is broken' started from the wrong premise.
+
+### 3. Classification key
+
+Every affected finding is assigned one of three classes. The classes describe the *finding*, not the number.
+
+- **(a) stands.** The observation was correct and was never carried by this metric. The mis-paired number appeared nearby; it was not the evidence.
+- **(b) stands, but for a reason that survives.** The conclusion is true; the stated reason is not the operative one. The surviving reason is named in each case. This is the subtlest class and the easiest to lose — a true conclusion with a dead justification is one careless edit away from being struck as false.
+- **(c) must be re-derived.** Not decidable from the record. Neither established nor refuted. Re-derivation is now possible (the corrected metric is banked) and has not been done.
+
+There is no class for 'proved wrong'. This pass found no conclusion that the correction falsifies; it found conclusions whose *support* it removes. The distinction matters for what gets retracted (nothing) and what gets re-opened (class c).
+
+### 4. Finding by finding
+
+Each row is keyed by the line number it occupied before this pass.
+
+| site | original conclusion | rested on | class | status now |
+|---|---|---|---|---|
+| `:7298` | FLAG 1: `0.027` is physically suspicious, since the vertical component should dominate `E_y` in integrated energy by roughly 10x while `0.027` says `E_y` dominates by 37x | the ratio `sum(e_z^2)/sum(e_y_unit^2)` | **(c)** | The alarm was aimed at the wrong component — the numerator is not vertical (see §5.2). A *vertical*-over-in-plane expectation was applied to a *longitudinal*-over-in-plane ratio, and for a quasi-TEM microstrip a small longitudinal fraction is unremarkable. Re-derive with `e_z_vv` in the numerator before concluding anything about the vertical component. |
+| `:7300` | FLAG 2: `corr_e_z = 0.1192` against `corr_e_y = 0.9208` — two components of what is supposed to be one field | the mis-paired metric | **(b)** | The puzzle was real, and this is the entry that found it. But the resolution is the *pairing*, not a solve defect. The two components agree at `0.935` and `0.921`: one field after all. |
+| `:7304` | `corr_e_z = 0.1192` is a **solve-side defect in the longitudinal block** | the mis-paired metric | **(c)** | The strongest single casualty of the pass, and the session's headline result. There is no longitudinal-block defect to find: both the vertical and the in-plane components reproduce at `0.935`+ and `0.921`. This must **not** be carried forward as an established defect. The residual that does exist is edge-localised (§5.3) — a different object, of a different size, in a different place. |
+| `:7306` | restoring the sign moves `corr_e_z` by exactly `0.000000000`, so sign is not the cause | invariance of `|corr|` | **(a)** | Trivially true for any pairing: `|corr|` is invariant under a global sign flip of either operand. It survives the correction and, for the same reason, it was never evidence of anything. |
+| `:7307` | the gauge variants change the *energy* — `0.006735411` and `0.008582176` against the baseline `0.027223973` | the same longitudinal-over-in-plane ratio | **(c)** | The three energies are all computed on the wrong numerator (§5.2). |
+| `:7308` | a per-column sign-aligned oracle reaches only `0.197856` at 31x17 and `0.199096` at 41x22, so no sign convention reaches `0.92` | an oracle bound on the mis-paired quantity | **(c)** | Not merely unsupported — aimed at a target that does not exist. A per-column sign oracle on a field that already correlates at `0.935` has almost nothing left to buy. The corrected analogue has not been computed. |
+| `:7309` | `c[z-rows] @ z_free` gives `corr = -0.117276695`, only 15.2 per cent of the operator's own *ceiling* | `|corr(A_ez, c@z_free)| / |corr(A_ez, c@phi)|` | **(b)** for the operator claim, **(c)** for any fidelity reading | See §5.1. The ratio is like-for-like on the reference axis and on the operator, and the narrow claim survives. It is not a statement about the extracted vertical field, whose same-component correlation is `0.935`. |
+| `:7310` | `e_z` is single-signed and does not decay to the top wall — top-row mean `7.5e-3` against a mean of `9.5e-3`; the reconstruction violates `integral(e_z dz) = 0` outside the strip | a sign and decay census over `z_free`, the longitudinal solution, against the expected behaviour of a *vertical* field | **(c)** | A longitudinal component of a quasi-TEM mode is not required to decay to the top wall, and the identity actually available here is the telescoping discrete sum `sum(e_z) = -v_mode` (`emfit/mode_profile.py:46`), not an integral-over-z statement in the sense the note used. Whether the extracted field violates anything must be re-asked against `e_z_vv`. |
+| `:7311` | `0.119160432` at 31x17 against `0.119317007` at 41x22: refining the mesh moves the fifth decimal | two mis-paired values | **(c)** | Void twice over. The statistic is mis-paired, *and* the bookkeeping is unsafe: `docs/design/zfree_shape.md:68` uses the same `0.119317007` as the **31x17 legal-operator baseline**, where this entry uses it as the **41x22 leg**. Twelve-digit agreement between two supposedly different quantities is not a coincidence; one of the two attributions is wrong. Unresolved (§6). |
+| `:7313` | the ratio `sum(e_z^2)/sum(e_y^2)` survives *bit-identically* under every legal repair, which protects (a) and limits it | the same longitudinal-over-in-plane ratio | **(c)** | The invariance is real and the reasoning about it is careful, but it is an invariance property of the wrong quantity. |
+| `:7340` | the A-versus-C gap is not a staggering artefact — every de-staggered value within about 1.5 per cent of A (`0.028007207` / `0.027417597` / `0.025557701`) | the same ratio family | **(c)** | Same defect as `:7307`, `:7313`. |
+| `:7401` | the `corr_e_z` archaeology is unresolved; four mesh logs carry `0.14619976001754773` and no candidate reconstruction reproduces `0.1462` | the record itself | **(a)** | Correct then, correct now, and the correction explains why it could never have closed: a mis-paired statistic is not reconstructible from its own value. The archaeology should be closed as *unreconstructible by construction*, not kept open as a missing piece. |
+| `:7490` | a *minimum*-admixture floor (the point before `corr(e_z)` collapses from `0.92` to `0.119`) was mistaken for an upper bound | an illustrative parenthetical | **(b)** | **Keep this one.** The methodological finding — a floor read backwards as a bound — is independent of which components were correlated, and it is one of the few transferable lessons in the file. Only the illustrative numbers in the parenthesis are void. |
+| `:7506` | the bound is applied to `corr_e_z 0.119160432391` alongside `corr_e_y +0.920770784811 / -0.938702180036` | the mis-paired value | **(c)** | The `corr_e_z <= 0.3` clause is retired, not repaired. The replacement is a *lower* bound on a same-component correlation — `CORR_EZ_VV_MIN = 0.90`, provisional (§7). |
+| `:7546` | the ceiling on `corr_e_z` exists because the suspected defect is *decorrelation*, which shows up as a small `|corr_e_z|` | the design logic of the screen | **(b)** | The logic is sound given a same-component metric: genuinely decorrelated fields do read small. But it was applied to a number that was small *by construction*, so the clause could not fail and therefore could not select. |
+| `:7638` | the C1 audit's screen (`corr_e_y >= 0.90 AND corr_e_z <= 0.30`) matched the current mode and reported `shape_pair_ok = True` | `corr_e_y` and the mis-paired `corr_e_z` | **(b)** | The selection was right. It was carried by `corr_e_y >= 0.90` alone; the `corr_e_z <= 0.30` clause contributed nothing and could not have vetoed anything. Whether the corrected metric can now supply a genuine second blow is untested — that is the M3c gate's job. |
+| `:7672` | quasi-TEM at col 699 (`beta^2/k0^2 = 3.606`, `corr_e_y 0.9123`, `corr_e_z 0.1473`), so C1 is dead in both pencils | `beta^2/k0^2` and `corr_e_y`; the `corr_e_z` is parenthetical | **(b)** | The mode identification stands on its real evidence. Under the corrected metric col 699 reads `0.9369`, so this conclusion gets *stronger*, not weaker: the quasi-TEM witness is better than the record claimed. |
+| `:7677` | `0.1192` is the PMC pencil, the banked baseline, correct for that box | its own run | **(a)** | Untouched. A banked number is still the number its run produced. |
+| `:7678` | whether the `0.028` PEC-versus-PMC shift is a real wall effect has not been established; C2b's premise is that `corr_e_z` is a stable physics-carrying quantity | the `0.028` shift | **(b)** | The caution was right and is now vindicated — but resolved *against* C2b rather than for it: the shift is `0.0016`, not `0.028`. |
+| `:7682` | the `0.028` shift is a wall effect at fixed mesh — `23.6 %` relative, `179.7` times the `1.5657e-4` mesh floor | the mis-paired metric on two wall treatments | **(c)** | **Dead as written.** The shift is `+0.1757 %`, absolute `0.001645`, about `10.5x` the mesh floor rather than `180x`. The two quoted figures are wrong by `134x` and `17x` respectively, and any inference drawn from a wall sensitivity of that size — including the entire motivation for C2b — is void. |
+| `:7735` | what `0.1192` can and cannot say stops at 'the extracted `e_z` and the analytic `A_ez` disagree, a lot'; the number is blind to which field carries the fault, and five hypotheses are compatible with it | the mis-paired metric, read carefully | **(a)** | **The most careful entry in the file, and it survives entire.** It said the number could not localise a fault. The correction confirms it in the sharpest possible way: the number could not localise a fault because it was not looking at one field. Keep verbatim. |
+| `:7743` | no quoted number moves; `+0.119160432391342`, `+0.147291446944630` and `0.028131014553288` are still the measurements they were | the three values | **(a)** as measurements, superseded as a defence | True and insufficient. They are still the measurements they were; their evidential meaning is precisely what has now been withdrawn. |
+| `:7751` | the sentence at `:7309` that quotes a ceiling is like for like and stands; '15.2 per cent' is not a statement about the banked figure | the structure of the two correlations | **(a)** | Correct then and correct now. This entry is what made the 15.2 % question answerable; §5.1 completes it. |
+| `:7759` | `corr_ez` has been correlating the vertical component of `A_ez` against the *longitudinal* component; same-component agreement is `0.935` (31x17) and `0.949` (41x22) | the correction itself | **(a)** | This is the correction. Everything else in this pass is downstream of it. |
+| `:7818` | the M1 row '41x22 -> `0.147291446944630`' is `corr_ez[0]` of a **31x17** npz; no 41x22 `corr_ez` leg is banked anywhere | the npz files | **(a)** | Untouched, and heavier than it looks: it means the claim that two independent meshes converge on the same wrong value has **no second mesh** behind it. |
+| `:7820` | `pecbox_spectrum.npz`'s `corr_ez` is a **2-vector** `[0.14729145, 0.12092331]` with `ok = [True False]` | the npz file | **(a)** | Untouched. `0.14729` was never one settled number. |
+| `:7835` | open questions: is `corr_ez` redefined vertical-against-vertical everywhere, does that change the C2B verdict, was the `e_y >= 0.9` / `e_z <= 0.3` screen ever load-bearing | nothing | **(a)** | All three are now answered: yes it is; the verdict becomes **void**, not falsified; and the screen was partly load-bearing — `corr_e_y` alone selected the mode, `corr_ez` contributed nothing. |
+
+### 5. The two re-derivations the record needs
+
+#### 5.1 `15.2 per cent of the ceiling` (`:7309`)
+
+Numerator `|corr(A_ez, c @ z_free)| = 0.117276695`; denominator `|corr(A_ez, c @ phi_analytic)| = 0.770566870`; ratio `0.15220`. Code: `tools/corr_ez_101_20.py:572` printing `abs(c_te)/abs(c_ctl)`, with `:529` `c_te = corr(A_ez, te)`, `:535` `c_ctl = corr(A_ez, ctl)`, `:381` `out['te'] = op_plane(dz, dz['zr'])`, `:397` `out['ctrl_phi'] = op_plane(dz, phi_mesh.ravel())`.
+
+Both arms correlate against the **same** reference, `A_ez`, and both fields are pushed through the **same** operator. So the ratio is like-for-like on the reference axis and on the operator, which is what `:7751` established and why that entry stands.
+
+What it is *not*: a statement about the fidelity of the extracted vertical field. Neither arm's field is `e_z_vv` — the solver's own transverse vertical component, which is read directly at `c1_audit.py:510-511` and which is the quantity that scores `0.935`. The numerator field is what the `c` block *makes of* the longitudinal solution. The sentence at `:7309` therefore survives only in the narrow form: *the legal discrete operator `c`, applied to the longitudinal solution, does not reproduce the analytic vertical field*. It does not survive in the form *the extraction reaches only 15.2 % of the ceiling*, because the extraction's vertical field was never placed on that scale. A ceiling of `0.77` on one operator route says nothing about a field that scores `0.935` by a different route.
+
+#### 5.2 The `0.0272` ratio (`:7298`, `:7307`, `:7313`, `:7340`)
+
+Numerator: sum of squares of `-|beta * z_free|`, the **longitudinal** candidate. Denominator: sum of squares of `e_y_unit`, the unit-repaired **in-plane** field. Code: `tools/corr_ez_101_20.py:424` `s_ey = float(np.sum(dz['e_y_unit'] ** 2))`, `:456` `ratio = float(np.sum(fld ** 2)) / s_ey`, header `:37` `ratio_A = sum(e_z^2) / sum(e_y_unit^2)`, constant `:75` `SCHEME_A = 0.0272240`; the un-repaired anchor is `:470-471` `a_raw = np.sum(F['baseline_abs'] ** 2) / s_ey_bug = 2722397.314568`.
+
+So the ratio is **longitudinal over in-plane**. It is *not* longitudinal over vertical, and the vertical extracted component `e_z_vv` appears nowhere in it.
+
+Consequence, stated plainly because `:7298` is what started the hunt: the expectation 'the vertical component should dominate `E_y` by roughly 10x' belongs to a *vertical*-over-in-plane ratio. Applied to a longitudinal-over-in-plane ratio it is simply the wrong comparator. In a quasi-TEM microstrip the longitudinal component is expected to be a small fraction of the in-plane field, so `0.0272` is not prima facie alarming — it may be a perfectly ordinary number about a small component. The denominator also sits on the repaired normalisation (the `2722397` anchor against `0.0272` is a factor of `1e8`), so the ratio inherits whatever authority that repair has, which is not settled. What the true vertical-over-in-plane energy ratio is has not been computed. Class (c) covers all four sites.
+
+#### 5.3 What the corrected metric actually localises (new, not a re-derivation)
+
+The residual is not uniform, and this survives the correction because it is measured on the corrected pair. Decomposing the deficit exactly (`1 - corr = SUM_R ||A_R - E_R||^2 / 2`) over three y-regions, PMC column 738, `A_ez` against `e_z_vv`, `corr = 0.93528673`, deficit `0.06471327`:
+
+| region | analytic energy | extracted energy | local corr | share of deficit | excess |
+|---|---|---|---|---|---|
+| under strip, `|y-10| <= 1.5` mm | 0.8222 | 0.6780 | `+0.9708` | 39.1 % | 0.52 |
+| fringe, `1.5 < |y-10| <= 3.1` mm | 0.1474 | 0.2716 | `+0.8628` | **57.0 %** | **2.85** |
+| outer | 0.0304 | 0.0504 | `+0.9669` | 3.9 % | 1.01 |
+
+PEC column 699, `corr = 0.93692972`, deficit `0.06307028`: under strip 39.1→37.8 % / excess 0.50 / local `+0.9725`; fringe 57.9 % / 2.89 / `+0.8653`; outer 4.3 % / 1.17 / `+0.9429`.
+
+A 6.2 mm band straddling the two strip edges — 13 % of the modelled y-extent — carries **57-58 %** of the whole deficit while holding 15 % of the analytic energy. Peak deficit density sits **0.4-0.8 mm outside** each edge, not on the interface: the first cell outside the edge gives only 3 % of the deficit at an excess of `0.87`, and the band sweep over the first 0.80 mm accumulates 0.5169 of the deficit at `0.0209` per mm. This is an edge artefact of the extraction, and it is the thing the old number was groping for — but the old number could not have found it, because at `0.12` the deficit was everywhere at once.
+
+By contrast, the `e_y` residual is essentially uniform: `corr = 0.92077078`, deficit `0.07922922`, and the excess is `0.85-0.91` right across the fringe where 85-87 % of the energy is, rising only in the outermost cell (`2.1-2.4`). Nothing is localised. The in-plane field's 8 % deficit is a distributed amplitude error; the vertical field's 6.5 % deficit is a concentrated edge error. Those are different defects and they are now separately visible.
+
+### 6. The near-degenerate cluster of small numbers
+
+This file quotes six small numbers that are close enough to be confused by eye and that have different provenances. Do not reconcile them by inspection; they are not a converging series, and at least one attribution is wrong.
+
+| value | provenance |
+|---|---|
+| `0.117276695` | `|corr(A_ez, c @ z_free)|`, the `:7309` numerator. A legal-operator reconstruction, 31x17. |
+| `0.119160432391342` | the banked **PMC 31x17** mis-paired `corr_ez`. This is the number everyone has been calling '0.12'. |
+| `0.119317006502073` | the **41x22** leg of the same mis-paired metric — per `:7311` and per the correction table. But `docs/design/zfree_shape.md:68` uses `0.119317007` as the **31x17 legal-operator baseline**. **Both attributions cannot hold.** Unresolved. |
+| `0.14619976001754773` | carried by four mesh logs; reproduced by no candidate reconstruction (`:7401`). |
+| `0.147291446944630` | `corr_ez[0]` of a **31x17 PEC** npz, mis-paired; mis-attributed to 41x22 at `zfree_shape.md:68` (`:7818`). |
+| `[0.14729145, 0.12092331]` | `pecbox_spectrum.npz`'s `corr_ez` **2-vector**, `ok = [True False]` (`:7820`). Never one number. |
+
+### 7. Open items carried out of this pass
+
+1. **`mode_purity` does not match the ruling that voided it.** The ruling voided it on the grounds that it 'aggregated V and I which came from different components'. As coded it is `abs(gamma_i + gamma_v)` (`emfit/ports.py:1556`) — a modal decay-rate consistency residual, printed by `sweep3.py`, `.scratch/logs/_sweep3_before.py`, and renamed `mode_consistency_residual` at `s10118_basis.py:414`. It is not a reflection coefficient and not a per-column overlap with `A_ez`. The voiding may still be right, but not for the reason given. Status: **undetermined**, pending the operator.
+2. **`CORR_EZ_VV_MIN = 0.90` is provisional.** The legs sit at `0.935`-`0.949`, i.e. `0.035`-`0.049` above the bound with only one mesh refinement pair as evidence. Re-base it together with the M3c gate rather than inheriting it.
+3. **`0.119317007` double attribution** (§6).
+4. **The M3c gate** is now the next real target, and it must be stated against a same-component metric from the outset rather than repaired afterwards.
+
+### 8. What this pass did not touch
+
+Recorded so that a later reader does not mistake this pass for a general amnesty: the passivity bug (`R_CIRC` phantom gain, `+8.47 %`); `R_MODAL`, undefined and never coded; the `R_FLUX` versus `R_CIRC` divergence, which is a sign conflict and scale-free; `corr_e_y = 0.92`, which was right all along; and the mode selection itself, column 738 (PMC) and 699 (PEC), which is unchanged. All of these stand on their own measurements and none of them was ever carried by `corr_ez`.
