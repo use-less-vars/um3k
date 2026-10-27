@@ -178,6 +178,28 @@ TABLE_PATH = os.path.join(OUTDIR, "c1_table.txt")
 ANCHOR_CORR_EY = 0.9207707848111418      # tools/corr_ez_101_20.py:80
 ANCHOR_CORR_EZ = 0.11916043239134175     # tools/corr_ez_101_20.py:78
 
+#: banked ``R_extracted`` of the identified column of the PMC mesh (QZ column
+#: 738): ``sum(e_z_vv^2) / sum(e_y^2)`` over the extracted field.  Unlike the two
+#: correlation anchors this one is gated EXACTLY, not to a relative tolerance: it
+#: is one float64 division of two float64 sums over one fixed deposited field, so
+#: on the mesh that reproduces the banked column it comes back bit-identical, and
+#: any difference means the summed field is no longer the identified column's.
+#: Gated only where that identity holds -- the resolved banked column has to BE
+#: the cached identified column (see the step-5 resolution); on any other mesh
+#: there is no anchor and the measured ratio is reported, not gated.  The PEC box
+#: is such a mesh: its solver-selected column is 699, ratio 4.163656524825077.
+#: HISTORY, recorded rather than dropped: before the step-5 fix, ``R_extracted``
+#: was formed from loop-scoped arrays, i.e. from the LAST SCANNED propagating
+#: column.  On the PMC mesh that column happens to be the identified column, so
+#: 4.0489791163982565 is also what the defective code wrote.  On the PEC box it
+#: wrote 70.63501855512833 -- column 704's ratio (the failing witness, second of
+#: the two propagating columns) -- while the mode the solver actually selects is
+#: column 699, whose ratio is 4.163656524825077.  70.63501855512833 is therefore
+#: a wrong-column artefact and must never be quoted as a measurement; it survives
+#: in the already-banked out/pecbox_spectrum.npz (not overwritten here) and in
+#: pecbox_variant.py's TRAP-2 note.
+ANCHOR_R_EXTRACTED = 4.0489791163982565
+
 #: shape-pair criterion (see the module docstring): e_y must match, e_z must not.
 #: ``CORR_EY_MIN`` is DERIVED, not a round number: the population is the two
 #: clean PMC mesh legs, ``|corr_e_y| = 0.920770784811142`` (31x17) and
@@ -562,6 +584,11 @@ norm_b = float(np.linalg.norm(B_dense))
 #:  corr_ez_superseded_longitudinal, residual, shape_ok) -- 9 fields per
 #: propagating QZ column; every derived array below indexes this list
 rows: list[tuple] = []
+#: (e_y energy, e_z_vv energy) per row, in the same order as ``rows``.  R_extracted
+#: is a ratio of ONE column's field, so the energies are kept per column and the
+#: ratio is taken at step 5 for the banked column only -- not after the loop, where
+#: the names still point at whichever column was visited last.
+energies: list[tuple[float, float]] = []
 n_scanned = 0
 _t_loop = time.time()
 
@@ -630,6 +657,7 @@ for j in range(int(lam.size)):
                     and e_z.shape == A_ez.shape)
     rows.append((int(j), bsq, beta, float(bsq / (K0 * K0)), cy, cz_vv, cz, resid,
                  shape_ok))
+    energies.append((float(np.sum(e_y ** 2)), float(np.sum(e_z_vv ** 2))))
 
     n_scanned += 1
     if n_scanned % 50 == 0:
@@ -657,6 +685,41 @@ ok_arr_legacy = np.array([bool(r[8]) and np.isfinite(r[4]) and np.isfinite(r[6])
                           for r in rows], dtype=bool)
 order = np.argsort(-abs_cy, kind="stable")
 
+# ---- which column the banked figures belong to ------------------------------
+#: ``R_extracted`` (and every banked corr figure read off a row) belongs to ONE
+#: QZ column.  This resolution names it, and nothing here invents a selection
+#: rule: the column is the one the SOLVER selected, recovered by matching the
+#: eigenvalue it reports (``mode.beta_sq``) back to a row.  ``mode.chosen`` is NOT
+#: used for this -- it is an index into mode2d's re-ordered candidate list
+#: (emfit/mode2d.py:1150-1167), not a QZ column index, so using it as one would be
+#: the same class of mistake this block exists to fix.  Fallbacks, in order: the
+#: single column that passes the criterion, then the best-|corr_e_y| column; each
+#: records itself in ``banked_src`` and every caller prints it.
+banked_idx = -1
+chosen_col = -1
+banked_src = "none (no propagating column)"
+R_by_col = (np.array([ez / ey for (ey, ez) in energies], dtype=float)
+            if rows else np.zeros(0, dtype=float))
+if rows:
+    _sel_bsq = float(mode.beta_sq)
+    _hits = [i for i, r in enumerate(rows) if float(r[1]) == _sel_bsq]
+    if len(_hits) == 1:
+        banked_idx = _hits[0]
+        chosen_col = int(rows[banked_idx][0])
+        banked_src = "solver selection (matched by mode.beta_sq)"
+    if banked_idx < 0:
+        _hits = [i for i, flag in enumerate(ok_arr) if bool(flag)]
+        if len(_hits) == 1:
+            banked_idx = _hits[0]
+            banked_src = ("unique criterion-passing column (solver eigenvalue not "
+                          "matched exactly)")
+    if banked_idx < 0:
+        banked_idx = int(order[0])
+        banked_src = ("best-|corr_e_y| column (no solver eigenvalue match, no "
+                      "unique criterion pass)")
+banked_col = int(rows[banked_idx][0]) if banked_idx >= 0 else -1
+R_extracted = float(R_by_col[banked_idx]) if banked_idx >= 0 else float("nan")
+
 _hdr = (
     "# c1_audit.py -- every propagating eigenvector of the mixed 2-D pencil\n"
     "# vs the analytic plane basis (microstrip_mode_profile -> plane_mode)\n"
@@ -667,9 +730,14 @@ _hdr = (
     f"# QZ columns           : {int(lam.size)} (dense QZ, every eigenvector kept)\n"
     f"# propagating columns  : {n_scanned} (real lambda, beta^2 > 0)\n"
     f"# f0 / k0              : {F0:.12g} Hz / {K0:.12g} rad/m\n"
-    f"# criteria             : shape_pair_ok = |corr_e_y| >= {CORR_EY_MIN:g} and "
+    f"# criteria             : ok = |corr_e_y| >= {CORR_EY_MIN:g} and "
     f"|corr_ez_vv| >= {CORR_EZ_VV_MIN:g} and shapes match  (the |corr_ez_vv| bar "
     "is derived -- docs/design/corr_ez_vv_threshold.md)\n"
+    "#                        the npz keys shape_pair_ok / shape_only_ok are the "
+    "GEOMETRY flag alone\n"
+    "#                        (shapes line up, no correlation bar) -- they are not "
+    "this column and\n"
+    "#                        never were; the column below is ok (the npz's ok)\n"
     f"# criteria SUPERSEDED  : shape_pair_ok_legacy = |corr_e_y| >= {CORR_EY_MIN:g} "
     f"and |corr_ez| <= {CORR_EZ_MAX:g} on corr_ez_superseded_longitudinal\n"
     "# criterion uses |corr| because an eigenvector's sign is arbitrary; the\n"
@@ -683,7 +751,7 @@ _hdr = (
     f"# banked identified col: {bank_col} ({bank_status})\n"
     "#\n"
     "  rank     col        beta_sq         beta    eps_eff     corr_e_y   "
-    "corr_ez_vv  |corr_e_y|  |corr_ez_vv|  shape_pair_ok   "
+    "corr_ez_vv  |corr_e_y|  |corr_ez_vv|     ok           "
     "corr_ez_superseded_longitudinal  |corr_ez_superseded|  shape_pair_ok_legacy\n"
 )
 
@@ -716,26 +784,63 @@ np.savez(
     # +0.147291446944630).  Same value as corr_ez_superseded_longitudinal.
     corr_ez=np.array([r[6] for r in rows], dtype=float),
     residual=np.array([r[7] for r in rows], dtype=float),
+    # TWO DIFFERENT FLAGS, and their names now say which is which:
+    #   ok            = the criterion -- shapes match AND |corr_e_y| >= the bar
+    #                   AND |corr_ez_vv| >= its bar.  This is the table's "ok"
+    #                   column and what the VERDICT counts.
+    #   shape_pair_ok = GEOMETRY ONLY -- the three field shapes line up, no
+    #                   correlation bar applied.  The banked key name is kept for
+    #                   readers of existing files, and aliased as shape_only_ok
+    #                   because "pair_ok" reads like a verdict and it is not one.
     ok=ok_arr,
     shape_pair_ok=np.array([r[8] for r in rows], dtype=bool),
+    shape_only_ok=np.array([r[8] for r in rows], dtype=bool),
     shape_pair_ok_legacy=ok_arr_legacy,
     xs=XS, zs=ZS, k0=K0, f0=F0,
     n_edges=int(mesh.n_edges), n_nodes=int(mesh.n_nodes),
     free_e=free_e, free_n=free_n,
-    bank_col=int(bank_col),
+    # bank_col used to carry the CACHE's identified column -- a property of the
+    # PMC mesh, not of this QZ sweep.  In the PEC box it was 738, a column that
+    # is not even propagating there, and the R_extracted written beside it came
+    # from a different column entirely.  bank_col now names the column the
+    # R_extracted / banked figures in THIS file belong to: the column the solver
+    # itself resolved (-1 when there is none).  The old cache value is still
+    # recorded, under identified_col.
+    bank_col=int(banked_col),
+    identified_col=int(bank_col),
+    chosen_col=int(chosen_col),
+    n_eligible=int(len(rows)),
+    eligible_cols=np.array([r[0] for r in rows], dtype=np.int64),
+    # per-ELIGIBLE-column diagnostics, same order as j / beta_sq:
+    #   R_by_col                     sum(e_z_vv^2)/sum(e_y^2) of that column
+    #   corr_ey_by_col, corr_ez_vv_by_col   the two correlation aliases
+    R_by_col=R_by_col,
+    corr_ey_by_col=np.array([r[4] for r in rows], dtype=float),
+    corr_ez_vv_by_col=np.array([r[5] for r in rows], dtype=float),
+    # the full QZ spectrum, for diagnostics.  It records the null-space risk:
+    # the non-physical branch sits near Re(lambda) = -6.2e8..-6.9e8 while the
+    # physical band is k0^2 = 2.694e4 (eps_r k0^2 = 1.185e5), so eligibility is
+    # a single scalar filter (finite, real, > 0, residual < tol) with NO band --
+    # deliberately not added here.
+    beta_sq_all=lam,
     A_ey=A_ey, A_ez=A_ez,
     # R_extracted: vertical / in-plane energy ratio of the EXTRACTED field,
     # sum(e_z_vv^2) / sum(e_y^2) -- the T4_amp numerator.  Its analytic
     # counterpart, read off the references written above, is
     # sum(A_ez^2)/sum(A_ey^2) = 2.810102138752.  The numerator is the SAME
-    # vertical array the primary metric corr_ez_vv is formed from (line 539) and
-    # the denominator the SAME in-plane array corr_ey is formed from (line 532);
-    # both are scaled by CELL and the ratio is scale invariant.  CAVEAT, read
-    # before quoting it: both names are loop-scoped, so what is written here is
-    # the LAST scanned column -- the banked/identified column for
-    # c1_spectrum.npz (j=(738,)) but NOT for pecbox_spectrum.npz, whose
-    # j=(699, 704) leaves the failing witness 704 behind (out/pecbox_table.txt).
-    R_extracted=float(np.sum(e_z_vv ** 2) / np.sum(e_y ** 2)),
+    # vertical array the primary metric corr_ez_vv is formed from and the
+    # denominator the SAME in-plane array corr_ey is formed from; both are
+    # scaled by CELL and the ratio is scale invariant.
+    # WHICH COLUMN: the one named by bank_col, i.e. the column the solver
+    # resolved (banked_src says how).  NOT the last column the scan happened to
+    # visit.  For c1_spectrum.npz both are 738 and the value is unchanged:
+    # 4.0489791163982565 (exact anchor, ANCHOR_R_EXTRACTED).  For
+    # pecbox_spectrum.npz the old last-visited form banked the failing witness
+    # 704 and wrote 70.63501855512833; the solver resolves 699 and this file now
+    # holds 4.163656524825077.  Every eligible column's ratio is in R_by_col;
+    # whether the selected column passed the criterion is R_extracted_ok.
+    R_extracted=R_extracted,
+    R_extracted_ok=bool(ok_arr[banked_idx]) if banked_idx >= 0 else False,
     criterion=np.array([CORR_EY_MIN, CORR_EZ_MAX], dtype=float),
     criterion_ez_vv=np.array([CORR_EY_MIN, CORR_EZ_VV_MIN], dtype=float),
 )
@@ -745,7 +850,7 @@ say("wrote", NPZ_PATH)
 say("")
 say("=" * 118)
 say("  rank     col        beta_sq         beta    eps_eff     corr_e_y   "
-    "corr_ez_vv  |corr_e_y|  |corr_ez_vv|  shape_pair_ok   "
+    "corr_ez_vv  |corr_e_y|  |corr_ez_vv|     ok           "
     "corr_ez_superseded_longitudinal  |corr_ez_superseded|  shape_pair_ok_legacy")
 say("-" * 118)
 for rank, idx in enumerate(order, start=1):
@@ -771,8 +876,8 @@ say("")
 say("-" * 100)
 say("VERDICT")
 say(f"  propagating modes considered (real lambda, beta^2 > 0) : {n_kept}")
-say(f"  shape_pair_ok (|corr_e_y| >= {CORR_EY_MIN:g} and |corr_ez_vv| >= "
-    f"{CORR_EZ_VV_MIN:g}) : {n_ok}")
+say(f"  ok (criterion: |corr_e_y| >= {CORR_EY_MIN:g} and |corr_ez_vv| >= "
+    f"{CORR_EZ_VV_MIN:g}, shapes match) : {n_ok}")
 say(f"  their QZ columns                                      : {ok_cols}")
 say(f"  shape_pair_ok_legacy SUPERSEDED (|corr_e_y| >= {CORR_EY_MIN:g} and "
     f"|corr_ez| <= {CORR_EZ_MAX:g} on corr_ez_superseded_longitudinal) : "
@@ -784,8 +889,10 @@ if n_kept:
         f"  |corr_e_y| = {abs(cy):.15f}  |corr_ez_vv| = {abs(cz_vv):.15f}"
         f"  |corr_ez_superseded| = {abs(cz_sup):.15f}"
         f"  beta^2 = {bsq:.12g}  eps_eff = {ee:.9f}  residual = {resid:.3e}"
-        f"  shape_pair_ok = {bool(ok_arr[best_idx])}"
+        f"  ok = {bool(ok_arr[best_idx])}"
         f"  shape_pair_ok_legacy = {bool(ok_arr_legacy[best_idx])}")
+    say(f"  resolved propagating column                           : {banked_col}"
+        f"  [{banked_src}]")
     if bank_col >= 0:
         same = (int(j) == int(bank_col))
         say(f"  banked / identified column                            : {bank_col}")
@@ -797,17 +904,13 @@ if n_kept:
 else:
     say("  no propagating mode: nothing to reproduce")
 
-# reproduction check on the banked column if it is in the table, else on the best
-_target = None
-if bank_col >= 0:
-    for idx, r in enumerate(rows):
-        if int(r[0]) == int(bank_col):
-            _target = idx
-            break
-_target_label = f"banked column {bank_col}"
-if _target is None and n_kept:
-    _target = best_idx
-    _target_label = f"best-|corr_e_y| column {int(rows[best_idx][0])} (banked column unavailable)"
+# reproduction check on the column the SOLVER resolved.  This used to hunt the
+# table for the CACHE's column -- which in the PEC box silently moved the check
+# onto the same last-visited column that R_extracted was wrongly taking its
+# value from, so both the gate and the number agreed with each other and with
+# nothing else.
+_target = banked_idx if banked_idx >= 0 else None
+_target_label = f"column {banked_col} [{banked_src}]" if _target is not None else "none"
 
 _repro_ok = False        # gate result, reported in the DONE line below
 if _target is not None:
@@ -835,6 +938,20 @@ if _target is not None:
         say(f"  {_tag}  banked = {_bank!r}  measured = {_meas:.17g}  "
             f"rel_delta = {_rel:.3e}  tol = {REPRO_RTOL:g} (relative)  "
             f"{'PASS' if _pass else 'FAIL'}")
+    # R_extracted: gated EXACTLY, and only where an anchor exists -- the case where
+    # the resolved column IS the cache's identified column (c1_spectrum.npz).  There
+    # the banked value is a bit-for-bit property of the banked npz, so the
+    # tolerance is 0 and any movement at all fails.
+    if bank_col >= 0 and banked_col == int(bank_col):
+        _pass = bool(R_extracted == ANCHOR_R_EXTRACTED)
+        _repro.append(_pass)
+        say(f"  REPRO R  banked = {ANCHOR_R_EXTRACTED!r}  "
+            f"measured = {R_extracted!r}  exact_match = {_pass}  tol = 0  "
+            f"{'PASS' if _pass else 'FAIL'}")
+    else:
+        say(f"  REPRO R  R_extracted = {R_extracted!r}  (no anchor: resolved column "
+            f"{banked_col} is not the cache's identified column {bank_col}; "
+            f"pecbox_spectrum.npz is expected to read 4.163656524825077 here)")
     _repro_ok = all(_repro)
     say(f"  REPRO overall: {'PASS' if _repro_ok else 'FAIL'}")
 else:
@@ -844,9 +961,10 @@ else:
 
 say("-" * 100)
 say(f"DONE c1_audit.py elapsed={time.time() - T0:.1f}s modes_kept={n_kept} "
-    f"shape_pair_ok={n_ok} shape_pair_ok_legacy={n_ok_legacy} "
+    f"ok={n_ok} shape_pair_ok_legacy={n_ok_legacy} "
     f"best_col={int(rows[best_idx][0]) if n_kept else -1} "
     f"best_abs_corr_ey={abs_cy[best_idx] if n_kept else float('nan'):.15f} "
     f"best_abs_corr_ez_vv={abs_cz_vv[best_idx] if n_kept else float('nan'):.15f} "
-    f"bank_col={bank_col} repro={'PASS' if _repro_ok else 'FAIL'} "
+    f"cache_col={bank_col} bank_col={banked_col} banked_src={banked_src!r} "
+    f"repro={'PASS' if _repro_ok else 'FAIL'} "
     f"repro_rtol={REPRO_RTOL:g} npz={NPZ_PATH} table={TABLE_PATH}")
