@@ -91,6 +91,22 @@ What this script does NOT do
 * ``PANA`` (analytic ``PlaneMode``) exposes only e_y/e_z/h_y/h_z -- no ``phi``
   (tools/corr_ez_101_20.py:206-208) -- and no potential is correlated here.
 
+Mesh and output knobs (environment only -- this script has no argument parser)
+-----------------------------------------------------------------------------
+* ``C1_STRIP_CELLS`` -- cells across the strip band.  Default 12, the banked
+  31 x 17 node mesh (9 | 12 | 9 across, 8 | 4 | 4 up).  Anything else is a
+  DIFFERENT mesh and a different spectrum, so pair it with ``C1_OUTDIR``:
+  a variant must not overwrite the captures the rest of the record reads.
+* ``C1_OUTDIR`` -- output directory.  Default ``out/`` beside this file, where
+  ``c1_spectrum.npz`` and ``c1_table.txt`` live and are read from.
+* ``C1_ALLOW_REMESH=1`` -- permit the non-banked mesh that ``C1_STRIP_CELLS``
+  produces.  The banked-cache guard (step 1) is a mesh-identity gate: a
+  refinement study is a different mesh ON PURPOSE, and without this the run is
+  refused.  Banked column unknown then, so the reproduction check runs on the
+  best-|corr_e_y| column and is EXPECTED to fail -- loud, not fatal.
+
+Unset, all of them leave the mesh and both paths exactly as they were.
+
 Run:
     tools/host/c1-audit/run.sh
 or directly:
@@ -143,7 +159,12 @@ from emfit.mode_profile import microstrip_mode_profile  # noqa: E402
 GEOJSON = os.path.join(REPO, ".scratch", "tol", "logs", "TOLFLUX.json")
 PLANES = os.path.join(REPO, ".scratch", "tol", "logs", "TOLFLUX_planes.npz")
 BANKED = os.path.join(REPO, ".scratch", "s10118_mixed_mode.npz")
-OUTDIR = os.path.join(HERE, "out")
+#: repointed by ``C1_OUTDIR`` in the same env-only style as the repo override
+#: above (no argument parser here).  Unset -- the normal case -- this is ``out/``
+#: beside this file, byte for byte the directory run.sh and pecbox_variant.py
+#: already read and write.
+_OUTDIR_ENV = os.environ.get("C1_OUTDIR", "").strip()
+OUTDIR = os.path.abspath(_OUTDIR_ENV) if _OUTDIR_ENV else os.path.join(HERE, "out")
 NPZ_PATH = os.path.join(OUTDIR, "c1_spectrum.npz")
 TABLE_PATH = os.path.join(OUTDIR, "c1_table.txt")
 
@@ -300,12 +321,19 @@ def axis(edges, cells):
     return out
 
 
-XS = axis([(0.0, Y0), (Y0, Y1), (Y1, W)], [9, 12, 9])
+#: strip-band resolution only: 12 is the banked mesh (31 x 17 nodes) and
+#: ``C1_STRIP_CELLS`` overrides it.  The 9 | 9 air cells and the 8 | 4 | 4
+#: substrate do NOT move, so a sweep over this knob is a one-parameter family.
+_STRIP_CELLS = int(os.environ.get("C1_STRIP_CELLS", "").strip() or 12)
+if _STRIP_CELLS < 1:
+    raise SystemExit(f"C1_STRIP_CELLS must be >= 1, got {_STRIP_CELLS}")
+XS = axis([(0.0, Y0), (Y0, Y1), (Y1, W)], [9, _STRIP_CELLS, 9])
 ZS = axis([(0.0, HSUB), (HSUB, 0.0036), (0.0036, H)], [8, 4, 4])
 mesh = m2.structured_mesh(XS, ZS)
 _nx, _nz = int(XS.size), int(ZS.size)
 say("mesh       :", dict(nodes=mesh.n_nodes, tris=mesh.n_tris,
-                         edges=mesh.n_edges, xs=_nx, ys=_nz))
+                         edges=mesh.n_edges, xs=_nx, ys=_nz,
+                         strip_cells=_STRIP_CELLS))
 
 
 def eps_of(p):
@@ -353,24 +381,41 @@ say("node order : OK (4 probe nodes, layout j*nx+i)")
 # ---- banked cache: mesh reproduction check + the identified column ----------
 bank_col = -1
 bank_status = "absent"
+#: the guard below is a MESH-IDENTITY gate: a silently mis-built mesh must not
+#: be scored against the banked column.  A strip-band refinement study is a
+#: different mesh on purpose, so ``C1_ALLOW_REMESH=1`` downgrades the two
+#: refusals to a loud warning and leaves ``bank_col`` unknown (-1), which puts
+#: the reproduction check on the best-|corr_e_y| column, where it is EXPECTED to
+#: fail.  Default (unset) is unchanged: a wrong mesh is still fatal.
+_ALLOW_REMESH = os.environ.get("C1_ALLOW_REMESH", "").strip().lower() in (
+    "1", "true", "yes", "on")
+
 if os.path.exists(BANKED):
     _b = np.load(BANKED)
-    if int(_b["n_edges"]) != int(mesh.n_edges):
-        raise SystemExit(f"banked n_edges {int(_b['n_edges'])} != rebuilt "
-                         f"{int(mesh.n_edges)}: the mesh is not the banked one")
     _bxs = np.asarray(_b["xs"], dtype=float)
     _bzs = np.asarray(_b["zs"], dtype=float)
-    if (_bxs.shape != XS.shape or not np.array_equal(_bxs, XS)
-            or _bzs.shape != ZS.shape or not np.array_equal(_bzs, ZS)):
-        raise SystemExit("banked xs/zs differ from the rebuilt axes: "
-                         "the mesh is not the banked one")
-    bank_col = int(_b["col"])
-    bank_status = "loaded"
-    say("banked     : mesh reproduced (n_edges + xs/zs identical); identified "
-        "column =", bank_col,
-        dict(beta=float(_b["beta"]), beta_sq=float(_b["beta_sq"]),
-             eps_eff=float(_b["eps_eff"]), residual=float(_b["residual"]),
-             n_dof=int(_b["n_dof"]), n_pec=int(_b["n_pec"])))
+    _edges_same = int(_b["n_edges"]) == int(mesh.n_edges)
+    _axes_same = (_bxs.shape == XS.shape and np.array_equal(_bxs, XS)
+                  and _bzs.shape == ZS.shape and np.array_equal(_bzs, ZS))
+    if not (_edges_same and _axes_same):
+        _msg = (f"banked n_edges {int(_b['n_edges'])} != rebuilt "
+                f"{int(mesh.n_edges)}" if not _edges_same else
+                "banked xs/zs differ from the rebuilt axes")
+        if not _ALLOW_REMESH:
+            raise SystemExit(_msg + ": the mesh is not the banked one")
+        say("WARNING    :", _msg + ": the mesh is not the banked one -- allowed "
+            "by C1_ALLOW_REMESH=1; banked column unknown (-1), so the "
+            "reproduction check below runs on the best-|corr_e_y| column and is "
+            "EXPECTED to fail")
+        bank_status = "not this mesh (C1_ALLOW_REMESH=1)"
+    else:
+        bank_col = int(_b["col"])
+        bank_status = "loaded"
+        say("banked     : mesh reproduced (n_edges + xs/zs identical); identified "
+            "column =", bank_col,
+            dict(beta=float(_b["beta"]), beta_sq=float(_b["beta_sq"]),
+                 eps_eff=float(_b["eps_eff"]), residual=float(_b["residual"]),
+                 n_dof=int(_b["n_dof"]), n_pec=int(_b["n_pec"])))
 else:
     say("banked     : no cache at", BANKED,
         "-> identified column unknown (-1); reproduction check falls back to",
