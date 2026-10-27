@@ -78,7 +78,7 @@ correlation would therefore report the same mode as ``+0.92`` or ``-0.92``
 depending on LAPACK's internal choices, which is not a property of the physics.
 The table is consequently ranked and thresholded on ``|corr|`` -- and the
 *signed* values are printed alongside, so nothing is hidden.
-The thresholds are ``|corr_e_y| >= 0.90`` and ``|corr_e_z| <= 0.30``: e_y must
+The thresholds are ``|corr_e_y| >= 0.89`` and ``|corr_e_z| <= 0.30``: e_y must
 carry the shape, e_z must *not* (the analytic e_z has both signs within one
 column, which is why an |e_z| reconstruction has a ceiling far below 1 --
 tools/corr_ez_101_20.py:227-228).
@@ -151,16 +151,34 @@ TABLE_PATH = os.path.join(OUTDIR, "c1_table.txt")
 ANCHOR_CORR_EY = 0.9207707848111418      # tools/corr_ez_101_20.py:80
 ANCHOR_CORR_EZ = 0.11916043239134175     # tools/corr_ez_101_20.py:78
 
-#: shape-pair criterion (see the module docstring): e_y must match, e_z must not
-CORR_EY_MIN = 0.90
+#: shape-pair criterion (see the module docstring): e_y must match, e_z must not.
+#: ``CORR_EY_MIN`` is DERIVED, not a round number: the population is the two
+#: clean PMC mesh legs, ``|corr_e_y| = 0.920770784811142`` (31x17) and
+#: ``0.938702180035899`` (41x22) (decisions.md:7875; docs/design/zfree_shape.md:77,
+#: row M2), the rule is the same k=2 round-up used for ``CORR_EZ_VV_MIN`` below:
+#: S = 0.938702180035899 - 0.920770784811142 = 0.017931395224757, and
+#: 0.9207707848111419 - 2*S = 0.8849079943616279 -> 0.89.  Failing witness:
+#: PEC col 704, ``corr_e_y = -0.426418989``, 0.46 below the bar.  The wider
+#: three-leg population (adding 0.912343044811209) gives 0.86 and is NOT adopted:
+#: widening a population must not loosen a bar, and that leg's e_y attribution is
+#: disputed (docs/design/m3c_gate_v2.md, section 3.3).  0.89 is the LOOSER of the
+#: two correlation bars here (``CORR_EZ_VV_MIN = 0.91``); neither is the other
+#: reused -- different statistic, different spread.
+#: NOTE the side effect: this constant also sets the floor of the SUPERSEDED
+#: ``shape_pair_ok_legacy`` (line ~562), so that floor moves 0.90 -> 0.89 too.
+#: No recorded verdict flips (passing legs sit at 0.92 / 0.94, the witness at
+#: 0.43), but a re-run writes ``criterion = [0.89, 0.30]`` into the npz where the
+#: banked one carries 0.90; nothing in the tree compares those arrays.
+CORR_EY_MIN = 0.89
 CORR_EZ_MAX = 0.30
 
 #: derived bar for the same-component vertical statistic; derivation and its
 #: self-reference caveat: docs/design/corr_ez_vv_threshold.md.  NOT the
-#: ``corr_e_y`` >= 0.90 number reused (a vertical reference against the mode's
+#: ``corr_e_y`` >= 0.89 number reused (a vertical reference against the mode's
 #: VERTICAL component is a different reading, with its own spread).
-#: ``CORR_EY_MIN``/``CORR_EZ_MAX`` are untouched: they still define
-#: ``shape_pair_ok_legacy``.  Rule: T = (weakest passing leg) - 2 * S_good,
+#: ``CORR_EZ_MAX`` is untouched; ``CORR_EY_MIN`` is the derived 0.89 above, so the
+#: SUPERSEDED ``shape_pair_ok_legacy`` floor moves with it (see the note there).
+#: Rule: T = (weakest passing leg) - 2 * S_good,
 #: rounded UP to 0.01, where S_good = 0.0132433711770793 is the SPREAD of the
 #: three passing legs (max - min) -- which on this population is also the
 #: 31x17 -> 41x22 PMC step on |corr_ez_vv| itself
