@@ -8034,3 +8034,113 @@ Recorded so that a later reader does not mistake this pass for a general amnesty
 **The journal caveat, and the mapping for future readers.** This file is append-only, so the earlier entries still read `mode_purity` verbatim — eleven occurrences on ten lines: `:101` (twice), `:102`, `:2373`, `:2405`, `:6843`, `:6855`, `:6945`, `:6968`, `:7194`, `:7989`. They are history and stay exactly as written. The mapping is: **an older entry saying `mode_purity` refers to what is now `mode_consistency_residual`**, and the *reading* of those entries is unaffected by the rename, because the numbers never moved — the symbol changed and the arithmetic did not. One of them needs flagging rather than mapping: `:2405` explicitly declined the library rename ('The library name is not changed: it is read at ten sites across `emfit/` and `tests/`...'), a judgement made about a harness column on the grounds that a rename there bought nothing. That judgement is superseded here for the library, and the reason is the one above: the label was carrying a claim, so a rename buys the claim's withdrawal. `:2405`'s underlying observations — that the value is unnormalised, that it sits in the same numerical range as `|B/A|` and so is plausible as a reflection coefficient, and that the true ratio belongs beside it in `bwd_fwd_V` / `bwd_fwd_I` — all stand.
 
 **Left deliberately unrewritten.** The identifier also survives in `docs/design/*.md` prose, in the frozen `reports/`, in `d80_96.md`, and throughout `.scratch/` history. None of it is rewritten, because rewriting history to match a later naming decision destroys the record of *when* the decision was made — which is the only thing this file is for. `emfit/ports.py` also keeps one deliberate prose occurrence — 'any claim about mode purity must be made with `corr_ez_vv`' — which is the rule in the third paragraph, not a counter-example to this pass.
+
+---
+
+## Two locator corrections, both verified at the cited range: the extracted field at `:7948`, and the `(0,)` beta at `:7226`
+
+Both citations were wrong in the same way — a pointer that lands the reader beside the thing named instead of on it. Neither sentence's *content* changes; what changes is where to look, and, in the second case, what the defect is called. This file is append-only, so both lines stand as written and the corrections live here.
+
+### 1. `:7948` cites `c1_audit.py:510-511` for the extracted vertical field. Those two lines are the propagation constant and the edge-field seed.
+
+`:7948` says the extracted vertical field `e_z_vv` is "read directly at `c1_audit.py:510-511`". Read at those lines, `tools/host/c1-audit/c1_audit.py` has:
+
+- `:510  beta = float(np.sqrt(bsq))`
+- `:511  e_t = np.zeros(mesh.n_edges)`
+
+Those build the propagation constant and seed the transverse edge field on the mesh. No `e_at` sampling, no `CELL`, no `e_y`, no `e_z_vv`: they are upstream of the extraction, not it.
+
+The extracted fields are built immediately after, in a carrier block and two sampling calls:
+
+- `:523-529` `MODE = m2.Mode2D(...)` — the carrier, with `chosen=int(j)` and `e_z=None`, its audit-trail fields left empty;
+- `:531` `E_t = MODE.e_at(_ey_pts).reshape(NYN - 1, NZN, 2)`;
+- `:532` `e_y = E_t[:, :, 0] * CELL` — in-plane component on the `(200, 77)` lattice;
+- `:538` `E_tz = MODE.e_at(_ezc_pts).reshape(NYN, NZN - 1, 2)`;
+- `:539` `e_z_vv = E_tz[:, :, 1] * CELL` — vertical component on the `(201, 76)` lattice.
+
+**Correct citation: `c1_audit.py:538-539`**, read through the carrier at `:523-529`, with the shape-pair guard it must satisfy at `:553-554`. `e_z_vv` is still the solver's own transverse vertical component and still the quantity that scores `0.93528673`; only the pointer moves.
+
+Recorded for precision, because it is nearly right rather than wrong: `:520-521` is prose, not construction — `:520` "so it is used here purely as a field carrier for `e_at`: the audit trail fields", `:521` "(candidates / curl_ratio) are left empty rather than mislabelled, and". That is the comment explaining *why* `e_at` is reachable from a bare eigenvector, and it is the right place to look for the reason; the construction itself is `:531-539`.
+
+### 2. `:7226` calls the `beta` shape defect "a capture without beta". The capture is complete; the *sweep* half is empty, and the empty array has a line number.
+
+`:7226` says "a capture without beta cannot support a T2 comparison". The behaviour it describes is real — `T2_agree` refuses loudly on `beta.shape == (0,)` and must go on doing so — but the diagnosis is one word off in a way that matters, because "without a capture" sends the reader looking for a failed or truncated write, and the write did exactly what it was told.
+
+The `(0,)` is produced by the tone path in `emfit/studies.py`:
+
+- `:3242` `if plane_path and excite != "pulse" and plane_ey is not None:`
+- `:3243-3244` "A tone has no bins to store: the sweep half of the record is empty, and the blocks and the scalars that formed them are the whole of it."
+- `:3245` `_dump_bins(`
+- `:3246` `    plane_path, freqs=np.empty(0), spectra=np.empty((0, spec.size)),`
+- `:3248` `bins=(),`
+- `:3245-3258` the rest of that call, whose `planes` dict carries `plane_Ey`, `plane_Ez`, `plane_Hy`, `plane_Hz`, `station_cells`, `f`, `dt`, `n_samples`, `capture`.
+
+`np.empty(0)` occurs at `:3246` and, in that block, only there. `beta` is built from the bin list, not from any field: `:2145` `"beta": np.array([b.beta for b in bins]),` inside the payload written at `:2188` `written = np.savez(path, **payload)`. With `bins=()`, `beta` is `np.array([])`. The plane blocks are all present and well-formed.
+
+**Corrected form:** the `(0,)` beta is a *tone-path* record — a complete capture whose sweep half is empty by design — not a capture that is missing. The refusal in `T2_agree` is right for the corrected reason as well: a record with no bins cannot support a beta comparison whatever the state of its plane blocks. Which artefact the `:7226` sentence was pointing at is a question for whoever holds that run; what is established here is that the tree contains exactly one route to a `beta` of shape `(0,)`, and it runs through `:3246` and `:3248`.
+
+---
+
+## Retraction: the "6.2 mm / 13 %" fringe gap is WITHDRAWN, and is not replaced by another number
+
+**Status: withdrawn — a numeral, not a finding.** The sentence at `:7970` that gives the fringe band a width in millimetres and a share of the modelled y-extent is withdrawn in those two clauses. What the same paragraph establishes about the *deficit* — that 57-58 % of it sits in the fringe band, on both columns and both meshes — is measured on banked arrays and stands untouched. The replacement below is that sentence with the two numerals removed; no new number is offered in their place, because none has a source.
+
+**What was claimed.** `:7970`, first sentence, verbatim:
+
+> A 6.2 mm band straddling the two strip edges — 13 % of the modelled y-extent — carries **57-58 %** of the whole deficit while holding 15 % of the analytic energy.
+
+**Why it is withdrawn — the millimetre figure first.** `6.2 mm` is `2 × 3.1`: the total width of the band that the table above it defines by *inequality* (`1.5 < |y-10| <= 3.1` mm, `:7965`). It is arithmetic on a definition, not a measurement of anything, and printing it beside measured columns invites it to be read as one. It occurs exactly twice elsewhere in the tree and neither occurrence is a source: `:7970` itself, and `reports/2026-10-27_18-06-24_Dispatch_24___split_figures__T5_registrations__T2_.md:98`, which records that the figure "has **no textual existence** in `docs/report/*.tex` or `docs/design/m3c_gate_v2.md`. Its provenance is unverified; treat it as unsupported." Both are statements of the same claim, so the claim has one origin and no evidence behind it. It is not in any `.tex`, any `.npz`, any log, or any table — the region table at `:7962-7966` carries energies and shares of the deficit, and no extent of any kind.
+
+**The percentage does not reproduce, and that is the sharper reason.** `13 % of the modelled y-extent` needs a denominator. The record supplies three candidates and not one of them yields 13 %:
+
+| extent | value | `6.2 mm` as a fraction of it |
+|---|---|---|
+| modelled y axis `W` (`c1_audit.py:284`, `Y0/Y1 = W/2 ∓ WSTRIP/2` at `:288`; strip centre is `y = 10` mm, so `W = 20.0` mm) | 20.0 mm | 31.0 % |
+| modelled z axis `H` | 7.6 mm | 81.6 % |
+| the geometry JSON's own `y_extent` key (`.scratch/tol/logs/TOLFLUX.json`, `geometry`) | 8.8 mm | 70.5 % |
+
+To get 13 % the band would have to sit on a 47.69 mm extent. No extent of that size exists anywhere in the tree outside `.scratch`, and no occurrence of `47.7` does either. The numeral is therefore not a rounding of any measured or modelled length in the record, and the arithmetic that would have produced it is not recoverable from what is on file. That is a stronger statement than "unsupported": a carried figure can be repaired by finding its source, whereas a figure with no denominator cannot.
+
+**What replaces it — the share, stated as a share of the deficit.** The quantity the decomposition actually computes is a share of the *deficit*, not a share of an extent, and it is the one that survives every check:
+
+> **57-58 % of the deficit sits in the fringe band identified by the regional decomposition.**
+
+Support, from `:7960-7972`, measured on the corrected same-component pair (`A_ez` against the solver's own `e_z_vv`):
+
+- **PMC column 738**, `corr = 0.93528673`, deficit `0.06471327`: fringe-band analytic energy `0.1474` against extracted `0.2716`, local corr `+0.8628` against `+0.9708` under the strip, excess `2.85` against the `2.0` bar, share **57.0 %** (`:7965`).
+- **PEC column 699**, `corr = 0.93692972`, deficit `0.06307028`: share `57.9 %`, excess `2.89`, local corr `+0.8653` against `+0.9725` (`:7968`).
+- The band is defined by the inequality and by nothing else. Its energy share is `15 %` — `0.1474` of `0.8222 + 0.1474 + 0.0304 = 1.0000`, a ratio of two banked energies that does reproduce.
+
+**Corroborated outside this file, in one half only.** `docs/design/m3c_gate_v2.md:591` prints the PMC excess as `2.849` against the `2.85` above — the same measurement at lower precision, in a document that is not this one. So the excess and the share have a second witness. The millimetre width and the percentage-of-extent have none, anywhere.
+
+**Where the withdrawn numeral still stands, and what to read instead.** `13 %` is also printed at `reports/2026-10-27_16-16-34_Dispatch_22___corr_ez_metric_correction_and_supers.md:89` and at `docs/design/m3c_gate_v2.md:364-365`. Those are frozen, or out of scope for this pass, and this file is append-only, so `:7970` stands as written. Read the first clause of that sentence as withdrawn and the second as the finding: the band, defined by its inequality, carries 57-58 % of the deficit. Any later document that needs the band's size should quote the inequality, not a width in millimetres.
+
+**Nothing else is withdrawn.** The region table (`:7962-7966`), the 57-58 % share on both columns, the edge-artefact reading, the peak-density sweep (`0.5169` over the first `0.80 mm` at `0.0209` per mm) and the contrast with the uniform `e_y` residual (`:7972`) all stand as recorded. What is withdrawn is one composite sentence that welded a definition to an unreproducible fraction. Filed here rather than against `:7970` because the file is append-only: this is item **(g)** of the ledger opened at `:7835`, joined by reference.
+
+---
+
+## Named pattern: a verdict about a build is a claim about the artefact, not the sources
+
+**Named pattern: a verdict about a build is a claim about the artefact, not the sources.** "It builds" and "the report is up to date" were both true of `docs/report/*.tex` and both false of `docs/report/main.pdf` for three days running. The tracked PDF sat at **1,529,009 bytes / 116 pages** while the sources it was supposed to contain moved on; after the rebuild it is **1,679,652 bytes / 122 pages**, `cmp` clean against the build output, sha256 `14fab3bc8d43a341c4317af4eb52a911d2001e324f20e8905b41ba69c2957234`. That hash was read off the artefact in this block, not carried from an earlier one, because carrying it would be the same defect one level up. Every verdict of the form "it builds / it's readable" pronounced in that window was describing an artefact that did not contain the sources under review.
+
+**Why the false verdict survived three days of scrutiny.** Three reasons, and each one is a rule now:
+
+- **Page count was plausible.** 116 pages is what a report of that length looks like. The number that would have caught it — 122 — differs by 6, which is inside what a reader expects a rebuild to change. A page count cannot distinguish "current" from "nearly current".
+- **mtime looks like evidence and is not.** A file touched by a copy, a checkout or a `touch` carries a fresh mtime with stale content, and a file built elsewhere carries a stale mtime with fresh content. The rebuild here is the second case: `tectonic` runs with `--outdir .scratch/build`, so nothing writes back to the tracked path unless it is explicitly copied. A green build is compatible with an arbitrarily stale artefact, and the mechanism that would have kept them in step was never in the build.
+- **The verdict was about the wrong object.** The sources compiled; nobody doubted that, and nobody was asked. The question "is what we ship current?" was answered with evidence about a different question, which is how a true measurement becomes a false verdict without anything being misreported.
+
+**Rule, for this repository.** A rebuild is done only when the build output has been **copied over `docs/report/main.pdf` and `cmp` reports no difference**. Not when the build exits 0; not when the page count looks right; not when the mtime is recent. Where the two disagree, the artefact is the fact.
+
+**Where the fix belongs — the wrapper, not the reviewer.** The failure was structural: the build had no step that wrote back to the tracked path, so "rebuild and copy" was a discipline that each dispatch had to remember and each dispatch could forget. The fix is that the copy-and-`cmp` step is *in* the build wrapper, so that running the build is sufficient and forgetting is impossible. A rule that lives in an operator's memory is a rule with an expiry date. The instance is recorded at `reports/2026-10-27_18-06-24_Dispatch_24___split_figures__T5_registrations__T2_.md:100-104`; what this entry adds is the generalisation, because the same shape recurs wherever a build output and a tracked output are two objects: **the artefact is the only thing anyone downstream ever sees**.
+
+## Named pattern: unverified numbers carried across blocks
+
+**Named pattern: unverified numbers carried across blocks.** Rule: a number that was not read from source **in the current block** is labelled `[carried]` at its first use, and cannot enter an argument as evidence until it has been re-read. The label is what makes the difference visible; the re-read is what makes it stop mattering. A carried number is not a lie and is not usually wrong — it is a number whose provenance has been replaced by its familiarity, and after one or two hops it is indistinguishable from a measured one. Three instances, all found in a single pass over this dispatch's own citations:
+
+**(1) `6.2 mm / 13 %` — no source for one numeral, no denominator for the other.** The millimetre width is arithmetic on the band's inequality (`2 × 3.1`) and occurs twice elsewhere in the tree, both times as a restatement of the same claim; the percentage does not reproduce against any extent the record names (31.0 % of the 20.0 mm y axis; 81.6 % of the 7.6 mm z axis; 70.5 % of the geometry's `y_extent = 8.8` mm; 13 % would need 47.69 mm, which is nowhere). Withdrawn in the entry above and **not replaced** — the share of the deficit is the quantity that survives, because it is the quantity the decomposition computes.
+
+**(2) `1.14e-5` — a correct value spelled in a form that appears nowhere in the record.** The literal `1.1364e-5` has no occurrence elsewhere in the tree. What the source prints is a **percentage**, `0.0011364035779397668 %`, at `:4850`, at `:4852` (inside the derived ratio `1.1 / 0.0011364035779397668`) and at `:4856`; the fractional spelling exists only as prose, "a relative difference of 1.14e-5", at `:5004` and `:5594`. It entered by commit `f3859a736ff7d1e7c0e499253e07164a74b38805`, one file, one hunk, `@@ -4829,3 +4829,46 @@`. The value is right and re-derivable: `R_B1 = 1.0843286401655754`, `R_B2 = 1.0843409625150389`, `(R_B2-R_B1)/R_B1 = 1.1364035779397669e-05` — a factor of 100 from the printed `0.0011364035779397668`, which is the same statement in the other spelling. So the defect is not the number; it is that a reader who greps for the numeral finds nothing, and concludes either that the number is invented or that the record is. `:7214`'s own locator for it — "`decisions.md:4848`, `:4850` and `:4854`" — is two lines wide of the mark on two of its three pointers: the numeral is at `:4850`, `:4852` and `:4856`. Same class as the locator corrections at the top of this file, which is the point: the pattern does not spare the entries that diagnose it.
+
+**(3) `12×` margin — a headroom quoted an order of magnitude too generous.** A margin between the `TOLFLUX.json` fit and the eigenvalue was quoted as **12×**. It is **1.25×**: `beta_fit = 326.9107654423116` (`tools/host/attribution/attribution.py:124`), `beta_eigen = 312.7827646322591` (`tools/host/c1-audit/out/c1_spectrum.npz:beta`), `beta_TOLFLUX = 314.03158662735785` (`.scratch/tol/logs/TOLFLUX.json:beta`); `(beta_TOLFLUX − beta_eigen)/beta_eigen = 0.3992617676894698 %`, and `0.005 / 0.003992617676894698 = 1.2523112415533872`. `1.25×` is what the record already says, in three places, which is how the error was catchable at all: `docs/design/m3c_gate_v2.md:223`, `:144`, and `docs/design/t4_amp_ratio.md:37`. A genuine 12× margin would need `T2_TOL = 0.04791141212273638` — an order of magnitude looser than the `0.005` the gate registers. The direction of the error is the dangerous part: it inflates the headroom on the leg that *passes*, which is exactly the number a later reader would use to argue the tolerance is comfortable. The `9.03×` on the scored fit is a different comparison and is unaffected; the two must not be conflated, and in the wrong hands `12×` and `9.03×` would have looked like the same family of number.
+
+**What the three have in common.** None is a fabrication, none was checked in the block that used it, and each is locally plausible: a width in millimetres that a geometry could have had, a relative difference spelled in scientific notation instead of percent, a margin with the right order of magnitude for a tolerance test. That is what makes carrying dangerous — the errors are not wild, they are *small and smooth*, and the check that catches them is cheap: one grep and one line read. The cost is entirely in noticing that a check is owed.
