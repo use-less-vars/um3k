@@ -155,14 +155,24 @@ ANCHOR_CORR_EZ = 0.11916043239134175     # tools/corr_ez_101_20.py:78
 CORR_EY_MIN = 0.90
 CORR_EZ_MAX = 0.30
 
-#: PROVISIONAL, awaiting operator re-basing -- the same-component vertical bar for
-#: the corrected ``corr_ez_vv``.  It reuses the existing ``corr_e_y`` >= 0.90 bar
-#: because a vertical reference correlated against the mode's VERTICAL component
-#: is the same kind of quantity as e_y; the 0.3 upper bound above was never a
-#: property of the field, it was an artefact of pairing a vertical reference with
-#: the LONGITUDINAL field.  ``CORR_EY_MIN``/``CORR_EZ_MAX`` are untouched: they
-#: still define ``shape_pair_ok_legacy``.
-CORR_EZ_VV_MIN = 0.90
+#: derived bar for the same-component vertical statistic; derivation and its
+#: self-reference caveat: docs/design/corr_ez_vv_threshold.md.  NOT the
+#: ``corr_e_y`` >= 0.90 number reused (a vertical reference against the mode's
+#: VERTICAL component is a different reading, with its own spread).
+#: ``CORR_EY_MIN``/``CORR_EZ_MAX`` are untouched: they still define
+#: ``shape_pair_ok_legacy``.  Rule: T = (weakest passing leg) - 2 * S_good,
+#: rounded UP to 0.01, where S_good = 0.0132433711770793 is the SPREAD of the
+#: three passing legs (max - min) -- which on this population is also the
+#: 31x17 -> 41x22 PMC step on |corr_ez_vv| itself
+#: (.scratch/logs/d22_41x22_replay.txt:70-74; zero solves, reproduces the
+#: banked values to 4.3e-16).  0.9352867303487647 - 2*S_good =
+#: 0.9087999879946061 -> 0.91; rounding up tightens by 0.0012, deliberately.
+#: The passing legs sit 1.91 / 2.91 / 2.03 spreads above the bar; PEC col 704
+#: sits 62.4 spreads below.  S_good is measured FROM the legs it judges, so it
+#: bounds reproducibility, not accuracy (two points, no sigma).  The legacy
+#: F = 1.5657e-4 (docs/design/c2b_preregistration.md:29) is the SUPERSEDED
+#: statistic's spread: no conversion exists, and it puts the bar at 0.934974.
+CORR_EZ_VV_MIN = 0.91
 
 #: reproduction gate (step 6): relative tolerance on |measured - banked| / |banked|.
 #: 1e-6 is tight enough to catch the 2e-2-scale drift the analytic reference
@@ -565,7 +575,7 @@ _hdr = (
     f"# f0 / k0              : {F0:.12g} Hz / {K0:.12g} rad/m\n"
     f"# criteria             : shape_pair_ok = |corr_e_y| >= {CORR_EY_MIN:g} and "
     f"|corr_ez_vv| >= {CORR_EZ_VV_MIN:g} and shapes match  (the |corr_ez_vv| bar "
-    "is PROVISIONAL, awaiting operator re-basing)\n"
+    "is derived -- docs/design/corr_ez_vv_threshold.md)\n"
     f"# criteria SUPERSEDED  : shape_pair_ok_legacy = |corr_e_y| >= {CORR_EY_MIN:g} "
     f"and |corr_ez| <= {CORR_EZ_MAX:g} on corr_ez_superseded_longitudinal\n"
     "# criterion uses |corr| because an eigenvector's sign is arbitrary; the\n"
