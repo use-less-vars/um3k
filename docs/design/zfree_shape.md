@@ -461,6 +461,30 @@ measurement can buy.
 **The corrected numbers.** Same-component correlation, vertical extraction against the vertical reference, read from the solver's own transverse field (`tools/host/c1-audit/c1_audit.py:510-511`): `0.935286730348765` (31x17, PMC), `0.948530101525844` (41x22, PMC), `0.936929717079781` (31x17, PEC). Superseded, the values quoted throughout this file and retained under the name `corr_ez_superseded_longitudinal`: `0.119160432391342`, `0.119317006502073`, `0.147291446944630`. Those three are the names of what was measured; they are not defect sizes, not ceilings, and not anything a screen may be set on. Signs are LAPACK-arbitrary, so every screen is on `|corr|`.
 
 **The corrected metric is what gates selection now.** `CORR_EZ_VV_MIN = 0.90` (provisional) replaces the retired `corr_e_z <= 0.30` clause, which could not fail and therefore could not select. The selected columns are unchanged by the correction: 738 (PMC) and 699 (PEC).
+> **[CORRECTION, APPENDED 2026-10-27]** — the paragraph above is left exactly as written; this note records what has
+> changed since, in `docs/design/m3c_gate_v2.md` §3.3 and §3.6.
+>
+> 1. **`CORR_EZ_VV_MIN` is no longer `0.90` (provisional); it is `0.91`.** Derived as the lower clean leg minus twice
+>    the good-leg spread: `0.9352867303487647 − 2(0.0132433711770793) = 0.9087999879946061`, rounded **up** to
+>    `0.91`. The arithmetic checks: `2(0.0132433711770793) = 0.0264867423541586`, and
+>    `0.9352867303487647 − 0.0264867423541586 = 0.9087999879946061`. The round-up is a tightening of
+>    `0.0012000120053939`, and no banked leg lies in `[0.9087999879946061, 0.91)`.
+> 2. **`CORR_EY_MIN` is `0.89`**, derived the same way over the two clean `corr_e_y` legs `0.920770784811142` and
+>    `0.938702180035899`: spread `0.938702180035899 − 0.920770784811142 = 0.017931395224757`, lower leg minus twice
+>    the spread `0.9207707848111419 − 2(0.017931395224757) = 0.8849079943616279`, rounded up to `0.89`.
+>    **`0.89` is the LOOSER of the two bars, not the tighter.** For a `>=` screen, tighter means higher, so `0.89`
+>    against `0.91` leaves the in-plane bar the looser of the pair, and the `0.90` it replaced was already the looser
+>    of the two from the day the pair existed. The two bars stand at different heights because they are on different
+>    statistics with different reproducibility — spread `0.0179` on `corr_e_y` against `0.0132` on `corr_ez_vv` —
+>    not because one is stricter than the other.
+> 3. **The selection sentence above is true only on the 31x17 lattice.** On 41x22 the PMC selection is column **1318**
+>    with `corr_ez_vv = −0.948530101525844`; the 41x22 PEC leg is column 704 at `−0.083134346`, a mis-paired
+>    column. "Unchanged" therefore holds per-lattice, and not across lattices.
+> 4. **The clause id is now `§101.20.T5_ez_corr`**, sitting beside `§101.20.T5_ey_corr` (`|corr_e_y| >= 0.89`)
+>    and `§101.20.T5_fringe_excess` (`ex_R <= 2.0`; `ex_R > 2.0` fails). The corrected metric no longer carries
+>    selection duty alone, and on the fringe region it was never sufficient: that region correlates at `0.8628` /
+>    `0.8653` while carrying `57-58 %` of the deficit at about `15 %` of the analytic energy, which is why the
+>    amplitude-aware excess ratio replaces the correlation there.
 
 **What this pass did not touch, and what still stands.** Recorded so that the banner above is not read as a general amnesty.
 
@@ -470,5 +494,18 @@ measurement can buy.
 - The code readings in §3 — the shape of the right-hand side in H3, the inverse-versus-forward map in H5, and their `Lives in` citations — are observations about source lines rather than about `corr_e_z`, and they are not affected.
 - §4's census specification, the reductions it names (the per-column three-sign tuple and `n_sc`), and the cost table in §4.2 are untouched. The census is still the cheapest measurement named in this file; it is now a same-component question rather than a question about a number that was never a fidelity measure.
 - §4.1's noise floor `F = 1.5657e-4` and the `2F` detection bar stand as properties of the meshes; only the statistic they were applied to changes, and the corrected statistic is now available to apply them to.
+> **[LIMITATION, APPENDED 2026-10-27]** — "available to apply them to" is an availability claim, and only that.
+> **No committed run has applied `F` or `2F` to the corrected statistic.** What the corrected statistic got instead
+> is an absolute bar, `0.91` (`docs/design/m3c_gate_v2.md` §3.6): a bar derived from spread across clean legs, a
+> different construction from a noise-floor detection bar, and one that does not use `F` at all.
+>
+> The comparator's dimension has to be stated or the comparison is not like-for-like. `F = 1.5657e-4` is a noise
+> floor on a **difference**, established on differenced field arrays; `0.91`, and every number it is compared with,
+> is a **correlation value** — dimensionless and confined to `[-1, 1]`. The one measured wall effect,
+> `+0.0016429867310159274` absolute, is a shift in that correlation-valued statistic. Dividing it by `2F = 3.1314e-4`
+> gives `5.25` (`10.49` by `F`), but that quotient puts a correlation shift over a field-difference noise floor: it is
+> arithmetic across two scales, to be read as a scale comparison only and **not as a detection margin**. Until `F` is
+> re-expressed on the correlation scale — which no committed run has done — the honest statement is that the one
+> measured wall effect has not been tested against the noise floor at all.
 - §7's attributions stand, with the one exception this file already carried: `0.119317007` is used here as the 31x17 legal-operator baseline and in `decisions.md` as the 41x22 leg of the mis-paired metric, and both attributions cannot hold (`decisions.md` §6).
 - Outside this file and outside this pass: the passivity bug (`R_CIRC` phantom gain, `+8.47 %`), `R_MODAL` (undefined, never coded), the `R_FLUX` versus `R_CIRC` sign conflict, `corr_e_y = 0.92`, and the mode selection itself all stand on their own measurements and none of them was ever carried by `corr_ez` (`decisions.md` §8).
