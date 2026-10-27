@@ -185,16 +185,16 @@ The question this section answers is narrow and was raised by §9.2 and §9.8 th
 
 ### 10.1 Where R is computed — one site, four lines
 
-`R_extracted` is defined at exactly one place in the codebase: `c1_audit.py:738`, inside the single `np.savez(` call opened at `c1_audit.py:703`, as `R_extracted=float(np.sum(e_z_vv ** 2) / np.sum(e_y ** 2))`. There is no library-side definition of the ratio anywhere; `pecbox_variant.py:702,712` mention it only inside comments. Everything that follows is therefore about those two arrays and nothing else — a defect would have to be in how `e_y` and `e_z_vv` are built or reduced, because there is nowhere else for one to live.
+`R_extracted` is defined at exactly one place in the codebase: `c1_audit.py:766`, as `R_extracted = float(R_by_col[banked_idx])` on the per-column energies appended at `c1_audit.py:705` and reduced at `c1_audit.py:746-747`, carried into the single `np.savez(` call at `c1_audit.py:816`. There is no library-side definition of the ratio anywhere; `pecbox_variant.py:702,712` mention it only inside comments. Everything that follows is therefore about those two arrays and nothing else — a defect would have to be in how `e_y` and `e_z_vv` are built or reduced, because there is nowhere else for one to live.
 
 ### 10.2 The two operands and their lattices
 
 | operand | source line | array shape | lattice | where it lands |
 |---|---|---|---|---|
-| `e_y` | `c1_audit.py:506-520` | (200, 77) | y cell-centres × z nodes | the dielectric interface z = 1.6 mm |
-| `e_z_vv` | `c1_audit.py:607-615` | (201, 76) | y nodes × z cell-centres | the strip edges y = 8.5 / 11.5 mm |
+| `e_y` | `c1_audit.py:679-680` | (200, 77) | y cell-centres × z nodes | the dielectric interface z = 1.6 mm |
+| `e_z_vv` | `c1_audit.py:686-687` | (201, 76) | y nodes × z cell-centres | the strip edges y = 8.5 / 11.5 mm |
 
-`e_y` is built at `c1_audit.py:506-520` as `e_y = MODE.e_at(_ey_pts)[:,:,0]*CELL`; `e_z_vv` at `c1_audit.py:607-615`. The two lattices are deliberately staggered, and that is correct FEM practice rather than an accident: the in-plane component is wanted where its normal direction is resolvable, the vertical component where the singular edge lives. The interpolant is `Mode2D.e_at` at `emfit/mode2d.py:742-781`, a piecewise-linear Whitney 1-form evaluation `e_t(p) = Σ_s w_s [λ_a ∇λ_b − λ_b ∇λ_a]` — no bilinear interpolation, no `griddata`, no FFT, no resampling anywhere in the path, so the sampled values are the field and not a filtered version of it. The analytic counterparts are guarded for shape at `c1_audit.py:523-535`, which is what makes the two operands comparable at all rather than silently broadcast.
+`e_y` is built at `c1_audit.py:679-680` as `E_t = MODE.e_at(_ey_pts).reshape(NYN - 1, NZN, 2)` then `e_y = E_t[:, :, 0] * CELL`; `e_z_vv` at `c1_audit.py:686-687`. The two lattices are deliberately staggered, and that is correct FEM practice rather than an accident: the in-plane component is wanted where its normal direction is resolvable, the vertical component where the singular edge lives. The interpolant is `Mode2D.e_at` at `emfit/mode2d.py:742-781`, a piecewise-linear Whitney 1-form evaluation `e_t(p) = Σ_s w_s [λ_a ∇λ_b − λ_b ∇λ_a]` — no bilinear interpolation, no `griddata`, no FFT, no resampling anywhere in the path, so the sampled values are the field and not a filtered version of it. The analytic counterparts are guarded for shape at `c1_audit.py:598-602`, which is what makes the two operands comparable at all rather than silently broadcast.
 
 ### 10.3 No weight or area element is missing
 
@@ -238,10 +238,10 @@ With the extraction exonerated and the residual sensitivity identified as a genu
 
 | # | defect | evidence | impact |
 |---|---|---|---|
-| 1 | `shape_pair_ok` carries two different meanings | header at `c1_audit.py:670` defines it as `\|corr_ey\| >= 0.89 and \|corr_ez_vv\| >= 0.91 and shapes match`; the printed column at `:696` writes the real `ok_arr` from `:651-653`; the npz key at `:720` stores only shape equality. `out/mesh_study/yair06/c1_spectrum.npz` has `ok=[False]` with `shape_pair_ok=[True]`; `out/pecbox_spectrum.npz` has `ok=[True,False]` with `shape_pair_ok=[True,True]` | the npz key is the unsound one — same defect §9.8 records as "one known defect", reached from the other side |
-| 2 | npz key `corr_ez` at `:717` aliases `corr_ez_superseded_longitudinal` | the mis-paired ≈ +0.12 metric; `mode_plot.py:278-291` compares the alias against banked longitudinal anchors | readers must use `corr_ez_vv`; the alias silently answers a different question |
+| 1 | `shape_pair_ok` carries two different meanings | header at `c1_audit.py:778-780` defines it as `\|corr_ey\| >= 0.89 and \|corr_ez_vv\| >= 0.91 and shapes match`; the printed column at `:809` (stdout mirror `:905`) writes the real `ok_arr` from `:724-726`; the npz key at `:841` stores only shape equality. `out/mesh_study/yair06/c1_spectrum.npz` has `ok=[False]` with `shape_pair_ok=[True]`; `out/pecbox_spectrum.npz` has `ok=[True,False]` with `shape_pair_ok=[True,True]` | the npz key is the unsound one — same defect §9.8 records as "one known defect", reached from the other side |
+| 2 | npz key `corr_ez` at `:830` aliases `corr_ez_superseded_longitudinal` | the mis-paired ≈ +0.12 metric; `mode_plot.py:278-291` compares the alias against banked longitudinal anchors | readers must use `corr_ez_vv`; the alias silently answers a different question |
 | 3 | `out/pecbox_spectrum.npz` stores `bank_col=738` (a PMC column) | its own `j=[699,704]` | the PEC capture names a column it does not contain |
-| 4 | `pecbox_variant.py:706` cites `c1_audit.py:662` as the npz site | the npz call is at `:703`, `R` at `:738` | provenance citation off by 41 lines; follow-up audits land on the wrong statement |
+| 4 | `pecbox_variant.py:706` cites `c1_audit.py:662` as the npz site | the npz call is at `:816`, `R` at `:766` | provenance citation off by 154 lines; follow-up audits land on the wrong statement |
 | 5 | stored PEC `R_extracted = 70.635018555128326` is the *last scanned* failing-witness column, 704 (`corr_ey = -0.426418989`, `corr_ez_vv = -0.083134346`) | the identified column 699's `R = 4.1636565248` exists in no artefact | the PEC leg's quotable `R` is **unbanked**; any future PEC scoring must re-derive it |
 | 6 | `bank_col = -1` in all six mesh-study npz files | unset, not wrong | none — recorded for completeness |
 
@@ -254,3 +254,99 @@ All six are latent: none is fixed by this section, and none affects a banked ver
 - The six defects of §10.9 are recorded but not fixed; defect 5 leaves the PEC leg's `R` unbanked.
 - Whether the global `argmax(beta**2)` at `emfit/mode2d.py:1167` selects the fundamental at all is open — raised in `docs/design/sparse_eigenmode.md` §7, not measured.
 
+## 11. Citation repair: the t4 witness chain
+
+Every `c1_audit.py` line number in §9 and §10 above was verified against the
+script as it stands today (1015 lines) and repaired where stale. Lines 1–51
+(header, §1–§8) are out of scope by instruction and are untouched — their own
+stale cites are listed at the end of this section so a reader is not misled
+into trusting them. Line count is unchanged (256 lines; no edit moved text
+across a line boundary), and the first 51 lines hash byte-identically before
+and after (`head -51 | sha256sum` = `4abbadd18c77018758db6a74ea4393ce761fb916aab62db724fa524307a80f54`,
+computed with the same method on both sides).
+
+### 11.1 Edits made
+
+| line | § | symbol | old cite | new cite |
+|---|---|---|---|---|
+| 188 | 10.1 | `R_extracted` assignment | `:738` | `:766` |
+| 188 | 10.1 | `np.savez(` call | `:703` | `:816` |
+| 194 | 10.2 | `e_y` build | `:506-520` | `:679-680` |
+| 195 | 10.2 | `e_z_vv` build | `:607-615` | `:686-687` |
+| 197 | 10.2 | `e_y` build (prose) | `:506-520` | `:679-680` |
+| 197 | 10.2 | `e_z_vv` build (prose) | `:607-615` | `:686-687` |
+| 197 | 10.2 | analytic shape guard | `:523-535` | `:598-602` |
+| 241 | 10.9 #1 | printed `shape_pair_ok` criteria header | `:670` | `:778-780` |
+| 241 | 10.9 #1 | `ok_arr` printed column | `:696` | `:809` (stdout mirror `:905`, added) |
+| 241 | 10.9 #1 | `ok_arr` definition | `:651-653` | `:724-726` |
+| 241 | 10.9 #1 | npz key `shape_pair_ok` | `:720` | `:841` |
+| 242 | 10.9 #2 | npz key `corr_ez` alias | `:717` | `:830` |
+| 244 | 10.9 #4 | npz call / `R` (in the impact cell) | `:703` / `:738` | `:816` / `:766` |
+| 244 | 10.9 #4 | size of the provenance error | 41 lines | 154 lines |
+
+### 11.2 The offsets are not uniform, which is why no single `+N` repairs this
+
+| symbol | old | new | offset |
+|---|---|---|---|
+| `e_y` build | 506-520 | 679-680 | +173 (and 15 lines → 2) |
+| `e_z_vv` build | 607-615 | 686-687 | +79 (and 9 lines → 2) |
+| `ok_arr` definition | 651-653 | 724-726 | +73 |
+| header string | 670 | 778-780 | +108 |
+| printed `ok_arr` column | 696 | 809 | +113 |
+| `np.savez(` call | 703 | 816 | +113 |
+| npz `corr_ez` alias | 717 | 830 | +113 |
+| npz `shape_pair_ok` | 720 | 841 | +121 |
+| `R_extracted` assignment | 738 | 766 | **+28** |
+
+The last row is the interesting one. `R_extracted` has not drifted *up* with
+the rest of the script: it has drifted up by only 28 lines, because the
+reduction itself moved. It used to be written inline inside the `np.savez(`
+call as `R_extracted=float(np.sum(e_z_vv ** 2) / np.sum(e_y ** 2))`. It no
+longer lives there. The script now accumulates per-column energies inside the
+column loop (`energies.append((float(np.sum(e_y ** 2)), float(np.sum(e_z_vv ** 2))))`,
+`:705`), reduces them after the loop (`R_by_col = np.array([ez / ey for (ey, ez) in energies])`,
+`:746-747`), selects the banked column (`R_extracted = float(R_by_col[banked_idx])`,
+`:766`), and only then passes the scalar into `np.savez(` at `:816` as
+`R_extracted=R_extracted,`. The arithmetic is identical — the ratio of a
+column's summed squares — but the *region* between the old and new site
+shrank by 85 lines while everything after it grew, so the sum of the two
+movements is the +28. A blanket offset applied to this document would have
+landed on the loop body, not on the assignment.
+
+§10.1's quoted source has been updated to the current three stages for the
+same reason: the old quotation of the `np.savez` argument is now text that
+does not exist anywhere in the script, and leaving it would have been a
+worse defect than the stale line number it was attached to.
+
+### 11.3 Verified as still correct (no edit)
+
+- `emfit/mode2d.py:742-781` — `Mode2D.e_at`, the Whitney 1-form evaluator (§10.2).
+- `emfit/mode2d.py:1167` — the global `argmax(beta**2)` mode selection (§10.10).
+- `emfit/studies.py:3242-3246` — the `freqs=np.empty(0)` sentinel (§10.4).
+- `decisions.md:7956` — "…has not been computed." (§10.6, §10.10).
+- `docs/design/m3c_gate_v2.md:630` — "Seven entries, no more." (§10.10 and §2).
+- `pecbox_variant.py:706` — the comment that records the last-column-wins defect.
+
+### 11.4 Deliberately left stale
+
+- **§1–§8 (lines 1–51), frozen.** These still cite `c1_audit.py:430-433`,
+  `:437-441`, `:632` (§4), `:513-514`, `:520-521`, `:528-534`, `:609-635`
+  (§5), `:528-534` (§6). Under the current mapping the two field builds are
+  `:679-680` and `:686-687` and the reduction is `:746-747`; the guard and
+  banking sites have moved comparably. Read §1–§8 for the argument and §9–§11
+  for line numbers.
+- **`pecbox_variant.py:706`'s own embedded cite** (`c1_audit.py:662`). This
+  is a defect *in the script*, recorded as §10.9 #4 and explicitly not fixed
+  there; repairing the prose that reports it would erase the evidence.
+- **`decisions.md:7948`'s embedded cite** (`c1_audit.py:510-511` for the
+  `e_z_vv` read). §8 of this document already flags it as a Miscite and
+  supplies the correct construction; today that construction is `:686-687`.
+  The decision log is append-only and is not edited from here.
+
+### 11.5 Standing caution
+
+The offsets above are a snapshot of a 1015-line script that is still being
+edited. Line numbers are volatile; symbols are durable. `R_extracted`,
+`e_y`, `e_z_vv`, `np.savez(`, `shape_pair_ok`, `corr_ez`, `R_by_col` are what
+should be grepped when this document is next audited — the numbers in §9–§11
+are a convenience, not the claim.
