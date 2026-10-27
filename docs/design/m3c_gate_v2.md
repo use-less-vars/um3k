@@ -645,3 +645,77 @@ is allowed to select — while the physics tests keep the names they already had
 `1e-5`, not a correlation, and the older citations (`decisions.md:7129`, `:7254`) still resolve to it. The
 correlation clause v2 wanted to call `T3_ey` is therefore a new registration under a new id rather than a rename,
 which is why `§101.20.T3_scale` and `§101.20.T5_ey_corr` both appear above.
+
+---
+
+## 10. Gate state update (v2.2) — listed, not patched
+
+**This section supersedes nothing above it, and edits nothing above it.** The v2.1 header revision block (`:3-22`), the `## 0. Status and scope` table (`:39-45`), `### 3.2 T2_agree` (`:216-226`) and `### 3.4 T4_amp` (`:280-292`) stand byte-for-byte as they are; no line at or before `:630` is inserted, deleted, reflowed or replaced.
+
+**Why the update cannot go where a revision note normally goes.** `docs/design/t4_amp_ratio.md` §9.5 and §9.7, both committed, cite this file at `docs/design/m3c_gate_v2.md:630` for the sentence `Seven entries, no more.` (§9, `:628-640`). Writing the update into the header block, the §0 table or §3.4 would move that line, and the citation is to a line number, not to a heading: two committed citations would be silently falsified.
+
+**So the change is listed here, at the tail.** This file states at its head that it is not append-only and that its changes are *"listed, not silently patched"* (`:3`). Listing the change at the tail is that same discipline applied from the other end; the alternative was a silent patch of a line-frozen head, which is the one thing the head forbids.
+
+**Recorded changes, numbered.** (1) `T4_amp`'s status is restated: bar registered, clause still unimplemented, measurement recorded as FAIL (§10.2). (2) `T2_agree` is recorded as FAIL on the scored fit at `9.03×` `T2_TOL` (§10.3), a second and independent red from the same run. (3) The new mesh-sensitivity evidence is recorded, with the knob identified (§10.4). (4) The solver ceiling is named as the current physical blocker, with a pointer to the sparse design pass that is not yet a result (§10.5). (5) The extraction is exonerated, so the miss is not a bookkeeping bug (§10.6). (6) No gate-table row is added, removed or renumbered, and no verdict is flipped (§10.1, §10.7). (7) The two `CORR_EY_MIN` / `CORR_EZ_VV_MIN` line citations in §10.7 are corrected, and the 27-line drift that invalidated them in the v2.1 header and §9 is recorded rather than patched (§10.8).
+
+### 10.1 The gate verdict is unchanged: FAIL
+
+**The overall v2 gate verdict remains FAIL.** No clause was flipped to PASS, deleted or weakened by anything in this section, and no gate was run to produce it. The registered list still holds seven rows: `Seven entries, no more.` at `:630` is still literally true after this append, and `:632-640` still carries exactly `T1_stab`, `T2_agree`, `T3_scale`, `T5_ez_corr`, `T5_ey_corr`, `T5_fringe_excess` and `T6_fit_route`. Everything below is a status and evidence update against those rows, not a re-registration.
+
+### 10.2 `T4_amp` — bar registered, clause still unimplemented, measurement FAIL
+
+**The status moves from the design-only language of §3.4 (`:292`) to three separate facts.** The bar is **registered**: `±10 %` on the relative amplitude ratio, adopted and locked in `docs/design/t4_amp_ratio.md` §9.1-§9.6. The clause is **still not implemented** as executable gate code: `T4_amp` appears in no `.py` file in the tree, and §9.4 of that note remains unimplemented. And the measurement against the registered bar is a recorded **FAIL**.
+
+**The FAIL, in the registered quantity.** Scored quantity `Q = R_extracted / R_analytic = 1.440865461991999`, i.e. **44.086546199199894 %** away from the analytic value `R_analytic = 2.8101021387524523`. The `±10 %` band on `R_extracted` is `[2.52909192487721, 3.09111235262770]`; the measured `R_extracted = 4.0489791163982565` sits **4.408654619919989×** the `±10 %` half-width outside it.
+
+**A 4.4× overshoot is not a near miss.** The measurement is more than four half-widths beyond the edge of the band, so no correction of the size exonerated in §10.6 can reach it. §9.6's pre-registered revisit clause has **not** been invoked: the band was registered before this measurement and stands as registered.
+
+### 10.3 `T2_agree` — also FAIL, at `9.03×` tolerance
+
+**A second clause fails on the same run.** `beta_fit = 326.9107654423116` against `beta_eigen = 312.7827646322591` is a relative disagreement of **4.516873 %** — **`9.03×`** `T2_TOL = 0.005` (`tools/gates_101_20.py:166`), as tabulated at §3.2 (`:223`).
+
+**It is not the amplitude-ratio miss in disguise.** `Q` is a cross-section energy ratio formed from two field sums (§3.4, `:285`); `beta` is a global weighted propagation constant, and across the whole `N = 6 … 22` mesh sweep of §10.4 it moves only **1.3 %** (314.73 → 310.64). A quantity that moves 1.3 % under that refinement cannot carry a 4.4× ratio error, so the two reds are separate and both stand.
+
+### 10.4 What the new mesh evidence says about where the miss lives
+
+| knob swept | settings | `R_extracted` (dimensionless) | successive increments (%) | reads as |
+|---|---|---|---|---|
+| strip band | 12 / 18 / 24 / 36 | 4.0489791164 / 4.0463369445 / 4.0514540972 / 4.0493407985 | +0.0653 / −0.1263 / +0.0522 | flat — strip refinement is not the knob |
+| air band | `N =` 6 / 9 / 12 / 15 / 18 / 22 | 4.4382495593902 / 4.0489791163983 / 3.7124820337398 / 3.5036000135 / 3.4384391291194 / 3.2761300897590 | −8.7708 / −8.3107 / −5.6265 / −1.8598 / −4.7204 | monotone — the air band is the knob, and the ratio is still far from 2.81 at every reachable `N` |
+| z band | 12 / 6 / 8 | 4.1029404210 | — | the wrong way — away from `R_analytic`, not toward it |
+
+**The strip band does not move it.** Strip band 12 / 18 / 24 / 36 gives `4.0489791164 / 4.0463369445 / 4.0514540972 / 4.0493407985`, i.e. changes of `+0.0653 / −0.1263 / +0.0522 %`, verdict **NO**: refining the strip band does not move the ratio.
+
+**The air band does, and slowly.** `N = 6 / 9 / 12 / 15 / 18 / 22` gives `4.4382495593902 / 4.0489791163983 / 3.7124820337398 / 3.5036000135 / 3.4384391291194 / 3.2761300897590`, successive decrements `−8.7708 / −8.3107 / −5.6265 / −1.8598 / −4.7204 %`, while `beta` moves only 1.3 % (314.73 → 310.64).
+
+**Moving the z band instead goes the wrong way.** z band 12 / 6 / 8 gives `4.1029404210`, further from `R_analytic`, not closer.
+
+All three sweeps are recorded at `docs/design/t4_amp_ratio.md` §9.7 and §9.8; the readings here are those numbers, not new ones.
+
+### 10.5 The current physical blocker is the solver ceiling, not the operator
+
+**The mesh ceiling is `N = 25` at `h = 0.34 mm`.** Free edges scale as `48*nx − 44` with `nx = 2N + 13`, and the dense solve is capped by `_MIXED_DENSE_MAX = 3000`; at `N = 25` the free-edge count already sits just below that cap, so the next `N` in the air-band sweep crosses it. The next data point §10.4's argument needs is therefore unreachable by the current solver: the blocker is a linear-algebra limit, not a modelling choice about the operator.
+
+**`docs/design/sparse_eigenmode.md` is a design pass only — unanchored until implemented and gated.** At the 201×77 mesh it measures `splu` fill-in of 8,352,700 nonzeros (`0.00228` of the dense `n²`, about 100.2 MB), a 0.38 s factorisation and 12.82 ms per shift-invert apply, against 16.7 GB and roughly 41 days for the dense QZ path. **None of those numbers is a result about `R`**, and none is a gate result: they measure a solver that is not in the tree behind any clause.
+
+### 10.6 The extraction is exonerated
+
+**The FAIL is not a bookkeeping artefact.** `docs/design/t4_amp_ratio.md` §10 establishes four things about `R_extracted`: it has one definition, at `tools/host/c1-audit/c1_audit.py:738`, inside the single `np.savez(` call at `:703`; no weight or area element is missing from it, with trapezoid weighting worth only `+0.0223 %` / `+0.0175 %`; the numbers reproduce bit-exactly from the banked payloads; and de-staggering both operands onto one lattice bounds the lattice asymmetry at 1.18 % / 0.30 %.
+
+**What that means for the gate.** Every correction measured there is at most 1.18 %, against a 44.086546199199894 % miss, so the gap cannot be closed by correcting the extraction. It must be closed by refinement — which is exactly the step §10.5 says the dense solver cannot deliver.
+
+### 10.7 What this section does not do
+
+* No gate-table row was added, removed or renumbered: `:632-640` is unchanged and `:630` is still literally true.
+* No verdict was flipped to PASS; no clause was deleted or weakened.
+* No tolerance changed: `T1_TOL = 0.005` (`tools/gates_101_20.py:132`), `T2_TOL = 0.005` (`:166`), `T3_TOL = 1e-5` (`:221`), `CORR_EY_MIN = 0.89` (`tools/host/c1-audit/c1_audit.py:199`) and `CORR_EZ_VV_MIN = 0.91` (`:220`) all stand, as does the `±10 %` amplitude band registered in `docs/design/t4_amp_ratio.md` §9.1-§9.6.
+* No solve, no gate run and no `.py` edit accompanied this section; every number in it is quoted from an already-banked artefact or is arithmetic on those numbers.
+* `docs/design/t4_amp_ratio.md` §9.6's revisit clause remains uninvoked, and §9.4 remains unimplemented.
+
+### 10.8 Citation drift in the two constants this section relies on
+
+**The drift, measured.** The v2.1 header cites `tools/host/c1-audit/c1_audit.py:172` for `CORR_EY_MIN` at `:14`; the `§101.20.T5_ez_corr` and `§101.20.T5_ey_corr` rows of §9 cite `:193` for `CORR_EZ_VV_MIN` and `:172` for `CORR_EY_MIN` at `:637-638`. Each was correct when written and each is now stale by exactly 27 lines — `grep -n` puts `CORR_EY_MIN = 0.89` at `:199` and `CORR_EZ_VV_MIN = 0.91` at `:220`. The same stale pair appears at `:14`, `:166`, `:170`, `:240`, `:261`, `:273`, `:388`, `:442`, `:584-586` and `:607`, none of which is edited.
+
+**Why it drifted, and that it is not an authoring error.** The file grew above the constants, twice: the `C1_STRIP_CELLS` knob first, then the `C1_Y_AIR_CELLS` / `C1_Z_CELLS` knobs, whose commit inserts 6 lines above `CORR_EY_MIN` (its diff offsets jump to `+6` from `@@ -104,6 +104,12 @@` onward). 172 + 21 + 6 = 199 and 193 + 21 + 6 = 220. The `+27` is measured from current `grep -n`; the `+6` is attributable to the mesh-knob commit. Citations written after those commits — `R_extracted` at `:738` and the `np.savez(` call at `:703`, both relied on in §10.6 — are current.
+
+**What was and was not edited.** The two citations in §10.7 are corrected. The header citation at `:14` and the §9 rows at `:637-638` are deliberately left as-is. A same-line-count replacement at `:14` would not move `:630`, so it is mechanically safe — and it is still not made, because this document's rule is that changes are listed rather than silently patched, and §10.8 is the listing.
