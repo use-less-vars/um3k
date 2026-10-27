@@ -1078,6 +1078,185 @@ the *shape* defect and the residual are discretisation of the strip edge, not at
 * **WHAT IS NOT CLAIMED.** That `C2b` closes the 6.41 % analytic-internal `eps` gap -- that is §7.2 territory (placement
   versus extraction) and `C2b` says nothing about it. `C2b` addresses the surviving shape defect only.
 
+### 7.4 `C2b` figure run -- what the mode plot measured, and what it did not
+
+**STATUS.** Run, not designed, and not a `C2b` result. `tools/host/mode_plot/run.sh` executed `mode_plot.py` **once** at
+git HEAD `295f344` (`mode_plot.log:8`), started `2026-10-27T03:17:02Z` (`mode_plot.log:7`), `exit=0` (`mode_plot.log:36`), **1.6 s** for the
+plot inside **3 s** for the wrapper (`mode_plot.log:35`, `:36`). No assembly, no solve, no eigensolve: both spectra are
+read from disk -- `c1_spectrum.npz` QZ col 738 (`mode_plot.log:17`) and `pecbox_spectrum.npz` QZ col 699
+(`mode_plot.log:23`). It wrote two files and nothing else: `docs/design/c2b_shapes.pdf`, 100568 bytes
+(`mode_plot.log:33`), and `.png`, 472872 bytes (`mode_plot.log:34`). Geometry is the standing 20 mm x 7.6 mm
+cross-section: `width` 0.02, `height` 0.0076, `h` 0.0016, `strip` 0.003, `eps_r` 4.4, `strip_y` [0.0085, 0.0115]
+(`mode_plot.log:16`).
+
+No image was seen in producing this subsection. It was written by an agent with **no image capability**, from (i) the
+numbers `mode_plot.py` printed and persisted to `mode_plot.log`, and (ii) the code that draws the panels.
+`docs/design/c2b_shapes.pdf` (100568 bytes, `mode_plot.log:33`) and `.png` (472872 bytes, `mode_plot.log:34`) were never
+opened by the author, and **no claim in this subsection derives from looking at them**; the human operator holds the only
+view of those pixels.
+
+**What the run measured.** Two configurations, one QZ column each, against one analytic reference:
+
+| quantity | PMC / open top | PEC / closed box | source |
+|---|---|---|---|
+| mesh `h` / nnz | [483, 483] / 3141 | [422, 422] / 2726 | `mode_plot.log:18`, `:24` |
+| `c_f` / nnz | [1444, 483] / 5431 | [1382, 422] / 4952 | `mode_plot.log:18`, `:24` |
+| QZ column | 738 | 699 | `mode_plot.log:17`, `:23` |
+| `beta` [rad/m] | 312.782765 | 311.772112 | `mode_plot.log:19`, `:25` |
+| `beta^2` | 9.7833058e+04 | 9.7201850e+04 | `mode_plot.log:19`, `:25` |
+| `eps_eff` | 3.6295122080769704 | 3.606094999644309 | `mode_plot.log:19`, `:25`, `:32` |
+| `corr_e_y` | +0.920770784811142 | +0.912343044811209 | `mode_plot.log:20`, `:26` |
+| `corr_e_z`, banked = reconstructed | +0.119160432391342 | +0.147291446944630 | `mode_plot.log:20`, `:26` |
+| gauge sign applied | +1 | +1 | `mode_plot.log:21`, `:27` |
+| rms `A_ez`, (201, 76) | 1.409797e-01 | 1.409797e-01 | `mode_plot.log:22`, `:28` |
+| rms `e_z`, (201, 76) | 3.999873e+00 | 3.049101e+00 | `mode_plot.log:22`, `:28` |
+
+Read off those rows, not printed by the run:
+* `eps_eff` rel_delta **-0.006452** (`mode_plot.log:32`) = **-0.645 %**; the underlying `beta` step is **+0.324 %**
+  (312.782765 / 311.772112 - 1). # derived from `mode_plot.log:19`, `:25`
+* |`corr_e_z`| rel_delta **+0.236077** (**+23.61 %**, `mode_plot.log:31`); absolute step
+  `0.147291446944630 - 0.119160432391342` = **0.028131014553288**. # derived from `mode_plot.log:31`
+* the two **extracted** fields agree with each other at |corr| **0.932705** (`rel_rms` 0.366866, max|delta| 0.926972,
+  `mode_plot.log:30`) while each agrees with the **analytic** field at only 0.119 / 0.147 (`mode_plot.log:20`, `:26`).
+  `1 - |corr|` is **0.067** between the two panels against **0.881** and **0.853** against the reference -- a factor of
+  **~13**, so the mismatch is dominated by extraction-versus-reference, not by mask-versus-mask. # derived from
+  `mode_plot.log:20`, `:26`, `:30`
+* `max|A_ez(PMC) - A_ez(PEC)| = 0.000e+00` (`mode_plot.log:29`): the two panels do **not** carry two analytic fields,
+  they carry one, and the run says so in its own line.
+
+**The four questions this figure was asked, and its four answers.**
+
+**1 -- Is the extracted `e_z` the same object as the analytic `e_z`, i.e. is the reconstruction correct?**
+**NOT ANSWERABLE BY THIS RUN.** The only agreement the run computes *against a stored reference* is a re-derivation:
+`reconstructed` equals `banked` at `delta=0.00e+00` (`mode_plot.log:20`, `:26`), gated at `CORR_TOL = 1e-6`
+(`tools/host/mode_plot/mode_plot.py:196`). That proves the diagnostic reproduces the banked statistic, not that the
+banked statistic is right. Whether the reconstruction is correct is §0 Q1, settled by `S7`-`S9` on a *field*
+comparison, not by a correlation against itself.
+
+**2 -- Does the PEC mask change the extracted longitudinal field -- is the +23.61 % the wall?**
+**NOT ANSWERABLE BY THIS RUN**, as an attribution, for a design reason: **three** variables move together between the
+two panels -- the mask, the mesh (483 vs 422 free edges, `mode_plot.log:18` / `:24`) and the QZ column (738 vs 699,
+`mode_plot.log:17` / `:23`). One observation of a three-way perturbation cannot assign the effect to any one of them.
+What *is* measured, without attribution: |`corr_e_z`| 0.119160432391342 -> 0.147291446944630 (`mode_plot.log:31`) and
+|corr| 0.932705 between the fields themselves (`mode_plot.log:30`). Note the direction -- closing the box *raises* the
+agreement with the analytic reference (0.119 -> 0.147, `mode_plot.log:31`); a wall effect has to explain that sign,
+and this run does not try. `mode_plot.py` keeps no region, band, quadrant or mask statistics at all, so the picture
+cannot localise a wall term even by eye. # source: `tools/host/mode_plot/mode_plot.py:201-206` (the only builders are
+`say` and a global `corr`), `:437-439` (the sole overlay is a strip line, drawn for orientation)
+
+**3 -- Is the shape defect a discretisation artefact, i.e. does `C2b`'s hypothesis survive?**
+**NOT ANSWERABLE BY THIS RUN.** §7.3's kill condition needs a refinement ladder and a Step-0 `corr_e_z` floor. This
+run has neither: one mesh per configuration (`mode_plot.log:18`, `:24`), no refinement, no repeat statistic, and its
+`beta` step of +0.324 % is *inside* the 0.3993 % cross-code floor (§7.2 item 3: two codes on one cross-section,
+314.03158662735785 vs 312.7827646323) -- the floor behaving correctly, not evidence either way. `C2b` remains unexecuted.
+
+**4 -- Does the 21-28x rms ratio between the analytic and the extracted field indicate a defect?**
+**INFERENCE -- from code, not from this run.** 3.999873 / 0.1409797 = **28.4x** (PMC) and 3.049101 / 0.1409797 =
+**21.6x** (PEC) # derived from `mode_plot.log:22`, `:28`. The ratio compares two arrays that are **not on a common
+amplitude scale**, so it measures nothing:
+* the extracted side is fixed only up to a unit **two-norm of the transverse edge vector**: `normalised = np.real(vecs)`,
+  `norms = np.linalg.norm(normalised, axis=0)`, `normalised = normalised / norms` (:1127-1130), the convention of the
+  QZ branch that produced these columns; `c1_audit.py` then re-normalises once more (`x = np.real(vecs_all[:, j])`,
+  `x = x / nxv`, `tools/host/c1-audit/c1_audit.py:455-459`) before `e_z_node[free_n] = beta * z_free`
+  (`tools/host/c1-audit/c1_audit.py:473`), mirroring `e_z[free_n] = 1j * beta * lu_h.solve(c_f.T @ x)` (:1175).
+  **No unit-power, unit-peak or region-rms normalisation exists anywhere on that path.**
+* the analytic side is one array, identical in both panels (`mode_plot.log:29`) and identical in rms
+  (`mode_plot.log:22`, `:28`), carrying whatever normalisation `M.plane_mode` applies. **That convention was not read
+  this block and is an open item, not an assertion.**
+* the banked statistic is a **correlation**, and `corr(a, b)` is a normalised inner product over the whole array
+  (`tools/host/mode_plot/mode_plot.py:206`), hence invariant to the sign and the scale of either argument. That is the
+  correct choice, and it is why `corr_e_z` can be compared across the two panels while the rms values cannot. The one
+  amplitude statement that *is* on a common convention is PMC-vs-PEC `e_z` rms, 3.999873 vs 3.049101 -- **+31.18 %**
+  # derived from `mode_plot.log:22`, `:28` -- and it describes two different operators on two different meshes, not
+  either field's physical amplitude.
+
+**Names, as printed.** The run's two arrays are `A_ez` (analytic) and `e_z` (extracted)
+(`tools/host/mode_plot/mode_plot.py:394-395`, printed at `mode_plot.log:22`, `:28`). A bare `e_z rms` quoted for the
+analytic array is a relabelling the log does not make; **1.409797e-01 belongs to `A_ez`**, and the script prints no
+phrase of the form "analytic e_z rms" anywhere.
+
+**The three panel questions, asked literally, and why this run answers none of them.**
+
+**1 -- "What structural features does the extracted `e_z` have that the analytic `e_z` does not?"** (peaks in different
+locations, missing sign flips, non-decay at the top wall, amplitude blowup at the strip edges.)
+**NOT ANSWERABLE BY THIS RUN**, on two independent grounds. (a) The panels were never seen (STATUS above). (b) No log
+statistic can carry the answer: `corr` and `rms` reduce the whole (201, 76) array to one scalar each
+(`tools/host/mode_plot/mode_plot.py:206`, `:221`), the only drawing calls are contours (`:415-417`) and a strip line
+(`:437-439`), and nothing printed between `mode_plot.log:20` and `:31` is a per-row, per-column or per-region quantity.
+The four properties named live in the pixels, and no step converts them back into numbers.
+**What would answer it:** four masked reductions -- argmax index per band (peak location), sign-change count per row pair
+per band (missing sign flips), `rms(e_z)` on the outermost row pair (non-decay at the wall), `rms(e_z)` on the two
+strip-edge column groups (blowup). Bands below; their index bounds are UNKNOWN here.
+
+**2 -- "Is the 37 % rms difference between PMC and PEC concentrated at any specific region -- strip edge, top wall,
+substrate-air interface -- or is it uniform?"**
+**NOT ANSWERABLE BY THIS RUN**, and this is the one that looks answerable. `rel_rms = 0.366866` (`mode_plot.log:30`) is a
+**single whole-plane ratio**: `cross_rel = rms(cross) / sqrt(0.5*(rms(PMC)^2 + rms(PEC)^2))` with a global `rms`
+(`tools/host/mode_plot/mode_plot.py:472`, `:221`). It carries no spatial decomposition -- the script never partitions the
+array -- so it cannot say where the 37 % sits. The same line prints `max|delta| = 0.926972` (`mode_plot.log:30`), one
+element whose *position* is not printed; it does not localise the difference either.
+**What would answer it:** the band-share statistic below -- three numbers summing to 1.0.
+
+**3 -- "Do both extracted fields share a structural feature absent from the analytic field? If so, name it."**
+**NOT ANSWERABLE BY THIS RUN.** Naming a shared feature needs either the picture (not seen) or a decomposition into a
+common part and a differential part. The run computes three whole-array scalars here -- |corr| = 0.932705 between the two
+extracted fields (`mode_plot.log:30`) and 0.119160 / 0.147291 from each to the reference (`mode_plot.log:20`, `:26`) --
+which rank the disagreement but cannot name anything.
+
+**The one missing instrument, stated once; it is the same for all three.** Band-masked correlation and rms over three
+regions fixed by cell index:
+
+| band | definition | anchor |
+|---|---|---|
+| (i) strip edge | rows nearest `y = 0.0085` and `y = 0.0115` m, +/-2 cells each | `strip_y` (`mode_plot.log:16`); 0.0115 - 0.0085 = 0.003 m = `strip` # derived |
+| (ii) top wall | outermost 2 columns (the `z` extreme) | open top (PMC) / PEC wall (`mode_plot.log:17`, `:23`); `H` = 0.0076 (`tools/host/c1-audit/out/run.log:22`) with column coordinate `zc_mid = (i+0.5)*CELL` (`tools/host/c1-audit/c1_audit.py:397`) leaves the wall beyond column 75 (z = 7.55e-3), so columns 74-75 # derived |
+| (iii) substrate-air | columns nearest `z = h = 0.0016` m, +/-2 cells | `h` (`mode_plot.log:16`); `ZS[8] = HSUB` on the 17-node FEM z-axis (`tools/host/c1-audit/c1_audit.py:267`); with column coordinate `zc_mid = (i+0.5)*CELL` (`:397`) columns 15 and 16 straddle 1.6e-3 # derived |
+
+Rows are axis 0 of the (201, 76) arrays, columns axis 1: `e_z` is `reshape(NYN, NZN-1)` of an interpolator over
+`(ZS, XS)` (`tools/host/c1-audit/c1_audit.py:491-492`). **The indices are resolved, not deferred** -- row coordinate
+`yn_node = i*CELL` and column coordinate `zc_mid = (i+0.5)*CELL` (`tools/host/c1-audit/c1_audit.py:394`, `:397`), with
+`CELL` 1e-4, `ny` 200, `nz` 76, `H` 0.0076 and `h` 0.0016 (`tools/host/c1-audit/out/run.log:22`): strip edges at rows
+**85** and **115** (0.0085/1e-4 and 0.0115/1e-4) # derived; top wall at columns **74-75** (last centre 7.55e-3, wall
+7.6e-3) # derived; substrate-air interface at columns **15-16** (1.55e-3 and 1.65e-3, straddling 1.6e-3) # derived.
+Reductions, per band and per configuration: masked `corr(A_ez, e_z)`, masked `rms(A_ez)`, masked `rms(e_z)`; across
+configurations, masked PMC-vs-PEC `rel_rms` by the same formula as `:472` with the mask applied; and for question 2 the
+**band share** `sum_band(delta^2) / sum_all(delta^2)` with `delta = e_z_PMC - e_z_PEC` after the gauge fix
+(`mode_plot.log:21`, `:27`).
+**Cost:** one re-run of `mode_plot.py` with the statistics added, **no new solve** -- both spectra are already on disk
+(`mode_plot.log:17`, `:23`) -- hence seconds-scale, on the order of the 1.6 s the plot itself took (`mode_plot.log:35`).
+**ESTIMATE -- not measured.** Not run this block: the execution container is stopped.
+
+**"What field is the mixed solve producing?" -- one panel question with a numerical foothold, and its limit.**
+The full question is not answerable here (question 3 above). A weaker statement is licensed by the log alone.
+**INFERENCE -- from three scalars, not from the picture.** The two extracted fields agree with each other at
+|corr| = 0.932705 (`mode_plot.log:30`); each agrees with the analytic reference at only 0.119160 and 0.147291
+(`mode_plot.log:20`, `:26`). In `1 - |corr|` terms -- already tabulated above as 0.067 against 0.881 and 0.853 -- the two
+panels are **~13x** closer to each other than either is to the reference # derived from `mode_plot.log:20`, `:26`, `:30`.
+That is the signature of a **shared systematic component on the extraction path**, present under both wall conditions,
+rather than of two independent local distortions: one field that is internally consistent and externally wrong, which is
+what a formula or operator mismatch looks like.
+**The limit.** This does **not** name the offending term, does **not** separate a `z_free` formula error from a `z_free`
+operator error, and does **not** localise anything; naming it needs the band statistics above plus the §7.3 refinement
+ladder.
+
+**What this section does not establish.**
+* Nothing about `C2b`. No refinement was run, no mesh scatter was measured, no `corr_e_z` noise floor exists (§7.3
+  Step 0), and the figure is a rendering of two already-banked columns.
+* Nothing about the wall's contribution to the shape defect: mask, mesh and QZ column are confounded (the design that
+  would separate them is §7.3's "same physics, two meshes", and it was not this run).
+* Nothing about amplitude in either direction. The 21-28x ratio is a scale mismatch between two differently
+  normalised arrays; no physical normalisation of `e_z` was applied, banked or claimed.
+* Nothing about `eps_eff` beyond restating it: -0.645 % (`mode_plot.log:32`) between a closed box and an open top is
+  not a measurement of the 6.41 % analytic-internal gap, which is §7.2 territory.
+* **No code was changed and no test was run to produce this subsection.** The two outputs are the pdf and the png
+  (`mode_plot.log:33`, `:34`); the log is the evidence, and every number above is read from it or marked `# derived`.
+
+**Insert note.** This subsection is an insert at line 1080, so every line number >= 1081 in this file moves down by
+**179** lines. Bare `:NNNN` references throughout this document are to `emfit/mode2d.py` (the convention stated at the
+head of `## 8`) and are unaffected. The document's one *self*-reference, `§8.1 `:1084`` at :995, now points into this
+subsection and must be re-read against the shifted file; it already pointed at the blank line under `## 8.
+Provenance` rather than at the §8.1 row it cites.
+
 ---
 
 ## 8. Provenance
