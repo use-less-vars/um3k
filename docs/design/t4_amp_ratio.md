@@ -179,3 +179,78 @@ The pairwise deltas are −8.7708 / −8.3107 / −5.6265 / −1.8598 / −4.720
 
 **Reproducibility.** Every point above is one run of `tools/host/c1-audit/c1_audit.py` with `C1_Y_AIR_CELLS` / `C1_Z_CELLS` set and `C1_ALLOW_REMESH=1`, writing an npz under `out/mesh_study/` (`yair06`, `yair12`, `yair18`, `yair22`, `z12_6_8`), none of which is committed. The banked captures at `tools/host/c1-audit/out/` were verified unchanged after every run: `c1_spectrum.npz` sha256 `05387390cf2977364c2e6f62a1c694149fc13754d054c9c51bbccbabcf9568d4` and `pecbox_spectrum.npz` sha256 `92d283155a5e2fe5607e5867f8ebab2d7861c682e60274a8667f5dcd80340f18`.
 
+## 10. The extraction verdict: the extraction is correct, the sensitivity is physical
+
+The question this section answers is narrow and was raised by §9.2 and §9.8 themselves: are the 44.09 % of §9.2 and the monotone fall of §9.8 an artefact of *how* `R_extracted` is measured, or a real property of the discretisation? The answer is that the measurement is correct — no weight, area element, lattice or resampling defect stands behind it — and the sensitivity is physical, living in the `e_y` denominator, which is still gaining edge energy as the mesh refines. The basis is a fresh audit of the reduction path (226.7 s / 222 tool calls, high confidence), reading the banked arrays and the emitting code rather than re-running anything. **No number in §9.2 changed, and §9.6's revisit clause was not invoked**: this section explains a movement, it does not re-register a mechanism, and it moves neither the bar nor the verdict.
+
+### 10.1 Where R is computed — one site, four lines
+
+`R_extracted` is defined at exactly one place in the codebase: `c1_audit.py:738`, inside the single `np.savez(` call opened at `c1_audit.py:703`, as `R_extracted=float(np.sum(e_z_vv ** 2) / np.sum(e_y ** 2))`. There is no library-side definition of the ratio anywhere; `pecbox_variant.py:702,712` mention it only inside comments. Everything that follows is therefore about those two arrays and nothing else — a defect would have to be in how `e_y` and `e_z_vv` are built or reduced, because there is nowhere else for one to live.
+
+### 10.2 The two operands and their lattices
+
+| operand | source line | array shape | lattice | where it lands |
+|---|---|---|---|---|
+| `e_y` | `c1_audit.py:506-520` | (200, 77) | y cell-centres × z nodes | the dielectric interface z = 1.6 mm |
+| `e_z_vv` | `c1_audit.py:607-615` | (201, 76) | y nodes × z cell-centres | the strip edges y = 8.5 / 11.5 mm |
+
+`e_y` is built at `c1_audit.py:506-520` as `e_y = MODE.e_at(_ey_pts)[:,:,0]*CELL`; `e_z_vv` at `c1_audit.py:607-615`. The two lattices are deliberately staggered, and that is correct FEM practice rather than an accident: the in-plane component is wanted where its normal direction is resolvable, the vertical component where the singular edge lives. The interpolant is `Mode2D.e_at` at `emfit/mode2d.py:742-781`, a piecewise-linear Whitney 1-form evaluation `e_t(p) = Σ_s w_s [λ_a ∇λ_b − λ_b ∇λ_a]` — no bilinear interpolation, no `griddata`, no FFT, no resampling anywhere in the path, so the sampled values are the field and not a filtered version of it. The analytic counterparts are guarded for shape at `c1_audit.py:523-535`, which is what makes the two operands comparable at all rather than silently broadcast.
+
+### 10.3 No weight or area element is missing
+
+The ratio is plain node sums of squares: no quadrature weights, no trapezoid factors, no background subtraction, so no cancellation is possible, and a dropped weight could only appear as a common scale factor — which cancels in a ratio. Quantified rather than asserted: switching *both* operands to a trapezoid-weighted sum moves the analytic ratio by **+0.0223 %** and the extracted ratio by **+0.0175 %**, i.e. the whole weighting question is worth two parts in ten thousand. **What did not happen:** no mass-matrix weighting was applied anywhere in the reduction, and none was needed for a like-for-like comparison, because both operands are reduced by the same rule on the same kind of lattice.
+
+### 10.4 Bit-exact reproduction
+
+The numbers are reproducible from the stored npz payloads with relative difference **0.00e+00** on all six mesh-study captures and on the pecbox capture, via `tools/host/c1-audit/mode_plot.py`'s `reconstruct_run` with `mp.C1_OUT` patched; the N = 9 value reproduces as `4.0489791163983`. No partial sums are quoted here: the intermediate accumulations in the working notes were garbled and are not authoritative, so only quantities that reconstruct bit-exactly are used as evidence in this section.
+
+### 10.5 Like-for-like was tested, not assumed
+
+| variant | `R_analytic` | `R_extracted` | d(analytic) | d(extracted) |
+|---|---|---|---|---|
+| as written | 2.8101021387525 | 4.0489791163983 | — | — |
+| boundary planes dropped | 2.8113577527841 | 4.0503951543184 | +0.0447 % | +0.0350 % |
+| interior window y ∈ [1, 19] mm, z ∈ [0.5, 7.0] mm | 2.2382725482956 | 3.0730766300207 | −20.35 % | −24.10 % |
+| trapezoid weighting | 2.8107297770527 | 4.0496869679447 | +0.0223 % | +0.0175 % |
+| de-staggered onto a common 200×76 cell-centre grid | 2.8431489615431 | 4.0611143983338 | +1.176 % | +0.2997 % |
+
+The worst-case lattice/domain asymmetry is **1.18 %** on the analytic operand and **0.30 %** on the extracted one, and the two operands move *together* under every variant — including the interior window, where they move by −20 % and −24 % in the same direction — so the 44 % gap cannot be bookkeeping. The de-staggered row is the decisive one: forcing both operands onto one lattice, which is the strongest available test of the staggering noted in §10.2, costs 1.18 % on the denominator and 0.30 % on the numerator.
+
+### 10.6 Why the ratio falls with refinement — the denominator is still gaining edge energy
+
+**75.30 %** of the analytic `e_z` energy sits in **14.43 %** of its samples, and dropping edge columns moves the analytic ratio the *wrong* way (k = 1: analytic `2.9646`, extracted `3.8558`), i.e. the singular edge structure defines the mode and cannot be trimmed away. The `e_y` denominator is the operand still converging: its share of energy within 1.5 cells of the strip edge climbs monotonically **7.23 % → 15.79 %** across N = 6 … 22, toward the analytic **22.67 %**, while `e_z_vv`'s edge share is flat (12.39 % → 14.23 %) and its substrate share stays pinned at 87–89 % against an analytic 78.65 %. A ratio whose denominator keeps gaining edge energy *must* fall — and it does, from `4.4382495593902` to `3.2761300897590` — while `beta`, which is a global weighted quantity, moves only 1.3 % (`314.73` → `310.64`).
+
+**A correction, and an explicit limit.** Convergence to `2.810102138752` is plausible but **unproven**. The successive decrements (−0.389, −0.337, −0.209, −0.066, −0.162) are monotone in value but not extrapolable — the −0.066 plateau is the same contamination §9.8 records — and the data cannot distinguish a limit of 2.8101 from one near 3.0. "The denominator is converging toward the analytic edge share" is a mechanism; "it converges to the analytic ratio inside the bar" is not a result this evidence supports.
+
+### 10.7 The three questions that were asked
+
+1. **Integration domain.** The full modelled cross-section, each operand on its native lattice; the de-staggered test of §10.5 bounds the resulting asymmetry at 1.18 %, and the interior-window test bounds domain-truncation sensitivity at −20 % only when the domain is cut to a quarter of the geometry, which is not what the banked reduction does.
+2. **Weight / area element.** None missing; the trapezoid variant is worth 0.02 %, so the ratio is not sensitive to that choice in either direction.
+3. **Is `e_z_vv` pointwise-sampled at the interface rather than averaged?** Yes — and that is right for a Whitney 1-form, whose tangential component is continuous across a dielectric interface, so pointwise sampling of the tangential component is the correct choice and averaging would be wrong. This was the one candidate defect that, if real, would have invalidated the ratio; it is not real.
+
+### 10.8 What this does and does not change about the bar
+
+§9.2's `±10 %` band, the band endpoints `[2.52909192487721, 3.09111235262770]`, `Q = 1.440865461991999` and the 44.086546199199894 % miss are unchanged by this section; §9.6's revisit clause is **not** invoked, because a diagnosis of *why* `R` moves is not a pre-registered threshold mechanism; §9.4 remains unimplemented and §9.5's "registered, not implemented" wording still stands, with `m3c_gate_v2.md:630` still reading "Seven entries, no more."
+
+With the extraction exonerated and the residual sensitivity identified as a genuine finer-mesh effect in the `e_y` denominator, the binding constraint is the **solver ceiling** at N = 25 (§9.8) — 2884 to 2980 free edges against `_MIXED_DENSE_MAX = 3000` — not the measurement. `docs/design/sparse_eigenmode.md` addresses that ceiling as a **design pass, unanchored until implemented and gated**, and its numbers are quoted here strictly as measurements of the solver, never as results about `R`: at the 201×77 mesh, `splu` fill-in 8,352,700 nonzeros (0.00228 of the dense `n²`, about 100.2 MB), 0.38 s factorisation, 12.82 ms per shift-invert apply, against 16.7 GB and roughly 41 days for the dense QZ path.
+
+### 10.9 Six latent script-versus-log defects (recorded, not fixed)
+
+| # | defect | evidence | impact |
+|---|---|---|---|
+| 1 | `shape_pair_ok` carries two different meanings | header at `c1_audit.py:670` defines it as `\|corr_ey\| >= 0.89 and \|corr_ez_vv\| >= 0.91 and shapes match`; the printed column at `:696` writes the real `ok_arr` from `:651-653`; the npz key at `:720` stores only shape equality. `out/mesh_study/yair06/c1_spectrum.npz` has `ok=[False]` with `shape_pair_ok=[True]`; `out/pecbox_spectrum.npz` has `ok=[True,False]` with `shape_pair_ok=[True,True]` | the npz key is the unsound one — same defect §9.8 records as "one known defect", reached from the other side |
+| 2 | npz key `corr_ez` at `:717` aliases `corr_ez_superseded_longitudinal` | the mis-paired ≈ +0.12 metric; `mode_plot.py:278-291` compares the alias against banked longitudinal anchors | readers must use `corr_ez_vv`; the alias silently answers a different question |
+| 3 | `out/pecbox_spectrum.npz` stores `bank_col=738` (a PMC column) | its own `j=[699,704]` | the PEC capture names a column it does not contain |
+| 4 | `pecbox_variant.py:706` cites `c1_audit.py:662` as the npz site | the npz call is at `:703`, `R` at `:738` | provenance citation off by 41 lines; follow-up audits land on the wrong statement |
+| 5 | stored PEC `R_extracted = 70.635018555128326` is the *last scanned* failing-witness column, 704 (`corr_ey = -0.426418989`, `corr_ez_vv = -0.083134346`) | the identified column 699's `R = 4.1636565248` exists in no artefact | the PEC leg's quotable `R` is **unbanked**; any future PEC scoring must re-derive it |
+| 6 | `bank_col = -1` in all six mesh-study npz files | unset, not wrong | none — recorded for completeness |
+
+All six are latent: none is fixed by this section, and none affects a banked verdict. Defect 5 is the one with a live consequence — the PMC leg is the scored leg precisely because its `R` is banked on the column it was computed on.
+
+### 10.10 Open items
+
+- `R`'s limit is not established (§10.6): the sequence supports a mechanism, not a limit value, and 2.8101 cannot be distinguished from a limit near 3.0 on this data.
+- `T4_amp` is still unimplemented as a gate clause, and `docs/design/m3c_gate_v2.md:630` still reads "Seven entries, no more."
+- The six defects of §10.9 are recorded but not fixed; defect 5 leaves the PEC leg's `R` unbanked.
+- Whether the global `argmax(beta**2)` at `emfit/mode2d.py:1167` selects the fundamental at all is open — raised in `docs/design/sparse_eigenmode.md` §7, not measured.
+
