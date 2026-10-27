@@ -1,19 +1,19 @@
 """Read the *whole* banked C1 spectrum and say which columns propagate.
 
-``c1_audit.py`` writes ``out/c1_spectrum.npz`` (written at ``c1_audit.py:572-591``)
+``c1_audit.py`` writes ``out/c1_spectrum.npz`` (written at ``c1_audit.py:551-570``)
 and prints only the columns that survived its eigenvalue predicate, plus a
 post-hoc shape screen on top of those.  So the audit's headline number --
 "one propagating mode" -- is a count of ``lam`` entries that pass
 
     |Im(lambda)| <= 1e-6 * max(1, |lambda|)      and      Re(lambda) > 0
 
-(``c1_audit.py:459`` and ``:469-474``; the same tolerance the solver itself
+(``c1_audit.py:438`` and ``:448-453``; the same tolerance the solver itself
 applies at ``emfit/mode2d.py:1124``), where the eigenvalue *is* ``beta^2``
-(``c1_audit.py:472`` ``bsq = real(lam[j])``, ``:487`` ``beta = sqrt(bsq)``).
+(``c1_audit.py:451`` ``bsq = real(lam[j])``, ``:466`` ``beta = sqrt(bsq)``).
 
 That predicate can skip a column silently and the skip reasons are not
-persisted (``c1_audit.py:470-471`` not real enough, ``:473-474`` non-finite or
-``Re <= 0``, ``:478-479`` zero eigenvector).  Nothing in the audit's own output
+persisted (``c1_audit.py:449-450`` not real enough, ``:452-453`` non-finite or
+``Re <= 0``, ``:457-458`` zero eigenvector).  Nothing in the audit's own output
 distinguishes "9 columns are complex" from "1436 columns are complex", so the
 question *is the spectrum one-mode only, or does the reporting hide the rest?*
 cannot be answered from the audit's printout.  It can be answered from the
@@ -39,7 +39,7 @@ What it cannot settle
 Whether a *second* propagating mode exists in the continuous problem but is
 absent from this discrete spectrum because of the boundary conditions or the
 mesh.  ``c1_audit.py`` supplies only the ground plane and the strip as PEC
-predicates (``:299-307`` ``BOUNDARIES = (ground, strip)``), so the outer domain
+predicates (``:278-286`` ``BOUNDARIES = (ground, strip)``), so the outer domain
 walls are natural/Neumann -- "symmetry planes, not conductors"
 (``emfit/mode2d.py:1322-1324``, and ``:44`` "natural on every other wall;
 nothing is imposed").  A closed magnetic box is not the open cross-section, so
@@ -63,50 +63,25 @@ import numpy as np
 # which is THREE levels below the repository root.  Never count ".." levels
 # here -- a fixed count used to yield <repo>/tools instead of <repo>, which is
 # why `import emfit` in c1_audit.py failed with ModuleNotFoundError.  The root
-# is discovered (or handed over by run.sh via C1_REPO) and then validated.
-# Copied from c1_audit.py:113-158 so the two tools agree on where the repo is.
+# is now discovered by tools/host/_bootstrap.py -- one answer for the sibling
+# host scripts -- or handed over by run.sh via C1_REPO, and validated in
+# that module (its docstring keeps the traps).  This reader imports no emfit
+# module, but REPO is still resolved and printed, so a report can be tied to
+# the tree whose audit wrote the npz.
 # ---------------------------------------------------------------------------
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def _find_repo(start):
-    """Return the nearest ancestor of *start* that contains an ``emfit/`` dir.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+from _bootstrap import bootstrap  # noqa: E402
 
-    Counting ``..`` components is deliberately avoided (see above).  ``None``
-    is returned if the walk reaches the filesystem root without a candidate.
-    """
-    cur = os.path.abspath(start)
-    while True:
-        if os.path.isdir(os.path.join(cur, "emfit")):
-            return cur
-        parent = os.path.dirname(cur)
-        if parent == cur:                      # hit the filesystem root
-            return None
-        cur = parent
+REPO = bootstrap(start=HERE)
 
-
-#: run.sh exports the root it discovered; only a direct invocation needs the
-#: local walk.  Either way the result is validated immediately below.
-_REPO_ENV = os.environ.get("C1_REPO", "").strip()
-REPO = _REPO_ENV if _REPO_ENV else _find_repo(HERE)
-EMFIT_DIR = os.path.join(REPO, "emfit") if REPO else None
-if not REPO or not os.path.isdir(EMFIT_DIR):
-    _hint = "" if not _REPO_ENV else (
-        "  NOTE: C1_REPO=%r came from the environment and looks stale.\n"
-        % (_REPO_ENV,))
-    raise SystemExit(
-        "cannot locate the repository root:\n"
-        "  REPO      = %r\n"
-        "  emfit dir = %r  (not a directory)\n"
-        "%s"
-        "run this through tools/host/c1-audit/run.sh, which discovers the root\n"
-        "and exports C1_REPO; or export C1_REPO yourself."
-        % (REPO, EMFIT_DIR, _hint))
 #: nothing below imports emfit -- this is a reader -- but the root is still
 #: checked, because a wrong root means a wrong default npz path.
 NPZ_DEFAULT = os.path.join(HERE, "out", "c1_spectrum.npz")
 
-#: The audit's eigenvalue predicate, verbatim in value (c1_audit.py:459, which
+#: The audit's eigenvalue predicate, verbatim in value (c1_audit.py:438, which
 #: is also emfit/mode2d.py:1124).  Kept as one constant so the printed
 #: tolerance and the applied tolerance cannot drift apart.
 REL_TOL = 1e-6
@@ -165,13 +140,13 @@ def main(argv):
     say(f"  repo      : {REPO}")
     say(f"  npz       : {path}")
     say(f"  predicate : |Im(lam)| <= {REL_TOL:g} * max(1, |lam|)  and  Re(lam) > 0")
-    say(f"              (c1_audit.py:459, :469-474; emfit/mode2d.py:1124)")
-    say(f"              beta^2 = Re(lam), beta = sqrt(Re(lam))  (c1_audit.py:472, :487)")
+    say(f"              (c1_audit.py:438, :448-453; emfit/mode2d.py:1124)")
+    say(f"              beta^2 = Re(lam), beta = sqrt(Re(lam))  (c1_audit.py:451, :466)")
     say("=" * 78)
     if not os.path.isfile(path):
         raise SystemExit(
             f"npz not found: {path}\n"
-            "  The audit writes it at c1_audit.py:572-591 -- run the audit first.")
+            "  The audit writes it at c1_audit.py:551-570 -- run the audit first.")
 
     with np.load(path, allow_pickle=False) as data:
         # --- what is actually in the file -----------------------------------
@@ -314,7 +289,7 @@ def main(argv):
                 f"738 is the only one: {'YES' if prop.size == 1 else 'NO'}")
         say(f"  rejected mass: {int(i_cplx.size)} complex + "
             f"{int(i_nonpos.size)} real-non-positive of {n_tot} "
-            f"(the audit persists the kept count only, c1_audit.py:610-621)")
+            f"(the audit persists the kept count only, c1_audit.py:589-600)")
         if prop.size == 0:
             say("  NOTE: no real-positive column at all -- the single-mode headline")
             say("        did not come from this file.")

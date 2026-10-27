@@ -243,10 +243,18 @@ document makes no line-level claim about the ones not in the table above.
 **Decision:** four concerns consolidate into one place each, and the consolidation is a prerequisite for
 the swap, not a follow-up to it.
 
-1. **Root discovery.** Today it is reimplemented at `tools/host/c1-audit/c1_audit.py:117-137`,
-   `tools/host/c1-audit/pecbox_variant.py:118-129` (whose own comment at `:120` admits it copies
-   `run.sh`), and hard-coded as `/workspace` in `.scratch/tol/tol_driver.py:41`, `.scratch/c3_driver.py:30`,
-   `.scratch/lever/run_real.py:30` and `tools/gates_101_20.py:58`. One function, one behaviour.
+1. **Root discovery.** One answer now exists and the `tools/host` scripts use it:
+   `tools/host/_bootstrap.py` (`find_repo` at `:40`, the walk at `:63-70`, `bootstrap` at `:93`) is
+   called by `tools/host/c1-audit/c1_audit.py:113-137`, `.../pecbox_variant.py:118-129`,
+   `.../spectrum_report.py:61-82`, `tools/host/attribution/attribution.py:91-97`,
+   `tools/host/phaselag-subsets/phaselag_subsets.py:79-83` and `tools/host/mode_plot/mode_plot.py:125-139`.
+   None of them counts `..` levels or keeps a private copy any more; `spectrum_report.py`'s own
+   `_find_repo` was the last one and is gone. What remains is the hard-coded `/workspace`:
+   `.scratch/tol/tol_driver.py:41`, `.scratch/c3_driver.py:30`, `.scratch/lever/run_real.py:30`,
+   `tools/gates_101_20.py:58`, `tools/corr_ez_101_20.py:57` and `tools/destagger_ratio_101_20.py:70`
+   (whose `:67` counts `..` twice instead -- the other half of the same trap) -- plus the same literal
+   in ~30 further places under `.scratch/**`, scratch drivers this document does not track. One function,
+   one behaviour.
 2. **Cache keying.** Today it is literal strings — `("31x17", ...)`, `("41x22", ...)` at
    `tools/corr_ez_101_20.py:63-71` and `:70-76` of the destagger script — plus a npz key list that includes
    an eigenvector column index (`tools/corr_ez_101_20.py:310-311`). The key must be a hash of the contract
