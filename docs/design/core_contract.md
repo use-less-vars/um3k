@@ -218,7 +218,7 @@ Tracked:
 
 | Driver | Path | Breakage |
 |---|---|---|
-| PEC-box audit | `tools/host/c1-audit/c1_audit.py` | Its own root discovery (`_find_repo` at `:123-137`, env var at `:141-142`, sys.path insert `:157-158`), and a `SystemExit` text that prescribes a specific shell wrapper (`:144-156`). Imports the 2D core directly at `:160-162`. |
+| PEC-box audit | `tools/host/c1-audit/c1_audit.py` | Root discovery is the shared `tools/host/_bootstrap.py`, reached from the preamble at `:113-137` (banner `:113-124`, `HERE` `:125`, `_REPO_ENV` `:130-131`, `sys.path.insert` `:133`, `from _bootstrap import bootstrap` `:134`, `REPO = bootstrap(start=HERE)` `:136`, `EMFIT_DIR` `:137`); the file's own `_find_repo` and its `SystemExit` text are gone. Imports the 2D core at `:139-141`. |
 | Box variant | `tools/host/c1-audit/pecbox_variant.py` | A second, independent root walk at `:118-146`, whose comment at `:120` says "same fallback rule as run.sh: walk up until a directory holding emfit/" — the rule is duplicated, not shared. Varies the core by monkeypatch (`:33-44`). Hard-codes the anchor constants at `:97-102`. |
 | Gate harness | `tools/gates_101_20.py` | `WORKSPACE = "/workspace"` at `:58`; a hard-coded capture path at `:64-66`; plane keys as literals at `:69`; imports extraction at `:62`; quotes a cached wall time `wall_s = 4210.484 s = 70.2 min` at `:229-237`; own beta estimator at `:427` with a self-declared estimator-mismatch warning at `:446-461`. |
 | Cross-check | `tools/corr_ez_101_20.py` | Paths and caches as literals at `:63-71`; its own `sha256` at `:110-115`; a fixed npz key list at `:269-311` including `int(d["col"])` at `:310-311`, i.e. the eigenvector column index is baked into the cache format. |
