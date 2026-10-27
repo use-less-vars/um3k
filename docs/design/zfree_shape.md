@@ -321,6 +321,22 @@ bar; §5's readings are statements about shape and are read alongside these numb
 The ordering is the argument: the census and the one-expression prototype both cost **zero** solves, and the ladder
 that tests one of the five hypotheses costs 3-4. Nothing above needs its last row executed in order to be read.
 
+### The transposed census: changes along z at fixed y (Dispatch 21)
+
+The census in 4.1 counts sign changes along **y** at fixed z-column. The transposed census - changes along **z** at fixed y-row - is the one that tests the interface node, and it had not been run. Measured on `A_ez`, structural threshold `1e-2 * max|v| = 1.578671918791774e-02`:
+
+- Exactly one sign change per row on rows 84..116 (33 rows), always at column boundary 16 = z node 1.600 mm = h.
+- Cols 0-15 negative, cols 16-75 positive. 30/30 strip rows.
+- Away from the strip no crossing is detectable: the substrate-side value lies inside the zero band.
+- Row tally (rows with 0 / 1 changes): 132 / 69 structural; 82 / 119 at 1e-12. Never state "no sign change" without naming the threshold.
+- Zero-transparent convention throughout (a change counts only when both endpoints are outside the band). It reproduces the `A_ez` tallies 132 / 69 / 0 / 0, the 33 rows 84..116 at index 15, and the 30/30 strip rows.
+
+Two counts of the same object are compatible and must not be reconciled: under `numpy.sign` all 57 interior columns reverse along y (the 4.1 count is correct), while under the structural threshold only 30 of the 57 reverse strictly, cols 17-46, the other 27 crossing inside the band. A count reports that a crossing exists; it cannot report whether the crossing is resolvable. An adjacent-row counter (`.scratch/m8_fieldlevel.py`) is blind to precisely that distinction and under-reports by construction - it is not wrong, and neither is 4.1.
+
+### Status of this section's premise (Dispatch 21)
+
+The title of this section asserts a defect: that the extracted longitudinal field has no node where the reference has one. Dispatch 21 then measured the thing that had never been measured - a same-component correlation - and found the 0.92 / 0.12 pair to be `A_ez` (vertical) paired against the longitudinal component, two orthogonal quantities; see `decisions.md`, Dispatch 21 section 1. Same-component, the two legs read 0.935 and 0.949, with orthogonal controls at 0.028 or below. The reference's node at z = h is a property of `A_ez` itself, and no measurement in this repo establishes that the longitudinal component should share it. The premise above is therefore contested and is awaiting the operator's ruling. It is not withdrawn here; sections 3 and 5 are left exactly as written, and the null-hypothesis ordering in section 4 stands either way.
+
 ---
 
 ## 5. What each outcome decides

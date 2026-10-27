@@ -7753,3 +7753,85 @@ Offsets measured from `git show d8f5a72` (hunk header and file length are the co
 **Two digits in `7309` that must not be merged with the log's.** The ceiling quoted in that sentence is `0.770566870`, in-range `0.767188080`, `201/201` entries flipped, with the analytic derivative control at `1.000000000000000`. The follow-up log's corresponding lines are `0.772595941` and `0.769644553` (`:177-178`), and its derivative control is `-0.811883638` (`:180`). Same objects, different mesh legs; the digits are not interchangeable, and the two derivative controls differ in value rather than in decimals. And `0.77` appears nowhere in `mode_plot.log` — a search for `0.7[0-9]` across all thirty-six lines finds nothing — so the ceiling cannot be sourced from the banked run at all, only from the follow-up log or from `7309` itself.
 
 **Name it.** Call it the amplitude retraction: a printed statistic is promoted to a physical quantity before the definition behind it has been read, and the retraction is always the same sentence — *that number is X, not Y*. It has bitten twice in this line of work and is waiting a third time in the rms ratio, which is why this record prefers a definition-carrying number, `corr`, scale-free, to a level-carrying one wherever both are available. The figure note two entries above makes the complementary point about the same statistics: a correlation cannot see a nodal line, and an rms cannot see anything at all until someone says which array it summarises.
+
+## The 0.12 was a component mis-pairing - the same-component number is 0.935 / 0.949
+
+**The 0.12 was a component mis-pairing.** `corr_ez` has been correlating the vertical component of `A_ez` against the *longitudinal* component of the mixed pencil, which is not the same quantity and carries no expectation. Correlated against the right partner, the same-component agreement is 0.935 (31x17) and 0.949 (41x22), with orthogonal controls at 0.028 or below.
+
+Base HEAD `aaf8f1f`. No new solves this dispatch - 0 assemblies, 0 `splu`, 0 eigensolves; every number below is re-derived from cached arrays. No tracked file was modified.
+
+### 1. THE FINDING
+
+`mode2d.py:12-21`, verbatim: cross-section in `(x,y)`, propagation along `z` as `exp(-j beta z)`, `E = e_t(x,y) exp(-j beta z)`, `e_t = (e_x, e_y, 0)`, `e_z := 0`. Both mesh axes of the mixed pencil are therefore **transverse**; the pencil's `z` is the *propagation* axis, which in this pipeline is the plane's x - the 322-cell / 32.2 mm axis (`TOLFLUX.json:48-52`, `"length":0.0322`) that the (201,76) plane does not contain. `mode2d.py:636` calls `e_z` the "nodal longitudinal field"; `mode_profile.py:639` builds `A_ez = e[ny*n2:].reshape(n1, nz)` from the **height** cells. `A_ez` is the vertical (thickness) component; `beta*z_free` is the longitudinal component. They are orthogonal quantities.
+
+Every `corr_ez` this repo has ever computed - `c1_audit.py:496`, `pecbox_variant.py:472`, `mode_plot.py:370`, `corr_ez_101_20.py:186,191`, `.scratch/m8_fieldlevel.py:118,304,310,479`, and every banked value in `corr_ez_101_20.txt`, `corr_ez_followup.txt`, `c1_table.txt`, `mode_plot.log` - correlates `A_ez` against a *longitudinal* scalar. A same-component `corr_ez` had never been computed anywhere in the repository.
+
+Repo path used: `c1_audit.py:203-216` (`corr`), `:393-401` (plane lattices), `:472-473` (`e_z_node[free_n] = beta*z_free`), `:479-498` (`Mode2D.e_at`, `cy`, `cz`); component 1 sampled at `(iyy, izz)`.
+
+| leg | `corr(A_ez, E_t[:,:,1])` height vs height | `corr(A_ey, E_t[:,:,0])` width vs width | `A_ez` vs `E_t[:,:,0]` | `A_ey` vs `E_t[:,:,1]` | `A_ez` vs longitudinal |
+|---|---|---|---|---|---|
+| 31x17 | **+0.935286730348765** | **+0.920770784811142** | -0.023350034118720 | +0.012263013746736 | +0.119160432391342 |
+| 41x22 | **-0.948530101525844** | **-0.938702180035899** | +0.017981647413298 | +0.027732587109015 | -0.119317006502073 |
+
+Both orthogonal controls are dead (|corr| <= 0.028) on both legs - the signature of a correct pairing with correct controls, not of a fit. Signs are LAPACK-column-arbitrary (the two legs differ in sign because the column scaling differs); magnitudes are the object. |corr_zz| / |corr_yy| = 1.0158 (31x17) and 1.0105 (41x22): the vertical agreement is marginally the *better* of the two, not the worse.
+
+The 31x17 width-vs-width entry reproduces the banked `c1_audit.py:495` `cy = 0.920770784811142` exactly, which validates this path against the existing record. The 41x22 row reproduces the independent scratch derivation of Dispatch 21 T6 to 4.3e-16 (float summation order). The number is path-independent and is now a repo-path number on both legs.
+
+**Consequence.** The 0.92 / 0.12 pair that has driven the `e_z` defect chase is a definitional mis-pairing. Three items on the standing defect list are properties of the *longitudinal* component and carry no expectation for a propagation-axis field: single-signed (normal); no sign change across the height (there is no reason for one - the crossing the census finds at z = h belongs to `A_ez`, not to the longitudinal field); and 0.12 against `A_ez` (wrong partner). None of the three is a defect of the solve.
+
+**What this does not touch.** `c1_table.txt`'s `shape_pair_ok` test is `|corr_e_y| >= 0.9 and |corr_e_z| <= 0.3`. It has been screening every leg on a meaningless quantity; under a same-component definition the 31x17 leg reads 0.935 and would clear the same >= 0.9 bar it was previously failing at 0.119. **Awaiting the operator's ruling** on whether `corr_ez` is redefined vertical-vs-vertical everywhere, and on whether the <= 0.3 screen was ever load-bearing for a decision. Do not change the criterion on my authority.
+
+### 2. THE MISLABEL, AND WHY IT SURVIVED
+
+`z_free` is the field, not a potential: `mode2d.py:1174-1175` sets `e_z[free_n] = 1j*beta*lu_h.solve(c_f.T @ x)`, so `z_free = e_z/(i*beta)` and the extraction is `beta*z_free`. `mode_plot.py:61-63` documents the dropped `1j`; for a real eigenvector the whole vector is purely imaginary (`mode2d.py:641`), so dropping it is a global 90-degree phase.
+
+`c` is `INT (1/mu_r) W_e . grad phi_i dA` (`mode2d.py:469-479`, esp. `:477`; `:493`; `:525`, shape (ne,nn)) - the (1/mu)-weighted **transverse gradient**, i.e. the weak coupling block. `corr_ez_101_20.py:256-260` calls it "the *legal* discrete route from a nodal scalar to an edge cochain"; that premise is wrong in writing, and `:263` and `:377` inherit it. Applying a transverse gradient to a field and calling the result `E_z` is what produced the banked 0.12 on the `c@z_free` path, and it also explains why that path's residual fit against `z_free` looked bad: it should look bad, because the operator is not the identity.
+
+`c1_audit.py:471-493` is **correct** (same arithmetic as `mode_plot`, signed). The banked `corr_ez = 0.11916043239134176` therefore came from a field path - right arithmetic, wrong axis.
+
+`A_ez` itself is sound: `-(G.T @ phi_flat)` (`mode_profile.py:612-618`), a per-cell incidence difference of the quasi-static potential in volts-per-edge (`mode_profile.py:40-47`), with the telescoping identity `sum_{k<n_sub} e_z = -v_mode`. Correlations are scale-invariant: 0.12 was never a units artifact.
+
+### 3. THE `e_z` SLOT: BANKED SIGNED, AND THE `abs()` PROVEN HARMLESS
+
+`.scratch/e_z_signed_41x22.npz` (source `s10118_mode_41x22.npz`, sha256 `b8e5c58a...d7c4db`): `e_z_raw = -interp(beta*z_free)`. The leg guard reproduces exactly: rms 3.538696652919e-03 (delta 4.5e-16), min -1.710030545840e-02, max +1.414922244582e-02, and `corr(TE, A_ez) = +0.122104586573519`, equal to `corr_ez_followup.txt:169`.
+
+`max | -interp(|beta*z_free|) - (-e_z_raw) | = 0.000e+00`. `z_free` has no sign change on either leg (844/844 negative on 41x22; 483/483 positive on 31x17), so `np.abs()` is **exactly a global sign flip and never a per-node rectifier**. It can flip the sign of `corr`; it can never move `|corr|`, exactly as `corr_ez_followup.txt` shows at -0.199469783 and +0.199469783. Every "rectifier" explanation is dead.
+
+TE guard on the 31x17 leg through the same path: rms 4.664265440019e-03, min -1.759207122554e-02, max +2.258050884604e-02.
+
+Note for anyone reusing the path: `import c1_audit` solves at import - the module body runs `Heartbeat`, a dense eig at `:362`, and a `splu` at `:389`. That is why every consumer of the tool pays a solve, and why `pecbox_variant.py:472` does. The numbers above exec'd the *units* (`corr`, the lattice setup, `:472-473`, `:479-498`) with the banked `z_free` injected in place of `:471`. `find emfit tools -newermt '-45 minutes' -type f` returned nothing: no tracked file was touched.
+
+### 4. THE CENSUS RE-SPECIFIED ON z: THE INTERFACE NODE IS THERE, AT z = h
+
+The census this record has been quoting counts sign changes along y at fixed z-column. The transposed census - changes along z at fixed y-row - is the one that tests the interface node, and it had not been run. It is run now.
+
+`A_ez` at the structural threshold `1e-2*max|v| = 1.578671918791774e-02` has exactly one sign change per row on **rows 84..116 (33 rows), at column boundary 16 = z node 1.600 mm = h**, with cols 0-15 negative and 16-75 positive, on 30/30 strip rows. This is the reference behaviour that the construction predicts, and it is now measured rather than argued. Full detail in `.scratch/logs/m10b_zcensus.txt`.
+
+Threshold sensitivity is large: the row histogram is 0:132 / 1:69 at the structural threshold but 0:82 / 1:119 at 1e-12. **Any "no sign change" claim must name its threshold.**
+
+### 5. RETRACTIONS AND CORRECTIONS TO THE RECORD
+
+**(a) My reading of the interior as single-lobed was wrong.** The section-4 y-tuples of `(1,1,1)` x 57 are *correct as counts* under `numpy.sign`, and 57/57 interior columns do reverse. What was wrong was the inference: I read a count of one change per column as evidence that the lobe structure is resolved in every column. It is not. Under the structural threshold, **30 of the 57 interior columns reverse strictly (cols 17-46)**; the other 27 reverse only through the zero band, and the resolvability of their crossing is exactly what a count of sign changes cannot report. `.scratch/m8_fieldlevel.py`'s "2 y-flips in 1 column" reproduces bit-exactly and is not wrong either - it is an **adjacent-row** counter, blind by construction to a change that passes through the band (col 45: -7.9e-04 at r=60 becomes +2.14e-02 at r=70). Its region tallies 2802/855/2803 and 496/1860/0 reproduce exactly. **Three counts, one object, no contradiction between them - only between my earlier readings of them.** Shared convention from here on: the zero-transparent scan, which reproduces the `A_ez` tallies 132/69/0/0, the 33 rows 84..116 at index 15, and the 30/30 strip rows.
+
+**(b) Task 2's item 3 - "`z_free` is a potential" - is overruled** by section 2. That reading entered through `c@z_free`; a transverse gradient applied to a field is not a potential reconstruction, and its residual cannot testify to what `z_free` is.
+
+**(c) Operator-requested correction (i).** The M1 row "41x22 -> 0.147291446944630" is `corr_ez[0]` of a **31x17** npz. No 41x22 `corr_ez` leg is banked anywhere.
+
+**(d) Operator-requested correction (ii).** `pecbox_spectrum.npz`'s `corr_ez` is a **2-vector `[0.14729145, 0.12092331]` with `ok = [True False]`**, so 0.14729 is not one settled number.
+
+**(e) Operator-requested correction (iii).** `c1_audit.py:137`'s comment `# presence validated in find_repo()` points at a function that no longer exists.
+
+**(f) Operator-requested correction (iv).** `TE = c@z_free` is bit-exact; the "TE != c@z_free" claim is retracted. The sign-flip fact concerns the sign of the *correlation*, not the sign of any region mean.
+
+### 6. TRAPS FOR WHOEVER TOUCHES THIS NEXT
+
+- `c1_audit.py:400-403` `_ez_pts` is in **(z,y)** order for its own `RegularGridInterpolator((ZS,XS), ...)`, the reverse of what `e_at()` wants. Passing `_ez_pts` to `e_at` raises, observed live on 41x22: `ValueError: point 5852 (5e-05, 0.0077) lies outside the mesh; 9424 of 15276 are outside`. A component-1 sample must use `(iyy, izz)`.
+- `tools/c1_audit.py` does not exist; the file is `tools/host/c1-audit/c1_audit.py`.
+- `tools/corr_ez_101_20.py` cannot be exec'd as a prefix: around line 106 it opens `.scratch/logs/corr_ez_followup.txt` in `'w'` and would truncate the evidence. Extract its defs, or run it whole.
+- Extrapolation is a non-issue on the reconstruction path: mesh 20.000000 mm x 7.600000 mm against the same plane extent, z shortfall 5.0e-05 m at each end where the plane samples cell centres, **0 of 15276 plane nodes outside the hull**, so `extrapolate=True` never fires. The only real fidelity loss is the (21,41) -> (76,201) linear upsampling.
+
+### 7. OWED
+
+- An operator ruling: is `corr_ez` redefined as vertical-vs-vertical everywhere? Does that change the C2B verdict? Was the e_y >= 0.9 / e_z <= 0.3 screen ever load-bearing?
+- `docs/design/zfree_shape.md` section 4 gets the calibrated rule (node at z = h, zero-transparent convention, 30/30 strip rows, threshold named) - in this dispatch, as the transposed census alongside the one already there.
+- Anything downstream that quotes 0.12 as a defect of the extraction must be re-read against section 1.
