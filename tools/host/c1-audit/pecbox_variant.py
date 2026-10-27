@@ -116,34 +116,17 @@ def say(*a):
 
 
 # ---------------------------------------------------------------------------
-# repo discovery -- one answer only, handed to c1_audit.py via C1_REPO
-# (same fallback rule as run.sh: walk up until a directory holding emfit/)
+# repo discovery -- one answer only, from tools/host/_bootstrap.py, handed to
+# c1_audit.py via C1_REPO (same fallback rule as run.sh: walk up until a
+# directory holding emfit/).  The traps live in that module's docstring.
 # ---------------------------------------------------------------------------
-def _find_repo(start):
-    path = os.path.abspath(start)
-    while True:
-        if os.path.isdir(os.path.join(path, "emfit")):
-            return path
-        parent = os.path.dirname(path)
-        if parent == path:
-            return None
-        path = parent
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+from _bootstrap import bootstrap  # noqa: E402
 
-
-_env_repo = os.environ.get("C1_REPO", "").strip()
-REPO = _env_repo or _find_repo(HERE)
-if not REPO or not os.path.isdir(os.path.join(REPO, "emfit")):
-    raise SystemExit(
-        "FATAL: cannot find the repository root.\n"
-        "       looked for : <dir>/emfit (the emfit/ package directory)\n"
-        f"       started at : {HERE}\n"
-        f"       C1_REPO env: {_env_repo or '(unset)'}"
-    )
-REPO = os.path.abspath(REPO)
+# two sys.path entries, as before: the repo root, then this script's directory
+REPO = bootstrap(start=HERE, extra_paths=(HERE,))
+C1_REPO = REPO                          # module-level name, kept for importers
 os.environ["C1_REPO"] = REPO            # c1_audit.py cannot re-derive another
-for _p in (HERE, REPO):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 import emfit.mode2d as m2                                    # noqa: E402
 

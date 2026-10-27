@@ -69,32 +69,18 @@ def say(*a):
     print(" ".join(str(x) for x in a), flush=True)
 
 
-def _find_repo(start):
-    """Walk up from *start* until a directory holding ``emfit/`` is found."""
-    cur = os.path.abspath(start)
-    while True:
-        if os.path.isdir(os.path.join(cur, "emfit")):
-            return cur
-        parent = os.path.dirname(cur)
-        if parent == cur:
-            return None
-        cur = parent
+# ---------------------------------------------------------------------------
+# repo discovery -- one answer, from tools/host/_bootstrap.py, shared with the
+# sibling host scripts (c1-audit/c1_audit.py, c1-audit/pecbox_variant.py,
+# attribution/attribution.py).  Never count ".." levels -- this file sits three
+# levels below the root; a root that holds no emfit/ is not accepted; both
+# C1_REPO and REPO name the root.  The traps live in that module's docstring.
+# ---------------------------------------------------------------------------
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+from _bootstrap import bootstrap  # noqa: E402
 
-
-_REPO_ENV = os.environ.get("C1_REPO", "").strip()
-REPO = _REPO_ENV if _REPO_ENV else _find_repo(HERE)
-if not REPO:
-    raise SystemExit(
-        "cannot locate the repository root:\n"
-        f"  walked up from : {HERE}\n"
-        "  looking for    : a directory holding emfit/ (an emfit package directory)\n"
-        "  state it       : C1_REPO=<repo> tools/host/phaselag-subsets/run.sh")
-EMFIT_DIR = os.path.join(REPO, "emfit")
-if not os.path.isdir(EMFIT_DIR):
-    raise SystemExit(f"cannot locate the repository root: C1_REPO={REPO!r} "
-                     "holds no emfit/ directory")
-if REPO not in sys.path:
-    sys.path.insert(0, REPO)
+REPO = bootstrap(start=HERE)
+EMFIT_DIR = os.path.join(REPO, "emfit")     # presence validated in find_repo()
 
 PLANES = os.path.join(REPO, ".scratch", "tol", "logs", "TOLFLUX_planes.npz")
 GEOJSON = os.path.join(REPO, ".scratch", "tol", "logs", "TOLFLUX.json")

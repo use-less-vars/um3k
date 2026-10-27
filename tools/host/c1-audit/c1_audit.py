@@ -114,48 +114,27 @@ from scipy.sparse.linalg import splu
 # repo layout: this file lives at <repo>/tools/host/c1-audit/c1_audit.py,
 # which is THREE levels below the repository root.  Never count ".." levels
 # here -- a fixed count used to yield <repo>/tools instead of <repo>, which is
-# why `import emfit` below failed with ModuleNotFoundError.  The root is
-# discovered (or handed over by run.sh via C1_REPO) and then validated.
+# why `import emfit` below failed with ModuleNotFoundError.  The root is now
+# discovered by tools/host/_bootstrap.py (or handed over by run.sh via
+# C1_REPO) and validated there; that module's docstring keeps the traps.
+#
+# run this audit through tools/host/c1-audit/run.sh, which discovers the root
+# (git rev-parse --show-toplevel, else walk up to emfit/) and exports C1_REPO;
+# do not invoke c1_audit.py directly.
 # ---------------------------------------------------------------------------
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-
-def _find_repo(start):
-    """Return the nearest ancestor of *start* that contains an ``emfit/`` dir.
-
-    Counting ``..`` components is deliberately avoided (see above).  ``None``
-    is returned if the walk reaches the filesystem root without a candidate.
-    """
-    cur = os.path.abspath(start)
-    while True:
-        if os.path.isdir(os.path.join(cur, "emfit")):
-            return cur
-        parent = os.path.dirname(cur)
-        if parent == cur:                      # hit the filesystem root
-            return None
-        cur = parent
-
-
 #: run.sh exports the root it discovered; only a direct invocation needs the
-#: local walk.  Either way the result is validated immediately below.
-_REPO_ENV = os.environ.get("C1_REPO", "").strip()
-REPO = _REPO_ENV if _REPO_ENV else _find_repo(HERE)
-EMFIT_DIR = os.path.join(REPO, "emfit") if REPO else None
-if not REPO or not os.path.isdir(EMFIT_DIR):
-    _hint = "" if not _REPO_ENV else (
-        "  NOTE: C1_REPO=%r came from the environment and looks stale.\n"
-        % (_REPO_ENV,))
-    raise SystemExit(
-        "cannot locate the repository root:\n"
-        "  REPO      = %r\n"
-        "  emfit dir = %r  (not a directory)\n"
-        "%s"
-        "run this audit through tools/host/c1-audit/run.sh, which discovers the\n"
-        "root (git rev-parse --show-toplevel, else walk up to emfit/) and exports\n"
-        "C1_REPO; do not invoke c1_audit.py directly.\n"
-        % (REPO, EMFIT_DIR, _hint))
-if REPO not in sys.path:
-    sys.path.insert(0, REPO)
+#: local walk.  Captured BEFORE bootstrap(), which writes REPO into the
+#: environment -- after that the "came from the environment" banner is gone.
+_REPO_ENV = (os.environ.get("REPO", "").strip()
+             or os.environ.get("C1_REPO", "").strip())
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+from _bootstrap import bootstrap  # noqa: E402
+
+REPO = bootstrap(start=HERE)
+EMFIT_DIR = os.path.join(REPO, "emfit")     # presence validated in find_repo()
 
 import emfit.modal as M  # noqa: E402
 import emfit.mode2d as m2  # noqa: E402
