@@ -1799,7 +1799,7 @@ def _blank_station_fit(reference_plane: float, beta: float,
     return StationFit(
         z0=complex(nan, nan), z0_sigma_stat=None, z0_sigma_beta=None,
         z0_sigma_total=None, phase_deg=nan, gamma_v=complex(nan, nan),
-        gamma_i=complex(nan, nan), mode_purity=nan, beta=float(beta),
+        gamma_i=complex(nan, nan), mode_consistency_residual=nan, beta=float(beta),
         sigma_beta=sigma_beta, reference_plane=float(reference_plane),
         n_stations=int(n_stations), residual_v=nan, residual_i=nan,
         residual_v_stations=np.full(int(n_stations), nan, dtype=complex),
@@ -4323,8 +4323,8 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         "line Z0, sigma (statistical)": stations_z0_sigma_stat,
         "line Z0, sigma (beta)": stations_z0_sigma_beta,
         "line Z0, sigma total": stations_z0_sigma_total,
-        "line mode purity": (num(sf.mode_purity, "", ".3e")
-                             + " as |gamma_I + gamma_V|; 0 is a pure mode"),
+        "line mode consistency residual": (num(sf.mode_consistency_residual, "", ".3e")
+                             + " as |gamma_I + gamma_V|; 0 means V and I decay consistently"),
         "line Z0, reference plane": num(sf.reference_plane * 1e3, "mm"),
         "beta sigma (curvature)": (num(sf.sigma_beta, "rad/m", ".4g")
                                    + (" (relative "

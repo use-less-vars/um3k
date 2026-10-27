@@ -452,7 +452,7 @@ def _phasor(t, y, f0, t_a, t_b):
     return complex(coef[0], coef[1]), resid, n
 
 
-def test_t1_forward_wave_purity():
+def test_t1_forward_wave_consistency():
     """A pure forward wave has the same amplitude at both stations.
 
     |a(x2)/a(x1)| = 1 within 1e-3 (measured deviation 5.8e-05 on this

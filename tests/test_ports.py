@@ -508,7 +508,7 @@ def test_fit_station_impedance_recovers_a_pure_forward_wave():
     assert fit.reference_plane == pytest.approx(float(z[0]))
     assert abs(fit.z0 - 50.0) <= 1e-9 * 50.0
     # a travelling wave is the pure mode: gamma_I = -gamma_V cancels exactly
-    assert fit.mode_purity < 1e-9
+    assert fit.mode_consistency_residual < 1e-9
     assert abs(fit.gamma_v) < 1e-9
     assert abs(fit.gamma_i) < 1e-9
     # no scatter and no beta lever arm asked for, so every sigma is roundoff
@@ -539,7 +539,7 @@ def test_fit_station_impedance_separates_the_two_waves():
     assert abs(fit.z0 - 50.0) <= 1e-9 * 50.0
     assert fit.gamma_v == pytest.approx(gamma, rel=1e-9, abs=1e-9)
     assert fit.gamma_i == pytest.approx(-gamma, rel=1e-9, abs=1e-9)
-    assert fit.mode_purity < 1e-9
+    assert fit.mode_consistency_residual < 1e-9
     assert abs(fit.phase_deg) < 1e-9
 
 
@@ -554,7 +554,7 @@ def test_fit_station_impedance_carries_a_wrong_beta_into_z0():
     exponential divided by another cancels whatever phase constant both were
     fitted with -- but the mode test still fails, since the pair of spurious
     coefficients come out with the same sign instead of opposite ones
-    (``mode_purity`` 0.0175 against roundoff).  So neither series on its own
+    (``mode_consistency_residual`` 0.0175 against roundoff).  So neither series on its own
     can police ``beta``: only the sum signature can, which is why the beta
     part of the budget is reported separately and not folded into a
     statistical sigma.
@@ -569,14 +569,14 @@ def test_fit_station_impedance_carries_a_wrong_beta_into_z0():
     assert shifted.phase_deg > 0.0
     assert shifted.z0_sigma_beta == pytest.approx(0.0911, abs=5e-4)
     # the assumed pair no longer has gamma_I = -gamma_V at the wrong beta
-    assert shifted.mode_purity > 0.0
+    assert shifted.mode_consistency_residual > 0.0
 
     v, i = _forward(z)
     exact = fit_station_impedance(z, v, i, 1.02 * BETA, sigma_beta)
     assert abs(exact.z0 - 50.0) <= 1e-9 * 50.0
     assert exact.z0_sigma_beta < 1e-9 * 50.0
     # one wave, wrong beta: ``z0`` cannot see it, the mode signature can
-    assert exact.mode_purity == pytest.approx(0.01746, abs=1e-4)
+    assert exact.mode_consistency_residual == pytest.approx(0.01746, abs=1e-4)
 
 
 def test_sigma_beta_from_curvature_is_roundoff_on_exact_data():

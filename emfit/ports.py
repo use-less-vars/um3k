@@ -1331,11 +1331,21 @@ class StationFit:
             it equals ``gamma_v``; a wave reflected from a short gives
             ``gamma_i = -gamma_v``, because the current reverses with the
             voltage.
-        mode_purity: ``abs(gamma_i + gamma_v)``, dimensionless.  Zero exactly
-            when the two waves agree about which way the reflected wave
-            travels, i.e. when the stations hold a single mode; anything else
-            is the residual of a second mode or of a reference-plane error,
-            and it is the number to read before believing ``z0`` at all.
+        mode_consistency_residual: ``abs(gamma_i + gamma_v)``, dimensionless.
+            A modal decay-rate residual: the magnitude of the sum of the two
+            modal rates, ``gamma_i`` for the current record and ``gamma_v``
+            for the voltage record.  Zero exactly when those two records
+            decay at equal and opposite rates, i.e. when the waves agree
+            about which way the reflected wave travels; anything else is the
+            residual of a second mode or of a reference-plane error, and it
+            is the number to read before believing ``z0`` at all.  It is
+            therefore a measure of whether the V and I modal fields decay
+            consistently with each other, and as such it is a legitimate
+            structural diagnostic of the pair.
+
+            It is **not** a mode-purity measure, and nothing it reports may
+            be read as one: any claim about mode purity must be made with
+            ``corr_ez_vv``, not with this quantity.
         beta: The phase constant the fit was made at [rad/m].
         sigma_beta: The uncertainty quoted for ``beta`` [rad/m], passed in
             through ``sigma_beta``; ``None`` if the caller has none.
@@ -1361,7 +1371,7 @@ class StationFit:
     phase_deg: float
     gamma_v: complex
     gamma_i: complex
-    mode_purity: float
+    mode_consistency_residual: float
     beta: float
     sigma_beta: float | None
     reference_plane: float
@@ -1553,7 +1563,7 @@ def fit_station_impedance(x, v, i, beta, sigma_beta=None,
         phase_deg=float(np.degrees(np.angle(z0))),
         gamma_v=gamma_v,
         gamma_i=gamma_i,
-        mode_purity=float(abs(gamma_i + gamma_v)),
+        mode_consistency_residual=float(abs(gamma_i + gamma_v)),
         beta=beta,
         sigma_beta=sigma_beta,
         reference_plane=plane,

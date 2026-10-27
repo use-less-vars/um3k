@@ -25,7 +25,7 @@ Two mechanisms, and only two:
 
     (a) estimator bias -- the one-wave model is too small for the record it is
         fitted to.  The analytic-basis phasors do carry a backward wave: that
-        record's own diagnostics are mode_purity 0.0139, passivity 1.0143 and
+        record's own diagnostics are mode_consistency_residual 0.0139, passivity 1.0143 and
         amplitude_mismatch_max 1.49e4 (``.scratch/s10118_result.txt:165, :170-171``), and
         a one-wave fit then reports a beta the data does not have; or
     (b) placement-induced distortion -- the mode is converged on a box of its own

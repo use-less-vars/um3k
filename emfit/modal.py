@@ -51,7 +51,7 @@ A wave travelling the other way reverses ``H`` against ``E`` (the profile's
 ``h_y = -e_z/eta_eff`` carries that sign), so it gives ``a_H = -a_b`` while
 ``a_E = +a_b``: ``V = (a_f + a_b) v_mode`` and ``I = (a_f - a_b) i_mode``, which
 is the two-wave model :func:`emfit.ports.travelling_waves` inverts, with
-``gamma_i = -gamma_v`` and :attr:`~emfit.ports.StationFit.mode_purity` the
+``gamma_i = -gamma_v`` and :attr:`~emfit.ports.StationFit.mode_consistency_residual` the
 residual that says so.
 
 Which characteristic impedance this module quotes
@@ -358,7 +358,7 @@ class StationPhasors:
 
         Zero for a single travelling mode.  A non-zero value is the project's
         own reading of "the two sides of the plane are not one mode" -- the
-        same question :attr:`~emfit.ports.StationFit.mode_purity` asks of a
+        same question :attr:`~emfit.ports.StationFit.mode_consistency_residual` asks of a
         fitted line, but answerable from one station.
         """
         return np.abs(self.a_e - self.a_h)
@@ -474,7 +474,7 @@ class ModalLine:
 
     ``beta`` and the two travelling amplitudes come from
     :func:`emfit.ports.fit_beta` on the modal voltages; ``z0``, ``gamma_v``,
-    ``gamma_i`` and ``mode_purity`` from
+    ``gamma_i`` and ``mode_consistency_residual`` from
     :func:`emfit.ports.fit_station_impedance` on both series at that ``beta``.
     Both are the house fits, applied to modal quantities instead of raw probe
     voltages, and no new estimator is introduced here.
@@ -513,9 +513,9 @@ class ModalLine:
         return self.station_fit.z0
 
     @property
-    def mode_purity(self) -> float:
+    def mode_consistency_residual(self) -> float:
         """``|gamma_i + gamma_v|``: 0 when the two series are one mode."""
-        return float(self.station_fit.mode_purity)
+        return float(self.station_fit.mode_consistency_residual)
 
     @property
     def reference_plane(self) -> float:
@@ -531,8 +531,8 @@ class ModalLine:
         return (f"f0 = {self.f0:.6g} Hz, beta = {self.beta:.6g} rad/m, "
                 f"eps_eff = {self.epsilon_eff:.6g}, "
                 f"z0 = {abs(self.z0):.6g} ohm at {1000.0 * self.reference_plane:.4g} mm "
-                f"(angle {self.station_fit.phase_deg:.3g} deg, mode purity "
-                f"{self.mode_purity:.3g}, {self.station_fit.n_stations} stations)")
+                f"(angle {self.station_fit.phase_deg:.3g} deg, mode consistency residual "
+                f"{self.mode_consistency_residual:.3g}, {self.station_fit.n_stations} stations)")
 
 
 def modal_line_quantities(v, i, stations_m, *, f0: float,
@@ -610,7 +610,7 @@ class ModalSparams:
         s11: ``v_minus / v_plus`` on the near plane, dimensionless.
         s21: De-embedded transmission, dimensionless.
         line: The :class:`ModalLine` the phasors fitted, so ``beta``, ``z0``,
-            ``gamma_v``, ``gamma_i`` and ``mode_purity`` are all reachable
+            ``gamma_v``, ``gamma_i`` and ``mode_consistency_residual`` are all reachable
             without a second call.
         reference_distance: How far upstream ``S11`` was moved [m]; zero means
             it stays on the near station's plane.
@@ -640,8 +640,8 @@ class ModalSparams:
         return self.line.z0
 
     @property
-    def mode_purity(self) -> float:
-        return self.line.mode_purity
+    def mode_consistency_residual(self) -> float:
+        return self.line.mode_consistency_residual
 
     @property
     def reference_plane(self) -> float:
