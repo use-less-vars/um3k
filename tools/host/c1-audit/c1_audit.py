@@ -110,6 +110,19 @@ Mesh and output knobs (environment only -- this script has no argument parser)
 * ``C1_Z_CELLS`` -- cells in the three bands of the second axis, substrate |
   interface | air, as three comma-separated ints.  Default ``8,4,4``, the
   banked mesh; each value must be >= 1.
+* ``C1_ALLOW_DENSE_ABOVE_MAX=1`` -- run the dense QZ ABOVE the solver's
+  ``_MIXED_DENSE_MAX`` guard (emfit/mode2d.py:151, consumed at
+  emfit/mode2d.py:1094 as the ``dense=None`` default) instead of refusing the
+  mesh below.  Unset, the refusal is unchanged.  Set, the limit becomes
+  ``C1_MIXED_DENSE_MAX`` (default: this mesh's own ``free_e``, so no limit),
+  ``m2._MIXED_DENSE_MAX`` is raised for THIS PROCESS ONLY -- emfit/ is not
+  edited -- and the projection is printed loudly before the solve.  This buys
+  nothing but the SAME dense QZ at O(n_e^3) time and O(n_e^2) memory: there is
+  no sparse eigensolver in this tree (docs/design/sparse_eigenmode.md is a
+  design note).  The refinement ladder that spends that budget lives in
+  tools/host/sparse-probe/.  ``C1_MIXED_DENSE_MAX`` without the opt-in is
+  ignored (and the refusal below stands), so an unset environment stays
+  byte-identical.
 
 Unset, all of them leave the mesh and both paths exactly as they were.
 
@@ -415,6 +428,38 @@ free_n = np.flatnonzero(~node_pec)
 say("dof        :", dict(free_edges=int(free_e.size), free_nodes=int(free_n.size),
                          n_edges=int(mesh.n_edges), n_nodes=int(mesh.n_nodes),
                          mixed_dense_max=int(m2._MIXED_DENSE_MAX)))
+# ---- dense-above-max opt-in (refinement ladders; no sparse solver here) ------
+#: ``_MIXED_DENSE_MAX`` is BOTH the audit's refusal below AND the ``dense=None``
+#: default of ``solve_modes_mixed`` (emfit/mode2d.py:1094), so an above-max run
+#: has to lift both or the solver refuses one step later with "iterative path
+#: pending".  ``emfit/`` is not edited: the assignment below is process-local,
+#: lasts only as long as this run, and is skipped entirely when the opt-in is
+#: absent -- an unset environment keeps the refusal (and its wording) exactly.
+_ALLOW_DENSE = (os.environ.get("C1_ALLOW_DENSE_ABOVE_MAX", "").strip()
+                not in ("", "0"))
+_DENSE_MAX_RAW = os.environ.get("C1_MIXED_DENSE_MAX", "").strip()
+if _ALLOW_DENSE:
+    _dense_max = int(_DENSE_MAX_RAW) if _DENSE_MAX_RAW else int(free_e.size)
+    if _dense_max < 1:
+        raise SystemExit(f"C1_MIXED_DENSE_MAX must be >= 1, got {_dense_max}")
+    _one_gb = free_e.size ** 2 * 8.0 / 1024.0 ** 3
+    say("=" * 100)
+    say("DENSE ABOVE MAX: C1_ALLOW_DENSE_ABOVE_MAX is set -- the _MIXED_DENSE_MAX")
+    say("  guard is lifted for THIS RUN ONLY.  This is the SAME dense QZ path, not a")
+    say("  sparse solver (docs/design/sparse_eigenmode.md is a design note only).")
+    say(f"  free_e            : {free_e.size}")
+    say(f"  _MIXED_DENSE_MAX  : {int(m2._MIXED_DENSE_MAX)} -> "
+        f"{max(_dense_max, int(free_e.size))}")
+    say(f"  one dense matrix  : {free_e.size}^2 * 8 B = {_one_gb:.3f} GB")
+    say(f"  QZ work arrays    : ~5.5 x that = {5.5 * _one_gb:.2f} GB peak (factor")
+    say("                      documented in tools/host/sparse-probe/README.md)")
+    say("  time              : O(n_e^3) -- cubic in the free-edge count; expect")
+    say("                      hours past ~5k free edges")
+    say("=" * 100)
+    m2._MIXED_DENSE_MAX = max(_dense_max, int(free_e.size))
+elif _DENSE_MAX_RAW:
+    say(f"note       : C1_MIXED_DENSE_MAX={_DENSE_MAX_RAW!r} ignored without "
+        f"C1_ALLOW_DENSE_ABOVE_MAX=1")
 if free_e.size > m2._MIXED_DENSE_MAX:
     raise SystemExit(f"{free_e.size} free edges > _MIXED_DENSE_MAX "
                      f"{m2._MIXED_DENSE_MAX}: the dense mixed pencil cannot run")
