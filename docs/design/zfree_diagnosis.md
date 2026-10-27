@@ -1432,3 +1432,37 @@ is a no-op on this data). Where a locator here and a locator in another note dif
 note's is authoritative by construction — every line number in it was read against the file sizes recorded in
 the table above.
 
+## Amendment B1 -- 2026-10-27 -- the analytic array's scale convention
+
+1. **What was open.** §7.4 :1164-:1165 "carrying whatever normalisation `M.plane_mode` applies. **That convention
+   was not read this block and is an open item, not an assertion.**", restated at §7.5 :1282 and :1369. Read here,
+   from source only: it closes the bookkeeping question, not the amplitude one.
+
+2. **The finding: unit modal power over the projection window, not 1 V.** `emfit/mode_profile.py:18-23`: "The
+   returned field carries exactly ``1 W`` of modal power through the **projection window** -- the clipped ``201 x 77``
+   node plane that :meth:`ModeProfile.plane_window` copies into an FDTD grid", with `0.5 / eta_eff * (sum e_y^2 +
+   sum e_z^2) = 1 W     on those slices only.` The class says it in bold: "**The field arrays are normalised to unit
+   modal power over the projection window, not to 1 V.**" (:255), "Scale the fields by ``1 / v_mode`` to recover the
+   1 V normalisation" (:264-265), `v_mode` = 9.9558 V (:261-263). The arrays are E . dl in volts, zeroed outside the
+   clip that drops 1.164852 % of the power (:235-236, :600).
+
+3. **Placement does not rescale.** `emfit/modal.py:290-300` is a pure copy -- `e_y = np.zeros((nyn - 1, nzn))`,
+   `e_y[dst] = mode.e_y[src]`, `e_z[dst] = mode.e_z[src]`, `h_y[dst] = mode.h_y[src]` -- through slice pairs from
+   `plane_window`, which returns slices only ("Slices placing this profile in an ``(nyn, nzn)`` FDTD plane.",
+   `emfit/mode_profile.py:316-324`). No scalar appears in the function, so the placed array keeps the profile's own
+   convention: 1 W through the window, zero outside.
+
+4. **What it does not settle / what it does.** Not the 21-28x ratio: the extracted side is still on an arbitrary
+   unit two-norm (§7.5 :1276-:1281), so :1286's "A ratio of two conventions measures neither" still holds. No
+   quoted correlation needs repair, though: `def corr(a, b)` at `tools/host/mode_plot/mode_plot.py:206` returns
+   `float(np.sum(a * b) / (na * nb))` (:220), `na`/`nb` the two two-norms (:216-217), so a positive scalar divides
+   out; `corr_e_z`/`corr_e_y` are scale-free as :1370 says, and this convention cannot move one.
+
+5. **Standing.** Bookkeeping **CLOSED**: unit modal power over the projection window, `power = 1 W`
+   (`emfit/mode_profile.py:162`, `:250`), not the 1 V solve, copied and never renormalised. Amplitude **STILL OPEN**:
+   no comparison of the two sides is licensed, here or by `C2b` Step 0 (`docs/design/c2b_step0_plan.md`, item 8);
+   `A_ez`'s rms 1.409797e-01 has a stated convention but no physical reading.
+
+6. **Pointer.** The convention itself, as opposed to this record of it, belongs in `docs/design/zfree_shape.md`
+   (not yet written); when that note exists, this amendment is its citation for the analytic side.
+
