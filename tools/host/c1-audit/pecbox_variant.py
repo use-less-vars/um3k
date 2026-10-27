@@ -110,7 +110,13 @@ SELF_TEST_BETA_TOL = 0.02        # relative, only for --self-test-anchor
 HERE = os.path.dirname(os.path.abspath(__file__))
 T0 = time.time()
 
-OUTDIR = os.path.join(HERE, "out")
+#: ``C1_OUTDIR`` must be honoured HERE too, not only in c1_audit.py: the two
+#: keys below are c1_audit.py's own output paths, and the redirect further down
+#: matches on them.  If c1_audit.py moved and this did not, the shim would stop
+#: matching (c1_audit.py's captures landing under its own names in the variant
+#: directory) while our two files still went to out/.  Unset: unchanged.
+_OUTDIR_ENV = os.environ.get("C1_OUTDIR", "").strip()
+OUTDIR = os.path.abspath(_OUTDIR_ENV) if _OUTDIR_ENV else os.path.join(HERE, "out")
 TABLE_OWN = os.path.join(OUTDIR, "c1_table.txt")            # c1_audit.py's
 NPZ_OWN = os.path.join(OUTDIR, "c1_spectrum.npz")           # c1_audit.py's
 TABLE_BOX = os.path.join(OUTDIR, "pecbox_table.txt")        # ours
