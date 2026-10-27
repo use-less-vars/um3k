@@ -648,6 +648,18 @@ np.savez(
     free_e=free_e, free_n=free_n,
     bank_col=int(bank_col),
     A_ey=A_ey, A_ez=A_ez,
+    # R_extracted: vertical / in-plane energy ratio of the EXTRACTED field,
+    # sum(e_z_vv^2) / sum(e_y^2) -- the T4_amp numerator.  Its analytic
+    # counterpart, read off the references written above, is
+    # sum(A_ez^2)/sum(A_ey^2) = 2.810102138752.  The numerator is the SAME
+    # vertical array the primary metric corr_ez_vv is formed from (line 539) and
+    # the denominator the SAME in-plane array corr_ey is formed from (line 532);
+    # both are scaled by CELL and the ratio is scale invariant.  CAVEAT, read
+    # before quoting it: both names are loop-scoped, so what is written here is
+    # the LAST scanned column -- the banked/identified column for
+    # c1_spectrum.npz (j=(738,)) but NOT for pecbox_spectrum.npz, whose
+    # j=(699, 704) leaves the failing witness 704 behind (out/pecbox_table.txt).
+    R_extracted=float(np.sum(e_z_vv ** 2) / np.sum(e_y ** 2)),
     criterion=np.array([CORR_EY_MIN, CORR_EZ_MAX], dtype=float),
     criterion_ez_vv=np.array([CORR_EY_MIN, CORR_EZ_VV_MIN], dtype=float),
 )
