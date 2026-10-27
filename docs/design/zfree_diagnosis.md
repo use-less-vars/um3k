@@ -843,6 +843,231 @@ in it. **None of the three is authorised this block.** All three are **deferred 
 is confirmed, the selection defect is the larger term and this 3.16 % reduces to a denominator question that the
 audit's own full-spectrum artefacts will make cheaper to answer.
 
+### 7.2 Seven routes to one `beta` -- what the 3.16 % and the 4.09 % are made of
+
+**Status.** Accounting only: **no solve, no extraction and no re-placement was performed to write this**, and every
+number below is quoted from a banked file whose locator was opened for this subsection. §7.1 established *that* two
+"analytic" references differ by 3.16 % on `beta` and 6.41 % on `eps`. This asks the prior question: how many distinct
+constructions on this record emit a `beta` at all, which of them share a definition of `eps_eff`, and how much of the
+published spread is construction and how much estimator. That matters because §5, §6 and `D1` all rank hypotheses by
+"which route sits closest to the target", which is only meaningful if the routes are read as separate measurements
+rather than as seven views of three number-producing mechanisms.
+
+| # | route | `beta` [rad/m] | `eps_eff` | `eps_eff` is | locator |
+|---|-------|----------------|-----------|--------------|---------|
+| 1 | converged modal solve, 431x217 box | 300.498268 | 3.3500085193 | definitional, `c'/c_air` | `emfit/mode_profile.py:586-600`, `:646-652`; `corr_ez_followup.txt:22` |
+| 2 | field placed on 200x77, `fit_beta(n_wave=1)` | 309.9818636706751 | 3.5648002823688385 | **measured**, `(beta C0/omega)^2` | `s10118_result.txt:14-22`, `:108`; `emfit/modal.py:575-578`; `emfit/ports.py:861-903` |
+| 3 | `solve_modes_mixed` eigen-solve, 31x17 | 312.7827646323 | 3.6295122080769704 | definitional, `beta_sq/k0**2` | `s10118_result.txt:128-138`; `emfit/mode2d.py:1190-1200` |
+| 4 | FDTD board, CW run | 314.03158662735785 | 3.658552575317196 | **measured**, `(beta c/2 pi f)^2` | `decisions.md:3671-3686`, `:3909-3917` |
+| 5 | gate estimator `_beta_from_phase_slope` | not banked | derived | measured, full-plane phase slope | `tools/gates_101_20.py:426-445` |
+| 6 | quasistatic capacitance ratio, no solve | derived `k0 sqrt(eps_eff)` | 3.3500085193 | definitional by construction | `emfit/mode_profile.py:648-651` |
+| 7 | broadband bin `fit_beta(n_wave=1)` + span guards | not banked per tone | derived | measured, station phase slope | `emfit/studies.py:1809-1813`, `:1938-1958` |
+
+**1. Half the table does not measure `eps` at all.** Rows 1, 3 and 6 emit `eps_eff` by definition: `mode2d.py:1193-1195`
+sets `eps_eff = beta_sq[chosen]/(k0*k0)` from the eigenvalue the pencil already returned, and `mode_profile.py:648-651`
+sets `eps_eff = c_prime/c_air` from the capacitance ratio; in row 6 there is no `beta` at all and it is *derived* as
+`k0 sqrt(eps_eff)`. Rows 2, 4, 5 and 7 invert that: `beta` is measured off a field and `eps` is derived from it. The
+consequence for §1 is arithmetic, not rhetorical: on rows 2 and 4 a ratio `(1+d)` on `beta` is `(1+d)^2` on `eps`, and
+pair B's 6.41 % `eps` gap is exactly the square of its own 3.16 % `beta` gap. **An `eps` percentage quoted next to a
+`beta` percentage from the same route is that percentage counted twice** and must be labelled as derived.
+
+**2. Rows 1 -> 2 are a placement difference and nothing else.** Same construction -- one mode read off one field -- and
+the only change is the domain: the converged 431x217 box versus the FDTD plane's 200x77 placed by index offset. The
+module banks the size of that move in its own words (`emfit/mode_profile.py:586-600`): "A box sized to the FDTD plane
+instead would be 4-5 % high", with the window normalisation the clip costs measured at 1.164852 % (`:620-623`). The
+observed 3.16 % sits *inside* the range the module warns about, so it is not a new discrepancy; it is the placement
+term, and §7.1 (i) is the sweep that would price it.
+
+**3. Rows 3 vs 4 are two independent codes on the same cross-section, and they agree to 0.40 %.** The 31x17 FEM mesh
+covers `x_edges [0.0, 0.02]` and `z_edges [0.0, 0.0076]` (`.scratch/s10118_result.txt:117-126`) -- the same 20 mm x
+7.6 mm section the FDTD board discretises on 322x200x76 (`decisions.md:3909-3917`) -- and both are driven at `k0` =
+164.1794 rad/m. A tetrahedral FEM eigen-solve and a Yee FDTD run with a v/i extraction, sharing no code, land
+**+0.3993 % apart on `beta`** (314.03158662735785 vs 312.7827646323) and **+0.8001 % apart on `eps`**
+(3.658552575317196 vs 3.6295122080769704). Since row 3's `eps` is definitional and row 4's is extracted, that 0.40 %
+bounds code plus extraction together rather than code alone -- but 0.40 % is the whole of it.
+
+**4. Rows 2 vs 3 are one field, one mesh and two extractions -- no re-solve.** Both are read off the same 31x17
+capture: `.scratch/s10118_result.txt:14-22` and `:128-138` are two harnesses over one solve, with the identical nine
+`station_x` planes recorded twice (`:208-218`, `:267-277`). Fitting the phase of the placed field gives
+309.9818636706751; the eigenvalue the capture carries is 312.7827646323. That is **the fit sitting 0.90 % below the
+eigen value on the analytic basis** -- and **+4.52 % on the mixed basis** (326.9107654423116 against the same
+312.7827646323), the largest single gap on the record and the one the `T2_agree` gate is written around
+(`tools/gates_101_20.py:26-32`, `:144-147`). Extraction alone, with no physics changed, therefore moves `beta` by
+between 0.90 % and 4.52 %, depending only on which basis is fitted.
+
+**5. The estimator's own window spread is the same order as the 3.16 % it is used to explain.** The gate's measured
+table (`tools/gates_101_20.py:98-131`) reproduces the null floor exactly -- repeat of the same process 0.0 bitwise,
+BLAS threads 1 vs 4 at 8.13e-11, `float32` round-trip at 1.10e-10, H-destagger 0.0 -- and then shows the dependency
+that is *not* noise: across all 21 contiguous station windows the analytic basis spans **2.02 %** and the mixed basis
+**31.2 %**; 8-station windows span 0.0700 % and 0.2338 %; the same window fitted with `n_wave=2` instead of `n_wave=1`
+moves it 0.164 % / 0.335 %. The 2.02 % is the number to hold next to the 3.16 %: a route whose own reproducibility
+under window choice is two-thirds of the gap cannot arbitrate that gap.
+
+**6. The span arithmetic says the fit is well posed but close to a branch.** The nine stations run 0.0104 -> 0.0200 m
+in steps of 0.0012 (`.scratch/s10118_result.txt:208-218`), so the span is **0.0096 m** and `beta*span` =
+309.9818636706751 x 0.0096 = **2.976 rad** = **0.947 pi** = **0.474** guided wavelengths (`lambda_g` = 0.020268 m).
+`emfit/ports.py:887-897` warns that a *two*-wave fit is ill-conditioned over a small fraction of a wavelength and that
+"a one-wave fit has no such difficulty: it is well posed for any span", so the harness's `n_wave=1` is the right
+choice; but the same span sits 5.3 % below the `> pi` branch-ambiguity refusal the broadband path enforces
+(`emfit/studies.py:1946-1958`) and only 2.37x above its `_BIN_SPAN_PHASE_MIN` = 2 pi/5 floor (`:1809-1813`). A span
+5 % shorter would put this fit into a branch it could not resolve.
+
+**7. Two estimators that could arbitrate have no banked value at this tone.** Row 5 is a full-plane overlap phase slope
+(`tools/gates_101_20.py:426-445`: `z = sum_plane conj(Ey[0])*Ey`, `unwrap(angle(z))`, `np.polyfit(xx, phi, 1)`), row 7
+is a station phase slope on a projected modal line (`emfit/studies.py:1938-1958`). They are independent constructions
+over the same class of capture, and neither has a stored `beta` for this record, so there is no third and fourth number
+to break the tie in item 4. That comparison is currently two points whose members are 0.90 % or 4.52 % apart, and
+which one is quoted depends on the basis, not on the physics.
+
+**Decomposition.** The terms multiply rather than add: 1.031566 (placement, rows 1 -> 2, §1.1) x 1.009036 (extraction,
+rows 2 -> 3) = **1.040887**, which is the +4.09 % of §1 to three decimals; multiplying in the code term gives x
+1.003993 = **1.045037**, which is +4.50 % and is the whole of the 300.498268 -> 314.03158662735785 span. In words:
+**the 4.09 % is 3.16 % of placement and 0.90 % of extraction, and the last 0.40 % is two codes agreeing.** The 4.52 %
+mixed-basis gap of item 4 is not in that product, because the banked `beta` is the analytic one; it stands beside it as
+the estimate of what the extraction term could be.
+
+**What this settles, and what it does not.** It settles the bookkeeping: from here on every percentage in §1 should
+carry a term label -- placement, extraction or code -- and none may be described as a solver discrepancy at a fixed
+geometry, because item 3 shows the solvers do not disagree. It does not settle which analytic construction is correct:
+that is still §1.1's open question, and rows 1 and 3 differ by *placement*, not by formulation, so no comparison among
+the seven can decide it. **Nothing here is authorised.** The one experiment that would price the placement term is
+§7.1 (i), it remains deferred behind the `C1` audit, and until it runs the 3.16 % and the 4.09 % are a sum of terms
+with one term unmeasured.
+
+
+---
+
+### 7.3 `C2a` pre-registration -- which attribution rule, and what answer would count
+
+**Status.** Design and pre-registration only: **no code was changed, no patched build exists, and no run was
+performed.** This subsection fixes, *before* the patch is written, (a) which attribution rule `D1` would add, (b) what
+the patch may not touch and what it does to the `1e-12` consistency guard that currently protects every banked number,
+and (c) the band in which a spread would count as an answer. It is written in advance for the reason §5 gives: so that
+the result cannot be retro-fitted. It is also where `Q2` and `Q3` (`:42`, `:48`) land -- **neither the Schur
+elimination nor the coupling sign is reopened here**, and §7's item 3 is why: the `1e-12` guard is the mechanical
+evidence that the two assembly paths already agree, and a change that breaks it would be reopening `S1` by the back
+door.
+
+**What is already fixed by static read (re-read for this subsection, not quoted from §5).** There is exactly **one**
+attribution rule in the modal path and it is a per-element, one-point rule. `assemble` (`emfit/mode2d.py:397`) and
+`assemble_mixed` (`:469`) both call `_per_triangle(eps_r, mesh, "eps_r")` (`:416`, `:506`; the helper is `:378-394` and
+evaluates a callable at `mesh.centroid`, `:382`), and `assemble_mixed` reaches `eps` only through its internal call to
+`assemble` at `:505`. `assemble`'s docstring says it outright (`:408-410`): "``eps_r`` / ``mu_r`` may be a scalar, a
+per-triangle array, or a callable taking the ``(nt, 2)`` centroid array -- that is the only place material ever enters,
+and it is sampled at the centroid as specified." Neither assembler accepts an `interface` keyword at all. The
+alternative rule exists, is tested, and is **not reachable from here**: `emfit/materials.py:241` takes
+`interface="dual"` and documents the two conventions at `:248-251` (point = the value at the entity centre; dual = the
+weighted average over the whole dual entity), `M_eps`/`M_mu`/`M_sigma` (`:354`, `:363`, `:372`) all forward the
+keyword, and the raster path relies on the dual default deliberately (`emfit/raster.py:486-489`: "the library default
+interface convention (dual) is wanted here: the board top is a dielectric/air interface exactly on a node plane, the
+case point sampling gets wrong by a fixed 5.7 % in capacitance"). So `D1` is not "flip a flag": the flag reaches the
+FDTD/raster assembly and does **not** reach the modal assembly, and the 5.7 % on the raster side is why the modal side
+may be sensitive too -- and why it cannot be assumed to be the same 5.7 %.
+
+**Item 1 -- the rule `D1` should add, and what would refute it.** *Recommendation: extend the existing `dual` rule to
+the modal path; do not invent a third one.* Two reasons, in order of weight. (i) **It is the energy-consistent average
+for this configuration.** The interface that matters is the substrate top at `z = h`, where `eps` steps 4.4 -> 1.0
+normal to the interface (`n = z_hat`); the field component discontinuous there is `D_z`, so the correct effective
+permittivity for a dual entity straddling the interface is the **series / inverse-length-weighted** one,
+`1/eps_eff = f/4.4 + (1-f)/1.0`, which is what a dual average over the entity gives. A point rule assigns the whole
+entity the value at its centroid -- the wrong average on both sides of the crossing. (ii) **It needs no structural
+change.** The matrices stay `K_q`, `M_mu`, `M_eps` on the same edge list with the same sparsity; only the *values*
+change, plus plumbing an `interface` keyword through `assemble`/`assemble_mixed`. A Hodge-star or edge-averaged
+attribution would change the operator's structure and would no longer be a one-parameter comparison against the
+centroid baseline, which is what `D1`'s spread is defined as.
+* *Prediction if the rule is right.* The 31x17 and 41x22 `eps_eff` both move **down**, toward 3.3500085193, and the
+  movement is **larger on the coarser mesh** (31x17) -- a dual entity straddling `z = h` is a larger fraction of the
+  cross-section where the mesh is coarse, so the correction scales with the mis-attributed volume.
+* *Data needed, and its cost.* One patched build (the `interface` plumbing plus a dual-valued `eps` per triangle) and a
+  solve sweep on the three recorded meshes -- 31x17, 41x22, 51x19 -- whose banked sizes are 527/1486, 902/2581 and
+  (51x19) nodes/edges (§8). The dense QZ pencil is the expensive step and its column count is the free-edge count, so
+  cost grows with the finest mesh, not with the number of rules. **No flag-only run is possible**: that is the whole
+  content of `D1`'s correction -- the `interface` switch lives in `emfit/materials.py` and the raster path
+  (`emfit/raster.py:489`) and does not reach `emfit/mode2d.py` at all, so there is nothing to toggle today.
+* *Falsifier.* **A spread that is the same sign and magnitude on both meshes but does not shrink with refinement** is
+  not an interface artefact -- it is a level shift, and `C2a` as written (§5 `D1`) is the wrong mechanism.
+
+**Item 2 -- what the patch must not touch, and the shape check.** The `eps` mass block only. `K_q`, `M_mu`, `c`,
+`k_zz`, `m_zz`, the `tri_sign` factor, the PEC mask set and the selector at `:1150`/`:1167` are all outside it. If a
+proposed patch moves more than the `M_eps` values, it is no longer `D1` and the spread it measures is not `C2a`'s. The
+second guard on this item is shape, because a spread measured on a changed shape is not `C2a`'s spread either. The one
+number available for that check is the **banked** `corr_e_z` = **0.11916043239134175** (`s10118_result.txt:105`, banked
+as measured in §8.1 `:1084`): the analytic and mixed bases on 31x17 read shapes that overlap by 12 %, so a `C2a` run
+must report the same statistic for the patched build and the spread must be read at matched shape. **The value
+`0.14619976001754773` is NOT used and must not be cited here**: §8.1 records it as CLOSED-UNRESOLVED, the archaeology
+scan is negative (`.scratch/logs/corr_ez_followup.txt:117`, `:200`), and it is a re-openable locator, never a
+measurement.
+
+**Item 3 -- the guard, and the decision that keeps it exact.** `solve_modes_mixed` calls **both** assemblers and then
+cross-checks them (`:1051-1052` then `:1053-1069`). Three checks: the edge numberings must agree (`:1053-1057`,
+comparing `k_q.shape` against `m1.shape` and `m_eps.shape`); the `1/mu` mass must agree to **`1e-12` relative** --
+`gap_mu > 1e-12 * max|m1|` raises (`:1058-1063`); and the `eps` mass must agree to the same **`1e-12` relative** --
+`gap_eps > 1e-12 * max|m_eps|` raises (`:1064-1069`). Because `assemble_mixed` reaches `M_eps` **through** `assemble`
+(`:505`), the two paths are not independent implementations but the same numbers computed once and twice, so the guard
+passes *by construction* today. That is the property the patch is about to change. *Decision: apply the new attribution
+rule to **both** paths, so the `1e-12` guard keeps holding exactly as it does today, and relax nothing.* The reasoning
+is fail-closed: the guard is the *only* mechanical statement that the two paths agree, it is quoted as such upstream
+(§7 item 3 puts the `c_f` identity and the Schur elimination out of scope on the strength of it), and a patch that makes
+it fire would invalidate the comparison before the spread is measured -- the solve would raise, not report. **Option
+(b)** -- apply the rule to one path and re-base the guard with an explicit reference split -- is **withdrawn as the
+default**: it converts a hard structural guarantee into a tolerance, and every banked number in §1 came from a build in
+which the guard was *passing*, i.e. in which both paths used the identical rule, so a split build would not be
+comparable to the baseline it is being differenced against. *What breaks if this is wrong.* If the physics genuinely
+requires the two paths to differ -- if, say, the mixed pencil's nodal `eps` block must keep the point rule while the
+edge mass takes the dual one -- then applying the rule to both is the *wrong* patch, the guard becomes a false alarm
+rather than a guarantee, and the build must fall back to option (b) with an explicit, documented reference split (which
+path is the reference, which is the perturbation, and a tolerance stated per path). That failure mode is **detectable
+statically, before any solve is spent**: if the two paths cannot be made to agree analytically for a test case with a
+known interface, the "apply to both" decision is refuted.
+
+**Item 4 -- the falsifier band, with its floor measured rather than assumed.** The band is derived from the geometry,
+not chosen for comfort. The interface is the substrate top: contrast `4.4 - 1.0` = **3.4** in `eps_r`, and the
+substrate occupies `h/H` = 0.0016/0.0076 = **21.05 %** of the box height. The largest `eps_eff` swing the attribution
+rule can possibly reach is the whole substrate share mis-attributed at full contrast: `3.4 x 0.2105` = **0.7158**
+absolute on `eps_eff`, which on the measured 3.6295122 is **+19.72 % on `eps`** and, since `eps = (beta/k_0)^2` so a
+factor `(1+d)` on `beta` is `(1+d)^2` on `eps`, **+9.86 % on `beta`**. Against that ceiling:
+* the **gap it must explain** is **+8.3434 % on `eps` / +4.09 % on `beta`** (§1.1, pair A, eigenvalue route), i.e.
+  **0.3027** absolute on `eps_eff`, which is **42.3 %** of the 0.7158 ceiling -- a whole-cell-scale mis-attribution,
+  not a sub-cell one. After §7.2 that 4.09 % carries a **term label**: it is 3.16 % of placement times 0.90 % of
+  extraction, which is precisely why a spread of that size is being asked of a rule that acts on one interface only.
+* the **kill floor** is `<= ~0.4 %` on `beta`, and it is **no longer an assumption**. Two independent codes on the same
+  20 mm x 7.6 mm cross-section read `beta` **+0.3993 % apart** and `eps_eff` **+0.8001 % apart**
+  (314.03158662735785 vs 312.7827646323; 3.658552575317196 vs 3.6295122080769704, §7.2 item 3), so ~0.4 % on `beta` is
+  the *measured resolution* at which two solvers on this geometry stop distinguishing a construction from an
+  extraction; `(1.004)^2 - 1` = **0.80 %** on `eps` reproduces it, i.e. **0.0291** absolute, **4.06 %** of the same
+  ceiling. **This 0.3993 % / 0.8001 % pair replaces the unsourced "`<= ~0.4 %`" of the earlier text**, which asserted
+  the floor without a provenance.
+* *Verdicts, in advance, thresholds unchanged.* **Spread `>= ~2 %` on `beta`** (i.e. `>= ~49 %` of the gap, `>= 0.145`
+  absolute on `eps_eff`, `>= 20 %` of the ceiling): `C2a` **is a substantial fraction of the answer** and the re-rank
+  in §5 `D1` applies. **Spread `<= ~0.4 %` on `beta`**: `C2a` is a **4 %-of-ceiling correction on an 8.34 % gap** --
+  arithmetically unable to produce it, and at that size indistinguishable from the cross-code floor itself -- killed
+  exactly as §5 already preregistered, with the gap moving to `C2b`, `C1` or a reopened `C3`. **Between 0.4 % and 2 %**:
+  partial -- report the fraction of the gap and re-rank against `C2b`; do **not** declare a verdict (§5 `D1`,
+  unchanged). **Spread larger than the gap itself**: the baseline attribution is not the one that produced the banked
+  number -- a **provenance** finding, reported before any percentage in §1 is re-read.
+* *Sanity check on the ceiling.* 3.4 x 0.2105 = 0.7158 is the **whole-substrate** bound; the realistic mis-attributed
+  volume is a band of triangles straddling `z = h`, so a measured spread anywhere near 9.86 % on `beta` would mean the
+  rule changed substantially more than the interface, and should be treated as a bug report, not a result.
+
+**Nothing in this subsection is authorised.** The patch is described on this page so its size can be judged, not so it
+can be dispatched: **`C2a` is DEFERRED**, queued behind the `C1` audit for the reason §7 gives -- if `C1` is confirmed
+the selection defect is the larger term, and a `C2a` spread measured against a mis-selected eigenvector would be
+measuring the selector's error as much as the rule's.
+
+**`C2b` pre-registration (recorded here, not authorised).** The surviving hypothesis after §7.2's decomposition is that
+the *shape* defect and the residual are discretisation of the strip edge, not attribution at `z = h`.
+* **HYPOTHESIS.** Graded / geometric refinement toward the strip edge moves the converged `beta` by **more than the
+  0.3993 % cross-code `beta` agreement** (§7.2 item 3), in the direction of the FDTD value.
+* **STEP 0 PREREQUISITE.** `corr_e_z` has **no established noise floor.** Before `C2b` can falsify anything, run
+  *identical physics on two different meshes* and report the scatter of `corr_e_z`. Until that number exists any change
+  in `corr_e_z` is uninterpretable; on `beta` the floor is known (0.3993 %), on `corr_e_z` it is not.
+* **KILL CONDITION.** Refinement moves `beta` by **less than 0.3993 %** while `corr_e_z` moves by **more than its
+  Step-0 scatter** -- the shape defect is then not a discretisation artefact, and `C2b` is dead.
+* **CONFIRMATION.** `beta` moves by **more than 0.3993 % toward the FDTD value** *and* `corr_e_z` **decreases by more
+  than its Step-0 scatter**.
+* **WHAT IS NOT CLAIMED.** That `C2b` closes the 6.41 % analytic-internal `eps` gap -- that is §7.2 territory (placement
+  versus extraction) and `C2b` says nothing about it. `C2b` addresses the surviving shape defect only.
+
 ---
 
 ## 8. Provenance
