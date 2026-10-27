@@ -59,3 +59,48 @@ No solver modification. Step 0 changes meshes and walls only, never the physics,
 **Fence -- the wall set is part of the observable.** `corr_e_z` is MESH-stable (0.13 % across 31x17 -> 41x22) but WALL-sensitive (~24 % for the same mesh with the three open walls closed). Every `C2b` run and every `C2b` comparison is therefore executed at FIXED walls. A `corr_e_z` value is not comparable across wall sets, and any `C2b` result quoted without its wall set is meaningless.
 
 **Fence -- the station set is part of the observable.** Any C2b beta comparison must use the same station set as the baseline, station 0 included. The phaselag subset sweep shows that dropping station 0 moves beta by about 1 % on its own — station 0 sits 1.7 mm from the port, so the field there is evanescent-contaminated, and it is the outlier in every bad subset. One percent is the same order as several of the effects C2b exists to resolve. Change the station set and the comparison measures the change, not C2b.
+
+## Amendment A1 -- 2026-10-27 -- the wall pair's mode identity, and closure of the `## Tolerance` wall item
+
+**Standing of this section.** Appended, not inserted: the pre-registered text above stands exactly as written and is not edited here. The file's convention to date has been in-place edit plus a commit message (`e3837e4` original, `131f560` "wall tolerance measured at fixed mesh, not pending"); this item is appended instead, because what it settles is a caveat the measurement recorded rather than a prediction it falsified, and a pre-registration's prediction should not be rewritten after the fact. No solve was run for it: every number below is read from a file that already existed, and the only operation performed on them is the division printed beside it.
+
+**Paths.** Written `out/...`, as elsewhere in this file; the resolved directory is `tools/host/c1-audit/out`, printed by the runs themselves (`out/pecbox_run.log:8`). From the repository root the bare `out/` holds only `refbox/`, so `out/` in this file always means the audit's own output directory.
+
+**The two rows, as recorded.** Same code path, same 31 x 17 node mesh, walls the only change. `beta_sq` is `beta^2/k0^2`; `residual` is the audit's own eigen-residual, not a correlation error.
+
+| run | row | col | `eps_eff` | `beta_sq` | `corr_e_y` | `corr_e_z` | residual |
+|---|---|---|---|---|---|---|---|
+| PMC, open top | `out/c1_table.txt:16` | 738 | `3.6295122080769704` | `9.7833058e4` | `+0.920770784811142` | `+0.119160432391342` | `4.035e-16` |
+| PEC, closed box | `out/pecbox_table.txt:16` | 699 | `3.606094999644309` | `9.7201850e4` | `+0.912343044811209` | `+0.147291446944630` | `1.833e-15` |
+
+Source per number: `eps_eff` and the eigen-residual from the full-precision solve lines, `out/run.log:27` and `out/pecbox_run.log:56`; `beta_sq`, `corr_e_y` and `corr_e_z` from the six-figure table rows, `out/c1_table.txt:16` and `out/pecbox_table.txt:16`, and at printed full precision from the verdict lines `out/run.log:49` and `out/pecbox_run.log:82`; magnitudes re-printed at `out/run.log:54-55` and `out/pecbox_run.log:88-89`.
+
+**The wall sensitivity, in the pre-registered measure.** The measure is the one `## Tolerance` already fixes (line 33 above): the magnitude of `corr_e_z`, never the signed value (line 13), relative to the PMC member of the pair.
+
+    S_wall = ( |corr_e_z|_closed - |corr_e_z|_open ) / |corr_e_z|_open
+           = ( 0.147291446944630 - 0.119160432391342 ) / 0.119160432391342
+           = 0.028131014553288 / 0.119160432391342
+           = 0.2361  =  23.6 %
+
+The numerator `0.028131014553288` is printed at `out/pecbox_run.log:88`; the audit's own REL_DELTA for the same pair prints `2.361e-01` at `:91`, arrived at independently inside the run. Both members are positive, so magnitude and signed value coincide for this pair and the magnitude convention at line 13 does no hidden work here. No absolute figure is mixed with a relative one in this section.
+
+**Is the mode identity ambiguous?** No -- and the count alone does not settle it, the margin does. The open-top run printed exactly one propagating column (`out/c1_table.txt:7`; `out/run.log:34`, `:46`, `:61`), so it offered no choice at all. The closed-box run printed **two** (`out/pecbox_table.txt:7`; `out/pecbox_run.log:79`, `:102`), so it did offer one, and both candidates are recorded:
+
+| col | `eps_eff` | `beta_sq` | `|corr_e_y|` | `|corr_e_z|` | `shape_pair_ok` | `eps_eff` distance from the open-top row |
+|---|---|---|---|---|---|---|
+| 699 | `3.606095` | `9.7201850e4` | `0.9123430` | `0.1472914` | True | 0.645 % |
+| 704 | `0.280411` | `7.5584447e3` | `0.4264190` | `0.1209233` | False | 92.3 % |
+
+(`out/pecbox_table.txt:16-17`; the same two rows, with `dominant = e_z` on both, at `out/pecbox_run.log:113-114`.) The runner-up is `92.3 %` away from the open-top mode on the `eps_eff` axis against the matched mode's `0.645 %`, a factor of about `143`, and it fails the audit's own shape screen (`|corr_e_y| >= 0.9 and |corr_e_z| <= 0.3`, `out/pecbox_table.txt:9`), which is why `N_PASSING_CORRELATION_SCREEN = 1` (`out/pecbox_run.log:119`). Note how the selection was actually made: by that screen, applied by the same code to both runs, and **not** by matching `eps_eff` after the fact. `eps_eff` proximity is only the post-hoc check that the screened mode is the same physical solution in both boxes, and it agrees to `0.645 %`.
+
+**Consequence for the caveat at line 35.** Line 35 above says the shift is "a wall effect carrying a mode-selection difference that the walls themselves caused". The first half is measured and stands. The second half must not be read as an identification uncertainty that could be subtracted from `0.2361` to leave a "pure" wall term: there is no competing identification to subtract, the only other propagating solution being `92.3 %` away in `eps_eff` and failing the same screen that admits the matched one. The `0.645 %` `eps_eff` shift is therefore not an uncertainty *in* the wall term; it is part of the wall term, produced by closing the lid. Recorded as an observation and not as a mechanism: the closed-box value moves toward the analytic profile's own `eps_eff = 3.3500085193372118` (`out/run.log:32`); nothing here establishes that this is why it moved.
+
+**What this does to the pre-registered number.** Not numerically. The pre-registration states the wall sensitivity as `23.6 %` at line 33 and as `~24 %` at line 59; this amendment re-reads the same two recorded rows and returns `0.2361` = `23.6 %`, and no tightening is claimed or available. What changes is the standing of the item. `## Tolerance` recorded the pair as carrying a mode-selection difference left unresolved; it is resolved here, with a factor of about `143` in `eps_eff` between the matched mode and the only alternative. The `## Tolerance` wall item is **CLOSED AS MEASURED**: `23.6 %` at fixed mesh, unambiguous identification, and no second wall configuration is required to quote it, because nothing in `C2b` compares wall sets (line 59). Said plainly, because the word "bound" has been used of this number: `23.6 %` is a measured shift on one box, one mesh, one pair of wall sets. It is not a statistical bound, it carries no error bar, and nothing recorded here can tighten or loosen it.
+
+**What this does NOT establish.**
+
+* **One mode pair on one mesh is not a convergence study.** Nothing here re-runs the closed box on 41x22 or 51x19, so the `23.6 %` inherits exactly the mesh scatter of its own row, the `0.13 %` at line 29, and no more. A wall term that varied with mesh would not be visible in this data.
+* **A single propagating mode on the open-top side means no mode-identity statistics exist.** One candidate on one side and two on the other is a count, not a distribution; the `~143` factor is one comparison, not a typical margin, and it says nothing about whether other wall perturbations would produce competing modes.
+* **Nothing here was re-solved.** All figures come from `out/c1_table.txt`, `out/pecbox_table.txt`, `out/run.log` and `out/pecbox_run.log` as they stand; the only operation performed was dividing two recorded numbers. In particular, `REPRO overall: FAIL` (`out/pecbox_run.log:92`) is the closed-box run being scored against open-top anchors, and is annotated as such by the run itself (`:129-132`); it is not evidence about this pair and this amendment neither reassigns nor excuses it.
+* **Nothing here licenses a `corr_e_z` comparison across wall sets** (line 59), and nothing here makes `corr_e_z` a PEC-vs-PMC observable. The item closed is the wall tolerance at fixed mesh; the premise at line 37 continues to hold as written.
+
