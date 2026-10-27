@@ -361,8 +361,10 @@ decomposition computed**. So the clause is red on the healthiest measurements in
 leg whose failure it was built to explain, and two readings follow that the record cannot separate: (i) the vertical
 field has a concentrated edge defect on *both* meshes and *both* solvers, which is what `decisions.md:7972` says in
 words, and the clause is reporting it; (ii) the bar is too tight and rejects a field the rest of the register accepts.
-Reading (i) is favoured by the `1.4 %` PMC/PEC agreement and by the geometry: the band is `13 %` of the modelled
-y-extent, carries `57–58 %` of the deficit at `15 %` of the analytic energy, peak deficit density sits
+Reading (i) is favoured by the `1.4 %` PMC/PEC agreement and by the geometry: the band is defined by the
+inequality `1.5 < |y−10| <= 3.1` mm (the `13 %`-of-the-modelled-y-extent figure that used to be quoted here is
+withdrawn — it has no denominator that reproduces, see `decisions.md`), carries `57–58 %` of the deficit at
+`15 %` of the analytic energy, peak deficit density sits
 `0.4–0.8 mm` **outside** each strip edge, the first cell outside the edge already carries `3 %` of the deficit at
 excess `0.87`, and the first `0.80 mm` accumulates `0.5169` at `0.0209/mm`. That is an edge-localised error profile,
 not a mesh artefact. But (i) is a reading, not a measurement, and a fringe decomposition of `PEC col704` is the
@@ -581,16 +583,24 @@ whether they are registered.
 
 Two further gaps belong here, because both are the kind that get mistaken for a measurement later.
 
-* **`CORR_EY_MIN = 0.89` is in code, but no re-run was done.** The constant at `c1_audit.py:172` moved from `0.90`
-  to `0.89` (§3.3) with no gate run behind the change. The banked npz artefacts still carry
-  `criterion = [0.90, 0.30]`, and nothing in the tree compares those stored arrays against the constant that is now
-  meant to have written them. No recorded verdict flips — the passing legs sit at 0.92 / 0.94 and the witness at
-  0.43, all clear of either value — but the committed artefacts and the committed constant disagree on paper, and
-  that disagreement is not a measurement of anything. It is a gap of exactly the kind that gets read as one later.
+* **`CORR_EY_MIN = 0.89` is in code, but no gate run was done.** The constant at `c1_audit.py:172` moved from `0.90`
+  to `0.89` (§3.3) with no gate run behind the change. The banked npz artefacts carried `criterion = [0.90, 0.30]`
+  and `criterion_ez_vv = [0.90, 0.90]` when this was written, and nothing in the tree compared those stored arrays
+  against the constants meant to have written them; both banks were re-banked in this block and now carry
+  `criterion = [0.89, 0.30]` and `criterion_ez_vv = [0.89, 0.91]`, matching the live `CORR_EY_MIN = 0.89`,
+  `CORR_EZ_MAX = 0.30` and `CORR_EZ_VV_MIN = 0.91` in `c1_audit.py`, so this particular gap is **closed**. No
+  recorded verdict flips — the passing legs sit at 0.92 / 0.94 and the witness at 0.43, all clear of either
+  value — and while the stored arrays and the live constants disagreed on paper, that disagreement was not a
+  measurement of anything. It was a gap of exactly the kind that gets read as one later.
 * **The `§101.20.T5_fringe_excess` red is a reading of the record, not a failing build.** No gate computes `ex_R`;
   the `2.849` (31x17 PMC) and `2.89` (31x17 PEC, col 699) values in §3.5 come from the region decomposition that
   produced the band census, not from a gate run. The clause is registered on measured evidence with no executable
   behind it yet, which is what its `nowhere` row in §7 is saying.
+* **Reading `pecbox_spectrum.npz` for the PEC column gives the PMC answer, twice over.** `bank_col` there is `738`
+  (c1_audit.py's `BANKED` column, inherited through the path redirect) while this file's columns are `699` and
+  `704`; and `R_extracted` there is `70.635018555128326`, the last *scanned* column (`704`, the failing witness),
+  not the identified `699`. Neither is quotable for PEC; `c1_spectrum.npz` is unaffected because it scans `(738,)`
+  alone, so its `R_extracted = 4.0489791163982565` is the identified column's.
 
 ---
 
