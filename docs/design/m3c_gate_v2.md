@@ -287,25 +287,25 @@ in-plane bar is not supposed to be the tighter one.
 | recorded value | `2.72e6 / 2.64e6 / 2.54e6` (`modalport_ownership.md:190`) — with the caveat at `:198` that name, comment and sampling disagree |
 | analytic ratio (v2.1) | **`R_analytic = Σ A_ez² / Σ A_ey² = 3.036149093425e+02 / 1.080440832223e+02 = 2.810102138752`** (per-sample `2.832912603875`, amplitude ratio `√R = 1.676336`) — computed in `docs/design/t4_amp_ratio.md` from the banked arrays |
 | failing witness | not applicable — there is no threshold for a measurement to miss |
-| can pass | yes on the analytic side — `R_analytic` now exists — and **nothing to compare it with**, so not as a clause |
-| can fail | **no** — there is still no extracted ratio for a measurement to miss; see §6.1 |
-| status | **design-only, and must stay so**; `T4_amp` appears in no `.py` file in the tree. **Half cleared in v2.1**: the numerator now exists |
+| can pass | yes on both sides now — `R_analytic` and a PMC `R_extracted` both exist — but with no `X` there is still no clause to pass |
+| can fail | **no** — the extracted ratio now exists, but with no threshold there is nothing for a measurement to miss; see §6.1 |
+| status | **design-only, and must stay so**; `T4_amp` appears in no `.py` file in the tree. **Both sides cleared in v2.1**: numerator and PMC extracted ratio now exist; the threshold does not |
 
-The blocker is not a missing tolerance; it is a **missing numerator**. `decisions.md:7950-7956` (§5.2): the
+The blocker **was** not a missing tolerance but a **missing numerator**. `decisions.md:7950-7956` (§5.2): the
 `0.0272` ratio on record is *longitudinal*-over-in-plane, `e_z_vv` appears nowhere in it, and *"What the true
 vertical-over-in-plane energy ratio is has not been computed."* Until that ratio is measured on the same lattice,
 any X would be a number with nothing to compare to — which is exactly the defect that got the old bands withdrawn.
 
-**v2.1: half of the blocker is gone, and the clause still cannot ship.** `docs/design/t4_amp_ratio.md` forms the number
+**v2.1: both halves of the ratio now exist, and the clause still cannot ship.** `docs/design/t4_amp_ratio.md` forms
 `decisions.md:7950-7956` said had not been computed, on arrays that are already banked: `R_analytic = 2.810102138752`
-(above). What is still missing is the *other* side of the comparison — `R_extracted` cannot be formed from the banks at
-all, because the solver's own `e_y` `(200,77)` and `e_z_vv` `(201,76)` arrays are never written: `c1_audit.py:546-552`
-reduces them to scalars and `:627-653` banks only `A_ez`, `A_ey` and the scalars, and `c1_spectrum.npz` /
-`pecbox_spectrum.npz` are byte-identical, so there is no second artefact to raid. `TOLFLUX_planes`' pooled
+(above). What is still missing is no longer *data*: `R_extracted` **is** banked in both spectra, and on the PMC leg
+(j = [738], the identified column) it is `4.0489791163982565`, which against `R_analytic = 2.8101021387524523`
+is `1.441×` — the ratio the clause needs. The PEC banked `70.635018555128326` is a **wrong-column artefact** (the
+last *scanned* column, `704`), not a measurement, so only the PMC figure is quotable. `TOLFLUX_planes`' pooled
 `3.439935` (per-sample `3.467858`, per station `3.101484 … 3.620866`) is an FDTD tone capture of a different quantity
 and is **not** substitutable: using it would place the analytic mode `18.3 %` below the extraction and invite an `X`
-calibrated on that mismatch. So the defect changes shape from *"no numerator"* to *"no extracted ratio to compare the
-numerator against"*. That is narrower, and it is not cleared — `T4_amp` still ships with no threshold.
+calibrated on that mismatch. So the defect changes shape a second time: `T4_amp` no longer lacks a measurement, it
+lacks a **threshold** — a rule for how far `1.441×` may sit from `1`. That is a choice, not a datum, and it is unmade.
 One more number that is not a use of `0.0272`: `2.810102 / 0.0272240 = 103.2` is an arithmetic exercise, because
 `0.0272` is longitudinal-over-in-plane and `e_z_vv` appears nowhere in it (`decisions.md:7950-7956`).
 
@@ -410,6 +410,27 @@ statistic, not of this one. Applied here it gives `0.9352867303487647 − 2 × 1
 conversion from `F` to an `S_good` on this metric; `S_good/F = 84.5821` compares two numbers measured on different
 statistics and nothing more. That is the whole reason this clause carries its own derivation and its own id rather
 than a tightened `0.30`.
+
+### 3.7 `T6_fit_route` — two fit routes over one eigen-solution agree
+
+| field | value |
+|---|---|
+| statement | `|beta_fit_2 − beta_eigen| / beta_eigen <= 0.005` — two *routes to a fit* of the **same** eigen-solution, on the same lattice |
+| quantity | a second fit of one eigenvalue vs the eigenvalue: `beta_eigen = 312.7827646322591`, second fit `314.03158662735785` (`TOLFLUX.json:beta`) |
+| threshold | `T2_TOL = 0.005` (`gates_101_20.py:166`) — the same bar `T2_agree` is scored against, deliberately reused |
+| measured gap | **`0.399261768 %`** — inside the tolerance, margin **`1.252311×`** |
+| failing witness | **none.** The clause has passed on every measurement taken; it has no failing run to point at |
+| can pass | yes, and it does: `0.399261768 %` against `0.5 %` |
+| can fail | yes in principle — it is a real inequality with a measured margin of only 25 %, not a tautology |
+| status | **registered, no implementation**, and none is claimed: `T6_fit_route` appears in no `.py` file in the tree |
+
+**This is a route-sensitivity check, and it is not evidence of solver accuracy.** It asks one narrow question: do two
+fitting routes over the *same* eigen-solution, on the *same* lattice, land within `0.5 %` of each other? Its subject is
+the **fit**, not the field. It is **not** a cross-solver test, **not** an FDTD comparison, and **not** a check by an
+independent solver — every number in the table comes from one solver's output and one banked eigenvector, and a pass
+says only that the extraction route is not what moves `beta`. It says nothing about whether `beta` is right. The
+margin is **thin** — 25 % of headroom over the bar — so a pass here is not comfort; it is the absence of one named
+failure mode, and it must not be described as comfortable. The failure on the other route is `T2_agree`'s (§3.2).
 
 ---
 
@@ -606,7 +627,7 @@ Two further gaps belong here, because both are the kind that get mistaken for a 
 
 ## 9. Registered clause list
 
-Six entries, no more. Everything else in §§2–3 is an audit of what v1 already had, not a registration.
+Seven entries, no more. Everything else in §§2–3 is an audit of what v1 already had, not a registration.
 
 | id | asserts | status | lives |
 |---|---|---|---|
@@ -616,6 +637,7 @@ Six entries, no more. Everything else in §§2–3 is an audit of what v1 alread
 | `§101.20.T5_ez_corr` | `|corr_ez_vv| >= 0.91` | in force | `tools/host/c1-audit/c1_audit.py:193` (`CORR_EZ_VV_MIN`), criterion `:575-577` |
 | `§101.20.T5_ey_corr` | `|corr_e_y| >= 0.89` | in force | `tools/host/c1-audit/c1_audit.py:172` (`CORR_EY_MIN`), screen `:575-581` |
 | `§101.20.T5_fringe_excess` | `ex_R > 2.0` fails | registered, no implementation | nowhere |
+| `§101.20.T6_fit_route` | two fit routes over one eigen-solution agree within `T2_TOL = 0.005` (`0.399261768 %`, margin `1.252311×`) | registered, no implementation | nowhere |
 
 The organising rule is in the names: **mode-selection tests live under `T5_*`** — they ask which column the solver
 is allowed to select — while the physics tests keep the names they already had, `T1_stab`, `T2_agree` and
