@@ -350,3 +350,184 @@ edited. Line numbers are volatile; symbols are durable. `R_extracted`,
 `e_y`, `e_z_vv`, `np.savez(`, `shape_pair_ok`, `corr_ez`, `R_by_col` are what
 should be grepped when this document is next audited — the numbers in §9–§11
 are a convenience, not the claim.
+
+## 12. Mesh refinement: the first two rungs
+
+### 12.1 What was measured, and what it is not
+
+A committed harness at `tools/host/sparse-probe/` refines the C1 mesh and re-extracts
+`R_extracted` at each rung, starting from the banked mesh. It drives the **existing
+dense-QZ pipeline** — the same `c1_audit.py` code path that produced the banked
+capture, only larger.
+
+It is **not** a sparse solver, because the sparse solver does not exist. `emfit`'s
+iterative path is a stub that raises `NotImplementedError` (`emfit/mode2d.py:1095-1099`),
+and the mixed solve refuses any mesh above `_MIXED_DENSE_MAX = 3000` free edges
+(`emfit/mode2d.py:151`), which `c1_audit.py:395-398` turns into a `SystemExit`. Rungs
+above that cap are reachable only through `C1_ALLOW_DENSE_ABOVE_MAX=1`, which the
+driver sets for exactly those rungs. The sparse path is a design note,
+`docs/design/sparse_eigenmode.md`; nothing in this ladder implements it.
+
+The consequence of staying dense is the reason the ladder is interpretable at all:
+the mode-selection path, the eligibility filter (`|corr_e_y| >= 0.89 and
+|corr_ez_vv| >= 0.91 and shapes match`), the column-selection rule and the extraction
+are byte-identical to the registered run at every rung, so `R_extracted` is directly
+comparable to the banked value with no re-registration and no changed rule. **`h` is
+the only changing variable.**
+
+Rung 0 is the control: same mesh as the banked capture (`31 x 17` nodes,
+`free_e = 1444`), and it reproduces the banked `R` to 7.9e-13 relative. It is a gate,
+not a sixth data point.
+
+One reading rule, because it will otherwise be misread: the QZ column index is a
+diagnostic and never a mode identifier. On the identical rung-0 mesh the solver
+selects column 732 while the banked cache holds 738, for the same mode, with `R`
+agreeing to 8e-13. The rungs are compared by `free_e`, `R_extracted` and `beta_sq`.
+
+### 12.2 The data
+
+`R_analytic = 2.8101021387524523` (§1, unchanged). `Q = R_extracted / R_analytic`;
+the amplitude error is `|Q - 1|`.
+
+| rung | strip / y_air / z | free_e | `R_extracted` | `Q` | error | wall |
+|---|---|---|---|---|---|---|
+| 0 (control) | 12 / 9 / 8\|4\|4 | 1444 | 4.0489791163982565 | 1.440865461991999 | 44.086546199199894 % | 20.1 s |
+| 1 | 16 / 12 / 10\|5\|5 | 2404 | 3.780331990015745 | 1.345264977341367 | 34.5264977341367 % | 108.7 s |
+
+The rung-0 entry is the registered `R_extracted` (PMC leg); the fresh control runs
+print `4.0489791163950715`, which is that value to 7.9e-13 relative. Using either
+moves no digit quoted anywhere in this section.
+
+**Rung 1's guard evidence**, so that it can be seen to have passed the same shape
+test as the control rather than being a lucky pick: `n_eligible = 1`, the single
+eligible column 1224, `|corr_e_y| = 0.938008867` (threshold 0.89),
+`|corr_ez_vv| = 0.948121954` (threshold 0.91), `ok = True`, `beta_sq = 97328.3081094`
+(the selected mode's eigenvalue, of order `eps_r k0^2 = 1.185e5`), and
+`free_e = 2404 = 2460 edges - 56 PEC edges`, recomputed from `strip = 16`,
+`y_air = 12`, `z = 10,5,5` and asserted against the built mesh. The control's
+`corr_e_y` was 0.92077078481114194 (§9.7), so the gating correlations do not merely
+re-pass at rung 1 — they improve.
+
+Rung 1's driver reports `repro: FAIL` by design: a re-meshed run has no banked column
+to reproduce, so the check has nothing to compare and is expected to fail. The control
+is rung 0, and rung 0 passed. The failure is not a fault and is not evidence.
+
+### 12.3 The implied order, labelled as an indication
+
+In two dimensions a uniform refinement that quadruples the free-edge count halves the
+cell size, so `h ∝ free_e^(-1/2)`:
+
+    h1/h0 = sqrt(1444 / 2404) = 0.775026165625604
+
+With `e ≡ |Q - 1|`, `e0 = 0.440865461991999` and `e1 = 0.345264977341367`:
+
+    e1/e0 = 0.7831527010107066
+    p     = ln(0.7831527010107066) / ln(0.775026165625604) = 0.9590717710780169
+
+i.e. `p ≈ 0.96`, consistent with first order (`error ∝ h`). Anchoring `e ∝ h^p` at
+rung 0 and predicting rung 1:
+
+    p = 1 :  Q1 = 1 + e0 * (h1/h0)^1 = 1.3416822685644194   (observed 1.345264977341367, +0.27 %)
+    p = 2 :  Q1 = 1 + e0 * (h1/h0)^2 = 1.2648126984677397   (observed 6.4 % above it)
+
+So `p = 1` is close and `p = 2` is already disfavoured by this one extra point.
+
+**Two points indicate an order; they do not establish one.** With two points and two
+free parameters the log-log line passes through both exactly: `p` here is a one-degree-
+of-freedom statistic with no residual, so it carries no goodness of fit, no error bar
+and no outlier test. It is a consistency statement — the movement is the size first
+order predicts — and rungs 2 and 3 are what decide.
+
+### 12.4 What this does and does not overturn
+
+It does not overturn §10. Section 10 audited *how* `R_extracted` is computed — which
+arrays, which lattices, which reduction, which artefact — and found the path correctly
+implemented. Nothing here reopens that: the ladder runs the same path and obtains the
+banked number at the banked mesh. §10 was never a claim that `h` is irrelevant; it was
+a claim that the measurement is not distorted by the way it is taken.
+
+What is now under test is a different and further claim: that the 44 % gap is
+dominated by physics rather than by discretisation. On this data that claim is not
+supported in the strong form. The first refinement step moves `R_extracted` by
+`0.26864712638251165` — 6.634934848008922 % of its value, 21.684729898929323 % of the
+gap to `R_analytic` — and the amplitude error falls by a fifth, from 44.09 % to
+34.53 %. The mesh is demonstrably a live lever on the operand, not a settled detail.
+Equally, one step that closes a fifth of the gap is not a convergence: §9.8's monotone
+fall and this step are the same movement seen twice, and neither establishes a limit.
+
+### 12.5 The consequence
+
+The band is `|Q - 1| <= 0.10`, i.e. `R_extracted ∈ [2.5290919248772, 3.0911123526277]`.
+From rung 1 the error must fall by
+
+    e1 / 0.10 = 3.4526497734136700x
+
+With `p = 1`, `h` must fall by that same factor, so `free_e` must rise by its square:
+
+    h_target/h1 = 3.4526497734136700
+    free_e = 2404 * 3.4526497734136700^2 = 2404 * 11.9207946525 = 28657.60  ≈ 2.9e4
+
+Carrying the fitted `p = 0.9590717710780169` instead of 1:
+
+    h_target/h1 = 3.4526497734136700^(1/0.9590717710780169) = 3.6406
+    free_e = 2404 * 3.6406^2 = 31854.5  ≈ 3.2e4
+
+Both are quoted because the order of magnitude is the claim, not the digit: the
+registered band needs three to four times finer `h`, `free_e` of order `3e4`.
+
+That is out of dense reach on this machine. Under the driver's documented cost model
+(`peak RAM ≈ 5.5 * 8 * free_e^2` bytes, `wall ≈ 45 s * (free_e/1444)^3`), `free_e`
+≈ 2.9e4 projects to ≈ 3.6e10 bytes (33.6 GiB) and ≈ 3.5e5 s (≈ 98 h); the fitted
+target of 3.2e4 projects to ≈ 4.5e10 bytes (41.6 GiB) and ≈ 134 h. For scale, rung 4 —
+`free_e = 9604`, the largest rung anyone has costed — already projects to 3.78 GB peak
+and 13239 s (3.68 h). The band therefore sits nine to eleven times rung 4's memory and
+twenty-six to thirty-seven times its wall clock away, on a path that scales as
+`free_e^2` in memory and `free_e^3` in time.
+
+**That is the concrete case for the sparse design.** It is not a performance
+optimisation of an existing capability, and it is not a nicer way to reach a mesh we
+could already afford: at first order the dense path cannot reach the registered band
+at all. The sparse path is the only route to it. That reframes the sparse work from an
+efficiency project to a precondition for the gate.
+
+One caveat on the two numbers above: the cost model is documented and deliberately
+generous, not measured (`README.md`, "Cost model"), and it is anchored at 45 s per
+rung-0-equivalent, which is ~2x pessimistic against rung 0's own log. The *scaling*
+argument is unaffected — it is the exponent, not the constant, that puts `3e4` out of
+reach — but the absolute GiB and hours are soft by a factor of about two in the
+optimistic direction.
+
+### 12.6 What is still open
+
+Rungs 2, 3 and 4 (`free_e` 3604, 5044, 9604) are **not run**. The command is
+
+    tools/host/sparse-probe/high_res_run.sh --include-rung4
+
+and the driver projects rungs 0-4 at 16110 s total (4.47 h), rung 4 alone at 13239 s
+(3.68 h). That projection is not firm: it is the driver's own model, and the one rung
+where a projection can be checked against a measurement ran long — rung 1 was
+estimated at 208 s and took 108.7 s, i.e. the estimate was 1.91x pessimistic (rung 0:
+45 s projected, 20.1 s measured, 2.24x). The driver replaces its 45 s base with rung
+0's measured clock as soon as rung 0 finishes, so the revised estimates for rungs 2-4
+are shorter again. Treat 4.47 h as an upper bound of order two times too large, not as
+a scheduled duration.
+
+The decision rule was registered before any rung of this ladder ran, in
+`tools/host/sparse-probe/evidence/ladder/summary_HIGHRES.txt`, and is quoted verbatim:
+
+> (d1) |R_extracted - R_analytic| falls monotonically and the 1/n_free extrapolant lands
+>      inside the band  ->  the discrepancy is discretisation, and the bar can be met by
+>      a run at the fitted resolution;
+> (d2) it is flat or non-monotone, or the extrapolant stays above 3.09111235262770
+>      ->  the mesh is NOT the mechanism, and the ladder has eliminated it.
+
+In plain terms: if `R` tends to `2.8101` as `h -> 0`, the gap was discretisation; if
+`R` plateaus at `~4.049`, the gap is genuine physics and the mesh is not the mechanism.
+
+The plateau branch is **not** what the current data show: rung 1 sits 0.2686 below the
+control, which is movement, not a plateau. But one refinement step is not enough to say
+what the data do show either — `d1` requires monotonicity *and* an extrapolant that
+lands inside the band, and with two points there is no defensible extrapolant (§12.3:
+no residual, no error bar). The honest statement is that the sequence has started to
+move in the `d1` direction and that the two branches remain live until rungs 2 and 3
+are measured.
