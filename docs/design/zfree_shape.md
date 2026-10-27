@@ -509,3 +509,33 @@ measurement can buy.
 > measured wall effect has not been tested against the noise floor at all.
 - §7's attributions stand, with the one exception this file already carried: `0.119317007` is used here as the 31x17 legal-operator baseline and in `decisions.md` as the 41x22 leg of the mis-paired metric, and both attributions cannot hold (`decisions.md` §6).
 - Outside this file and outside this pass: the passivity bug (`R_CIRC` phantom gain, `+8.47 %`), `R_MODAL` (undefined, never coded), the `R_FLUX` versus `R_CIRC` sign conflict, `corr_e_y = 0.92`, and the mode selection itself all stand on their own measurements and none of them was ever carried by `corr_ez` (`decisions.md` §8).
+
+> **[CORRECTION OF THE PRECEDING BLOCK, APPENDED 2026-10-27]** — item 3 of the correction above is wrong in two
+> places, and both errors are mine, not the original author's. It says "the 41x22 PEC leg is column 704 at
+> `-0.083134346`, a mis-paired column". Column 704 is not a 41x22 leg, and `-0.083134346` is not the mis-paired
+> number.
+>
+> **The lattice.** `-0.083134346` is banked in exactly one place, `tools/host/c1-audit/out/pecbox_spectrum.npz`,
+> whose own `xs` is `(31,)`, `zs` is `(17,)` and `n_nodes` is `527`; its generator describes running "exactly the
+> same 31 x 17 mixed solve". **No 41x22 PEC spectrum bank exists anywhere in `out/` or `.scratch/`**, so there is
+> nothing in the data that could be a 41x22 PEC leg at column 704. The 41x22 runs bank `beta`, `col`, `e_t`,
+> `e_z_node`, `z_free` and their meshes, and no correlation arrays at all.
+>
+> **The statistic.** `-0.083134346` is stored under `corr_ez_vv`, the corrected same-component vertical
+> correlation. It is *not* stored under `corr_ez_superseded_longitudinal`, which is where the mis-pairing lives:
+> that number is `+0.12092330979461664` for column 704 and `+0.1472914469446296` for column 699.
+> `decisions.md:7877` carries both in one row, with the two statistics in separate columns —
+> `| 31x17 | PEC | 704 | -0.426418989 | -0.083134346 | +0.120923310 |` — which is why conflating them is possible
+> and why it is wrong.
+>
+> **Corrected statement.** Column 704 is the second banked column of the *same 31x17 PEC* run — `beta =
+> 86.93931629` rad/m, `eps_eff = 0.28041102`, `v_phase = 1.89c` — and `-0.083134346` is its `corr_ez_vv`: a
+> column-*selection* failure against the `0.91` bar, not an instance of the superseded longitudinal mis-pairing.
+> Item 3's first sentence stands, as does the per-lattice reading of "unchanged"; only the wrong example is
+> withdrawn.
+>
+> **Why the two defects must not be used as evidence for each other.** The **reference mis-pairing** is the
+> vertical-analytic-against-longitudinal-extraction mismatch, and its measure is
+> `corr_ez_superseded_longitudinal` (`+0.1209` / `+0.1473`). The **column 704 failure** is a different defect: a
+> non-carrier box mode (`eps_eff = 0.280`, faster than light) that the corrected correlation rejects and that the
+> old `0.30` screen passed. Neither is a witness for the other.
