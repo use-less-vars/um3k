@@ -155,6 +155,15 @@ ANCHOR_CORR_EZ = 0.11916043239134175     # tools/corr_ez_101_20.py:78
 CORR_EY_MIN = 0.90
 CORR_EZ_MAX = 0.30
 
+#: PROVISIONAL, awaiting operator re-basing -- the same-component vertical bar for
+#: the corrected ``corr_ez_vv``.  It reuses the existing ``corr_e_y`` >= 0.90 bar
+#: because a vertical reference correlated against the mode's VERTICAL component
+#: is the same kind of quantity as e_y; the 0.3 upper bound above was never a
+#: property of the field, it was an artefact of pairing a vertical reference with
+#: the LONGITUDINAL field.  ``CORR_EY_MIN``/``CORR_EZ_MAX`` are untouched: they
+#: still define ``shape_pair_ok_legacy``.
+CORR_EZ_VV_MIN = 0.90
+
 #: reproduction gate (step 6): relative tolerance on |measured - banked| / |banked|.
 #: 1e-6 is tight enough to catch the 2e-2-scale drift the analytic reference
 #: placement has already produced once (superseded 0.1462 in
@@ -399,6 +408,12 @@ yy, zz = np.meshgrid(yc_mid, zn_node, indexing="ij")        # E_y lattice (ny, n
 iyy, izz = np.meshgrid(yn_node, zc_mid, indexing="ij")      # E_z lattice (ny+1, nz)
 _ey_pts = np.stack([yy.ravel(), zz.ravel()], axis=1)
 _ez_pts = np.stack([izz.ravel(), iyy.ravel()], axis=1)
+#: the SAME E_z lattice in Mode2D.e_at's (x, y) = (XS, ZS) order.  ``_ez_pts`` is
+#: (z, y), which is right for the (ZS, XS)-ordered RegularGridInterpolator at
+#: :491 and wrong for e_at -- handing it to e_at raises
+#: ``ValueError: point ... lies outside the mesh``.  Component-1 sampling uses
+#: this array, not ``_ez_pts``.
+_ezc_pts = np.stack([iyy.ravel(), izz.ravel()], axis=1)
 
 _t0 = time.time()
 prof = microstrip_mode_profile(HSUB, WSTRIP, EPS_R, n_sub=N_SUB)
@@ -439,8 +454,9 @@ real_enough = np.abs(np.imag(lam)) <= 1e-6 * np.maximum(1.0, np.abs(lam))
 norm_a = float(np.linalg.norm(A_dense))
 norm_b = float(np.linalg.norm(B_dense))
 
-#: (col, beta_sq, beta, eps_eff, corr_e_y, corr_e_z, residual, shape_pair_ok) --
-#: 8 fields per propagating QZ column; every derived array below indexes this list
+#: (col, beta_sq, beta, eps_eff, corr_e_y, corr_ez_vv,
+#:  corr_ez_superseded_longitudinal, residual, shape_ok) -- 9 fields per
+#: propagating QZ column; every derived array below indexes this list
 rows: list[tuple] = []
 n_scanned = 0
 _t_loop = time.time()
@@ -487,21 +503,36 @@ for j in range(int(lam.size)):
     E_t = MODE.e_at(_ey_pts).reshape(NYN - 1, NZN, 2)
     e_y = E_t[:, :, 0] * CELL          # *CELL as in s10118_basis.py:314; corr is
                                        # invariant to it, kept for faithfulness
+    # vertical, SAME COMPONENT: component 1 of the transverse field sampled on the
+    # A_ez lattice in e_at's (x, y) order (iyy, izz) -- a vertical reference against
+    # the VERTICAL mode component.  This is the primary e_z metric; the block below
+    # is retained as the superseded mis-pairing and is still computed.
+    E_tz = MODE.e_at(_ezc_pts).reshape(NYN, NZN - 1, 2)
+    e_z_vv = E_tz[:, :, 1] * CELL
+
     ez_grid = np.asarray(e_z_node, dtype=float).reshape(_nz, _nx)
     ez_itp = RegularGridInterpolator((ZS, XS), ez_grid, bounds_error=True)
     e_z_mag = ez_itp(_ez_pts).reshape(NYN, NZN - 1)
     e_z = -e_z_mag                     # s10118_basis.py:369 (E: strip -> ground)
 
     cy = corr(A_ey, e_y)
-    cz = corr(A_ez, e_z)
-    shape_ok = bool(e_y.shape == A_ey.shape and e_z.shape == A_ez.shape)
-    rows.append((int(j), bsq, beta, float(bsq / (K0 * K0)), cy, cz, resid, shape_ok))
+    cz_vv = corr(A_ez, e_z_vv)         # PRIMARY: vertical vs vertical
+    cz = corr(A_ez, e_z)               # SUPERSEDED: A_ez (vertical) against the
+                                       # LONGITUDINAL field beta*z_free -- a
+                                       # component mis-pairing.  Kept and still
+                                       # computed so the old numbers remain
+                                       # reproducible; it is not a shape test.
+    shape_ok = bool(e_y.shape == A_ey.shape and e_z_vv.shape == A_ez.shape
+                    and e_z.shape == A_ez.shape)
+    rows.append((int(j), bsq, beta, float(bsq / (K0 * K0)), cy, cz_vv, cz, resid,
+                 shape_ok))
 
     n_scanned += 1
     if n_scanned % 50 == 0:
         phase(f"step4 per-column ({n_scanned} done, {time.time() - _t_loop:.1f} s)")
         say(f"PROGRESS [columns] {time.time() - T0:.1f} s  col={j}/{int(lam.size)}  "
-            f"kept={n_scanned}  |corr_e_y|={abs(cy):.6f}  |corr_e_z|={abs(cz):.6f}")
+            f"kept={n_scanned}  |corr_e_y|={abs(cy):.6f}  "
+            f"|corr_ez_vv|={abs(cz_vv):.6f}  |corr_ez_superseded|={abs(cz):.6f}")
 
 say(f"loop done in {time.time() - _t_loop:.2f} s for {n_scanned} propagating columns")
 
@@ -510,10 +541,16 @@ say(f"loop done in {time.time() - _t_loop:.2f} s for {n_scanned} propagating col
 # ---------------------------------------------------------------------------
 phase("step5 write outputs")
 abs_cy = np.array([abs(r[4]) for r in rows], dtype=float)
-abs_cz = np.array([abs(r[5]) for r in rows], dtype=float)
-ok_arr = np.array([bool(r[7]) and np.isfinite(r[4]) and np.isfinite(r[5])
-                   and abs(r[4]) >= CORR_EY_MIN and abs(r[5]) <= CORR_EZ_MAX
+abs_cz_vv = np.array([abs(r[5]) for r in rows], dtype=float)
+abs_cz_superseded = np.array([abs(r[6]) for r in rows], dtype=float)
+#: the corrected criterion, on the same-component vertical metric
+ok_arr = np.array([bool(r[8]) and np.isfinite(r[4]) and np.isfinite(r[5])
+                   and abs(r[4]) >= CORR_EY_MIN and abs(r[5]) >= CORR_EZ_VV_MIN
                    for r in rows], dtype=bool)
+#: the legacy criterion, unchanged, on the superseded longitudinal number
+ok_arr_legacy = np.array([bool(r[8]) and np.isfinite(r[4]) and np.isfinite(r[6])
+                          and abs(r[4]) >= CORR_EY_MIN and abs(r[6]) <= CORR_EZ_MAX
+                          for r in rows], dtype=bool)
 order = np.argsort(-abs_cy, kind="stable")
 
 _hdr = (
@@ -527,22 +564,33 @@ _hdr = (
     f"# propagating columns  : {n_scanned} (real lambda, beta^2 > 0)\n"
     f"# f0 / k0              : {F0:.12g} Hz / {K0:.12g} rad/m\n"
     f"# criteria             : shape_pair_ok = |corr_e_y| >= {CORR_EY_MIN:g} and "
-    f"|corr_e_z| <= {CORR_EZ_MAX:g} and shapes match\n"
+    f"|corr_ez_vv| >= {CORR_EZ_VV_MIN:g} and shapes match  (the |corr_ez_vv| bar "
+    "is PROVISIONAL, awaiting operator re-basing)\n"
+    f"# criteria SUPERSEDED  : shape_pair_ok_legacy = |corr_e_y| >= {CORR_EY_MIN:g} "
+    f"and |corr_ez| <= {CORR_EZ_MAX:g} on corr_ez_superseded_longitudinal\n"
     "# criterion uses |corr| because an eigenvector's sign is arbitrary; the\n"
     "# signed values are printed too, so nothing is hidden.\n"
-    f"# banked anchors       : corr_e_y {ANCHOR_CORR_EY!r} / corr_e_z {ANCHOR_CORR_EZ!r}\n"
+    "# corr_ez_vv                       = vertical reference vs VERTICAL mode "
+    "component (primary)\n"
+    "# corr_ez_superseded_longitudinal  = vertical reference vs the LONGITUDINAL "
+    "field beta*z_free (the mis-pairing, retained)\n"
+    f"# banked anchors       : corr_e_y {ANCHOR_CORR_EY!r} / corr_e_z {ANCHOR_CORR_EZ!r}"
+    "  (both belong to the superseded pairing)\n"
     f"# banked identified col: {bank_col} ({bank_status})\n"
     "#\n"
-    "  rank     col        beta_sq         beta    eps_eff     corr_e_y     "
-    "corr_e_z  |corr_e_y|  |corr_e_z|  shape_pair_ok\n"
+    "  rank     col        beta_sq         beta    eps_eff     corr_e_y   "
+    "corr_ez_vv  |corr_e_y|  |corr_ez_vv|  shape_pair_ok   "
+    "corr_ez_superseded_longitudinal  |corr_ez_superseded|  shape_pair_ok_legacy\n"
 )
 
 _lines = [_hdr]
 for rank, idx in enumerate(order, start=1):
-    j, bsq, beta, ee, cy, cz, resid, shape_ok = rows[idx]
+    j, bsq, beta, ee, cy, cz_vv, cz_sup, resid, shape_ok = rows[idx]
     _lines.append(
         f"{rank:6d} {j:7d} {bsq:15.7e} {beta:12.5e} {ee:10.6f} {cy:+12.7f} "
-        f"{cz:+12.7f} {abs(cy):11.7f} {abs(cz):11.7f}  {str(bool(ok_arr[idx])):>5s}\n"
+        f"{cz_vv:+12.7f} {abs(cy):11.7f} {abs(cz_vv):12.7f}  "
+        f"{str(bool(ok_arr[idx])):>5s} {cz_sup:+32.7f} {abs(cz_sup):20.7f}  "
+        f"{str(bool(ok_arr_legacy[idx])):>5s}\n"
     )
 with open(TABLE_PATH, "w", encoding="utf-8") as fh:
     fh.writelines(_lines)
@@ -557,29 +605,39 @@ np.savez(
     beta=np.array([r[2] for r in rows], dtype=float),
     eps_eff=np.array([r[3] for r in rows], dtype=float),
     corr_ey=np.array([r[4] for r in rows], dtype=float),
-    corr_ez=np.array([r[5] for r in rows], dtype=float),
-    residual=np.array([r[6] for r in rows], dtype=float),
+    corr_ez_vv=np.array([r[5] for r in rows], dtype=float),
+    corr_ez_superseded_longitudinal=np.array([r[6] for r in rows], dtype=float),
+    # compatibility alias, NOT for new work: mode_plot.py:278-291 reads "corr_ez"
+    # and compares it with the banked LONGITUDINAL numbers (+0.119160432391342 /
+    # +0.147291446944630).  Same value as corr_ez_superseded_longitudinal.
+    corr_ez=np.array([r[6] for r in rows], dtype=float),
+    residual=np.array([r[7] for r in rows], dtype=float),
     ok=ok_arr,
-    shape_pair_ok=np.array([r[7] for r in rows], dtype=bool),
+    shape_pair_ok=np.array([r[8] for r in rows], dtype=bool),
+    shape_pair_ok_legacy=ok_arr_legacy,
     xs=XS, zs=ZS, k0=K0, f0=F0,
     n_edges=int(mesh.n_edges), n_nodes=int(mesh.n_nodes),
     free_e=free_e, free_n=free_n,
     bank_col=int(bank_col),
     A_ey=A_ey, A_ez=A_ez,
     criterion=np.array([CORR_EY_MIN, CORR_EZ_MAX], dtype=float),
+    criterion_ez_vv=np.array([CORR_EY_MIN, CORR_EZ_VV_MIN], dtype=float),
 )
 say("wrote", NPZ_PATH)
 
 # the same table, on stdout (ranked by |corr_e_y|)
 say("")
 say("=" * 118)
-say("  rank     col        beta_sq         beta    eps_eff     corr_e_y     "
-    "corr_e_z  |corr_e_y|  |corr_e_z|  shape_pair_ok")
+say("  rank     col        beta_sq         beta    eps_eff     corr_e_y   "
+    "corr_ez_vv  |corr_e_y|  |corr_ez_vv|  shape_pair_ok   "
+    "corr_ez_superseded_longitudinal  |corr_ez_superseded|  shape_pair_ok_legacy")
 say("-" * 118)
 for rank, idx in enumerate(order, start=1):
-    j, bsq, beta, ee, cy, cz, resid, shape_ok = rows[idx]
+    j, bsq, beta, ee, cy, cz_vv, cz_sup, resid, shape_ok = rows[idx]
     say(f"{rank:6d} {j:7d} {bsq:15.7e} {beta:12.5e} {ee:10.6f} {cy:+12.7f} "
-        f"{cz:+12.7f} {abs(cy):11.7f} {abs(cz):11.7f}  {str(bool(ok_arr[idx])):>5s}")
+        f"{cz_vv:+12.7f} {abs(cy):11.7f} {abs(cz_vv):12.7f}  "
+        f"{str(bool(ok_arr[idx])):>5s} {cz_sup:+32.7f} {abs(cz_sup):20.7f}  "
+        f"{str(bool(ok_arr_legacy[idx])):>5s}")
 say("=" * 118)
 
 # ---------------------------------------------------------------------------
@@ -589,21 +647,29 @@ phase("step6 verdict")
 n_kept = len(rows)
 n_ok = int(ok_arr.sum())
 ok_cols = [int(r[0]) for r, f in zip(rows, ok_arr) if f]
+n_ok_legacy = int(ok_arr_legacy.sum())
+ok_cols_legacy = [int(r[0]) for r, f in zip(rows, ok_arr_legacy) if f]
 best_idx = int(order[0]) if n_kept else -1
 
 say("")
 say("-" * 100)
 say("VERDICT")
 say(f"  propagating modes considered (real lambda, beta^2 > 0) : {n_kept}")
-say(f"  shape_pair_ok (|corr_e_y| >= {CORR_EY_MIN:g} and |corr_e_z| <= {CORR_EZ_MAX:g}) : "
-    f"{n_ok}")
+say(f"  shape_pair_ok (|corr_e_y| >= {CORR_EY_MIN:g} and |corr_ez_vv| >= "
+    f"{CORR_EZ_VV_MIN:g}) : {n_ok}")
 say(f"  their QZ columns                                      : {ok_cols}")
+say(f"  shape_pair_ok_legacy SUPERSEDED (|corr_e_y| >= {CORR_EY_MIN:g} and "
+    f"|corr_ez| <= {CORR_EZ_MAX:g} on corr_ez_superseded_longitudinal) : "
+    f"{n_ok_legacy}")
+say(f"  their QZ columns                                      : {ok_cols_legacy}")
 if n_kept:
-    j, bsq, beta, ee, cy, cz, resid, shape_ok = rows[best_idx]
+    j, bsq, beta, ee, cy, cz_vv, cz_sup, resid, shape_ok = rows[best_idx]
     say(f"  best |corr_e_y| mode                                  : col {j}"
-        f"  |corr_e_y| = {abs(cy):.15f}  |corr_e_z| = {abs(cz):.15f}"
+        f"  |corr_e_y| = {abs(cy):.15f}  |corr_ez_vv| = {abs(cz_vv):.15f}"
+        f"  |corr_ez_superseded| = {abs(cz_sup):.15f}"
         f"  beta^2 = {bsq:.12g}  eps_eff = {ee:.9f}  residual = {resid:.3e}"
-        f"  shape_pair_ok = {bool(ok_arr[best_idx])}")
+        f"  shape_pair_ok = {bool(ok_arr[best_idx])}"
+        f"  shape_pair_ok_legacy = {bool(ok_arr_legacy[best_idx])}")
     if bank_col >= 0:
         same = (int(j) == int(bank_col))
         say(f"  banked / identified column                            : {bank_col}")
@@ -629,21 +695,24 @@ if _target is None and n_kept:
 
 _repro_ok = False        # gate result, reported in the DONE line below
 if _target is not None:
-    j, bsq, beta, ee, cy, cz, resid, shape_ok = rows[_target]
+    j, bsq, beta, ee, cy, cz_vv, cz_sup, resid, shape_ok = rows[_target]
     say("")
     say(f"REPRODUCTION CHECK ({_target_label})")
     say(f"  |corr_e_y| = {abs(cy):.17f}   anchor {ANCHOR_CORR_EY!r}   "
         f"delta = {abs(cy) - ANCHOR_CORR_EY:+.3e}")
-    say(f"  |corr_e_z| = {abs(cz):.17f}   anchor {ANCHOR_CORR_EZ!r}   "
-        f"delta = {abs(cz) - ANCHOR_CORR_EZ:+.3e}")
-    say(f"  signed     = ({cy:+.15f}, {cz:+.15f})  "
-        f"(signs are LAPACK-arbitrary; the anchors are magnitudes)")
+    say(f"  |corr_ez_superseded| = {abs(cz_sup):.17f}   anchor {ANCHOR_CORR_EZ!r}   "
+        f"delta = {abs(cz_sup) - ANCHOR_CORR_EZ:+.3e}")
+    say(f"  |corr_ez_vv| = {abs(cz_vv):.17f}   (corrected same-component "
+        f"pairing; the banked anchor is the SUPERSEDED value, so no gate here)")
+    say(f"  signed     = ({cy:+.15f}, {cz_sup:+.15f}, {cz_vv:+.15f})  "
+        f"(e_y, e_z_superseded, e_z_vv; signs are LAPACK-arbitrary; "
+        f"the anchors are magnitudes)")
     # a delta that nothing checks is how drift survives: gate both anchors.
     # This is LOUD but not fatal -- the spectrum bank and the table above are the
     # primary product and must still reach disk even when the gate fails.
     _repro = []
     for _tag, _meas, _bank in (("REPRO e_y", abs(float(cy)), ANCHOR_CORR_EY),
-                               ("REPRO e_z", abs(float(cz)), ANCHOR_CORR_EZ)):
+                               ("REPRO e_z", abs(float(cz_sup)), ANCHOR_CORR_EZ)):
         _rel = abs(_meas - _bank) / max(abs(_bank), 1e-300)
         _pass = bool(np.isfinite(_rel) and _rel <= REPRO_RTOL)
         _repro.append(_pass)
@@ -659,7 +728,9 @@ else:
 
 say("-" * 100)
 say(f"DONE c1_audit.py elapsed={time.time() - T0:.1f}s modes_kept={n_kept} "
-    f"shape_pair_ok={n_ok} best_col={int(rows[best_idx][0]) if n_kept else -1} "
+    f"shape_pair_ok={n_ok} shape_pair_ok_legacy={n_ok_legacy} "
+    f"best_col={int(rows[best_idx][0]) if n_kept else -1} "
     f"best_abs_corr_ey={abs_cy[best_idx] if n_kept else float('nan'):.15f} "
+    f"best_abs_corr_ez_vv={abs_cz_vv[best_idx] if n_kept else float('nan'):.15f} "
     f"bank_col={bank_col} repro={'PASS' if _repro_ok else 'FAIL'} "
     f"repro_rtol={REPRO_RTOL:g} npz={NPZ_PATH} table={TABLE_PATH}")

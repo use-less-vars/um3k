@@ -67,7 +67,13 @@
 #   `dominant` is defined on the audit's own field lattices: the reconstructed
 #   e_y on the (NYN-1) x NZN = 200 x 77 plane lattice and e_z on the
 #   NYN x (NZN-1) = 201 x 76 lattice, compared by Frobenius norm -- the same
-#   fields c1_audit.py correlates against the analytic plane basis.  They are
+#   fields c1_audit.py correlates against the analytic plane basis.  All THREE
+#   Frobenius norms are printed as their own columns -- |e_y|, |e_z_sup| (the
+#   SUPERSEDED longitudinal field beta*z_free) and |e_z_vv| (the same-component
+#   vertical field) -- and `dominant` compares |e_y| against |e_z_vv|.  Before
+#   D22-T12 that label was decided against the longitudinal |e_z_sup| instead
+#   and the substitution was never printed; both decisions are now shown side
+#   by side, and any row where they disagree is named in a NOTE line.  They are
 #   re-derived here only because c1_audit.py keeps the two scalar correlations
 #   in `rows` and discards the field arrays; the re-derivation is checked
 #   against c1_audit's own stored corr_e_y / corr_e_z and the largest
@@ -400,7 +406,7 @@ say("#" * 100)
 
 
 def _reconstruct(j, bsq, beta, eps_eff, resid):
-    """e_y / e_z for QZ column j, on the audit's own planes.
+    """e_y / e_z (superseded) / e_z_vv for QZ column j, on the audit's own planes.
 
     Mirrors c1_audit.py:455-493 (same LU route, same +-sign, same lattices) and
     is verified against c1_audit's stored correlations by the caller.
@@ -426,25 +432,40 @@ def _reconstruct(j, bsq, beta, eps_eff, resid):
     )
     E_t = MODE.e_at(c1_audit._ey_pts).reshape(c1_audit.NYN - 1, c1_audit.NZN, 2)
     e_y = E_t[:, :, 0] * c1_audit.CELL
+    #: the SAME-COMPONENT vertical field (c1_audit.py's primary corr_ez_vv): the
+    #: mode's vertical component sampled on the A_ez lattice, in e_at's (x, y)
+    #: point order (_ezc_pts), exactly as the longitudinal e_z below is NOT.
+    E_tz = MODE.e_at(c1_audit._ezc_pts).reshape(c1_audit.NYN, c1_audit.NZN - 1, 2)
+    e_z_vv = E_tz[:, :, 1] * c1_audit.CELL
     ez_grid = np.asarray(e_z_node, dtype=float).reshape(c1_audit._nz, c1_audit._nx)
     ez_itp = RegularGridInterpolator((c1_audit.ZS, c1_audit.XS), ez_grid,
                                      bounds_error=True)
+    #: SUPERSEDED: vertical reference vs the LONGITUDINAL field beta*z_free.
     e_z = -ez_itp(c1_audit._ez_pts).reshape(c1_audit.NYN, c1_audit.NZN - 1)
-    return e_y, e_z
+    return e_y, e_z, e_z_vv
 
 
 say("")
-say("REPORT -- one row per propagating eigenvalue (dominant field component on the")
-say("          audit's own planes: e_y (NYN-1)xNZN=200x77 vs e_z NYNx(NZN-1)=201x76,")
-say("          compared by Frobenius norm)")
-say("-" * 148)
+say("REPORT -- one row per propagating eigenvalue.  THREE field norms are printed,")
+say("          each on its own plane of the audit's own lattices, by Frobenius norm:")
+say("            |e_y|       transverse                     (NYN-1) x NZN     = 200 x 77")
+say("            |e_z_sup|   SUPERSEDED longitudinal e_z    NYN x (NZN-1)    = 201 x 76")
+say("            |e_z_vv|    same-component vertical e_z    NYN x (NZN-1)    = 201 x 76")
+say("          `dominant` compares |e_y| against |e_z_vv| -- same component against")
+say("          same component.  Before D22-T12 the label was decided against the")
+say("          longitudinal |e_z_sup| and that substitution was printed nowhere; both")
+say("          decisions are now reported, and any row where they disagree is named")
+say("          in a NOTE line below the table.")
+say("-" * 220)
 say("  idx    col        Re(lambda)        Im(lambda)          beta      beta^2/k0^2 "
-    "        eps_eff        corr_e_y        corr_e_z   dominant")
-say("-" * 148)
+    "        eps_eff        corr_e_y       corr_ez_vv  corr_ez_superseded"
+    "        |e_y|    |e_z_sup|     |e_z_vv|   dominant")
+say("-" * 220)
 
 screen_flags = []
 corr_mismatch = 0.0
 dom_counts = {"e_y": 0, "e_z": 0, "n/a": 0}
+dom_flips = []                    # rows where the corrected and old rules differ
 for idx, j in enumerate(np.flatnonzero(propagating), start=1):
     j = int(j)
     bsq = float(lam_re[j])
@@ -452,49 +473,80 @@ for idx, j in enumerate(np.flatnonzero(propagating), start=1):
     if row is None:
         beta = float(np.sqrt(bsq))
         eps_eff = float(bsq / (c1_audit.K0 * c1_audit.K0))
-        cy = cz = float("nan")
+        cy = cz_vv = cz_sup = float("nan")
         resid = float("nan")
     else:
-        _jj, bsq, beta, eps_eff, cy, cz, resid, _shape_ok = row
-        bsq, beta, eps_eff, cy, cz = (float(bsq), float(beta), float(eps_eff),
-                                      float(cy), float(cz))
-    # dominant component
+        #: 9 fields: (col, bsq, beta, eps_eff, corr_e_y, corr_ez_vv,
+        #:            corr_ez_superseded_longitudinal, residual, shape_ok)
+        _jj, bsq, beta, eps_eff, cy, cz_vv, cz_sup, resid, _shape_ok = row
+        bsq, beta, eps_eff, cy = (float(bsq), float(beta), float(eps_eff),
+                                  float(cy))
+        cz_vv, cz_sup = float(cz_vv), float(cz_sup)
+    # dominant component -- all THREE norms are computed and each is printed;
+    # the label is decided on the same-component pair (|e_y| vs |e_z_vv|).
     dom = "n/a"
+    dom_long = "n/a"                 # what the pre-D22-T12 rule would have said
+    ny_norm = nz_sup_norm = nz_vv_norm = float("nan")
     try:
         fields = _reconstruct(j, bsq, beta, eps_eff, resid)
         if fields is not None:
-            e_y, e_z = fields
+            e_y, e_z, e_z_vv = fields
             ny_norm = float(np.linalg.norm(e_y))
-            nz_norm = float(np.linalg.norm(e_z))
-            dom = "e_y" if ny_norm > nz_norm else "e_z"
-            if np.isfinite(cy) and np.isfinite(cz):
+            nz_sup_norm = float(np.linalg.norm(e_z))       # SUPERSEDED longitudinal
+            nz_vv_norm = float(np.linalg.norm(e_z_vv))     # same-component vertical
+            dom = "e_y" if ny_norm > nz_vv_norm else "e_z"
+            dom_long = "e_y" if ny_norm > nz_sup_norm else "e_z"
+            if dom != dom_long:
+                dom_flips.append((j, dom, dom_long))
+            if np.isfinite(cy) and np.isfinite(cz_vv):
                 cy_chk = c1_audit.corr(c1_audit.A_ey, e_y)
+                cz_vv_chk = c1_audit.corr(c1_audit.A_ez, e_z_vv)
                 cz_chk = c1_audit.corr(c1_audit.A_ez, e_z)
-                for a, b in ((cy, cy_chk), (cz, cz_chk)):
+                for a, b in ((cy, cy_chk), (cz_vv, cz_vv_chk), (cz_sup, cz_chk)):
                     if np.isfinite(a) and np.isfinite(b):
                         corr_mismatch = max(corr_mismatch, abs(a - b))
     except Exception as exc:                        # never lose the row over this
         dom = f"n/a ({type(exc).__name__})"
     dom_counts["e_y" if dom == "e_y" else "e_z" if dom == "e_z" else "n/a"] += 1
-    passed = bool(np.isfinite(cy) and np.isfinite(cz)
+    passed = bool(np.isfinite(cy) and np.isfinite(cz_vv)
                   and abs(cy) >= c1_audit.CORR_EY_MIN
-                  and abs(cz) <= c1_audit.CORR_EZ_MAX)
+                  and abs(cz_vv) >= c1_audit.CORR_EZ_VV_MIN)
     screen_flags.append(passed)
     say(f"{idx:6d} {j:7d} {lam_re[j]:+16.9e} {np.imag(lam[j]):+16.9e} {beta:13.6e} "
-        f"{bsq / (c1_audit.K0 ** 2):16.9f} {eps_eff:15.9f} {cy:+15.9f} {cz:+15.9f}   {dom}")
-say("-" * 148)
+        f"{bsq / (c1_audit.K0 ** 2):16.9f} {eps_eff:15.9f} {cy:+15.9f} "
+        f"{cz_vv:+15.9f} {cz_sup:+17.9f} {ny_norm:12.6e} {nz_sup_norm:12.6e} "
+        f"{nz_vv_norm:12.6e}   {dom}")
+say("-" * 220)
+if dom_flips:
+    say("NOTE: `dominant` would have differed between the two rules on:")
+    for _jf, _dn_corr, _dn_long in dom_flips:
+        say(f"      col {_jf}: |e_y| vs |e_z_vv| -> {_dn_corr}   BUT   "
+            f"|e_y| vs longitudinal |e_z_sup| -> {_dn_long}")
+else:
+    say("NOTE: no row's `dominant` label differs between the two rules -- comparing")
+    say("      |e_y| against the same-component |e_z_vv| gives the same label as")
+    say("      comparing it against the longitudinal |e_z_sup| on every row here.")
 
 n_screen = int(np.count_nonzero(screen_flags))
 say("")
 say("#" * 100)
 say(f"#  N_PROPAGATING = {n_prop}")
 say(f"#  N_PASSING_CORRELATION_SCREEN = {n_screen}"
-    f"   (|corr_e_y| >= {c1_audit.CORR_EY_MIN:g} and |corr_e_z| <= "
-    f"{c1_audit.CORR_EZ_MAX:g}; applied AFTER the count above, not folded into it)")
+    f"   (|corr_e_y| >= {c1_audit.CORR_EY_MIN:g} and |corr_ez_vv| >= "
+    f"{c1_audit.CORR_EZ_VV_MIN:g}; applied AFTER the count above, not folded "
+    "into it)")
+say(f"#  corr_ez_superseded = vertical reference vs the LONGITUDINAL field "
+    "beta*z_free (the mis-pairing, retained for comparison only; the SUPERSEDED "
+    f"screen was |corr_e_z| <= {c1_audit.CORR_EZ_MAX:g})")
 say(f"#  (c1_audit.py's own ok_arr also requires shape_pair_ok and gives "
     f"{int(np.count_nonzero(c1_audit.ok_arr))} of {len(c1_audit.rows)})")
 say(f"#  dominant-field tally: e_y {dom_counts['e_y']}, e_z {dom_counts['e_z']}, "
     f"unavailable {dom_counts['n/a']}")
+say("#  dominant = |e_y| vs |e_z_vv| (Frobenius norm of the transverse field against")
+say("#  the Frobenius norm of the SAME-COMPONENT vertical field).  UNTIL D22-T12 the")
+say("#  label was decided against the longitudinal |e_z_sup| instead; the three norm")
+say("#  columns are printed side by side in the table above and the tally here is on")
+say("#  the corrected comparison.")
 say(f"#  re-derivation cross-check: max |corr(re-derived) - corr(c1_audit row)| = "
     f"{corr_mismatch:.3e}")
 say("#" * 100)
@@ -509,7 +561,8 @@ say("      'chosen' mode is emfit's own pick (largest positive beta^2 below the"
 say("      residual tolerance, emfit/mode2d.py:1156-1167), not the quasi-TEM mode;")
 say("      the per-eigenvalue table above is the audit's actual product.")
 say("NOTE: c1_audit.py's own REPRODUCTION CHECK / REPRO lines will read FAIL here.")
-say("      Its anchors (corr_e_y 0.9207707848111418 / corr_e_z 0.11916043239134175)")
+say("      Its anchors (corr_e_y 0.9207707848111418 / corr_e_z 0.11916043239134175,")
+say("      the latter on the SUPERSEDED longitudinal pairing, not on corr_ez_vv)")
 say("      belong to the open-top geometry; closing the box moves every eigenvalue,")
 say("      so those anchors are not a gate for this variant.")
 
