@@ -296,18 +296,18 @@ The blocker **was** not a missing tolerance but a **missing numerator**. `decisi
 vertical-over-in-plane energy ratio is has not been computed."* Until that ratio is measured on the same lattice,
 any X would be a number with nothing to compare to — which is exactly the defect that got the old bands withdrawn.
 
-**v2.1: both halves of the ratio now exist, and the clause still cannot ship.** `docs/design/t4_amp_ratio.md` forms
-`decisions.md:7950-7956` said had not been computed, on arrays that are already banked: `R_analytic = 2.810102138752`
-(above). What is still missing is no longer *data*: `R_extracted` **is** banked in both spectra, and on the PMC leg
-(j = [738], the identified column) it is `4.0489791163982565`, which against `R_analytic = 2.8101021387524523`
-is `1.441×` — the ratio the clause needs. The PEC banked `70.635018555128326` is a **wrong-column artefact** (the
-last *scanned* column, `704`), not a measurement, so only the PMC figure is quotable. `TOLFLUX_planes`' pooled
-`3.439935` (per-sample `3.467858`, per station `3.101484 … 3.620866`) is an FDTD tone capture of a different quantity
-and is **not** substitutable: using it would place the analytic mode `18.3 %` below the extraction and invite an `X`
-calibrated on that mismatch. So the defect changes shape a second time: `T4_amp` no longer lacks a measurement, it
-lacks a **threshold** — a rule for how far `1.441×` may sit from `1`. That is a choice, not a datum, and it is unmade.
-One more number that is not a use of `0.0272`: `2.810102 / 0.0272240 = 103.2` is an arithmetic exercise, because
-`0.0272` is longitudinal-over-in-plane and `e_z_vv` appears nowhere in it (`decisions.md:7950-7956`).
+**v2.1: both halves of the ratio now exist, and the clause still cannot ship.** `docs/design/t4_amp_ratio.md` forms what
+`decisions.md:7950-7956` said had not been computed, on already-banked arrays: `R_analytic = 2.810102138752` (above). What
+is missing is no longer *data*: `R_extracted` **is** banked in both spectra, and on the PMC leg (j = [738], the identified
+column) it is `4.0489791163982565`, which against `R_analytic = 2.8101021387524523` is `1.441×`. The PEC banked
+`70.635018555128326` **rests on an inferred column, not a read one**: `704` comes from elimination over `j = [699, 704]` /
+`ok = [True, False]` — the non-carrier, mode spurious, `beta = 86.93931629` — while its own `bank_col` is `738`; only the
+PMC figure is quotable. `TOLFLUX_planes`' pooled `3.439935` (per-sample `3.467858`, per station `3.101484 … 3.620866`) is an
+FDTD tone capture of a different quantity, **not** substitutable: it would place the analytic mode `18.3 %` below the
+extraction and invite an `X` calibrated on it. So the defect changes shape again: `T4_amp` no longer lacks a measurement, it
+lacks a **threshold** — a rule for how far `1.441×` may sit from `1`. That is a choice, not a datum, and it is unmade. One
+more non-use of `0.0272`: `2.810102 / 0.0272240 = 103.2` is arithmetic, since `0.0272` is longitudinal-over-in-plane and
+`e_z_vv` appears nowhere in it (`decisions.md:7950-7956`).
 
 ### 3.5 `§101.20.T5_fringe_excess` — the fringe excess-energy clause
 
