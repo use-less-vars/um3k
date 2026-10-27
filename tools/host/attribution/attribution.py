@@ -70,9 +70,62 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 
 import numpy as np
+
+# ---------------------------------------------------------------------------
+# repo layout: this file lives at <repo>/tools/host/attribution/attribution.py,
+# which is THREE levels below the repository root, and `python3 /path/to/this.py`
+# puts only *this* directory on sys.path -- never the root.  run.sh discovers
+# the root and exports it as C1_REPO, but the interpreter does not inherit it,
+# so the `import emfit` below died with ModuleNotFoundError (out/run.log:3).
+# The root is resolved here, by the rule the sibling host scripts use
+# (tools/host/c1-audit/c1_audit.py:120-158,
+# tools/host/phaselag-subsets/phaselag_subsets.py:65-97), and put on sys.path
+# BEFORE any emfit import.  Never count ".." levels: a fixed count yields
+# <repo>/tools instead of <repo>, which is exactly how the import failed.
+# ---------------------------------------------------------------------------
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _find_repo(start):
+    """Return the nearest ancestor of *start* that contains an ``emfit/`` dir.
+
+    ``None`` is returned if the walk reaches the filesystem root without a
+    candidate, so the caller can fail loudly instead of importing against a
+    bogus root.
+    """
+    cur = os.path.abspath(start)
+    while True:
+        if os.path.isdir(os.path.join(cur, "emfit")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:                      # hit the filesystem root
+            return None
+        cur = parent
+
+
+#: run.sh exports the root it discovered as C1_REPO, the repo-wide name
+#: (tools/host/c1-audit/run.sh, tools/host/phaselag-subsets/run.sh); REPO is
+#: accepted as well, and only a direct invocation needs the local walk.
+_REPO_ENV = ""
+for _name in ("C1_REPO", "REPO"):
+    _value = os.environ.get(_name, "").strip()
+    if _value and os.path.isdir(_value):
+        _REPO_ENV = _value
+        break
+REPO = os.path.abspath(_REPO_ENV) if _REPO_ENV else _find_repo(HERE)
+if not REPO or not os.path.isdir(os.path.join(REPO, "emfit")):
+    raise SystemExit(
+        "cannot locate the repository root:\n"
+        "  walked up from : %s\n"
+        "  looked for     : <dir>/emfit (an emfit/ package directory)\n"
+        "  state it       : C1_REPO=<repo> tools/host/attribution/run.sh"
+        % (HERE,))
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
 
 from emfit.materials import C0
 from emfit.ports import fit_beta
