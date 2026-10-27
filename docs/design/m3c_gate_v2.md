@@ -419,7 +419,7 @@ than a tightened `0.30`.
 | quantity | a second fit of one eigenvalue vs the eigenvalue: `beta_eigen = 312.7827646322591`, second fit `314.03158662735785` (`TOLFLUX.json:beta`) |
 | threshold | `T2_TOL = 0.005` (`gates_101_20.py:166`) — the same bar `T2_agree` is scored against, deliberately reused |
 | measured gap | **`0.399261768 %`** — inside the tolerance, margin **`1.252311×`** |
-| failing witness | **none.** The clause has passed on every measurement taken; it has no failing run to point at |
+| failing witness | **none, on `n = 1`** — one measurement exists (`0.399261768 %`); one pass is not a population |
 | can pass | yes, and it does: `0.399261768 %` against `0.5 %` |
 | can fail | yes in principle — it is a real inequality with a measured margin of only 25 %, not a tautology |
 | status | **registered, no implementation**, and none is claimed: `T6_fit_route` appears in no `.py` file in the tree |
@@ -487,13 +487,13 @@ This is the section the rule exists to produce. Applied honestly, **one of the f
 (`T4_amp`, §6.1), **one ships red on the recorded population** (`§101.20.T5_fringe_excess`, §6.2), and
 `T2_agree`'s state is determined but adverse (§6.4).
 
-### 6.1 `T4_amp` — no threshold, no witness, no numerator
+### 6.1 `T4_amp` — no threshold, no witness; the numerator now exists
 
-`decisions.md:7258` reserves the criterion and proposes no X; the placeholder bands are withdrawn; the measured `R`
-is `2.72e6 / 2.64e6 / 2.54e6` against a unit-order analytic ratio that *does not exist in the tree*. There is
-nothing for a measurement to miss. By §1 corollary (1) this clause cannot select, and by corollary (2) it would
-reject everything by five to eight orders if a band were invented — which is the same defect stated the other way.
-**Verdict: still cannot fail. Do not ship.**
+`decisions.md:7258` reserves the criterion and proposes no X; the placeholder bands stay withdrawn. The missing
+element is now a **threshold**, not a datum. The PMC leg gives `R_extracted = 4.0489791163982565` against
+`R_analytic = 2.8101021387524523` — `1.441×`, a `44.09 %` relative error — and no rule says how far `1.441×` may sit
+from `1.0`. With no inequality to score there is nothing for a measurement to miss, so by §1 corollary (1) this
+clause cannot select. **Verdict: still cannot fail — on the threshold, not the datum. Do not ship.**
 
 ### 6.2 `§101.20.T5_fringe_excess` — red on the record, on purpose
 
@@ -596,9 +596,9 @@ justify `0.005` against a 4.1 % inter-fit spread or widen it and say what the wi
 None of `T1_stab`, `T2_agree`, `T3_ey_slot` has been run as part of this note (they require
 `--i-understand-this-needs-a-solve`, `gates_101_20.py:15`). No tolerance in this note has been validated by a new
 solve. The 0.89 in §3.3 is arithmetic on two banked numbers, not a measurement. `T4_amp` is deferred and
-**not registered**, with no implementation and no second operand to compute it from — `R_analytic` exists, but
-`R_extracted` cannot be formed from the banks (§3.4). `§101.20.T5_fringe_excess` is **registered** (§3.5,
-§9) with **no executable**: what is registered is a definition and a bar, not a running gate. §6's advice that
+**not registered**, with no implementation — but what it lacks has narrowed to a **threshold**: the PMC leg now
+gives `R_extracted = 4.0489791163982565`, `1.441×` `R_analytic` (§3.4); how far from `1.0` that may sit is a policy
+choice still unmade. `T5_fringe_excess` is **registered** (§3.5, §9) with **no executable**, and §6's advice that
 both should stay unimplemented in their present form speaks to their implementation status only, and not to
 whether they are registered.
 
