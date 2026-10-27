@@ -61,20 +61,30 @@ Not one script's oversight: every artefact that pairs the two fields normalises 
 - **The PEC reading is named as a wrong-column artefact and is excluded from scoring.** `pecbox_spectrum.npz` also carries an `R_extracted`, 70.635018555128326, and it is not a second physics result to be compared: its leg list is `j = [699, 704]` with `ok = [True, False]`, its own `bank_col` is 738, and 70.635018555128326 is 17.445142719817547× the peak-column value. It is retained as the diagnostic of column sensitivity in §9.4, and not as a data point. *Inference, marked as inference:* attributing 70.635 to column 704 rests on the leg list beside `ok`, not on the file's `bank_col`.
 - **n = 1.** One capture per leg, one column, one run. There is no empirical scatter in the record for this quantity, and none is assumed below.
 
-### 9.2 The bar: ±10 % relative, and the absolute band it implies
+### 9.2 The bar: ±10 % relative on `Q` — ADOPTED and LOCKED
 
-Primary proposal: `tol_rel = 0.10` on the scored inequality, i.e. `Q ∈ [0.90, 1.10]`. Converted into the quantity's own units in Python from the two banked numbers (not by hand), that band is `R_extracted ∈ [2.52909192487721, 3.09111235262770]`.
+**Adopted.** `T4_amp`'s pass condition is `|Q − 1| <= 0.10` on the scored quantity `Q = R_extracted / R_analytic`, equivalently `0.90 <= Q <= 1.10`. **The band is defined on the dimensionless ratio `Q`; the interval it implies on the operand is a consequence of that definition, not a second and separate bar.**
+
+On the operand, with `R_analytic = 2.8101021387524523`, the adopted band requires `R_extracted ∈ [2.52909192487721, 3.09111235262770]` — `0.90 × R_analytic` to `1.10 × R_analytic`, converted in Python from the banked number rather than by hand. The interval is quoted so that a new `R_extracted` can be scored without re-deriving the division; it carries no independent authority, and if `R_analytic` is ever re-measured the interval moves with it while the band does not.
+
+**Status today: FAIL.** `Q = 1.440865461991999` — `R_extracted = 4.0489791163982565` (PMC leg, peak column 738) over `R_analytic = 2.8101021387524523` — a relative error of `44.086546199199894 %`, which is `4.408654619919989×` the `±10 %` half-width. The extraction is over the limit by a factor of `4.408654619919989`.
 
 "Over the limit" below is `|Q − 1| / half-width`: 0 is exact agreement, 1.00 sits exactly on the limit, anything above 1.00 fails.
 
 | bar | pass band on `Q` | pass band on `R_extracted` | half-width as % of `R_analytic` | `\|Q − 1\|` / half-width today | today |
 |---|---|---|---|---|---|
-| **±10 % relative (primary proposal)** | [0.90, 1.10] | [2.52909192487721, 3.09111235262770] | 10.000 % | **4.408654619919989×** | **FAIL** |
-| ±20 % relative | [0.80, 1.20] | [2.24808171100196, 3.37212256650294] | 20.000 % | 2.2043273099599947× | FAIL |
-| ±25 % relative | [0.75, 1.25] | [2.10757660406434, 3.51262767344057] | 25.000 % | 1.7634618479679958× | FAIL |
-| ±0.2 absolute, on the ratio | [0.9288282097501301, 1.0711717902498699] | [2.61010213875245, 3.01010213875245] | 7.117179024986979 % | 6.1943848882290204× | FAIL |
+| **±10 % relative — ADOPTED and LOCKED** | [0.90, 1.10] | [2.52909192487721, 3.09111235262770] | 10.000 % | **4.408654619919989×** | **FAIL** |
+| ±20 % relative — rejected | [0.80, 1.20] | [2.24808171100196, 3.37212256650294] | 20.000 % | 2.2043273099599947× | FAIL |
+| ±25 % relative — rejected | [0.75, 1.25] | [2.10757660406434, 3.51262767344057] | 25.000 % | 1.7634618479679958× | FAIL |
+| ±0.2 absolute, on the ratio — rejected | [0.9288282097501301, 1.0711717902498699] | [2.61010213875245, 3.01010213875245] | 7.117179024986979 % | 6.1943848882290204× | FAIL |
 
-Two things the table settles. **±0.2 absolute is proportionally *tighter* than ±10 % relative**, not a looser fallback: 0.2 is 7.117179024986979 % of `R_analytic = 2.810102138752`, so an absolute band that size admits only a 7.1 % relative disagreement on this geometry. And every candidate bar fails today — the loosest, ±25 %, still fails by 1.7634618479679958× — so the current reading is not a near miss under any tolerance on the list.
+**The two relative alternatives were rejected as too loose to constitute a test.** `±25 %` still fails today, but only by `1.7634618479679958×` the half-width — close enough that a small numerical tweak could flip the verdict without the underlying extraction having been fixed, and **a bar that a tweak can accidentally satisfy measures nothing**. `±20 %` fails by `2.2043273099599947×` for the same reason in weaker form. Neither would test the physics: both would report PASS on a run whose ratio had moved for reasons unrelated to the divergence the clause exists to detect.
+
+**`±0.2` absolute was rejected on two counts.** It is **not** the looser option it reads as: `0.2` is `7.117179024986979 %` of `R_analytic = 2.810102138752`, i.e. **tighter** than the adopted `±10 %`, and the two bands coincide only where `R_analytic = 2.0` — which is why its row above fails by `6.1943848882290204×` rather than `4.408654619919989×`. And a tolerance on a ratio should be relative, so that it scales with the physical quantity instead of being pinned to one particular lattice.
+
+**Why `±10 %` itself.** It is a real test: today's reading fails it by `4.408654619919989×`, so satisfying it requires the physics to improve rather than the bookkeeping to shift. And `10 %` is the standard engineering target for a 2D cross-section extraction — small enough that agreement at that level is evidence the extraction is right, loose enough that a converged method is not failed on discretisation noise alone.
+
+**Locked.** The bar was registered before any measurement was taken on the refined mesh, and **it is not to be moved after the measurement**: bar first, number second, verdict third. That ordering is the whole of its value — a tolerance chosen after seeing the number describes the result it was meant to judge. Any change is governed by §9.6, which requires a pre-registered revisit naming a mechanism, not a new number.
 
 ### 9.3 Why relative rather than absolute
 
