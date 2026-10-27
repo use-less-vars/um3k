@@ -7685,3 +7685,21 @@ Note: `c1_audit`'s own REPRO lines read FAIL on the closed box because its ancho
 
 **Pre-registration node-count prediction was off by 4.** The PEC-walled variant pre-registration predicted PEC edges 42→104 (+62) and PEC nodes 44→109 (+65). Measured: edges +62 (exact match), nodes +61 (short by 4). The discrepancy is because some wall nodes overlap with existing ground PEC nodes and were already excluded from the "before" set, so the delta is smaller than a naive intersection count would predict. **The edge count is the real gate**, because edges are the mixed-solve's actual degree of freedom; the node count is a redundant check that catches coordinate-mapping errors but is sensitive to overlap. Future pre-registrations should gate on the edge count and treat the node count as sanity.
 
+## Phaselag subset sweep: the 10.66 % spread is degenerate fits
+
+**Phaselag subset sweep: the 10.66 % spread is degenerate fits.** `tools/host/phaselag-subsets/run.sh` scores the polyfit beta estimator over the 19 distinct station sets of the 9-station set and reports SPREAD = 10.656 % (`tools/host/phaselag-subsets/out/run.log:72`), which its own threshold calls ALIVE (`:71`, `:73`). That headline is not the estimator's uncertainty, and it must not be quoted as such.
+
+Two-station fits are exact by construction: two stations determine two unknowns, so the residual is zero and the fit cannot fail. They were scored anyway and they supply the whole spread. The worst pair, 0-1, is the 10.656 % itself (`:57`); every other pair is at or below 3.2481 % (`:58`). Excluding degenerate fits the picture is far tighter: leave-one-out over 8 stations stays within 0.9478 % (`:45`; dropping the last station, index 8, moves beta by 0.1803 % in magnitude and negative in sign, `:47`, since 307.539606702 < 308.094964205), dropping both ends (0 and 8, leaving 7) gives 1.0233 % (`:48`), the worst triple (0-2) gives 6.9521 % (`:50`) and the best triple (6-8) gives 0.1158 % (`:56`).
+
+Station 0 is the outlier in every bad subset: 0-1, 0-2 and 0-8 are bad, 6-8, 7-8 and 6-7 are good. Station 0 sits at 10.4 mm and the port at 8.7 mm, 1.7 mm apart (`:10`, `:11`), so the field at station 0 is evanescent-contaminated. That is a property of the reference field at that station, not an estimator failure, and it is the largest single contributor to the tail of the distribution.
+
+**Honest read: the polyfit estimator is subset-sensitive at about 1 % for reasonable 7-9 station subsets.** Both gaps under investigation are larger than that — 3.16 % for the analytic-versus-internal comparison and 4.52 % for the beta_fit-versus-beta_eigen comparison, both recorded above — so estimator bias explains **at most about one third** of either gap. The remainder is evanescent contamination plus placement distortion, and possibly a real difference between the models.
+
+**The cross-estimator discrepancy is now a number rather than an assertion: 0.608713 %.** On the same TOLFLUX field, polyfit on the raw plane E_y gives 308.09496420529206 rad/m and `fit_beta` on the modal voltage gives 309.9818636706751 (`:30`, `:37`), a relative difference of 0.608713 % on the anchor as denominator (`:31`). The gate-versus-baseline estimator defect had previously only been asserted to exist; it is now measured, and it is smaller than the ~1 % station-subset sensitivity above.
+
+Provenance: the sweep's output is `tools/host/phaselag-subsets/out/run.log`, which is gitignored and so not in the tree; the sweep is re-runnable with `bash tools/host/phaselag-subsets/run.sh` and these figures are quoted from that run. No gate was run for any of these numbers; they are diagnostic measurements.
+
+## The gate script parses clean
+
+**The gate script parses clean.** `python3 -m py_compile tools/gates_101_20.py` passes on the 924-line script (operator, host). It imports `warnings` at line 54, and the ESTIMATOR MISMATCH guard sits at lines 446-461 inside `_beta_from_phase_slope` (defined at line 427), above that function's `return` at line 462. The corr_e_z gate edit is therefore syntax-verified and not merely read-verified, which closes the one open verification item left over from that edit.
+
