@@ -674,3 +674,34 @@ say(f"DONE pecbox_variant.py elapsed={time.time() - T0:.1f}s N_PROPAGATING={n_pr
     f"table={TABLE_BOX} npz={NPZ_BOX}")
 if _self_test_ok is False:
     sys.exit(3)
+
+# ARTEFACT TRAP NOTES -- kept at EOF on purpose: 28 inserted lines anywhere in the body
+# shift every line below and invalidate file:line citations elsewhere (annotates the block at ~295).
+# ---------------------------------------------------------------------------
+# TRAPS IN THE ARTEFACTS THIS FILE WRITES -- read before quoting a number out
+# of out/pecbox_spectrum.npz. Neither trap changes a measurement; both change
+# which column a reader believes a number belongs to.
+# ---------------------------------------------------------------------------
+# TRAP 1 -- bank_col in out/pecbox_spectrum.npz is 738, and 738 is not a column
+# of this file's selection. This file builds no payload of its own: the
+# redirect above sends c1_audit.py's writes here verbatim, so the payload is
+# c1_audit.py's and its bank_col is that script's BANKED column (c1_audit.py:145,
+# read from .scratch/s10118_mixed_mode.npz). 738 is the PMC identified column --
+# the right answer to a different question. This file propagates j = [699, 704];
+# the identified PEC column is 699, and 699 is representable only in
+# out/pecbox_table.txt (rank 1 row) and mode_plot.RUNS, never in the npz.
+# Anything downstream that reads bank_col from out/pecbox_spectrum.npz gets the
+# PMC answer silently.
+#
+# TRAP 2 -- R_extracted in out/pecbox_spectrum.npz is 70.63501855512833
+# (70.635018555128326 printed at 17 digits -- the same double), which is the
+# LAST SCANNED column, 704, the known failing witness (corr_ey -0.4264189886,
+# corr_ez_vv -0.0831343462, eps_eff 0.280411; rank 2 in the table). It is stored
+# once after the column loop (c1_audit.py:662), so the last column wins and the
+# identified one is lost. The identified column 699 has NO stored R: the literal
+# 4.163657 appears nowhere in the tree, so it is a record-level figure and not
+# an artefact one. Neither PEC number is quotable from this npz.
+#
+# out/c1_spectrum.npz is unaffected: it scans j = (738,) alone, so its
+# R_extracted = 4.0489791163982565 IS the identified column's, and quotable.
+# ---------------------------------------------------------------------------
