@@ -7621,3 +7621,63 @@ with both `flux_detected` and `slot_detected` routed through it, and `b_min` mad
   `:597-600` (1.164852 % window normalisation); pair B's provenance `docs/design/modalport_ownership.md:7` and
   this file `:6846`-`:6847`.
 
+## Supervisor error: contradictory recommendations
+
+**Supervisor error, recorded.** A dispatch contained two contradictory rulings on the same item: a recommendation line ("Yes to (2)") and a closing line ("Do not authorize C2a yet"). The agent followed the closing, which was the intended answer. The correct ruling, given the re-based gap, is that C2a has nothing to explain and is deferred, not parked. Recorded as an instance of the "state each ruling once, in one place" pattern.
+
+## Named pattern: contradictory recommendations
+
+**Named pattern: contradictory recommendations.** When a dispatch contains multiple decision lines (recommendations section, closing paragraph), they can conflict. The correct fix is not "read both" — it is "state each ruling once, in one place, and reference it from the other." Bit the supervisor twice this session. The record now carries the pattern.
+
+## C1 falsified by exhaustion on the PMC pencil
+
+**C1 falsified by exhaustion on the PMC pencil.** `tools/host/c1-audit/run.sh` (31×17, 1444-column spectrum, `c1_spectrum.npz` banked): only one propagating mode exists (λ real, β² > 0), at column 738, matching the banked mode. No alternative mode exists for the selector to miss. **The caveat is boundary condition, not mesh.** `c1_audit.py:307` sets `BOUNDARIES = (ground, strip)` — PEC only on ground and strip; every other wall is homogeneous Neumann (magnetic). "One propagating mode" is a true statement about a **PMC box**. It is not a statement about a PEC-walled waveguide. Whether a PEC-walled pencil admits a second mode is tested in Entry 8; the answer is yes, and the second mode is not a better mode for the port.
+
+## Named pattern: shape-pair screen tautology
+
+**Named pattern: shape-pair screen tautology.** The C1 audit's screen (`corr_e_y ≥ 0.90 AND corr_e_z ≤ 0.30`) matched the current mode (column 738), reporting `shape_pair_ok = True`. Read literally, this confirms existence of a mode matching the screen — which is the mode the selector already picks. C1's requirement is a *different, better* mode, not the current one. A screen that matches the current mode does not confirm mis-pick; it confirms existence. Follow-on: any future screen for a defect must require the *defective* population to be matched, not the healthy one. Third instance of the "state the inequality direction in prose against the falsifier's logic" pattern.
+
+## Three different BVPs were being compared as one
+
+**Three different BVPs were being compared as one, and the largest term is the analytic reference disagreeing with itself.**
+The error budget inherited from pre-M3c work treats `analytic ε_eff`, `mixed solve ε_eff`, and `FDTD ε_eff` as three measurements of one quantity. They are not. There are **four β numbers on the table**:
+| source | β | ε_eff = (β/k₀)² | box / walls |
+|---|---|---|---|
+| analytic, **definitional** `k0√ε_eff` | 300.498 | 3.35001 | 43 mm, Neumann |
+| analytic, **measured** by `fit_beta(x,v)`, `n_wave=1` on its own placed field | 309.982 | 3.56481 | 43 mm, Neumann |
+| FEM mixed 31×17 | 312.783 | 3.62951 | 20 mm, PEC ground+strip, Neumann elsewhere |
+| FDTD | 314.032 | 3.65855 | 20 mm, PEC lateral, PML lid |
+**The definitional analytic β is a tautology, not a measurement.** `emfit/mode_profile.py:650` computes `eps_eff = c_prime / c_air` — an electrostatic capacitance ratio, not a propagation constant squared. The module computes no β at all; the 300.498 is synthesised by a caller as `k0·√eps_eff`. The full-wave side `emfit/mode2d.py:1193-1195` computes `eps_eff = beta_sq / k0²`, which is also a tautology of β. Neither is evidence of agreement.
+**The measured analytic β uses `fit_beta(x,v)`, `n_wave=1`.** Confirmed chain: `.scratch/logs/s10118_basis.py:402-406` builds station phasors via `modal_station_phasors` and `modal_line_quantities`; `:413-414` records `beta=float(line.beta)`; `:437-438` is the `measure(PANA, "analytic")` call; `emfit/modal.py:575-578` sets `beta_fit = fit_beta(x, v)` and derives `epsilon_eff = (beta*C0/omega)**2`; `emfit/ports.py:861-976` is `fit_beta` itself (2048-point scan → Brent → Newton, complex **one-wave** model). It is the same analytic field as A, reduced by a different method. The +3.16% in β / +6.41% in ε between A and B is therefore an estimator/placement question, not a model difference. Whether it is estimator bias or placement-induced phase distortion is the current open attribution task.
+**A second, confirmed defect: the gate script and the analytic baseline use different estimators.** `tools/gates_101_20.py:426-445` uses an unweighted `np.polyfit` on unwrapped phase. The 309.982 baseline comes from `fit_beta(x, v)`, `n_wave=1`. **Every gate run before this is reconciled is cross-estimator by construction**, independent of physics.
+**ε_eff gaps factor exactly** (multiplicative, matched to rounding):
+- analytic definitional → analytic measured: **+6.41%**
+- 43 mm → 20 mm box, walls unchanged: **+1.81%**
+- Neumann → PEC+PML on the same box: **+0.80%**
+- product: **+9.21%**, matching FDTD/analytic-definitional
+In log-share terms: **~71% analytic-internal, ~20% box clearance, ~9% wall type**. The FEM-vs-FDTD agreement on the *same* box is the correct accuracy measure: **0.3993% in β, 0.8001% in ε** (a prior record listed 0.79% — that was a linearised rounding of the squared quantity; 0.8001% is the exact value). This replaces FEM-vs-analytic as the §1 error budget anchor.
+**Correction to a previous version of this entry.** An earlier claim that the observed 4.50% "sits dead centre in the 4–5% band documented at `mode_profile.py:589-591`" was wrong in units: the module's 4–5% is a percentage of `eps_eff` and `Z0`, **not of β**. Box clearance accounts for ~1.81% in ε (about a fifth of the 8.34% gap). The largest single term is the analytic-internal +6.41% in ε.
+**Priority implication.** C2a has nothing to explain (gap evaporated; FEM-vs-FDTD 0.3993%/0.8001% at the kill floor's edge). C2a deferred, not parked. The real targets: (ii) estimator/placement attribution in the analytic pipeline (in flight) and C2b (graded cell / singular strip edge) for the shape defect.
+
+## (ii) estimator bias is alive, not falsified
+
+**(ii) estimator bias is alive, not falsified.** `.scratch/logs/s10118_beta_null_report.txt` STEP 3: the analytic basis shows 2.02% span across all 21 contiguous windows, pure window choice contributes 0.164%, 3-station ends 1.93% / 0.890%. On the mixed basis, the same lever is 2.99–3.06% with a **6.24%** span across the same 21 windows, all-21 span **31.2%**. This is the same size as the 4.52% β_fit-vs-β_eigen gap being chased, so **every mixed-basis β comparison in the record is provisional until the estimator contribution is bounded**. The gate script (`tools/gates_101_20.py:426-445`) uses an unweighted polyfit; the reference figure 309.981864 came from `fit_beta(x, v)` with `n_wave=1` (`emfit/ports.py:861-976`). Different estimators. This is a **confirmed** defect in the gate script, not the extraction, and must be fixed before any gate run.
+
+## The 0.4383 anchor runs and passes
+
+**The 0.4383 anchor runs and passes.** `tools/host/c1-audit/pecbox_variant.py --self-test-anchor` at 10 GHz in a 20×7.6 mm vacuum PEC box: β²/k₀² = 0.438322827 vs predicted 0.438278, rel_delta 1.022e-4, PASS at tol 0.02. The mixed solve's load-bearing validation anchor — cited since the formulation was built in `emfit/mode2d.py:1020-1022` — had no executable counterpart until this run. It now does. The docstring's arithmetic is confirmed: `1 − (c/(2W)/f₀)² = 0.438278`. This is a 20 mm vacuum box at 10 GHz, not our geometry; it is a *formulation* validation, not a *problem* validation.
+
+## PEC-walled variant: C1 falsified in both pencils
+
+**PEC-walled variant: C1 falsified in both pencils.** 31×17 node mesh, 1382 free edges (was 1444), 104 PEC edges (was 42, +62 matching pre-registration). N_PROPAGATING = 2: quasi-TEM at col 699 (β²/k₀² = 3.606, corr_e_y 0.9123, **corr_e_z 0.1473**) and a box mode at col 704 (β²/k₀² = 0.280, corr_e_y 0.426). The second mode is faster than light (v_phase = 1.89c at 7.83 GHz), does not have the quasi-TEM shape, and is correctly rejected by the screen. **The selector correctly picks col 699.** No better mode exists for the port in either pencil. C1 dead.
+**Three corr_e_z values, three contexts, not to be conflated:**
+- **0.1473** (0.147291446944630) = PEC pencil, this run. Genuine, new measurement.
+- **0.1462** (0.14619976001754773) = `.scratch/logs/mesh*.log` value, **RETRACTED** per §8.1, do not quote.
+- **0.1192** (0.11916043239134175) = PMC pencil, banked baseline (`s10118_result.txt:105`). Correct for that box.
+Whether the **0.028 PEC-vs-PMC shift** is a real wall-treatment effect or an artefact of the closed-box solve has **not been established**. C2b's premise (that corr_e_z is a stable, physics-carrying quantity) needs that shift checked against the mesh noise floor before it can be validated. Step 0 of the C2b pre-registration (§7.3) addresses this.
+Note: `c1_audit`'s own REPRO lines read FAIL on the closed box because its anchors (corr_e_y 0.9208, corr_e_z 0.1192) belong to the open-top geometry. This is expected, not a defect.
+
+## Pre-registration node-count prediction was off by 4
+
+**Pre-registration node-count prediction was off by 4.** The PEC-walled variant pre-registration predicted PEC edges 42→104 (+62) and PEC nodes 44→109 (+65). Measured: edges +62 (exact match), nodes +61 (short by 4). The discrepancy is because some wall nodes overlap with existing ground PEC nodes and were already excluded from the "before" set, so the delta is smaller than a naive intersection count would predict. **The edge count is the real gate**, because edges are the mixed-solve's actual degree of freedom; the node count is a redundant check that catches coordinate-mapping errors but is sensitive to overlap. Future pre-registrations should gate on the edge count and treat the node count as sanity.
+
