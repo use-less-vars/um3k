@@ -84,7 +84,7 @@ On the operand, with `R_analytic = 2.8101021387524523`, the adopted band require
 
 **Why `±10 %` itself.** It is a real test: today's reading fails it by `4.408654619919989×`, so satisfying it requires the physics to improve rather than the bookkeeping to shift. And `10 %` is the standard engineering target for a 2D cross-section extraction — small enough that agreement at that level is evidence the extraction is right, loose enough that a converged method is not failed on discretisation noise alone.
 
-**Locked.** The bar was registered before any measurement was taken on the refined mesh, and **it is not to be moved after the measurement**: bar first, number second, verdict third. That ordering is the whole of its value — a tolerance chosen after seeing the number describes the result it was meant to judge. Any change is governed by §9.6, which requires a pre-registered revisit naming a mechanism, not a new number.
+**Locked.** The bar was registered before any measurement was taken on the refined mesh, and **it is not to be moved after the measurement**: bar first, number second, verdict third. That ordering is the whole of its value — a tolerance chosen after seeing the number describes the result it was meant to judge. Any change is governed by §9.6, which requires a pre-registered revisit naming a mechanism, not a new number. The measurement the lock was set ahead of has now been taken, and it is recorded in §9.7: it does not move the bar and it does not move the verdict.
 
 ### 9.3 Why relative rather than absolute
 
@@ -111,4 +111,32 @@ The bar is **a pre-registered engineering requirement, not a derived error budge
 
 ### 9.6 Revisit clause
 
-The bar may be revisited **once**. The revisit must be pre-registered in `decisions.md` — the new tolerance, the mechanism that justifies it, and the date — *before* it is applied to any computed value. It must never be tuned post-hoc to a number already in hand: choosing the tolerance after seeing 1.4409 (or 1.763, or 6.194) converts the gate into a description of the result it was supposed to judge. A revisit prompted by a measured miss must therefore name a mechanism — a changed column-selection rule, a re-meshed run, a different leg, a resolved estimator question from §6 — and not merely a new number.
+The bar may be revisited **once**. The revisit must be pre-registered in `decisions.md` — the new tolerance, the mechanism that justifies it, and the date — *before* it is applied to any computed value. It must never be tuned post-hoc to a number already in hand: choosing the tolerance after seeing 1.4409 (or 1.763, or 6.194) converts the gate into a description of the result it was supposed to judge. A revisit prompted by a measured miss must therefore name a mechanism — a changed column-selection rule, a re-meshed run (which §9.7 now excludes at the strip band: a 3× refinement there moved the operand by 0.13 %, so a re-mesh can be named only at the z band or the air band), a different leg, a resolved estimator question from §6 — and not merely a new number.
+
+### 9.7 The measurement the bar was locked ahead of: the strip band is refined to flatness and the verdict does not move
+
+**Ordering.** §9.2’s bar was registered and committed before any refined-mesh solve had been run; this section is that measurement, taken afterwards and reported against a bar it did not choose. Bar first, number second, verdict third — nothing in §9.2 was touched to produce §9.7.
+
+**The experiment.** Strip-band cells alone: `C1_STRIP_CELLS` = 12 / 18 / 24 / 36 against the banked 12, with the 9|9 air grading and the 8|4|4 substrate held fixed at their banked values — a one-parameter family in which the strip is the only thing that moves. The knob lives in `tools/host/c1-audit/c1_audit.py` (default 12 = banked mesh, guarded `>= 1`, echoed into the run’s `mesh :` provenance line) alongside `C1_OUTDIR` and `C1_ALLOW_REMESH`; with them unset, the mesh, both output paths, both `SystemExit` messages and the reproduction target are byte-identical to before, and `C1_STRIP_CELLS=12` reproduces the banked capture to 10 digits — `best_col` 738, `corr_e_y` 0.92077078481114194, `R_extracted` 4.0489791164, REPRO PASS.
+
+| strip cells | mesh (nodes) | strip cell size | `R_extracted` | `Q` | relative error | beta | eps_eff | column |
+|---|---|---|---|---|---|---|---|---|
+| 12 | 31x17 | 250.000 um | 4.0489791164 | 1.4408654620 | 44.0865 % | 312.782764632 | 3.629512208 | 738 |
+| 18 | 37x17 | 166.667 um | 4.0463369445 | 1.4399252215 | 43.9925 % | 312.781399019 | 3.629480515 | 974 |
+| 24 | 43x17 | 125.000 um | 4.0514540972 | 1.4417462061 | 44.1746 % | 312.780825091 | 3.629467196 | 1209 |
+| 36 | 55x17 | 83.333 um | 4.0493407985 | 1.4409941698 | 44.0994 % | 312.780379041 | 3.629456844 | 1651 |
+
+**Flat within noise, not converging.** The pair deltas are +0.0653 %, −0.1263 %, +0.0522 % — sign-alternating at the 1e-3 level, no monotone trend across a 3× range. The operand is flat to 0.13 % over that range.
+
+**Every extrapolation lands in the same place.** Linear `R_inf` 4.0503776201 (44.14 % high), quadratic 4.0548481483 (44.30 %), Richardson on 12-18-24 (`p` = 0.954) 4.0540962691 (44.27 %), Richardson on 18-24-36 (`p` = −1.276, unidentifiable) 4.0442236458 (43.92 %), free power law `p` → 0.004 (no information in the exponents). All five land in 4.04-4.06: ~44 % high, ~4.4× outside the adopted band.
+
+**The solves were healthy.** `corr_ey` 0.9208 → 0.9213 and `corr_ez_vv` 0.9353 → 0.9352 across the sweep, `modes_kept` = 1, `ok` = True, residual ~1e-16 on every row — the flatness is not a solve failing quietly.
+
+**Verdict.** NO. Strip-band refinement neither reaches the bar nor moves the operand: 0.13 % of movement over 3×, against a miss of 4.408654619919989× the half-width. The 44.09 % disagreement is not strip-band discretisation, and further refinement of the strip cannot close it.
+
+**A correction that matters.** The earlier `.scratch` three-mesh comparison (31x17 / 41x22 / 51x19 → `R_extracted` 4.049 / 3.771 / 3.566) looks O(h)-convergent and would extrapolate to `R_inf` of roughly 2.86-3.32, inside the band — but it changed the strip and the z band and the air band together. Isolate the strip and the apparent convergence is gone. Whatever residual sensitivity exists is in the z band, the air band, or the extraction definition, and is not something this sweep can see.
+
+**The mesh is already graded.** The banked grading steps 9|12|9 across 0.9444 / 0.25 / 0.9444 mm and 8|4|4 up 0.2 / 0.5 / 1.0 mm (~3.8:1 in both directions), and `y` = 8.5 mm and `y` = 11.5 mm are node lines by construction (the PEC masks test `p[:,1] == 0.0` at 1e-12), so a uniform mesh cannot be built for this geometry at all. “Concentrate cells at the strip edges” therefore describes what the mesh already does, and “de-grade” is not an available move.
+
+**What did not happen.** The bar is untouched: ±10 % relative on `Q`, `R_extracted` ∈ [2.52909192487721, 3.09111235262770], still FAIL at 4.408654619919989× the half-width. The §9.6 revisit is not invoked — this sweep establishes no mechanism, and it removes strip re-mesh from the list (untested: the z band, the air band, the extraction definition). §9.4’s column/peak assertion remains unimplemented and §9.5’s “registered, not implemented” still stands: no `.py` compares `R_extracted` against `tol_rel`, and `m3c_gate_v2.md:630` still reads “Seven entries, no more.”
+
