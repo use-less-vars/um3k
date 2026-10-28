@@ -96,6 +96,7 @@ __all__ = [
     "Mode2D",
     "assemble",
     "assemble_mixed",
+    "candidate_records",
     "eps_eff_laplace",
     "k0_from_freq",
     "mesh_from_grid",
@@ -792,6 +793,57 @@ class Mode2D:
         gb = g[:, _LOCAL_B, :]
         terms = w[:, :, None] * (lam_a[:, :, None] * gb - lam_b[:, :, None] * ga)
         return terms.sum(axis=1)
+
+
+def candidate_records(res) -> tuple:
+    """Every candidate of ``res`` as a flat record that carries its diagnostic.
+
+    ``Mode2D.candidates`` is a tuple of ``(beta_sq, eps_eff)`` pairs and
+    nothing else, so an artefact that stores only that tuple loses the one
+    number that says whether a candidate is a physical mode or a spurious
+    gradient mode: the curl ratio ``e^T K_q e / e^T B e`` held in
+    :attr:`Mode2D.curl_ratio` (zero to working precision marks a gradient
+    null vector, whose ``beta_sq`` is exactly ``k0^2``).  Mode purity is then
+    lost to any reader of the stored artefact -- neither the pair list nor the
+    chosen index can be re-checked against the curl test.
+
+    This returns *the same* candidates, in the same order, with that
+    diagnostic attached: one ``dict`` per candidate, index-aligned with
+    ``res.candidates`` (``record["index"] == i`` describes
+    ``res.candidates[i]``, and all of them are returned, including those that
+    fail the solver's ``acceptable`` curl test).  The key names and the
+    ``beta``-from-``beta_sq`` convention match ``candidate_rows`` in
+    ``tools/host/anchor/ladder.py``: ``beta`` is ``sqrt(beta_sq)`` and is
+    ``None`` when ``beta_sq < 0`` (below cutoff).
+
+    Every value is a plain Python ``int``/``float`` (or ``None``), never a
+    numpy scalar, so the tuple drops straight into ``json.dump``.
+
+    This is additive: :attr:`Mode2D.candidates` itself is unchanged, nothing
+    in the solver calls this, and the class is only read.
+    """
+    pairs = list(res.candidates)
+    ratios = list(res.curl_ratio)
+    if len(ratios) != len(pairs):
+        raise ValueError(
+            f"mode 2D result is inconsistent: {len(pairs)} candidates but "
+            f"{len(ratios)} curl ratios; the two must be index-aligned"
+        )
+    records = []
+    for i, ((beta_sq, eps_eff), curl_ratio) in enumerate(zip(pairs, ratios)):
+        bsq = float(beta_sq)
+        cr = float(curl_ratio)
+        records.append(
+            {
+                "index": int(i),
+                "beta": float(np.sqrt(bsq)) if bsq >= 0.0 else None,
+                "beta_sq": bsq,
+                "eps_eff": float(eps_eff),
+                "curl_ratio": cr,
+                "abs_curl_ratio": abs(cr),
+            }
+        )
+    return tuple(records)
 
 
 # ----------------------------------------------------------------------
