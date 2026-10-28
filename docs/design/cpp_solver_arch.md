@@ -26,7 +26,7 @@
 
 ## 2. The incumbent being replaced, stated as measurement
 
-**2.1 The adopted solve.** `decisions.md:6112` to `:6116`: "The solve is shift-invert Lanczos: `eigsh(C, k=nk, M=B, sigma=sigma, which="LM")` (`/tmp/c3.py:96-97`), which factorises `C - sigma B` sparsely and returns the `k` eigenvalues nearest `sigma`. Nothing is densified at any size used here, including 259760 degrees of freedom."
+**2.1 The adopted solve, and the second entry point it hides.** `emfit/mode2d.py:795` `solve_modes` is the adopted solve: `c = (k0*k0*m_eps - k_q).tocsr()` at `:860`, `b = m_mu.tocsr()` at `:861`, free-degree slices `c_free` and `b_free` at `:862` to `:863`, then `eigsh(c_free, k=n_k, M=b_free, sigma=sigma, which="LM")` at `:868`, with `sigma` a scalar (`float` annotation at `:798`, `float(sigma)` at `:847`, finite check at `:850` to `:851`) and with no `OPinv`, no `LinearOperator`, no `todense` and no `toarray` anywhere in `:795` to `:934`. `decisions.md:6112` to `:6116` records the same solve against `/tmp/c3.py:96-97`, a file that is not in this tree; the citation that can be reopened is the one just given. The same file carries a second solve, `solve_modes_mixed` at `:935`, and it is dense by construction: `_MIXED_DENSE_MAX = 3000` at `:151`, `use_dense` at `:1094`, a `NotImplementedError` above that cap at `:1096` to `:1099`, and below it `splu(h)` at `:1107`, `toarray()` at `:1115` and `_dense_eig` at `:1120`. The sentence "nothing is densified at any size used here" is true of the first and false of the second. See 9.1.
 
 **2.2 The pencil actually run.** The mass-side enlarged pencil of `docs/design/sparse_eigenmode.md:550` to `:584`:
 
@@ -37,7 +37,7 @@
 | factorised matrix | same | `K_C - sigma*M_C`, one `splu` |
 | `sigma` | scalar | `0.999 * beta_sq`, pre-registered in the result |
 
-**2.3 The `LinearOperator` form is mandatory, not stylistic.** `M_C` is symmetric **indefinite**, so it cannot be passed as the `M` argument of `eigsh`. The driver must be handed `(K_C - sigma*M_C)^{-1} M_C` as an operator and must never see `M_C` as an `M`. Evidence, MEASURED at `free_e = 1444` with `M_C` of order 1927 (`sparse_eigenmode.md:529` to `:533`, with the dimension triple at `:336`):
+**2.3 The `LinearOperator` form is mandatory for the port, and absent from the incumbent.** `M_C` is symmetric **indefinite**, so it cannot be passed as the `M` argument of `eigsh`. A driver that has to exceed the incumbent's cap must be handed `(K_C - sigma*M_C)^{-1} M_C` as an operator and must never see `M_C` as an `M`. That is a requirement on the port and not a description of anything in `emfit/`: `solve_modes` passes the positive definite `M=b_free` at `:868` and lets the ARPACK layer factorise `C - sigma B` internally, and `solve_modes_mixed` never forms the operator at all, building the dense pair at `:1115` to `:1116` and calling `_dense_eig` at `:1120` (9.1). Evidence, MEASURED at `free_e = 1444` with `M_C` of order 1927 (`sparse_eigenmode.md:529` to `:533`, with the dimension triple at `:336`):
 
 | quantity | value |
 |---|---|
@@ -71,7 +71,7 @@ Three consequences follow, and each of them changes section 4:
 
 **2.6 Extrapolations are labelled as extrapolations.** `sparse_eigenmode.md:357` to `:360` states the terms: "Everything in this subsection is **EXTRAPOLATED**: a two-point power law fitted through the two measured rungs ... Nothing here was measured at the target mesh, and nothing here was measured at ladder rung 4." At `free_e = 30000` (`:362` to `:365`) that gives route A (`nnz(L+U)` `8.99e8`, 10.8 GB, 343 s) against route C (`n = 40021`, `nnz(L+U)` `7.03e6`, 0.0843 GB, 0.156 s). The 0.0843 GB and 0.156 s figures are **EXTRAPOLATED**. They are quoted here because they set the scale of what a port is being asked to beat, and for no other reason.
 
-**2.7 The dense path stays dead.** `decisions.md:6398` to `:6402` records the rejection: `todense()` at `emfit/eigen.py:186`, `sla.eigh` at `:196` and `:198`, and a guard that raises above `max_dense = 3000` at `:176` to `:182`. "It cannot reach 115232 or 259760 degrees of freedom, and it must not be refactored to try; 315.64 MiB and 155 s is the measured alternative." Any C++ proposal that reaches for a dense solve on these meshes is contradicting a recorded ruling, not proposing an optimisation.
+**2.7 The dense path stays dead in `emfit/eigen.py` and is alive in `emfit/mode2d.py`.** `decisions.md:6398` to `:6402` records the rejection of the `emfit/eigen.py` path: `todense()` at `emfit/eigen.py:186`, `sla.eigh` at `:196` and `:198`, and a guard that raises above `max_dense = 3000` at `:176` to `:182`. "It cannot reach 115232 or 259760 degrees of freedom, and it must not be refactored to try; 315.64 MiB and 155 s is the measured alternative." That ruling names one dense path and the tree contains two. `solve_modes_mixed` in `emfit/mode2d.py` is itself a dense path: `splu` at `:1107`, `np.eye` at `:1114`, `toarray()` at `:1115`, `_dense_eig` at `:1120`, and the same 3000 threshold at `:151` enforced by the raise at `:1096`. A port that excludes only the `emfit/eigen.py` path has not excluded the dense path the incumbent actually reaches (9.1).
 
 ---
 
@@ -239,13 +239,13 @@ One honest qualification, recorded so the block is not over-read: `decisions.md:
 
 **PASS** and **FAIL**, and only those two. "Close" is not a verdict. "Within tolerance except for one pair" is a FAIL with a note.
 
-| statistic | threshold | verdict if exceeded |
-|---|---|---|
-| `|rel|` on `beta^2`, both meshes | `1e-11` | PASS or FAIL, reported only; NOT citable as validation or as port defect (5.3) |
-| `|rel|` on `beta^2`, same run | `1e-8` | PASS or FAIL, binding (5.4) |
-| Python self-agreement, 5.5 | bitwise | FAIL (harness invalid) |
-| residual, either side | `1e-6` | not a result |
-| environment block, 5.8 | as registered | comparison void |
+| statistic | threshold | verdict if exceeded | citable for |
+|---|---|---|---|
+| `|rel|` on `beta^2`, both meshes | `1e-11` | PASS or FAIL, reported only | nothing: not validation, not port defect (5.3) |
+| `|rel|` on `beta^2`, same run | `1e-8` | PASS or FAIL, binding | fidelity of the port to the Python on the same pencil, and nothing beyond it (5.4, 9.1) |
+| analytic anchor (9.1) | not set here | reference only, no verdict | whether the Python itself is right. UNMEASURED (9.1) |
+| physics invariants (9.1) | not set here | reference only, no verdict | passivity, mode purity and `beta` against an analytic value. UNMEASURED (9.1) |
+The thresholds do not move: `1e-6` on the residual on either side is still not a result, self-agreement in 5.5 is still bitwise and its failure still invalidates the harness rather than the port, and the environment block of 5.8 still voids any comparison when it differs. What changes is the fourth column, which now says what each row is allowed to certify, and the last two rows are commitments recorded in 9.1 rather than measurements. Those three are retained and were not dropped: they sit outside the criterion table because they are not accuracy criteria and not wrongness criteria.
 
 ---
 
@@ -302,3 +302,13 @@ Principal-only, except for the two rulings recorded in 4.1 and 4.2. Nothing belo
 - It does not move any existing verdict. `T4_amp` remains the recorded FAIL, `T4b` and `T4c` remain as recorded in `docs/design/t4b_t4c_preregistration.md`, and the two errata recorded there in section 8 are not reopened here.
 - It does not decide the `mode2d` normalisation defect (`decisions.md:7008`). Section 5.2 excludes field scale from the comparison for exactly that reason, following `core_contract.md:327` to `:331`.
 - It does not authorise a run. No benchmark, no prototype, and no build is implied by this document having been written.
+### 9.1 Corrigenda, appended below the last line so that nothing above it moves
+
+Four statements above did not match the code they describe, and they are corrected here rather than in place because eleven citations point into lines 110 to 272 of this file and a line inserted above them would drift every one of them. The corrections were applied line for line, one line in and one line out, and the 5.9 table was replaced seven lines for seven, so `:244` is still the `1e-11` row and `:245` is still the `1e-8` row.
+
+- **2.1.** There are two solves in `emfit/mode2d.py`, not one. `solve_modes` at `:795` is a sparse shift-invert Lanczos on a standard symmetric pencil with a positive definite mass side: `eigsh(c_free, k=n_k, M=b_free, sigma=sigma, which="LM")` at `:868`, a scalar `sigma`, no `OPinv` and no `LinearOperator` in `:795` to `:934`. `solve_modes_mixed` at `:935` is dense by construction: capped at `_MIXED_DENSE_MAX = 3000` at `:151`, raising at `:1096` to `:1099` above the cap, and below it building `toarray()` pairs at `:1115` to `:1116` for `_dense_eig` at `:1120`. The quoted decisions entry at `:6112` to `:6116` cites `/tmp/c3.py:96-97`, which is not in this tree.
+- **2.3.** The `LinearOperator` requirement is a condition the port must meet to pass the cap. It is not a description of the incumbent, which never forms that operator: the standard pencil is handed to ARPACK with `M=b_free`, and the mixed path builds a dense pair instead.
+- **2.7.** The dense path is dead in `emfit/eigen.py` (`:176` to `:182`, `:186`, `:196`, `:198`) and alive in `emfit/mode2d.py` (`:1107`, `:1114` to `:1115`, `:1120`). A port that excludes one and not the other has not applied the ruling.
+- **5.9.** The table now has four rows and a column stating what each row may certify. `1e-11` certifies nothing. `1e-8` certifies fidelity to the Python on the same pencil and nothing beyond it, because both sides share the arithmetic and therefore share its cancellation: `b_dense = m1_f.toarray() - (c_f @ d_dense) @ c_f.toarray().T` at `:1116` and `e_z[free_n] = 1j * beta * lu_h.solve(c_f.T @ x)` at `:1175` both combine terms that are not scaled to their difference. The two added rows, an analytic anchor and the physics invariants, carry no threshold and no verdict, and they are commitments rather than measurements.
+
+**Consequence for the port, stated once.** A port has to name its reference entry point. A port of `solve_modes` is a port of the path measured to return nothing at `k = 6` at 259,760 degrees of freedom, and a port of `solve_modes_mixed` cannot reach the meshes in 5.6 at all, because M3 at 28,980 and M4 at 30,672 free edges are ten times its cap. The full argument, together with the one adverse analytic cross-check that prompted these rows and the harness defect that prevents it being promoted to a measurement of the incumbent, is in `docs/design/d44_acceptance.md`.
