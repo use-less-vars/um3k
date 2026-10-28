@@ -928,3 +928,210 @@ One false alarm belongs on the record here: the `indefinite` / `LinearOperator` 
 this note and never was - it lives in `docs/design/sparse_eigenmode.md`, where `indefinite` appears
 on `16` lines and `LinearOperator` on `6` - so a grep of this note for it finds nothing, and
 that absence is not a loss.
+
+---
+
+## 14. Five meshes, one hump: the mesh-parameterised probe, and the verdict it forces
+
+Section 13 closed the five-rung ladder and its one sparse cross-check. This section reports what
+happened when the same Route C probe was lifted off the rung-4 mesh and run across a fresh,
+irregular series of five meshes. It answers the question the ladder could not: **is the
+`T4_amp` discrepancy a fixed offset that refinement will carry away, or is it a floor?** The
+answer, stated once and not softened below, is the second: the registered band is missed at every
+fresh mesh, by 2.2-2.4x the registered `|Q-1| <= 0.10` bar, and the miss is not monotone.
+
+### 14.1 The tool generalised: one probe, mesh-parameterised, and how it was validated
+
+`tools/host/sparse-probe/routeC_mesh_probe.py` is not a second implementation. It **imports** the
+committed rung-4 Route C probe rather than forking it: the mesh, the output label and the shift
+are the only things that become arguments, and every line of arithmetic under test - assembly,
+the `splu` factorisation, the pencil, the `eigsh` call, the Rayleigh quotient, the two-component
+residuals - is the committed code path. A fork would have left the door open to the two probes
+drifting apart; the import closes it. Mesh spec syntax is `nx/nz/A-b-c` (e.g.
+`36/22/20-10-10`), the same form the ladder used.
+
+Before any fresh mesh was trusted, the generalised tool was re-run on **rungs 2 and 3** and
+scored against the banked npz values:
+
+| rung | digits reproduced, `beta_sq` | digits reproduced, `R_extracted` |
+|---|---|---|
+| 2 | 11.68 | 10.13 |
+| 3 | 11.30 | 11.91 |
+
+A rung-3 run with the compatibility shim **on** is byte-identical to the shim-off run, so the
+shim is not silently doing arithmetic. Four of those four numbers are 11.30-11.91 digits, and
+**the limiting side is the banked data, not our own arithmetic.** The decisive measurement is the
+gap between the Rayleigh quotient we form and the eigenvalue the banked array stores: `4.6e-14`,
+some five orders of magnitude smaller than the disagreement above. When a probe agrees with its
+own inputs to 14 digits and disagrees with the banked record at 11, the 11 is the record's
+precision, not a bug in the probe.
+
+Rung 2's `R` at 10.13 digits is the one genuine outlier and it is explained rather than excused:
+the column-criterion extraction amplifies error on the way from `beta_sq` to `R`. The measured
+chain is `rel_err(beta_sq) = 2.0957645715664437e-12` becoming
+`rel_err(R) = 7.454663503262057e-11`, an amplification of **35.6x** (the "~36x" of the working
+notes). That is a property of how `R_extracted` was banked at rung 2, and it sets the noise floor
+of any rung-2 cross-comparison; it is not a defect introduced by the generalisation.
+
+### 14.2 The rung-4 control: a different shift, the same answer
+
+The control run reproduces the rung-4 mesh exactly (`36/22/20-10-10`, `9604` free edges,
+`n_dof = 12807`) and it does so **with a shift that is not the committed one**:
+
+* shift used here: `96655.73751135959`
+* committed rung-4 shift: `96777.0147917196`
+* difference: `0.13%`
+
+Against that, the control reproduces the banked rung-4 result to **11.51 digits in `beta_sq` and
+11.59 digits in `R`**. A 0.13% move in the shift with 11.5-digit agreement in the answer is the
+definition of **shift-independence**: the result is a property of the pencil, not of where the
+spectrum was translated. It also means the generalised probe agrees with the dense anchor
+end-to-end at the one mesh where both exist, via an input the committed run never used. The
+control's own `R = 3.5754127532043682` sits on the banked value `3.5754127531951991` to 11
+digits, which is what licenses reading the four fresh meshes below as new information rather than
+as probe noise.
+
+### 14.3 The five meshes
+
+All five runs wrote their JSON per-process into `tools/host/sparse-probe/out_mesh/` (JSON only;
+no npz was produced by these runs). `sigma` is chained as `0.999 x` the previous run's measured
+`beta_sq`, so no run inherits a shift from the ladder's `out/` tree. `R_analytic =
+2.8101021387524523`; the registered band is `[2.52909192487721, 3.09111235262770]`.
+
+| tag | mesh | nx | nz | free edges | `n_dof` | `R_extracted` | `\|Q-1\|` | wall (s) | RSS (MiB) | factor (GB) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| M5 (control, = rung 4) | `36/22/20-10-10` | 81 | 41 | 9604 | 12807 | 3.5754127532043682 | 0.27234 | 0.167 | 236.7 | 0.0164 |
+| M1 | `36/27/22-11-11` | 91 | 45 | 11888 | 15855 | 3.6601243414431774 | 0.30249 | 0.193 | 234.7 | 0.0220 |
+| M2 | `47/35/28-14-14` | 118 | 57 | 19665 | 26225 | 3.6652028499934413 | 0.30429 | 0.358 | 235.7 | 0.0423 |
+| M3 | `56/43/34-17-17` | 143 | 69 | 28980 | 38647 | 3.4737020689593079 | 0.23615 | 0.647 | 272.5 | 0.0687 |
+| M4 | `58/44/35-17-18` | 147 | 71 | 30672 | 40903 | 3.4304140267508245 | 0.22074 | 0.691 | 288.8 | 0.0759 |
+
+Supporting checks, all five runs, all passing: the far-field residual is `1.38e-11`, `1.10e-12`,
+`3.55e-12`, `3.26e-12`, `6.06e-11` against a reference pencil and `3.60e-17`, `2.30e-18`,
+`3.12e-18`, `1.45e-18`, `2.48e-17` against the enlarged system; the `x2` vs `Dc^T x1`
+consistency residual is `1.14e-13` to `3.03e-11`; `opinv_calls` is `21` in every run. Nothing in
+these five records is a broken solve.
+
+### 14.4 The gate verdict: FAIL
+
+Scored against the condition registered in section 9 - `|Q-1| <= 0.10` - **every one of the five
+meshes fails**, the control included:
+
+* at `28980` free edges, `|Q-1| = 0.236148`: **2.36x** the registered bar. In `R` terms,
+  `3.4737020689593079` sits `0.382590` above the band's upper edge, which is `1.361x` the
+  semi-allowance (`0.28101`) and `0.68x` the full allowance width (`0.562020`).
+* at `30672` free edges, `|Q-1| = 0.220744`: **2.21x** the bar, and `0.339302` above the upper
+  edge, `1.207x` the semi-allowance.
+
+There is no reading of these numbers that is a pass. The best mesh in the series (`30672`, the
+largest) is still 2.2x outside the bar; the closest approach to the band anywhere in the series is
+the control's own `0.27234`, which is 2.7x outside it. This is recorded as **FAIL**. No
+softening, no "promising trend", no "close to the boundary": the largest mesh available is not
+closer to the band than the smallest, and the smallest is 2.7x out.
+
+### 14.5 The finding: a non-monotone hump
+
+The one thing in this series that is not simply "the band is missed" is the shape of `R`:
+
+```
+free edges :   9604    11888    19665    28980    30672
+R          :  3.575 -> 3.660    3.665 -> 3.474    3.431
+```
+
+`R` **rises** by `0.090` between `9604` and `11888`, holds flat to `19665` (`+0.005`), then
+**falls** by `0.191` and `0.043`. What is new here is the **direction**, not the magnitude. The
+banked ladder's four adjacent moves are `-0.269`, `-0.213`, `+0.045`, `-0.037`: two large
+decreases and one negligible reversal (`3.567 -> 3.613` at `3604 -> 5044`), never a middle mesh
+standing above a smaller one by more than `0.045`. The fresh series puts its two middle meshes
+`0.090` **above** the smallest - twice that reversal - and then falls back `0.191`, below the
+smallest's value. It is *inverted* relative to what "a smooth approach to the asymptote" would
+look like: the two middle meshes are worse than the smallest, and the two largest are better.
+
+This matters more than the raw failure. A monotone miss invites extrapolation - "one more rung
+and it would be inside". **A hump forbids it.** The ladder's own lesson applies unchanged here: five
+irregular points already failed to establish an order once; nine points with a hump still do not
+establish one. No fit through these nine
+points, of any functional form, has earned the right to be extrapolated, because the sequence it
+would be extrapolating is not established as monotone or as approaching anything. The hump is the
+finding, and it is a negative one: it says the `T4_amp` discrepancy is not a clean
+discretisation offset waiting for a finer mesh.
+
+### 14.6 Cost and memory: the ceiling is gone, and this is measured
+
+The sparse engine's advantage over the dense ladder is now measured, not argued:
+
+* largest mesh (`30672` free edges, `n_dof = 40903`): `splu` `0.311` s, `eigsh` `0.235` s,
+  **wall `0.691` s**, **RSS `288.8` MiB**, factor `6327066` nnz = **`0.0759` GB**.
+* next largest (`28980`): wall `0.647` s, RSS `272.5` MiB, factor `0.0687` GB.
+* the dense rung-4 reference took **`9784.3` s** at roughly **one third** the size of the largest
+  mesh here. Dense `B` at `30672` would be **`7.53` GB**, i.e. about **`99x`** the `0.0759` GB
+  factor actually used.
+
+Factor memory grew `4.6x` (`0.0164` -> `0.0759` GB) for `3.2x` free edges (`9604` -> `30672`) -
+sub-cubic, comfortably inside a 16 GB machine. **The memory ceiling that made the dense ladder
+infeasible is gone**, and that statement rests on measurements taken at these sizes, not on an
+extrapolation from small ones. This is what makes 14.4 a clean verdict: the gate is no longer
+blocked on cost or feasibility, so it cannot be dismissed as a resource artefact. It is blocked on
+**accuracy**.
+
+### 14.7 Ruling on the `(d2)` variable, and a correction to its premise
+
+The rung-4-era registration gave the refinement model as `R = a + b * (1/n_free)`. **That wording
+is wrong and is fixed here**: the variable to use is `1/h`, with `h = 1/(nx-1)` the mesh spacing.
+The intercept `a` is invariant to a rescaling of `x` (the slope absorbs it), so this is not a
+cosmetic change - but it matters when the series mixes meshes whose `n_free` and `h` do not move
+together, as the fresh five do.
+
+The correction that must travel with that fix is **to the premise of the `(d2)` proposal, not
+just its algebra.** The claim made when the variable was changed was that the nine-point intercept
+would land inside the band. That claim was true of the **pre-rung-4 five-point fit**, which gave
+an intercept of **`2.990608605836237`**, `3.25%` inside the band. **It does not survive.** On the
+full nine points:
+
+* under `1/h`: intercept **`3.372054`** (rms `0.0882`, `R^2 = 0.7401`), hence
+  `Q_inf = 3.372054 / 2.8101021387524523 = 1.19997` - **exactly 2.0x** the `0.10` allowance.
+* under `1/n_free`: intercept **`3.492397`** (rms `0.0809`, `R^2 = 0.7815`), `Q_inf = 1.2428`.
+
+`R^2` also degrades from `0.87` (five points, `1/h`) to `0.74` (nine points): the extra four
+points do not lie on the line the first five implied. So: **the change of variable does not rescue
+the intercept.** The wording is fixed in this section for correctness of the record, and for no
+other reason - it does not deliver a pass, and it was never going to.
+
+### 14.8 Corrections log
+
+Six statements made during this campaign were wrong, and this is where each is fixed:
+
+1. **`rung4_routeC_probe.py` has no `--dry-run`.** A smoke test of it does not exist, and none was
+   ever run; the flag was assumed rather than checked. Cheapest available check, and the one
+   actually used: launch the probe and kill it immediately after the `splu(h)` line returns, which
+   proves the factorisation path executes without paying for the eigensolve. Fixed here.
+2. **The Route C shift is not read from any npz.** It is a *pinned constant in the source* -
+   deliberately, so that the probe cannot silently follow the ladder's `out/` tree and change its
+   shift underneath a comparison. Consequently the figure **`97101.0`**, once briefed as the
+   shift in use, **does not exist** anywhere in this work. The real pinned value is
+   `0.999 x` the rung-3 `beta_sq` = **`96777.0147917196`**; an earlier working note of `96807.01`
+   was an arithmetic slip and is withdrawn. Fixed here.
+3. **"`Q`" is not a new column.** Section 9.1 already defines `Q = R_extracted / R_analytic`, so
+   `Q` and the `error%` column are the same number in two dresses. Every table above that carries
+   both is reporting one measurement twice; that is harmless but it is not corroboration, and it
+   must not be counted as such. Fixed here.
+4. **`t4_s13_draft.md` is not a pre-registration.** Its mtime is `43.5` s **after** the rung-4 run
+   printed `DONE`, so it cannot be, and section 13.8 says so. The honest and weaker claim -
+   "the rule was fixed without knowledge of the result" - is the one made, here and there. Fixed
+   in 13.8, restated here.
+5. **`ru_maxrss` is MiB on this platform, not KiB.** A reading of `237.9` means `237.9` MiB, i.e.
+   `243637`-`243660` KiB, and it is `237.9` that the tables above quote. Any reader applying the
+   usual Linux KiB convention would divide by 1024 and under-report by three orders of magnitude.
+   Fixed here.
+6. **`verdict['route_C']` is nested.** `print_summary` therefore raised `KeyError: 'n'`
+   *after* the report had already been written, and the probe exited `1` on a completely
+   successful run. The exit code was not a measurement; it was a reporting bug. Fixed by
+   unwrapping the key. Fixed here.
+
+**One convention note on rung 2.** The banked rung-2 npz stores `corr_ey` and `corr_ez_vv` as
+**negative** (`-0.9468487659632563` and `-0.9571763172883659`) while rung 3 stores the same
+quantities **positive** (`0.956953579885539` and `0.9621073171967215`). The magnitudes agree to
+**11.7 digits**; the sign does not. A *signed* cross-comparison of these two rungs therefore
+reports a disagreement of `abs_diff` `1.894` and `1.914`, which is an artefact of the stored
+convention and not a physical result. Rung-2 comparisons in this document are magnitude
+comparisons for exactly this reason.

@@ -796,3 +796,45 @@ The head-630 prefix hash did **not** survive, and it is recorded here rather tha
 * **Prefix link, resolved rather than restated.** head-630 prefix sha256 is `e60a092946615f54ab481cb5515fe64bbf66d8bced2a963a13384017ac81a56a` — the `e60a0929…` that the closing append to §10 asserts, checked against the file instead of taken on trust. The link before it, `a03c78d43fd8077df2588281d00a97103e9115ecdc2b3be37326cad789583203`, is the *after* value recorded in this section above, so the prefix chain here reads `39bb7a71…` → `a03c78d4…` (§11's repair) → `e60a0929…` (§10's closing append).
 * **Whole-file sha256 before this note:** `8cb9d55d0e977e8194578375ce4d38698df4e75947ba18a4a6a874fc20d21183`, 84,603 bytes, 792 lines. That is not the `05d7fcf1…` *after* value recorded above, and the gap is not a contradiction: the file moved once more when the closing append to §10 was written — the same edit that moved the prefix from `a03c78d4…` to `e60a0929…`. A file cannot contain the hash of its own post-edit self, so the whole-file hash *after* this note is reported in the change report and not here; every hash in this bullet is a *before* value and is reproducible.
 * **Line 630 is still line 630.** It still reads `Seven entries, no more. Everything else in §2–§3 is an audit of what v1 already had, not a registration.`, own sha256 `0d7cf7485cc954e931ae43f68ca1858322d92709f03319b3e79e2db7cee643b8`, and the head-630 prefix hash is unchanged by this append (`e60a0929…` before and after): this note sits entirely below line 630 and moved nothing at or above it. The load-bearing invariant of the whole chain — line-630 identity plus a fixed prefix — is the one that held.
+
+---
+
+## STATUS APPEND - `T4_amp`, as of the mesh-series result
+
+*Append made against `29a235a4ba73e0e972e8c36bb6fe261af3be7cb740e82c0b7ef7cead42d17808`, 798 lines; all pre-registered text above is unchanged.* This
+section is a status bullet appended at EOF to a frozen pre-registration. Nothing above it was
+edited, reordered or reflowed; the hash and line count in the sentence above are of the file
+immediately before this append and can be checked with
+`head -n 798 docs/design/m3c_gate_v2.md | sha256sum`. Everything in this section is *reported
+against* the pre-registration; nothing in it amends one.
+
+**Status: `T4_amp` FAILS.** Both available denominators fail, and they fail on their own terms:
+
+* **Dense ladder:** `Q = 1.2723426355905907`, i.e. `|Q - 1| = 0.2723`, which is **2.72x** the
+  registered `|Q - 1| <= 0.10` allowance.
+* **Sparse, largest mesh:** `Q = 1.220744`, i.e. `|Q - 1| = 0.2207`, which is **2.21x** the same
+  allowance, at `free_e = 30672` (mesh `58/44/35-17-18`, `n_dof = 40903`).
+
+**Cost is no longer the blocker, and the gate therefore fails on ACCURACY, not feasibility.** The
+sparse engine was built specifically to test whether the dense ladder's infeasibility was
+responsible for the verdict. It is not. At `free_e = 30672` the measured cost was a `0.0759` GB
+factor (`6327066` nnz), **`288.8` MiB** peak RSS, and `0.691` s wall - against a dense `B` at that
+size of `7.53` GB, roughly `99x` the factor actually used, and a dense reference run of `9784.3` s
+at about one third that size. These are measurements at these sizes, not extrapolations, and the
+memory ceiling that made the dense ladder impractical is simply gone. Feasibility has been
+removed as an explanation, which means the `|Q - 1| <= 0.10` miss must be read as a statement
+about the amplitude ratio itself.
+
+**Both `(d2)` refinement variables were tried, and both intercepts land outside the band.**
+Fitting `R = a + b*x` over all nine available points gives `a = 3.372054` under `x = 1/h`
+(`h = 1/(nx-1)`; rms `0.0882`, `R^2 = 0.7401`, `Q_inf = 1.19997`) and `a = 3.492397` under
+`x = 1/n_free` (rms `0.0809`, `R^2 = 0.7815`, `Q_inf = 1.2428`), against `R_analytic =
+2.8101021387524523` and the band `[2.52909192487721, 3.09111235262770]`. Neither intercept is in
+the band; the choice of variable does not change the verdict.
+
+**No new pass criterion is declared here, the `|Q - 1| <= 0.10` bar is not relaxed, and the
+allowance is not touched.** The pre-registered condition above this append is the condition
+`T4_amp` is scored against, and it is scored against it as written. A later, more favourable
+statement of the same quantity - including the non-monotone hump across `free_e` 9604-30672, which
+removes any basis for extrapolating a further refinement into the band - belongs in the `T4_amp`
+record (`docs/design/t4_amp_ratio.md` §14), not in this file.
