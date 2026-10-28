@@ -233,6 +233,27 @@ Three verdicts, named before the run. There is no fourth.
 
 An amendment is a dated entry appended to this section. Each entry states the date, states what it replaces, and is written before the run whose reading it affects. No entry is written after a run whose numbers it would change. The frozen values of section 3, the 1e-12 bound, and section 4, are outside what an entry may alter.
 
+### 5.b Amendment 1 (2026-10-28). ARPACK iteration budget for the deflated ladder
+
+Dated 2026-10-28 and written before the run whose reading it affects. It replaces nothing in section 3, nothing in section 4, and it does not touch the 1e-12 bound.
+
+The measurement that forces it. The deflated ladder was run at levels 1, 2 and 3. Levels 1 and 2 completed. Level 3 aborted inside the solve with
+
+    ArpackNoConvergence: ARPACK error -1: No convergence
+    (11351 iterations, 12/16 eigenvectors converged)
+
+after 550.8 s of wall clock at 1.00 core, and wrote no record. The iteration count is not a property of the problem: 11351 = 10 * 1135 + 1, and 1135 is the deflated dimension at level 3, being 1464 free degrees of freedom less 329 gradient columns. The budget that was exhausted is ARPACK's default, maxiter = 10 * n, which the solve inherited from the library because the call in `emfit/mode2d.py` passes four keywords and no tuning arguments. No iteration budget was ever chosen by this pre-registration. A library default was inherited by it, and an inherited default is not a criterion.
+
+What the entry adds. Levels 1, 2 and 3 are measured with an explicit ARPACK iteration budget of maxiter = 40 * n, where n is the deflated dimension of the level in question. ncv and tol stay at their SciPy defaults, so the Krylov space built per restart is unchanged and the only quantity that moves is how many restarts ARPACK may take before it gives up. For any run that converged below the old default the iteration sequence is identical, which is what makes the change inert at levels 1 and 2 rather than merely harmless: both levels finished well inside 10 * n.
+
+It is not a relaxation. No threshold is lowered, no band is widened, no candidate count is changed, no level is dropped and no level is added. The frozen values of section 3, the 1e-12 bound, and the criterion of section 4 are applied exactly as transcribed, and the level 3 readings are judged by them unchanged. An iteration budget is not a verdict quantity. It is the cost of asking the question, and the question is asked once.
+
+Where the change lives. The budget is injected by rebinding `emfit.mode2d.eigsh` inside the scratch driver `.scratch/d47/run_deflated.py`, the same way that driver already rebinds `emfit.mode2d.solve_modes`. `emfit/mode2d.py` is not edited and remains byte-identical. The rebind is process-local and restored in a finally block.
+
+Inertness, to be shown and not asserted. Levels 1 and 2 are re-measured under the rebind and the seven check 1 rows of the acceptance document are re-applied to the same 1e-12 bound. Any movement there voids this entry and the reading that depends on it.
+
+If 40 * n is also exhausted at level 3, the level 3 reading is FAILED-TO-MEASURE under section 5.a and is recorded as such, with no second budget and no further attempt without a new dated entry.
+
 ## 6. What this fix does not fix
 
 - The mixed path. `solve_modes_mixed` is unchanged and does not pass through the projection. It solves a different pencil, `A x_t = beta^2 B x_t` with `A = k0^2 m_eps - k_q` and `B = m1 - c D c^T`, and its normalisation cannot be the edge-only `e^T B e = 1`, because that `B` is indefinite [RELAYED]. A transverse gradient field is not a null vector of the block system there: it carries an `e_z` partner and the coupling does not annihilate it, since `c^T Z = k_zz phi` is nonzero. The mixed-path kernel, and so its dimension, is PROVISIONAL, and no number for it is frozen here.
