@@ -2,7 +2,7 @@
 # tools/host/run-tests/run.sh -- resumable, chunked test runner for this repo.
 #
 # WHY THIS EXISTS
-#   The full suite (483 tests, 40 files) takes ~12 min. The agent exec tool that
+#   The full suite (483 tests, 39 files) takes ~12 min. The agent exec tool that
 #   drives these runs has a HARD CAP of ~360-420 s per call: a foreground
 #   `python3 -m pytest -q` is SIGKILLed at the cap, and the aggregate summary is
 #   suppressed in this repo, so a killed run leaves no verdict.
