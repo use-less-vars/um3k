@@ -1,0 +1,28 @@
+{
+ "schema": "t4_rung4_dense_anchor/1",
+ "purpose": "dense anchor for rung4_routeC_probe.py --dense-anchor; every value read from the finished dense run at rung 4 (strip 36 / y_air 22 / z 20-10-10), never re-derived here",
+ "source_run": "tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10/",
+ "beta_sq": 96752.51970055024,
+ "R": 3.575412753195199,
+ "eps_eff": 3.5894252835292333,
+ "corr_ey": 0.9699299418483792,
+ "corr_ez_vv": 0.9665079165493766,
+ "corr_ez_superseded_longitudinal": 0.11930571427583656,
+ "scored_column": 5133,
+ "bank_col": 5133,
+ "n_free_edges": 9604,
+ "n_free_nodes": 3203,
+ "n_edges": 9720,
+ "n_nodes": 3321,
+ "sources": {
+  "beta_sq": "c1_spectrum.npz:beta_sq[0] = 96752.51970055024 (full precision); independently printed as beta = 311.0506706318928 at run.log:34 and as 'beta^2 = 96752.5197006' at run.log:57; c1_table.txt:22 column beta_sq = 9.6752520e+04",
+  "R": "c1_spectrum.npz:R_extracted (scalar) = 3.575412753195199, identical to R_by_col[0]; printed at run.log:68 'REPRO R  R_extracted = 3.575412753195199'",
+  "eps_eff": "c1_spectrum.npz:eps_eff[0] = 3.5894252835292333; printed at run.log:34 \"'eps_eff': 3.5894252835292333\" and at run.log:57 'eps_eff = 3.589425284'; c1_table.txt:22 = 3.589425",
+  "corr_ey": "c1_spectrum.npz:corr_ey[0] = -0.9699299418483792, stored signed; magnitude quoted = 0.96992994184837922 as printed at run.log:62 '|corr_e_y| = 0.96992994184837922' (compare_to_dense compares abs(route-C corr) to this field, so the magnitude is the correct anchor)",
+  "corr_ez_vv": "c1_spectrum.npz:corr_ez_vv[0] = -0.9665079165493766, stored signed; magnitude quoted = 0.96650791654937662 as printed at run.log:64 '|corr_ez_vv| = 0.96650791654937662' (vv = vertical reference vs VERTICAL component; NOT the superseded longitudinal 0.11930... at run.log:63)"
+ },
+ "notes": [
+  "bank_col 5133 is a solver-picked column index, not a mode identity (run.log:59 'banked / identified column : unknown (no cache)')",
+  "the dense run's REPRO overall was FAIL against a stub cache (run.log:69); irrelevant here -- this anchor is the rung-4 dense measurement itself, which is what Route C is cross-checked against"
+ ]
+}

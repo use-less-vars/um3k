@@ -1,0 +1,292 @@
+{
+  "probe": "Route C (corrected enlarged pencil) at high_res_run rung 4 -- sparse reformulation of the 2-D mixed mode pencil",
+  "script": "tools/host/sparse-probe/rung4_routeC_probe.py",
+  "environment": {
+    "python": "3.12.15",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "thread_env": {
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1"
+    },
+    "host_note": "rung 4 was NOT run by this script's author: the timings, if present, are this machine's"
+  },
+  "geometry": {
+    "W": 0.02,
+    "H": 0.0076,
+    "HSUB": 0.0016,
+    "WSTRIP": 0.003,
+    "EPS_R": 4.4,
+    "N_SUB": 16,
+    "K_STRIP": 16,
+    "J_CENTRE": 100,
+    "NY": 200,
+    "NZ": 76,
+    "CELL": 0.0001,
+    "FREQ": 7833566197.718491,
+    "Y0": 0.0085,
+    "Y1": 0.0115,
+    "ZZ1": 0.0036,
+    "k0": 164.17940719617263
+  },
+  "analytic_reference": {
+    "eps_eff": 3.3500085193372136,
+    "shape_e_y": [
+      200,
+      77
+    ],
+    "shape_e_z": [
+      201,
+      76
+    ]
+  },
+  "targets_note": "dense_targets is null: rung 4 has no banked dense record, so this report contains no agreement fields unless --dense-anchor was given",
+  "sigma_provenance": {
+    "sigma": 96777.0147917196,
+    "how": "default: C_SHIFT_FACTOR * rung-3 beta_sq = 0.999 * 96873.8886804 (rung-3 record tools/host/sparse-probe/out/rung3_s24_a18_z14-7-7/c1_spectrum.npz, pinned in RUNG3_RECORD)",
+    "shift_factor": 0.999,
+    "default_sigma": 96777.0147917196,
+    "rung3_record": {
+      "record": "tools/host/sparse-probe/out/rung3_s24_a18_z14-7-7/c1_spectrum.npz",
+      "keys_used": [
+        "beta_sq",
+        "beta",
+        "eps_eff",
+        "n_edges",
+        "free_e",
+        "chosen_col"
+      ],
+      "beta_sq": 96873.8886804,
+      "beta": 311.24570468,
+      "eps_eff": 3.59392796,
+      "n_edges": 5128,
+      "free_e": 5044,
+      "chosen_col": 2561
+    },
+    "note": "Route C is shift-invert on the corrected enlarged pencil and needs a shift next to the wanted beta_sq; the shift is placed the same way sparse_solver_test.py places it for rung 0/1 (0.999 * beta_sq), with rung 3's beta_sq as the operating point"
+  },
+  "dense_anchor": {
+    "present": true,
+    "path": "/workspace/evidence/t4/rung4_dense_anchor.json",
+    "values": {
+      "beta_sq": 96752.51970055024,
+      "R": 3.575412753195199,
+      "eps_eff": 3.5894252835292333,
+      "corr_ey": 0.9699299418483792,
+      "corr_ez_vv": 0.9665079165493766
+    }
+  },
+  "routes": {
+    "C": "CORRECTED enlargement: K=[[A,0],[0,0]], M=[[m1,-c],[-c^T,h]], sigma=0.999*beta_sq; condenses to the reference pencil A x = lam (m1 - c h^-1 c^T) x. Routes A (dense B) and B/B2 are deliberately NOT run: at 9604 free edges the dense B alone is 0.69 GiB"
+  },
+  "rungs": {
+    "rung4": {
+      "key": "rung4",
+      "name": "rung4_s36_a22_z20-10-10",
+      "config": {
+        "y_air": 22,
+        "strip_cells": 36,
+        "z_split": [
+          20,
+          10,
+          10
+        ],
+        "n_x_nodes": 81,
+        "n_z_nodes": 41
+      },
+      "mesh_checks": {
+        "nodes": {
+          "measured": 3321,
+          "expected": 3321,
+          "ok": true
+        },
+        "tris": {
+          "measured": 6400,
+          "expected": 6400,
+          "ok": true
+        },
+        "edges": {
+          "measured": 9720,
+          "expected": 9720,
+          "ok": true
+        },
+        "free_edges": {
+          "measured": 9604,
+          "expected": 9604,
+          "ok": true
+        },
+        "n_pec_edges": {
+          "measured": 116,
+          "expected": 116,
+          "ok": true
+        },
+        "free_nodes": {
+          "measured": 3203,
+          "expected": null,
+          "ok": null
+        },
+        "nnz_h": {
+          "measured": 21789,
+          "expected": null,
+          "ok": null
+        },
+        "nnz_c": {
+          "measured": 37483,
+          "expected": null,
+          "ok": null
+        }
+      },
+      "mesh_checks_ok": true,
+      "assembly": {
+        "t_assemble_s": 0.005894513917155564,
+        "t_assemble_mixed_s": 0.0194640759145841,
+        "max_abs_m1_minus_m_mu": 0.0,
+        "max_abs_m_eps_m_minus_m_eps": 0.0
+      },
+      "blocks": {
+        "n_free_edges": 9604,
+        "n_free_nodes": 3203,
+        "n_dense_pencil": 9604,
+        "n_dense_squared": 92236816,
+        "nnz_A": 47396,
+        "nnz_m1_f": 47396,
+        "nnz_m_eps_f": 47396,
+        "nnz_k_q_f": 47396,
+        "nnz_c_f": 37483,
+        "nnz_h": 21789,
+        "t_form_A_s": 0.0006268980214372277,
+        "dense_B_if_formed_gib": 0.6872178316116333,
+        "dense_D_if_formed_mb": 82.073672
+      },
+      "longitudinal": {
+        "t_splu_h_s": 0.006171123939566314,
+        "factor_nnz_h": 173854,
+        "solve_note": "h^-1 is applied as an splu solve; the dense D of the rung-0/rung-1 probe is deliberately not formed here"
+      },
+      "dense_targets": {
+        "beta_sq": 96752.51970055024,
+        "R": 3.575412753195199,
+        "eps_eff": 3.5894252835292333,
+        "corr_ey": 0.9699299418483792,
+        "corr_ez_vv": 0.9665079165493766
+      },
+      "dense_targets_note": "supplied on the command line (--dense-anchor)",
+      "route_A": [],
+      "route_C": {
+        "route": "C",
+        "sigma": 96777.0147917196,
+        "definition": "K=[[A,0],[0,0]], M=[[m1,-c],[-c^T,h]]",
+        "expected_elimination": "A x = lam (m1 - c h^-1 c^T) x",
+        "note": "corrected enlargement: the auxiliary/rank-one term is carried on the MASS side, so condensation returns the reference pencil (Route B carries it on the stiffness side and condenses to (A - c h^-1 c^T) x = lam m1 x)",
+        "dense_objects_avoided": {
+          "B": "n_e^2=92236816 doubles = 0.69 GiB -- never formed",
+          "D": "n_n^2=10259209 doubles = 82 MB -- never formed; h^-1 applied as an splu solve"
+        },
+        "t_build_K_s": 0.0004646419547498226,
+        "t_build_M_s": 0.0016665869625285268,
+        "t_build_shifted_s": 0.00044755800627171993,
+        "n": 12807,
+        "n_transverse": 9604,
+        "n_auxiliary": 3203,
+        "nnz_K": 47396,
+        "nnz_M": 144151,
+        "nnz_S": 144151,
+        "nnz_S_of_n2": 0.0008788663579358298,
+        "S_density": 0.0008788663579358298,
+        "t_splu_s": 0.07401308696717024,
+        "factor_nnz": 1369259,
+        "fill_ratio_factor_over_S": 9.498782526656075,
+        "fill_per_row": 106.91489029437027,
+        "factor_is_effectively_dense": false,
+        "factor_memory_gb_measured": 0.016431108,
+        "t_eigsh_s": 0.0528004429070279,
+        "eigenvalue": 96752.51970086167,
+        "opinv_calls": 21,
+        "residual_in_enlarged_pencil": 2.328122901161473e-18,
+        "x2_matches_DcTx1_rel": 3.016493594052664e-13,
+        "rayleigh_true_pencil": 96752.51970085397,
+        "residual": 9.379388877240471e-13,
+        "residual_normalisation": "||A x - lam B x|| / (||A x|| + |lam| ||B x||) -- B is not formed at rung 4, so the ||B||_F normalisation of the rung-0/rung-1 probe is unavailable",
+        "beta_sq": 96752.51970086167,
+        "eps_eff": 3.5894252835407867,
+        "R": 3.5754127532015456,
+        "corr_ey": 0.9699299418485792,
+        "corr_ez_vv": 0.9665079165495085,
+        "comparison": {
+          "rel_err_beta_sq": 3.218784779622725e-12,
+          "digits_beta_sq": 11.492308060949373,
+          "rel_err_R": 1.77503391525794e-12,
+          "digits_R": 11.750793344542036,
+          "rel_err_eps_eff": 3.218739483580933e-12,
+          "abs_diff_corr_ey": 1.999511667349907e-13,
+          "abs_diff_corr_ez_vv": 1.318944953254686e-13
+        },
+        "comparison_note": "route C's eigenvalue IS the beta^2 of the reference pencil (exact block elimination), so it is compared directly, without a Rayleigh-quotient detour"
+      }
+    }
+  },
+  "extrapolation": {
+    "available": false,
+    "reason": "sparse_solver_test.py fits its fill-per-row exponents on TWO measured rungs (rung 0 and rung 1).  This probe runs ONE rung, so there is nothing to fit and no projection is computed here",
+    "prior_projection_not_remeasured": {
+      "source": "tools/host/sparse-probe/evidence/sparse/rung01_sparse_report.json",
+      "target_free_e": 30000.0,
+      "route_C_factor_memory_gb": 0.08430019068778438,
+      "route_C_splu_time_at_big_s": 0.15587435136032093,
+      "measured_at_rung4": false
+    }
+  },
+  "wall_seconds": 2.168796753976494,
+  "verdict": {
+    "thresholds": {
+      "min_digits_beta_sq": 6.0,
+      "min_digits_R": 4.0,
+      "max_rel_residual": 1e-08
+    },
+    "route_C": {
+      "rung4": {
+        "status": "SELF_CONSISTENT",
+        "sigma": 96777.0147917196,
+        "eigenvalue": 96752.51970086167,
+        "beta_sq": 96752.51970086167,
+        "eps_eff": 3.5894252835407867,
+        "R": 3.5754127532015456,
+        "corr_ey": 0.9699299418485792,
+        "corr_ez_vv": 0.9665079165495085,
+        "rel_residual_reference_pencil": 9.379388877240471e-13,
+        "rel_residual_enlarged": 2.328122901161473e-18,
+        "x2_matches_DcTx1_rel": 3.016493594052664e-13,
+        "n": 12807,
+        "nnz_S": 144151,
+        "nnz_S_of_n2": 0.0008788663579358298,
+        "factor_nnz": 1369259,
+        "fill_per_row": 106.91489029437027,
+        "factor_memory_gb_measured": 0.016431108,
+        "t_splu_s": 0.07401308696717024,
+        "factor_is_effectively_dense": false,
+        "error": null,
+        "agreement": {
+          "rel_err_beta_sq": 3.218784779622725e-12,
+          "digits_beta_sq": 11.492308060949373,
+          "rel_err_R": 1.77503391525794e-12,
+          "digits_R": 11.750793344542036,
+          "rel_err_eps_eff": 3.218739483580933e-12,
+          "abs_diff_corr_ey": 1.999511667349907e-13,
+          "abs_diff_corr_ez_vv": 1.318944953254686e-13,
+          "meets_thresholds": true,
+          "status": "REPRODUCES_REFERENCE"
+        }
+      }
+    },
+    "overall": {
+      "dense_anchor_present": true,
+      "route_C_self_consistent": true,
+      "route_C_agrees_with_anchor": true,
+      "agreement_evaluated": true,
+      "note": "no dense reference exists at rung 4, so no 'reproduces_reference' claim is made anywhere in this report",
+      "exit_code": 0
+    }
+  }
+}

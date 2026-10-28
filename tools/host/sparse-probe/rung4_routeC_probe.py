@@ -854,6 +854,9 @@ def verdict_of(entry, anchor):
 # ---------------------------------------------------------------------------
 def print_summary(payload, path):
     v = payload["verdict"]["route_C"]
+    # verdict.route_C is written nested as {"rung4": {...}}; unwrap so the
+    # summary reads the same keys the report carries under that rung.
+    v = v.get("rung4", v)
     print("\n--- rung 4 / Route C -------------------------------------------")
     print(f"  n = {v['n']}  (transverse {payload['rungs']['rung4']['blocks']['n_free_edges']}"
           f" + auxiliary {payload['rungs']['rung4']['blocks']['n_free_nodes']})")
