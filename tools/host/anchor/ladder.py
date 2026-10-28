@@ -101,7 +101,7 @@ def peak_rss_mb():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
-def build_mesh(ny, t):
+def build_mesh(ny, t, eps_r=EPS_R):
     """Level mesh of section 1.3/1.4 for slab thickness ``t``."""
     nx = ny // 8
     h = B / ny
@@ -110,7 +110,8 @@ def build_mesh(ny, t):
     mesh = mode2d.structured_mesh(xs, ys)
     if not np.any(ys == t):
         raise SystemExit("interface y = t is not a node line at ny = %d" % ny)
-    eps_r_callable = lambda c: np.where(c[:, 1] < t, EPS_R, 1.0)   # noqa: E731
+    _eps = float(eps_r)
+    eps_r_callable = lambda c: np.where(c[:, 1] < t, _eps, 1.0)   # noqa: E731
     boundaries = (
         lambda P: P[:, 1] == 0.0,      # y = 0
         lambda P: P[:, 1] == B,        # y = b
