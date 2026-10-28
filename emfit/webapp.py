@@ -18,6 +18,7 @@ Routes
 ------
 ``GET  /``            landing page: every study as a card
 ``GET  /s/<name>``    the study's form (prefilled from the query string)
+``GET  /demo``        303 to ``/s/<name>``: the demo picker (``?study=<name>``)
 ``POST /run/<name>``  validate with :func:`emfit.studies.coerce`, run, show results
 ``GET  /run/<name>``  the same, with the parameters in the query string
 ``GET  /healthz``     ``ok``, for probes
@@ -41,6 +42,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import DEFAULT_PORT, __version__, studies
+from .demos import DEMOS as _DEMOS
 
 __all__ = ["make_server", "serve", "Handler"]
 
@@ -76,6 +78,11 @@ a:hover { text-decoration:underline; }
 .card p { margin:0; color:var(--muted); font-size:.95rem; }
 .card .go { display:inline-block; margin-top:.7rem; font-size:.9rem;
             color:var(--accent); }
+.card.demo { border-left:3px solid var(--accent); }
+.tag { display:inline-block; margin:.7rem .6rem 0 0; padding:.05rem .5rem;
+       font-size:.72rem; font-weight:600; letter-spacing:.06em;
+       text-transform:uppercase; color:var(--accent); background:var(--wash);
+       border:1px solid var(--line); border-radius:999px; }
 form { border-top:1px solid var(--line); padding-top:1.4rem; margin-top:2rem; }
 .field { display:grid; grid-template-columns:15rem 1fr; gap:.35rem 1.25rem;
          align-items:baseline; padding:.7rem 0; }
@@ -95,6 +102,10 @@ button { margin-top:1.6rem; padding:.6rem 1.4rem; font:inherit; font-weight:600;
          color:#fff; background:var(--accent); border:0; border-radius:.45rem;
          cursor:pointer; }
 button:hover { background:#0959a9; }
+input[type=submit] { padding:.45rem .9rem; font:inherit; font-size:.9rem;
+                     font-weight:600; color:#fff; background:var(--accent);
+                     border:0; border-radius:.4rem; cursor:pointer; }
+input[type=submit]:hover { background:#0959a9; }
 table.metrics { border-collapse:collapse; margin-top:1rem; font-size:.94rem; }
 table.metrics th, table.metrics td { text-align:left; padding:.35rem .9rem .35rem 0;
                                      vertical-align:top; }
@@ -200,19 +211,46 @@ def _form_html(study, values, submit: str = "Run", form_key: str = "f-") -> str:
             + f"<button type=\"submit\">{_esc(submit)}</button></form>")
 
 
+def _demo_selector() -> str:
+    """The demo picker: an ordinary GET form, because there is no JavaScript.
+
+    A ``<select>`` cannot navigate on its own without a handler, so the picker
+    submits to ``/demo``, which answers with a 303 to the chosen study's page.
+    The option list comes from :data:`emfit.demos.DEMOS`, not from a second
+    hand-maintained copy of the names.
+    """
+    options = "".join(
+        f"<option value=\"{_esc(study.name)}\">{_esc(study.title)}</option>"
+        for study in _DEMOS)
+    return (
+        "<form method=\"get\" action=\"/demo\">"
+        "<label for=\"demo-study\"><strong>Load Demo</strong></label> "
+        f"<select id=\"demo-study\" name=\"study\">{options}</select> "
+        "<input type=\"submit\" value=\"Load Demo\">"
+        "<p class=\"hint\">These are coarse-mesh demonstrations: they need no "
+        "KiCad file, they run in seconds, and their numbers are illustrative "
+        "rather than converged.</p></form>")
+
+
 def _landing() -> bytes:
-    cards = "".join(
-        f"<a class=\"card\" href=\"/s/{_esc(study.name)}\">"
-        f"<h2>{_esc(study.title)}</h2><p>{_esc(study.blurb)}</p>"
-        f"<span class=\"go\">Open study &rarr;</span></a>"
-        for study in studies.STUDIES.values())
+    demo_names = {study.name for study in _DEMOS}
+    cards = []
+    for study in studies.STUDIES.values():
+        is_demo = study.name in demo_names
+        tag = "<span class=\"tag\">demo</span>" if is_demo else ""
+        cards.append(
+            f"<a class=\"card{' demo' if is_demo else ''}\" "
+            f"href=\"/s/{_esc(study.name)}\">"
+            f"<h2>{_esc(study.title)}</h2><p>{_esc(study.blurb)}</p>{tag}"
+            f"<span class=\"go\">Open study &rarr;</span></a>")
     body = (
         "<h1>emfit &mdash; finite-integration time-domain studies</h1>"
         f"<p class=\"lede\">{len(studies.STUDIES)} self-contained electromagnetics "
         "experiments on a Yee-type cell complex: pick one, adjust its handful of "
         "parameters and run it; the numbers and the figures come back in the same "
         "page.</p>"
-        f"<div class=\"cards\">{cards}</div>")
+        f"{_demo_selector()}"
+        f"<div class=\"cards\">{''.join(cards)}</div>")
     return _page("emfit studies", body)
 
 
@@ -337,6 +375,19 @@ class Handler(BaseHTTPRequestHandler):
         if body:
             self.wfile.write(body)
 
+    def _redirect(self, location: str) -> None:
+        """303 to ``location`` with an empty body: the demo picker's answer.
+
+        ``GET /demo?study=<name>`` is a form submission but must end up as a
+        page load, so it is redirected rather than rendered; ``no-store`` is
+        the same cache policy every other response carries.
+        """
+        self.send_response(303)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def _not_found(self) -> None:
         body = _page("not found &middot; emfit",
                      "<h1>404 &mdash; no such page</h1>"
@@ -383,6 +434,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(204, b"")
         if path == "/":
             return self._send(200, _landing())
+        if path == "/demo":
+            query = urllib.parse.parse_qs(parts.query, keep_blank_values=True)
+            name = (query.get("study") or [""])[-1].strip().lower()
+            study = self._study_or_none(name)
+            if study is not None:
+                return self._redirect(f"/s/{study.name}")
+            return self._send(400, _page(
+                "demo &middot; emfit",
+                "<h1>400 &mdash; pick a demo</h1>"
+                f"<p class=\"lede\">No demo study named <code>{_esc(name)}</code>. "
+                "Choose one from the <a href=\"/\">list of studies</a>.</p>"))
         if path.startswith("/s/"):
             study = self._study_or_none(path[3:].strip("/"))
             if study is None:

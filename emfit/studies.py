@@ -5111,6 +5111,9 @@ STUDIES: dict = {study.name: study
                                MICROSTRIP_BOARD)}
 """Registry of every study, keyed by :attr:`Study.name`."""
 
+from .demos import DEMOS as _DEMOS      # noqa: E402 - demos imports this module
+STUDIES = {**STUDIES, **{s.name: s for s in _DEMOS}}
+
 
 def get(name: str) -> Study:
     """Look up a study by name.
