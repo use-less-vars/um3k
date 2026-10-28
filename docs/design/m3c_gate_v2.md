@@ -838,3 +838,21 @@ allowance is not touched.** The pre-registered condition above this append is th
 statement of the same quantity - including the non-monotone hump across `free_e` 9604-30672, which
 removes any basis for extrapolating a further refinement into the band - belongs in the `T4_amp`
 record (`docs/design/t4_amp_ratio.md` §14), not in this file.
+
+## POINTER - the `free_e` hump is diagnosed (record filed in the `T4_amp` document)
+
+**Baseline.** This append is made against the **840-line** file whose whole-file sha256 is
+`6f2746ac649c204918449825a26fb9cf69fe26577c594aa0d2f45513a5315af3`.
+
+**Routed, not duplicated.** The hump across `free_e` 9604-30672 named at line 840 is now
+diagnosed, and per that line's own routing note the record is filed in
+`docs/design/t4_amp_ratio.md` §15 - the note names §14, which is how far that document ran at
+the time. Nothing more is stated here.
+
+**Finding.** Mode fixed - `lambda` strictly monotone, shape frozen, `d_rec = 0.00e+00` - so not
+mode tracking; and `R` turns over along each refinement axis alone, so `R` is not a function of a
+single `h` and the convergence premise is mis-specified.
+
+**No new pass criterion is introduced here, the `|Q - 1| <= 0.10` bar is not relaxed, the
+allowance is not touched, `T4_amp` remains FAIL as recorded above, and any change to that state
+is the project owner's decision - not this document's.**

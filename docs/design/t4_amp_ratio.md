@@ -1135,3 +1135,182 @@ quantities **positive** (`0.956953579885539` and `0.9621073171967215`). The magn
 reports a disagreement of `abs_diff` `1.894` and `1.914`, which is an artefact of the stored
 convention and not a physical result. Rung-2 comparisons in this document are magnitude
 comparisons for exactly this reason.
+
+---
+
+## 15. The hump diagnosed: the mode is fixed, and `R` is not a function of one `h`
+
+**Baseline.** This section is appended to the **1137-line** file whose whole-file sha256 is
+`cc1487f15c8df0b163e797eac4d0f39ae7ac5a5b33f66f10c624b1343c604af1` (`102334` bytes). Nothing above
+this section was edited, reordered or reflowed: the append is whole lines at EOF, the line count only
+grows, and the head-1137 prefix is re-hashed after the write with the value reported in the change
+note rather than asserted here.
+
+Section 14 recorded the hump and said what it forbade - no fit through nine points with a hump in it
+earns the right to be extrapolated. It did not say what the hump *is*. This section does. The answer
+has two halves that must be read together: **the eigenpair is the same mode at every size** (so
+nothing is being mis-selected), and **`R` is not monotone along either refinement axis alone** (so
+there is no single `h`-story for it to converge along). The consequence is a statement about the
+metric's well-posedness. It is not a statement about the solver, and it is not a request to move a
+threshold.
+
+### 15.1 The sparse solver, verified: the memory ceiling is removed
+
+Peak RSS for the `30672`-free-edge solve (mesh `58/44/35-17-18`, `n_dof = 40903`) was **`288.8` MiB**
+against **`7.53` GB** for the dense path at that size: **`99x`** less memory. Agreement with the dense
+reference is **`11.5` significant digits**. Sparse storage is **mathematically equivalent** for this
+operator: the factorisation is applied to the same assembled system the dense path factors, no
+truncation, no dropping, no preconditioner in place of a solve - the 11.5-digit agreement with the
+dense anchor is the evidence, and it is agreement in `beta_sq`, in `R`, and in both component
+residuals.
+
+**The memory ceiling is REMOVED, and feasibility is settled.** It is not the reason anything fails,
+and it can no longer be offered as an explanation for anything.
+
+### 15.2 `T4_amp`: the registered verdict is FAIL, and the failure is accuracy
+
+The distinction that must not be lost: **this is an ACCURACY failure, not a FEASIBILITY failure.**
+The solver runs, converges, reproduces the dense answer to 11.5 digits, and does so in under a second
+at a size where the dense path wanted three hours at a third of the size. What fails is the
+**physical acceptance test** - the registered `|Q-1| <= 0.10` against `Q = R_extracted / R_analytic`.
+`T4_amp` is **FAIL** as registered in section 9, at every mesh in the series, the control included.
+
+### 15.3 The hump is not mode tracking: the eigenvalue and the shape are both frozen
+
+The first hypothesis available to a non-monotone ratio in a sequence of solves is that the solver is
+following a different mode at larger meshes. It was tested directly rather than argued about. All
+five campaign meshes were re-run **in one process** (`tools/host/sparse-probe/mode_overlap.py`, commit
+`0a28615`) and scored against the committed per-run records in `r4.field_scalars`: the reproduction is
+**bit-for-bit**, `d_rec = 0.00e+00` for `R`, `corr_ey` and `corr_ez_vv` on all five meshes. The
+numbers in 14.3 are therefore not three-run artefacts; they are what these five meshes produce.
+
+**The eigenvalue is strictly monotone decreasing**, spread `3.433e-3`, steps `-135`, `-116`, `-69.8`,
+`-10.1`:
+
+| mesh | free edges | `lambda` |
+|---|---|---|
+| M5 (control) | 9604 | `96752.519700848279172` |
+| M1 | 11888 | `96617.808797000368941` |
+| M2 | 19665 | `96501.437696076784050` |
+| M3 | 28980 | `96431.677574227433070` |
+| M4 | 30672 | `96421.549011048933608` |
+
+**The shape is frozen across `3.2x` refinement.** Peak `|e_y|` sits at `z = 0.00160 = HSUB` on every
+mesh; there is exactly **one** sign change along `y` on every mesh; the strip/air peak ratio moves
+only within `0.2597`-`0.2726`. A different mode at a larger mesh would not preserve all three.
+
+What does move monotonically is **amplitude** and **where the energy sits**: peak `|e_y|` goes
+`3.351e-2` -> `5.092e-2` (`+52%`), and the `e_y` strip-footprint energy fraction climbs
+`0.082289` -> `0.092995` -> `0.104386` -> `0.110099` -> `0.111532`. That is a shape-preserving
+redistribution, not a branch change.
+
+Cross-mesh `|corr|` is `0.976857`-`0.999028` (`e_y`) and `0.986063`-`0.999011` (`e_z_vv`) - close
+enough to be the same mode, far enough from 1.0 to be worth testing for branch identity. The
+consistency test (a pair passes when its cross-correlation is at least as large as either member's
+correlation with the reference) passes **`10/10`** for `e_z_vv` and **`4/10`** for `e_y`. The six
+`e_y` failures are exactly the pairs formed between `M5` (lowest `|corr_ey|`, `-0.969930`) or `M1`
+(the one positive-signed `corr_ey`, `+0.976834`) and the three remaining meshes; the `M5`-`M1` pair
+itself passes. That is the signature of a **global sign convention** on a field that changes little
+in shape, not of a selector picking a different mode.
+
+Region-resolved, the disagreement concentrates in the **air**: pairwise `|corr|` for `e_z_vv` in the
+air region spans a spread of **`0.048972`**, while over the conductor it is **flat at
+`0.998823`-`0.999943`** (spread `0.0011`). The conductor does not move; the air does.
+
+**Conclusion: it is the same mode at every size. There is no selector bug, and no cheap pass hidden
+in the shape.**
+
+### 15.4 The diagonal-mixing hypothesis: tested and refuted
+
+The second available hypothesis was that the hump is an artefact of moving `y` and `z` **together** -
+the five campaign meshes refine both, so a hump along their diagonal need not exist along either axis.
+This was tested by sweeping each axis alone (`tools/host/sparse-probe/axis_sweep.py`, commit
+`0f92dfe`): 10 meshes, `6.8` s wall total, residual gate `1e-6`, **`10/10` converged**.
+
+`y` axis, `z` held at `34-17-17`:
+
+| free edges | `lambda` | `R` |
+|---|---|---|
+| 12694 | `96883.122136809877702` | `3.740906063593582` |
+| 14525 | `96804.735480503324652` | `3.596616207254226` |
+| 18597 | `96640.321865275938762` | `3.635344997928221` |
+| 22669 | `96534.897941162023926` | `3.612955819639116` |
+| 23280 | `96520.894352604300366` | `3.682063900742108` |
+
+`z` axis, `y` held at `56/43`:
+
+| free edges | `lambda` | `R` |
+|---|---|---|
+| 17024 | `96355.301630117959576` | `3.442680518753782` |
+| 18732 | `96373.320434486071463` | `3.417259254982775` |
+| 23856 | `96410.060415645129979` | `3.419158233113235` |
+| 28980 | `96431.677574227433070` | `3.473702068959308` |
+| 29834 | `96430.530935012924601` | `3.471507207732160` |
+
+`R` is **not monotone on either axis**: it drops `-0.144289856339356` along `y` and then recovers,
+and drops `-0.025421263771007` along `z` and then recovers. `lambda` stays strictly decreasing on
+`y`, and on `z` turns over by `-1.15` at the last point - the one place where the eigenvalue itself
+is not a clean monotone sequence.
+
+**So `R` humps along the `y` axis ALONE and along the `z` axis ALONE. The hump is not a diagonal
+artefact.** `R_substrate` and `R_air` are each non-monotone on both axes as well, so it is not an
+air/substrate cancellation in a weighted sum. It follows that **`R` is not a monotone function of any
+single refinement parameter.**
+
+The corner mesh `56/43/34-17-17` reproduces campaign mesh M3 exactly in a **fresh process**
+(`lambda` `96431.677574227433070`, `R` `3.473702068959308`), which re-validates the measurement path
+across two independent scripts.
+
+### 15.5 The substantive finding: `R` is an average over regions that differ by `40x`
+
+Region-resolved, over all ten meshes of the axis sweep: `R_substrate` ranges `6.178042807`-`6.992095190`,
+`R_air` ranges `0.854638066`-`0.960334386`, and the `e_z_vv` strip-footprint ratio ranges
+`24.568518898`-`35.941761637`.
+
+The global `R` of `~3.4`-`3.7` is therefore a **weighted average of regions whose ratios differ by
+`40x`**, with the weights themselves moving as the mesh refines (`15.3`). A single global energy ratio
+cannot be a clean convergence diagnostic for this geometry: the quantity being tracked is a
+composition whose components have no reason to approach a common limit together, and whose mixture
+weights are mesh-dependent by construction.
+
+### 15.6 Consequence: the convergence premise is mis-specified
+
+Stated carefully, because this is the load-bearing sentence and it is easy to misread: **"`R`
+converges as `free_e` increases" is mis-specified as a premise, because there is no single-`h` story
+for `R` to converge along.** The hump is not a transient on the way to the band; it is what a
+region-weighted ratio does when the region weights are `3.2x` apart across the series.
+
+**This is a statement about the METRIC's well-posedness. It is not a request to relax anything.**
+
+### 15.7 Boundary clause
+
+**NO new pass criterion is introduced here. `|Q-1| <= 0.10` is UNTOUCHED. The allowance is
+UNTOUCHED. `T4_amp` remains FAIL. This section diagnoses why the existing criterion does not
+converge; it does not amend it. Any change to the acceptance criterion is a decision reserved to the
+project owner.**
+
+### 15.8 Hazard note: shift lock-on, and how a run announces it
+
+A new operational hazard, found while running the axis sweep, recorded here because it is reusable.
+
+Mesh `43/34/34-17-17` solved at the **default** shift (`sigma = 96777`) returned a **spurious
+eigenpair**: residual `9.89e-01`, `|corr_ey|` `0.247`, `R` `0.2370`. That is not physics - it is the
+iteration locking on to a nearby vector and returning it as the mode.
+
+The lock-on is **shift-dependent, not mesh-dependent**. `sigma` in `{96777, 96656, 96883, 96640,
+97000}` all returned the bogus pair; `sigma` in `{96100, 96400}` returned residual `1.9e-12` and the
+true mode (`lambda` `96534.897941162`, `R` `3.612955819639116`).
+
+Mitigation is now **in the tool**: `axis_sweep.py` walks a descending shift ladder
+`sigma*{1, .996, .992, .988, .984, .980}`, accepts only residual `< 1e-6`, and records
+`sigma_retries` and the full `sigma_ladder` per mesh, so a retry is visible in the record rather than
+silent.
+
+The campaign meshes are **NOT affected**: their residuals are `1e-11` to `6e-11`, verified both in
+the campaign JSONs and in the single-process re-run of `15.3`. And `sigma` is **not a confound for
+`R` or `lambda`** where the solve is genuine: over `sigma` `96100`-`96777`, `R` varies by at most
+`6e-12` and `lambda` by at most `4e-10` - the shift moves where the spectrum is translated, not the
+answer.
+
+**Operational rule: any future run reporting a residual `>> 1e-6` is a suspected lock-on. Retry down
+the ladder before reading the number as physics.**
