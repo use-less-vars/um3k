@@ -1,0 +1,601 @@
+{
+  "probe": "tools/host/sparse-probe/axis_sweep.py",
+  "generated_utc": "2026-10-28T03:16:16Z",
+  "reuses": "rung4_routeC_probe (load_context/analytic_reference/build_problem/run_route_c/corr/field_scalars) + routeC_mesh_probe.DenseShim(mode='auto'); recorder identical to mode_overlap.py",
+  "y_sweep_specs": [
+    "22/20/34-17-17",
+    "27/22/34-17-17",
+    "35/28/34-17-17",
+    "43/34/34-17-17",
+    "44/35/34-17-17"
+  ],
+  "z_sweep_specs": [
+    "56/43/20-10-10",
+    "56/43/22-11-11",
+    "56/43/28-14-14",
+    "56/43/34-17-17",
+    "56/43/35-17-18"
+  ],
+  "shared_corner": "56/43/34-17-17",
+  "y_axis": [
+    {
+      "label": "Y_22_20",
+      "spec": "22/20/34-17-17",
+      "strip": 22,
+      "yair": 20,
+      "z": [
+        34,
+        17,
+        17
+      ],
+      "sigma": 96777.0147917196,
+      "sigma_source": "r4.DEFAULT_SIGMA",
+      "error": null,
+      "wall_s": 0.28693043801467866,
+      "sigma_used": 96777.0147917196,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96883.12213680988,
+          "R": 3.740906063593582,
+          "residual": 7.200836487855385e-13
+        }
+      ],
+      "n_e": 12694,
+      "n_n": 4261,
+      "free_e": 12694,
+      "mesh_checks_ok": true,
+      "lambda": 96883.12213680988,
+      "beta_sq": 96883.12213680988,
+      "R": 3.740906063593582,
+      "residual": 7.200836487855385e-13,
+      "corr_ey_routec": 0.9728024806798584,
+      "corr_ez_vv_routec": 0.9659705288401856,
+      "corr_vs_ref_ey": 0.9728024806798584,
+      "corr_vs_ref_ez_vv": 0.9659705288401856,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.9920951899922805,
+        "air": 0.9285485697332716,
+        "strip_footprint": 35.94176163734826,
+        "all": 3.740906063593582
+      },
+      "converged": true,
+      "peak_abs_ey": 0.0307722640079024,
+      "peak_y": 0.008150000000000001,
+      "peak_z": 0.0016
+    },
+    {
+      "label": "Y_27_22",
+      "spec": "27/22/34-17-17",
+      "strip": 27,
+      "yair": 22,
+      "z": [
+        34,
+        17,
+        17
+      ],
+      "sigma": 96777.0147917196,
+      "sigma_source": "r4.DEFAULT_SIGMA",
+      "error": null,
+      "wall_s": 0.2610661960206926,
+      "sigma_used": 96777.0147917196,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96804.73548050332,
+          "R": 3.596616207254226,
+          "residual": 8.279940369682917e-13
+        }
+      ],
+      "n_e": 14525,
+      "n_n": 4868,
+      "free_e": 14525,
+      "mesh_checks_ok": true,
+      "lambda": 96804.73548050332,
+      "beta_sq": 96804.73548050332,
+      "R": 3.596616207254226,
+      "residual": 8.279940369682917e-13,
+      "corr_ey_routec": -0.9725896401522164,
+      "corr_ez_vv_routec": -0.9671403429470342,
+      "corr_vs_ref_ey": -0.9725896401522164,
+      "corr_vs_ref_ez_vv": -0.9671403429470342,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.663229382673753,
+        "air": 0.8997413988985503,
+        "strip_footprint": 34.072381240895965,
+        "all": 3.596616207254226
+      },
+      "converged": true,
+      "peak_abs_ey": 0.03308011991307153,
+      "peak_y": 0.00835,
+      "peak_z": 0.0016
+    },
+    {
+      "label": "Y_35_28",
+      "spec": "35/28/34-17-17",
+      "strip": 35,
+      "yair": 28,
+      "z": [
+        34,
+        17,
+        17
+      ],
+      "sigma": 96777.0147917196,
+      "sigma_source": "r4.DEFAULT_SIGMA",
+      "error": null,
+      "wall_s": 0.34358765406068414,
+      "sigma_used": 96777.0147917196,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96640.32186527594,
+          "R": 3.6353449979282213,
+          "residual": 2.877043617989459e-10
+        }
+      ],
+      "n_e": 18597,
+      "n_n": 6220,
+      "free_e": 18597,
+      "mesh_checks_ok": true,
+      "lambda": 96640.32186527594,
+      "beta_sq": 96640.32186527594,
+      "R": 3.6353449979282213,
+      "residual": 2.877043617989459e-10,
+      "corr_ey_routec": 0.9808851126092559,
+      "corr_ez_vv_routec": 0.9721405121643201,
+      "corr_vs_ref_ey": 0.9808851126092559,
+      "corr_vs_ref_ez_vv": 0.9721405121643201,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.590139597766699,
+        "air": 0.9395255708126162,
+        "strip_footprint": 28.456274178642463,
+        "all": 3.6353449979282213
+      },
+      "converged": true,
+      "peak_abs_ey": 0.039676213335156016,
+      "peak_y": 0.00825,
+      "peak_z": 0.0016
+    },
+    {
+      "label": "Y_43_34",
+      "spec": "43/34/34-17-17",
+      "strip": 43,
+      "yair": 34,
+      "z": [
+        34,
+        17,
+        17
+      ],
+      "sigma": 96389.90673255273,
+      "sigma_source": "r4.DEFAULT_SIGMA+retry",
+      "error": null,
+      "wall_s": 1.1056079850532115,
+      "sigma_used": 96389.90673255273,
+      "sigma_retries": 1,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96809.05044363065,
+          "R": 0.23700271758284236,
+          "residual": 0.9894401969722201
+        },
+        {
+          "sigma": 96389.90673255273,
+          "lambda": 96534.89794116202,
+          "R": 3.612955819639116,
+          "residual": 2.047483451596032e-12
+        }
+      ],
+      "n_e": 22669,
+      "n_n": 7572,
+      "free_e": 22669,
+      "mesh_checks_ok": true,
+      "lambda": 96534.89794116202,
+      "beta_sq": 96534.89794116202,
+      "R": 3.612955819639116,
+      "residual": 2.047483451596032e-12,
+      "corr_ey_routec": -0.9829884918052747,
+      "corr_ez_vv_routec": -0.9732294975165323,
+      "corr_vs_ref_ey": -0.9829884918052747,
+      "corr_vs_ref_ez_vv": -0.9732294975165323,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.400849962272325,
+        "air": 0.9603343860380439,
+        "strip_footprint": 27.628845138653706,
+        "all": 3.612955819639116
+      },
+      "converged": true,
+      "peak_abs_ey": 0.04490483929415319,
+      "peak_y": 0.00825,
+      "peak_z": 0.0016
+    },
+    {
+      "label": "Y_44_35",
+      "spec": "44/35/34-17-17",
+      "strip": 44,
+      "yair": 35,
+      "z": [
+        34,
+        17,
+        17
+      ],
+      "sigma": 96777.0147917196,
+      "sigma_source": "r4.DEFAULT_SIGMA",
+      "error": null,
+      "wall_s": 0.4708029739558697,
+      "sigma_used": 96777.0147917196,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96520.8943526043,
+          "R": 3.682063900742108,
+          "residual": 7.817707748184662e-12
+        }
+      ],
+      "n_e": 23280,
+      "n_n": 7775,
+      "free_e": 23280,
+      "mesh_checks_ok": true,
+      "lambda": 96520.8943526043,
+      "beta_sq": 96520.8943526043,
+      "R": 3.682063900742108,
+      "residual": 7.817707748184662e-12,
+      "corr_ey_routec": 0.9863386975138774,
+      "corr_ez_vv_routec": 0.9738641043366171,
+      "corr_vs_ref_ey": 0.9863386975138774,
+      "corr_vs_ref_ez_vv": 0.9738641043366171,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.713859833351454,
+        "air": 0.9576561588792945,
+        "strip_footprint": 27.10851180145932,
+        "all": 3.682063900742108
+      },
+      "converged": true,
+      "peak_abs_ey": 0.045721905683698556,
+      "peak_y": 0.00835,
+      "peak_z": 0.0016
+    }
+  ],
+  "z_axis": [
+    {
+      "label": "Z_20_10_10",
+      "spec": "56/43/20-10-10",
+      "strip": 56,
+      "yair": 43,
+      "z": [
+        20,
+        10,
+        10
+      ],
+      "sigma": 96777.0147917196,
+      "sigma_source": "r4.DEFAULT_SIGMA",
+      "error": null,
+      "wall_s": 0.2859359410358593,
+      "sigma_used": 96777.0147917196,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96355.30163011796,
+          "R": 3.4426805187537823,
+          "residual": 5.48659432679358e-09
+        }
+      ],
+      "n_e": 17024,
+      "n_n": 5663,
+      "free_e": 17024,
+      "mesh_checks_ok": true,
+      "lambda": 96355.30163011796,
+      "beta_sq": 96355.30163011796,
+      "R": 3.4426805187537823,
+      "residual": 5.48659432679358e-09,
+      "corr_ey_routec": 0.980496211839665,
+      "corr_ez_vv_routec": 0.9760766290664834,
+      "corr_vs_ref_ey": 0.980496211839665,
+      "corr_vs_ref_ez_vv": 0.9760766290664834,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.305580242507397,
+        "air": 0.8787735438690412,
+        "strip_footprint": 25.34226805115233,
+        "all": 3.4426805187537823
+      },
+      "converged": true,
+      "peak_abs_ey": 0.0448834846210219,
+      "peak_y": 0.00835,
+      "peak_z": 0.0016
+    },
+    {
+      "label": "Z_22_11_11",
+      "spec": "56/43/22-11-11",
+      "strip": 56,
+      "yair": 43,
+      "z": [
+        22,
+        11,
+        11
+      ],
+      "sigma": 96777.0147917196,
+      "sigma_source": "r4.DEFAULT_SIGMA",
+      "error": null,
+      "wall_s": 0.3052287610480562,
+      "sigma_used": 96777.0147917196,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96373.32043448607,
+          "R": 3.417259254982775,
+          "residual": 2.2217349953630187e-12
+        }
+      ],
+      "n_e": 18732,
+      "n_n": 6235,
+      "free_e": 18732,
+      "mesh_checks_ok": true,
+      "lambda": 96373.32043448607,
+      "beta_sq": 96373.32043448607,
+      "R": 3.417259254982775,
+      "residual": 2.2217349953630187e-12,
+      "corr_ey_routec": 0.9800620840297681,
+      "corr_ez_vv_routec": 0.976009059285692,
+      "corr_vs_ref_ey": 0.9800620840297681,
+      "corr_vs_ref_ez_vv": 0.976009059285692,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.307323937633353,
+        "air": 0.881686734427028,
+        "strip_footprint": 25.29569299177056,
+        "all": 3.417259254982775
+      },
+      "converged": true,
+      "peak_abs_ey": 0.04629299548809541,
+      "peak_y": 0.00835,
+      "peak_z": 0.0016
+    },
+    {
+      "label": "Z_28_14_14",
+      "spec": "56/43/28-14-14",
+      "strip": 56,
+      "yair": 43,
+      "z": [
+        28,
+        14,
+        14
+      ],
+      "sigma": 96777.0147917196,
+      "sigma_source": "r4.DEFAULT_SIGMA",
+      "error": null,
+      "wall_s": 0.48443218297325075,
+      "sigma_used": 96777.0147917196,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96410.06041564513,
+          "R": 3.4191582331132353,
+          "residual": 2.71101493833355e-12
+        }
+      ],
+      "n_e": 23856,
+      "n_n": 7951,
+      "free_e": 23856,
+      "mesh_checks_ok": true,
+      "lambda": 96410.06041564513,
+      "beta_sq": 96410.06041564513,
+      "R": 3.4191582331132353,
+      "residual": 2.71101493833355e-12,
+      "corr_ey_routec": 0.980852199947384,
+      "corr_ez_vv_routec": 0.9764141892194866,
+      "corr_vs_ref_ey": 0.980852199947384,
+      "corr_vs_ref_ez_vv": 0.9764141892194866,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.296858786119129,
+        "air": 0.8546380660971588,
+        "strip_footprint": 25.082086086651977,
+        "all": 3.4191582331132353
+      },
+      "converged": true,
+      "peak_abs_ey": 0.049118342622788115,
+      "peak_y": 0.00835,
+      "peak_z": 0.0016
+    },
+    {
+      "label": "YZ_corner_56_43_34_17_17",
+      "spec": "56/43/34-17-17",
+      "strip": 56,
+      "yair": 43,
+      "z": [
+        34,
+        17,
+        17
+      ],
+      "sigma": 96404.93625838071,
+      "sigma_source": "campaign:M3_fe28980",
+      "error": null,
+      "wall_s": 0.6016046589938924,
+      "sigma_used": 96404.93625838071,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96404.93625838071,
+          "lambda": 96431.67757422743,
+          "R": 3.473702068959308,
+          "residual": 3.2639272825896974e-12
+        }
+      ],
+      "n_e": 28980,
+      "n_n": 9667,
+      "free_e": 28980,
+      "mesh_checks_ok": true,
+      "lambda": 96431.67757422743,
+      "beta_sq": 96431.67757422743,
+      "R": 3.473702068959308,
+      "residual": 3.2639272825896974e-12,
+      "corr_ey_routec": -0.9859547875012363,
+      "corr_ez_vv_routec": -0.9770688452278082,
+      "corr_vs_ref_ey": -0.9859547875012363,
+      "corr_vs_ref_ez_vv": -0.9770688452278082,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.187865811362768,
+        "air": 0.9168431342033891,
+        "strip_footprint": 24.570701037577226,
+        "all": 3.473702068959308
+      },
+      "converged": true,
+      "peak_abs_ey": 0.050423199615251615,
+      "peak_y": 0.00835,
+      "peak_z": 0.0016
+    },
+    {
+      "label": "Z_35_17_18",
+      "spec": "56/43/35-17-18",
+      "strip": 56,
+      "yair": 43,
+      "z": [
+        35,
+        17,
+        18
+      ],
+      "sigma": 96777.0147917196,
+      "sigma_source": "r4.DEFAULT_SIGMA",
+      "error": null,
+      "wall_s": 0.7171946089947596,
+      "sigma_used": 96777.0147917196,
+      "sigma_retries": 0,
+      "sigma_ladder": [
+        {
+          "sigma": 96777.0147917196,
+          "lambda": 96430.53093501292,
+          "R": 3.4715072077321603,
+          "residual": 3.7471545933622495e-09
+        }
+      ],
+      "n_e": 29834,
+      "n_n": 9953,
+      "free_e": 29834,
+      "mesh_checks_ok": true,
+      "lambda": 96430.53093501292,
+      "beta_sq": 96430.53093501292,
+      "R": 3.4715072077321603,
+      "residual": 3.7471545933622495e-09,
+      "corr_ey_routec": 0.9858890336138465,
+      "corr_ez_vv_routec": 0.9770611724016748,
+      "corr_vs_ref_ey": 0.9858890336138465,
+      "corr_vs_ref_ez_vv": 0.9770611724016748,
+      "shim_interceptions": 0,
+      "d_rec_R": 0.0,
+      "d_rec_ey": 0.0,
+      "d_rec_ez": 0.0,
+      "R_regions": {
+        "substrate": 6.178042807026,
+        "air": 0.916945039816239,
+        "strip_footprint": 24.56851889766003,
+        "all": 3.4715072077321603
+      },
+      "converged": true,
+      "peak_abs_ey": 0.05053821088757398,
+      "peak_y": 0.00835,
+      "peak_z": 0.0016
+    }
+  ],
+  "solve_order": [
+    "22/20/34-17-17",
+    "27/22/34-17-17",
+    "35/28/34-17-17",
+    "43/34/34-17-17",
+    "44/35/34-17-17",
+    "56/43/20-10-10",
+    "56/43/22-11-11",
+    "56/43/28-14-14",
+    "56/43/34-17-17",
+    "56/43/35-17-18"
+  ],
+  "campaign_diagonal": [
+    {
+      "label": "M5_ctrl_rung4",
+      "spec": "36/22/20-10-10",
+      "free_e": 9604,
+      "R": 3.5754127532043682
+    },
+    {
+      "label": "M1_fe11888",
+      "spec": "36/27/22-11-11",
+      "free_e": 11888,
+      "R": 3.6601243414431774
+    },
+    {
+      "label": "M2_fe19665",
+      "spec": "47/35/28-14-14",
+      "free_e": 19665,
+      "R": 3.6652028499934413
+    },
+    {
+      "label": "M3_fe28980",
+      "spec": "56/43/34-17-17",
+      "free_e": 28980,
+      "R": 3.473702068959308
+    },
+    {
+      "label": "M4_fe30672",
+      "spec": "58/44/35-17-18",
+      "free_e": 30672,
+      "R": 3.4304140267508245
+    }
+  ],
+  "residual_gate": 1e-06,
+  "nonconverged_specs": [],
+  "n_converged": {
+    "y": 5,
+    "z": 5
+  },
+  "patterns": {
+    "R_y": "non-monotone (humps)",
+    "R_z": "non-monotone (humps)",
+    "R_campaign": "non-monotone (humps)",
+    "R_substrate_y": "non-monotone (humps)",
+    "R_substrate_z": "non-monotone (humps)",
+    "R_air_y": "non-monotone (humps)",
+    "R_air_z": "non-monotone (humps)"
+  },
+  "verdict": "the hump is NOT purely a diagonal artefact: R already humps along the y-axis and z-axis alone, so that axis owns (at least part of) the hump and R is not a monotone function of any single refinement parameter.",
+  "wall_s_total": 6.812158219050616
+}
