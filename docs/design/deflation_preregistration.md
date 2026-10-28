@@ -294,3 +294,92 @@ Made before any run of the modified solver. Each one is falsifiable by a number 
 8. The mixed-path numbers are unchanged, because that path is untouched.
 
 A run that contradicts one of these eight statements is a result and is reported as one. It is not grounds to adjust section 3, section 4 or this list.
+
+### 5.b Amendment 3 (2026-10-28). The task 1 analytic census, frozen, and the widened preservation set
+
+Dated 2026-10-28 and written before any line of the extension is written, under dispatch 49 of `docs/design/d49_acceptance.md`, criterion AC2.1. It replaces nothing in section 3, nothing in the 1e-12 bound, nothing in section 4 and nothing in section 5.a. It adds one licence and one widened preservation set, and it removes no check.
+
+What was measured, and what was not. The census is read-only and asks the analytic side one question. It calls the validated reference routine `tools/host/anchor/anchor_reference.py` at geometry A, `t = b/4` with `eps_r = 2`, and it calls no solver: nothing under `emfit/`, `tests/` or `tools/` is written or edited by it. Every value below is [VERIFIED this session] by that run and is re-derivable from the driver `.scratch/d49_task1_census.py` and its log `.scratch/d49_task1_census.txt`. The band `T1`, the factor of 10 and the budget `40 * n` are [RELAYED] from the entries that set them and are not recomputed here.
+
+    k0              = 1407.4335088082273
+    b, t, L2        = 0.0078125, 0.001953125, 0.005859375
+    eps_r           = 2.0
+    2 * k0^2        = 3961738.163432477    (the target)
+    sqrt(eps_r)*k0  = 1990.411556294948    (domain endpoint, and the square root of the target)
+    window          = [0, 2985.617334442422] = 1.5 * sqrt(eps_r) * k0
+
+The window, and why it is wide enough. The target `beta^2 = 2*k0^2` sits at `beta = sqrt(2)*k0` = 1990.411556294948 [VERIFIED this session], which at `eps_r = 2` is the domain endpoint `sqrt(eps_r)*k0` itself, so a window that stopped there would put the target on its own edge. This one runs to 2985.617334442422, which is 995.20577814747389 beta units past the target [VERIFIED this session], and the region past the endpoint is proved root-free below by an exact argument rather than by a scan. Below the target the window contains the whole pole structure, at cut points 911.5793030029113, 1172.382440722014, 1301.305505138204 and 1407.4335088082273 [VERIFIED this session], and it contains roots on both sides of the last pole. The edge is not doing any of the work.
+
+The census result, as frozen numbers. Three roots exist in the window [VERIFIED this session]. Each carries the achieved precision AC1.2 requires, `|f|/|f'|` at the root:
+
+    idx  beta                   beta^2                eps_eff                |f|/|f'|
+      0  944.60297882485338      892274.78760478646    0.45044611773722776    2.177e-13
+      1  1296.2992799512631      1680391.8232021632    0.8483103899760305     1.501e-13
+      2  1637.9985692980779      2683039.3130225502    1.3544758398156966     1.424e-14
+
+The effective permittivity there is `beta^2 / k0^2` with `k0^2` = 1980869.0817162385 [VERIFIED this session by arithmetic on the two columns], so roots 0 and 1 sit below `eps_eff = 1`, root 2 sits at 1.3544758398156966, and none of the three sits at the target's `eps_eff = 2`.
+
+What is not a root, and how that was decided. Three sign changes of the dispersion function are pole artefacts and are rejected: 911.5793030029113, 1172.382440722014 and 1301.305505138204, where the term scale reaches 7.002162e+17, 1.329552e+18 and 6.447989e+16 [VERIFIED this session], against a rejection threshold of 1e9. The scan is invariant across a density ladder of 20, 50, 100, 500 and 5000 points per beta unit, returning three accepted roots and three rejected pole candidates at every density [VERIFIED this session]. An independent complex-form evaluation of the relation agrees with the dispersion form to 9.095e-13, maximum difference over 4001 points [VERIFIED this session].
+
+AC1.2, answered. No root exists at or near `beta^2 = 2*k0^2`. The nearest is index 2:
+
+    beta^2 - 2*k0^2       = 1278698.8504099268   (|delta|, absolute)
+    relative              = 0.32276208009215163
+    in beta units         = 352.41298699687013   (|beta - sqrt(2)*k0|)
+    root precision        = 1.424e-14            (|f|/|f'| at idx 2)
+    distance / precision  = 2.475e+16
+    relative test 2e-2    : NO root
+    relative test 1e-3    : NO root
+    relative test 1e-6    : NO root
+    smallest relative distance over all roots = 0.32276208009215163
+
+AC1.3, answered, with a defect in the criterion stated rather than absorbed. AC1.3 as worded asks whether any analytic root lies within the calibrated band the curl test used, `T1` = 2.6791731109636385e-09 [RELAYED], itself carried with `g` unresolved. `T1` is a threshold on a dimensionless curl ratio: it is neither a `beta` tolerance nor a `beta^2` tolerance, and it cannot be applied to a census of roots. The criterion as literally worded is therefore unevaluable, and this entry records that instead of substituting one quantity for another.
+
+The gate was instead evaluated as pure relative `beta^2` tests at 2e-2, 1e-3 and 1e-6, and the curl band was not borrowed as a `beta` tolerance [VERIFIED this session]. The answer does not depend on the choice of reading. The nearest root is 0.32276208009215163 of `2*k0^2` away, a factor of 16.13810400460758 outside the loosest of the three tests, and even reading `T1` as a relative `beta^2` tolerance - the strictest and least defensible reading available - that distance is 120470782.11234412 times outside it. No reading of AC1.3 reverses the verdict, so the defect does not change the outcome of this dispatch. It must still be repaired before AC1.3 is cited as evaluated by anything other than a relative `beta^2` test.
+
+Even multiplicity is excluded separately, because a sign-change scan cannot see a tangential root:
+
+    interval                       roots  min|f_norm|        at beta
+    [    0.000000,   911.579303]   0      no interior local minimum
+    [  911.579303,  1172.382441]   1      no interior local minimum
+    [ 1172.382441,  1301.305505]   1      no interior local minimum
+    [ 1301.305505,  1407.433509]   0      9.497721575e-01     1407.4334722557753
+    [ 1407.433509,  1990.411556]   1      no interior local minimum
+    [ 1990.411556,  2985.617334]   0      1.363782751e+00     1990.411606304026
+
+The global floor is `min |f_norm|` = 9.497722e-01 at `beta` = 1407.4334722557753 [VERIFIED this session], which is not near zero on any scale that would read as a tangency, and four of the six intervals have no interior local minimum at all. Even-multiplicity roots are excluded to the resolution stated here, and not absolutely, and the limits the exclusion inherits are recorded rather than repaired. Local minima within 5e-3 of an accepted root were masked by the detector, so a tangency that close to a simple root is masked and not refuted. The scan cell is 4.6e-3 to 5.0e-3 in `beta` on the wide intervals, against a feature scale of the relation of about `1/k0` = 7.1e-4, so a tangency narrower than one cell could in principle pass between samples. Neither limit is a plausible competitor to a floor of 0.9497722. The census also covers real `beta >= 0` only: complex roots were not enumerated, and the solver candidates under test are real, which is what makes the comparison apt. Complete, where this entry uses the word, means numerical plus analytic and not theorem, and the word is not used to claim more than that.
+
+The endpoint degeneracy, reported and not resolved. At the target itself the relation is `0/0`: `d1 = eps_r*k0^2 - beta^2` vanishes at `beta = sqrt(eps_r)*k0`, so `s1/tan(s1*t)` is `0/0` there and the dispersion form returns `nan`. The singularity is removable, with limit
+
+    1/t                     = 512.0
+    k0*coth(k0*L2)          = 1407.4337022196212
+    limit                   = 1919.4337022196212
+
+A delta ladder from `delta = 1e-1 * k0` down to `1e-12 * k0` approaches that limit from below with `f` positive at all seven steps, largest `|f - limit|` = 6.194620e+02 at the coarsest step [VERIFIED this session]. The eleven spurious solver candidates of dispatch 48 sit at exactly this `beta`. No claim is made here that the degeneracy causes them; it is recorded because the analytic relation is undefined at the single point where the target sits, and a root there would be degenerate rather than simple. The census result at the target is therefore a statement about a removable 0/0, not about a simple root that fails to exist, and it is read that way in what follows.
+
+Above the endpoint, no root exists for any beta. For `beta > sqrt(eps_r)*k0` both arguments are imaginary and the relation is a sum of two strictly positive terms:
+
+    term1 = s1*coth(s1*t)    min = 5.120129e+02   (> 0)
+    term2 = s2*coth(s2*L2)   min = 1.407441e+03   (> 0)
+    sum over the scanned range: min = 1.919454e+03, max = 4.859162e+03, sign changes = 0
+
+This is an exact argument about the sign of both terms and not a sampling result, so the window's upper edge truncates nothing and no root can be missed above the endpoint.
+
+The widened preservation set. AC1.4 asks how many analytic roots the window contains, and the count is 3 [VERIFIED this session]. Every one of them must reappear after extended deflation within the existing 1e-12 bound, reported root by root with its frozen value, its returned value and its deviation:
+
+    idx  frozen beta^2            frozen beta            eps_eff
+      0  892274.78760478646       944.60297882485338     0.45044611773722776
+      1  1680391.8232021632       1296.2992799512631     0.8483103899760305
+      2  2683039.3130225502       1637.9985692980779     1.3544758398156966
+
+The seven frozen rows of section 3 are not a substitute for this set. Whether those rows are a subset of it is a question about the rows, and it is not asserted here. A preservation claim narrower than all three roots - whether it stops at the seven rows, or at the rows plus whichever roots happened to reproduce - is a failure of this section and is not a partial success.
+
+The licence, and how narrow it is. The extension of `Z` contemplated by dispatch 49 is licensed by this census and by nothing else, and only for geometry A at `t = b/4` and `eps_r = 2`. It says nothing about any other geometry, aspect ratio, permittivity, mesh or level set. No other geometry may inherit it: each requires its own census and its own dated entry before any line of an extension touching it is written.
+
+The licence is void, and section 1 returns to provisional, on any one of four events: a change to the geometry; a later census that finds a fourth root in the window; a later census that finds a tangential root; or a disagreement with this census on re-running it. They are listed so that they cannot be quietly ignored.
+
+It is not a relaxation. No threshold is lowered, no band is widened, no candidate count is changed, no floor is relaxed anywhere, and no level is dropped or added. The 1e-12 preservation bound is unchanged and is now applied to a larger set. The band factor of 10 stands, `T1` stands with `g` unresolved, the level 3 budget stays at `40 * n` under Amendment 1, and levels 4 and 5 remain out of scope. The census adds a check and removes none.
+
+What this entry does not do. It does not show that the extension works: that is Task 2 and the level 1, level 2 and level 3 runs, and this entry is written before any line of it exists. It does not validate the dispatch 47 or dispatch 48 passes retroactively, and their numbers are not re-read as measurements of the analytic modes. It does not resolve `g`, which stays disputed between two documents and non-blocking. It does not convert the endpoint degeneracy into an explanation of the spurious family. And it does not make the census a formality: a geometry that fails it stops the dispatch, as section 7 of the acceptance document requires.
+
+The sha256 of this document immediately before this entry was appended: `9fbfaf67030fb25724b0f271436e3122bae9f02bc9651e1aaf8f573dc1b979b2` (296 lines, 33785 bytes).
