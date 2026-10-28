@@ -1,0 +1,415 @@
+{
+  "probe": "Route C (corrected enlarged pencil) at an arbitrary ladder-shaped mesh -- mesh-parameterised generalisation of rung4_routeC_probe.py, which it imports rather than copies",
+  "script": "tools/host/sparse-probe/routeC_mesh_probe.py",
+  "environment": {
+    "python": "3.12.15",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "thread_env": {
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1"
+    }
+  },
+  "mesh": "47/35/28-14-14",
+  "label": "M2_fe19665",
+  "sigma": {
+    "value": 96521.19098820337,
+    "provenance": "command line (--sigma)",
+    "shift_factor": 0.999,
+    "r4_default_sigma": 96777.0147917196
+  },
+  "thresholds": {
+    "min_digits_beta_sq": 6.0,
+    "min_digits_R": 4.0,
+    "max_rel_residual": 1e-08,
+    "max_free_e": 40000,
+    "R_analytic": 2.8101021387524523,
+    "Q_bar": 0.1
+  },
+  "runs": [
+    {
+      "mesh": "47/35/28-14-14",
+      "label": "M2_fe19665",
+      "strip": 47,
+      "yair": 35,
+      "z": [
+        28,
+        14,
+        14
+      ],
+      "nx": 118,
+      "nz": 57,
+      "n_edges": 19829,
+      "n_edges_expected": 19829,
+      "n_pec_edges": 164,
+      "free_e": 19665,
+      "free_e_expected": 19665,
+      "n_free_nodes": 6560,
+      "n_dof": 26225,
+      "mesh_checks_ok": true,
+      "mesh_checks": {
+        "nodes": {
+          "measured": 6726,
+          "expected": 6726,
+          "ok": true
+        },
+        "tris": {
+          "measured": 13104,
+          "expected": 13104,
+          "ok": true
+        },
+        "edges": {
+          "measured": 19829,
+          "expected": 19829,
+          "ok": true
+        },
+        "free_edges": {
+          "measured": 19665,
+          "expected": 19665,
+          "ok": true
+        },
+        "n_pec_edges": {
+          "measured": 164,
+          "expected": 164,
+          "ok": true
+        },
+        "free_nodes": {
+          "measured": 6560,
+          "expected": null,
+          "ok": null
+        },
+        "nnz_h": {
+          "measured": 45032,
+          "expected": null,
+          "ok": null
+        },
+        "nnz_c": {
+          "measured": 77363,
+          "expected": null,
+          "ok": null
+        }
+      },
+      "assembly": {
+        "t_assemble_s": 0.011973889078944921,
+        "t_assemble_mixed_s": 0.01925610296893865,
+        "max_abs_m1_minus_m_mu": 0.0,
+        "max_abs_m_eps_m_minus_m_eps": 0.0,
+        "t_splu_h_s": 0.014770768932066858,
+        "factor_nnz_h": 447184
+      },
+      "blocks": {
+        "nnz_A": 97445,
+        "nnz_m1_f": 97445,
+        "nnz_c_f": 77363,
+        "nnz_h": 45032,
+        "nnz_S": 297203,
+        "nnz_S_of_n2": 0.0004321377388788269,
+        "factor_nnz": 3523476,
+        "fill_per_row": 134.35561487130602,
+        "factor_memory_gb_measured": 0.042281712,
+        "factor_is_effectively_dense": false,
+        "dense_B_if_formed_gib": 2.8812306001782417
+      },
+      "sigma": 96521.19098820337,
+      "sigma_provenance": "command line (--sigma)",
+      "beta_sq": 96501.43769607678,
+      "beta": 310.6468053852748,
+      "eps_eff": 3.5801103830192975,
+      "R": 3.6652028499934413,
+      "corr_ey": -0.9840343580895954,
+      "corr_ez_vv": -0.973104004142603,
+      "R_analytic": 2.8101021387524523,
+      "Q": 1.3042952423147907,
+      "abs_Q_minus_1": 0.30429524231479066,
+      "Q_inside_bar": false,
+      "residual": 3.551986947354624e-12,
+      "residual_in_enlarged_pencil": 3.1201275286422045e-18,
+      "x2_matches_DcTx1_rel": 3.81400979062818e-12,
+      "eigenvalue": 96501.43769607678,
+      "t_splu_s": 0.15137481596320868,
+      "t_eigsh_s": 0.11601618898566812,
+      "opinv_calls": 21,
+      "wall_s": 0.3579418129520491,
+      "peak_rss_mib": 235.70703125,
+      "peak_rss_note": "ru_maxrss high-water mark of THIS process after the run; it includes every earlier run in the same process, so a --repeat series is monotone by construction and the first run is the honest bound",
+      "dense_anchor": {
+        "present": false,
+        "path": null,
+        "values": null
+      },
+      "pre_registered_check": null,
+      "verdict": {
+        "status": "SELF_CONSISTENT",
+        "sigma": 96521.19098820337,
+        "eigenvalue": 96501.43769607678,
+        "beta_sq": 96501.43769607678,
+        "eps_eff": 3.5801103830192975,
+        "R": 3.6652028499934413,
+        "corr_ey": -0.9840343580895954,
+        "corr_ez_vv": -0.973104004142603,
+        "rel_residual_reference_pencil": 3.551986947354624e-12,
+        "rel_residual_enlarged": 3.1201275286422045e-18,
+        "x2_matches_DcTx1_rel": 3.81400979062818e-12,
+        "n": 26225,
+        "nnz_S": 297203,
+        "nnz_S_of_n2": 0.0004321377388788269,
+        "factor_nnz": 3523476,
+        "fill_per_row": 134.35561487130602,
+        "factor_memory_gb_measured": 0.042281712,
+        "t_splu_s": 0.15137481596320868,
+        "factor_is_effectively_dense": false,
+        "error": null,
+        "agreement": null,
+        "agreement_note": "null by construction: rung 4 has no banked dense record to agree with.  This verdict is SELF-CONSISTENCY only (residuals + the x2 == h^-1 c^T x1 identity), not reproduction of a reference"
+      },
+      "route_c": {
+        "route": "C",
+        "sigma": 96521.19098820337,
+        "definition": "K=[[A,0],[0,0]], M=[[m1,-c],[-c^T,h]]",
+        "expected_elimination": "A x = lam (m1 - c h^-1 c^T) x",
+        "note": "corrected enlargement: the auxiliary/rank-one term is carried on the MASS side, so condensation returns the reference pencil (Route B carries it on the stiffness side and condenses to (A - c h^-1 c^T) x = lam m1 x)",
+        "dense_objects_avoided": {
+          "B": "n_e^2=386712225 doubles = 2.88 GiB -- never formed",
+          "D": "n_n^2=43033600 doubles = 344 MB -- never formed; h^-1 applied as an splu solve"
+        },
+        "t_build_K_s": 0.001090163947083056,
+        "t_build_M_s": 0.004474143963307142,
+        "t_build_shifted_s": 0.0009750620229169726,
+        "n": 26225,
+        "n_transverse": 19665,
+        "n_auxiliary": 6560,
+        "nnz_K": 97445,
+        "nnz_M": 297203,
+        "nnz_S": 297203,
+        "nnz_S_of_n2": 0.0004321377388788269,
+        "S_density": 0.0004321377388788269,
+        "t_splu_s": 0.15137481596320868,
+        "factor_nnz": 3523476,
+        "fill_ratio_factor_over_S": 11.855452333926642,
+        "fill_per_row": 134.35561487130602,
+        "factor_is_effectively_dense": false,
+        "factor_memory_gb_measured": 0.042281712,
+        "t_eigsh_s": 0.11601618898566812,
+        "eigenvalue": 96501.43769607678,
+        "opinv_calls": 21,
+        "residual_in_enlarged_pencil": 3.1201275286422045e-18,
+        "x2_matches_DcTx1_rel": 3.81400979062818e-12,
+        "rayleigh_true_pencil": 96501.43769605759,
+        "residual": 3.551986947354624e-12,
+        "residual_normalisation": "||A x - lam B x|| / (||A x|| + |lam| ||B x||) -- B is not formed at rung 4, so the ||B||_F normalisation of the rung-0/rung-1 probe is unavailable",
+        "beta_sq": 96501.43769607678,
+        "eps_eff": 3.5801103830192975,
+        "R": 3.6652028499934413,
+        "corr_ey": -0.9840343580895954,
+        "corr_ez_vv": -0.973104004142603,
+        "comparison": null,
+        "comparison_note": "no dense anchor at rung 4 (the ladder has written no c1_spectrum.npz for this rung), so no agreement is computed; --dense-anchor supplies one"
+      },
+      "shim": {
+        "mode": "auto",
+        "threshold_bytes": 268435456,
+        "cap_bytes": 268435456,
+        "floor_bytes": 1048576,
+        "interceptions": [],
+        "note": "an intercepted toarray() returns max|M.data| as a 0-d array -- the same number the dense call was computing, in O(nnz); the dense (n_edges x n_edges) array is never created"
+      },
+      "repeat_index": 0
+    }
+  ],
+  "canonical": {
+    "mesh": "47/35/28-14-14",
+    "label": "M2_fe19665",
+    "strip": 47,
+    "yair": 35,
+    "z": [
+      28,
+      14,
+      14
+    ],
+    "nx": 118,
+    "nz": 57,
+    "n_edges": 19829,
+    "n_edges_expected": 19829,
+    "n_pec_edges": 164,
+    "free_e": 19665,
+    "free_e_expected": 19665,
+    "n_free_nodes": 6560,
+    "n_dof": 26225,
+    "mesh_checks_ok": true,
+    "mesh_checks": {
+      "nodes": {
+        "measured": 6726,
+        "expected": 6726,
+        "ok": true
+      },
+      "tris": {
+        "measured": 13104,
+        "expected": 13104,
+        "ok": true
+      },
+      "edges": {
+        "measured": 19829,
+        "expected": 19829,
+        "ok": true
+      },
+      "free_edges": {
+        "measured": 19665,
+        "expected": 19665,
+        "ok": true
+      },
+      "n_pec_edges": {
+        "measured": 164,
+        "expected": 164,
+        "ok": true
+      },
+      "free_nodes": {
+        "measured": 6560,
+        "expected": null,
+        "ok": null
+      },
+      "nnz_h": {
+        "measured": 45032,
+        "expected": null,
+        "ok": null
+      },
+      "nnz_c": {
+        "measured": 77363,
+        "expected": null,
+        "ok": null
+      }
+    },
+    "assembly": {
+      "t_assemble_s": 0.011973889078944921,
+      "t_assemble_mixed_s": 0.01925610296893865,
+      "max_abs_m1_minus_m_mu": 0.0,
+      "max_abs_m_eps_m_minus_m_eps": 0.0,
+      "t_splu_h_s": 0.014770768932066858,
+      "factor_nnz_h": 447184
+    },
+    "blocks": {
+      "nnz_A": 97445,
+      "nnz_m1_f": 97445,
+      "nnz_c_f": 77363,
+      "nnz_h": 45032,
+      "nnz_S": 297203,
+      "nnz_S_of_n2": 0.0004321377388788269,
+      "factor_nnz": 3523476,
+      "fill_per_row": 134.35561487130602,
+      "factor_memory_gb_measured": 0.042281712,
+      "factor_is_effectively_dense": false,
+      "dense_B_if_formed_gib": 2.8812306001782417
+    },
+    "sigma": 96521.19098820337,
+    "sigma_provenance": "command line (--sigma)",
+    "beta_sq": 96501.43769607678,
+    "beta": 310.6468053852748,
+    "eps_eff": 3.5801103830192975,
+    "R": 3.6652028499934413,
+    "corr_ey": -0.9840343580895954,
+    "corr_ez_vv": -0.973104004142603,
+    "R_analytic": 2.8101021387524523,
+    "Q": 1.3042952423147907,
+    "abs_Q_minus_1": 0.30429524231479066,
+    "Q_inside_bar": false,
+    "residual": 3.551986947354624e-12,
+    "residual_in_enlarged_pencil": 3.1201275286422045e-18,
+    "x2_matches_DcTx1_rel": 3.81400979062818e-12,
+    "eigenvalue": 96501.43769607678,
+    "t_splu_s": 0.15137481596320868,
+    "t_eigsh_s": 0.11601618898566812,
+    "opinv_calls": 21,
+    "wall_s": 0.3579418129520491,
+    "peak_rss_mib": 235.70703125,
+    "peak_rss_note": "ru_maxrss high-water mark of THIS process after the run; it includes every earlier run in the same process, so a --repeat series is monotone by construction and the first run is the honest bound",
+    "dense_anchor": {
+      "present": false,
+      "path": null,
+      "values": null
+    },
+    "pre_registered_check": null,
+    "verdict": {
+      "status": "SELF_CONSISTENT",
+      "sigma": 96521.19098820337,
+      "eigenvalue": 96501.43769607678,
+      "beta_sq": 96501.43769607678,
+      "eps_eff": 3.5801103830192975,
+      "R": 3.6652028499934413,
+      "corr_ey": -0.9840343580895954,
+      "corr_ez_vv": -0.973104004142603,
+      "rel_residual_reference_pencil": 3.551986947354624e-12,
+      "rel_residual_enlarged": 3.1201275286422045e-18,
+      "x2_matches_DcTx1_rel": 3.81400979062818e-12,
+      "n": 26225,
+      "nnz_S": 297203,
+      "nnz_S_of_n2": 0.0004321377388788269,
+      "factor_nnz": 3523476,
+      "fill_per_row": 134.35561487130602,
+      "factor_memory_gb_measured": 0.042281712,
+      "t_splu_s": 0.15137481596320868,
+      "factor_is_effectively_dense": false,
+      "error": null,
+      "agreement": null,
+      "agreement_note": "null by construction: rung 4 has no banked dense record to agree with.  This verdict is SELF-CONSISTENCY only (residuals + the x2 == h^-1 c^T x1 identity), not reproduction of a reference"
+    },
+    "route_c": {
+      "route": "C",
+      "sigma": 96521.19098820337,
+      "definition": "K=[[A,0],[0,0]], M=[[m1,-c],[-c^T,h]]",
+      "expected_elimination": "A x = lam (m1 - c h^-1 c^T) x",
+      "note": "corrected enlargement: the auxiliary/rank-one term is carried on the MASS side, so condensation returns the reference pencil (Route B carries it on the stiffness side and condenses to (A - c h^-1 c^T) x = lam m1 x)",
+      "dense_objects_avoided": {
+        "B": "n_e^2=386712225 doubles = 2.88 GiB -- never formed",
+        "D": "n_n^2=43033600 doubles = 344 MB -- never formed; h^-1 applied as an splu solve"
+      },
+      "t_build_K_s": 0.001090163947083056,
+      "t_build_M_s": 0.004474143963307142,
+      "t_build_shifted_s": 0.0009750620229169726,
+      "n": 26225,
+      "n_transverse": 19665,
+      "n_auxiliary": 6560,
+      "nnz_K": 97445,
+      "nnz_M": 297203,
+      "nnz_S": 297203,
+      "nnz_S_of_n2": 0.0004321377388788269,
+      "S_density": 0.0004321377388788269,
+      "t_splu_s": 0.15137481596320868,
+      "factor_nnz": 3523476,
+      "fill_ratio_factor_over_S": 11.855452333926642,
+      "fill_per_row": 134.35561487130602,
+      "factor_is_effectively_dense": false,
+      "factor_memory_gb_measured": 0.042281712,
+      "t_eigsh_s": 0.11601618898566812,
+      "eigenvalue": 96501.43769607678,
+      "opinv_calls": 21,
+      "residual_in_enlarged_pencil": 3.1201275286422045e-18,
+      "x2_matches_DcTx1_rel": 3.81400979062818e-12,
+      "rayleigh_true_pencil": 96501.43769605759,
+      "residual": 3.551986947354624e-12,
+      "residual_normalisation": "||A x - lam B x|| / (||A x|| + |lam| ||B x||) -- B is not formed at rung 4, so the ||B||_F normalisation of the rung-0/rung-1 probe is unavailable",
+      "beta_sq": 96501.43769607678,
+      "eps_eff": 3.5801103830192975,
+      "R": 3.6652028499934413,
+      "corr_ey": -0.9840343580895954,
+      "corr_ez_vv": -0.973104004142603,
+      "comparison": null,
+      "comparison_note": "no dense anchor at rung 4 (the ladder has written no c1_spectrum.npz for this rung), so no agreement is computed; --dense-anchor supplies one"
+    },
+    "shim": {
+      "mode": "auto",
+      "threshold_bytes": 268435456,
+      "cap_bytes": 268435456,
+      "floor_bytes": 1048576,
+      "interceptions": [],
+      "note": "an intercepted toarray() returns max|M.data| as a 0-d array -- the same number the dense call was computing, in O(nnz); the dense (n_edges x n_edges) array is never created"
+    },
+    "repeat_index": 0
+  },
+  "overall": {
+    "self_consistent": true,
+    "dense_anchor_present": false,
+    "agrees_with_anchor": null,
+    "exit_code": 0
+  }
+}

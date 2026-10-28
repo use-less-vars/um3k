@@ -1,0 +1,461 @@
+{
+  "probe": "Route C (corrected enlarged pencil) at an arbitrary ladder-shaped mesh -- mesh-parameterised generalisation of rung4_routeC_probe.py, which it imports rather than copies",
+  "script": "tools/host/sparse-probe/routeC_mesh_probe.py",
+  "environment": {
+    "python": "3.12.15",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "thread_env": {
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1"
+    }
+  },
+  "mesh": "36/22/20-10-10",
+  "label": "M5_ctrl_rung4",
+  "sigma": {
+    "value": 96655.73751135959,
+    "provenance": "command line (--sigma)",
+    "shift_factor": 0.999,
+    "r4_default_sigma": 96777.0147917196
+  },
+  "thresholds": {
+    "min_digits_beta_sq": 6.0,
+    "min_digits_R": 4.0,
+    "max_rel_residual": 1e-08,
+    "max_free_e": 40000,
+    "R_analytic": 2.8101021387524523,
+    "Q_bar": 0.1
+  },
+  "runs": [
+    {
+      "mesh": "36/22/20-10-10",
+      "label": "M5_ctrl_rung4",
+      "strip": 36,
+      "yair": 22,
+      "z": [
+        20,
+        10,
+        10
+      ],
+      "nx": 81,
+      "nz": 41,
+      "n_edges": 9720,
+      "n_edges_expected": 9720,
+      "n_pec_edges": 116,
+      "free_e": 9604,
+      "free_e_expected": 9604,
+      "n_free_nodes": 3203,
+      "n_dof": 12807,
+      "mesh_checks_ok": true,
+      "mesh_checks": {
+        "nodes": {
+          "measured": 3321,
+          "expected": 3321,
+          "ok": true
+        },
+        "tris": {
+          "measured": 6400,
+          "expected": 6400,
+          "ok": true
+        },
+        "edges": {
+          "measured": 9720,
+          "expected": 9720,
+          "ok": true
+        },
+        "free_edges": {
+          "measured": 9604,
+          "expected": 9604,
+          "ok": true
+        },
+        "n_pec_edges": {
+          "measured": 116,
+          "expected": 116,
+          "ok": true
+        },
+        "free_nodes": {
+          "measured": 3203,
+          "expected": null,
+          "ok": null
+        },
+        "nnz_h": {
+          "measured": 21789,
+          "expected": null,
+          "ok": null
+        },
+        "nnz_c": {
+          "measured": 37483,
+          "expected": null,
+          "ok": null
+        }
+      },
+      "assembly": {
+        "t_assemble_s": 0.00587115902453661,
+        "t_assemble_mixed_s": 0.0093900749925524,
+        "max_abs_m1_minus_m_mu": 0.0,
+        "max_abs_m_eps_m_minus_m_eps": 0.0,
+        "t_splu_h_s": 0.006234796019271016,
+        "factor_nnz_h": 173854
+      },
+      "blocks": {
+        "nnz_A": 47396,
+        "nnz_m1_f": 47396,
+        "nnz_c_f": 37483,
+        "nnz_h": 21789,
+        "nnz_S": 144151,
+        "nnz_S_of_n2": 0.0008788663579358298,
+        "factor_nnz": 1369133,
+        "fill_per_row": 106.90505192472867,
+        "factor_memory_gb_measured": 0.016429596,
+        "factor_is_effectively_dense": false,
+        "dense_B_if_formed_gib": 0.6872178316116333
+      },
+      "sigma": 96655.73751135959,
+      "sigma_provenance": "command line (--sigma)",
+      "beta_sq": 96752.51970084828,
+      "beta": 311.05067063237186,
+      "eps_eff": 3.5894252835402902,
+      "R": 3.5754127532043682,
+      "corr_ey": -0.9699299418485586,
+      "corr_ez_vv": -0.9665079165495419,
+      "R_analytic": 2.8101021387524523,
+      "Q": 1.2723426326388536,
+      "abs_Q_minus_1": 0.2723426326388536,
+      "Q_inside_bar": false,
+      "residual": 1.3817866142195237e-11,
+      "residual_in_enlarged_pencil": 3.600819930961016e-17,
+      "x2_matches_DcTx1_rel": 1.1420012256548796e-13,
+      "eigenvalue": 96752.51970084828,
+      "t_splu_s": 0.055962236947380006,
+      "t_eigsh_s": 0.05939359893091023,
+      "opinv_calls": 21,
+      "wall_s": 0.16716241999529302,
+      "peak_rss_mib": 236.6953125,
+      "peak_rss_note": "ru_maxrss high-water mark of THIS process after the run; it includes every earlier run in the same process, so a --repeat series is monotone by construction and the first run is the honest bound",
+      "dense_anchor": {
+        "present": true,
+        "path": "/workspace/tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10/c1_spectrum.npz",
+        "values": {
+          "beta_sq": 96752.51970055024,
+          "R": 3.575412753195199,
+          "eps_eff": 3.5894252835292333,
+          "corr_ey": -0.9699299418483792,
+          "corr_ez_vv": -0.9665079165493766
+        }
+      },
+      "pre_registered_check": null,
+      "verdict": {
+        "status": "SELF_CONSISTENT",
+        "sigma": 96655.73751135959,
+        "eigenvalue": 96752.51970084828,
+        "beta_sq": 96752.51970084828,
+        "eps_eff": 3.5894252835402902,
+        "R": 3.5754127532043682,
+        "corr_ey": -0.9699299418485586,
+        "corr_ez_vv": -0.9665079165495419,
+        "rel_residual_reference_pencil": 1.3817866142195237e-11,
+        "rel_residual_enlarged": 3.600819930961016e-17,
+        "x2_matches_DcTx1_rel": 1.1420012256548796e-13,
+        "n": 12807,
+        "nnz_S": 144151,
+        "nnz_S_of_n2": 0.0008788663579358298,
+        "factor_nnz": 1369133,
+        "fill_per_row": 106.90505192472867,
+        "factor_memory_gb_measured": 0.016429596,
+        "t_splu_s": 0.055962236947380006,
+        "factor_is_effectively_dense": false,
+        "error": null,
+        "agreement": {
+          "rel_err_beta_sq": 3.0804135821434997e-12,
+          "digits_beta_sq": 11.511390970387746,
+          "rel_err_R": 2.5644899061178844e-12,
+          "digits_R": 11.590999005986385,
+          "rel_err_eps_eff": 3.0804188062038005e-12,
+          "abs_diff_corr_ey": 1.9398598836969378,
+          "abs_diff_corr_ez_vv": 1.9330158330989184,
+          "meets_thresholds": true,
+          "status": "REPRODUCES_REFERENCE"
+        }
+      },
+      "route_c": {
+        "route": "C",
+        "sigma": 96655.73751135959,
+        "definition": "K=[[A,0],[0,0]], M=[[m1,-c],[-c^T,h]]",
+        "expected_elimination": "A x = lam (m1 - c h^-1 c^T) x",
+        "note": "corrected enlargement: the auxiliary/rank-one term is carried on the MASS side, so condensation returns the reference pencil (Route B carries it on the stiffness side and condenses to (A - c h^-1 c^T) x = lam m1 x)",
+        "dense_objects_avoided": {
+          "B": "n_e^2=92236816 doubles = 0.69 GiB -- never formed",
+          "D": "n_n^2=10259209 doubles = 82 MB -- never formed; h^-1 applied as an splu solve"
+        },
+        "t_build_K_s": 0.0005827660206705332,
+        "t_build_M_s": 0.00226931506767869,
+        "t_build_shifted_s": 0.0004492979496717453,
+        "n": 12807,
+        "n_transverse": 9604,
+        "n_auxiliary": 3203,
+        "nnz_K": 47396,
+        "nnz_M": 144151,
+        "nnz_S": 144151,
+        "nnz_S_of_n2": 0.0008788663579358298,
+        "S_density": 0.0008788663579358298,
+        "t_splu_s": 0.055962236947380006,
+        "factor_nnz": 1369133,
+        "fill_ratio_factor_over_S": 9.497908443229669,
+        "fill_per_row": 106.90505192472867,
+        "factor_is_effectively_dense": false,
+        "factor_memory_gb_measured": 0.016429596,
+        "t_eigsh_s": 0.05939359893091023,
+        "eigenvalue": 96752.51970084828,
+        "opinv_calls": 21,
+        "residual_in_enlarged_pencil": 3.600819930961016e-17,
+        "x2_matches_DcTx1_rel": 1.1420012256548796e-13,
+        "rayleigh_true_pencil": 96752.51970085349,
+        "residual": 1.3817866142195237e-11,
+        "residual_normalisation": "||A x - lam B x|| / (||A x|| + |lam| ||B x||) -- B is not formed at rung 4, so the ||B||_F normalisation of the rung-0/rung-1 probe is unavailable",
+        "beta_sq": 96752.51970084828,
+        "eps_eff": 3.5894252835402902,
+        "R": 3.5754127532043682,
+        "corr_ey": -0.9699299418485586,
+        "corr_ez_vv": -0.9665079165495419,
+        "comparison": {
+          "rel_err_beta_sq": 3.0804135821434997e-12,
+          "digits_beta_sq": 11.511390970387746,
+          "rel_err_R": 2.5644899061178844e-12,
+          "digits_R": 11.590999005986385,
+          "rel_err_eps_eff": 3.0804188062038005e-12,
+          "abs_diff_corr_ey": 1.9398598836969378,
+          "abs_diff_corr_ez_vv": 1.9330158330989184
+        },
+        "comparison_note": "route C's eigenvalue IS the beta^2 of the reference pencil (exact block elimination), so it is compared directly, without a Rayleigh-quotient detour"
+      },
+      "shim": {
+        "mode": "auto",
+        "threshold_bytes": 268435456,
+        "cap_bytes": 268435456,
+        "floor_bytes": 1048576,
+        "interceptions": [],
+        "note": "an intercepted toarray() returns max|M.data| as a 0-d array -- the same number the dense call was computing, in O(nnz); the dense (n_edges x n_edges) array is never created"
+      },
+      "repeat_index": 0
+    }
+  ],
+  "canonical": {
+    "mesh": "36/22/20-10-10",
+    "label": "M5_ctrl_rung4",
+    "strip": 36,
+    "yair": 22,
+    "z": [
+      20,
+      10,
+      10
+    ],
+    "nx": 81,
+    "nz": 41,
+    "n_edges": 9720,
+    "n_edges_expected": 9720,
+    "n_pec_edges": 116,
+    "free_e": 9604,
+    "free_e_expected": 9604,
+    "n_free_nodes": 3203,
+    "n_dof": 12807,
+    "mesh_checks_ok": true,
+    "mesh_checks": {
+      "nodes": {
+        "measured": 3321,
+        "expected": 3321,
+        "ok": true
+      },
+      "tris": {
+        "measured": 6400,
+        "expected": 6400,
+        "ok": true
+      },
+      "edges": {
+        "measured": 9720,
+        "expected": 9720,
+        "ok": true
+      },
+      "free_edges": {
+        "measured": 9604,
+        "expected": 9604,
+        "ok": true
+      },
+      "n_pec_edges": {
+        "measured": 116,
+        "expected": 116,
+        "ok": true
+      },
+      "free_nodes": {
+        "measured": 3203,
+        "expected": null,
+        "ok": null
+      },
+      "nnz_h": {
+        "measured": 21789,
+        "expected": null,
+        "ok": null
+      },
+      "nnz_c": {
+        "measured": 37483,
+        "expected": null,
+        "ok": null
+      }
+    },
+    "assembly": {
+      "t_assemble_s": 0.00587115902453661,
+      "t_assemble_mixed_s": 0.0093900749925524,
+      "max_abs_m1_minus_m_mu": 0.0,
+      "max_abs_m_eps_m_minus_m_eps": 0.0,
+      "t_splu_h_s": 0.006234796019271016,
+      "factor_nnz_h": 173854
+    },
+    "blocks": {
+      "nnz_A": 47396,
+      "nnz_m1_f": 47396,
+      "nnz_c_f": 37483,
+      "nnz_h": 21789,
+      "nnz_S": 144151,
+      "nnz_S_of_n2": 0.0008788663579358298,
+      "factor_nnz": 1369133,
+      "fill_per_row": 106.90505192472867,
+      "factor_memory_gb_measured": 0.016429596,
+      "factor_is_effectively_dense": false,
+      "dense_B_if_formed_gib": 0.6872178316116333
+    },
+    "sigma": 96655.73751135959,
+    "sigma_provenance": "command line (--sigma)",
+    "beta_sq": 96752.51970084828,
+    "beta": 311.05067063237186,
+    "eps_eff": 3.5894252835402902,
+    "R": 3.5754127532043682,
+    "corr_ey": -0.9699299418485586,
+    "corr_ez_vv": -0.9665079165495419,
+    "R_analytic": 2.8101021387524523,
+    "Q": 1.2723426326388536,
+    "abs_Q_minus_1": 0.2723426326388536,
+    "Q_inside_bar": false,
+    "residual": 1.3817866142195237e-11,
+    "residual_in_enlarged_pencil": 3.600819930961016e-17,
+    "x2_matches_DcTx1_rel": 1.1420012256548796e-13,
+    "eigenvalue": 96752.51970084828,
+    "t_splu_s": 0.055962236947380006,
+    "t_eigsh_s": 0.05939359893091023,
+    "opinv_calls": 21,
+    "wall_s": 0.16716241999529302,
+    "peak_rss_mib": 236.6953125,
+    "peak_rss_note": "ru_maxrss high-water mark of THIS process after the run; it includes every earlier run in the same process, so a --repeat series is monotone by construction and the first run is the honest bound",
+    "dense_anchor": {
+      "present": true,
+      "path": "/workspace/tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10/c1_spectrum.npz",
+      "values": {
+        "beta_sq": 96752.51970055024,
+        "R": 3.575412753195199,
+        "eps_eff": 3.5894252835292333,
+        "corr_ey": -0.9699299418483792,
+        "corr_ez_vv": -0.9665079165493766
+      }
+    },
+    "pre_registered_check": null,
+    "verdict": {
+      "status": "SELF_CONSISTENT",
+      "sigma": 96655.73751135959,
+      "eigenvalue": 96752.51970084828,
+      "beta_sq": 96752.51970084828,
+      "eps_eff": 3.5894252835402902,
+      "R": 3.5754127532043682,
+      "corr_ey": -0.9699299418485586,
+      "corr_ez_vv": -0.9665079165495419,
+      "rel_residual_reference_pencil": 1.3817866142195237e-11,
+      "rel_residual_enlarged": 3.600819930961016e-17,
+      "x2_matches_DcTx1_rel": 1.1420012256548796e-13,
+      "n": 12807,
+      "nnz_S": 144151,
+      "nnz_S_of_n2": 0.0008788663579358298,
+      "factor_nnz": 1369133,
+      "fill_per_row": 106.90505192472867,
+      "factor_memory_gb_measured": 0.016429596,
+      "t_splu_s": 0.055962236947380006,
+      "factor_is_effectively_dense": false,
+      "error": null,
+      "agreement": {
+        "rel_err_beta_sq": 3.0804135821434997e-12,
+        "digits_beta_sq": 11.511390970387746,
+        "rel_err_R": 2.5644899061178844e-12,
+        "digits_R": 11.590999005986385,
+        "rel_err_eps_eff": 3.0804188062038005e-12,
+        "abs_diff_corr_ey": 1.9398598836969378,
+        "abs_diff_corr_ez_vv": 1.9330158330989184,
+        "meets_thresholds": true,
+        "status": "REPRODUCES_REFERENCE"
+      }
+    },
+    "route_c": {
+      "route": "C",
+      "sigma": 96655.73751135959,
+      "definition": "K=[[A,0],[0,0]], M=[[m1,-c],[-c^T,h]]",
+      "expected_elimination": "A x = lam (m1 - c h^-1 c^T) x",
+      "note": "corrected enlargement: the auxiliary/rank-one term is carried on the MASS side, so condensation returns the reference pencil (Route B carries it on the stiffness side and condenses to (A - c h^-1 c^T) x = lam m1 x)",
+      "dense_objects_avoided": {
+        "B": "n_e^2=92236816 doubles = 0.69 GiB -- never formed",
+        "D": "n_n^2=10259209 doubles = 82 MB -- never formed; h^-1 applied as an splu solve"
+      },
+      "t_build_K_s": 0.0005827660206705332,
+      "t_build_M_s": 0.00226931506767869,
+      "t_build_shifted_s": 0.0004492979496717453,
+      "n": 12807,
+      "n_transverse": 9604,
+      "n_auxiliary": 3203,
+      "nnz_K": 47396,
+      "nnz_M": 144151,
+      "nnz_S": 144151,
+      "nnz_S_of_n2": 0.0008788663579358298,
+      "S_density": 0.0008788663579358298,
+      "t_splu_s": 0.055962236947380006,
+      "factor_nnz": 1369133,
+      "fill_ratio_factor_over_S": 9.497908443229669,
+      "fill_per_row": 106.90505192472867,
+      "factor_is_effectively_dense": false,
+      "factor_memory_gb_measured": 0.016429596,
+      "t_eigsh_s": 0.05939359893091023,
+      "eigenvalue": 96752.51970084828,
+      "opinv_calls": 21,
+      "residual_in_enlarged_pencil": 3.600819930961016e-17,
+      "x2_matches_DcTx1_rel": 1.1420012256548796e-13,
+      "rayleigh_true_pencil": 96752.51970085349,
+      "residual": 1.3817866142195237e-11,
+      "residual_normalisation": "||A x - lam B x|| / (||A x|| + |lam| ||B x||) -- B is not formed at rung 4, so the ||B||_F normalisation of the rung-0/rung-1 probe is unavailable",
+      "beta_sq": 96752.51970084828,
+      "eps_eff": 3.5894252835402902,
+      "R": 3.5754127532043682,
+      "corr_ey": -0.9699299418485586,
+      "corr_ez_vv": -0.9665079165495419,
+      "comparison": {
+        "rel_err_beta_sq": 3.0804135821434997e-12,
+        "digits_beta_sq": 11.511390970387746,
+        "rel_err_R": 2.5644899061178844e-12,
+        "digits_R": 11.590999005986385,
+        "rel_err_eps_eff": 3.0804188062038005e-12,
+        "abs_diff_corr_ey": 1.9398598836969378,
+        "abs_diff_corr_ez_vv": 1.9330158330989184
+      },
+      "comparison_note": "route C's eigenvalue IS the beta^2 of the reference pencil (exact block elimination), so it is compared directly, without a Rayleigh-quotient detour"
+    },
+    "shim": {
+      "mode": "auto",
+      "threshold_bytes": 268435456,
+      "cap_bytes": 268435456,
+      "floor_bytes": 1048576,
+      "interceptions": [],
+      "note": "an intercepted toarray() returns max|M.data| as a 0-d array -- the same number the dense call was computing, in O(nnz); the dense (n_edges x n_edges) array is never created"
+    },
+    "repeat_index": 0
+  },
+  "overall": {
+    "self_consistent": true,
+    "dense_anchor_present": true,
+    "agrees_with_anchor": true,
+    "exit_code": 0
+  }
+}
