@@ -499,6 +499,49 @@ invariant reports a failure on the mixed path as the code stands today.
 The mismatch between the container's documented `e^T B e = 1` and the
 mixed solve's plain 2-norm normalisation is recorded here and not fixed.
 
+Scope: the derivation behind the statement uses the symmetry of `A` and the
+symmetry of `B` and nothing else. It writes `x_j^T A x_i = (A x_j)^T x_i =
+lambda_j x_j^T B x_i` by symmetry of `A` and the relation for `x_j`, and
+`x_j^T A x_i = lambda_i x_j^T B x_i` by the relation for `x_i`, then
+subtracts to give `(lambda_j - lambda_i) x_j^T B x_i = 0`. Definiteness of
+`B` is not used, and `B` is indefinite here rather than definite, which
+costs the result nothing. The hypothesis is that the pencil is regular, that
+`A` and `B` are both symmetric, that the eigenvalues are distinct and real,
+and that `B` is nonsingular; the mixed pencil of `solve_modes_mixed`
+meets it. Its `A`, `k0^2 m_eps - k_q`, is symmetric by assembly, and its
+`B`, `m1 - c h^-1 c^T` with `h = k_zz - k0^2 m_zz`, is symmetric because
+`h` is symmetric by assembly and the inverse of a symmetric matrix is
+symmetric, so the general `splu` solve contributes roundoff and not
+asymmetry; the largest measured asymmetry is `8.2e-17` relative on the
+inverse and `3.8e-17` absolute on `B` against a largest entry of `0.27`.
+Both matrices are then symmetrised as `0.5 (X + X^T)` immediately before the
+dense eigensolve. That symmetrisation is two-sided and unconditional, which
+is also the caveat: being unconditional it would silently absorb a genuine
+asymmetry in an upstream assembly, and I1 is what has to catch that, not
+this invariant. Realness is not implied by the symmetry hypothesis and is
+part of the hypothesis in its own right: `A = [[0, 1], [1, 0]]` with
+`B = diag(1, -1)` gives `lambda = +-i`, so the filter that drops candidates
+with a large imaginary part is a symptom of the hypothesis rather than
+evidence for it. Where two eigenvalues coincide within the candidate
+tolerance, a `B`-orthonormal basis of the eigenspace exists if and only if
+the restriction `Z^T B Z` of `B` to that eigenspace is nonsingular, so any
+degeneracy guard has to test that restriction and not the closeness of the
+eigenvalues alone. Defective pencils are outside the scope, and the
+exclusion is not a convenience: they exist, minimally `A = diag(1, 0)` with
+`B = [[0, 1], [1, 0]]`, for which `det(A - lambda B) = -lambda^2` while
+`det B = -1`, so the algebraic multiplicity is two and the geometric
+multiplicity is one, and they are exactly the case in which the restriction
+is singular; `scipy` returns as many vectors as there are columns even then,
+so the rank of the returned matrix is not the detector. The route by which
+this was checked is the derivation above together with a numerical check on
+symmetric pencils of order two to four with an indefinite nonsingular `B`,
+which gave a largest off-diagonal of `V^T B V` of `1.5e-15`, a
+`B`-orthonormal basis of a degenerate eigenspace to `2.2e-16` after
+`B`-Gram-Schmidt, no normalising scale at all when the restriction was
+singular, and a defective pencil of order three with algebraic multiplicity
+three and geometric multiplicity two, the Jordan chain residual being zero
+to the last bit.
+
 **3.8 I7, Kramers-Kronig.**
 
 Statement: the relative permittivity fed to the per-triangle assembly is a
@@ -672,6 +715,17 @@ Read the two together and each outcome has a meaning.
 The second row is the one the current table has no entry for, and it is
 the reason the layer exists rather than being a refinement of the port
 gate.
+
+The fourth row of the criterion table in `cpp_solver_arch.md` 5.9 is the row
+this layer is the subject of: it is headed `physics invariants (9.1)`, its
+last column cites the layer for passivity, mode purity and `beta` against an
+analytic value, and its verdict column says `UNMEASURED`. It stays
+unmeasured for one named reason rather than for lack of attention. The
+normalisation defect that 3.7 I6 records is a physics change and not a bug
+fix, because the normalisation sets the amplitude of the mode and the
+amplitude enters every extraction, so no figure in that row can be cited
+until the change has a pre-registration of its own. The emptiness of the
+fourth row is a queue position.
 
 **5.3 The thresholds do not move.**
 
