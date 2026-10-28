@@ -96,17 +96,19 @@ TEXTWIDTH_PT = 455.24411                      # .scratch/build/main.log:760
 PT_PER_IN = 72.27
 TEXTWIDTH_IN = TEXTWIDTH_PT / PT_PER_IN       # 6.299215 in
 FIG_W = 0.95 * TEXTWIDTH_IN                   # 5.984254 in  <- figsize width
-FIG_H = 6.00                                  # <= 8.5 in, page + caption
+FIG_H = 7.60                                  # printed 549 pt: 78% of \\textheight
 
-#: every text element, set explicitly -- nothing is inherited
+#: every text element, set explicitly -- nothing is inherited.  All sizes are
+#: already printed sizes (FIG_W == printed width, scale 1.0037); the floor the
+#: report is held to is 11 printed pt, so 11.0 is the smallest value here.
 RCPARAMS = {
-    "font.size": 9.5,
-    "axes.labelsize": 10.0,
-    "axes.titlesize": 9.5,
-    "xtick.labelsize": 9.0,
-    "ytick.labelsize": 9.0,
-    "legend.fontsize": 9.0,
-    "figure.titlesize": 10.0,
+    "font.size": 11.0,
+    "axes.labelsize": 11.5,
+    "axes.titlesize": 11.0,
+    "xtick.labelsize": 11.0,
+    "ytick.labelsize": 11.0,
+    "legend.fontsize": 11.0,
+    "figure.titlesize": 16.0,
     "mathtext.fontset": "dejavusans",         # mathtext, never usetex
     "figure.dpi": 100,
     "savefig.bbox": None,                     # keep the declared inches exact
@@ -119,23 +121,17 @@ FS_TITLE = RCPARAMS["axes.titlesize"]
 FS_AXLAB = RCPARAMS["axes.labelsize"]
 FS_TICK = RCPARAMS["xtick.labelsize"]
 FS_HEAD = RCPARAMS["figure.titlesize"]
-FS_NOTE = 9.0                                 # footnote; still >= 9 pt
+FS_NOTE = 11.0                                # footnote; still >= 11 pt
 
-#: Text that carries a mathtext subscript ("$e_z$", "$e_y$") is set larger than
-#: the rest, because matplotlib's script factor is 0.7: a subscript only reaches
-#: 8 pt when its parent is >= 8/0.7 = 11.43 pt.  Every other element keeps its
-#: size -- the tick labels, the note lines, the "y/z [mm]" axis labels and the
-#: DIFFERENCE-row titles carry no subscript and already passed at 9-10 pt, so
-#: they are deliberately left alone and the layout moves only where it must.
-#:
-#: 12.0 pt was tried first (subscript 8.40 pt) and is NOT clean: on the e_z
-#: figure the two duplicated row-0 headings "BEFORE  superseded, mis-paired" are
-#: 2.736 in wide on a 2.737 in panel pitch, so they touch -- 0.1 px clearance on
-#: the exact font metrics, and an outright 4.9 px overlap as rendered, with each
-#: title spilling 17.5 px past its panel edge.  11.8 pt is the largest size that
-#: leaves a real gap (4.7 px = 1.2 mm on the metrics, 12.1 px as rendered) and
-#: still puts the subscript at 0.7 * 11.8 = 8.26 pt, i.e. above the 8 pt floor.
-FS_SUB = 11.8
+#: Mathtext subscripts are emitted at 0.7 x the parent size, and the PDF text
+#: runs are measured per run, so a subscript is a real budget item: a parent of
+#: s pt puts 0.7 s pt of type on the page.  The ONLY string left in this file
+#: that carries a subscript is the figure head ("$e_z$" / "$e_y$"), and it is set
+#: at FS_HEAD = 16 pt so the subscript prints at 0.7 * 16 = 11.2 pt, above the
+#: 11 pt floor.  15.72 pt would be the bare minimum (11 / 0.7) -- 16 is that
+#: with slack.  Every panel title, tick label, axis label and note line is plain
+#: text at 11.0-11.5 pt, so nothing else can fall below the floor.
+FS_SUB = 16.0
 
 OUT_DIR = os.path.join(mp.REPO, "docs", "figures")   # what \\includegraphics
                                                      # ../figures/ resolves to
@@ -172,14 +168,30 @@ def panel(ax, f, yc, zc, ext, title, vmax, show_x, show_y):
               interpolation="nearest", aspect="equal", zorder=1)
     ax.set_xlim(ext[0], ext[1])
     ax.set_ylim(ext[2], ext[3])
-    ax.set_title(title, fontsize=fs_for(title, FS_TITLE),
-                 linespacing=1.35, pad=3.0)
+    ax.set_title(title, fontsize=FS_TITLE, linespacing=1.35, pad=3.0)
     ax.tick_params(labelsize=FS_TICK)
     ax.tick_params(labelbottom=show_x, labelleft=show_y)
     if show_x:
         ax.set_xlabel("y  [mm]", fontsize=FS_AXLAB)
     if show_y:
         ax.set_ylabel("z  [mm]", fontsize=FS_AXLAB)
+
+
+TITLE_BLOCK_PT = 3 * FS_TITLE * 1.35 + 3.0   # three lines plus the 3 pt pad
+RUN_DY_PT = TITLE_BLOCK_PT + 2.0 + 0.5 * FS_HEAD * 1.15
+
+
+def run_label(ax, label):
+    """The column's run name, once, sitting clear above that column's titles.
+
+    Placed in *points above the axes top* (xytext, va="bottom") rather than in
+    axes fractions: 1.72 axes-heights cleared the titles by 0.72 axes heights
+    and therefore ran off the top of the canvas, so the labels were clipped
+    away entirely by savefig(bbox=None) and were never on the page.
+    """
+    ax.annotate(label, xy=(0.5, 1.0), xycoords="axes fraction",
+                xytext=(0.0, RUN_DY_PT), textcoords="offset points",
+                ha="center", va="bottom", fontsize=FS_HEAD, fontweight="bold")
 
 
 def finish(fig, out_stem, head, note):
@@ -198,7 +210,7 @@ def finish(fig, out_stem, head, note):
 def layout(fig, nrow, ncol_key):
     gs = GridSpec(nrow, 4, figure=fig,
                   width_ratios=[1.0, 0.05, 1.0, 0.05],
-                  left=0.085, right=0.985, top=0.885, bottom=0.105,
+                  left=0.085, right=0.916, top=0.815, bottom=0.150,
                   wspace=0.07, hspace=0.62)
     fields, cbars = {}, {}
     for r in range(nrow):
@@ -222,8 +234,8 @@ def draw_ez(cases, geo):
         v_diff = float(np.max(np.abs(D)))
         c_sup, c_vv = case["corr_ez_sup"], case["corr_ez_vv"]
         titles = {
-            0: "BEFORE  superseded, mis-paired\nvertical ref vs longitudinal\n$e_z$ corr = %+.4f" % c_sup,
-            1: "AFTER  correctly paired\nvertical ref vs VERTICAL\n$e_z$ corr = %+.4f" % c_vv,
+            0: "BEFORE  superseded, mis-paired\nvertical ref vs longitudinal\ncorr = %+.4f" % c_sup,
+            1: "AFTER  correctly paired\nvertical ref vs VERTICAL\ncorr = %+.4f" % c_vv,
             2: "DIFFERENCE  after \u2212 before\nmax|\u0394| = %.2f, rms(\u0394)/rms = %.2f\ndimensionless" % (v_diff, rel_rms(D, E_aft, E_bef)),
         }
         for r, f, vmax in ((0, E_bef, v_common), (1, E_aft, v_common), (2, D, v_diff)):
@@ -238,15 +250,11 @@ def draw_ez(cases, geo):
             cb.update_ticks()
             # the run label, once, on the top panel of its column
             if r == 0:
-                ax.annotate(case["spec"]["label"].replace(" / ", "/\n"),
-                            xy=(0.5, 1.72), xycoords="axes fraction",
-                            ha="center", va="bottom", fontsize=FS_HEAD,
-                            fontweight="bold")
-    head = "$e_z$: what the mis-pairing did, and what the correct pairing gives"
-    note = ("Fields divided by their own RMS (dimensionless).  Columns PMC / PEC are the two banked 31\u00d717 runs: "
-            "c1_spectrum.npz QZ col 738 and pecbox_spectrum.npz QZ col 699.\n"
-            "Dashed line: substrate interface h.  Thick line: strip.  Dotted verticals: strip edges y = 8.5 / 11.5 mm.  "
-            "Colour limits shared across the two runs within a row; difference row on its own limit.")
+                run_label(ax, case["spec"]["label"])
+    head = "$e_z$: mis-paired, then correctly paired"
+    note = ("Fields divided by their own RMS (dimensionless).\n"
+            "Colour limits shared across the two runs within a row;\n"
+            "the difference row on its own limit.")
     return finish(fig, "fig_ez_before_after", head, note)
 
 
@@ -263,8 +271,8 @@ def draw_ey(cases, geo):
         v_diff = float(np.max(np.abs(D)))
         c_ey = case["corr_ey"]
         titles = {
-            0: "REFERENCE  analytic $e_y$\nwidth component\nunit RMS",
-            1: "EXTRACTED  $e_y$\nwidth vs WIDTH\n$e_y$ corr = %+.4f" % c_ey,
+            0: "REFERENCE  analytic width\ncomponent, unit RMS\n(same reference throughout)",
+            1: "EXTRACTED  width vs WIDTH\ncomponent, same pairing\ncorr = %+.4f" % c_ey,
             2: "DIFFERENCE  ref \u2212 extracted\nmax|\u0394| = %.2f, rms(\u0394)/rms = %.2f\ndimensionless" % (v_diff, rel_rms(D, A, E)),
         }
         for r, f, vmax in ((0, A, v_common), (1, E, v_common), (2, D, v_diff)):
@@ -278,15 +286,11 @@ def draw_ey(cases, geo):
             cb.locator = matplotlib.ticker.MaxNLocator(4)
             cb.update_ticks()
             if r == 0:
-                ax.annotate(case["spec"]["label"].replace(" / ", "/\n"),
-                            xy=(0.5, 1.72), xycoords="axes fraction",
-                            ha="center", va="bottom", fontsize=FS_HEAD,
-                            fontweight="bold")
-    head = "$e_y$: the same reference, the same pairing, the same metric throughout"
-    note = ("Fields divided by their own RMS (dimensionless).  Columns PMC / PEC are the two banked 31\u00d717 runs: "
-            "c1_spectrum.npz QZ col 738 and pecbox_spectrum.npz QZ col 699.\n"
-            "Dashed line: substrate interface h.  Thick line: strip.  Dotted verticals: strip edges y = 8.5 / 11.5 mm.  "
-            "Colour limits shared across the two runs within a row; difference row on its own limit.")
+                run_label(ax, case["spec"]["label"])
+    head = "$e_y$: same reference, same metric throughout"
+    note = ("Fields divided by their own RMS (dimensionless).\n"
+            "Colour limits shared across the two runs within a row;\n"
+            "the difference row on its own limit.")
     return finish(fig, "fig_ey_before_after", head, note)
 
 
