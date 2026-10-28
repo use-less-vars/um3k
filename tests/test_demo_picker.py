@@ -24,12 +24,23 @@ fast part of the suite; the rest of the file is a few milliseconds of HTTP.
 from __future__ import annotations
 
 import http.client
+import os
 import threading
 import urllib.parse
 
 import pytest
 
 from emfit import studies, webapp
+
+# The demo studies are real FDTD solves.  Under a full-suite run on a loaded
+# host one submission can take minutes (measured: under load the suite runs
+# ~40-75x slower than documented, which turns the ~3 s and ~4.5 s demo solves
+# into a multi-minute wait), so a fixed 120 s client deadline
+# used to fail these tests while the server was still solving.  These tests
+# assert the *content* of the response, never its latency, so the deadline must
+# not double as a performance assertion -- it only has to be longer than the
+# solve it waits for.  Override with EMFIT_TEST_HTTP_TIMEOUT (seconds).
+HTTP_TIMEOUT = float(os.environ.get("EMFIT_TEST_HTTP_TIMEOUT", "600"))
 
 DEMO_LINE = "demo_microstrip_line"
 DEMO_STUB = "demo_microstrip_stub"
@@ -73,7 +84,7 @@ def _request(server, method: str, path: str, data: dict = None):
             "Content-Type": "application/x-www-form-urlencoded",
             "Content-Length": str(len(payload)),
         }
-    connection = http.client.HTTPConnection(host, port, timeout=120)
+    connection = http.client.HTTPConnection(host, port, timeout=HTTP_TIMEOUT)
     try:
         connection.request(method, path, body=payload, headers=headers)
         response = connection.getresponse()

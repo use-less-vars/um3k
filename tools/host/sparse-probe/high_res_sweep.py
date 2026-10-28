@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """high_res_sweep.py — the 40k / 50k / 60k sparse Route-C sweep.
 
-PREPARED, NOT RUN
------------------
-This file was written by a dispatch that was explicitly forbidden to run it.
-Nothing here has been executed: no solve, no mesh assembly, no timing.  Every
-number the plan prints *before* a point runs is an ESTIMATE derived from the
-~30k records already on disk (``out_mesh/M1..M4``), and every number a point
-writes *after* it runs is MEASURED in that point's own process.  The two are
-kept in separate keys so a reader can never mistake one for the other.
+ESTIMATE BEFORE, MEASUREMENT AFTER
+----------------------------------
+Every number the plan prints *before* a point runs is an ESTIMATE derived from
+the ~30k records already on disk (``out_mesh/M1..M4``), and every number a
+point writes *after* it runs is MEASURED in that point's own process.  The two
+are kept in separate keys so a reader can never mistake one for the other.
 
 WHERE THIS SITS
 ---------------
@@ -156,6 +154,7 @@ the hard free-edge cap, or an estimated factor that does not fit in RAM).
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -186,11 +185,6 @@ FORBIDDEN_OUT_DIRS = (ROOT / "out", HERE / "out", HERE / "out_mesh",
 REPORT_DIR = HERE / "out_mesh"
 
 PROBE = "high_res_sweep"
-PREPARED_NOT_RUN = (
-    "written by a dispatch forbidden to run it: this file has not been "
-    "executed, no solve has been performed, and no measured value below "
-    "originated from it"
-)
 
 TARGET_30K = 30000
 TARGETS = (40000, 50000, 60000)
@@ -199,6 +193,16 @@ MAX_FREE_E_HARD = 120000          # absolute refusal, well above the 60k point
 MEM_HEADROOM = 0.5                # estimated factor memory must fit in half of MemAvailable
 SHIFT_FACTOR = r4.C_SHIFT_FACTOR  # 0.999
 BYTES_PER_NNZ = r4.BYTES_PER_NNZ  # 12
+
+# The sigma ladder.  A shift that is too small leaves eigsh with an interior
+# residual the verdict cannot accept, so the sweep descends from the seeded or
+# chained value and adopts the first attempt that clears RESIDUAL_BAR.  Same
+# ladder and same bar as axis_sweep.py.  Note that r4.MAX_REL_RESIDUAL (1e-8,
+# the verdict gate) is NOT this bar: the ladder only decides which shift to
+# adopt, the verdict still decides whether the adopted point is consistent.
+RESIDUAL_BAR = 1e-6
+SIGMA_LADDER_FACTORS = (0.996, 0.992, 0.988, 0.984, 0.980)
+EXIT_REFUSED = 3                   # --one child refused: no points/ record
 
 R_ANALYTIC = mp.R_ANALYTIC
 Q_BAR = mp.Q_BAR
@@ -543,7 +547,11 @@ def run_point(pt, sigma, sigma_how, shim_mode):
     started = time.time()
     rec = {
         "probe": PROBE,
-        "prepared_not_run": PREPARED_NOT_RUN,
+        # Written by the process that just ran the point, so it says so.  The
+        # key that used to sit here carried the dispatch's "prepared, not run"
+        # disclaimer into a file full of measurements, where it was false for
+        # every record ever written; it is gone rather than softened.
+        "executed": True,
         "target": pt["target"],
         "label": pt["label"],
         "family": pt["family"],
@@ -584,9 +592,73 @@ def run_point(pt, sigma, sigma_how, shim_mode):
            "yair": int(pt["yair"]), "z": [int(v) for v in pt["z"]]}
     ctx = r4.load_context()
     ref = r4.analytic_reference(ctx)
-    with mp.DenseShim(shim_mode):
-        pb = r4.build_problem(cfg, ctx)
-        route_c = r4.run_route_c(pb, ctx, ref, float(sigma), None)
+
+    # sigma ladder: the seeded/chained shift is an estimate, and a shift that is
+    # too small leaves eigsh with an interior residual the verdict rejects.
+    # Descend from the seeded value and adopt the first attempt under
+    # RESIDUAL_BAR.  Each attempt rebuilds the problem inside a fresh DenseShim
+    # (the shim patches scipy's toarray on __enter__ and restores it on
+    # __exit__, so one instance per attempt is the safe pattern) and drops the
+    # previous problem and eigenpair first, so the process peak RSS is that of a
+    # single attempt rather than a running sum.
+    ladder = [float(sigma)] + [float(sigma) * f for f in SIGMA_LADDER_FACTORS]
+    tries = []
+    pb = None
+    route_c = None
+    sigma_used = None
+    for n, sig in enumerate(ladder):
+        if n:
+            prev = tries[-1]["residual"]
+            print("  [retry %d] sigma=%.9g (previous residual %s >= %g)"
+                  % (n, sig,
+                     "unavailable" if prev is None else "%.3e" % prev,
+                     RESIDUAL_BAR))
+        pb = None
+        route_c = None
+        gc.collect()
+        with mp.DenseShim(shim_mode):
+            pb = r4.build_problem(cfg, ctx)
+            route_c = r4.run_route_c(pb, ctx, ref, sig, None)
+        resid = route_c.get("residual")
+        tries.append({"sigma": sig, "lambda": route_c.get("eigenvalue"),
+                      "R": route_c.get("R"), "residual": resid})
+        if resid is not None and resid < RESIDUAL_BAR:
+            sigma_used = sig
+            break
+
+    if sigma_used is None:
+        last = tries[-1]
+        reason = ("no ladder attempt reached residual < %g: last attempt "
+                  "sigma=%.9g left residual %s after %d attempt(s)"
+                  % (RESIDUAL_BAR, last["sigma"],
+                     "unavailable" if last["residual"] is None
+                     else "%.3e" % last["residual"], len(tries)))
+        print("  REFUSED: %s" % reason)
+        return {
+            "probe": PROBE,
+            "executed": True,
+            "target": pt["target"],
+            "label": pt["label"],
+            "family": pt["family"],
+            "mesh": pt["mesh"],
+            "free_e_expected": pt["free_e_expected"],
+            "sigma": float(sigma),
+            "sigma_used": None,
+            "sigma_how": sigma_how,
+            "sigma_retries": max(0, len(tries) - 1),
+            "sigma_ladder": tries,
+            "residual_bar": RESIDUAL_BAR,
+            "max_rel_residual": r4.MAX_REL_RESIDUAL,
+            "reason": reason,
+            "status": "refused",
+            "ok": False,
+            "written_point_json": False,
+            "wall_s": round(time.time() - started, 2),
+        }
+    if len(tries) > 1:
+        print("  sigma ladder: adopted %.9g after %d retry(ies)"
+              % (sigma_used, len(tries) - 1))
+
     verdict = r4.verdict_of(route_c, None)
 
     wall = time.time() - started
@@ -633,7 +705,13 @@ def run_point(pt, sigma, sigma_how, shim_mode):
         "corr_ey": route_c.get("corr_ey"),
         "corr_ez_vv": route_c.get("corr_ez_vv"),
         "eigenvalue": route_c.get("eigenvalue"),
+        "sigma": sigma_used,
+        "sigma_requested": float(sigma),
+        "sigma_used": sigma_used,
+        "sigma_retries": max(0, len(tries) - 1),
+        "sigma_ladder": tries,
         "residual": residual,
+        "residual_bar": RESIDUAL_BAR,
         "max_rel_residual": r4.MAX_REL_RESIDUAL,
         "residual_in_enlarged_pencil": route_c.get("residual_in_enlarged_pencil"),
         "x2_matches_DcTx1_rel": route_c.get("x2_matches_DcTx1_rel"),
@@ -672,6 +750,63 @@ def write_point(rec, outdir):
     path = Path(outdir) / "points" / ("%s.json" % rec["label"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(rec, indent=2, default=r4._json_default) + "\n")
+    # At most one artifact per label: a refusal left over from an earlier run
+    # must not survive next to a real result.
+    stale = Path(outdir) / "refused" / ("%s.json" % rec["label"])
+    if stale.exists():
+        stale.unlink()
+    return path
+
+
+VERDICT_KEYS = ("record_present", "eigenpair_self_consistent", "Q_inside_bar",
+                "child_exit", "child_wall_s", "preflight", "status", "ok")
+
+
+def merge_verdict(path, rec):
+    """Write the parent's verdict back into the child's own point file.
+
+    The child measures and writes ``points/<label>.json``; the parent decides
+    whether that record is any good (did the eigenpair converge? is R inside
+    the Q bar?) and until now that decision existed only in the payload, so a
+    reader of the point file saw the measurement without the judgement.
+
+    This copies the verdict keys into the file the child wrote.  Nothing is
+    recomputed and no key the child wrote is dropped: the measurement stays
+    the child's, the verdict becomes the parent's, and one file answers both
+    questions.  Refusal records live in ``refused/`` and are left alone -- a
+    refused point has no measurement file to annotate.
+
+    Returns True when the file was rewritten, False when it could not be read,
+    parsed or written.  A False costs the reader convenience only: the payload
+    carries the same verdict either way.
+    """
+    try:
+        disk = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(disk, dict):
+        return False
+    for key in VERDICT_KEYS:
+        if key in rec:
+            disk[key] = rec[key]
+    if rec.get("reason") is not None:
+        disk["reason"] = rec["reason"]
+    try:
+        Path(path).write_text(json.dumps(disk, indent=2,
+                                         default=r4._json_default) + "\n")
+    except OSError:
+        return False
+    return True
+
+
+def write_refusal(rec, outdir):
+    """Write a refusal OUTSIDE points/, so no points/*.json glob can see one."""
+    path = Path(outdir) / "refused" / ("%s.json" % rec["label"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rec, indent=2, default=r4._json_default) + "\n")
+    stale = Path(outdir) / "points" / ("%s.json" % rec["label"])
+    if stale.exists():
+        stale.unlink()
     return path
 
 
@@ -722,29 +857,113 @@ def run_sweep(plan, outdir, seed, seed_how, args):
                 rec = json.loads(path.read_text())
             except ValueError:
                 rec = None
-        if proc.returncode != 0 or rec is None:
-            print("point %d FAILED: child exit %d after %.1f s (no usable record)"
-                  % (k, proc.returncode, child_wall))
+
+        if proc.returncode == EXIT_REFUSED:
+            rpath = Path(outdir) / "refused" / ("%s.json" % pt["label"])
+            refus = None
+            if rpath.exists():
+                try:
+                    refus = json.loads(rpath.read_text())
+                except ValueError:
+                    refus = None
+            refus = refus or {}
+            reason = refus.get("reason") or "child refused (no reason recorded)"
+            print("point %d REFUSED (no result written): %s" % (k, reason))
             records.append({"label": pt["label"], "target": pt["target"],
-                            "mesh": pt["mesh"], "free_e_expected": pt["free_e_expected"],
-                            "sigma": sigma, "status": "failed",
-                            "child_exit": proc.returncode, "ok": False})
+                            "mesh": pt["mesh"],
+                            "free_e_expected": pt["free_e_expected"],
+                            "sigma": sigma, "status": "refused", "ok": False,
+                            "child_exit": proc.returncode,
+                            "child_wall_s": round(child_wall, 2),
+                            "preflight": checks, "reason": reason,
+                            "sigma_retries": refus.get("sigma_retries"),
+                            "sigma_ladder": refus.get("sigma_ladder")})
+            # no chaining: a refusal carries no beta_sq, so sigma is held for
+            # the next point instead of being derived from a failed solve
+            continue
+
+        # The child exit code is NOT the record contract.  --one returns 1 both
+        # for "solved, but outside the Q bar" (a real record was written) and
+        # for "crashed with no record"; it returns EXIT_REFUSED for a refusal.
+        # Classify from the artifact first and from the numbers second, never
+        # from the exit code alone.
+        if rec is None:
+            why = ("child exited %d and wrote no record at %s"
+                   % (proc.returncode, path))
+            print("point %d FAILED: %s after %.1f s" % (k, why, child_wall))
+            records.append({"label": pt["label"], "target": pt["target"],
+                            "mesh": pt["mesh"],
+                            "free_e_expected": pt["free_e_expected"],
+                            "sigma": sigma, "status": "failed", "ok": False,
+                            "record_present": False,
+                            "eigenpair_self_consistent": False,
+                            "Q_inside_bar": None, "reason": why,
+                            "child_exit": proc.returncode,
+                            "child_wall_s": round(child_wall, 2),
+                            "preflight": checks})
             continue
 
         rec["preflight"] = checks
         rec["child_exit"] = proc.returncode
         rec["child_wall_s"] = round(child_wall, 2)
-        records.append(rec)
-        print("point %d done: beta=%.6f  R_extracted=%.9f  |Q-1|=%.4f  peak RSS "
-              "%.1f MiB  wall %.1f s%s"
-              % (k, rec.get("beta_sq") or float("nan"),
-                 rec.get("R_extracted") or float("nan"),
-                 abs((rec.get("Q") or float("nan")) - 1.0),
-                 rec.get("peak_rss_mib") or float("nan"),
-                 child_wall,
-                 "" if rec.get("ok") else "   [INCONSISTENT]"))
+        rec["record_present"] = True
 
-        if args.chain and rec.get("beta_sq"):
+        # Two independent questions, reported separately.  (1) Did the
+        # eigenpair converge (residual <= MAX_REL_RESIDUAL)?  (2) Is R inside
+        # the Q bar?  Answering yes to (1) and no to (2) is a physics
+        # statement about this mesh, not a crash: the sweep still solved.
+        residual = rec.get("residual")
+        eig_ok = residual is not None and float(residual) <= r4.MAX_REL_RESIDUAL
+        q_inside = bool(rec.get("Q_inside_bar"))
+        rec["eigenpair_self_consistent"] = bool(eig_ok)
+        rec["Q_inside_bar"] = q_inside
+        Qm1 = rec.get("Q_minus_1")
+        if not eig_ok:
+            rec["status"] = "failed"
+            rec["ok"] = False
+            rec["reason"] = ("record written but the eigenpair is not "
+                             "self-consistent: residual %r > %.1e"
+                             % (residual, r4.MAX_REL_RESIDUAL))
+        elif not q_inside:
+            rec["status"] = "solved_off_bar"
+            rec["ok"] = False
+            rec["reason"] = ("solved and eigenpair self-consistent, but "
+                             "|Q-1| = %s > q_bar %.2f"
+                             % ("n/a" if Qm1 is None else "%.4f" % abs(Qm1),
+                                Q_BAR))
+        else:
+            rec["status"] = "ok"
+            rec["ok"] = True
+            rec["reason"] = None
+
+        # The child owned the measurement, the parent owns the verdict.  Merge
+        # the verdict back into the child's file so points/<label>.json is the
+        # one artifact that answers both "what did this point measure?" and
+        # "was it any good?" without a reader cross-referencing the payload.
+        if not merge_verdict(path, rec):
+            print("  !! could not merge the verdict into %s" % path)
+
+        records.append(rec)
+
+        print("point %d %s: beta=%.6f  R_extracted=%.9f  residual=%.2e  "
+              "eigenpair=%s  |Q-1|=%s (%s q_bar %.2f)  peak RSS %.1f MiB  "
+              "wall %.1f s"
+              % (k, rec["status"],
+                 rec.get("beta_sq") or float("nan"),
+                 rec.get("R_extracted") or float("nan"),
+                 float(residual) if residual is not None else float("nan"),
+                 "self-consistent" if eig_ok else "NOT self-consistent",
+                 "n/a" if Qm1 is None else "%.4f" % abs(Qm1),
+                 "inside" if q_inside else "OUTSIDE", Q_BAR,
+                 rec.get("peak_rss_mib") or float("nan"), child_wall))
+        if rec["status"] == "solved_off_bar":
+            print("    off-bar, not a failure: the solve converged, R just "
+                  "misses R_analytic by more than the Q bar")
+
+        # Chaining behaviour is unchanged: sigma only advances from a point
+        # that passed every bar, which is exactly the set the pre-fix code
+        # chained from (child exit 0).
+        if args.chain and rec.get("ok") and rec.get("beta_sq"):
             prev = float(rec["beta_sq"])
             sigma = SHIFT_FACTOR * prev
             how = {"source": "chained: 0.999 x %s beta_sq" % pt["label"],
@@ -753,6 +972,10 @@ def run_sweep(plan, outdir, seed, seed_how, args):
                    "note": ("sigma = 0.999 x %.6f (beta_sq of %s), the "
                             "convention the M1..M4 ladder used"
                             % (prev, pt["label"]))}
+        elif args.chain:
+            print("    sigma held at %.6f: chaining only advances from a point "
+                  "that passed every bar (status %s)"
+                  % (sigma, rec["status"]))
 
     return records, time.time() - started, how
 
@@ -760,8 +983,18 @@ def run_sweep(plan, outdir, seed, seed_how, args):
 # ------------------------------------------------------------------- payload --
 
 def build_payload(args, plan, records, seed, seed_how, wall, outdir, final_how):
-    done = [r for r in records if r.get("status") == "ok" and r.get("R_extracted")]
-    Rs = [float(r["R_extracted"]) for r in done]
+    # A record that exists is evidence, whatever the child's exit code was:
+    # solved (eigenpair self-consistent) splits into ok and solved_off_bar,
+    # failed means no record or a non-converged eigenpair, refused is the
+    # pre-flight/ladder refusal and still lives in refused/.
+    solved = [r for r in records
+              if r.get("status") in ("ok", "solved_off_bar")
+              and r.get("R_extracted")]
+    done = [r for r in solved if r.get("status") == "ok"]
+    off_bar = [r for r in solved if r.get("status") == "solved_off_bar"]
+    failed = [r for r in records if r.get("status") == "failed"]
+    refused = [r for r in records if r.get("status") == "refused"]
+    Rs = [float(r["R_extracted"]) for r in solved]
 
     if len(Rs) >= 2:
         first, last = Rs[0], Rs[-1]
@@ -777,7 +1010,11 @@ def build_payload(args, plan, records, seed, seed_how, wall, outdir, final_how):
 
     interior = None
     if len(Rs) >= 2:
-        devs = [(abs(r - R_ANALYTIC) / R_ANALYTIC, r["label"]) for r in done]
+        # pre-existing latent bug, newly reachable now that solved points are
+        # not empty: the tuple carried r["label"] from a dict but did the
+        # arithmetic on the float, so this crashed as soon as Rs had 2 entries
+        devs = [(abs(float(r["R_extracted"]) - R_ANALYTIC) / R_ANALYTIC,
+                 r["label"]) for r in solved]
         devs.sort()
         interior = {"label": devs[-1][1], "max_abs_rel_dev": devs[-1][0]}
 
@@ -788,7 +1025,7 @@ def build_payload(args, plan, records, seed, seed_how, wall, outdir, final_how):
     return {
         "probe": PROBE,
         "script": str(Path(__file__).resolve()),
-        "prepared_not_run": PREPARED_NOT_RUN,
+        "executed": True,
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "environment": {
             "python": sys.version.split()[0],
@@ -814,25 +1051,51 @@ def build_payload(args, plan, records, seed, seed_how, wall, outdir, final_how):
             "max_free_e_hard": MAX_FREE_E_HARD,
             "mem_headroom": args.mem_headroom,
             "max_rel_residual": r4.MAX_REL_RESIDUAL,
+            "residual_bar": RESIDUAL_BAR,
             "q_bar": Q_BAR,
             "shim_mode": args.shim,
         },
         "points": records,
+        "refusals": [{"label": r.get("label"), "target": r.get("target"),
+                      "reason": r.get("reason"),
+                      "sigma_ladder": r.get("sigma_ladder")}
+                     for r in refused],
         "trend": {
+            # four disjoint outcomes, one per planned point:
+            #   ok            solved, eigenpair self-consistent, inside Q bar
+            #   solved_off_bar solved and eigenpair self-consistent, R misses
+            #                 R_analytic by more than the Q bar (physics, not
+            #                 a crash -- the numbers below are still real)
+            #   failed        no record at all, or a record whose eigenpair did
+            #                 not converge
+            #   refused       pre-flight/ladder refusal, no points/ record
             "n_points_ok": len(done),
-            "n_points_failed": len(records) - len(done),
+            "n_points_solved": len(solved),
+            "n_points_solved_off_bar": len(off_bar),
+            "n_points_failed": len(failed),
+            "n_points_refused": len(refused),
             "R_direction": direction,
             "R_rel_change_first_to_last": rel,
             "R_values": Rs,
             "worst_deviation_from_analytic": interior,
-            "n_Q_inside_bar": sum(1 for r in done if r.get("Q_inside_bar")),
+            "n_Q_inside_bar": sum(1 for r in solved if r.get("Q_inside_bar")),
         },
         "totals": {
             "peak_rss_mib_max": max(peak_rss) if peak_rss else None,
             "factor_memory_gb_max_measured": max(factor_gb) if factor_gb else None,
             "wall_s_total": round(wall, 2),
+            # exit-code contract, unchanged: 0 only when EVERY planned point
+            # came back ok; any off-bar/failed/refused point keeps it False
             "all_self_consistent": bool(done) and all(r.get("ok") for r in done)
                                    and len(done) == len(records),
+            # the eigenpair question on its own, so an off-bar sweep is not
+            # confused with a numerical failure
+            "all_eigenpairs_self_consistent": (bool(solved)
+                                               and not failed
+                                               and all(r.get("eigenpair_self_consistent")
+                                                       for r in solved)),
+            "n_points_with_record": len([r for r in records
+                                         if r.get("record_present")]),
         },
         "notes": {
             "no_dense_anchor": ("anchor=None at every point: the dense QZ "
@@ -856,7 +1119,6 @@ def build_payload(args, plan, records, seed, seed_how, wall, outdir, final_how):
             "free_e_offset": ("nominal targets are unreachable exactly: nx must "
                               "be odd, so each point lands a few edges above its "
                               "target (offsets are printed per point)"),
-            "prepared_only": PREPARED_NOT_RUN,
         },
         "outputs": {
             "points_dir": str(Path(outdir) / "points"),
@@ -867,30 +1129,63 @@ def build_payload(args, plan, records, seed, seed_how, wall, outdir, final_how):
 
 def print_summary(payload):
     print("\n--- sweep summary ---")
-    print("%-16s %8s %9s %10s %9s %7s %8s %s"
+    print("%-16s %8s %9s %10s %13s %7s %9s %4s %8s %s"
           % ("label", "free_e", "sigma", "beta_sq", "R_extracted", "|Q-1|",
-             "RSS(MiB)", "status"))
+             "residual", "eig", "RSS(MiB)", "status"))
     for r in payload["points"]:
         Q = r.get("Q")
-        print("%-16s %8s %9s %10s %13s %7s %8s %s"
+        res = r.get("residual")
+        print("%-16s %8s %9s %10s %13s %7s %9s %4s %8s %s"
               % (r.get("label"), r.get("free_e_measured", "-"),
                  ("%.3f" % r["sigma"]) if r.get("sigma") else "-",
                  ("%.4f" % r["beta_sq"]) if r.get("beta_sq") else "-",
                  ("%.9f" % r["R_extracted"]) if r.get("R_extracted") else "-",
                  ("%.4f" % abs(Q - 1.0)) if Q is not None else "-",
+                 ("%.2e" % res) if res is not None else "-",
+                 "yes" if r.get("eigenpair_self_consistent") else "NO",
                  r.get("peak_rss_mib", "-"), r.get("status", "?")))
+    print("  eig = eigenpair self-consistency, judged on residual <= %.1e alone"
+          % r4.MAX_REL_RESIDUAL)
+    print("  |Q-1| is the separate R check against R_analytic (q_bar %.2f); "
+          "solved_off_bar = converged, R outside that bar" % Q_BAR)
     t = payload["trend"]
-    print("\nR direction first->last: %s (rel change %s)"
+    print("\nR direction first->last: %s (rel change %s, over %d solved "
+          "point(s))"
           % (t["R_direction"],
              "n/a" if t["R_rel_change_first_to_last"] is None
-             else "%.3e" % t["R_rel_change_first_to_last"]))
-    print("points ok/failed: %d/%d   inside Q bar: %d"
-          % (t["n_points_ok"], t["n_points_failed"], t["n_Q_inside_bar"]))
+             else "%.3e" % t["R_rel_change_first_to_last"],
+             t["n_points_solved"]))
+    print("points ok/solved_off_bar/failed/refused: %d/%d/%d/%d   "
+          "inside Q bar: %d of %d solved"
+          % (t["n_points_ok"], t["n_points_solved_off_bar"],
+             t["n_points_failed"], t["n_points_refused"],
+             t["n_Q_inside_bar"], t["n_points_solved"]))
     tot = payload["totals"]
     print("peak RSS max: %s MiB   factor memory max: %s GB   wall: %.1f s"
-          % (tot["peak_rss_mib_max"], tot["factor_memory_gb_max_measured"],
+          % ("n/a" if tot["peak_rss_mib_max"] is None
+             else "%.1f" % tot["peak_rss_mib_max"],
+             "n/a" if tot["factor_memory_gb_max_measured"] is None
+             else "%.6f" % tot["factor_memory_gb_max_measured"],
              tot["wall_s_total"]))
-    print("all self-consistent: %s" % tot["all_self_consistent"])
+    print("all self-consistent (ok on every point): %s"
+          % tot["all_self_consistent"])
+    print("all eigenpairs self-consistent: %s"
+          % tot["all_eigenpairs_self_consistent"])
+    if payload["refusals"]:
+        print("\n*** SWEEP REFUSED: %d point(s) produced no record ***"
+              % len(payload["refusals"]))
+        for r in payload["refusals"]:
+            print("    %s: %s" % (r.get("label"), r.get("reason")))
+    if t["n_points_solved_off_bar"]:
+        print("\n*** %d point(s) SOLVED but outside the Q bar (|Q-1| > %.2f): "
+              "the eigenpairs converged, so these are measured values that "
+              "disagree with R_analytic, not failed runs ***"
+              % (t["n_points_solved_off_bar"], Q_BAR))
+    bad = [r for r in payload["points"] if r.get("status") == "failed"]
+    if bad:
+        print("\n*** %d point(s) FAILED (no usable record) ***" % len(bad))
+        for r in bad:
+            print("    %s: %s" % (r.get("label"), r.get("reason")))
     print("payload: %s" % payload["outputs"]["payload"])
 
 
@@ -932,6 +1227,11 @@ def _main(args):
         rec = run_point(pt, args.sigma,
                         args.sigma_how or "explicit --sigma", args.shim)
         rec["preflight"] = checks
+        if rec.get("status") == "refused":
+            path = write_refusal(rec, outdir)
+            print("REFUSED: %s" % rec.get("reason"))
+            print("wrote %s (no points/ record)" % path)
+            return EXIT_REFUSED
         path = write_point(rec, outdir)
         print("wrote %s" % path)
         return 0 if rec.get("ok") else 1
@@ -960,8 +1260,8 @@ def _main(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="high_res_sweep.py",
-        description=("40k / 50k / 60k sparse Route-C sweep. PREPARED, NOT RUN: "
-                     "this file has never been executed."),
+        description=("40k / 50k / 60k sparse Route-C sweep: three real solves, "
+                     "one child process per point."),
         epilog=("exit 0 = every point ran and stayed self-consistent; "
                 "1 = a point failed or fell outside the Q bar; "
                 "2 = refused before running"))

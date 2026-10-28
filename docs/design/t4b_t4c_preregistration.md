@@ -3,6 +3,14 @@
 Pre-registration only. No solve, no gate run, no field reconstruction. Every figure below is a reading
 from an artefact that already exists, named where it appears, or a quotient of two such readings.
 
+**Status, 2026-10-28: this document now carries one result and one non-certification.** §3.5 reports
+the `40k`/`50k`/`60k` ladder, now run, scored at the registered `1e-4` per step. §3.6 records what that
+pass does not certify and does not reach. Everything else is the registration text as it was written, and
+where a sentence below is now stale it is corrected **forward** — by a dated note placed beside the
+original sentence, never by rewriting it, because a pre-registration that is edited after its result is
+not a pre-registration. The intro above ("No solve, no gate run, no field reconstruction") therefore
+describes this document **as registered**; it no longer describes this document as it stands.
+
 **This document supersedes nothing and amends nothing.** It does not edit
 `docs/design/t4_amp_ratio.md`, it does not edit `docs/design/m3c_gate_v2.md`, it moves no existing
 threshold, and it rewrites no earlier verdict. `T4_amp` remains registered **FAIL** (Physics).
@@ -223,7 +231,180 @@ there is no measurement, and the test must not be reported as pass, as fail, or 
 It becomes evaluable when at least two rungs of the `40k`/`50k`/`60k` ladder have been solved and
 recorded with their residuals (§4).
 
-### 3.5 Observed convergence, recorded and explicitly NOT a gate
+**STATUS UPDATE, 2026-10-28: EVALUABLE, EVALUATED, PASS.** Three statements in this section are now
+superseded, and they are named here verbatim rather than deleted, because the record of what was
+registered before any mesh existed is the point of registering: "no mesh in that ladder has been solved"
+(first paragraph), "**no banked step anywhere in the record meets `1e-4`**" (after the fine-end table),
+and "**`T4c` STATUS: PRE-REGISTERED, NOT YET EVALUABLE**" (closing). The ladder has been run, and the
+criterion scored in §3.5 is **this** criterion: `1e-4` per successive step over `40k`/`50k`/`60k`,
+relative against the finer value, monotone in `free_e` — no widening of the bar, no re-scoping to another
+ladder, no change of denominator convention, no allowance. The pre-run paragraphs above stay exactly as
+written.
+
+### 3.5 The registered ladder, run: `T4c` scores **PASS** at the registered `1e-4`
+
+**Verdict: `T4c` PASS, at the original `1e-4` per-step bar, on the `40k` / `50k` / `60k` ladder it was
+pinned to.** Two successive steps exist; **both** are inside the bar, by `9.68x` and `17.91x`; and
+`lambda` is strictly monotone decreasing, which is the other half of the registered condition. No
+denominator was changed, no step was dropped, no rung was added after the fact.
+
+Source: `tools/host/sparse-probe/out_highres/high_res_sweep.json` plus one record per rung under
+`points/` (`hi40k_nx835.json`, `hi50k_nx1043.json`, `hi60k_nx1251.json`), written by
+`tools/host/sparse-probe/high_res_sweep.py`, `generated = 2026-10-28T04:59:35`, `executed = true`.
+Environment as recorded: Python `3.12.15`, SciPy `1.18.1`, `threads = 1`, `mp_max_free_e = 40000`,
+`shim_mode = auto`. Thresholds in force at the run: `max_free_e_hard = 120000`, `mem_headroom = 0.5`,
+`max_rel_residual = 1e-8`, `residual_bar = 1e-6`, `q_bar = 0.1`, `r_analytic = 2.8101021387524523`.
+**Refusals: `[]` — `0 of 3` meshes refused, `n_points_failed = 0`.**
+
+| rung | mesh spec | `nx` | nodes | `n_edges` | `n_pec_edges` | free edges (offset) | `n_dof` |
+|---|---|---|---|---|---|---|---|
+| `40k` | `12/411/8-4-4` | `835` | `14195` | `40882` | `846` | `40036` (`+36`) | `53391` |
+| `50k` | `12/515/8-4-4` | `1043` | `17731` | `51074` | `1054` | `50020` (`+20`) | `66705` |
+| `60k` | `12/619/8-4-4` | `1251` | `21267` | `61266` | `1262` | `60004` (`+4`) | `80020` |
+
+Three rungs, one cross-section (`strip 12`, `z` lobes `8-4-4`, `nz = 17`), `yair` growing
+`411` -> `515` -> `619`, so `free_e` is linear in `nx` alone (`free_e = 48 * nx - 44`, recorded per
+point as `law`, agreeing with the closed form at all three). The `free_e` offsets are not slack: `nx`
+must be odd, so each rung lands a few edges above its nominal target. They change no arithmetic below.
+
+**The criterion, scored step by step.** Convention as §3.2: `(lambda_next - lambda_prev) / lambda_next`,
+relative against the finer value; the coarser denominator is printed beside it.
+
+| step | `lambda` before | `lambda` after | absolute | relative (finer) | relative (coarser) | vs `1e-4` |
+|---|---|---|---|---|---|---|
+| `40k` -> `50k` | `95889.18208402561` | `95888.19176210178` | `-0.990321923833` | `1.0327881939e-05` | `1.0327775275e-05` | **PASS**, `9.68x` inside |
+| `50k` -> `60k` | `95888.19176210178` | `95887.65639467127` | `-0.535367430508` | `5.5832778758e-06` | `5.5832467030e-06` | **PASS**, `17.91x` inside |
+
+**`2 of 2` steps meet `1e-4`; `lambda` is strictly monotone decreasing; the direction half of the
+condition is satisfied on every rung.** Whole-ladder spread: `95889.18208402561 - 95887.65639467127 =
+1.52568935434` absolute, `1.591096431507866e-05` over `max` and `1.591121747789216e-05` over `min` —
+i.e. the entire three-rung ladder moves less than **one fifth** of a single step's allowance
+(`0.159x` of `1e-4`). The two rungs are `9.681x` apart in `free_e`; the answer moves `1.6e-05`.
+
+**What "PASS" means here, and nothing more.** It means the registered convergence condition is met on
+the registered ladder. It is scored on `lambda`. It says nothing about `R` (§3.6), nothing about
+`T4_amp`, and nothing about accuracy against a dense reference — each rung records
+`anchor = None` with `anchor_note`: no dense anchor exists above `~3000` free edges, so every verdict
+here is `SELF_CONSISTENT` (residual, enlarged-pencil residual, and the `x2 == D_c^T x1` identity), not a
+reproduction of a reference eigenpair. Self-consistency per rung, as recorded:
+
+| rung | residual | residual, enlarged pencil | `x2` vs `D_c^T x1` (rel.) | `eps_eff` |
+|---|---|---|---|---|
+| `40k` | `1.5527873334932968e-12` | `6.312744455557535e-19` | `9.072127188276239e-13` | `3.5573962895705598` |
+| `50k` | `2.152731713758068e-12` | `6.111586526973199e-19` | `4.719296257601582e-12` | `3.5573595495811183` |
+| `60k` | `2.5489994505965004e-12` | `5.423777957245537e-19` | `1.862700857955338e-12` | `3.5573396879651416` |
+
+Cost and shape, for the record and not as a criterion: `nnz_S` `596655` / `745583` / `894511`, factor
+`nnz` `3482697` / `4353648` / `5218009`, fill per row `65.23981417305134` / `65.27697728465402` /
+`65.21940580199232`, factor memory `0.041792364` / `0.052243776` / `0.062616108` GB, `t_splu`
+`0.27513273898512125` / `0.30346789001487195` / `0.38073511503171176` s, `t_eigsh` `0.38941675692331046`
+/ `0.5035539170494303` / `0.5699685489526019` s, `opinv_calls` `21` at every rung, `wall_s` `4.9` /
+`5.74` / `6.22` (`child_wall_s` `5.59` / `6.62` / `7.09`, `wall_s_total` `19.3`), `peak_rss_mib` `237.7`
+/ `279.9` / `315.7` (`peak_rss_mib_max` `315.7`). Memory was never the constraint: the hard guard is
+`120000` free edges and the largest rung is `60004`.
+**`wall_s` and `peak_rss_mib` are load-dependent; the numerics are not.** These figures were measured
+on a loaded host (`loadavg` `~2.9` on `12` cores); the identical code on an idle host gave `wall_s`
+`2.21` / `2.35` / `2.43` and `peak_rss_mib` `236.0` / `268.5` / `307.8`, i.e. `~2.6x` less wall for the
+same numerics — `lambda`, `R`, `residual` and `sigma` are **bit-identical** between the two runs. The
+cost figures here are therefore an **upper bound measured on a loaded host**, and what the gate scores
+is the numerics, not the timings.
+
+**The bar that was authorised in advance and deliberately not used.** Before this run the bar `2e-4` was
+authorised, on the strength of one neighbouring number: the campaign's finest step, `M3` -> `M4`, at
+`1.0504460136124583e-04`, is `5.0 %` above `1e-4`. **That authorisation was not used.** The ladder passes
+at `1e-4` with `9.7x` and `17.9x` to spare, so moving the bar would have bought nothing and cost the
+result its meaning: a bar relaxed because a *different* mesh pair missed it by `5 %` is a bar aimed at a
+number, not at a regime. `2e-4` is recorded here as **authorised, not adopted, and not needed**. If this
+ladder had come in between `1e-4` and `2e-4`, the verdict would have been FAIL and `2e-4` would still not
+have been applied in this document; that would have been a decision for the project owner, named as such.
+
+### 3.6 What the pass does not certify: `R` does not converge, and the campaigns are not one ladder
+
+**This section is not a caveat and it is not a hedge: it is the other half of the measurement.** The
+eigenvalue converges beautifully on this ladder. The energy ratio does not converge at all, is not
+monotone, and is `12`-`15 %` above the analytic value at every rung. Both facts come from the same three
+solves. Quoting the first without the second would be quoting half a solve.
+
+| rung | `R_extracted` | vs `R_analytic` `2.8101021387524523` | `Q` | `\|Q - 1\|` | `\|Q - 1\|` vs the `0.10` bar |
+|---|---|---|---|---|---|
+| `40k` | `3.184188500254623` | `+13.312 %` | `1.1331219802808472` | `0.13312198028084724` | `1.3312x` outside |
+| `50k` | `3.2242746409436047` | `+14.739 %` | `1.1473869922660622` | `0.14738699226606217` | `1.4739x` outside |
+| `60k` | `3.153215686647681` | `+12.210 %` | `1.1221000273134392` | `0.12210002731343916` | `1.2210x` outside |
+
+**`R` does not approach `R_analytic`.** It sits at `3.184` / `3.224` / `3.153` against `2.810`: flat,
+non-monotone, with a hump at `50k` (`+1.258912 %` from `40k`, then `-2.203874 %` to `60k`). Endpoint to
+endpoint `40k` -> `60k` is `-0.972707 %` **against the `40k` value** (`-0.982261 %` by this document's
+finer-value convention) — the payload's own `trend.R_rel_change_first_to_last = -0.009727066599375415`
+uses the coarser denominator there, unlike §3.2. **The payload's `trend.R_direction` reads
+`"decreasing"`, and that label is an endpoint-only statement: the sequence `3.184` -> `3.224` -> `3.153`
+is not decreasing.** The label is quoted here so it is not mistaken for a claim about the sequence.
+
+**All seven meshes now measured are outside `|Q - 1| <= 0.10`.** These three at `0.1221`-`0.1474`; the
+campaign's five at `0.2207`-`0.3043` (`M4` `0.22074353791060441` to `M2` `0.30429524231479066`). There is
+no mesh in the record, at any resolution, inside the bar. Every rung here is `status:
+solved_off_bar`, `ok: false`, `child_exit: 1` for exactly this reason — the eigenpair is self-consistent
+and the ratio is off the bar. That is not a defect of the ladder; it is the measurement.
+
+**`lambda` converging while `R` does not is not a contradiction, and it is not a resolution either.** It
+is the live tension that `T4` work has to confront: the eigenvalue is a property of the discrete operator
+and settles as the operator settles, while `R` is a weighted ratio over three regions whose ratios differ
+by `~40x` and whose weights are mesh-dependent (§1). A converged eigenvalue does not make `R` converged,
+and a `T4c` PASS must never be quoted as support for `T4_amp`. **`T4_amp` remains FAIL, in Physics, at
+`44.09 %`, with `|Q - 1| <= 0.10` on `R_extracted` in `[2.52909192487721, 3.09111235262770]` untouched.**
+The pass moves no other row in §6 and no clause in §5.
+
+**`R`'s non-monotonicity is not solver noise.** Every rung's eigenpair is self-consistent to `~1e-12`
+(table in §3.5), and the recorded mode correlations are stable in magnitude across rungs —
+`corr_ez_vv` `+0.9744828302045693` / `-0.9745057271595093` / `+0.9745258112132862`, `corr_ey`
+`+0.953368248307638` / `-0.9426999153519491` / `+0.9486238464730392`. The sign flips are the
+eigenvector's global sign convention, not a mode change. The hump in `R` is in the measurement.
+
+**The `M` campaign is not a ladder, and the two campaigns are not one sequence.** Recorded because it is
+tempting to concatenate them and the concatenation is not licensed:
+
+| step | `lambda` before | `lambda` after | absolute | relative (finer) | vs `1e-4` | vs `2e-4` |
+|---|---|---|---|---|---|---|
+| `M5` -> `M1` | `96752.51970084828` | `96617.80879700037` | `-134.710903848` | `1.3942657728e-03` | fail | fail |
+| `M1` -> `M2` | `96617.80879700037` | `96501.43769607678` | `-116.371100924` | `1.2059001783e-03` | fail | fail |
+| `M2` -> `M3` | `96501.43769607678` | `96431.67757422743` | `-69.7601218494` | `7.2341499810e-04` | fail | fail |
+| `M3` -> `M4` | `96431.67757422743` | `96421.54901104893` | `-10.1285631785` | `1.0504460136e-04` | fail | **PASS** |
+
+The campaign's diagonal has **four** steps, not three, and at `1e-4` it scores **`0 of 4`**; at `2e-4` it
+would score **`1 of 4`**. So a campaign-scoped reading of `T4c` — had one been attempted — would have
+failed at `1e-4` and still failed at `2e-4`. The relaxation that was authorised for the `s12` ladder would
+not have rescued it, which is a second reason it was not applied: it would have moved the bar without
+moving the verdict.
+
+Why the campaigns are not one sequence, stated as arithmetic rather than as a caveat: (i) they are
+different cross-sections — campaign `M4` is `58/44/35-17-18`, this ladder's `40k` is `12/411/8-4-4`; the
+mesh is not the same object at a different `h`. (ii) The join is enormous: `M4` -> `hi40k` is
+`(95889.18208402561 - 96421.54901104893) / 95889.18208402561 = -5.5518976745e-03`, which is **`52.85x`
+the finest within-campaign step** (`M3` -> `M4`) and `537.56x` the first ladder step. A step two orders
+larger than the steps being tested is a different sequence, not a next rung. (iii) The extrapolants
+disagree: a least-squares line in `1/free_e` (the natural variable, `free_e` proportional to `h^-2`, using
+each campaign's recorded `free_e` including the `+36`/`+20`/`+4` offsets) gives `96276.1533639126` for the
+campaign's five points against `95884.5478902379` for this ladder's three — a difference of `391.605474`
+in `lambda`, `4.08e-03` relative to the `s12` extrapolant, i.e. `41x` the `1e-4` bar and `395x` the actual
+first ladder step. (In `free_e` rather than `1/free_e`: `96822.3920247657` vs `95892.1652776572`.) Two
+campaigns whose extrapolants disagree by `41x` the bar cannot be pooled into one convergence claim. **This
+is a secondary observation and it is explicitly not the register: `T4c` is scored on §3.5 and nowhere
+else.**
+
+**Hedges on §3.5-§3.6, all recorded in the payload's own `notes` and not repaired here.** (i)
+`no_dense_anchor`: no dense QZ reference exists above `~3000` free edges, so nothing above is an
+eigenvalue *comparison*; it is self-consistency only. (ii) `anisotropy`: `strip` and `z` are fixed while
+`yair` grows, so the air box gets more elongated in `y` at every rung, and the `y`-drift in `R` cannot be
+separated from an aspect-ratio drift — the `50k` hump is recorded, not explained or attributed. (iii)
+`free_e_offset`: the nominal targets are unreachable exactly because `nx` must be odd; the offsets
+`+36`/`+20`/`+4` are printed per point and change no arithmetic in this section. (iv) The two campaigns'
+flags are **not** comparable and are not tabulated together: this ladder's per-point `ok` is `false`
+because `ok` requires residual **and** `|Q - 1| <= q_bar`, while the campaign's `overall.self_consistent`
+is `true` because it is residual-only; correspondingly the payload carries
+`all_eigenpairs_self_consistent: true` beside `all_self_consistent: false`, and
+`n_points_solved: 3`, `n_points_solved_off_bar: 3`, `n_Q_inside_bar: 0`, `n_points_ok: 0`. Reading either
+flag as a verdict on the other campaign is a category error.
+
+### 3.7 Observed convergence, recorded and explicitly NOT a gate
 
 The following are recorded because they are the honest account of how fast `lambda` actually moves. They
 are **not** a pass criterion, they are **not** a fallback criterion, and no verdict is ever scored
@@ -246,7 +427,7 @@ solve carries residual `3.7471545933622495e-09`, three orders inside the `1e-6` 
 monotonicity claim is therefore made for the `z` axis, and none should be inferred from the campaign
 diagonal being monotone — that diagonal moves both axes at once.
 
-### 3.6 Falsification
+### 3.8 Falsification
 
 `T4c` fails if **any** rung in the registered ladder shows `lambda` moving in the wrong direction, or
 **any** successive step exceeds `1e-4` relative. A failure is recorded as a FAIL and reported with the
@@ -281,6 +462,31 @@ recorded per mesh at `:209`-`:211`). It is **NOT yet implemented** in
 `T4c`'s registered ladder cannot be evaluated honestly until §4 is implemented there. This is recorded
 as an open item, not as a caveat on results that do not exist yet.
 
+**Now implemented, and still never exercised — a supersession, not an edit.** The paragraph above is the
+state of the record when it was written and it stays as written. Two things have changed and neither is a
+rewrite of it. (1) `high_res_sweep.py` now carries the ladder: every point record under
+`tools/host/sparse-probe/out_highres/points/` carries `sigma_ladder` (a list, not a scalar),
+`sigma_requested`, `sigma_used` and `sigma_retries`, and each rung records one ladder entry with its own
+`sigma`, `lambda`, `R` and `residual`. (2) **The ladder was never exercised.** All three rungs solved on
+the **first** attempt, at residual `1.5527873334932968e-12` / `2.152731713758068e-12` /
+`2.5489994505965004e-12` — four to five orders inside the `1e-6` bar — so `sigma_retries = 0` and
+`sigma_ladder` holds exactly **one** entry at every rung, with `sigma = sigma_requested = sigma_used =
+96325.12746203788`. That figure is the seed from `seed_sigma`: `0.999 x 96421.54901104893` (the `beta_sq`
+of `out_mesh/M4_fe30672.json`, `30672` free edges), chosen from `10` candidates as the nearest `out_mesh`
+record to `30000` free edges, and each later rung chains `0.999 x` the previous rung's `beta_sq`.
+
+**Stated bluntly: the retry path is implemented and EMPIRICALLY UNTESTED.** "The rule is now in this
+script" is a statement about code. The only evidence in the record that a ladder retry actually recovers
+a bad solve is still the `43/34/34-17-17` lock-on at `9.89e-01` and its recovery at `sigma = 96100`, and
+that is one incident, one mesh, in `axis_sweep.py`. A `T4c` PASS computed on first-attempt solves is
+therefore evidence about the ladder's convergence and **no evidence at all** about the retry path; the two
+must not be quoted as one. The condition is not hypothetical — three rungs is three chances for it to
+happen, and it did not, which is a fact about these three shifts, not about the rule.
+
+**Scope, restated because it is now load-bearing.** The invariant still registers no physics test and
+changes no number. It is now the precondition under which §3.5's three residuals are quoted at all, and
+those three are quoted in full above for that reason.
+
 **Scope of the hazard, measured.** The banked campaign meshes are **unaffected**: residuals `1e-11` to
 `6e-11` (`M5` `1.3817866142195237e-11`, `M1` `1.100478257696839e-12`, `M2`
 `3.551986947354624e-12`, `M3` `3.2639272825896974e-12`, `M4` `6.061053364772882e-11`), verified in
@@ -307,6 +513,13 @@ remains the project owner's decision, and this document makes none.**
 | `T4c` | `lambda` monotone in `free_e` and `\|d lambda / lambda\| <= 1e-4` per step, over the `40k`/`50k`/`60k` ladder | any step exceeding `1e-4` relative, or `lambda` moving the wrong way, on any rung; the `z` axis already reverses at `1.19e-05` on the low-resolution sweep, so the monotone half is the one at risk |
 | §4 invariant | every banked solve records its residual, and residual `<= 1e-6` | a solve quoted without a residual, or with residual `> 1e-6` and no ladder retry; the `43/34/34-17-17` lock-on at `9.89e-01` is the worked example of what the rule exists to catch |
 
+**Status of this table at 2026-10-28.** The `T4c` row is the only row that has moved: it is now **scored
+PASS** at its registered `1e-4`, on the `40k`/`50k`/`60k` ladder, `2 of 2` steps, `9.68x` and `17.91x`
+inside (§3.5). Both `T4b` rows are unchanged and remain unevaluated as registered, and the §4 invariant row
+is unchanged. **`T4c`'s pass moves no other row**: `T4_amp` remains **FAIL** in Physics, and §3.6 records
+that the same three solves sit `12`-`15 %` high on `R` and outside `|Q - 1| <= 0.10` by `1.22x`-`1.47x`, so
+the `T4c` PASS must never be cited as support for `T4_amp` or for the `T4b` clauses.
+
 ## 7. Open items this document does not close
 
 1. `high_res_sweep.py` has no sigma ladder (§4) — required before `T4c` can be evaluated.
@@ -314,3 +527,18 @@ remains the project owner's decision, and this document makes none.**
 3. No banked step meets `1e-4` (§3.4) — the threshold is a target, not a description.
 4. `T4b` is mesh-independence, never accuracy (§2.4) — the accuracy question stays with `T4_amp` and with
    the dense Route-C reference, where the meshes sit at `~0.97`, not at `0.99`.
+
+**Status at 2026-10-28: items 1-3 are closed by measurement, item 4 is not.**
+
+- **Item 1 — CLOSED.** The sigma ladder is implemented in `high_res_sweep.py` and recorded per point:
+  `sigma_ladder`, `sigma_requested`, `sigma_used`, `sigma_retries` on every rung. It was **never
+  triggered** — `sigma_retries = 0`, one ladder entry per rung (§4). Implemented is not tested; see §4.
+- **Item 2 — CLOSED.** The ladder was run. Three rungs solved, `0` refusals, `0` failures, `n_dof`
+  `53391`/`66705`/`80020` (§3.5).
+- **Item 3 — CLOSED, in the other direction.** Two banked steps now meet `1e-4` with margin, not merely
+  approach it: `1.0327881939e-05` (`9.68x` inside) and `5.5832778758e-06` (`17.91x` inside). The sentence
+  this item records was true of the record before this run and is false of it now (§3.4 status update).
+- **Item 4 — STANDS, and §3.6 attaches the same caution to `T4c`.** `T4b` is still mesh-independence and
+  never accuracy. What is new is that `T4c`'s PASS needs the identical caution for the identical reason:
+  self-consistency without a dense anchor is not accuracy, and a converged `lambda` is not a converged
+  `R`. The pass is a convergence result and it certifies no physics (§3.6).

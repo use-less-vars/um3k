@@ -18,7 +18,8 @@ Routes
 ------
 ``GET  /``            landing page: every study as a card
 ``GET  /s/<name>``    the study's form (prefilled from the query string)
-``GET  /demo``        303 to ``/s/<name>``: the demo picker (``?study=<name>``)
+``GET  /demo``        303 to ``/s/<name>``: the demo picker (``?study=<name>``);
+                      with no ``study``, 303 back to ``/``
 ``POST /run/<name>``  validate with :func:`emfit.studies.coerce`, run, show results
 ``GET  /run/<name>``  the same, with the parameters in the query string
 ``GET  /healthz``     ``ok``, for probes
@@ -380,7 +381,10 @@ class Handler(BaseHTTPRequestHandler):
 
         ``GET /demo?study=<name>`` is a form submission but must end up as a
         page load, so it is redirected rather than rendered; ``no-store`` is
-        the same cache policy every other response carries.
+        the same cache policy every other response carries.  A bare ``/demo``
+        (no ``study``, or a blank one) has nothing chosen yet, so it goes back
+        to the landing page rather than answering 400 at a visitor who only
+        typed the route.
         """
         self.send_response(303)
         self.send_header("Location", location)
@@ -437,6 +441,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/demo":
             query = urllib.parse.parse_qs(parts.query, keep_blank_values=True)
             name = (query.get("study") or [""])[-1].strip().lower()
+            if not name:
+                return self._redirect("/")
             study = self._study_or_none(name)
             if study is not None:
                 return self._redirect(f"/s/{study.name}")

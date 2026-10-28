@@ -51,9 +51,10 @@ not to `O(dt)`), plus a dense PEC-cavity eigenmode solver used as the validation
 - `test_energy.py::test_cfl_bound_is_sharp` -- stable at 1.01x the bound, divergent at 1.02x (`6.7e122` growth).
 - PEC box `1.0 x 0.7 x 0.5 m`, first six modes: mean error **1.213 %** (10x7x5) and **0.615 %** (14x10x7),
   mean-error **ratio 0.507** (second order for 1.4x refinement); rejected spurious modes exactly 216 and 702.
-- Whole suite: **71 tests**, **~10-20 s** (the fine-grid cavity is no longer the bottleneck: the growth came
-  from cheap checks -- operators, periodic axes, near field, Mie, the web front end -- beside a fast PML and
-  scattering path, and `emfit/` holds 18 `.py` files).
+- Whole suite: **483 tests**, about **13 min** (**469** with `-m "not slow"`); at M0 sign-off it was 71 tests
+  in ~10-20 s. The fine-grid cavity is no longer the bottleneck: the growth came from cheap checks -- operators,
+  periodic axes, near field, Mie, the web front end -- beside a fast PML and scattering path, and `emfit/` holds
+  18 `.py` files.
 
 **Risks / notes.**
 - The invariant is fragile: dropping `-(dt/2)(C e).h` gives drift 3.7e-1, using the wrong `h` time level 3.4e-1.

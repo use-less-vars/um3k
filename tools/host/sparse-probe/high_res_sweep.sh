@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # high_res_sweep.sh — entry point for the 40k / 50k / 60k sparse Route-C sweep.
 #
-# PREPARED, NOT RUN: this wrapper has never been executed. Running it performs
-# three real solves (one child process per point) and writes
-# out_highres/points/*.json plus out_highres/high_res_sweep.json.
+# A bare run performs three real solves (one child process per point) and
+# writes out_highres/points/*.json plus out_highres/high_res_sweep.json;
+# --plan prints the plan and writes nothing.
 #
 #   ./high_res_sweep.sh --plan            # print the plan, run nothing
 #   ./high_res_sweep.sh                   # the sweep

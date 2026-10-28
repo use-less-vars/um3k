@@ -57,7 +57,7 @@ where things stand.
   `python -m emfit list`, `run <study>`, and `serve` on `http://127.0.0.1:8010` (`--port N`,
   since 8000 is usually taken). Values are validated by
   `emfit.studies.coerce`, and the web app runs one study at a time behind a lock (`tests/test_webapp.py`, 7 tests).
-- 71 tests in ~10-20 s, every number locked by an explicit tolerance.
+- 483 tests in about 13 min (469 with `-m "not slow"`), every number locked by an explicit tolerance.
 - 5 studies and 2 example scripts, writing eight figures into `docs/figures/`.
 
 **Does not work yet**
@@ -185,7 +185,7 @@ Every value below is asserted by a test unless the row says *study*; break one a
 | Mie series | `abs(b_n) <= 1`, optical theorem, `(1/2 pi) int sigma dphi = sigma_tot` | `tests/test_mie.py::test_coefficients_are_lossless`, `::test_optical_theorem_forward_amplitude`, `::test_bistatic_pattern_integrates_to_total_width` |
 | Bistatic RCS vs Mie, ka = 3 | rms `1.830 dB`, worst `3.202 dB` at 284 deg, every point within 6 dB (assert) | `tests/test_nearfield.py::test_scattering_width_beats_the_mirror_and_tracks_mie` |
 | Web front end | unknown path 404, out-of-range value 400 not 500, `healthz` plain ok | `tests/test_webapp.py` (7 tests) |
-| Suite | 71 tests, ~10-20 s | `python -m pytest` |
+| Suite | 483 tests, about 13 min (469 with `-m "not slow"`) | `python -m pytest` |
 
 ## Milestone tracker
 
@@ -386,7 +386,7 @@ Each finding is a claim the code or a test already relies on; re-introducing the
 
 ```bash
 cd /workspace
-python -m pytest                                        # 71 tests, ~10-20 s
+python -m pytest                                        # 483 tests, about 13 min; 469 with -m "not slow"
 python -m emfit list                                    # the five studies with their parameters
 python -m emfit run cavity --out docs/figures           # mode table, spectrum/field/energy PNGs
 python -m emfit run modes --out docs/figures            # one panel per eigenmode

@@ -61,10 +61,11 @@ code, and a half-wave dipole is a three-dimensional object, so the `73 ohm, 2.15
 check is not reachable in the present 2-D TM layer. It stays open, and it is no longer
 blocked on numerics -- it is blocked on geometry.
 
-Test suite: **71 tests**, full run **10-20 s**. That is up from 34 tests at ~30-55 s,
-and the dense `eigh` of the 14x10x7 cavity grid is no longer the bottleneck: the growth
-came from cheap checks (operators, periodic axes, near field, Mie, web front end)
-alongside a fast PML and scattering path.
+Test suite: **483 tests**, full run **about 13 min**; `-m "not slow"` skips the 14 slow
+checks (the two demo solves among them) and gives **469 tests**. That is up from 34
+tests at ~30-55 s, and the dense `eigh` of the 14x10x7 cavity grid is no longer the
+bottleneck: most of the growth came from cheap checks (operators, periodic axes, near
+field, Mie, web front end) alongside a fast PML and scattering path.
 
 ## Quick start
 
@@ -72,7 +73,7 @@ alongside a fast PML and scattering path.
 python -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev]'
 
-python -m pytest                          # 71 tests, ~10-20 s
+python -m pytest                          # 483 tests, ~13 min (469 with -m "not slow")
 python -m emfit list                      # the five packaged studies
 python -m emfit run scatter --out docs/figures
 python -m emfit run rcs --out docs/figures
@@ -442,7 +443,7 @@ emfit/                 the solver package, 18 modules
 ├── _env.py            BLAS thread hygiene before numpy import
 ├── __init__.py
 └── __main__.py
-tests/                 71 pytest checks: operators, periodic axes, energy,
+tests/                 483 pytest checks: operators, periodic axes, energy,
                        cavity, Mur edge, PML, scattering, near field, Mie, web app
 examples/              cavity_resonance.py, abc_duct.py -- end-to-end demos
 docs/figures/          8 figures: the 4 committed demo PNGs, plus 2 PNGs from
