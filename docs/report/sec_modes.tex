@@ -19,24 +19,20 @@ metric, normalisation and plotting path, so that the two figures differ in the o
 both, every field is divided by its own RMS before it is drawn, so every panel is dimensionless and the two runs
 are directly comparable.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
   \centering
   \includegraphics[width=0.95\textwidth]{../figures/fig_ez_before_after.pdf}
-  \caption[$e_z$: the mis-paired comparison and the correct one.]{The $e_z$ row before and after the pairing was
-  fixed, on both banked runs (PMC QZ column $738$ of \texttt{c1\_spectrum.npz}, PEC QZ column $699$ of
-  \texttt{pecbox\_spectrum.npz}, both $31\times17$). Top row, \textsc{before}: the superseded comparison
-  correlates two arrays that were never the same quantity --- the analytic \emph{vertical} reference against the
-  extracted \emph{longitudinal} field, $e_{z,\text{superseded}} = -\mathrm{interp}(\beta z_{\text{free}})$ --- and
-  reads $\mathrm{corr} = +0.1192$ (PMC) and $+0.1473$ (PEC). Middle row, \textsc{after}: component~$1$ of the
-  banked $e_t$ eigenvector sampled on the $A_{ez}$ lattice against that same reference, vertical versus vertical,
-  $\mathrm{corr} = +0.9353$ (PMC) and $+0.9369$ (PEC). Bottom row: the difference after minus before, which is the
-  size of the mis-pairing itself --- $\max|\Delta| = 5.87$ and $5.86$, $\mathrm{rms}(\Delta)/\mathrm{rms} = 1.24$
-  and $1.23$: the residual is larger than the field. The arithmetic was never wrong, the \emph{pairing} was, and
-  a small correlation is the correct answer to a meaningless question --- which is why the top row must not be
-  read as the mode failing. \par
-  Every field is divided by its own RMS, so all panels are dimensionless and the two runs are directly
-  comparable; colour limits are shared across the two columns within a row, and the difference row has its own.
-  The rule this figure exists to teach: read which two things are being paired before believing which number.}
+  \caption[$e_z$: the mis-paired comparison and the correct one.]{The $e_z$ row before and after the
+  pairing was fixed, on both banked runs (PMC QZ column $738$ of
+  \texttt{c1\_spectrum.npz}, PEC QZ column $699$ of \texttt{pecbox\_spectrum.npz}, both $31\times17$). Top row,
+  \textsc{before}: the superseded comparison pairs the analytic \emph{vertical} reference
+  $e_{z,\text{superseded}} = -\mathrm{interp}(\beta z_{\text{free}})$ with the extracted \emph{longitudinal}
+  field, and reads $\mathrm{corr} = +0.1192$ (PMC) and $+0.1473$ (PEC). Middle row, \textsc{after}:
+  component~$1$ of the banked $e_t$ eigenvector sampled on the $A_{ez}$ lattice, vertical against vertical,
+  $\mathrm{corr} = +0.9353$ (PMC) and $+0.9369$ (PEC). Bottom row: the difference after minus before,
+  $\max|\Delta| = 5.87$ and $5.86$, $\mathrm{rms}(\Delta)/\mathrm{rms} = 1.24$ and $1.23$, a residual larger
+  than the field. The arithmetic was never wrong, the \emph{pairing} was, and a small correlation is the
+  correct answer to a meaningless question --- which is why the top row must not be read as the mode failing.}
   \label{fig:mode-ez-pairing}
 \end{figure}
 
@@ -57,20 +53,19 @@ to. The mode shape in the banked comparison was therefore materially wrong in th
 was not the shape the basis describes --- and is materially right once the field is paired against the mesh and
 the run it belongs to, with no arithmetic changed between the rows.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
   \centering
   \includegraphics[width=0.95\textwidth]{../figures/fig_ey_before_after.pdf}
-  \caption[$e_y$: the same metric on a component the mis-pairing never touched.]{Same two banked runs, same
-  extents, same layout, same per-row colour limits, on the component the mis-pairing never touched. Top row: the
-  analytic width reference $A_{ey}$ ($200\times77$), normalised to unit RMS. Middle row: the extracted width
-  component, width against width, $\mathrm{corr} = +0.9208$ (PMC) and $+0.9123$ (PEC). Bottom row: the difference,
-  $\max|\Delta| = 16.16$ and $16.04$ with $\mathrm{rms}(\Delta)/\mathrm{rms} = 0.40$ and $0.42$. \par
-  This is the control for Figure~\ref{fig:mode-ez-pairing}: the metric, the normalisation and the plotting path
-  are identical, so the $+0.92$ / $+0.91$ here and the $+0.12$ / $+0.15$ there cannot both mean ``the extracted
-  field agrees with the analytic basis'' --- only one of the two was a comparison at all. What the difference row
-  shows is a near-blank field with a bright rim at the strip edges and at the substrate interface: disagreement
-  concentrated where the discretisation is thinnest and where the reference field has its largest gradient, a
-  boundary effect rather than a shape error.}
+  \caption[$e_y$: the same metric on a component the mis-pairing never touched.]{Same two banked runs and
+  layout, on the component the mis-pairing never touched. Top row: the analytic width reference $A_{ey}$
+  ($200\times77$). Middle row: the extracted width component, width against width,
+  $\mathrm{corr} = +0.9208$ (PMC) and $+0.9123$ (PEC). Bottom row:
+  $\max|\Delta| = 16.16$ and $16.04$ with $\mathrm{rms}(\Delta)/\mathrm{rms} = 0.40$ and $0.42$ --- a near-blank
+  field with a bright rim at the strip edges and the substrate interface, a boundary effect rather than a shape
+  error. \par
+  Control for Figure~\ref{fig:mode-ez-pairing}, metric, normalisation and plotting path identical:
+  $+0.92$ / $+0.91$ here and $+0.12$ / $+0.15$ there cannot both mean ``the extracted field agrees with the
+  analytic basis'' --- only one of the two was a comparison at all.}
   \label{fig:mode-ey-pairing}
 \end{figure}
 
