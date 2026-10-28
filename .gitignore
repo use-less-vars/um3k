@@ -51,3 +51,11 @@ study-out/
 # Host-script outputs (cached spectra, logs, figures)
 tools/host/*/out/
 
+# Explicit artefact paths (anchored at the repository root)
+/out/
+/tmp_job2/
+/tools/host/c1-audit/out_pec_v2/
+/tools/host/c1-audit/out_v2/
+/tools/host/sparse-probe/out_rung4/
+/tools/host/sparse-probe/out_sparse_run1.txt
+
