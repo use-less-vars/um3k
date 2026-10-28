@@ -856,3 +856,104 @@ single `h` and the convergence premise is mis-specified.
 **No new pass criterion is introduced here, the `|Q - 1| <= 0.10` bar is not relaxed, the
 allowance is not touched, `T4_amp` remains FAIL as recorded above, and any change to that state
 is the project owner's decision - not this document's.**
+
+## 12. CLOSING STATUS (v2.3) — the M3c mode solver is CLOSED
+
+*Appended against the 858-line file whose whole-file sha256 is `19a75cd4d65753c29134dc4931e61c9988f771329b74b78d3e967b328f4eb3e3`, `90,280` bytes. Nothing above this line is edited, reordered, reflowed or replaced: §12 is listed at the tail in the manner §10 describes for itself.*
+
+**What closes, and on what.** The mode-solver question this file exists to gate is closed, and it closes on three verdicts and one refusal, not on one number. Two of the tests registered after this file's first audit now pass, one test registered before them fails and stays failed, and one piece of arithmetic that would have made the two passes look broader than they are is refused. **Closing the question is not passing the gate.** `T4_amp` is still FAIL, the `±10 %` allowance is untouched, and no row of §9 is added, removed or renumbered by this section.
+
+| test | quantity | verdict | bar in force |
+|---|---|---|---|
+| `T4_amp` | `Q = R_extracted / R_analytic` | **FAIL**, `44.09 %` (Physics) | `\|Q − 1\| <= 0.10`, i.e. `±10 %` |
+| `T4b_conductor_corr` | mesh-pair `\|corr\|` of the conductor-slab field | **PASS** — the real metric | `>= 0.99` (`e_z_vv`, 31 x 76 slab); `>= 0.98` (`e_y`, 30 x 77 slab) |
+| `T4c_eigenvalue` | step-to-step `\|d lambda / lambda\|` on `40k`/`50k`/`60k` | **PASS at `1e-4`** | `1e-4`; `2e-4` refused |
+| pooling `M` with `s12` | one extrapolated limit from two campaigns | **REFUSED** | — |
+
+### 12.1 `T4_amp` — FAIL at `44.09 %`, and it stays FAIL as history
+
+**The verdict is the one §10.2 already carries; §12 does not touch it.** `Q = 1.440865461991999` against `R_analytic = 2.8101021387524523` is a relative error of `44.086546199899894 %` (`44.09 %`), in **Physics**. The registered `|Q − 1| <= 0.10` band on `R_extracted` is `[2.52909192487721, 3.09111235262770]`, and the measured `4.0489791163982565` sits `4.408654619919989×` the half-width outside it.
+
+**The metric is documented as bad, and that is a statement about the metric, not about the verdict.** What `T4_amp` scores is a field amplitude on a mesh where the quantity is not mesh-convergent in the way the metric assumes. The record says so four times over: the strip band is flat (`+0.0653 / −0.1263 / +0.0522 %` at 12 / 18 / 24 / 36 cells, §10.4); the air band is the only knob that moves it and `N = 22` still leaves `3.2761300897590`; the `z` band moves it the wrong way (`4.1029404210`); both pre-registered denominators land outside the band (`Q = 1.2723426355905907` dense, `1.220744` sparse, `:813-:816`); and `R` turns over along each refinement axis alone, so it is not a function of a single `h` and the convergence premise is mis-specified (`:852-:854`). The clause asks a question the available meshes cannot answer.
+
+**The measurement stands as history: not withdrawn, not re-scored, not re-interpreted.** A metric documented as bad does not convert a FAIL into a PASS — it converts an open question into a closed one, with the FAIL left on the record as the reading taken against the bar as registered. Three things are explicitly not done: the bar is not loosened (`docs/design/t4_amp_ratio.md` §9.6's revisit clause remains uninvoked), the FAIL is not re-attributed to the extraction (§10.6 exonerates it — every correction measured there is at most `1.18 %` against `44.09 %`), and no later or more favourable reading of the same quantity is substituted for it — the `free_e` hump is diagnosed in the `T4_amp` document (`:842-:850`), not absorbed into this verdict.
+
+### 12.2 `T4b_conductor_corr` — PASS, and it is the metric that carried the physics question
+
+**Verdict: `T4b_conductor_corr` PASS, on both clauses, at both registered bars.**
+
+| clause | bar | recorded `min` over the `10` mesh pairs | margin | pair |
+|---|---|---|---|---|
+| conductor shape, `e_z_vv` (31 x 76 slab) | `>= 0.99` | `0.9988226233736953` | `+0.0088` | `M5`-`M2` |
+| `e_y` clause (30 x 77 slab) | `>= 0.98` | `0.985637534849262` | `+0.0056` | `M5`-`M3` |
+
+Both bars are clear on the recorded population, and the second is the clause the pre-registration expected to fail first (`docs/design/t4b_t4c_preregistration.md` §2, §6), which is why its `0.0056` of margin is quoted rather than rounded away.
+
+**Why this is the real metric.** `T4_amp` scored an amplitude whose convergence the mesh cannot deliver; `T4b` scores the thing that was in question — whether the conductor-region field is the *same field* on every mesh. That is a comparative question, and the meshes in hand can answer it, which is exactly what the amplitude ratio had been standing in for. It speaks to the physics of the conductor region rather than to the resolution of one extraction.
+
+**The caveat travels with the pass and is not dropped.** `T4b` certifies **mesh-independence, never accuracy** (§2.4 of that document): a pass says "the conductor field no longer changes as the mesh is refined", not "the conductor field is right". A `T4b` pass is **not** support for `T4_amp`, does not lift its FAIL, and is never cited as an accuracy check. One flag on the provenance, kept rather than smoothed: that document's §6 status row still labels both `T4b` rows "unevaluated as registered" — the row marks the absence of a standalone scoring pass, not the absence of a measurement against the bars; the verdict above is scored from the registered conditions and the recorded minima, which is what §2 and §6 of that document define the score to be.
+
+### 12.3 `T4c_eigenvalue` — PASS at `1e-4`, and not at `2e-4`
+
+| rung | `n_dof` | `lambda` | step `\|d lambda / lambda\|` | against `1e-4` |
+|---|---|---|---|---|
+| `40k` | `53391` | `95889.18208402561` | — | — |
+| `50k` | `66705` | `95888.19176210178` | `1.0327881939e-05` | `9.68×` inside |
+| `60k` | `80020` | `95887.65639467127` | `5.5832778758e-06` | `17.91×` inside |
+
+The registered condition is `lambda` monotone in `free_e` **and** `|d lambda / lambda| <= 1e-4` per step, over the `40k`/`50k`/`60k` ladder. Both halves hold: `95889.18208402561 → 95888.19176210178 → 95887.65639467127` is strictly monotone decreasing, `2 of 2` steps meet `1e-4`, and neither is marginal — `9.68×` and `17.91×` inside.
+
+**Scored at `1e-4`, and the `2e-4` relaxation is refused rather than merely unused.** `1e-4` is the threshold at which this PASS is recorded. A `2e-4` bar was authorised in advance and deliberately not adopted (`decisions.md` entry 158), and then explicitly refused when the instruction to loosen it was issued (`decisions.md` entry 161): the gate was not what was blocking anything, the evidence offered for loosening pooled two campaigns that are not one ladder, and `2e-4` changes no verdict anywhere in the record. A pass scored at `2e-4` would have moved the bar the pass was scored against, which is the one thing a closing record must not do. **The tolerance stays `1e-4`, and the score of record is the value at `1e-4`.**
+
+**Scope: eigenvalue only. It is not `R_extracted`.**
+
+| rung | `lambda` | step | `R_extracted` | `Q = R / R_analytic` | `\|Q − 1\|` | vs `0.10` |
+|---|---|---|---|---|---|---|
+| `40k` | `95889.18208402561` | — | `3.184188500254623` | `1.133122` | `0.1331` | `1.33×` |
+| `50k` | `95888.19176210178` | `1.0327881939e-05` | `3.2242746409436047` | `1.147387` | `0.1474` | `1.47×` |
+| `60k` | `95887.65639467127` | `5.5832778758e-06` | `3.153215686647681` | `1.122100` | `0.1221` | `1.22×` |
+
+**`lambda` converges on the same three solves on which `R` does not.** `R` is flat and non-monotone — `3.184188500254623 / 3.2242746409436047 / 3.153215686647681`, a hump at `50k` — sitting `12`-`15 %` high against `R_analytic = 2.8101021387524523`, and every rung is outside `|Q − 1| <= 0.10` by `1.22×`-`1.47×`. No mesh anywhere in the record meets the amplitude allowance: the `s12` ladder sits at `0.12`-`0.15` and the `M` campaign at `0.22`-`0.30`. So the `T4c` PASS is a convergence result about one scalar and it certifies **no** physics: a converged `lambda` is not a converged `R` (`docs/design/t4b_t4c_preregistration.md` §3.6), and this section cites it as support for neither `T4_amp` nor the `T4b` clauses.
+
+**Pooling the `M` campaign with the `s12` ladder is refused, and the refusal is arithmetic rather than loyalty to a label.** Four measurements:
+
+1. **It is a change of discretisation, not a rung of one ladder.** `M4 → hi40k` moves the strip band `58 → 12` cells, the air band `yair` `44 → 411`, and the `z` band `[35, 17, 18] → [8, 4, 4]`. A ladder varies one knob; this varies three at once, in both directions.
+2. **The join step is not a step of that ladder.** `M4 → hi40k` implies `5.5519e-03`, which is `52.85×` the finest within-`M` step (`M3 → M4`, `1.0504460136124583e-04`). A population whose steps differ by a factor of `53` cannot be scored against a per-step tolerance of `1e-4` as though it were one sequence.
+3. **The two extrapolated limits do not agree.** `96276.1533639126` from `M` against `95884.5478902379` from `s12` — a difference of `391.6`, i.e. `4.08e-03` relative, `40.8×` the tolerance under discussion. Two campaigns that extrapolate to different limits are two campaigns; joining them would replace a disagreement with an average.
+4. **Pooling would lend one campaign's PASS to the other.** The single number a pooled fit produces is then used to certify a sequence that neither campaign ran.
+
+### 12.4 Closing status block
+
+| | |
+|---|---|
+| **state** | **CLOSED — the M3c mode solver** |
+| **certified** | `T4b_conductor_corr` **PASS** (`e_z_vv` `0.9988226233736953 >= 0.99`; `e_y` `0.985637534849262 >= 0.98`) — mesh-independence of the conductor field, never accuracy; `T4c_eigenvalue` **PASS at `1e-4`** (`1.0327881939e-05`, `5.5832778758e-06`; `9.68×` and `17.91×` inside) on the `40k`/`50k`/`60k` ladder, `lambda` strictly monotone |
+| **not certified** | `R_extracted` to within `10 %` — no mesh in the record meets `\|Q − 1\| <= 0.10` (`s12` `0.12`-`0.15`, `M` `0.22`-`0.30`); the amplitude metric as a convergence measure — documented as bad, and its FAIL is kept as history rather than re-scored |
+| **still FAIL, not reopened** | `T4_amp` at `44.09 %` (Physics) against the untouched `±10 %` band |
+| **refused** | `T4c` at `2e-4`; pooling `M` with `s12` |
+| **bars, unchanged** | `\|Q − 1\| <= 0.10`; `1e-4`; `0.99` / `0.98`; and `T1_TOL = 0.005`, `T2_TOL = 0.005`, `T3_TOL = 1e-5`, `CORR_EY_MIN = 0.89`, `CORR_EZ_VV_MIN = 0.91` |
+| **record** | `decisions.md` **entry 158** (`T4c` PASSES at its registered `1e-4`; the authorised `2e-4` recorded as not adopted) and **entry 161** (the instruction to loosen to `2e-4` REFUSED; the tolerance stays `1e-4`, and the score of record is the value at `1e-4`) |
+| **runs behind this section** | none — no gate, no solve and no `.py` edit was made to produce it; every number above is quoted from the record or is arithmetic on it |
+
+**What "CLOSED" means here, and what it does not.** CLOSED means the questions this file can answer are answered, and the ones it cannot are named with their reason: the conductor field is mesh-independent, the eigenvalue converges, the amplitude ratio converges on no mesh in the record, and the amplitude metric was mis-specified from the start. It does **not** mean green. The gate verdict at §10.1 is still **FAIL**, `T4_amp` is still FAIL, and closing the solver question neither upgrades nor expunges it. Any change to that state is the project owner's decision, made forward, and is not this document's.
+
+### 12.5 Statements above that §12 supersedes — listed, not patched
+
+**Nothing above is edited, and that is deliberate.** This file states at its head that it is not append-only and that its changes are *listed, not silently patched* (`:3`, `:657`); §12 keeps that rule and adds no line at or before `:630` (`:653`'s invariant). Six statements above now read as history rather than as current state:
+
+| line | what it says | what is true after §12 |
+|---|---|---|
+| `:292` (§3.4 status row) | "**design-only, and must stay so** … `T4_amp` appears in no `.py` file in the tree" | the second half is still true; the first is superseded by the bar ruling (`±10 %`, adopted and locked in `docs/design/t4_amp_ratio.md` §9.1-§9.6) and by the measurement — §10.2, §12.1 |
+| `:496` (§6.1) | "still cannot fail — on the threshold, not the datum. **Do not ship.**" | the threshold now exists, so the clause can fail and does: §10.2's FAIL and §12.1's `44.09 %` are that failure. "Do not ship" survives for the clause's *implementation* status, not as a statement about its verdict |
+| `:811-:816` (`STATUS APPEND`) | both denominators fail: dense `Q = 1.2723426355905907`, sparse `Q = 1.220744` | both readings stand and are not re-scored; they are the mesh-series denominators, while the scored operand here and at §10.2 is the banked `4.0489791163982565` |
+| `:835-:840`, `:856-:858` | "`T4_amp` remains FAIL … any change to that state is the project owner's decision — not this document's" | still literally true; §12 changes nothing and closes nothing on the owner's behalf |
+| `:39-45` (§0 status table) | "what changed in the tree | nothing"; "runs performed | none" | true of the v2.1 audit it describes; the runs behind §10.10, the `STATUS APPEND` and §12 all postdate it, and no line of §0 is rewritten to chase them |
+| `:630` (§9) | "Seven entries, no more." | still literally true, still at `:630`, still byte-identical (§12.6). §12 registers no clause: `T4b` and `T4c` are registered in `docs/design/t4b_t4c_preregistration.md`, not in that table |
+
+### 12.6 Invariants kept by this append
+
+* **Line `:630` is byte-identical.** `Seven entries, no more. Everything else in §§2–3 is an audit of what v1 already had, not a registration.`, own sha256 `0d7cf7485cc954e931ae43f68ca1858322d92709f03319b3e79e2db7cee643b8`. The citation target of `docs/design/t4_amp_ratio.md` §9.5 and §9.7 still resolves, and the head-630 prefix sha256 is `e60a092946615f54ab481cb5515fe64bbf66d8bced2a963a13384017ac81a56a` before and after this section (`head -n 630 docs/design/m3c_gate_v2.md | sha256sum`), continuing §11's chain `39bb7a71…` → `a03c78d4…` → `e60a0929…`.
+* **No line at or before `:858` was inserted, deleted, split, joined, reflowed or replaced.** §12 sits entirely below the previous EOF, so every citation above — §11's per-symbol table included — keeps the line number it was written against.
+* **Whole file, before:** `19a75cd4d65753c29134dc4931e61c9988f771329b74b78d3e967b328f4eb3e3`, `90,280` bytes, `858` lines. A file cannot contain the hash of its own post-edit self, so the *after* value is reported in the change report, as §11 did.
+* **No gate was run, no solve was performed and no `.py` file was touched** to produce this section. It is a closing statement over numbers already in the record; the only edit in the tree is the text you are reading.
+
