@@ -11,6 +11,32 @@ unanchored until it is implemented and gated.
 > side; it is derived, measured and benchmarked against a dense shift-invert in
 > **section 4.2**, which supersedes section 4 as an implementation recipe.
 > Section 4 is left standing as the record of the defect.
+>
+> **PRIMARY RECOMMENDED PATH — the mass-side enlargement of section 4.2 (route
+> C).** What this note recommends is `K_C = [[A, 0], [0, 0]]`,
+> `M_C = [[m1_f, -c], [-c^T, h]]`, shifted as
+> `[[A - sigma m1_f, sigma c], [sigma c^T, -sigma h]]` and solved by shift-invert
+> through an explicit `LinearOperator` for `(K_C - sigma M_C)^{-1} M_C` (section
+> 6). Its `y`-elimination is `sigma`-free, so it condenses to the code's own
+> `A x = lambda (m1_f - c D c^T) x`; it is **MEASURED** to reproduce the dense
+> reference `beta^2` on both audit rungs (12.2 / 12.5 digits, section 4.2), and
+> its factorisation is sparse and cheap.
+>
+> **DEMOTED — section 4's stiffness-side enlargement is a REJECTED VARIANT.**
+> Its `w`-elimination lands the rank-one term on the stiffness side and condenses
+> to `(A - c D c^T) x = lambda m1_f x`, which is not the code's pencil; measured,
+> it returns `lambda = 26953.0` against a reference `97833.1` at `sigma = 1`, and
+> is still `+0.54 %` off with the shift moved onto the target, at
+> `abs(corr_ey) = 0.55` against `0.92`. It is kept as the record of the defect and
+> as the cost reference in section 5.2, not as a recipe.
+>
+> **LABELS.** Three labels are used below and they are never interchangeable:
+> **MEASURED** = produced by a run recorded in the evidence file;
+> **EXTRAPOLATED** = a two-point power-law projection through the measured rungs
+> `sc = 12, 16`, *not* a measurement; **ESTIMATED** = arithmetic or inherited. In
+> particular the `0.0843 GB`, the `0.156 s` and the `n = 40021` in section 4.2 are
+> **EXTRAPOLATED**: they were not measured at the target mesh, and not at ladder
+> rung 4.
 
 ## 1. Scope, and what this note is not
 
@@ -21,11 +47,12 @@ path: assemble, condense the longitudinal block densely, and hand the resulting
 be, and what it would cost, on the meshes the audit actually wants.
 
 This note **is**: a statement of the pencil the code builds (section 3), a
-derivation of an equivalent *sparse symmetric* pencil (section 4), measured
-factorisation statistics for that pencil on the audit mesh and on the target
-201x77 mesh (section 5), a reading of the documented `scipy.sparse.linalg`
-contracts against that pencil (section 6), and the consequences for result
-semantics (section 7).
+derivation of an equivalent *sparse symmetric* pencil (section 4) and of its
+corrected **mass-side** form (section 4.2, route C), which is the note's primary
+recommendation, measured factorisation statistics for **both** pencils on the
+audit mesh and on the target 201x77 mesh (section 5), a reading of the documented
+`scipy.sparse.linalg` contracts against those pencils (section 6), and the
+consequences for result semantics (section 7).
 
 This note **is not**: an implementation, an accuracy claim, a convergence study,
 or a decision about which mode the audit should report. No `eig`/`eigsh`/`eigs`
@@ -104,7 +131,15 @@ roundoff: `max|B_raw - B_raw^T| = 4.3e-15, 5.5e-15, 2.3e-14, 1.4e-13` for
 (`emfit/mode2d.py:1117-1118`) is cleaning up roundoff, not an asymmetry of the
 discretisation. **MEASURED.**
 
-## 4. The enlarged sparse pencil
+## 4. The enlarged sparse pencil — stiffness side: REJECTED
+
+> **Status: REJECTED VARIANT.** The enlargement below is *not* the recommended
+> pencil. It puts the rank-one term on the stiffness side, so it condenses to
+> `(A - c D c^T) x = lambda m1_f x` rather than to the code's
+> `A x = lambda (m1_f - c D c^T) x`, and measured it returns `lambda = 26953.0`
+> where the reference is `97833.1`. The primary recommendation is the mass-side
+> enlargement of **section 4.2** (route C). This section is kept as the record of
+> the defect, and its matrix pattern is the cost reference used in section 5.2.
 
 Eliminating the longitudinal block is what forces density. Do not eliminate it.
 Reinstate the second unknown and keep both matrices sparse:
@@ -181,7 +216,13 @@ Because `K - sigma M` is symmetric, a *symmetric* factorisation is admissible
 same LU), and — more importantly — `eigsh`'s documented contract becomes
 satisfiable (section 6), which it is not for `(A, B)`.
 
-### 4.2 CORRECTION (measured): the auxiliary belongs on the mass side
+### 4.2 PRIMARY RECOMMENDED PENCIL (measured): Route C, the auxiliary on the mass side
+
+> **Status: PRIMARY RECOMMENDATION.** This subsection, not section 4, is the
+> recommended path: route C, the mass-side enlargement, solved by shift-invert
+> with an explicit `LinearOperator` (section 6). Note also that the factorisation
+> numbers in section 5.2 were measured on section 4's rejected stiffness-side
+> matrix, not on `(K_C, M_C)`; they are a cost reference, not this pencil's cost.
 
 Section 4 is wrong as an implementation recipe, and the factorisation numbers in
 section 5.2 were measured on the wrong matrix. The substitution there is
@@ -202,11 +243,16 @@ landed on the stiffness side. The two pencils do not share a spectrum.
 (`splu(K - M)` at `sigma = 1.0`, `eigsh(K, k=1, M=M, sigma=1, which="LM")`,
 `maxiter=5000`, threads = 1, no row scaling), on both audit rungs:
 
-| quantity | rung0 (`sc=12`) | rung1 (`sc=24`) | reference (dense QZ) |
+| quantity | rung0 (`sc=12`, `s12_a9_z8-4-4`) | rung1 (`sc=16`, `s16_a12_z10-5-5`) | reference (dense QZ) |
 |---|---|---|---|
-| `lambda` of section 4's pencil at `sigma = 1` | 26953.009476 | 26953.002674 | 97833.057911 / 97328.308109 |
-| `R` of that eigenvector | 1830.467943 | 1930.608798 | 4.048979116 / 3.780331872 |
+| `lambda` of section 4's pencil at `sigma = 1` | 26953.009476 | 26953.002674 | 97833.057851 / 97328.308109 |
+| `R` of that eigenvector | 1830.467943 | 1930.608798 | 4.048979116 / 3.780331990 |
 | mode overlap with the reference mode, `abs(corr_ey)` | 0.363 | 0.369 | 0.921 / 0.938 |
+
+The reference column is the banked `dense_targets` record. An earlier version of
+this table printed `97833.057911` (that is route A's eigenvalue, not the
+reference) and `R = 3.780331872` (wrong in its ninth digit); both are corrected
+here, and the rung-by-rung table below quotes the same banked values.
 
 `sigma = 1` is wrong by 5 orders of magnitude in the shift, and the returned
 mode is not the wanted one. Moving the shift onto the target
@@ -238,7 +284,7 @@ A x = lambda (m1_f x - c y) = lambda (m1_f - c D c^T) x = lambda B x ,
 
 which is the code's pencil exactly, for every `sigma`. `K_C` and `M_C` are both
 symmetric; `M_C` is symmetric but **indefinite** (it inherits the indefinite
-`-c D c^T` block) and nonsingular, so the enlarged pencil has no infinite
+`-c D c^T` block) and nonsingular (nonsingularity measured in section 6c), so the enlarged pencil has no infinite
 eigenvalues to filter and `n_dof = free_e + free_n` counts only finite ones.
 The shifted matrix
 
@@ -280,18 +326,54 @@ Route C on rung1: `n = 3207 = 2404 + 803`, `nnz(K_C) = 11,716`,
 `2.6e-3 GB`. Route A on the same rung: `nnz(S) = 5,779,216 = n^2` exactly,
 `splu` `0.62-0.63 s`, `nnz(L+U) = 5,781,620`, fill/row 2405, i.e. dense.
 
-#### Extrapolated to the audit target (`free_e = 30000`)
+#### Route C measured, rung by rung (the primary path's evidence)
+
+`sigma = 0.999 * beta_sq`, `threads = 1`. Every cell in this table is
+**MEASURED**.
+
+| quantity | rung0 (`sc=12`, `s12_a9_z8-4-4`) | rung1 (`sc=16`, `s16_a12_z10-5-5`) |
+|---|---|---|
+| `free_e / free_n / n` | 1444 / 483 / 1927 | 2404 / 803 / 3207 |
+| `beta^2` from `(K_C, M_C)` | 97833.0578509302 | 97328.3081094334 |
+| reference `beta^2` (dense QZ) | 97833.0578509992 | 97328.3081094 |
+| `R` from `(K_C, M_C)` | 4.048979116393649 | 3.780331990014912 |
+| reference `R` (dense QZ) | 4.0489791163950715 | 3.780331990015745 |
+| digits in `beta^2` / in `R` | 12.15 / 12.45 | 12.46 / 12.66 |
+| `nnz(K_C)` | 6,988 | 11,716 |
+| `nnz(M_C) = nnz(S_C)` | 20,991 (`0.00565 n^2`) | 35,351 (`0.00344 n^2`) |
+| `splu(K_C - sigma M_C)` | 0.00411 s | 0.00756 s |
+| `nnz(L+U)` / fill per row | 106,167 / 55.1 | 214,641 / 66.9 |
+| factor memory | `1.27e-3 GB` | `2.58e-3 GB` |
+| `eigsh` wall time / `OPinv` calls | 0.00567 s / 21 | 0.00901 s / 21 |
+| `x_2 - D c^T x_1`, relative | 8.09e-12 | 2.05e-13 |
+| residual, enlarged / reference | 2.59e-15 / 2.67e-15 | 8.49e-18 / 9.23e-18 |
+
+The reference column is the banked `dense_targets` record (see the note under the
+defect table above): rung0 `97833.0578509992` / `4.0489791163950715`, rung1
+`97328.3081094` / `3.780331990015745`.
+
+#### Extrapolated target architecture (`free_e = 30000`)
+
+Everything in this subsection is **EXTRAPOLATED**: a two-point power law fitted
+through the two measured rungs `sc = 12` (`s12_a9_z8-4-4`) and `sc = 16` (`s16_a12_z10-5-5`), evaluated at
+`free_e = 30000`. Nothing here was measured at the target mesh, and nothing here
+was measured at ladder rung 4.
 
 | route | n | nnz(L+U) | factor memory | `splu` |
 |---|---|---|---|---|
 | A | 30000 | 8.99e8 | 10.8 GB | 343 s |
-| C | 40021 (30000 transverse + 10021 auxiliary) | 7.03e6 | 0.084 GB | 0.16 s |
+| C | 40021 (30000 transverse + 10021 auxiliary) | 7.03e6 | 0.0843 GB | 0.156 s |
 
-The fill/row growth exponents are 1.00 (route A, i.e. `O(n^2)` fill) against
-0.38 (route C). Route A is **128x** larger in factor entries and memory at the
-matched transverse count, and the gap widens with `n`. **MEASURED** at `sc = 12,
-24`; the target column is an extrapolation, flagged as such in the evidence
-file.
+**EXTRAPOLATED** fill/row growth exponents: 1.000 for route A (i.e. `O(n^2)`
+fill, dense) against 0.382 for route C; `splu` against factor entries, 1.237 (A)
+and 0.867 (C). Route A is **127.99x** larger than route C in factor entries and in
+memory at the matched transverse count, and the gap widens with `n`.
+
+That table is a target *architecture*, stated so that it cannot be mistaken for a
+measurement: route C is projected at `7.03e6` factor entries and `0.0843 GB`
+against `8.99e8` and `10.8 GB` for route A. Route C's **per-apply cost at the
+target mesh is not measured and is not extrapolated here**; the only measured
+per-apply figure for route C is about `0.43 ms` at rung1 (section 5.3).
 
 Provenance: `tools/host/sparse-probe/sparse_solver_test.py` (routes A, B, B2, C
 in one run, `threads = 1`), evidence in
@@ -316,7 +398,14 @@ Nonzeros per row, `sc = 12`, reduced blocks (`free_e = 1444`, `free_n = 483`):
 The same ratios recur on every rung (4.83-4.84, 3.67-3.80, 6.47-6.52), so they
 are the stencil and not a mesh artefact. **MEASURED.**
 
-### 5.2 Factorisation of `K - sigma M`
+### 5.2 Factorisation of `K - sigma M` (the REJECTED variant's matrix)
+
+> **Label warning.** Every number in this subsection was measured on section 4's
+> **rejected stiffness-side** matrix, `S = K - sigma M` with
+> `K = [[A, -c], [-c^T, h]]` and `M = diag(m1_f, 0)` — not on route C's
+> `K_C - sigma M_C`. Including the `n = 60587` target row, none of it may be
+> quoted as the primary path's cost. Route C's own measured factorisation is in
+> section 4.2 (`splu` `0.00756 s`, `nnz(L+U) = 214,641`, fill/row 66.9 at rung1).
 
 `splu` on `S = K - sigma M` with `sigma = 1.0`, default COLAMD ordering. `n` is
 the enlarged order `free_e + free_n`.
@@ -330,6 +419,12 @@ the enlarged order `free_e + free_n`.
 | sc=100 | 7383 | - | 429,730 | 58.2 | 0.014 | 0.64 |
 | sc=200 | 13583 | - | 796,999 | 58.7 | 0.028 | 1.26 |
 | **target** | **60587** | **687,031** | **8,352,700** | **137.9** | **0.38** | **12.82** |
+
+> **Note (ESTIMATED, inherited labelling).** The `sc` column above is the design
+> note's own labelling and its meshes are its own: its `sc=24` row (`n = 2671`)
+> is **not** our measured rung1, which is `sc=16` (`s16_a12_z10-5-5`,
+> `n = 3207`, section 5.3). Do not read the `sc` column row-for-row across the
+> two tables.
 
 Target mesh detail: `nnz(K) = 508,240`, `nnz(M) = 404,429`. The fill is
 **0.00228** of dense `n^2 = 3,670,784,569`, i.e. about **100.2 MB** at 12 B/nnz,
@@ -351,11 +446,18 @@ grid-shaped graph.
 
 ### 5.3 Shift-invert cost per ARPACK iteration
 
-One `splu(S)`-based application is 12.82 ms on the target mesh (12.82 ms from the
-table), plus two sparse mat-vecs with `K` and `M` and vector work — so of order
-`1e-2` s per implicit restart step, and a `k = 8`, `ncv = 24` solve should land in
-the seconds-to-tens-of-seconds range. That end-to-end figure is **ESTIMATED**;
-only the single-apply 12.82 ms is **MEASURED**.
+For section 4's **rejected** stiffness-side matrix, one `splu(S)`-based
+application is 12.82 ms on the target mesh (12.82 ms from the table), plus two
+sparse mat-vecs with `K` and `M` and vector work — so of order `1e-2` s per
+implicit restart step, and a `k = 8`, `ncv = 24` solve should land in the
+seconds-to-tens-of-seconds range. That end-to-end figure is **ESTIMATED**, and the
+12.82 ms single-apply figure is **MEASURED** but belongs to the rejected variant.
+
+For the primary path, route C, the measured per-apply cost at rung1 is about
+`0.43 ms`: `t_eigsh = 0.00901 s` over 21 `OPinv` applications, i.e. arithmetic on
+**MEASURED** quantities, on top of a once-only `splu(K_C - sigma M_C)` of
+`0.00756 s`. Route C's per-apply cost at the target mesh is **unmeasured**, and is
+not extrapolated here.
 
 ## 6. Solver options against the documented contracts
 
@@ -393,46 +495,107 @@ violation, not a matter of taste. This is the real reason
 that even with a sparse `A - sigma B` the driver would be out of contract.
 **MEASURED** (Cholesky failure) + **documented** (quoted contract).
 
-**(b) The symmetric enlarged pencil `(K, M)` is inside the contract** — `M` is
-"symmetric positive semi-definite" — with one genuine gap: `M` is *singular*
-(nullity `free_n`), and `ARPACK`'s shift-invert theory is written for a
+**(b) The REJECTED stiffness-side pencil `(K, M)` is inside the letter of the
+contract, and that gap no longer blocks anything.** `M = diag(m1_f, 0)` *is*
+"symmetric positive semi-definite", so `eigsh(K, k, M=M, sigma=sigma)` on it
+would be contract-compliant by the letter, with one genuine gap: `M` is
+*singular* (nullity `free_n`), and `ARPACK`'s shift-invert theory is written for a
 non-degenerate `M`-inner product. `scipy` documents the *class* of `M` it
-accepts, not the behaviour of the returned Ritz pairs when `M` is singular. So
-`eigsh(K, k, M=M, sigma=sigma)` is contract-compliant by the letter and
-unverified by the documentation in the way that matters.
+accepts, not the behaviour of the returned Ritz pairs when `M` is singular. That
+gap is now moot: this pencil is rejected for returning the wrong mode (section
+4.2), so no blocking decision rests on it. The contract question that *does*
+matter is the one in (c).
 
-**(c) The mechanism is transparent, so the gap is closeable by guard.** In
-shift-invert the driver solves `(K - sigma M) y = M x` and returns
-`mu = 1/(lambda - sigma)`, with `lambda = sigma + 1/mu`. Every infinite
-eigenvalue of the pencil maps to `mu = 0`; every finite `lambda` maps to a
-non-zero `mu`. So a computation of `k` Ritz values with `which="LM"` (largest
-`|mu|`, i.e. nearest `sigma`) *should* return finite `lambda` and never the
-infinite set — but "should" is exactly the thing to check, not assume. Guards
-required are in section 8.
+**(c) The primary path, route C, is outside the `M=` form and inside the
+operator form.** `M_C = [[m1_f, -c], [-c^T, h]]` is symmetric but *indefinite*,
+while the `sigma` mode documents `M` as symmetric positive semi-definite; passing
+`M=M_C` with `sigma` would therefore be a documented-contract violation, not a
+matter of taste, and the buckling mode is a different problem altogether (its
+indefinite `M` puts the wanted mode at the wrong end, below). The
+`LinearOperator` form carries no such clause: we hand the driver
+`(K_C - sigma M_C)^{-1} M_C` and the driver never sees `M_C` as an `M`. What
+remains is mechanical — in shift-invert the driver solves
+`(K_C - sigma M_C) y = M_C z` and returns `mu = 1/(lambda - sigma)` with
+`lambda = sigma + 1/mu`, so a `mu = 0` *would* become `lambda = inf` — but `M_C`
+is nonsingular (inertia measured in the paragraph below, this item), so the primary pencil has **no** infinite
+eigenvalues to surface and a `mu = 0` return would be a numerical failure rather
+than a legitimate eigenpair. Guards required are in section 8.
+
+**The inertia, measured, and where the negativity actually sits.** A one-off
+rung0 check (`M_C` at 1927x1927, rebuilt through
+`tools/host/sparse-probe/sparse_solver_test.py`'s own assembly path and
+eigendecomposed with a dense `scipy.linalg.eigh`, threads pinned to 1, at 1444
+free edges — below the 2404 dense fence; the check is promoted as
+`tools/host/sparse-probe/mc_inertia_check.py`) gives the inertia **MEASURED**:
+1444 positive, 483 negative, 0 zero; `lambda_min = -1.856672362588098e-02`,
+`lambda_max = 21.777039052800774`, smallest `|lambda| = 1.0293555296331769e-04`,
+`numpy.linalg.cond = 211559.9365417365`, and a condition ratio of `|eig|` of
+1172.9069431746586. So `M_C` is indefinite *and* nonsingular — 0 zero
+eigenvalues and smallest `|lambda| > 0`, hence no infinite eigenvalues — which is
+assertion (c) above confirmed by direct measurement rather than inherited by
+analogy. The negativity is **not** in `h`: `h` is SPD (symmetric to round-off,
+`||h - h^T||_max = 0.0`, `cholesky(h)` succeeds, `ldl` min
+`diag(D) = 0.30610723225474`, 483 positive pivots and 0 negative, `cond_2(h) =
+1738.382116837915`) and `m1_f` is SPD too (`cholesky(m1_f)` succeeds,
+eigenvalues `0.11227346625652906 .. 3.1582388589222656`, 0 negative). All 483
+negative directions sit in the Schur complement, because the congruence
+`L M_C L^T = diag(m1_f, h - c^T m1_f^-1 c)` holds with
+`L = [[I, 0], [c^T m1_f^-1, I]]` (unit lower triangular, so Sylvester's law
+makes the inertias equal): they belong to `h - c^T m1_f^-1 c`, in a number
+that equals the aux dimension `free_n = 483` exactly. The sign matters: it is
+`h` **minus** `c^T m1_f^-1 c`, the sign-corrected form — the plus sign is the
+route-B error, and no reading of `h + c^T m1_f^-1 c` is intended anywhere in
+this note.
 
 ### Recommendation
 
-Implement the iterative path as shift-invert on the **symmetric enlarged pencil**
-`(K, M) = ([[A, -c], [-c^T, h]], diag(m1_f, 0))` with an explicit
-`LinearOperator` for `(K - sigma M)^{-1} M` built from one `splu(K - sigma M)`,
-rather than by passing `M=` and letting the driver factorise. Reasons: the
-operator route does not depend on `ARPACK`'s generalised-`M` path at all (so the
-singular-`M` question in (b) never arises), it keeps the 12.82 ms per-apply cost
-visible in our own code, and it lets us reject `mu = 0` before it becomes an
-inf. The `M=` route is the fallback if the operator route shows restart
-pathology.
+Implement the iterative path as shift-invert on route C, the **mass-side enlarged
+pencil** of section 4.2 — `K_C = [[A, 0], [0, 0]]`,
+`M_C = [[m1_f, -c], [-c^T, h]]` — with an explicit `LinearOperator` for
+`(K_C - sigma M_C)^{-1} M_C` built from one `splu(K_C - sigma M_C)`, and `sigma`
+pre-registered in the result (`sigma = 0.999 * beta_sq`, the band convention of
+section 7). This is not a preference between two equivalent routes; it is the
+only route that solves the code's eigenproblem.
 
-**Apply this to the corrected pencil of section 4.2**, `(K_C, M_C)` with the
-auxiliary on the mass side — not to section 4's `(K, M)`, which returns a
-different mode (measured: `lambda = 26953.0` vs `97833.1`).
+Reasons:
 
-`eigsh` remains the right *driver family* where `(K, M)` is used directly,
-because `K` and `M` are real symmetric and the wanted eigenvalues of a symmetric
-pencil are real by construction. `eigs` (non-symmetric driver) is not needed for
-the pencil, and would forfeit that guarantee.
+* **It is the code's pencil, exactly.** `M_C`'s block row 2 gives `h y = c^T x`,
+  a `lambda`-free elimination, so substituting into block row 1 returns
+  `A x = lambda (m1_f - c D c^T) x`, which is `emfit/mode2d.py:1006-1008`.
+  Measured `beta^2` reproduces the dense reference to 12.15 / 12.46 digits on the
+  two rungs (section 4.2).
+* **`M_C` is nonsingular.** No infinite eigenvalues, nothing to filter, and the
+  `mu = 0` / `lambda = inf` artefact belongs entirely to the rejected variant.
+* **It is sparse and cheap, measured.** At rung1 `nnz(S_C) = 35,351`
+  (`0.00344 n^2`), `splu` `0.00756 s`, `nnz(L+U) = 214,641`, fill/row 66.9,
+  factor `2.58e-3 GB`; at the target mesh `0.0843 GB` and `0.156 s`
+  (**EXTRAPOLATED**, section 4.2), against `10.8 GB` and `343 s` for the dense
+  route.
+* **It is symmetric**, so `eigsh` remains the right *driver family* and the wanted
+  eigenvalues are real by construction. `eigs` (non-symmetric driver) is not
+  needed for this pencil and would forfeit that guarantee.
+
+The `LinearOperator` route is **mandatory** here, not merely preferred: it is what
+keeps the primary pencil inside the documented contracts (paragraph c). The `M=`
+form is retained only as a fallback *diagnostic* on the rejected stiffness-side
+pencil, where it is compliant by the letter (paragraph b). It is not a licence to
+drive the primary pencil through `M=M_C`, whose `M` is indefinite. That the
+shortcut did converge on `(K_C, M_C)` in 21 `OPinv` calls (5.7 / 9.0 ms, measured)
+is recorded as a diagnostic, not as a recommendation.
 
 Rejected alternatives, with the reason:
 
+* **Section 4's stiffness-side enlargement** (`K = [[A, -c], [-c^T, h]]`,
+  `M = diag(m1_f, 0)`) — rejected as *the pencil*, not as an implementation. Its
+  `w`-elimination is not `lambda`-free: it lands the rank-one term on the
+  stiffness side and yields `(A - c D c^T) x = lambda m1_f x`, a different
+  eigenvalue problem. Measured at `sigma = 1`: `lambda = 26953.0` against a
+  reference `97833.1`; with the shift moved onto the target,
+  `lambda = 98360.7 / 98375.3` (`+0.54 % / +1.08 %` off) at `abs(corr_ey) = 0.55`
+  against `0.92`. A variant that is within a percent is **more** dangerous here
+  than one that is nowhere near, because it looks like a convergence tolerance
+  being met. The corrected pencil is exact, not approximate, so there is nothing
+  to trade. **MEASURED.**
 * **Woodbury on the reduced pencil.** `(A - sigma B)^{-1} = (A - sigma m1 +
   sigma c D c^T)^{-1}` reduces to one `splu(A - sigma m1_f)` plus a dense
   `free_n x free_n` capacitance solve (15093x15093 at 1.82 GB on the target
@@ -511,9 +674,12 @@ Guards to implement with the sparse path:
   existing longitudinal-block guard (`emfit/mode2d.py:1113`, which converts
   `RuntimeError` into "the longitudinal block `k_zz - k0^2 m_zz` is singular at
   `k0 = ...`; nudge `k0` off the nodal Dirichlet eigenvalue").
-* **Non-finite or `mu = 0` Ritz values** -> drop, and *count the drops*; an
-  infinite eigenvalue surfacing as `lambda = inf` is the expected artefact of
-  singular `M` (section 6c), not a bug, but it must never reach `chosen`.
+* **Non-finite or `mu = 0` Ritz values** -> drop, and *count the drops*. On the
+  primary path this is defence in depth, not an expected artefact: `M_C` is
+  nonsingular (section 6c), so `(K_C, M_C)` has no infinite eigenvalues and a
+  `mu = 0` return is a numerical failure. The expected-artefact reading belongs
+  to section 4's rejected stiffness-side pencil, whose `M` is singular. Either
+  way no such value may reach `chosen`.
 * **Empty eligibility set** -> the existing `raise` semantics
   (`emfit/mode2d.py:1161-1166`), not a silent fallback.
 * **Residual gate.** The same scale-aware backward error already used by the
@@ -534,10 +700,13 @@ Acceptance tests, in the order they can be run cheaply:
    backward-error level, with the band set wide enough to contain the answer.
    This is the only mesh where both paths run, so it is the only honest
    cross-check, and it must run every time the sparse path changes.
-2. **Infinite-eigenvalue accounting**: `nullity(M) = free_n` exactly (measured
-   certificate in section 4), so a request for all `n_dof` eigenpairs from the
-   enlarged pencil must return `free_e` finite and `free_n` infinite ones. Any
-   other split means a discretisation or masking mistake.
+2. **No infinite eigenvalues on the primary path**: `M_C` is nonsingular
+   (section 6c), so a request for all `n_dof = free_e + free_n` eigenpairs from
+   `(K_C, M_C)` must return `free_e + free_n` **finite** values and zero
+   `inf`/`nan`. The `nullity(M) = free_n` accounting — `free_e` finite and
+   `free_n` infinite — applies only to section 4's rejected stiffness-side
+   pencil, and is kept as the regression that proves the two pencils are
+   different problems, not as a gate on the primary path.
 3. **Determinism under `sigma`**: shifting `sigma` within the band must not
    change the reported mode when the band contains exactly one eligible
    candidate; if it does, the band is wrong or the eligibility rule is.
@@ -545,10 +714,11 @@ Acceptance tests, in the order they can be run cheaply:
 ## 9. Risks, open questions, provenance
 
 **Single biggest technical risk: the semantic break in section 7, not the
-numerics.** The factorisation is measured, cheap and well-behaved — 0.38 s to
-build, ~100 MB of fill, 12.82 ms per shift-invert application on the target
-mesh, against 16.7 GB and ~41 days for the dense path — so nothing about the
-linear algebra is the threat. The threat is that `chosen` comes from a global
+numerics.** Route C's factorisation is measured, cheap and well-behaved: at rung1
+`splu` is `0.00756 s`, the fill is `2.58e-3 GB`, and fill/row rises only 55.1 ->
+66.9 from rung0 to rung1; at the target mesh it is `0.156 s` and `0.0843 GB` at
+`n = 40021` (**EXTRAPOLATED**), against 16.7 GB and ~41 days (**ESTIMATED**) for
+the dense path — so nothing about the linear algebra is the threat. The threat is that `chosen` comes from a global
 argmax over the complete spectrum (`emfit/mode2d.py:1167`), that an iterative
 solve cannot reproduce a global argmax, and that `c1_audit.py:478` consumes
 `chosen`. A fast solver that silently returns a *different mode* than the dense
@@ -565,17 +735,36 @@ Open questions:
 * The fill/row jump 58.7 -> 137.9 at the target mesh is unexplained beyond "more
   transverse nodes"; a reordering study (RCM, nested dissection) could halve it,
   and is not attempted here.
+* **Route C's fill/row exponent `0.382` rests on exactly two rungs** (`sc = 12`
+  and `16`), so every **EXTRAPOLATED** figure in section 4.2 that depends on it
+  (`7.03e6` factor entries, `0.0843 GB`, `0.156 s`, `n = 40021`) is unverified at
+  ladder rung 4 and at `free_e = 30000`. A third rung would either confirm the
+  exponent or move the whole target column.
 * The ~41 day / 16.7 GB figures are inherited arithmetic, not timings.
 
-Provenance. Every number in this note carries one of two labels:
-**MEASURED** = produced in this session by assembling `emfit/mode2d.py`
+Provenance. Every number in this note carries one of three labels:
+**MEASURED** = produced by a run recorded in the evidence file, i.e. the section-5
+assembly measurements, which come from assembling `emfit/mode2d.py`
 (`assemble` `:397`, `assemble_mixed` `:469`, `structured_mesh` `:287`,
 `pec_edge_mask` `:539`, `pec_node_mask` `:571`, `k0_from_freq` `:787`) on the
 geometry in `.scratch/tol/logs/TOLFLUX.json` (`W = 0.02`, `H = 0.0076`,
 `h = 0.0016`, `w = 0.003`, `eps_r = 4.4`, graded per `eps_of`; boundaries
 `(ground, strip)`), with `k0 = 164.17940719617263`, `scipy` 1.18.1, `numpy`
-2.5.4, and `Cholesky`/`splu`/`lu.solve` only — **no `eig`, `eigsh`, `eigs`,
-`eigh` or `svd` anywhere**; scripts `/tmp/sp/measure2.py`, `/tmp/sp/measure3.py`.
+2.5.4, and `Cholesky`/`splu`/`lu.solve` only — for *those* numbers **no `eig`,
+`eigsh`, `eigs`, `eigh` or `svd` call was made anywhere**; scripts
+`/tmp/sp/measure2.py`, `/tmp/sp/measure3.py`. That restriction is scoped to the
+assembly measurements only: section 4.2's **MEASURED** `eigsh` figures (the 21
+`OPinv` calls, the reproduced `beta^2`, the consistency and residual columns)
+come from `tools/host/sparse-probe/sparse_solver_test.py`, which *does* call
+`eigsh`, filed under `rungs.*.route_C` in the same evidence file.
+**EXTRAPOLATED** = a two-point power-law projection through the two measured
+rungs `sc = 12` (`s12_a9_z8-4-4`) and `sc = 16` (`s16_a12_z10-5-5`), evaluated at `free_e = 30000`: the target table in
+section 4.2 (`n`, `nnz(L+U)`, factor memory, `splu`), its fill/row exponents
+`0.382` (route C) and `1.000` (route A), the `splu`-versus-entries exponents
+`0.867` and `1.237`, the `127.99x` route A / route C ratio, and the
+`0.0843 GB` / `0.156 s` / `n = 40021` target architecture. No extrapolated number
+is a measurement: none was taken at the target mesh, none was taken at ladder
+rung 4, and none may be quoted as measured.
 **ESTIMATED** = arithmetic or inherited: the ~3.2e4 QZ cost ratio, the ~41 day
 dense runtime, the 16.7 GB dense matrix size, the `O(1e-2)` s per shift-invert
 iteration, and the "seconds-to-tens-of-seconds" end-to-end prediction.
