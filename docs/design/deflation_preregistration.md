@@ -254,6 +254,22 @@ Inertness, to be shown and not asserted. Levels 1 and 2 are re-measured under th
 
 If 40 * n is also exhausted at level 3, the level 3 reading is FAILED-TO-MEASURE under section 5.a and is recorded as such, with no second budget and no further attempt without a new dated entry.
 
+### 5.b Amendment 2 (2026-10-28). Pairing rule for the deflated ladder: slab-region extension of Z, and a criterion that can fail
+
+Dated 2026-10-28 and written before the run whose reading it affects, under dispatch 48. It replaces nothing in section 3, nothing in the 1e-12 bound, and nothing in section 4. The text it points at is frozen in `docs/design/deflation_v2_preregistration.md`, sections 1 and 3, committed before any run that uses it.
+
+What failed, and what did not. The by-order criterion of section 1 failed at dispatch 47. Eleven candidates appeared above the physical roots: level 1 at indices 0, 1 and 2, level 2 at indices 0 through 7, at eps_eff = 2 and beta^2 = 3961738.16343248 = 2 * k0^2 [VERIFIED this session]. The position shift is 3 at level 1 and 8 at level 2, and positional pairing paired the analytic ladder against members of that family. The solver did not fail: the seven frozen rows reproduced within the 1e-12 bound, worst residual 1.0525169405629708e-14 [VERIFIED this session]. The criterion failed and the arithmetic did not.
+
+Why it failed. Positional matching presumes that the candidate count and the candidate ordering track the analytic ladder. Any additional family breaks the first premise, and on this pass three extra members appeared at level 1 and eight at level 2, upstream of every physical root, so the second premise went with it. The ladder is in any case not a clean bijection with the candidate list, because one frozen row has no beta at all: the frozen table of section 3 records the level 1 slot 16 row as `none`, with a negative beta^2 of -179735.7274530737, an evanescent branch rather than a propagating root. No index arithmetic recovers a pairing across that. A pairing rule that cannot mis-pair is not a rule, it is an assumption.
+
+What the entry adds. Two things, both frozen in the v2 document. First, `Z` is extended from the interface line to the whole slab region, so the projection removes the family that this dispatch is measuring and not only the vertical-gradient family it was built for (v2 section 1). Second, the by-order pairing rule of section 1 is replaced by one that can fail: a candidate is paired with an analytic mode only when it satisfies a stated, falsifiable test, and a candidate satisfying no test is recorded as unpaired instead of being assigned to the nearest free slot (v2 section 3). Both are written before the run and neither may be adjusted after it.
+
+It is not a relaxation. Section 5.a stands unaltered: no threshold is lowered, no band is widened, no candidate count is changed, no floor is relaxed anywhere, and no level is dropped or added. The seven frozen rows keep their 1e-12 bound. The level 3 ARPACK budget stays at 40 * n under Amendment 1, with n = 1135 = 1464 - 329, and no increase to that budget is authorised by this entry. Levels 4 and 5 remain out of scope.
+
+What this entry does not do. It does not validate the dispatch 47 pass retroactively. That pass stays recorded as having failed the by-order criterion, and its numbers are not read as a measurement of the analytic modes. This entry changes what the next run is judged by; it does not change what the last run did.
+
+The sha256 of this document immediately before this entry was appended: `9ea938f520ae89593219dfdbd8fc8f109e6d6616aef45e14a29d60d6f3fe2308` (280 lines, 30426 bytes).
+
 ## 6. What this fix does not fix
 
 - The mixed path. `solve_modes_mixed` is unchanged and does not pass through the projection. It solves a different pencil, `A x_t = beta^2 B x_t` with `A = k0^2 m_eps - k_q` and `B = m1 - c D c^T`, and its normalisation cannot be the edge-only `e^T B e = 1`, because that `B` is indefinite [RELAYED]. A transverse gradient field is not a null vector of the block system there: it carries an `e_z` partner and the coupling does not annihilate it, since `c^T Z = k_zz phi` is nonzero. The mixed-path kernel, and so its dimension, is PROVISIONAL, and no number for it is frozen here.
