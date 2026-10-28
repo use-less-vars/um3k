@@ -515,7 +515,7 @@ remains the project owner's decision, and this document makes none.**
 
 **Status of this table at 2026-10-28.** The `T4c` row is the only row that has moved: it is now **scored
 PASS** at its registered `1e-4`, on the `40k`/`50k`/`60k` ladder, `2 of 2` steps, `9.68x` and `17.91x`
-inside (§3.5). Both `T4b` rows are unchanged and remain unevaluated as registered, and the §4 invariant row
+inside (§3.5). SUPERSEDED by section 8 of this file - do not cite this line as current. Both `T4b` rows are unchanged and remain unevaluated as registered, and the §4 invariant row
 is unchanged. **`T4c`'s pass moves no other row**: `T4_amp` remains **FAIL** in Physics, and §3.6 records
 that the same three solves sit `12`-`15 %` high on `R` and outside `|Q - 1| <= 0.10` by `1.22x`-`1.47x`, so
 the `T4c` PASS must never be cited as support for `T4_amp` or for the `T4b` clauses.

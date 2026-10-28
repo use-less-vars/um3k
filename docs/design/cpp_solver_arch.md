@@ -6,7 +6,7 @@
 
 **Design only.** There is no C++ source, no header, no CMake file, and nothing in `emfit/` or `tools/` that knows this document exists. No benchmark in this document was run by it.
 
-**Every component and licence choice is an OPEN RULING.** Section 4 lists the options and the cost of each; section 8 collects them; section 9 lists what is deliberately not decided. This document recommends and does not decide, for the reason given in 4.0: a docs dispatch is not the place to create a legal position that an append-only log will then carry.
+**The factoriser is ruled and the licence is not.** Port v1 uses SuperLU (4.1, R4a) for attribution reasons and not for speed; the symmetric-indefinite upgrade is deferred to its own pre-registration (4.1, R4b); Eigen is excluded from v1 (4.2, R4c). The licence question stays open (4.6, R4d), and so do the binding, the threading model and the storage format. R4a is an engineering call and not a licence clearance. Section 8 collects all of them; section 9 lists what is deliberately not decided.
 
 ---
 
@@ -14,7 +14,7 @@
 
 **1.1 The question this document answers.** Given that the adopted 2D eigenproblem path is a Python shift-invert Lanczos solve that has been measured to 259,760 degrees of freedom and measured to return nothing at `k = 6` on that same matrix, what would a C++ implementation of that same solve have to look like, and how would anyone know it was right before trusting it?
 
-**1.2 The question it does not answer.** It does not ratify a library, a licence, a Python/C++ binding, a threading model, or a matrix storage format. Section 4 presents each as an option with its cost and its ratification requirement. Nothing in section 4 is a decision.
+**1.2 The question it does not answer.** It does not clear a licence, a Python/C++ binding, a threading model, or a matrix storage format. It records one component ruling (4.1, R4a), one deferral (R4b), one scope ruling (4.2, R4c) and one open question (4.6, R4d). The licence, the binding, the threading model and the storage format remain open, and R4a is an engineering call rather than a clearance.
 
 **1.3 It does not author a second C++ contract.** `docs/design/core_contract.md:166` opens `### C++ FIT production port`, and that subsection already fixes the interface shape: inputs are "the same contract, plus a thread count and a dt policy" (`:168` to `:170`), returns are `e`/`h` samples at declared probes and planes plus "the `dt` actually used, the three-valued status (item 5), and the required provenance core" (`:172` to `:173`), and two things it "cannot be asked for" are fixed at `:179` to `:185` (in-memory mutation as a variation mechanism, and source exposure for `inspect.getsource`). This document supplies the *engineering* content that section leaves open, namely which factoriser, which storage, which threads, which binding, and how the port is accepted. It does not restate the interface shape, and where the two ever appear to disagree, `core_contract.md` wins.
 
@@ -97,22 +97,22 @@ Read together: cost is governed by `k`, not by assembly (`decisions.md:6121`), a
 
 ---
 
-## 4. Component selection: OPEN RULINGS
+## 4. Component selection: RULED, DEFERRED AND OPEN
 
-**4.0 The framing, stated once.** Nothing below is decided, and this document does not draft the decision. Two reasons. First, a licence ruling made inside a documentation dispatch becomes a legal position the project never actually took, and append-only logs then carry it forward. Second, three of the five choices are downstream of the factoriser, and the factoriser choice is itself not settled, so deciding them now would be deciding the wrong order.
+**4.0 The framing, as amended at Dispatch 43.** This section was written at Dispatch 42 as five open rulings, on the reasoning that a licence position taken inside a documentation dispatch becomes a position the project never actually took, and that three of the five choices sit downstream of the factoriser. The first reason stands, and it is why 4.6 is still open. The second no longer applies: the factoriser question is answered by an engineering call that assumes nothing about licensing, and Eigen's scope is answered by not needing it. Both are ruled below, and the order they were taken in is stated because the other three questions were waiting on the factoriser.
 
-Where a licence appears below, it is **asserted from general knowledge and not verified against any vendor file in this tree; verify before ratification.** No licence text ships with this repository and none was consulted.
+Where a licence appears below it is marked either as **verified against a file in this tree** or as **asserted from general knowledge and not verified**. One fact is now verified, and it is not the comfortable one: the SuperLU code path ships inside the installed SciPy as compiled machinery, and no SuperLU licence text ships beside it. The audit and its evidence are in 4.6.
 
 ### 4.1 Sparse direct factorisation
 
 | option | what it is | cost | what ratification must establish |
 |---|---|---|---|
-| SuperLU | unsymmetric LU with pivoting, ships inside SciPy's `splu` which the incumbent already calls | uses no symmetry; doubles index storage for a symmetric matrix | that an unsymmetric path is acceptable, and which licence applies |
+| SuperLU | unsymmetric LU with pivoting, ships inside SciPy's `splu` which the incumbent already calls; **VERIFIED** at Dispatch 43, `_superlu` compiles `gstrf` (`scipy/sparse/linalg/_dsolve/linsolve.py:13`, `:444`, `:54`) | uses no symmetry; doubles index storage for a symmetric matrix | asserted BSD-3-Clause, not verifiable from this tree; notice not shipped in dist-info; obtaining and shipping the upstream notice is a prerequisite to ratification. **RULED** as R4a, below |
 | SuiteSparse/UMFPACK | unsymmetric multifrontal LU; the same SuiteSparse tree also carries the symmetric-indefinite multifrontal paths | external build dependency; multifrontal memory is supernode dependent | licence class, and whether the GPL branch is acceptable (4.6) |
-| Eigen | header-only C++ templates; `SparseLU` unsymmetric, `SimplicialLDLT`/`LLT` symmetric positive definite | `SimplicialLDLT` is excluded by 2.4; `SparseLU` is the surviving member | licence class for a header-only vendored dependency |
+| Eigen | header-only C++ templates; `SparseLU` unsymmetric, `SimplicialLDLT`/`LLT` symmetric positive definite; not installed in this tree | `SimplicialLDLT` is excluded by 2.4; `SparseLU` is the surviving member | asserted MPL2, unverified - Eigen absent from environment. **RULED** out of v1 as R4c, in 4.2 |
 | LAPACK + BLAS only | the incumbent's language, banded or dense blocked | `dpotrf` excluded by 2.4; `dsytrf` (Bunch-Kaufman) survives but is not sparse | whether a non-sparse indefinite path is admissible at all (it is not, per 2.7) |
 
-**Why not decided here.** The surviving set is determined by 2.4, which is a linear-algebra fact; picking among the survivors is determined by licence and by build-portability, which are principal decisions. The recommendation, if a recommendation is wanted: an unsymmetric LU with pivoting is the conservative choice because it needs nothing from the matrix, and a symmetric-indefinite multifrontal path is the efficient choice because the matrix is symmetric and the inertia is already being computed as a check (2.4).
+**The ruling (R4a), and why it is attribution rather than performance.** SuperLU is the port's factoriser. It is a general sparse LU, it is unsymmetric, and it exploits no symmetry of `K_C - sigma*M_C`. It survives 2.4 for the only reason that matters here: it assumes nothing about definiteness, so the indefinite pencil cannot break it. That is admissibility and not fitness, and 2.4 said so in advance: an unsymmetric LU on a symmetric matrix "discards a symmetry the problem actually has. It is admissible but it is a worse answer". SuperLU is chosen because the comparison it makes possible is attributable, the Python side already calling the same factorisation through `splu`, and not because it is fast. No speed claim is made for it (3.3). **The deferral (R4b).** The efficient answer is a symmetric-indefinite multifrontal path: MUMPS, or a paid HSL code (MA57, MA97) under a licence this project would have to buy. It is **DEFERRED**, not refused, and it is deferred to its own pre-registration. It must be judged against the port's measured SuperLU result on the same mesh and the same pencil, and not against the Python timing, because the Python timing is a script and the port is not.
 
 ### 4.2 Eigen's role and scope
 
@@ -123,7 +123,7 @@ Eigen is named separately because it can enter at four different depths and the 
 3. **the factorisation itself** (`SparseLU`),
 4. **the eigensolver** (not proposed; the driver stays the same algorithm as 2.1, in C++ or in Python).
 
-**Why not decided here.** Whether Eigen is permitted to touch the factorisation at all is constrained by 2.4 (its SPD members are excluded, its `SparseLU` is not), and by the licence question in 4.6. Depth 1 or 2 is a low-risk vendoring decision; depth 3 is the factoriser decision wearing a different name.
+**The ruling (R4c).** Eigen enters v1 at no depth. Depth 1, the per-cell `2x2` and `3x3` work, is a handful of closed-form operations per cell and does not justify a vendored header library. Depths 2 and 3 are excluded by the same argument as R4b: they would put a second factoriser in the tree, with a licence to attribute and a scope to defend, and R4a has already answered the factoriser question. Every dependency is a thing to attribute, and this document will not add one for convenience. Eigen is not installed in this tree, so its licence is not verified here either; its licence is asserted MPL2, unverified - Eigen absent from environment, and that is recorded as an assertion and not as a finding.
 
 ### 4.3 Matrix storage
 
@@ -133,7 +133,7 @@ CSC against CSR, and the ordering point: **the storage choice is downstream of t
 
 ### 4.4 Threading
 
-OpenMP against TBB against `std::thread`. This is a component choice **and** part of the acceptance criterion, not a performance detail, for the reason in 5.8: thread count alone moves the answer by more than the primary target. The measured figure is `decisions.md:7192`: "The smallest non-zero null obtainable without a re-solve is **8.13e-11** relative, from BLAS thread count 1 against 4 on the same capture."
+OpenMP against TBB against `std::thread`. This is a component choice **and** part of the acceptance criterion, not a performance detail, for the reason in 5.8: thread count alone moves the answer by 8.13e-11, which is eight times the 1e-11 figure reported in 5.3. The measured figure is `decisions.md:7192`: "The smallest non-zero null obtainable without a re-solve is 8.13e-11 relative, from BLAS thread count 1 against 4 on the same capture."
 
 **Why not decided here.** The threading model is a build and deployment decision, and 5.8 makes its *reporting* mandatory regardless of which model is chosen. Pinning thread count to 1 for the comparison run (5.8) means the choice does not affect the verdict, which is the right relationship: the model may be chosen freely, the pinning may not be skipped.
 
@@ -153,7 +153,7 @@ pybind11 against `ctypes` against a plain C ABI with a numpy buffer handoff. The
 
 The rule is not "is a GPL library good". It is: **is a GPL component admissible anywhere in the factorisation path of a project that ships a Python package?**
 
-The two licence facts that bear on it are **asserted from general knowledge and not verified against any vendor file in this tree; verify before ratification**: SuperLU is BSD-3-Clause, and UMFPACK is GPL-2.0-or-later. If the distribution boundary for this project is a Python package that a user installs, then a GPL factoriser is a different proposition from a GPL tool used in-house, and the answer changes which of the survivors in 4.1 is even a candidate. That is the principal's call, and it is the reason 4.1 is not decided here.
+**The verified fact, and the ruling that is not a clearance (R4d).** What is verified in this tree is a shipping fact and not a licence fact: the SuperLU code path ships inside the installed SciPy as compiled machinery, `_superlu` compiling `gstrf` (`scipy/sparse/linalg/_dsolve/linsolve.py:13`, `:444`, `:54`), and nothing in the wheel's licence field says so. `scipy-1.18.1.dist-info/LICENSE.txt` is SciPy's BSD-3-Clause text and contains zero occurrences of `superlu`; `METADATA:46` names OpenBLAS and the GCC runtime in its bundled list and does not name SuperLU. That citation was written `:43` in the supervisor's brief for Dispatch 43a and corrected to `:44` in the brief for 43b, and neither is right: line 43 of that file is the phrase "(depending on the build):", lines 44 and 45 are blank, and the first bundled name, OpenBLAS, is on line 46, so the reference is corrected here to `:46`; the auditwheel SBOM carries zero SuperLU entries. What is asserted and not verified against any vendor file in this tree is this: SuperLU is asserted BSD-3-Clause, not verifiable from this tree; notice not shipped in dist-info; obtaining and shipping the upstream notice is a prerequisite to ratification. UMFPACK is asserted GPL-2.0-or-later, unverified here. R4d stays **OPEN**, and R4a is an engineering call and not a clearance: it says the factoriser is SuperLU and it does not say a licence question is settled, because on this evidence nobody has established where the SuperLU notice lives in a wheel that ships the compiled library without it. If the distribution boundary for this project is a Python package that a user installs, that question is the principal's, and it no longer changes which factoriser v1 uses.
 
 ---
 
@@ -188,17 +188,17 @@ The two licence facts that bear on it are **asserted from general knowledge and 
 
 Wall time is reported for every run under 5.8 and it never enters a verdict. `core_contract.md:340` to `:341` gives the reason and it applies verbatim here: "a wall-time comparison would fail the test precisely when the test succeeded."
 
-### 5.3 Primary target
+### 5.3 The 1e-11 figure: reported, and not citable
 
-**`|rel| <= 1e-11`, the registered primary target, carrying a PASS or FAIL verdict.**
+**`|rel| <= 1e-11` on the same eigenpair is reported for every scored run and carries no verdict.** It is not citable as a pass or as a fail, for the reason in the next paragraph: the instrument cannot hold it still.
 
-**The caveat belongs in the same paragraph, not in an appendix.** This target sits at or below the measured round-off floor of the reference itself, and below the post-processing noise bound. `decisions.md:6133` to `:6135` records a relative error of **9.79e-12** at 9560 degrees of freedom and says in the next breath that "the error grows with refinement ... and it licenses no convergence rate". The smallest non-zero null obtainable without a re-solve is **8.13e-11** (`decisions.md:7192`, 5.8), from BLAS thread count 1 against 4 on the same capture, and it is *above* this target.
+**The caveat belongs in the same paragraph, not in an appendix.** This figure sits at or below the measured round-off floor of the reference itself, and below the post-processing noise bound. `decisions.md:6133` to `:6135` records a relative error of **9.79e-12** at 9560 degrees of freedom and says in the next breath that "the error grows with refinement ... and it licenses no convergence rate". The smallest non-zero null obtainable without a re-solve is **8.13e-11** (`decisions.md:7192`, 5.8), from BLAS thread count 1 against 4 on the same capture, and it is eight times this figure, which means it is above it. A number the instrument moves by eight times its own size cannot carry a verdict.
 
-The caveat and the verdict coexist, and neither cancels the other. The threshold is registered as a falsifiable target in the sense of 5.0: a result at or outside `1e-11` is scored **FAIL** and a result inside it is scored **PASS**. What the caveat fixes is the *interpretation* of that verdict, not its existence. **A FAIL at `1e-11` is not by itself evidence that the port is wrong, because the instrument's own floor sits at or above this threshold; and a PASS at `1e-11` is a stronger result than the threshold implies.** Both readings are registered here, before any C++ exists, so that no later reader can call a 1.4e-11 disagreement a surprise or a 9.8e-12 agreement a validation.
+**This is a relabel, and the threshold does not move.** Dispatch 42 called `1e-11` the primary criterion and scored it PASS or FAIL. The number stays exactly where it was and the verdict comes off it, for the reason stated above and for no other: a FAIL at `1e-11` would not be evidence that the port is wrong, because the instrument's own floor sits at or above the threshold, and a PASS at `1e-11` would be an artefact of a quiet machine rather than a validation of the port. A number that cannot fail is not a gate, and keeping a verdict on it invites a later reader to treat either outcome as information. The result is still reported for every run, with its sign, and it is reported as a figure and not as a score. The binding gate is 5.4.
 
-### 5.4 Second statistic: the achievable diagnostic
+### 5.4 The second statistic, and the binding gate: `1e-8`
 
-**`|rel| <= 1e-8` on the same eigenpair, same mesh, same run.** This is achievable above the measured noise floors recorded in 5.3, and tight enough to catch a wrong pencil, a wrong `sigma`, or a silent densification that changes rounding. It is the *second* statistic: a gate that is expected to pass, so a failure here is diagnostic of a real port defect rather than of instrument noise. It carries a PASS or FAIL verdict of its own. The `1e-11` row in 5.3 is the registered primary target and is scored on its own terms, with the caveat above attached to it.
+**`|rel| <= 1e-8` on the same eigenpair, same mesh, same run, and this one carries the PASS or FAIL verdict.** It is achievable above the measured noise floors recorded in 5.3, and tight enough to catch a wrong pencil, a wrong `sigma`, or a silent densification that changes rounding. It remains the *second* statistic in the order of the two, because it is the larger number and is read after the first, and it is the only one of the two that binds. A failure here is a FAIL of the port, not a diagnostic footnote, and it is attributable: the noise floor of 5.3 is two orders of magnitude below it.
 
 ### 5.5 Third statistic: Python-side self-agreement
 
@@ -209,9 +209,9 @@ The Python solver run against itself on the same mesh, thread count pinned to 1,
 | mesh | free edges | spec | source |
 |---|---|---|---|
 | M4 | **30,672** | `58/44/35-17-18` | `tools/host/sparse-probe/out_mesh/mode_overlap.json:285` to `:286`, with `n_e = 30672`, `n_n = 10231`, `free_e = 30672` at `:299` to `:301` and `sigma = 96335.2458966532` at `:294` |
-| target class | **30,000** | extrapolated target architecture | `docs/design/sparse_eigenmode.md:355` |
+| M3 | **28,980** | `56/43/34-17-17` | `tools/host/sparse-probe/out_mesh/mode_overlap.json:228` to `:229`, with `n_e = 28980`, `n_n = 9667`, `free_e = 28980` at `:242` to `:244`, `mesh_checks_ok = true` at `:245`, `sigma = 96404.93625838071` at `:237`, `lambda = 96431.67757422743` at `:246` and `R = 3.473702068959308` at `:248` |
 
-M4 is a measured mesh and is the mesh on which the port is judged. The 30,000 class mesh is an extrapolated target (`sparse_eigenmode.md:357` to `:360`) and is run to show that the port scales past the measured rungs; per `:359`, "Nothing here was measured at the target mesh", so a result there is reported as a first data point and not as a confirmation of the extrapolation.
+M4 at 30,672 free edges and M3 at 28,980 free edges are both measured meshes, and the port is judged on both. Dispatch 42 carried a third row here, a 30,000 free-edge class mesh taken from `sparse_eigenmode.md:355`, and it has been removed: a criterion row that names a mesh no probe in this tree can execute is not a criterion, it is a placeholder, and it is the same class of defect as a line that no longer matches its own measurement. The observation the row carried is not lost and is weaker than it was written. `sparse_eigenmode.md:357` to `:360` marks that whole subsection EXTRAPOLATED and says "Nothing here was measured at the target mesh, and nothing here was measured at ladder rung 4", so any figure at 30,000 free edges remains an EXTRAPOLATED first data point, is labelled as one there (`:357`), and is not a confirmation of the extrapolation.
 
 ### 5.7 Residual gate
 
@@ -231,7 +231,7 @@ Every run reports, and any deviation from the registered values **voids the comp
 | compiler and optimisation flags | (to be filled for the C++ side) |
 | Python, numpy, scipy versions | (to be filled) |
 
-This block exists because of `decisions.md:7192`, quoted: "The smallest non-zero null obtainable without a re-solve is **8.13e-11** relative, from BLAS thread count 1 against 4 on the same capture." A thread-count change alone moves the answer by 8.13e-11, which is 8 times the primary target in 5.3. Without pinning, the primary target is not measurable and the secondary target is not attributable.
+This block exists because of `decisions.md:7192`, quoted: "The smallest non-zero null obtainable without a re-solve is 8.13e-11 relative, from BLAS thread count 1 against 4 on the same capture." A thread-count change alone moves the answer by 8.13e-11, which is eight times the 1e-11 figure of 5.3 and 0.8 percent of the 1e-8 threshold of 5.4. Without pinning, the 1e-11 figure is not measurable at all, and the binding gate carries an unattributed contribution it cannot separate from a port defect.
 
 One honest qualification, recorded so the block is not over-read: `decisions.md:7365` states that "the `8.13e-11` null demonstrates **determinism** ... not **repeatability** across the configuration changes a gate has to survive." This is exactly why 5.8 pins the configuration rather than treating the number as a repeatability bound. The number bounds what configuration drift does, which is the thing being pinned.
 
@@ -241,8 +241,8 @@ One honest qualification, recorded so the block is not over-read: `decisions.md:
 
 | statistic | threshold | verdict if exceeded |
 |---|---|---|
-| `|rel|` on `beta^2`, registered primary target, both meshes | `1e-11` | FAIL (see the caveat in 5.3) |
-| `|rel|` on `beta^2`, second achievable diagnostic, same run | `1e-8` | FAIL (diagnostic of a port defect) |
+| `|rel|` on `beta^2`, both meshes | `1e-11` | PASS or FAIL, reported only; NOT citable as validation or as port defect (5.3) |
+| `|rel|` on `beta^2`, same run | `1e-8` | PASS or FAIL, binding (5.4) |
 | Python self-agreement, 5.5 | bitwise | FAIL (harness invalid) |
 | residual, either side | `1e-6` | not a result |
 | environment block, 5.8 | as registered | comparison void |
@@ -273,17 +273,17 @@ One honest qualification, recorded so the block is not over-read: `decisions.md:
 
 **7.4 Silent densification.** The specific hazard of a C++ port: a factoriser that decides a matrix is small enough to fill in, or a binding that marshals a sparse matrix through a dense intermediate, converts the incumbent's 2.58e-3 GB factor (`sparse_eigenmode.md:346`) into something else without failing. Two detectors. First, the factor's reported `nnz(L+U)` and fill per row are recorded per run and compared against the measured rung values `214,641` and `66.9` (`:345`) at the corresponding size; a factoriser reporting zero fill has densified. Second, the inertia check of 2.4: a factoriser that reports a different positive/negative split for the same `M_C` has taken a different path, and at 1444 free edges the expected split is 1444/483/0 (`:530`).
 
-**7.5 Configuration drift.** Covered by 5.8 and by `7.3`'s logic: a change of machine, BLAS, or thread count moves the answer by more than the primary target, so the comparison is void rather than FAIL. Void is not a soft verdict; it means the run did not test anything.
+**7.5 Configuration drift.** Covered by 5.8 and by `7.3`'s logic: a change of machine, BLAS, or thread count moves the answer by more than the 1e-11 figure reported in 5.3, so the comparison is void rather than scored. Void is not a soft verdict; it means the run did not test anything.
 
 ---
 
 ## 8. Open rulings, collected
 
-Principal-only. Nothing below is decided by this document.
+Principal-only, except for the two rulings recorded in 4.1 and 4.2. Nothing below is decided by this document unless it is marked as ruled.
 
-1. **Licence, and specifically GPL in the factorisation path.** Whether a GPL component is admissible in a library this project ships (4.6). This gates 4.1 and therefore 4.2 and 4.3.
-2. **Factoriser.** Which of the survivors in 4.1, given 2.4. Recommendation if one is wanted: unsymmetric LU with pivoting is conservative, symmetric-indefinite multifrontal is efficient.
-3. **Eigen's scope.** Depth 1 or 2 (small blocks, assembly) against depth 3 (the factorisation) against not at all (4.2).
+1. **Licence, and specifically GPL in the factorisation path.** Whether a GPL component is admissible in a library this project ships (4.6). **OPEN (R4d).** R4a is an engineering call and not a clearance, and it no longer depends on this answer. It gates any future factoriser upgrade and not the v1 choice.
+2. **Factoriser.** **RULED (R4a): SuperLU**, general sparse LU, unsymmetric, no symmetry exploited, admissible under 2.4 because it assumes nothing about definiteness, and chosen for attribution rather than for speed. The efficient symmetric-indefinite path (MUMPS, MA57, MA97) is **DEFERRED (R4b)** to its own pre-registration, judged against the port's SuperLU result on the same mesh.
+3. **Eigen's scope.** **RULED (R4c): none in v1.** The per-cell `2x2` and `3x3` work does not need a vendored header library, and every dependency is a thing to attribute (4.2).
 4. **Storage.** CSC against CSR, and whether the zero block of `K_C` is stored or implied (4.3). Cannot be settled before item 2.
 5. **Threading model.** OpenMP against TBB against `std::thread` (4.4). Free choice, with mandatory pinning under 5.8.
 6. **Binding.** pybind11 against `ctypes` against a C ABI with numpy handoff (4.5).
@@ -294,10 +294,10 @@ Principal-only. Nothing below is decided by this document.
 
 ## 9. What this document does not decide
 
-- It does not ratify a library, a licence, a binding, a threading model, or a storage format. Every one of those is in section 8.
+- It does not clear a licence, a binding, a threading model, or a storage format, and it does not ratify SuperLU as a licence decision. It rules one component (R4a) as an engineering call and records that the call is not a clearance (R4d); the binding, the threading model and the storage format stay open in section 8.
 - It does not author a C++ contract, and it does not amend `docs/design/core_contract.md:166` to `:185`. That section owns the interface; this one supplies engineering content.
 - It does not assert that a C++ port will be faster. 3.3 leaves the estimate explicitly unfilled, because no measurement exists from which to fill it.
-- It does not assert any licence fact as a repository finding. Every licence statement in 4.1, 4.2 and 4.6 is marked as asserted from general knowledge and unverified against any vendor file in this tree.
+- It does not assert any licence fact as a repository finding, with the one exception recorded at 4.6: that SuperLU ships compiled inside the installed SciPy and that no SuperLU notice accompanies it in that tree is verified. Every other licence statement in 4.1, 4.2 and 4.6 is marked as asserted from general knowledge and unverified against any vendor file in this tree.
 - It does not propose CUDA, and it does not add CUDA to any shortlist.
 - It does not move any existing verdict. `T4_amp` remains the recorded FAIL, `T4b` and `T4c` remain as recorded in `docs/design/t4b_t4c_preregistration.md`, and the two errata recorded there in section 8 are not reopened here.
 - It does not decide the `mode2d` normalisation defect (`decisions.md:7008`). Section 5.2 excludes field scale from the comparison for exactly that reason, following `core_contract.md:327` to `:331`.

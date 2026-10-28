@@ -349,7 +349,7 @@ Presence assertions over the contract, none of which assert that a value is *rig
 
 Two negative assertions belong with these. The rendered page must not print a units label for a component whose `unit` is absent, and must not print a colour-bar range that differs from the declared `lo` and `hi`. Both are string comparisons against the artefact that produced the page, both are cheap, and both catch the exact failure mode of section 10.3.
 
-### 9.6 The existing gate, and the collision it produces
+### 9.6 The existing gate, the collision it produces, and the ruling that resolves it
 
 `tests/test_demo_picker.py:96-98` is already in the tree:
 
@@ -363,7 +363,7 @@ It is called on the landing page (`:122`), the error page (`:152`), a study form
 
 **A client-side viewer cannot pass this gate, and the sentence that decides it is the docstring's: "a page is not exempt."** WebGL is reached from script; a `<canvas>` with no script is a blank rectangle; an SVG that a reader can rotate is script. So as the tree stands, sections 7 and 8 describe an artefact that the front end's own test forbids on every page it serves.
 
-This is not a defect in the test and not a defeat for the design. It is a conflict between two intents, and it is recorded as an **OPEN** ruling in section 11 rather than resolved here. The three ways out are not equally cheap:
+This is not a defect in the test and not a defeat for the design. It is a conflict between two intents, and it was recorded at Dispatch 42 as an **OPEN** ruling. It is **ruled** at Dispatch 43: **R2, the script policy, stands, and a page served by this front end does not execute script.** A client-side viewer is therefore not admissible on any page this front end serves, and the three ways out below are reduced to the ones that do not change the policy. **The guard condition matters as much as the ruling.** R2 binds the pages this handler serves (`emfit/webapp.py:359`, `do_GET` at `:432`), not the visual engine and not the artefact: a viewer that renders without script is admissible anywhere, and a page produced by a different handler, outside this front end, is outside this ruling and must say so where the artefact is generated (8.6). The ruling is about which pages may run script, and it is not a statement that interaction is unwanted.
 
 1. **Render on the server** and ship a raster or a server-written SVG. No script, passes the gate as written, and is what the incumbent already does (`emfit/viz.py:287`, `pcolormesh` to PNG). The cost is the interaction that motivated a client-side viewer, and section 7's MVP becomes a better PNG rather than a model in the browser.
 2. **Put the viewer on a page outside the front end's policy.** This one does not survive contact with the code: every response is served by the same handler (`emfit/webapp.py:359`, `do_GET` at `:432`, `do_POST` at `:472`), so there is no outside.
@@ -401,9 +401,9 @@ The generalisation this document adopts is one line: **a quantity is not finishe
 
 The mirror of 10.4. A renderer that will draw whatever it is handed hides the absence of a quantity: an unlabelled axis looks like a labelled one at a glance, and a viewer that autoscales silently makes every array look like a good array. The countermeasure is the declaration requirement of section 5, applied as an assertion: a member that is missing must produce a visible statement on the face of the image or a refusal, and never a default that fills the gap.
 
-## 11. Open rulings
+## 11. Rulings: two taken, seven open
 
-Nine, collected in one table so that the number is visible. Everything in this section is **OPEN**; nothing here is a decision this document is entitled to take.
+Nine, collected in one table so that the number is visible. Seven are **OPEN**: nothing in those seven is a decision this document is entitled to take. Two are **ruled** at Dispatch 43 and are marked in the table with the number this document gives them beside the brief's label: **R2, the script policy, is ruling 8 below** and is recorded in 9.6; **R3, field arrays in `emfit.result.v1`, is ruling 5 below** and carries two specifications.
 
 | # | Ruling | What it decides | Where it bites |
 |---|---|---|---|
@@ -411,10 +411,10 @@ Nine, collected in one table so that the number is visible. Everything in this s
 | 2 | Vendoring against the byte budget | whether a renderer library's bytes may displace field bytes, and by how much | 8.3, 8.4, 9.4 |
 | 3 | Slice interpolation | whether the viewer reproduces the incumbent's nearest-neighbour convention or interpolates | 7.1; two pictures of one run that disagree |
 | 4 | The isosurface algorithm, and its encumbrance | which extractor is written or vendored | 7.2, unverified and recorded as unverified |
-| 5 | Whether field arrays enter `emfit.result.v1` | the version bump itself, which is what the MVP is actually waiting on | 4, 5, `decisions.md:7059` |
+| 5 | Whether field arrays enter `emfit.result.v1` | **RULED (R3): they enter as a sidecar, with two specifications.** First, the **absent case is legal**: a result that carries no field arrays is a legal result, and a page must declare the absence rather than default it (5, 10.4). Second, the arrays are **not base64-encoded**: the sidecar carries them as binary, because base64 inflates a field by a third and the byte budget is already an argument (8.3, 8.4) | 4, 5, `decisions.md:7059` |
 | 6 | The colormap default and the domain policy per component | what a reader is told a colour means | 6.1, 10.2 |
 | 7 | Where the artefact is generated | build-time static against per-result, and therefore where the budget is spent | 8.6 |
-| 8 | Whether a page may execute script | whether a client-side viewer is admissible at all under `tests/test_demo_picker.py:96-98` | 9.6, and the shape of the MVP |
+| 8 | Whether a page may execute script | **RULED (R2): it may not**, on any page this front end serves, and any artefact it serves must render without script. Guard condition: the ruling binds the served pages and not the engine, so a page from a different handler is out of scope and must say so (9.6, 8.6) | 9.6, and the shape of the MVP |
 | 9 | The sampling or decimation ratio for a volumetric field | what an isosurface is extracted from, given 7.4's size | 7.4 |
 
 Rulings 1, 5 and 8 are the ones that gate everything else. Ruling 5 comes first in time because it is the only one that is not a matter of taste: without arrays in the contract there is no viewer to argue about. Ruling 8 is the one most likely to be discovered late, because it is a test in a file about demo pickers, and it is included here so that it is discovered in a document rather than in a failing build.
@@ -429,8 +429,8 @@ A list, because the boundary of a design document is the most useful thing in it
 - **It proposes no physics.** No field, no tolerance, no mesh, no solver behaviour and no observability is changed by anything here.
 - **It does not repair `decisions.md:7008`.** The normalisation defect stays OPEN and is handled by declaration on the artefact, which is the only handling available to a rendering layer.
 - **It does not fix the isosurface tolerance of 9.3.** That number is a proposal pending a measurement, and it is labelled as one.
-- **It answers none of section 11.**
+- **It answers none of section 11 except the two rulings taken at Dispatch 43**, R2 in 9.6 and R3 in the table, which are marked as rulings there and are appended rather than substituted into this section.
 - **It writes nothing under `emfit/`.** The package was read to produce this document and not modified.
 
-The one sentence a reader should carry out of it: **the MVP is blocked on a version bump and on two rulings, the script policy and the library policy, and not on rendering work.** The data is one function call from a picture, the picture is one schema version from being legal, and the byte budget is one argument away from being enough or not enough.
+The one sentence a reader should carry out of it: **the MVP is blocked on the schema addition and on two conditions, not on the two rulings.** R3 admits field arrays into `emfit.result.v1` as a sidecar, and what remains is the absent case (a page must declare it rather than default it) and the transfer form (binary, not base64). R2 keeps the JavaScript-free policy, and what remains is the guard test that enforces it on every page the front end serves. The data is one function call from a picture, the picture is one schema addition from being legal, and the byte budget is one argument away from being enough or not enough.
 
