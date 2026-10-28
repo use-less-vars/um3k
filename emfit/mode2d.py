@@ -103,6 +103,7 @@ __all__ = [
     "pec_node_mask",
     "solve_modes",
     "solve_modes_deflated",
+    "solve_modes_deflated_v2",
     "solve_modes_mixed",
     "structured_mesh",
 ]
@@ -1017,6 +1018,7 @@ def _gradient_columns(
     mu_t: np.ndarray,
     node_pec: np.ndarray,
     region_tol: float = 0.0,
+    region_contrast: float = 0.0,
 ) -> np.ndarray:
     """Nodes usable as columns of the discrete gradient subspace ``Z``.
 
@@ -1026,11 +1028,20 @@ def _gradient_columns(
     nodal-gradient field ``e = Z[:, i]`` that the shift-invert solve sees as a
     spurious state at ``beta^2 = k0^2``.  A node qualifies when
 
-    * every triangle adjacent to it satisfies ``|eps_r - 1/mu_r| <= region_tol``
-      (exact equality at the default ``region_tol = 0.0``, which is what the
-      exactness hypothesis H2 requires), and
+    * every triangle adjacent to it satisfies
+      ``|eps_r - 1/mu_r - region_contrast| <= region_tol`` (exact equality at the
+      default ``region_tol = 0.0`` and ``region_contrast = 0.0``, which is what
+      the exactness hypothesis H2 requires), and
     * it is **not** on a PEC predicate (:func:`pec_node_mask`), because the PEC
       rows and columns are deleted and a PEC node carries no free DOF pattern.
+
+    ``region_contrast`` selects *which* constant contrast the region carries: at
+    the default ``0.0`` this is the ``eps_r == 1 / mu_r`` block (the air block of
+    the pre-registered ladder and the only block the preregistration deflates);
+    ``region_contrast = c`` with ``c != 0`` selects the block where
+    ``eps_r - 1 / mu_r == c`` exactly, which is what the Amendment 3 widening of
+    :func:`_deflation_columns` unions in as well.  The default reproduces the
+    original predicate character for character.
 
     Returns the qualifying node indices, ascending.
     """
@@ -1041,7 +1052,10 @@ def _gradient_columns(
         )
     eps_t = np.asarray(eps_t, dtype=float)
     mu_t = np.asarray(mu_t, dtype=float)
-    on_region = np.abs(eps_t - 1.0 / mu_t) <= float(region_tol)
+    region_contrast = float(region_contrast)
+    on_region = (
+        np.abs(eps_t - 1.0 / mu_t - region_contrast) <= float(region_tol)
+    )
     owner = np.repeat(np.arange(mesh.n_tris), mesh.tris.shape[1])
     outside = mesh.tris.reshape(-1)[~on_region[owner]]
     in_region = np.ones(mesh.n_nodes, dtype=bool)
@@ -1140,6 +1154,165 @@ def _closed_form_dim(mesh: Mesh2D, in_region: np.ndarray) -> int | None:
     return (nx - 1) * (3 * ny // 4 - 1)
 
 
+def _closed_form_dim_v2(mesh: Mesh2D, in_region: np.ndarray) -> int | None:
+    """Widened column count ``(nx - 1) (ny - 2)`` of the ladder meshes.
+
+    The sibling of :func:`_closed_form_dim` for the Amendment 3 (5.b) widened
+    set.  The widened columns are the interior nodes of *both* homogeneous
+    blocks of the ladder, so they are the interior nodes minus the interface row
+    ``y = T = Ly / 4``, whose stars straddle the material jump and belong to
+    neither block: ``ny - 1`` interior rows per interior ``x`` column, less the
+    one interface row, i.e. ``(nx - 1) (ny - 2)``.
+
+    Like its v1 sibling this is a cross-check rather than a guess, so it is
+    quoted only when the mesh really is the pre-registered geometry -- a
+    structured ``(nx, ny)`` cell mesh with ``nx >= 2``, ``ny >= 4`` and ``ny`` a
+    multiple of 4 -- *and* ``in_region`` is exactly that node set; ``None``
+    otherwise.
+
+    Parameters
+    ----------
+    mesh : Mesh2D
+        The mesh the columns came from.
+    in_region : (nn,) bool array
+        Per-*node* column mask (``True`` on the nodes that carry a column),
+        unlike the per-*triangle* region predicate of :func:`_closed_form_dim`.
+
+    Returns ``None`` when the mesh is not of that shape or the mask is not the
+    ladder's widened column set.
+    """
+    axes = getattr(mesh, "grid_axes", ()) or ()
+    if len(axes) != 2:
+        return None
+    xs, ys = axes
+    xs = np.asarray(xs, dtype=float).ravel()
+    ys = np.asarray(ys, dtype=float).ravel()
+    nx = int(xs.size) - 1
+    ny = int(ys.size) - 1
+    if nx < 2 or ny < 4 or ny % 4 != 0:
+        return None
+    in_region = np.asarray(in_region, dtype=bool)
+    if in_region.shape != (mesh.n_nodes,):
+        raise ValueError(
+            f"in_region must have shape ({mesh.n_nodes},), got {in_region.shape}"
+        )
+    nodes = np.asarray(mesh.nodes, dtype=float)
+    x = nodes[:, 0]
+    y = nodes[:, 1]
+    span = max(
+        1.0,
+        float(np.max(xs) - np.min(xs)),
+        float(np.max(ys) - np.min(ys)),
+    )
+    tol = 1e-12 * span
+    y_line = float(ys[ny // 4])
+    wanted = (
+        (x >= float(xs[1]) - tol)
+        & (x <= float(xs[nx - 1]) + tol)
+        & (y >= float(ys[1]) - tol)
+        & (y <= float(ys[ny - 1]) + tol)
+        & (np.abs(y - y_line) > tol)
+    )
+    if np.any(in_region & ~wanted):
+        return None
+    if np.any(wanted & ~in_region):
+        return None
+    return (nx - 1) * (ny - 2)
+
+
+def _structured_rows(mesh: Mesh2D, nodes: np.ndarray) -> list[int]:
+    """The ``y``-grid levels occupied by ``nodes``, or ``[]`` for a free mesh."""
+    axes = getattr(mesh, "grid_axes", ()) or ()
+    nodes = np.asarray(nodes, dtype=np.int64)
+    if len(axes) != 2 or nodes.size == 0:
+        return []
+    ys = np.asarray(axes[1], dtype=float).ravel()
+    y = np.asarray(mesh.nodes, dtype=float)[nodes, 1]
+    level = np.abs(y[:, None] - ys[None, :]).argmin(axis=1)
+    return [int(v) for v in np.unique(level)]
+
+
+def _deflation_columns(
+    mesh: Mesh2D,
+    eps_t: np.ndarray,
+    mu_t: np.ndarray,
+    node_pec: np.ndarray,
+    widen: bool = False,
+    region_tol: float = 0.0,
+) -> tuple[np.ndarray, dict]:
+    """The deflated column set, and a description of the region it spans.
+
+    ``widen = False`` is preregistration 2.a / 2.b verbatim: the columns of
+    :func:`_gradient_columns`, i.e. the nodes whose whole star satisfies
+    ``eps_r == 1 / mu_r`` (the air block of the ladder).
+
+    ``widen = True`` is the Amendment 3 (5.b) widened set: those columns *plus*
+    the columns of every *other* constant-contrast block.  For each distinct
+    contrast value ``c`` of ``eps_r - 1 / mu_r`` present on the mesh with
+    ``|c| > region_tol``, the nodes whose whole star has ``eps_r - 1 / mu_r == c``
+    exactly are added.  On the pre-registered ladder the only such block is the
+    substrate (``eps_r = 2``, ``mu_r = 1``, so ``c = 1``) and the nodes it adds
+    are the substrate interior less the interface row ``y = T``, whose stars
+    straddle the material jump and so belong to neither block.
+
+    The widening is a *licence* from the Amendment 3 census, not an exactness
+    claim: only the ``c = 0`` block is an exact null space of the pencil, so the
+    ``residual_eps_mu`` / ``residual_pencil`` diagnostics are expected to be
+    non-zero on the widened route (``residual_grad`` stays zero, since a
+    gradient field has no curl whatever the contrast).
+
+    Parameters
+    ----------
+    mesh, eps_t, mu_t, node_pec :
+        As for :func:`_gradient_columns`.
+    widen : bool
+        Use the widened set as the column set (default ``False``: v1 verbatim).
+    region_tol : float
+        Contrast band, passed through to :func:`_gradient_columns`.
+
+    Returns
+    -------
+    (cols, info) : (int array, dict)
+        ``cols`` are the column node indices actually to be used, ascending.
+        ``info`` always describes both sets -- ``column_region`` (``"v1"`` or
+        ``"v1+homogeneous-blocks"``: which one ``cols`` is), ``columns_v1``,
+        ``columns_added``, ``z_dim_v2`` (= ``columns_v1 + columns_added``, the
+        widened total), ``region_contrast`` (the added contrast values) and
+        ``region_rows`` (the ``y``-grid levels of the added nodes, ``[]`` off a
+        structured mesh).
+    """
+    eps_t = np.asarray(eps_t, dtype=float)
+    mu_t = np.asarray(mu_t, dtype=float)
+    cols_v1 = _gradient_columns(mesh, eps_t, mu_t, node_pec, region_tol)
+    contrast = eps_t - 1.0 / mu_t
+    blocks = []
+    added_contrast = []
+    for value in np.unique(contrast):
+        value = float(value)
+        if abs(value) <= float(region_tol):
+            continue  # the v1 block, already counted in cols_v1
+        block = _gradient_columns(
+            mesh, eps_t, mu_t, node_pec, region_tol, region_contrast=value
+        )
+        if block.size:
+            blocks.append(block)
+            added_contrast.append(value)
+    if blocks:
+        cols_all = np.union1d(cols_v1, np.concatenate(blocks))
+    else:
+        cols_all = cols_v1
+    added = np.setdiff1d(cols_all, cols_v1, assume_unique=True)
+    info = {
+        "column_region": "v1+homogeneous-blocks" if widen else "v1",
+        "columns_v1": int(cols_v1.size),
+        "columns_added": int(added.size),
+        "z_dim_v2": int(cols_all.size),
+        "region_contrast": added_contrast,
+        "region_rows": _structured_rows(mesh, added),
+    }
+    return (cols_all if widen else cols_v1), info
+
+
 def _complement_basis(b_free, z, dense_max: int = _DEFLATED_DENSE_MAX):
     """Dense basis ``R`` of the ``B``-orthogonal complement of ``Z``.
 
@@ -1226,6 +1399,7 @@ def solve_modes_deflated(
     mu_r=1.0,
     boundaries=(),
     k: int = 4,
+    region_widen: bool = False,
 ) -> Mode2D:
     """Solve the same pencil as :func:`solve_modes`, with the gradient space deflated.
 
@@ -1241,6 +1415,17 @@ def solve_modes_deflated(
     ``78, 348, 1464, 6000, 24288`` free DOFs; these are the spurious states that
     sit at ``beta^2 = k0^2`` and otherwise win the "largest positive beta^2"
     selection whenever the physical mode is below them.
+
+    ``region_widen = False`` (the default) is that preregistered set verbatim.
+    ``region_widen = True`` -- the widened route of
+    :func:`solve_modes_deflated_v2`, licensed by Amendment 3 (5.b) -- also
+    deflates the columns of every *other* homogeneous contrast block
+    (:func:`_deflation_columns`), which on the ladder adds the substrate
+    interior less the interface row: ``3, 21, 105`` columns at levels 1-3, for
+    totals of ``14, 90, 434``.  That widening is a census licence, not an
+    exactness claim: only the ``eps_r == 1 / mu_r`` block is an exact null space
+    of the pencil, so ``residual_eps_mu`` and ``residual_pencil`` are non-zero
+    on the widened route by construction.
 
     **R (2.c / 2.d).**  ``R`` spans the ``B``-orthogonal complement of ``Z``
     with ``Z^T B R = 0`` and ``R^T B R = I`` (:func:`_complement_basis`).  The
@@ -1262,6 +1447,14 @@ def solve_modes_deflated(
     (``||K_q Z||``), ``residual_eps_mu`` (``||(M_eps - M_mu) Z||``) and
     ``residual_pencil`` (``||(A - k0^2 B) Z||``), each normalised by the
     correspondingly scaled norms so that ``0`` means "exactly in the null space".
+
+    The Amendment 3 diagnostics are ``column_region`` (which set the columns
+    are: ``"v1"`` or ``"v1+homogeneous-blocks"``), ``columns_v1``,
+    ``columns_added``, ``z_dim_v2`` (the widened total, whether or not it was
+    used), ``region_contrast`` and ``region_rows`` (the contrast values added
+    and the ``y``-grid levels they occupy), and ``z_dim_closed_form_v2``
+    (``(nx - 1) (ny - 2)`` on the ladder, else ``None``).  ``z_dim`` and
+    ``z_dim_closed_form`` keep their v1 meanings on both routes.
 
     **Limit.**  Building ``R`` densely costs about ``24 n^2`` bytes, so this
     route is capped at ``_DEFLATED_DENSE_MAX = 6000`` free DOFs and raises
@@ -1293,7 +1486,13 @@ def solve_modes_deflated(
     c_free = c[free][:, free]
     b_free = b[free][:, free]
 
-    cols = _gradient_columns(mesh, eps_t, mu_t, pec_node_mask(mesh, boundaries))
+    cols, column_info = _deflation_columns(
+        mesh,
+        eps_t,
+        mu_t,
+        pec_node_mask(mesh, boundaries),
+        widen=region_widen,
+    )
     z = _incidence(mesh, free, cols)
     r_basis, info = _complement_basis(b_free, z)
     n_columns = int(r_basis.shape[1])
@@ -1326,6 +1525,15 @@ def solve_modes_deflated(
     z_norm = _frob_norm(z)
     on_region = np.abs(eps_t - 1.0 / mu_t) <= 0.0  # same as _gradient_columns' default
     info["z_dim_closed_form"] = _closed_form_dim(mesh, on_region)
+    column_mask = np.zeros(mesh.n_nodes, dtype=bool)
+    column_mask[cols] = True
+    info["column_region"] = column_info["column_region"]
+    info["columns_v1"] = column_info["columns_v1"]
+    info["columns_added"] = column_info["columns_added"]
+    info["z_dim_v2"] = column_info["z_dim_v2"]
+    info["region_contrast"] = column_info["region_contrast"]
+    info["region_rows"] = column_info["region_rows"]
+    info["z_dim_closed_form_v2"] = _closed_form_dim_v2(mesh, column_mask)
     info["n_dof"] = n_dof
     info["n_columns"] = n_columns
     info["residual_grad"] = _ratio(_frob_norm(kq_f @ z), _frob_norm(kq_f) * z_norm)
@@ -1352,6 +1560,43 @@ def solve_modes_deflated(
         vals=vals,
         vecs=vecs,
         extra={"deflation": info},
+    )
+
+
+def solve_modes_deflated_v2(
+    mesh: Mesh2D,
+    k0: float,
+    sigma: float,
+    *,
+    eps_r=1.0,
+    mu_r=1.0,
+    boundaries=(),
+    k: int = 4,
+) -> Mode2D:
+    """The Amendment 3 (5.b) widened deflation route.
+
+    Exactly :func:`solve_modes_deflated` with ``region_widen = True``: the
+    deflated subspace is the preregistered ``eps_r == 1 / mu_r`` block *plus*
+    every other homogeneous contrast block of the mesh
+    (:func:`_deflation_columns`).  On the pre-registered ladder that is
+    ``14, 90, 434`` columns at levels 1-3, against ``11, 69, 329`` for the
+    preregistered route -- the widened ladder closed form ``(nx - 1) (ny - 2)``,
+    reported as ``deflation["z_dim_closed_form_v2"]``.
+
+    The pencil, the normalisation, the selection rule, the ``R`` construction and
+    the dense cap are those of :func:`solve_modes_deflated`, and the diagnostics
+    are the same dict plus the widening keys, so a v1 result and a v2 result are
+    comparable field by field.
+    """
+    return solve_modes_deflated(
+        mesh,
+        k0,
+        sigma,
+        eps_r=eps_r,
+        mu_r=mu_r,
+        boundaries=boundaries,
+        k=k,
+        region_widen=True,
     )
 
 
