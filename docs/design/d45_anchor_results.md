@@ -8,8 +8,7 @@ This is a failure to measure rather than a measurement that failed, and the dist
 
 Commit SHAs:
 
-- pre-registration / dispatch commit: `UNASSIGNED`, to be filled at commit time
-- results commit: `UNASSIGNED`, to be filled at commit time
+- pre-registration and results: both files entered the repository in commit `61bd071`, because the dispatch produced no intermediate commit and only the supervisor commits. The record that the pre-registration was frozen before any ladder number existed is the timestamp table in section 2, not a commit boundary.
 
 ## 2. Provenance and integrity record
 
