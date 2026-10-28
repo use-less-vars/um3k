@@ -1,0 +1,734 @@
+{
+  "schema": "t4.ladder_convergence/v1",
+  "purpose": "SS13 convergence material for docs/design/t4_amp_ratio.md (frozen; not modified). Rung table for the mesh-refinement ladder (all five rungs, rung 4 now complete), derived quantities, the (d1)/(d2) reading, the pre-registered vs post-rung-4 fits, and the Route C sparse cross-check at the rung-4 mesh.",
+  "generated_by": "worker dispatch 32 (task 1: rungs 0-3 and the pre-registration record); rung-4 record, post-rung-4 refits and Route C cross-check added by worker dispatch 32 (task 2)",
+  "sources": {
+    "rung_dirs": "tools/host/sparse-probe/out/rung{0,1,2,3,4}_*/ (run.log, env.json, c1_table.txt, c1_spectrum.npz)",
+    "run_log_repro_lines": {
+      "rung0": "tools/host/sparse-probe/out/rung0_s12_a9_z8-4-4/run.log:53 (REPRO R line)",
+      "rung1": "tools/host/sparse-probe/out/rung1_s16_a12_z10-5-5/run.log:53 (REPRO R line)",
+      "rung2": "tools/host/sparse-probe/out/rung2_s20_a15_z12-6-6/run.log:65 (REPRO R line)",
+      "rung3": "tools/host/sparse-probe/out/rung3_s24_a18_z14-7-7/run.log:65 (REPRO R line)",
+      "rung4": "tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10/run.log:68 (REPRO R line); DONE marker at run.log:71; DENSE ABOVE MAX banner run.log:17-27; remesh warning run.log:29"
+    },
+    "rung4_dir": "tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10/ -- COMPLETE: env.json, run.log (6773 B), c1_table.txt (1911 B), c1_spectrum.npz (738560423 B)",
+    "decision_rule": "tools/host/sparse-probe/evidence/ladder/summary_HIGHRES.txt:34-39; quoted verbatim in docs/design/t4_amp_ratio.md section 12.6",
+    "ladder_scoring": "tools/host/sparse-probe/out/summary_HIGHRES.txt (21562 B, mtime 2026-10-28T01:51:17.495874934Z)",
+    "superseded_pass": "tools/host/sparse-probe/out/prev/ -- the earlier unanchored pass's rung 0 and 1 directories, parked not deleted; source of the two wall clocks (20.1 s, 108.7 s) that section 12.2 quotes and section 13.1 supersedes with 19.2 s / 105.8 s",
+    "R_method": "tools/host/c1-audit/c1_audit.py:705, 746-747, 766",
+    "note": "docs/design/t4_amp_ratio.md (frozen, 547 lines, sha256 f1077f80...) -- section 13 appended, no line of the first 547 changed"
+  },
+  "constants": {
+    "R_analytic": 2.8101021387524523,
+    "band_lo": 2.52909192487721,
+    "band_hi": 3.0911123526277,
+    "tol_rel": 0.1,
+    "Q_definition": "Q = R_extracted / R_analytic, scored |Q - 1| <= tol_rel (frozen note section 9.1)",
+    "cost_model": "peak RAM ~ 5.5*8*free_e^2 bytes; wall ~ 45 s * (free_e/1444)^3 (frozen note)"
+  },
+  "r_method": {
+    "file": "tools/host/c1-audit/c1_audit.py",
+    "lines": "705, 746-747, 766",
+    "per_column_energy_line": ":705  energies.append((float(np.sum(e_y ** 2)), float(np.sum(e_z_vv ** 2))))",
+    "ratio_line": ":746-747  R_by_col = np.array([ez / ey for (ey, ez) in energies])",
+    "selection_line": ":766  R_extracted = float(R_by_col[banked_idx]) if banked_idx >= 0 else float('nan')",
+    "formula": "R_extracted = sum(e_z_vv**2) / sum(e_y**2), evaluated on the single banked column",
+    "field_shapes": "e_y = E_t[:,:,0]*CELL (200 x 77; y cell-centres x z nodes, :679-680); e_z_vv = E_tz[:,:,1]*CELL (201 x 76; y nodes x z cell-centres, :686-687)",
+    "banked_idx_rule": "matched by mode.beta_sq; fallbacks = unique criterion-passing column, then best-|corr_e_y| (banked_src records which)"
+  },
+  "rungs": [
+    {
+      "rung": 0,
+      "dir": "tools/host/sparse-probe/out/rung0_s12_a9_z8-4-4",
+      "env": {
+        "C1_STRIP_CELLS": 12,
+        "C1_Y_AIR_CELLS": 9,
+        "C1_Z_CELLS": "8,4,4",
+        "C1_ALLOW_REMESH": null,
+        "C1_ALLOW_DENSE_ABOVE_MAX": null
+      },
+      "free_e": 1444,
+      "free_nodes": 483,
+      "nodes": 527,
+      "tris": 960,
+      "edges": 1486,
+      "xs": 31,
+      "ys": 17,
+      "column": 732,
+      "cache_column": 738,
+      "beta": 312.7827646322591,
+      "beta_sq": 97833.0578509992,
+      "eps_eff": 3.6295122080769704,
+      "corr_e_y": 0.920770784810962,
+      "corr_ez_vv": 0.935286730348701,
+      "corr_ez_superseded": 0.119160432394625,
+      "residual": 3.606e-16,
+      "wall_s": 19.2,
+      "modes_kept": 1,
+      "ok": true,
+      "R": 4.0489791163982565,
+      "R_source": "banked anchor (rung 0 is a fixed control)",
+      "R_fresh": 4.0489791163950715,
+      "repro": "PASS (e_y 1.956e-13, e_z 2.755e-11)",
+      "log_line": 53,
+      "status": "complete",
+      "Q": 1.440865461991999,
+      "err_abs": 1.2388769776458042,
+      "err_pct": 44.086546199199894,
+      "band_excess_pct": 30.9877692719998,
+      "in_band": false,
+      "h_rel": 0.02631578947368421
+    },
+    {
+      "rung": 1,
+      "dir": "tools/host/sparse-probe/out/rung1_s16_a12_z10-5-5",
+      "env": {
+        "C1_STRIP_CELLS": 16,
+        "C1_Y_AIR_CELLS": 12,
+        "C1_Z_CELLS": "10,5,5",
+        "C1_ALLOW_REMESH": 1,
+        "C1_ALLOW_DENSE_ABOVE_MAX": null
+      },
+      "free_e": 2404,
+      "free_nodes": 803,
+      "nodes": 861,
+      "tris": 1600,
+      "edges": 2460,
+      "xs": 41,
+      "ys": 21,
+      "column": 1224,
+      "cache_column": -1,
+      "beta": 311.9748517259785,
+      "beta_sq": 97328.3081094,
+      "eps_eff": 3.6107864788681363,
+      "corr_e_y": 0.938008866588009,
+      "corr_ez_vv": 0.948121953787983,
+      "corr_ez_superseded": 0.119275451653871,
+      "residual": 1.439e-15,
+      "wall_s": 105.8,
+      "modes_kept": 1,
+      "ok": true,
+      "R": 3.7803319900157453,
+      "R_source": "this run (REPRO R line)",
+      "R_fresh": 3.7803319900157453,
+      "repro": "FAIL (e_y 1.872e-02, e_z 9.652e-04) -- EXPECTED: C1_ALLOW_REMESH=1, banked column unknown (-1)",
+      "log_line": 53,
+      "status": "complete",
+      "Q": 1.3452649773413672,
+      "err_abs": 0.970229851263293,
+      "err_pct": 34.52649773413672,
+      "band_excess_pct": 22.296816121942385,
+      "in_band": false,
+      "h_rel": 0.020395425411200103,
+      "delta_R": -0.2686471263825112,
+      "h_ratio": 0.775026165625604,
+      "p_vs_previous": 0.959071771078014,
+      "err_falls": true
+    },
+    {
+      "rung": 2,
+      "dir": "tools/host/sparse-probe/out/rung2_s20_a15_z12-6-6",
+      "env": {
+        "C1_STRIP_CELLS": 20,
+        "C1_Y_AIR_CELLS": 15,
+        "C1_Z_CELLS": "12,6,6",
+        "C1_ALLOW_REMESH": 1,
+        "C1_ALLOW_DENSE_ABOVE_MAX": 1
+      },
+      "free_e": 3604,
+      "free_nodes": 1203,
+      "nodes": 1275,
+      "tris": 2400,
+      "edges": 3674,
+      "xs": 51,
+      "ys": 25,
+      "column": 1826,
+      "cache_column": -1,
+      "beta": 311.52708647267895,
+      "beta_sq": 97049.1256062,
+      "eps_eff": 3.6004290769200455,
+      "corr_e_y": -0.946848765963256,
+      "corr_ez_vv": -0.957176317288366,
+      "corr_ez_superseded": -0.11929422554454,
+      "residual": 3.362e-16,
+      "wall_s": 404.8,
+      "modes_kept": 1,
+      "ok": true,
+      "R": 3.5673083405263886,
+      "R_source": "this run (REPRO R line)",
+      "R_fresh": 3.5673083405263886,
+      "repro": "FAIL (e_y 2.832e-02, e_z 1.123e-03) -- EXPECTED: C1_ALLOW_REMESH=1, banked column unknown (-1)",
+      "log_line": 65,
+      "status": "complete",
+      "Q": 1.2694586048427758,
+      "err_abs": 0.7572062017739363,
+      "err_pct": 26.945860484277585,
+      "band_excess_pct": 15.405327712979533,
+      "in_band": false,
+      "h_rel": 0.01665741511631924,
+      "delta_R": -0.2130236494893567,
+      "h_ratio": 0.8167231023860799,
+      "p_vs_previous": 1.224455785196871,
+      "err_falls": true
+    },
+    {
+      "rung": 3,
+      "dir": "tools/host/sparse-probe/out/rung3_s24_a18_z14-7-7",
+      "env": {
+        "C1_STRIP_CELLS": 24,
+        "C1_Y_AIR_CELLS": 18,
+        "C1_Z_CELLS": "14,7,7",
+        "C1_ALLOW_REMESH": 1,
+        "C1_ALLOW_DENSE_ABOVE_MAX": 1
+      },
+      "free_e": 5044,
+      "free_nodes": 1683,
+      "nodes": 1769,
+      "tris": 3360,
+      "edges": 5128,
+      "xs": 61,
+      "ys": 29,
+      "column": 2561,
+      "cache_column": -1,
+      "beta": 311.24570467783366,
+      "beta_sq": 96873.8886804,
+      "eps_eff": 3.593927955772413,
+      "corr_e_y": 0.956953579885539,
+      "corr_ez_vv": 0.962107317196721,
+      "corr_ez_superseded": 0.119345879049773,
+      "residual": 4.488e-16,
+      "wall_s": 1277.2,
+      "modes_kept": 1,
+      "ok": true,
+      "R": 3.6127170292894397,
+      "R_source": "this run (REPRO R line)",
+      "R_fresh": 3.6127170292894397,
+      "repro": "FAIL (e_y 3.930e-02, e_z 1.556e-03) -- EXPECTED: C1_ALLOW_REMESH=1, banked column unknown (-1)",
+      "log_line": 65,
+      "status": "complete",
+      "Q": 1.2856176932036034,
+      "err_abs": 0.8026148905369874,
+      "err_pct": 28.56176932036034,
+      "band_excess_pct": 16.874335745782034,
+      "in_band": false,
+      "h_rel": 0.014080317925903809,
+      "delta_R": 0.04540868876305115,
+      "h_ratio": 0.8452882891841572,
+      "p_vs_previous": -0.3465031741550254,
+      "err_falls": false
+    },
+    {
+      "rung": 4,
+      "dir": "tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10",
+      "env": {
+        "C1_STRIP_CELLS": 36,
+        "C1_Y_AIR_CELLS": 22,
+        "C1_Z_CELLS": "20,10,10",
+        "C1_ALLOW_REMESH": 1,
+        "C1_ALLOW_DENSE_ABOVE_MAX": 1
+      },
+      "free_e": 9604,
+      "free_nodes": 3203,
+      "nodes": 3321,
+      "tris": 6400,
+      "edges": 9720,
+      "xs": 81,
+      "ys": 41,
+      "column": 5133,
+      "cache_column": -1,
+      "beta": 311.0506706318928,
+      "beta_sq": 96752.51970055024,
+      "eps_eff": 3.5894252835292333,
+      "corr_e_y": -0.969929941848379,
+      "corr_ez_vv": -0.966507916549377,
+      "corr_ez_superseded": -0.119305714275837,
+      "residual": 3.56e-16,
+      "residual_qz": 1.844283662306968e-18,
+      "wall_s": 9784.3,
+      "wall_s_driver": 9784.9,
+      "modes_kept": 1,
+      "ok": true,
+      "R": 3.575412753195199,
+      "R_source": "this run (REPRO R line)",
+      "R_fresh": 3.575412753195199,
+      "repro": "FAIL (e_y 5.339e-02, e_z 1.219e-03) -- EXPECTED: C1_ALLOW_REMESH=1, banked column unknown (-1); run.log:29 states the check is EXPECTED to fail on this remeshed rung",
+      "log_line": 68,
+      "done_line": 71,
+      "status": "complete",
+      "Q": 1.2723426326355907,
+      "err_abs": 0.7653106144427468,
+      "err_pct": 27.234263263559065,
+      "band_excess_pct": 15.667512057780897,
+      "in_band": false,
+      "h_rel": 0.01020408163265306,
+      "q_allowance": 0.1,
+      "Q_minus_1": 0.27234263263559066,
+      "Q_minus_1_over_allowance": 2.7234263263559066,
+      "npz_bytes": 738560423,
+      "notes": [
+        "selected column 5133 is the single criterion-passing column (n_eligible = 1, ok = True) and also the best-|corr_e_y| column; column index is a diagnostic only and nothing is compared by it",
+        "REPRO verdicts on rungs 1-4 are mesh-identity checks, not numerical validity checks: C1_ALLOW_REMESH=1 rebuilds a non-banked mesh, so cache_col = -1 and the check is EXPECTED to fail (run.log:29)",
+        "dense QZ at free_e = 9604: one dense matrix 9604^2*8 B = 737894528 B; the driver banner prints it as 0.687 GB (GitBi) = 0.7379 GB decimal; QZ work arrays ~5.5x = 3.7797 GiB = 4.0584 GB",
+        "wall_s is the audit self-report (run.log:71 DONE ... elapsed=9784.3s); wall_s_driver = 9784.9 s is the outer driver clock"
+      ],
+      "delta_R": -0.037304276094240585,
+      "h_ratio": 0.7247053430434572,
+      "p_vs_previous": 0.14780958393659338,
+      "err_falls": true
+    }
+  ],
+  "pre_registration": {
+    "status": "PRE-RUNG-4: everything in this block was computed from rungs 0-3 only, before rung 4 had run. No rung-4 number appears anywhere in it.",
+    "timing_warrant": "The (d1)/(d2) decision rule in summary_HIGHRES.txt:34-39 was fixed before any rung of this ladder ran; that block, not the draft, carries the warrant. docs/design/t4_s13_draft.md (mtime 2026-10-28 01:52:01.035717862) is 43.5 s AFTER the rung-4 DONE line (01:51:17, elapsed=9784.3s) and after summary_HIGHRES.txt was written (01:51:17.495874934Z), so it is NOT a timestamped pre-registration; its content merely predates knowledge of the rung-4 value (it records rung 4 as pending and proposes thresholds rather than applying them).",
+    "rung4_projection": {
+      "rung": 4,
+      "dir": "tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10",
+      "env": {
+        "C1_STRIP_CELLS": 36,
+        "C1_Y_AIR_CELLS": 22,
+        "C1_Z_CELLS": "20,10,10",
+        "C1_ALLOW_REMESH": 1,
+        "C1_ALLOW_DENSE_ABOVE_MAX": 1
+      },
+      "free_e": 9604,
+      "free_nodes": 3203,
+      "nodes": 3321,
+      "edges": 9720,
+      "status_at_registration": "PENDING",
+      "reason_at_registration": "run.log stops at the DENSE ABOVE MAX banner (line 17) and line 29; no c1_spectrum.npz, no c1_table.txt, no REPRO R line, no DONE marker -- the dense QZ never finished and nothing was captured",
+      "projected_cost": {
+        "peak_GB": 4.058419904,
+        "model_wall_h": 3.6776033594205626,
+        "measured_exponent_extrapolation_h": 3.078031008358303
+      },
+      "predicted_R_range": [
+        3.258799252188066,
+        3.4773906761129343
+      ],
+      "predicted_R_by_extrapolation": {
+        "R_vs_1_over_free_e__rungs_0_3": 3.4674505912339324,
+        "R_vs_1_over_sqrt_free_e__rungs_0_3": 3.392045140566151,
+        "R_vs_1_over_free_e__rungs_0_2": 3.3932090457010746,
+        "R_vs_1_over_sqrt_free_e__rungs_0_2": 3.258799252188066,
+        "R_vs_1_over_free_e__rungs_0_1": 3.4773906761129343,
+        "R_vs_1_over_sqrt_free_e__rungs_0_1": 3.3178815070408567
+      }
+    },
+    "fits": {
+      "R_vs_1_over_free_e__rungs_0_3": {
+        "intercept": 3.36584109881959,
+        "slope": 975.857565147347,
+        "rms": 0.04410886472597009,
+        "max_abs_res": 0.06930344784573927,
+        "r2": 0.945390573840067,
+        "residuals": [
+          0.007336379664991455,
+          0.008560123663980956,
+          -0.06930344784573927,
+          0.05340694451676731
+        ],
+        "rungs": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "x_variable": "1/free_e",
+        "extrapolant_free_e_inf": 3.36584109881959,
+        "intercept_excess_over_band_hi_pct": 8.887698499808593,
+        "predicted_R_at_free_e_9604": 3.4674505912339324,
+        "intercept_inside_band": false
+      },
+      "R_vs_1_over_sqrt_free_e__rungs_0_3": {
+        "intercept": 2.990608605836237,
+        "slope": 39.34078040353156,
+        "rms": 0.05366950140373725,
+        "max_abs_res": 0.07861597549143085,
+        "r2": 0.9191516847796991,
+        "residuals": [
+          0.02308681573224103,
+          -0.012648568159122409,
+          -0.07861597549143085,
+          0.06817772791831178
+        ],
+        "rungs": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "x_variable": "1/sqrt(free_e)",
+        "extrapolant_free_e_inf": 2.990608605836237,
+        "intercept_excess_over_band_hi_pct": -3.251377993621818,
+        "predicted_R_at_free_e_9604": 3.392045140566151,
+        "intercept_inside_band": true
+      },
+      "R_vs_1_over_free_e__rungs_0_2": {
+        "intercept": 3.2751781525410877,
+        "slope": 1133.5686979085142,
+        "rms": 0.024206845681575665,
+        "max_abs_res": 0.03361943734632389,
+        "r2": 0.9849130727132671,
+        "residuals": [
+          -0.011218910040693864,
+          0.03361943734632389,
+          -0.022400527305630025
+        ],
+        "rungs": [
+          0,
+          1,
+          2
+        ],
+        "x_variable": "1/free_e",
+        "extrapolant_free_e_inf": 3.2751781525410877,
+        "intercept_excess_over_band_hi_pct": 5.954678410731873,
+        "predicted_R_at_free_e_9604": 3.3932090457010746,
+        "intercept_inside_band": false
+      },
+      "R_vs_1_over_sqrt_free_e__rungs_0_2": {
+        "intercept": 2.7540770632321094,
+        "slope": 49.46277451768376,
+        "rms": 0.012436861843007583,
+        "max_abs_res": 0.01744059847720747,
+        "r2": 0.9960175895955005,
+        "residuals": [
+          -0.006749907825530421,
+          0.01744059847720747,
+          -0.010690690651676604
+        ],
+        "rungs": [
+          0,
+          1,
+          2
+        ],
+        "x_variable": "1/sqrt(free_e)",
+        "extrapolant_free_e_inf": 2.7540770632321094,
+        "intercept_excess_over_band_hi_pct": -10.903365874394133,
+        "predicted_R_at_free_e_9604": 3.258799252188066,
+        "intercept_inside_band": true
+      },
+      "R_vs_1_over_free_e__rungs_0_1": {
+        "intercept": 3.3762419374153847,
+        "slope": 971.432486451267,
+        "rms": 0.0,
+        "max_abs_res": 0.0,
+        "r2": 1.0,
+        "residuals": [
+          0.0,
+          0.0
+        ],
+        "rungs": [
+          0,
+          1
+        ],
+        "x_variable": "1/free_e",
+        "extrapolant_free_e_inf": 3.3762419374153847,
+        "intercept_excess_over_band_hi_pct": 9.224174092064352,
+        "predicted_R_at_free_e_9604": 3.4773906761129343,
+        "intercept_inside_band": false
+      },
+      "R_vs_1_over_sqrt_free_e__rungs_0_1": {
+        "intercept": 2.854853021114504,
+        "slope": 45.376791620782605,
+        "rms": 0.0,
+        "max_abs_res": 0.0,
+        "r2": 1.0,
+        "residuals": [
+          0.0,
+          0.0
+        ],
+        "rungs": [
+          0,
+          1
+        ],
+        "x_variable": "1/sqrt(free_e)",
+        "extrapolant_free_e_inf": 2.854853021114504,
+        "intercept_excess_over_band_hi_pct": -7.64318163046892,
+        "predicted_R_at_free_e_9604": 3.3178815070408567,
+        "intercept_inside_band": true
+      }
+    },
+    "band_entry_free_e": {
+      "R_vs_1_over_free_e__rungs_0_3": {
+        "free_e": null,
+        "note": "intercept above band hi: no finite resolution reaches the band under this fit"
+      },
+      "R_vs_1_over_sqrt_free_e__rungs_0_3": {
+        "free_e": 153222.10918130612,
+        "peak_GB": 1032.9886486465962,
+        "model_wall_h": 14933.88292409771
+      },
+      "R_vs_1_over_free_e__rungs_0_2": {
+        "free_e": null,
+        "note": "intercept above band hi: no finite resolution reaches the band under this fit"
+      },
+      "R_vs_1_over_sqrt_free_e__rungs_0_2": {
+        "free_e": 21538.040774610025,
+        "peak_GB": 20.411036817985615,
+        "model_wall_h": 41.47887966977905
+      },
+      "R_vs_1_over_free_e__rungs_0_1": {
+        "free_e": null,
+        "note": "intercept above band hi: no finite resolution reaches the band under this fit"
+      },
+      "R_vs_1_over_sqrt_free_e__rungs_0_1": {
+        "free_e": 36888.383971961084,
+        "peak_GB": 59.87312637076476,
+        "model_wall_h": 208.39021501061174
+      }
+    },
+    "scenarios": {
+      "p_0_1": 0.959071771078014,
+      "p_0_2": 1.076558672005238,
+      "p_1_2": 1.224455785196871,
+      "p_2_3": -0.3465031741550254,
+      "p_loglog_lsq_rungs_0_2": 1.0715786518800754,
+      "p_loglog_lsq_rungs_0_3": 0.7681098321351343,
+      "ScenarioA_predicted_R_at_3604_from_p01": 3.6091045576383616,
+      "ScenarioA_predicted_R_at_5044_from_p01": 3.4901516117794618,
+      "ScenarioA_predicted_R_at_9604_from_p01": 3.3094754354286606,
+      "ScenarioA_predicted_R_at_5044_from_p02": 3.44197630945449,
+      "ScenarioA_predicted_R_at_9604_from_p02": 3.2568744126565687,
+      "ScenarioA_free_e_for_band_hi_from_p01": 31854.490070597025,
+      "ScenarioA_free_e_for_band_hi_from_p02": 22726.92343771089,
+      "ScenarioA_cost_at_band_entry_from_p01": {
+        "free_e": 31854.490070597025,
+        "peak_GB": 44.647175656941634,
+        "model_wall_h": 134.19007791534796
+      },
+      "ScenarioA_cost_at_band_entry_from_p02": {
+        "free_e": 22726.92343771089,
+        "peak_GB": 22.7265741535172,
+        "model_wall_h": 48.73381159885374
+      }
+    },
+    "proposed_thresholds_for_rung4": {
+      "W_R3_minus_R2": 0.04540868876305115,
+      "decay_resumed_max_R4": 3.5673083405263886,
+      "plateau_window": [
+        3.5673083405263886,
+        3.6127170292894397
+      ],
+      "rising_min_R4": 3.6127170292894397,
+      "R4_needed_to_pull_1_over_free_e_5pt_intercept_to_band_hi": 2.9906114587635453,
+      "R4_needed_to_pull_1_over_sqrt_free_e_5pt_intercept_to_band_hi": 3.4880845400862164,
+      "predicted_R4_range_across_six_extrapolations": [
+        3.258799252188066,
+        3.4773906761129343
+      ]
+    }
+  },
+  "derived": {
+    "monotone_decay_of_abs_error": [
+      null,
+      true,
+      true,
+      false,
+      true
+    ],
+    "monotone_decay_note": "index i records whether |R - R_analytic| at rung i is strictly below rung i-1; the sequence is NOT monotone (one rise at 2->3) and its minimum is at rung 2, not at the finest rung",
+    "monotone_overall": false,
+    "p_by_interval": {
+      "rung_0_1": 0.959071771078014,
+      "rung_1_2": 1.224455785196871,
+      "rung_2_3": -0.3465031741550254,
+      "rung_3_4": 0.14780958393659338
+    },
+    "p_loglog_lsq": {
+      "rungs_0_2": 1.0715786518800754,
+      "rungs_0_3": 0.7681098321351343,
+      "rungs_0_4": 0.5015357820872896,
+      "rms_log_0_2": 0.014084256719251178,
+      "rms_log_0_3": 0.06939766635017393,
+      "rms_log_0_4": 0.09589423164771,
+      "note": "diagnostic only, h-convention slope = p; the driver's FIT (a) quotes the same fit as log-log in free_e with p = -0.2508, c = +1.9373, which is -p/2 in this convention"
+    },
+    "h_ratio_by_interval": {
+      "rung_0_1": 0.775026165625604,
+      "rung_1_2": 0.8167231023860799,
+      "rung_2_3": 0.8452882891841572,
+      "rung_3_4": 0.7247053430434572
+    },
+    "delta_R_by_interval": {
+      "rung_0_1": -0.2686471263825112,
+      "rung_1_2": -0.2130236494893567,
+      "rung_2_3": 0.04540868876305115,
+      "rung_3_4": -0.037304276094240585
+    },
+    "post_rung4_fits": {
+      "R_vs_1_over_free_e__rungs_0_4": {
+        "intercept": 3.428043018444185,
+        "slope": 855.593185000519,
+        "rms": 0.05305596938376331,
+        "max_abs_res": 0.0981356726460203,
+        "r2": 0.915997410014004,
+        "residuals": [
+          0.028420041859528844,
+          -0.003615015533481092,
+          -0.0981356726460203,
+          0.015048082018823461,
+          0.05828256430114731
+        ],
+        "rungs": [
+          1444,
+          2404,
+          3604,
+          5044,
+          9604
+        ],
+        "x_variable": "1/free_e",
+        "extrapolant_free_e_inf": 3.428043018444185,
+        "intercept_excess_over_band_hi_pct": 10.899981216472664,
+        "predicted_R_at_free_e_9604": 3.517130188894052,
+        "intercept_inside_band": false,
+        "y_variable": "R_extracted"
+      },
+      "R_vs_1_over_sqrt_free_e__rungs_0_4": {
+        "intercept": 3.182499977518278,
+        "slope": 30.48667405171365,
+        "rms": 0.07283622950403429,
+        "max_abs_res": 0.12302082218720178,
+        "r2": 0.8416860882061383,
+        "residuals": [
+          0.06419824278225095,
+          -0.02395667415982805,
+          -0.12302082218720178,
+          0.0009549886196316137,
+          0.0818242649451495
+        ],
+        "rungs": [
+          1444,
+          2404,
+          3604,
+          5044,
+          9604
+        ],
+        "x_variable": "1/sqrt(free_e)",
+        "extrapolant_free_e_inf": 3.182499977518278,
+        "intercept_excess_over_band_hi_pct": 2.9564640318845425,
+        "predicted_R_at_free_e_9604": 3.4935884882500496,
+        "intercept_inside_band": false,
+        "y_variable": "R_extracted"
+      }
+    },
+    "post_rung4_fits_note": "the same estimator applied to the same variables over rungs 0-4 (i.e. with the rung-4 measurement absorbed). Both asymptotes move UP, further above the band ceiling, and both fit qualities fall relative to the pre-registered rungs 0-3 fits.",
+    "plateau_reading": {
+      "band_excess_pct_by_rung": [
+        30.9877692719998,
+        22.296816121942385,
+        15.405327712979533,
+        16.874335745782034,
+        15.667512057780897
+      ],
+      "rung2_free_e": 3604,
+      "rung2_band_excess_pct": 15.405327712979533,
+      "rung4_free_e": 9604,
+      "rung4_band_excess_pct": 15.667512057780897,
+      "free_e_ratio_rung4_over_rung2": 2.6648168701442843,
+      "wall_ratio_rung4_over_rung2": 24.170701581027664,
+      "change_pp": 0.2621843448013639,
+      "reading": "MEASURED: 2.67x the free edges and 24.17x the wall clock buys 0.2622 pp WORSE excess over the band ceiling -- a plateau with scatter around a floor, not convergence"
+    },
+    "definitions": {
+      "Q": "R_extracted / R_analytic (section 9.1), derived here, not separately banked",
+      "error_pct": "100*(R_extracted/R_analytic - 1)",
+      "band_excess_pct": "100*(R_extracted/3.09111235262770 - 1)",
+      "h_rel": "free_e^(-1/2), proportional to mesh size h",
+      "p": "ln(e_i/e_j) / ln(h_i/h_j) with e = |R_extracted - R_analytic| (section 12.3)"
+    }
+  },
+  "route_c_cross_check": {
+    "purpose": "one sparse (Route C) solve at the rung-4 mesh, scored against the dense answer at that same mesh -- a validation of the sparse path at the largest rung, NOT a convergence result and NOT a scaling law",
+    "source_report": "evidence/t4/rung4_routeC_report.json",
+    "source_report_sha256": "593b1117edc171da25b850eec12819127402b6a2f34c4007c3ed62a243933398",
+    "dense_anchor": "evidence/t4/rung4_dense_anchor.json (2159 B, md5 d9c1d3f9178f25fa526b7aea93611c05)",
+    "mesh_free_e": 9604,
+    "enlarged_pencil_n": 12807,
+    "enlarged_pencil_n_breakdown": "12807 = 9604 free edges + 3203 free nodes",
+    "nnz_S": 144151,
+    "nnz_S_of_n2": 0.0008788663579358298,
+    "sigma": 96777.0147917196,
+    "sigma_bracket_caveat": "sigma = 0.999 x the rung-3 beta_sq (96873.8886804): the sparse path is handed, to within 0.1%, the eigenvalue the ladder had already localised, whereas the dense ladder as run finds the mode with no such bracket. The speed-up compares two ways of obtaining the same object, not two equal amounts of work.",
+    "sparse": {
+      "beta_sq": 96752.51970086167,
+      "eps_eff": 3.5894252835407867,
+      "R": 3.5754127532015456,
+      "corr_e_y": 0.9699299418485792,
+      "corr_ez_vv": 0.9665079165495085,
+      "rel_residual_reference_pencil": 9.379388877240471e-13,
+      "rel_residual_enlarged": 2.328122901161473e-18,
+      "x2_matches_DcTx1_rel": 3.016493594052664e-13,
+      "eigsh_OPinv_calls": 21
+    },
+    "dense": {
+      "beta_sq": 96752.51970055024,
+      "eps_eff": 3.5894252835292333,
+      "R": 3.575412753195199,
+      "corr_e_y": 0.9699299418483792,
+      "corr_ez_vv": 0.96650791654718
+    },
+    "agreement": {
+      "beta_sq_rel_diff": 3.218784779622725e-12,
+      "beta_sq_digits": 11.492308060949373,
+      "R_rel_diff": 1.77503391525794e-12,
+      "R_digits": 11.750793344542036,
+      "eps_eff_rel_diff": 3.218739483580933e-12,
+      "corr_e_y_abs_diff": 1.999511667349907e-13,
+      "corr_ez_vv_abs_diff": 1.3189449532546e-13
+    },
+    "cost_measured": {
+      "t_splu_s": 0.05359245603904128,
+      "t_splu_s_second_run": 0.07401308696717024,
+      "factor_nnz": 1369259,
+      "fill_per_row": 106.91489029437027,
+      "factor_memory_gb": 0.016431108,
+      "t_eigsh_s": 0.056758934049867094,
+      "wall_s": 1.95574,
+      "wall_s_second_run": 2.168797,
+      "peak_rss_gb": 0.2324,
+      "peak_rss_note": "read from RUSAGE_CHILDREN; there is no /usr/bin/time in this container"
+    },
+    "speed_up": {
+      "wall_dense_over_wall_sparse": 5002.863366296133,
+      "wall_dense_over_wall_sparse_second_run": 4511.395026828237,
+      "wall_dense_s": 9784.3,
+      "wall_sparse_s": 1.95574
+    },
+    "caveats": [
+      "single-mesh ratio at free_e = 9604; it must not be extrapolated as though the two paths scaled alike",
+      "sigma = 0.999 x rung-3 beta_sq: the sparse path is cheap when bracketed, not a replacement for the dense ladder as a blind search",
+      "the dense 0.687 GiB matrix and the 82.07 MB matrix are never formed by the sparse path (factor_is_effectively_dense = false)"
+    ],
+    "defect_recorded_not_fixed": "rung4_routeC_probe.py:858 raises KeyError: 'n' in print_summary AFTER the report has been written, so the probe exits non-zero while its report carries verdict.overall.exit_code = 0; the numbers above are read from the written report and are unaffected, the printed summary is"
+  },
+  "decision_rule": {
+    "text_verbatim": "(d1) |R_extracted - R_analytic| falls monotonically and the 1/n_free extrapolant lands inside the band -> the discrepancy is discretisation, and the bar can be met by a run at the fitted resolution; (d2) it is flat or non-monotone, or the extrapolant stays above 3.09111235262770 -> the mesh is NOT the mechanism, and the ladder has eliminated it.",
+    "source": "tools/host/sparse-probe/evidence/ladder/summary_HIGHRES.txt:34-39",
+    "reading_on_rungs_0_3": {
+      "monotonicity_half": "FAILS at rung 3: |R - R_analytic| rises from 0.7572062017739363 (rung 2) to 0.8026148905369874 (rung 3)",
+      "extrapolant_half_1_over_free_e": "FAILS: intercept 3.36584109881959 (rungs 0-3) is 8.887698499808593% above band hi 3.09111235262770",
+      "note_on_variable": "the registered text names the 1/n_free extrapolant; the 1/sqrt(free_e) (= 1/h) extrapolant gives 2.990608605836237, which IS inside the band. The verdict is variable-dependent and the rule as registered binds to 1/n_free."
+    },
+    "reading_on_rungs_0_4": {
+      "branch_returned": "(d2)",
+      "monotonicity_half": "FAILS: |R - R_analytic| per rung is 1.2388769776458042, 0.970229851263293, 0.7572062017739363, 0.8026148905369874, 0.7653106144427468 -- the step 2->3 rises (+0.0454086887630511), the minimum is at rung 2, and rung 4 sits 1.0703045814765% ABOVE that minimum rather than at it. Rung 4 does not restore monotonicity and does not return to the floor.",
+      "extrapolant_half_1_over_free_e": "FAILS, and worse than before rung 4: pre-registered (rungs 0-3) intercept 3.36584109881959 is 8.887698499808593% above band hi 3.09111235262770; the post-rung-4 refit moves the asymptote OUT to 3.4280430184441846, i.e. 10.899981216472643% above -- the opposite of what (d1) needs.",
+      "variable_ambiguity_flag": "the registered text names the 1/n_free extrapolant, while section 12.3 orders in 1/h (free_e^-1/2); they are not the same variable. On the 1/sqrt(free_e) reading the pre-registered intercept 2.990608605836237 IS inside the band (3.251377993621818% below the ceiling), but the post-rung-4 refit of that variable, 3.182499977518278, is 2.9564640318845425% ABOVE it -- so the refit lands outside on both variables. The branch is variable-independent anyway because (d1) is a conjunction and its monotonicity half fails under either variable and either window.",
+      "prediction_scored": "the six pre-rung-4 extrapolations predicted R(9604) in [3.258799252188066, 3.4773906761129343]; measured 3.575412753195199 is 2.8188399352308435% above the top of that envelope. No extrapolation predicted a passing rung 4, and none is confirmed.",
+      "summary_self_branch": "summary_HIGHRES.txt step 4 prints 'non-increasing with refinement: NO' and branches to '-> branch (d2) the mesh is NOT the mechanism: refinement has been eliminated'",
+      "no_post_hoc_use": "summary_HIGHRES.txt:50 -- POST-HOC USE OF A NUMBER FROM THIS LADDER TO MOVE THE BAR IS A BREACH. R_analytic, the band and the column-selection rule are untouched by rung 4."
+    },
+    "rung_0_gate": "passed: n_eligible = 1 and |R - 4.0489791163982565| / 4.0489791163982565 = 1.96e-13 <= 1e-6 (fresh control 4.0489791163950715 vs banked 4.0489791163982565)",
+    "no_post_hoc_use": "summary_HIGHRES.txt:50 -- POST-HOC USE OF A NUMBER FROM THIS LADDER TO MOVE THE BAR IS A BREACH"
+  },
+  "verdict": {
+    "T4_amp": "FAIL (unmoved)",
+    "R_extracted_finest": 3.575412753195199,
+    "Q": 1.2723426326355907,
+    "Q_minus_1_abs": 0.27234263263559066,
+    "allowance": 0.1,
+    "multiple_of_allowance": 2.7234263263559066,
+    "band_excess_pct": 15.667512057780897,
+    "attribution": "branch (d2): this mesh family is eliminated as the mechanism. It does not say the discrepancy is physics; it says refinement in this family (strip, y_air and z moving together at every rung) does not remove it, over a 510x span in free_e (1444 -> 9604) costing 3.22 h. Strip and air bands individually remain covered only by sections 9.7 and 9.8."
+  }
+}

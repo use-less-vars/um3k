@@ -545,3 +545,386 @@ lands inside the band, and with two points there is no defensible extrapolant (Â
 no residual, no error bar). The honest statement is that the sequence has started to
 move in the `d1` direction and that the two branches remain live until rungs 2 and 3
 are measured.
+
+## 13. The ladder completed: five rungs, one sparse cross-check, and the branch it returns
+
+Section 12 was written with two rungs measured and three outstanding. All five have now been run
+in one **anchored** pass (`tools/host/sparse-probe/high_res_run.sh --include-rung4`), `free_e`
+1444 to 9604, 11591.3 s of solver time in total (3.22 h; the driver's own wall clocks sum to
+11593.8 s), and the largest mesh has additionally been re-solved by the sparse path as a
+cross-check (13.6). What the completed ladder returns is the plateau branch of the decision rule
+that was already in place before it ran, `(d2)`, and the `T4_amp` verdict is unchanged: **FAIL**,
+`|Q - 1| = 0.27234263263559066` against an allowance of `0.10`.
+
+Two boundaries, stated first because both are easy to overread. This is not a convergence study:
+five points on an irregular ladder whose increments change sign do not establish an order, and
+every order quoted below is labelled a diagnostic. And it is not a sparse solver result: Route C
+is one solve at one mesh, scored against the dense answer at that same mesh. It says the sparse
+path is correct at the largest rung. It says nothing about convergence.
+
+### 13.1 What was run, and what it is not
+
+Five rungs of the **existing dense-QZ pipeline** - `tools/host/c1-audit/c1_audit.py`, the code
+path of 12.1, unmodified - driven in one pass by
+`tools/host/sparse-probe/high_res_run.sh --include-rung4`. The mode-selection path, the
+eligibility filter (`|corr_e_y| >= 0.89`, `|corr_ez_vv| >= 0.91`, shapes match), the
+column-selection rule and the extraction are byte-identical at every rung, so `R_extracted` is
+directly comparable to the banked value with no re-registration and no changed rule. Within this
+family, `h` is still the only changing variable.
+
+Rung 0 is unchanged as the control: the fresh run reads `4.0489791163950715` against the banked
+`4.0489791163982565`, a relative difference of `7.866199655477237e-13` against a gate of `1e-6`,
+with `n_eligible = 1` and both reproduction checks passing (`e_y` `1.956e-13`, `e_z` `2.755e-11`,
+`REPRO overall: PASS`). The ladder is scorable.
+
+Rungs 1 to 4 each carry `C1_ALLOW_REMESH=1`, and rungs 2 to 4 also carry
+`C1_ALLOW_DENSE_ABOVE_MAX=1` because their `free_e` (3604, 5044, 9604) exceeds
+`_MIXED_DENSE_MAX = 3000`. Each of those rungs therefore rebuilds a mesh that is not the banked
+one and each therefore prints `repro: FAIL`. That is a statement about mesh identity, not about
+numerical validity; it is documented in 13.2 so it cannot be mistaken for a fault.
+
+Cost, **MEASURED**. Rung 4 alone took `9784.3` s, which is 84.41 % of the ladder's 11591.3 s. One
+dense matrix at `free_e = 9604` is
+
+    9604^2 * 8 B = 737894528 B
+
+which the driver's own banner prints as `0.687 GB` - that figure is **GiB**; in decimal it is
+`0.7379 GB`, and the rung-4 `c1_spectrum.npz` on disk is `738560423` B. The QZ work arrays are
+`~5.5 x` that, printed by the banner as `3.78 GB peak`, i.e. `3.7797 GiB` = `4.0584 GB`.
+
+The column index is a diagnostic, as in 12.1, and rung 4 selected column 5133. Nothing below is
+compared by column index.
+
+**One correction to 12.2, flagged here because 12.2 may not be edited.** The two wall clocks in
+12.2's table (`20.1 s`, `108.7 s`) come from the earlier, unanchored pass whose directories are
+now parked under `out/prev/`. The anchored pass behind `summary_HIGHRES.txt` reports `19.2 s` and
+`105.8 s` as the audit self-report (`19.7 s` and `106.2 s` of driver wall clock). The `R`, `Q` and
+error entries are unaffected - the two passes agree on those to every digit 12.2 quotes - but
+those two wall clocks are superseded and are not used in this section.
+
+One further reading note on durations. Each rung has two timings: the driver's wall clock and the
+audit's own self-report. At rung 4 they are `9784.9` s and `9784.3` s. Every duration quoted in
+13 is the self-report, because that is the number the log line records
+(`run.log:71`, `DONE ... elapsed=9784.3s`).
+
+### 13.2 The data
+
+`R_analytic = 2.8101021387524523` (section 1, unchanged). `Q = R_extracted / R_analytic`; the error
+is `100*(Q - 1)`; the excess column is `100*(R/3.09111235262770 - 1)`, i.e. how far above the
+band's upper edge each rung sits. Every rung of the ladder is above it.
+
+| rung | strip / y_air / z | free_e | `R_extracted` | `Q` | error vs `R_analytic` | excess over band hi | REPRO | wall |
+|---|---|---|---|---|---|---|---|---|
+| 0 (control) | 12 / 9 / 8\|4\|4 | 1444 | 4.0489791163982565 | 1.440865461991999 | 44.086546199199894 % | 30.9877692719998 % | PASS | 19.2 s |
+| 1 | 16 / 12 / 10\|5\|5 | 2404 | 3.7803319900157453 | 1.3452649773413672 | 34.52649773413672 % | 22.296816121942385 % | FAIL (expected) | 105.8 s |
+| 2 | 20 / 15 / 12\|6\|6 | 3604 | 3.5673083405263886 | 1.2694586048427758 | 26.945860484277585 % | 15.405327712979533 % | FAIL (expected) | 404.8 s |
+| 3 | 24 / 18 / 14\|7\|7 | 5044 | 3.6127170292894397 | 1.2856176932036034 | 28.56176932036034 % | 16.874335745782034 % | FAIL (expected) | 1277.2 s |
+| 4 | 36 / 22 / 20\|10\|10 | 9604 | 3.575412753195199 | 1.2723426326355907 | 27.234263263559065 % | 15.667512057780897 % | FAIL (expected) | 9784.3 s |
+
+*MEASURED - each cell read from that rung's own `run.log` and `c1_table.txt`.*
+
+The selected mode at each rung, which is what the rungs are actually compared by:
+
+| rung | free_e | `beta_sq` | `eps_eff` |
+|---|---|---|---|
+| 0 | 1444 | 97833.0578510 | 3.629512208 |
+| 1 | 2404 | 97328.3081094 | 3.610786479 |
+| 2 | 3604 | 97049.1256062 | 3.600429077 |
+| 3 | 5044 | 96873.8886804 | 3.593927956 |
+| 4 | 9604 | 96752.5197006 | 3.589425284 |
+
+*MEASURED - the selected column's own record, read from the same `c1_table.txt`.*
+
+`beta_sq` falls monotonically with refinement, in steps of `-504.75`, `-279.183`, `-175.237`,
+`-121.369`, and `eps_eff` follows it down. The selection is stable: the mode does not change
+identity as the mesh refines, and every rung kept exactly one criterion-passing column
+(`n_eligible == 1` at all five rungs, `ok = True` at all five). What changes is `R_extracted`, and
+it does not fall monotonically.
+
+Row checks against 12.2: rung 1's `R`, `Q` and error reproduce the frozen note's roundings
+(`3.780331990015745`, `1.345264977341367`, `34.5264977341367 %`), and rung 0's `Q` reproduces the
+banked `1.440865461991999` exactly - the consistency check that this `Q` column is the note's own
+quantity. Rung 3 agrees with the anchors already recorded in `decisions.md`
+(`3.6127170293`, `beta_sq 96873.8886804`, `eps_eff 3.59392796`, `free_e 5044`).
+
+**Why four of the five REPRO verdicts say FAIL, and why none of them is a fault.** From rung 1 up
+the driver sets `C1_ALLOW_REMESH=1`, so the rebuilt mesh is not the banked mesh and the cache has
+no column to check against. Rung 4's own log states the situation and its expected outcome
+verbatim (`run.log:29`):
+
+> WARNING : banked n_edges 1486 != rebuilt 9720: the mesh is not the banked one -- allowed by
+> C1_ALLOW_REMESH=1; banked column unknown (-1), so the reproduction check below runs on the
+> best-|corr_e_y| column and is EXPECTED to fail
+
+and the check duly fails, at rung 4 by `rel_delta = 5.339e-02` on `e_y` (banked
+`0.9207707848111418`, measured `0.96992994184837922`) and `rel_delta = 1.219e-03` on `e_z`
+(banked `0.11916043239134175`, measured `0.11930571427583656`), with `cache_col = -1` and the
+`REPRO R` line annotated `no anchor: resolved column 5133 is not the cache's identified column
+-1`. Nothing about the solve failed: the run reports `rc=0`, `ok=True`, `modes_kept=1`, one
+eligible column, and a residual of `1.844283662306968e-18` on 12807 degrees of freedom. The
+reproduction check is a mesh-identity check, it is expected to fail on every re-meshed rung, and
+it does. The comparison that matters - rung 0 against the banked capture - passed.
+
+### 13.3 What the five rungs say about order, and why no order may be claimed
+
+Using 12.3's convention (`h` proportional to `free_e^-1/2`, `p = ln(e_i/e_j) / ln(h_i/h_j)` with
+`e = |R_extracted - R_analytic|`):
+
+| interval | h ratio | h ratio, value | e before -> after | p |
+|---|---|---|---|---|
+| 0 -> 1 | sqrt(1444/2404) | 0.775026165625604 | 1.2388769776458042 -> 0.970229851263293 | 0.959071771078014 |
+| 1 -> 2 | sqrt(2404/3604) | 0.8167231023860799 | 0.970229851263293 -> 0.7572062017739363 | 1.224455785196871 |
+| 2 -> 3 | sqrt(3604/5044) | 0.8452882891841572 | 0.7572062017739363 -> 0.8026148905369874 | **-0.3465031741550254** |
+| 3 -> 4 | sqrt(5044/9604) | 0.7247053430434572 | 0.8026148905369874 -> 0.7653106144427468 | **+0.1478095839365937** |
+
+*DERIVED FROM MEASURED - arithmetic on the five `R_extracted` values in 13.2; no new compute.*
+
+The first interval reproduces 12.3 to 14 significant digits (`0.775026165625604` matches exactly;
+its `p` is `0.959071771078014` against 12.3's `0.9590717710780169`, the difference being rounding
+in 12.3's truncated intermediate `0.7831527010107066` - unrounded, `p` = `0.9590717710780145`),
+which is the anchor showing that this arithmetic is the note's arithmetic.
+
+Rung 4 lands on the other side of the reversal. Rung 2 is the minimum of `R`
+(`3.5673083405263886`); rung 3 is `+0.0454086887630511` above it; rung 4 falls back by
+`0.037304276094240585` and settles `0.008104412668810568` - `1.0703045814765 %` - above that same
+rung-2 minimum. So the sign of the increment is **not stable**: `-0.2686471263825112`,
+`-0.2130236494893567`, `+0.0454086887630511`, `-0.037304276094240585`, i.e. `p` runs
+`+0.96`, `+1.22`, `-0.35`, `+0.15`. A four-interval ladder with one sign change and one
+near-zero interval carries no convergence order, and the least-squares version says so as loudly
+as the differences: in log-log over rungs 0 to 4 the slope is `-0.2508` (the driver's FIT (a),
+`p = -0.2508`, `c = +1.9373`) with `rms(log residual) = 0.0959`, against `0.0141` over rungs 0 to
+2 - the residual has grown by a factor of seven as the extra rungs were added. Written in the
+`h`-convention that is `p = 0.5015`, and it is quoted only as a diagnostic, as FIT (a) itself
+insists: with sign-alternating deltas at this size `p` is not identifiable.
+
+**The pre-registered extrapolants and the prediction they made.** Fitting `R` against
+`1/free_e` and against `1/sqrt(free_e)` on rungs 0 to 3 (this is what the table in 12.6 and the
+draft's tables record, and it is the state of knowledge before rung 4 existed) and evaluating at
+`free_e = 9604` gave:
+
+| fit window | variable | intercept = R as free_e -> inf | rms | R^2 | predicted R at 9604 |
+|---|---|---|---|---|---|
+| 0-3 | `1/free_e` (pre-registered variable) | **3.36584109881959** | 0.04410886472597009 | 0.945391 | 3.4674505912339324 |
+| 0-3 | `1/sqrt(free_e)` | **2.990608605836237** | 0.05366950140373725 | 0.919152 | 3.392045140566151 |
+| 0-4 | `1/free_e` (post-rung-4 refit) | **3.4280430184441846** | 0.053055969383763425 | 0.915997 | 3.5171301888940514 |
+| 0-4 | `1/sqrt(free_e)` (post-rung-4 refit) | **3.182499977518278** | 0.07283622950403419 | 0.841686 | 3.49358848825005 |
+
+*DERIVED FROM MEASURED - least-squares fits to the same five measured `R_extracted` values.*
+
+Measured at rung 4: `3.575412753195199`. That is `3.1135890511087894 %` above the `1/free_e`
+prediction and `5.405812865993953 %` above the `1/sqrt(free_e)` prediction, and it lies above the
+whole envelope of the six pre-rung-4 fits - `[3.258799252188066, 3.4773906761129343]` - by
+`2.8188399352308435 %` over the top of it (13.5). The prediction missed, in the direction that
+says the fitted trend is not the trend the data follow.
+
+The refits absorb rung 4 and move the asymptotes up, both of them now above the band ceiling:
+`3.4280430184441846` is `+10.899981216472643 %` above `3.09111235262770` and
+`3.182499977518278` is `+2.9564640318845425 %` above it. The refit's own residuals are not small
+(`rms 0.053055969383763425`, `R^2 0.915997` for `1/free_e`; `rms 0.07283622950403419`,
+`R^2 0.841686` for `1/sqrt(free_e)`), and the fit quality fell when rung 4 was added to the first
+and to the second alike. That is the arithmetic signature of a plateau: extra refinement adds
+scatter around a floor rather than approaching a limit.
+
+### 13.4 The registered rule, applied without adjustment
+
+The decision rule was fixed before any rung of this ladder ran, and it is quoted verbatim here as
+it is in 12.6, from `tools/host/sparse-probe/evidence/ladder/summary_HIGHRES.txt`:
+
+> (d1) |R_extracted - R_analytic| falls monotonically and the 1/n_free extrapolant lands
+>      inside the band  ->  the discrepancy is discretisation, and the bar can be met by
+>      a run at the fitted resolution;
+> (d2) it is flat or non-monotone, or the extrapolant stays above 3.09111235262770
+>      ->  the mesh is NOT the mechanism, and the ladder has eliminated it.
+
+Both halves of `(d1)` are now tested against five rungs, and both fail.
+
+**Monotonicity: fails.** `|R - R_analytic|` per rung is `1.238877`, `0.970230`, `0.757206`,
+`0.802615`, `0.765311`, with steps `-0.268647`, `-0.213024`, `+0.0454087`, `-0.0373043`. One step
+rises, and the minimum of the sequence is at rung 2 - not at the finest rung - with rung 4
+`1.0703045814765 %` above it. Rung 4 does not restore monotonicity; it does not even return to the
+floor. The summary's own step 4 prints exactly this and branches on it: `non-increasing with
+refinement: NO` followed by `-> branch (d2) the mesh is NOT the mechanism: refinement has been
+eliminated`.
+
+**The `1/n_free` extrapolant: fails too.** On the pre-registered window (rungs 0 to 3) the
+intercept is `3.36584109881959`, which is `8.887698499808593 %` above `3.09111235262770`. On the
+full ladder it is `3.4280430184441846`, `10.899981216472643 %` above - the refit moved the
+asymptote further out of the band, not into it. Adding the largest rung made the extrapolant
+half of `(d1)` worse, which is the opposite of what `(d1)` needs.
+
+*DERIVED FROM MEASURED - the percentages in 13.4 are arithmetic on the 13.2/13.3 tables and the
+registered band edges; no new compute.*
+
+Therefore **(d2) fires**, on both halves of the evidence independently, and the ladder has
+eliminated this mesh family as the mechanism behind the 27 % amplitude discrepancy.
+
+**A caveat on the rule's wording, to be fixed in this note and not resolved after the fact.**
+`(d1)`/`(d2)` name `1/n_free`, while 12.3 orders in `1/h`, i.e. in `free_e^-1/2`, and the two are
+not the same variable. The distinction is not academic here: the pre-registered
+`1/sqrt(free_e)` intercept, `2.990608605836237`, is **inside** the band, `3.251377993621818 %`
+below the ceiling, so on that variable the extrapolant half of `(d1)` would pass. What the
+variable choice does **not** change is the branch: `(d1)` is a conjunction, and its monotonicity
+half fails under either variable and with either fit window, so `(d2)` is the answer whichever
+variable is read. The ambiguity is nevertheless a genuine defect in the registered text and
+should be repaired there - named, not decided post hoc from rung-4 data, which is exactly what
+`summary_HIGHRES.txt` prohibits:
+
+> POST-HOC USE OF A NUMBER FROM THIS LADDER TO MOVE THE BAR IS A BREACH, not a correction.
+
+### 13.5 What was predicted, and what happened
+
+Six pre-rung-4 extrapolations were available - three fit windows (0-1, 0-2, 0-3) times two
+variables - and all six predicted `R` at `free_e = 9604` inside
+
+    [3.258799252188066, 3.4773906761129343]      (EXTRAPOLATED, pre-rung-4)
+
+which is `5.424807655982433 %` to `12.496418098710205 %` above the band ceiling. So **no
+extrapolation predicted a passing rung 4**: the whole predicted range was out of band before the
+run. Measured `3.575412753195199` sits `2.8188399352308435 %` above the top of that range. The
+outcome is therefore neither a confirmation of any of the six nor a discriminating result between
+them; it says the trend the fits encode is not the trend the ladder follows.
+
+For completeness, the better of the two pre-rung-4 stories - Scenario A, decay continuing at
+`p` near 1 - would have reached the band edge only far outside the ladder. Anchoring at rung 0
+with `e_0 = 0.440865461991999` and requiring `|Q - 1| <= 0.10`:
+
+    p = 1.076558672005238 : free_e = 1444 * (0.440865461991999/0.10)^(2/1.076558672005238)
+                                   = 22726.92343771123
+    p = 0.959071771078014 : free_e = 1444 * (0.440865461991999/0.10)^(2/0.959071771078014)
+                                   = 31854.49007059756
+
+Under the note's own cost model (`peak RAM ~ 5.5*8*free_e^2` bytes, `wall ~ 45 s*(free_e/1444)^3`,
+12.5) those two resolutions are **EXTRAPOLATED** to
+
+    free_e = 22726.92 : 22.726574153517873 GB peak, 48.733811598855915 h
+    free_e = 31854.49 : 44.64717565694314 GB peak, 134.19007791535472 h
+
+and that is 2.37x to 3.32x the rung-4 free-edge count. Scenario A was therefore never a cheap
+escape even in its own terms, and it is the story rung 4 refuted anyway.
+
+**What a plateau looks like in one line, MEASURED.** Rung 2, at `free_e = 3604`, sits
+`15.405327712979533 %` above the band ceiling. Rung 4, at `9604` - `2.67x` the free edges, `24.17x`
+the wall clock (`9784.3` s against `404.8` s) - sits `15.667512057780897 %` above it: `0.2622`
+percentage points **worse**. Quadrupling the work moved the operand in the wrong direction by an
+amount far too large to be timing noise and far too small to be progress. That is the plateau,
+and it is why the plateau branch is the one the rule returns.
+
+### 13.6 The sparse cross-check at the largest rung
+
+One solve, at the rung-4 mesh, by the sparse path (Route C), scored against the dense answer at
+that same mesh. Same mesh, same physics, same selection and extraction rules, different linear
+algebra: a shift-invert eigenproblem on an enlarged pencil, with a sparse LU factorisation of a
+`12807 x 12807` operator (`12807 = 9604` free edges `+ 3203` free nodes) at
+`nnz_S = 144151`, i.e. `8.788663579358298e-04 n^2` - the operator is never formed densely.
+
+Agreement, **MEASURED** (`evidence/t4/rung4_routeC_report.json`):
+
+| quantity | sparse | dense | relative difference |
+|---|---|---|---|
+| `beta_sq` | 96752.51970086167 | 96752.51970055024 | 3.218784779622725e-12 (11.49 digits) |
+| `R_extracted` | 3.5754127532015456 | 3.575412753195199 | 1.77503391525794e-12 (11.75 digits) |
+| `eps_eff` | 3.5894252835407867 | 3.5894252835292333 | 3.218739483580933e-12 |
+| `corr_e_y` | 0.9699299418485792 | 0.96992994184837922 | 2.00e-13 |
+| `corr_ez_vv` | 0.9665079165495085 | 0.96650791654718 | 1.32e-13 |
+
+The solve's own diagnostics agree: Rayleigh quotient on the true pencil `96752.51970085397`,
+residual `9.379388877240471e-13` and residual inside the enlarged pencil
+`2.328122901161473e-18`, and the enlarged-pencil half of the eigenvector matching the dense
+`Dc^T x1` to `3.016493594052664e-13`. The shift was `sigma = 96777.0147917196`, and `eigsh`
+converged in 21 `OPinv` calls.
+
+Cost, **MEASURED** at this mesh: sparse LU `0.05359245603904128` s (a second run read
+`0.07401308696717024` s - at this size the difference is noise, and both are quoted rather than
+the friendlier one), factor `nnz` 1369259, fill `106.91489029437027` per row, factor memory
+`0.016431108` GB, `eigsh` `0.056758934049867094` s, wall `1.955740` s (second run `2.168797` s),
+peak RSS `237.9` MiB, i.e. `ru_maxrss` ~243.6e3 KiB (known only to the log's four printed significant
+figures; pinned to `[243637, 243660]` KiB by its two roundings) = `0.2324` GiB = `0.2495` GB decimal;
+the log's `237.9 MB = 0.2324 GB` is binary multiples for both, labelling the second one GB (read from
+`RUSAGE_CHILDREN`; no `/usr/bin/time` here; tracked in `evidence/t4/rung4_routeC_peak_rss.json`). Against the dense
+rung's `9784.3` s that is
+
+    9784.3 / 1.955740 = 5002.863366296133      (second run: 4511.395026828237)
+
+for the same answer at the same mesh. Neither dense `B` nor dense `D` is ever formed - the
+`0.687 GiB` matrix and the `82.07` MB matrix the dense path needs - and the report's own
+`factor_is_effectively_dense` is `false`.
+
+**Two caveats, both of which bound the claim rather than weaken it.** First, this is a
+single-mesh ratio, not a scaling law: it is measured at `free_e = 9604` and it must not be
+extrapolated as though the two paths scaled alike. Second, and more important, the shift is not
+free information: `sigma = 96777.0147917196` is `0.999 x` the rung-3 `beta_sq` (`96873.8886804`),
+so Route C is handed, to within `0.1 %`, the eigenvalue the ladder had already localised. The
+dense path, as the ladder runs it, finds the mode with no such bracket. The speed-up therefore
+compares two ways of obtaining the same object, not two equal amounts of work, and the honest
+statement is that the sparse path is **validated** at the largest rung and **cheap when
+bracketed** - not that it replaces the dense ladder as a blind search.
+
+One defect recorded, not fixed, in the manner of 10.9: `rung4_routeC_probe.py:858` raises
+`KeyError: 'n'` in `print_summary` after the report has been written, so the probe exits non-zero
+while its report carries `verdict.overall.exit_code = 0`. The numbers above are read from the
+written report and are unaffected; the printed summary is.
+
+### 13.7 The verdict
+
+`T4_amp: FAIL`, unmoved, and unmoved for a reason the ladder now supplies rather than assumes.
+`R_extracted = 3.575412753195199` at the finest mesh, `Q = 1.2723426326355907`, so
+
+    |Q - 1| = 0.27234263263559066       allowance 0.10
+
+i.e. `2.7234263263559066x` the allowance, with `R_extracted` `15.667512057780897 %` above the
+band's upper edge `3.09111235262770`. Nothing in 13 softens that, and nothing in 13 is scored
+against a moved bar: `R_analytic`, the band, and the column-selection rule are all as 9.2 and
+9.7 left them.
+
+The attribution is `(d2)` (13.4): this mesh family is eliminated as the mechanism. That is a
+narrower statement than it may look, and the narrowness is the point. It does not say the
+discrepancy is physics; it says refinement in this family does not remove it, and five rungs and
+a 510x span in `free_e` (`1444` to `9604`), costing 3.22 h, are enough to say that. It does not
+localise what does remain: strip, `y_air` and `z` move together at every rung, so `(d2)`
+eliminates *this family*, not every mesh parameterisation - 9.7 and 9.8 remain the only evidence
+that the strip and air bands are individually flat. And it does not touch 10: the extraction is
+still correct, and `Q = 1.440865461991999` at the banked resolution still stands.
+
+What is left standing after the ladder is a discrepancy of 27.2 % that is neither a mesh artefact
+nor an extraction defect, and the next question is therefore not another refinement - it is what
+else in the model behind `R_analytic`, or in the physics of the `e_y` denominator (10.6), differs
+from the measurement. The ladder's contribution is to have closed the cheapest explanation with
+evidence rather than by assertion.
+
+### 13.8 Provenance, and one honesty note about the rule's timing
+
+Every number in 13 is read from an artefact or is arithmetic on such a number, and the arithmetic
+is reproducible from `evidence/t4/ladder_convergence.json` (`schema: t4.ladder_convergence/v1`),
+which carries the five rung records, the pre-registered and post-rung-4 fits, and the Route C
+cross-check with their definitions.
+
+- `tools/host/sparse-probe/out/summary_HIGHRES.txt` - `21562` B, mtime
+  `2026-10-28T01:51:17.495874934Z`; scores all five rungs and prints both verdicts (13.2, 13.4).
+- `tools/host/sparse-probe/out/rung0_s12_a9_z8-4-4/` ... `rung4_s36_a22_z20-10-10/` - per rung
+  `run.log`, `env.json`, `c1_table.txt`, `c1_spectrum.npz`. The rung-4 npz is `738560423` B; its
+  `run.log` is `6773` B and its `DONE` line is at `:71`.
+- `tools/host/sparse-probe/out/prev/` - the earlier, unanchored pass's rung 0 and 1 directories,
+  parked rather than deleted; the source of the two wall clocks 13.1 supersedes.
+- `evidence/t4/rung4_routeC_report.json` - sha256
+  `593b1117edc171da25b850eec12819127402b6a2f34c4007c3ed62a243933398`; the Route C record (13.6).
+- `evidence/t4/rung4_dense_anchor.json` - `2159` B, md5 `d9c1d3f9178f25fa526b7aea93611c05`; the
+  dense rung-4 anchor Route C was scored against.
+- `docs/design/t4_s13_draft.md` - `13793` B, `205` lines, mtime
+  `2026-10-28 01:52:01.035717862`; the draft this section replaces, now marked SUPERSEDED.
+
+**The honesty note.** The decision rule quoted in 13.4 was written before any rung of this ladder
+ran, and that is the claim made for it - not for the draft. The draft's mtime,
+`2026-10-28 01:52:01.035717862`, is `43.5` s **after** the rung-4 job's own `DONE` line
+(`01:51:17`, `elapsed=9784.3s`) and after `summary_HIGHRES.txt` was written
+(`01:51:17.495874934Z`). It is therefore **not** a timestamped pre-registration and is not cited
+as one. What is true of it is weaker and still worth stating precisely: its content predates
+knowledge of the rung-4 value - it records rung 4 as pending, quotes no rung-4 number, and
+proposes thresholds rather than applying any - so it is a rule fixed without knowledge of the
+result, which is not the same thing as a pre-registration stamped before the result existed. Only
+the `(d1)`/`(d2)` block in `summary_HIGHRES.txt` carries the stronger warrant, and it is that
+block, not the draft, on which 13.4's reading rests.
+
+One false alarm belongs on the record here: the `indefinite` / `LinearOperator` material is not in
+this note and never was - it lives in `docs/design/sparse_eigenmode.md`, where `indefinite` appears
+on `16` lines and `LinearOperator` on `6` - so a grep of this note for it finds nothing, and
+that absence is not a loss.
