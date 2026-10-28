@@ -299,10 +299,10 @@ any X would be a number with nothing to compare to — which is exactly the defe
 **v2.1: both halves of the ratio now exist, and the clause still cannot ship.** `docs/design/t4_amp_ratio.md` forms what
 `decisions.md:7950-7956` said had not been computed, on already-banked arrays: `R_analytic = 2.810102138752` (above). What
 is missing is no longer *data*: `R_extracted` **is** banked in both spectra, and on the PMC leg (j = [738], the identified
-column) it is `4.0489791163982565`, which against `R_analytic = 2.8101021387524523` is `1.441×`. The PEC banked
-`70.635018555128326` **rests on an inferred column, not a read one**: `704` comes from elimination over `j = [699, 704]` /
-`ok = [True, False]` — the non-carrier, mode spurious, `beta = 86.93931629` — while its own `bank_col` is `738`; only the
-PMC figure is quotable. `TOLFLUX_planes`' pooled `3.439935` (per-sample `3.467858`, per station `3.101484 … 3.620866`) is an
+column) it is `4.0489791163982565`, which against `R_analytic = 2.8101021387524523` is `1.441×`. The PEC leg's ratio is
+`R = 4.163656524825077` at its identified column `699` (`1.482×`); what `pecbox_spectrum.npz` *banks* is `70.635018555128326`,
+the last *scanned* column (`704`, the failing witness, `beta = 86.93931629`) — a wrong-column artefact, not the leg's value, whose
+attribution to `704` is inference from `j` beside `ok` (`c1_audit.py:207-210`), not a per-column bank. Only the PMC figure is *scored*. `TOLFLUX_planes`' pooled `3.439935` (per-sample `3.467858`, per station `3.101484 … 3.620866`) is an
 FDTD tone capture of a different quantity, **not** substitutable: it would place the analytic mode `18.3 %` below the
 extraction and invite an `X` calibrated on it. So the defect changes shape again: `T4_amp` no longer lacks a measurement, it
 lacks a **threshold** — a rule for how far `1.441×` may sit from `1`. That is a choice, not a datum, and it is unmade. One
@@ -617,11 +617,11 @@ Two further gaps belong here, because both are the kind that get mistaken for a 
   the `2.849` (31x17 PMC) and `2.89` (31x17 PEC, col 699) values in §3.5 come from the region decomposition that
   produced the band census, not from a gate run. The clause is registered on measured evidence with no executable
   behind it yet, which is what its `nowhere` row in §7 is saying.
-* **Reading `pecbox_spectrum.npz` for the PEC column gives the PMC answer, twice over.** `bank_col` there is `738`
-  (c1_audit.py's `BANKED` column, inherited through the path redirect) while this file's columns are `699` and
-  `704`; and `R_extracted` there is `70.635018555128326`, the last *scanned* column (`704`, the failing witness),
-  not the identified `699`. Neither is quotable for PEC; `c1_spectrum.npz` is unaffected because it scans `(738,)`
-  alone, so its `R_extracted = 4.0489791163982565` is the identified column's.
+* **Reading `pecbox_spectrum.npz` for the PEC column gives the PMC answer, and the PEC ratio is not the banked one.**
+  `bank_col` there is `738` (c1_audit.py's `BANKED` column, inherited through the path redirect) while this file's columns
+  are `699` and `704`; and `R_extracted` there is `70.635018555128326`, the last *scanned* column (`704`, the failing
+  witness), not the identified `699`, whose ratio is `4.163656524825077` and is in no npz (§10.9). The banked scalar is
+  therefore not quotable for PEC; `c1_spectrum.npz` is unaffected because it scans `(738,)` alone, so its `R_extracted = 4.0489791163982565` is the identified column's.
 
 ---
 
@@ -720,6 +720,28 @@ All three sweeps are recorded at `docs/design/t4_amp_ratio.md` §9.7 and §9.8; 
 
 **What was and was not edited.** The two citations in §10.7 are corrected. The header citation at `:14` and the §9 rows at `:637-638` are deliberately left as-is. A same-line-count replacement at `:14` would not move `:630`, so it is mechanically safe — and it is still not made, because this document's rule is that changes are listed rather than silently patched, and §10.8 is the listing. **Superseded in part by §11.** The header citation at `:14` has since been edited in place (`172` → `234`, within-line, no change to the line count), so the sentence above that `:14` is left as-is no longer describes the file. The §9 rows at `:637-638` remain unedited on purpose: §9 is the registered clause list and this repair confines itself to prose that describes the code — §11 carries their corrected numbers instead.
 
+### 10.9 The PEC ratio on the record, re-read
+
+**The leg has a quotable ratio after all, and it is not the banked one.** `c1_audit.py` now selects the column rather than taking the last one scanned, and with the selection it records the PEC leg's quotient at its identified column: `R = 4.163656524825077` on column `699` (`ok` `True`, `corr_ey = 0.91234304`, `corr_ez_vv = 0.93692972`, against the `0.89` / `0.91` criterion). Against `R_analytic = 2.8101021387524523` that is `4.163656524825077 / 2.8101021387524523 = 1.4816744442867605`, i.e. `1.482×`, an error of `48.167 %` against the `±10 %` band — so the PEC leg read at its own column fails the bar too, marginally worse than the PMC leg's `1.441×`. The PEC leg is excluded from scoring for provenance and for leg count, not because re-reading it rescues anything.
+
+The two legs at their own identified columns therefore sit `4.163656524825077 / 4.0489791163982565 = 1.0283225487536798` apart, `2.8 %` — not the `17.445142719817547×` that the banked scalars suggest. The 17× is a carrier-versus-non-carrier comparison, and it is retained only as the diagnostic of how far a column selection can move the number.
+
+**The artefact still holds the wrong column.** `out/pecbox_spectrum.npz` reads `R_extracted = 70.635018555128326`, the last *scanned* column, `704`, and it was deliberately not overwritten when the selection was fixed (`c1_audit.py:210-213`): the banked capture is evidence of the defect and is left alone. So a reader who opens the npz still sees the artefact. `R_by_col` (`c1_audit.py:862`) and the per-column `R_extracted` (`:888`) exist only on a re-run, and `:999`'s `REPRO` message states what the re-run is expected to print — `4.163656524825077`, not `70.635`. Until that re-run, the correct PEC ratio lives in the script's own record and in `docs/design/t4_amp_ratio.md` §2, not in any npz.
+
+**What this supersedes.** §3.4's "only the PMC figure is quotable" and §8's "Neither is quotable for PEC" were true of the *banked scalars* and are too strong about the legs: the PEC leg's ratio is on record at its identified column, and what is unquotable is `70.635018555128326`. Both sentences are left as written and are corrected here, in the same way §10.8 is left and superseded rather than rewritten.
+
+**Why no column index is the identifier.** The first-banked capture names column `738` where a fresh solve of the identical rung-0 mesh names `732`, with `R` agreeing to `8e-13` — the mode is the same, the index is not (see `docs/design/t4_amp_ratio.md` §12.1). The PEC box names `699`. So `699`, `704`, `732` and `738` are all environment-dependent readings of one mode, and identifying the mode by its column index is exactly the mistake that produced `70.635`. The mode is identified by `beta_sq` and by `R`; a ratio is quoted with both.
+
+### 10.10 The refinement ladder: status
+
+**Where the ladder stands.** The full dense ladder, rungs 0–4, is running on the host in one **anchored** pass (`tools/host/sparse-probe/high_res_run.sh --include-rung4`). Rungs 0–3 have written their captures (`out/rung0_*` 22:38, `out/rung1_*` 22:40, `out/rung2_*` 22:46, `out/rung3_*` 23:08); rung 4's directory exists but holds only `env.json` and `run.log`. This section does not tabulate rungs 2–4: their numbers belong to the report of the completed pass, and quoting them from a partial directory would be exactly the kind of half-read number §10.8 exists to prevent.
+
+**An earlier pass was unanchored, and its verdict is void.** `out/summary_HIGHRES.txt` comes from that pass, and its own step 1 reads "rung 0 did not run: the ladder is unanchored and nothing below applies" — yet the same report went on to print `T4_amp: FAIL` from the rung-1 operand (`R_extracted = 3.780331990015745`, `Q = 1.345264977341`). A pass whose control never ran is a pass whose lower rungs do not apply; the FAIL line is not a verdict and is not to be cited as one. Its rung directories were parked under `out/prev/` rather than deleted, so the two passes stay distinguishable by path.
+
+**The harness now refuses that shape of run.** Commit `a72530f` makes an unanchored pass refuse outright (`tools/host/sparse-probe/high_res_run.py:966`, "the ladder would be UNANCHORED"), and a pass that reaches the verdict step without a rung-0 anchor writes `T4_amp: NOT EVALUATED` instead of a verdict (`:1126-1127`, emitted at `:1139`). Nothing in this section's gate verdict changes: `T4_amp` is still FAIL on the banked PMC measurement (§10.1–§10.2), and the ladder is a diagnostic of *why*, not a re-scoring.
+
+**Invariants kept by this append.** The repair above (§10.9, §8, §3.4) was made line-count-neutral, so `m3c_gate_v2.md:630` — "Seven entries, no more. Everything else in §2–§3 is an audit of what v1 already had, not a registration.", the citation target of `docs/design/t4_amp_ratio.md` §9.5 and §9.7 — is still at line 630 and still reads exactly that. This append sits entirely below line 630 and moves no line at or above it: the prefix through line 630 is fixed, the file grew only by the text you are reading. The head-630 *prefix hash* did change, from `a03c78d43fd8077df2588281d00a97103e9115ecdc2b3be37326cad789583203` to `e60a0929…`, for the same reason §11 records the previous link in that chain: the repaired lines `:302-305` and `:620-624` are inside the prefix, and leaving them wrong would be the only way to keep it.
+
 ## 11. Citation repair: witness chain
 
 **What this section is.** §10.8 recorded a drift rather than patching it. This section *is* the patch, listed the same way §10 lists its own changes: every line it touched, what the citation said, what it says now, and the mechanical evidence that nothing else moved. The `CORR_EY_MIN` / `CORR_EZ_VV_MIN` citations in §10.7 were already correct and are not touched again here.
@@ -768,3 +790,9 @@ The head-630 prefix hash did **not** survive, and it is recorded here rather tha
 * §10.8 itself (`:717`) is left as written for the same reason — it is the record of what was believed, and what supersedes it is a clause appended to the end of that same line, not a rewrite of it.
 
 **Line numbers are volatile; symbols are durable.** Every citation this document makes into `c1_audit.py` should be resolved by the symbol (`grep -n '^CORR_EY_MIN *='`), never by the number printed beside it. The numbers in this section are correct as of this append and will drift again the next time the file grows above them; the symbols will not. That is why both tables above are keyed by symbol and by code region, and why the four items above are listed rather than silently normalised.
+
+**The chain this append completes.** Re-measured on the working tree when this note was written, with the same method as every link above:
+
+* **Prefix link, resolved rather than restated.** head-630 prefix sha256 is `e60a092946615f54ab481cb5515fe64bbf66d8bced2a963a13384017ac81a56a` — the `e60a0929…` that the closing append to §10 asserts, checked against the file instead of taken on trust. The link before it, `a03c78d43fd8077df2588281d00a97103e9115ecdc2b3be37326cad789583203`, is the *after* value recorded in this section above, so the prefix chain here reads `39bb7a71…` → `a03c78d4…` (§11's repair) → `e60a0929…` (§10's closing append).
+* **Whole-file sha256 before this note:** `8cb9d55d0e977e8194578375ce4d38698df4e75947ba18a4a6a874fc20d21183`, 84,603 bytes, 792 lines. That is not the `05d7fcf1…` *after* value recorded above, and the gap is not a contradiction: the file moved once more when the closing append to §10 was written — the same edit that moved the prefix from `a03c78d4…` to `e60a0929…`. A file cannot contain the hash of its own post-edit self, so the whole-file hash *after* this note is reported in the change report and not here; every hash in this bullet is a *before* value and is reproducible.
+* **Line 630 is still line 630.** It still reads `Seven entries, no more. Everything else in §2–§3 is an audit of what v1 already had, not a registration.`, own sha256 `0d7cf7485cc954e931ae43f68ca1858322d92709f03319b3e79e2db7cee643b8`, and the head-630 prefix hash is unchanged by this append (`e60a0929…` before and after): this note sits entirely below line 630 and moved nothing at or above it. The load-bearing invariant of the whole chain — line-630 identity plus a fixed prefix — is the one that held.

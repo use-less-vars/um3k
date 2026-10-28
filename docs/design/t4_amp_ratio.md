@@ -12,13 +12,15 @@ Arithmetic on banked arrays only. No solve, no gate run, no field reconstruction
 | `R_analytic`, per-sample | 2.832912603875 | `mean/sq`, n-gap 15400/15276 = 1.008118 |
 | amplitude ratio | 1.676336 (per-sample 1.683126) | `sqrt` of both |
 
-`A_ez = PANA.e_z` on y(nodes)×z(cells), `A_ey = PANA.e_y` on y(cells)×z(nodes) (`c1_audit.py:430-433`, guard `:437-441`, banked `:632`). Both arrays are **array-identical** (`np.array_equal` = True) between `c1_spectrum.npz` and `pecbox_spectrum.npz` — the two files are not byte-identical, they differ everywhere else — so `R_analytic` is one number and cannot separate the PMC leg (col 738) from the PEC leg (col 699). The extracted side can: it is banked as a scalar, `R_extracted = 4.0489791163982565`, which is `1.440865×` `R_analytic`, and §2 is now about the column it was taken on.
+`A_ez = PANA.e_z` on y(nodes)×z(cells), `A_ey = PANA.e_y` on y(cells)×z(nodes) (`c1_audit.py:593-594`, guard `:600-602`, banked `:871`). Both arrays are **array-identical** (`np.array_equal` = True) between `c1_spectrum.npz` and `pecbox_spectrum.npz` — the two files are not byte-identical, they differ everywhere else — so `R_analytic` is one number and cannot separate the PMC leg (col 738) from the PEC leg (col 699). The extracted side can: it is banked as a scalar, `R_extracted = 4.0489791163982565`, which is `1.440865×` `R_analytic`, and §2 is now about the column it was taken on.
 
 ## 2. The artefacts, named: `R_extracted` is banked, the arrays behind it are not
 
-Both readings are in the two captures (`tools/host/c1-audit/out/` — the `out/` of §1's table is relative to that directory), and the arrays that formed the second one are still not saved. `c1_spectrum.npz` (16,972,501 bytes): `lam` (1444,), `j = [738]`, `bank_col` 738, `R_extracted` 4.0489791163982565, `beta` 312.78276463, `corr_ey` 0.92077078, `corr_ez_vv` 0.93528673, `A_ez` (201,76), `A_ey` (200,77), `ok` [True]. `pecbox_spectrum.npz` (15,568,904 bytes): `lam` (1382,), `j = [699, 704]`, `bank_col` 738, `R_extracted` 70.635018555128326, `beta` [311.77211206, 86.93931629], `corr_ey` [0.91234304, −0.42641899], `corr_ez_vv` [0.93692972, −0.08313435], `ok` [True, False]. What is **not** banked is the pair the scalar was reduced from: `c1_audit.py:513-514` builds `e_y = e_at(_ey_pts)[:,:,0]*CELL`, `:520-521` builds `e_z_vv = e_at(_ezc_pts)[:,:,1]*CELL`, `:528-534` reduces each to a scalar, and `:609-635` banks only `A_ez`, `A_ey` and scalars. `.scratch/e_z_signed_41x22.npz` does not hold them either: `e_z_raw`/`e_z_plane` are **longitudinal** (`-interp(beta*z_free)`, `c @ z_free`), not the vertical one.
+Both readings are in the two captures (`tools/host/c1-audit/out/` — the `out/` of §1's table is relative to that directory), and the arrays that formed the second one are still not saved. `c1_spectrum.npz` (16,972,501 bytes): `lam` (1444,), `j = [738]`, `bank_col` 738, `R_extracted` 4.0489791163982565, `beta` 312.78276463, `corr_ey` 0.92077078, `corr_ez_vv` 0.93528673, `A_ez` (201,76), `A_ey` (200,77), `ok` [True]. `pecbox_spectrum.npz` (15,568,904 bytes): `lam` (1382,), `j = [699, 704]`, `bank_col` 738, `R_extracted` 70.635018555128326, `beta` [311.77211206, 86.93931629], `corr_ey` [0.91234304, −0.42641899], `corr_ez_vv` [0.93692972, −0.08313435], `ok` [True, False]. What is **not** banked is the pair the scalar was reduced from: `c1_audit.py:679-680` builds `e_y = e_at(_ey_pts)[:,:,0]*CELL`, `:686-687` builds `e_z_vv = e_at(_ezc_pts)[:,:,1]*CELL`, `:705` reduces each to a scalar, and `:816` banks only `A_ez`, `A_ey` and scalars (keys at `:840-871`). `.scratch/e_z_signed_41x22.npz` does not hold them either: `e_z_raw`/`e_z_plane` are **longitudinal** (`-interp(beta*z_free)`, `c @ z_free`), not the vertical one.
 
-Not one script's oversight: every artefact that pairs the two fields normalises each by its own norm first — `c1_audit.py:528-534` (correlation), `.scratch/d22_t3_regions.py:69-74` (`_unit_pair`: `A/|A|`, `E/|E|`) — so the amplitude ratio is divided out by construction wherever the pair was analysed. The record says the same at `decisions.md:7956`: "What the true vertical-over-in-plane energy ratio is has not been computed." *`decisions.md:7956` is the pre-extraction record; the banks are ahead of it, they do not contradict it: the ratio is banked as a scalar, the fields behind it are not.* What remains open is the **column**: 738 (the peak, `ok` True) gives 4.0489791163982565, 704 (the last leg scanned, `ok` False) gives 70.635018555128326 — a factor 17.445142719817547. A ratio quoted without its column is not a measurement, and §9 makes recording it a precondition of scoring. Two points are inference rather than record and are marked so: that 70.635 belongs to column 704 (the PEC file's own `bank_col` is 738, so the attribution rests on `j = [699, 704]` beside `ok = [True, False]`), and that `R_extracted` was formed at run time from the un-reduced fields rather than from the banked arrays (forced, since `A_ez`/`A_ey` are array-identical across the two files while their `R_extracted` differ by 17×). Neither needs a re-run to settle the gate.
+Not one script's oversight: every artefact that pairs the two fields normalises each by its own norm first — `c1_audit.py:694-695` (correlation), `.scratch/d22_t3_regions.py:69-74` (`_unit_pair`: `A/|A|`, `E/|E|`) — so the amplitude ratio is divided out by construction wherever the pair was analysed. The record says the same at `decisions.md:7956`: "What the true vertical-over-in-plane energy ratio is has not been computed." *`decisions.md:7956` is the pre-extraction record; the banks are ahead of it, they do not contradict it: the ratio is banked as a scalar, the fields behind it are not.* What remains open is the **column**: 738 (the peak, `ok` True) gives 4.0489791163982565, 704 (the last leg scanned, `ok` False) gives 70.635018555128326 — a factor 17.445142719817547. A ratio quoted without its column is not a measurement, and §9 makes recording it a precondition of scoring. Two points are inference rather than record and are marked so: that 70.635 belongs to column 704 (the PEC file's own `bank_col` is 738, so the attribution rests on `j = [699, 704]` beside `ok = [True, False]`), and that `R_extracted` was formed at run time from the un-reduced fields rather than from the banked arrays (forced, since `A_ez`/`A_ey` are array-identical across the two files while their `R_extracted` differ by 17×). Neither needs a re-run to settle the gate.
+
+**Where the PEC number comes from, and what identifies the mode.** The PEC leg's quotable ratio is `R = 4.163656524825077`, the ratio of the column the solver selects, 699 (`ok` `True`, `corr_ey` 0.91234304, `corr_ez_vv` 0.93692972). The `70.635018555128326` read out of `pecbox_spectrum.npz` above is the ratio of the last *scanned* column, 704, whose leg is the failing witness; that capture was not overwritten when the selection defect was fixed, so the stale scalar deliberately survives in it (`c1_audit.py:210-213`). The correction is a re-read of the same banked run, not a new measurement, and it is the same lesson the ladder met from the other end: **the column index of the physical mode is environment-dependent.** The banked `c1_spectrum.npz` names 738 for this mode while a fresh solve of the identical rung-0 mesh names 732, with `R` agreeing to 8e-13 (§12.1); on the PEC box the same solver names 699. Neither 699, 704, 732 nor 738 is a durable name for the mode, and that ambiguity is exactly what produced `70.635` here. The mode is identified by `beta_sq` and by `R`, and a ratio is quoted with both.
 
 ## 3. The nearest pair that *is* banked, labelled a different object
 
@@ -45,7 +47,7 @@ Not one script's oversight: every artefact that pairs the two fields normalises 
 - `4.52 %` = (326.9107654423116 − 312.7827646322591)/312.7827646322591 = 4.5169 %: the rounded record figure is right, and the 45x remark against the old 1e-3 is 45.2x.
 - `4.52` hits: `decisions.md:7196` (b.5 first record), `:7224` (c.2, ~45x below), `:7371`/`:7375` (§(g) re-scope, T2 fails intended), `:7680` (estimator span 6.24 %), `:7716` ("at most about one third"); `:1219` is an unrelated 24.525 s timing.
 - `2.85x`/`2.89x`, `57.0 %`/`57.9 %` reproduce exactly (PMC col 738 / PEC col 699).
-- **Miscite:** `decisions.md:7948` puts the `e_z_vv` read at `c1_audit.py:510-511`; the construction is `:520-521`.
+- **Miscite:** `decisions.md:7948` puts the `e_z_vv` read at `c1_audit.py:510-511`; the construction is `:686-687`.
 - **Duplicate captures:** `TOLFLUX.json` and `TOL.json` carry identical `beta`/ephemera but differ on `poynting` (True/False) and `wall` (4210.48/4560.05).
 - **Open tension, unresolved here:** 4.52 % (fail by 9x) and 0.40 % (pass) are both "beta against 312.7827646322591". Which fit T2 is scored on is not settled by the banks; naming the estimator is a precondition, as `decisions.md:7680` already warns.
 
@@ -58,7 +60,7 @@ Not one script's oversight: every artefact that pairs the two fields normalises 
 `Q = R_extracted / R_analytic`, scored as the inequality `|Q − 1| <= tol_rel`, with both operands read from the banks: `R_analytic = 2.810102138752` (§1, `sum(A_ez^2)/sum(A_ey^2)`, one number because the two arrays are array-identical across the captures) and `R_extracted = 4.0489791163982565` from the **PMC leg, column 738**, whose `ok` is `True` and whose capture's `bank_col` is 738. Today `Q = 1.440865461991999`.
 
 - **The PMC leg is the scored leg.** Column 738 is the peak column of `c1_spectrum.npz` (`j = [738]`, `ok = [True]`) and the column §6/§7 read `beta` on (`beta_eigen = 312.7827646322591`), so scoring and the beta record sit on the same column.
-- **The PEC reading is named as a wrong-column artefact and is excluded from scoring.** `pecbox_spectrum.npz` also carries an `R_extracted`, 70.635018555128326, and it is not a second physics result to be compared: its leg list is `j = [699, 704]` with `ok = [True, False]`, its own `bank_col` is 738, and 70.635018555128326 is 17.445142719817547× the peak-column value. It is retained as the diagnostic of column sensitivity in §9.4, and not as a data point. *Inference, marked as inference:* attributing 70.635 to column 704 rests on the leg list beside `ok`, not on the file's `bank_col`.
+- **The PEC leg is excluded from scoring; what is excluded is the banked scalar, not the leg.** The leg's own ratio is `R = 4.163656524825077`, at its identified column 699 (§2). What `pecbox_spectrum.npz` carries under `R_extracted` is 70.635018555128326, the last *scanned* column (704, the failing witness), and it is 17.445142719817547× the peak-column value — the stored scalar is the wrong-column artefact. The leg is not a second physics result to be compared with the PMC one: its leg list is `j = [699, 704]` with `ok = [True, False]` and its own `bank_col` is 738, inherited through the PMC path. It is retained as the diagnostic of column sensitivity in §9.4, and not as a data point. Arithmetic only, not a second measurement: `4.163656524825077 / 2.8101021387524523 = 1.4816744442867605`, an error of 48.167 % against the ±10 % band, so the PEC leg read at its own column would also fail the bar — it is excluded for provenance and for leg count, not because re-reading it rescues the verdict. *Inference, marked as inference:* attributing 70.635 to column 704 rests on the leg list beside `ok`, not on the file's `bank_col`.
 - **n = 1.** One capture per leg, one column, one run. There is no empirical scatter in the record for this quantity, and none is assumed below.
 
 ### 9.2 The bar: ±10 % relative on `Q` — ADOPTED and LOCKED
@@ -92,7 +94,7 @@ On the operand, with `R_analytic = 2.8101021387524523`, the adopted band require
 
 ### 9.4 Precondition: the column must be recorded, and asserted to be the peak
 
-`R_extracted` is knife-edge sensitive to the column it is read on — 4.0489791163982565 at 738 against 70.635018555128326 at 704, a factor 17.445142719817547, because the extraction reduces per column and column 704 is a non-carrier (`ok` False). A bar applied to a number that can move by 17× on a selection the record does not pin down is not a test of anything. So `T4_amp` will require, before it compares anything:
+`R_extracted` is knife-edge sensitive to the column it is read on — 4.0489791163982565 at 738 against 70.635018555128326 at 704, a factor 17.445142719817547, because the extraction reduces per column and column 704 is a non-carrier (`ok` False); the identified PEC column 699 gives 4.163656524825077 (§2), so the 17× spread is between a carrier and a non-carrier column and not between the two legs — read at their own identified columns the two legs differ by `4.163656524825077 / 4.0489791163982565 = 1.0283225487536798`, i.e. 2.8 %. A bar applied to a number that can move by 17× on a selection the record does not pin down is not a test of anything. So `T4_amp` will require, before it compares anything:
 
 1. the column actually used is written into the run record, and
 2. that column is asserted to **be** the peak column — the leg's `ok` is `True` and the column equals the capture's `bank_col` — with a mismatch failing closed rather than being scored.
@@ -242,7 +244,7 @@ With the extraction exonerated and the residual sensitivity identified as a genu
 | 2 | npz key `corr_ez` at `:830` aliases `corr_ez_superseded_longitudinal` | the mis-paired ≈ +0.12 metric; `mode_plot.py:278-291` compares the alias against banked longitudinal anchors | readers must use `corr_ez_vv`; the alias silently answers a different question |
 | 3 | `out/pecbox_spectrum.npz` stores `bank_col=738` (a PMC column) | its own `j=[699,704]` | the PEC capture names a column it does not contain |
 | 4 | `pecbox_variant.py:706` cites `c1_audit.py:662` as the npz site | the npz call is at `:816`, `R` at `:766` | provenance citation off by 154 lines; follow-up audits land on the wrong statement |
-| 5 | stored PEC `R_extracted = 70.635018555128326` is the *last scanned* failing-witness column, 704 (`corr_ey = -0.426418989`, `corr_ez_vv = -0.083134346`) | the identified column 699's `R = 4.1636565248` exists in no artefact | the PEC leg's quotable `R` is **unbanked**; any future PEC scoring must re-derive it |
+| 5 | stored PEC `R_extracted = 70.635018555128326` is the *last scanned* failing-witness column, 704 (`corr_ey = -0.426418989`, `corr_ez_vv = -0.083134346`) | the identified column 699's `R = 4.163656524825077` is on record in `c1_audit.py` (`:203-210`, `:885`, `:999`) but still in no artefact — the banked npz predates the fix and is deliberately not overwritten (`:210-213`) | the PEC leg's quotable `R` is **unbanked**; a PEC scoring run must read it from `R_by_col` (`:862`) or `R_extracted` (`:888`) after a re-run, not from the banked scalar |
 | 6 | `bank_col = -1` in all six mesh-study npz files | unset, not wrong | none — recorded for completeness |
 
 All six are latent: none is fixed by this section, and none affects a banked verdict. Defect 5 is the one with a live consequence — the PMC leg is the scored leg precisely because its `R` is banked on the column it was computed on.
@@ -258,12 +260,18 @@ All six are latent: none is fixed by this section, and none affects a banked ver
 
 Every `c1_audit.py` line number in §9 and §10 above was verified against the
 script as it stands today (1015 lines) and repaired where stale. Lines 1–51
-(header, §1–§8) are out of scope by instruction and are untouched — their own
-stale cites are listed at the end of this section so a reader is not misled
-into trusting them. Line count is unchanged (256 lines; no edit moved text
-across a line boundary), and the first 51 lines hash byte-identically before
-and after (`head -51 | sha256sum` = `4abbadd18c77018758db6a74ea4393ce761fb916aab62db724fa524307a80f54`,
-computed with the same method on both sides).
+(header, §1–§8) were out of scope by instruction on the first pass and were
+left stale, so a reader is not misled into trusting them; their stale cites
+are recorded at the end of this section beside the numbers that replaced
+them. They have since been repaired too — by symbol, one site at a time,
+because no single offset fits (§11.4). The head therefore moved, and the
+earlier claim that it had not is withdrawn: `head -51 | sha256sum` was
+`4abbadd18c77018758db6a74ea4393ce761fb916aab62db724fa524307a80f54` (8,124 bytes) — and had in fact already drifted one witness further before this pass, to `323b9125…`, at the same 8,124 bytes — and is now
+`b6baa72679f0226549cc3f28746c60bb3134e6eff7b240d8d3f9daffdf16db82` (9,008 bytes), computed with the
+same method on both sides. Likewise the "line count unchanged (256 lines)" that
+stood here described the 256-line file it touched; §12 has since grown the
+file and this pass adds a paragraph to §2 and one to §12.6, so the count
+moves too: 533 lines before this pass, 547 after.
 
 ### 11.1 Edits made
 
@@ -327,14 +335,18 @@ worse defect than the stale line number it was attached to.
 - `docs/design/m3c_gate_v2.md:630` — "Seven entries, no more." (§10.10 and §2).
 - `pecbox_variant.py:706` — the comment that records the last-column-wins defect.
 
-### 11.4 Deliberately left stale
+### 11.4 What was left stale, and what was repaired later
 
-- **§1–§8 (lines 1–51), frozen.** These still cite `c1_audit.py:430-433`,
-  `:437-441`, `:632` (§4), `:513-514`, `:520-521`, `:528-534`, `:609-635`
-  (§5), `:528-534` (§6). Under the current mapping the two field builds are
-  `:679-680` and `:686-687` and the reduction is `:746-747`; the guard and
-  banking sites have moved comparably. Read §1–§8 for the argument and §9–§11
-  for line numbers.
+- **§1–§8 (lines 1–51): left stale first, then repaired.** When §11 was written
+  these lines were out of scope, and they cited `c1_audit.py:430-433`,
+  `:437-441`, `:632` (§1), `:513-514`, `:520-521`, `:528-534`, `:609-635` (§2) and
+  `:528-534` again in §2's prose. They have since been repaired at those same
+  sites, by symbol, to `:593-594`, `:600-602`, `:871`, `:679-680`, `:686-687`,
+  `:705`, `:746-747`, `:816` and `:694-695`. No offset would have found them:
+  the offsets run from `+163` (`:430-433` → `:593-594`) to `+239` (`:632` → `:871`),
+  and the reduction `:528-534` maps to no single line at all, because the
+  correlation calls and the energy sums now live apart (`:694-695`, `:705`).
+  The record that these cites were once stale is kept here rather than dropped.
 - **`pecbox_variant.py:706`'s own embedded cite** (`c1_audit.py:662`). This
   is a defect *in the script*, recorded as §10.9 #4 and explicitly not fixed
   there; repairing the prose that reports it would erase the evidence.
@@ -363,7 +375,7 @@ capture, only larger.
 It is **not** a sparse solver, because the sparse solver does not exist. `emfit`'s
 iterative path is a stub that raises `NotImplementedError` (`emfit/mode2d.py:1095-1099`),
 and the mixed solve refuses any mesh above `_MIXED_DENSE_MAX = 3000` free edges
-(`emfit/mode2d.py:151`), which `c1_audit.py:395-398` turns into a `SystemExit`. Rungs
+(`emfit/mode2d.py:151`), which `c1_audit.py:463-465` turns into a `SystemExit`. Rungs
 above that cap are reachable only through `C1_ALLOW_DENSE_ABOVE_MAX=1`, which the
 driver sets for exactly those rungs. The sparse path is a design note,
 `docs/design/sparse_eigenmode.md`; nothing in this ladder implements it.
@@ -499,7 +511,7 @@ optimistic direction.
 
 ### 12.6 What is still open
 
-Rungs 2, 3 and 4 (`free_e` 3604, 5044, 9604) are **not run**. The command is
+Rungs 2, 3 and 4 (`free_e` 3604, 5044, 9604) were **not run** when §12.2 was written. The command is
 
     tools/host/sparse-probe/high_res_run.sh --include-rung4
 
@@ -511,6 +523,8 @@ estimated at 208 s and took 108.7 s, i.e. the estimate was 1.91x pessimistic (ru
 0's measured clock as soon as rung 0 finishes, so the revised estimates for rungs 2-4
 are shorter again. Treat 4.47 h as an upper bound of order two times too large, not as
 a scheduled duration.
+
+**Status of the ladder as this is written.** The full dense ladder is now running on the host, rungs 0–4, in one **anchored** pass driven by `tools/host/sparse-probe/high_res_run.sh --include-rung4`. Rungs 0–3 have written their captures: `out/rung0_s12_a9_z8-4-4/` (22:38), `out/rung1_s16_a12_z10-5-5/` (22:40), `out/rung2_s20_a15_z12-6-6/` (22:46), `out/rung3_s24_a18_z14-7-7/` (23:08); rung 4's directory was created at 23:08 and holds only its `env.json` and `run.log`. The earlier pass's rung directories were parked under `out/prev/` rather than deleted, so both passes stay inspectable. That earlier pass is the one that left `out/summary_HIGHRES.txt` behind, and its own step 1 reads "rung 0 did not run: the ladder is unanchored and nothing below applies" — yet it went on to print `T4_amp: FAIL` from the rung-1 operand. A pass in which rung 0 never anchored the ladder is a pass whose lower rungs do not apply, so that verdict was not a verdict. Commit `a72530f` fixed the harness so the failure cannot recur: a run whose rungs do not start at rung 0 now refuses outright (`tools/host/sparse-probe/high_res_run.py:966`, "the ladder would be UNANCHORED"), and a pass that reaches the verdict step without a rung-0 anchor writes `T4_amp: NOT EVALUATED` instead of a verdict (`:1126-1127`, emitted at `:1139`). The rung 2, 3 and 4 numbers are **not** tabulated here — §12.2 stops at rung 1 by construction — and they will be recorded as a new section when the pass completes.
 
 The decision rule was registered before any rung of this ladder ran, in
 `tools/host/sparse-probe/evidence/ladder/summary_HIGHRES.txt`, and is quoted verbatim:
