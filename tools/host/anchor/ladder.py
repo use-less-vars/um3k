@@ -23,6 +23,7 @@ Usage: ``python ladder.py driven 1 2 3 4 5`` / ``python ladder.py mixed 1 2 3``
 / ``python ladder.py control``.
 """
 
+import hashlib
 import json
 import resource
 import sys
@@ -73,6 +74,20 @@ BETA_REF_B = {
     2: 1220.4777421405508,
     3: 868.5400506458038,
 }
+
+
+# --- section 6 negative control: governing arithmetic ----------------------
+# docs/design/d45_negative_control_addendum.md was written before the run and
+# fixes what section 6 of the pre-registration leaves open.  Nothing here
+# amends it: PAIR_TOL is a pairing distance, MOVE_BAND/EPS_EFF_BAND are the
+# addendum's readings of "a few percent" / the 4-d.p. fingerprints.
+ADDENDUM = ROOT / "docs" / "design" / "d45_negative_control_addendum.md"
+RECORD_A = Path(__file__).resolve().parent / "records" / "level1.json"
+PAIR_TOL = 0.02                 # addendum section 2: 2 per cent relative in beta
+MOVE_BAND = 0.02                # addendum section 3: |r - p| <= 0.02
+EPS_EFF_BAND = 0.02             # addendum section 4: |eps_eff - ref| <= 0.02
+BETA_REF_B_ORDERED = [BETA_REF_B[1], BETA_REF_B[2], BETA_REF_B[3]]
+EPS_EFF_REF_B = [(b / K0) ** 2 for b in BETA_REF_B_ORDERED]
 
 
 def rule(title):
@@ -371,12 +386,95 @@ def run_mixed(levels):
         print("  cross-check passes:", gate, "; extra survivors:", len(surplus_mixed))
 
 
+def sha256_file(path):
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def record_a_candidates(path):
+    """Geometry A candidates from the committed record (addendum section 1).
+
+    Uses the record's own filter-survival flags when it carries them; otherwise
+    recomputes retention with the same rule (``|eps_eff - 1| <= EPS_EFF_TOL``
+    is dropped).  Positional ``matched_by_order`` is deliberately not used:
+    addendum section 2 records that it pairs an artifact at level 1.
+    """
+    rec = json.loads(path.read_text())
+    rows = rec["classification"]["candidates_all"]
+    use_flags = all("kept" in r for r in rows)
+    kept, dropped = [], []
+    for r in rows:
+        survives = bool(r["kept"]) if use_flags else (
+            abs(r["eps_eff"] - 1.0) > EPS_EFF_TOL)
+        row = {"index": r.get("index"), "beta": r.get("beta"),
+               "beta_sq": r.get("beta_sq"), "eps_eff": r.get("eps_eff"),
+               "curl_ratio": r.get("curl_ratio"),
+               "drop_reason": (None if survives else
+                               r.get("drop_reason") or
+                               "|eps_eff - 1| <= %.0e" % EPS_EFF_TOL)}
+        (kept if survives else dropped).append(row)
+    physical = [r for r in kept
+                if r["beta"] is not None and r["beta_sq"] is not None
+                and r["beta_sq"] > 0.0]
+    physical.sort(key=lambda r: -r["beta_sq"])
+    route = ("committed 'kept' flag" if use_flags
+             else "recomputed |eps_eff - 1| <= %.0e" % EPS_EFF_TOL)
+    return rec, kept, dropped, physical, route
+
+
+def pair_by_value(beta_refs, candidates, tol=PAIR_TOL):
+    """Addendum section 2: nearest retained physical candidate within ``tol``."""
+    out = []
+    for i, ref in enumerate(beta_refs):
+        ranked = sorted(((abs(c["beta"] - ref) / ref, c) for c in candidates),
+                        key=lambda t: t[0])
+        entry = {"mode": i + 1, "beta_ref": ref, "paired": False,
+                 "candidate": None, "distance": None,
+                 "nearest": [{"beta": c["beta"], "distance": float(d)}
+                             for d, c in ranked[:3]]}
+        if ranked:
+            best_d, best = ranked[0]
+            if best_d <= tol:
+                entry["paired"] = True
+                entry["distance"] = float(best_d)
+                entry["candidate"] = {"index": best["index"], "beta": best["beta"],
+                                      "beta_sq": best["beta_sq"],
+                                      "eps_eff": best["eps_eff"],
+                                      "curl_ratio": best["curl_ratio"]}
+        out.append(entry)
+    return out
+
+
+def _fmt_beta(x):
+    return "n/m" if x is None else "%.15g" % x
+
+
 def run_control():
-    """STEP 4: section 6 negative control, geometry B at level 1."""
+    """STEP 4: section 6 negative control, geometry B at level 1.
+
+    Inputs, pairing and the readings of conditions 1-3 are taken from
+    docs/design/d45_negative_control_addendum.md, which was written before
+    this run.  The solver path is the undeflated one the committed geometry A
+    records came from (addendum section 8).
+    """
     rule("NEGATIVE CONTROL (section 6), geometry B: t = b/8")
     t0 = time.time()
+
+    addendum_sha = sha256_file(ADDENDUM) if ADDENDUM.exists() else None
+    record_sha = sha256_file(RECORD_A)
+
+    # ---- geometry A: the committed record, addendum section 1 -------------
+    rec_a, kept_a, dropped_a, phys_a, route_a = record_a_candidates(RECORD_A)
+    print("  geometry A record: %s" % RECORD_A)
+    print("    sha256 %s" % record_sha)
+    print("    retention route: %s ; kept %d, dropped %d, physical %d"
+          % (route_a, len(kept_a), len(dropped_a), len(phys_a)))
+
+    # ---- geometry B analytic poles, then the live solve -------------------
     rejected = []
     roots_b = solve_ref(T_B, rejected=rejected)[::-1]
+    eps_eff_ref_b = list(EPS_EFF_REF_B)
     print("  geometry B poles:", ", ".join("%.12f" % p for p in sorted(poles(T_B))))
     print("  geometry B roots (%d accepted, %d bracket(s) rejected on a pole):"
           % (len(roots_b), len(rejected)))
@@ -396,63 +494,285 @@ def run_control():
     L = 1
     ny = LEVEL_NY[L]
     mesh, eps_call, boundaries, nx, h = build_mesh(ny, T_B)
+    ys = B * np.arange(ny + 1) / ny
+    node_hits = np.where(ys == T_B)[0]
+    node_index = int(node_hits[0]) if node_hits.size else None
+    node_exact = bool(node_hits.size > 0 and np.all(ys[node_hits] == T_B))
+    print("  interface y = t_B = %.17g at ny = %d: node index %s, bit-exact %s"
+          % (T_B, ny, node_index, node_exact))
+
+    t_solve = time.time()
     res = mode2d.solve_modes(mesh, K0, SIGMA, eps_r=eps_call,
                              boundaries=boundaries, k=K_CAND)
-    rec_b = classify(mesh, res, "geometry_B_level%d" % L, roots_b, None)
+    wall_b = time.time() - t_solve
+    rec_b = classify(mesh, res, "geometry_B_level%d" % L, roots_b, eps_eff_ref_b)
+    print("  geometry B solve: wall %.3f s  solver beta %.17g  eps_eff %.17g"
+          "  residual %.3e  (module %s)"
+          % (wall_b, res.beta, res.eps_eff, res.residual, mode2d.__file__))
+    print("  retained geometry B candidates (beta^2 descending):")
+    print("    %-4s %-22s %-22s %-20s %s"
+          % ("idx", "beta", "beta^2", "eps_eff", "curl_ratio"))
+    if rec_b["retained"]:
+        for r in rec_b["retained"]:
+            print("    %-4d %-22s %-22s %-20.12g %+.8e"
+                  % (r["index"],
+                     "n/a (beta^2<0)" if r["beta"] is None else "%.17g" % r["beta"],
+                     "%.17g" % r["beta_sq"], r["eps_eff"], r["curl_ratio"]))
+    else:
+        print("    (none retained)")
 
-    l1 = json.loads((OUT / "level1.json").read_text())
-    a_betas = {m["order"]: m["beta"] for m in l1["classification"]["matched_by_order"]}
+    phys_b = [r for r in rec_b["retained"]
+              if r["beta"] is not None and r["beta_sq"] > 0.0]
 
-    moves = []
-    for m in rec_b["matched_by_order"]:
-        bA = a_betas.get(m["order"])
-        bB = m["beta"]
-        if bA is None or bB is None:
-            moves.append({"order": m["order"], "beta_A": bA, "beta_B": bB,
-                          "relative_movement": None})
+    # ---- pairing by value, addendum section 2 -----------------------------
+    pair_a = pair_by_value(list(BETA_REF_DOC), phys_a)
+    pair_b = pair_by_value(BETA_REF_B_ORDERED, phys_b)
+    print("  pairings (nearest retained physical candidate, tol %.2f relative):"
+          % PAIR_TOL)
+    print("    %-4s %-20s %-20s %-11s %-20s %-20s %-11s"
+          % ("mode", "A ref", "A paired", "A dist", "B ref", "B paired", "B dist"))
+    for pa, pb in zip(pair_a, pair_b):
+        print("    %-4d %-20.15g %-20s %-11s %-20.15g %-20s %-11s"
+              % (pa["mode"], pa["beta_ref"], _fmt_beta(pa["candidate"] and
+                                                       pa["candidate"]["beta"]),
+                 "n/m" if pa["distance"] is None else "%.3e" % pa["distance"],
+                 pb["beta_ref"], _fmt_beta(pb["candidate"] and
+                                           pb["candidate"]["beta"]),
+                 "n/m" if pb["distance"] is None else "%.3e" % pb["distance"]))
+    for pa, pb in zip(pair_a, pair_b):
+        for tag, p in (("A", pa), ("B", pb)):
+            if not p["paired"]:
+                print("    NOT PAIRED: geometry %s mode %d (beta_ref %.17g); nearest: %s"
+                      % (tag, p["mode"], p["beta_ref"],
+                         ", ".join("%.17g at %.3e" % (n["beta"], n["distance"])
+                                   for n in p["nearest"]) or "no candidates"))
+
+    paired_idx_a = {p["candidate"]["index"] for p in pair_a if p["paired"]}
+    paired_idx_b = {p["candidate"]["index"] for p in pair_b if p["paired"]}
+    surplus_a = [r for r in phys_a if r["index"] not in paired_idx_a]
+    surplus_b = [r for r in phys_b if r["index"] not in paired_idx_b]
+    for tag, surplus in (("A", surplus_a), ("B", surplus_b)):
+        for r in surplus:
+            print("    unpaired retained candidate (geometry %s): beta %.17g"
+                  "  eps_eff %.16f  -- not recognised by the analytic census,"
+                  " not counted as a mode (addendum section 5)"
+                  % (tag, r["beta"], r["eps_eff"]))
+
+    # ---- condition 1: the movement band -----------------------------------
+    cond1 = []
+    for i, mode in enumerate((1, 2, 3)):
+        ca, cb = pair_a[i]["candidate"], pair_b[i]["candidate"]
+        p = (BETA_REF_B[mode] - BETA_REF_DOC[i]) / BETA_REF_DOC[i]
+        if ca is None or cb is None:
+            cond1.append({
+                "mode": mode, "beta_A": None if ca is None else ca["beta"],
+                "beta_B": None if cb is None else cb["beta"],
+                "r": None, "p": p, "r_minus_p": None, "band": MOVE_BAND,
+                "verdict": "NOT MEASURED",
+                "why": "no retained physical candidate inside %.2f relative "
+                       "in geometry %s" % (PAIR_TOL, "A" if ca is None else "B"),
+            })
+        else:
+            r = (cb["beta"] - ca["beta"]) / ca["beta"]
+            cond1.append({
+                "mode": mode, "beta_A": ca["beta"], "beta_B": cb["beta"],
+                "r": r, "p": p, "r_minus_p": r - p, "band": MOVE_BAND,
+                "verdict": "PASS" if abs(r - p) <= MOVE_BAND else "FAIL",
+                "why": None,
+            })
+
+    # ---- condition 2: eps_eff fingerprints -------------------------------
+    eps_b = [pair_b[i]["candidate"]["eps_eff"] if pair_b[i]["paired"] else None
+             for i in range(3)]
+    cond2 = []
+    for i, mode in enumerate((1, 2, 3)):
+        ref = EPS_EFF_REF_B[i]
+        e = eps_b[i]
+        if e is None:
+            cond2.append({"mode": mode, "eps_eff": None, "ref": ref, "delta": None,
+                          "strictly_decreasing": None, "band": EPS_EFF_BAND,
+                          "verdict": "NOT MEASURED",
+                          "why": "geometry B mode not paired"})
             continue
-        move = (bB - bA) / bA
-        analytic = ((BETA_REF_B[m["order"]] - BETA_REF_DOC[m["order"] - 1])
-                    / BETA_REF_DOC[m["order"] - 1])
-        moves.append({
-            "order": m["order"],
-            "beta_A": bA,
-            "beta_B": bB,
-            "relative_movement": move,
-            "analytic_relative_movement": analytic,
-            "difference_from_analytic": move - analytic,
-            "void_if_unchanged": bool(abs(move) < VOID_MOVE),
-        })
-        print("    mode %d  A %.6f  B %.6f  move %+.4f%%  analytic %+.4f%%  diff %+.2e"
-              % (m["order"], bA, bB, 100 * move, 100 * analytic, move - analytic))
+        delta = e - ref
+        dec, why = True, []
+        if i < 2:
+            nxt = eps_b[i + 1]
+            if nxt is None:
+                dec, why = None, why + ["mode %d unmeasured" % (mode + 1)]
+            elif not (e > nxt):
+                dec = False
+                why.append("eps_eff[%d] <= eps_eff[%d]" % (mode, mode + 1))
+        if i > 0:
+            prv = eps_b[i - 1]
+            if prv is None:
+                if dec is True:
+                    dec = None
+                why.append("mode %d unmeasured" % (mode - 1))
+            elif not (prv > e):
+                dec = False
+                why.append("eps_eff[%d] <= eps_eff[%d]" % (mode - 1, mode))
+        if dec is None:
+            verdict = "NOT MEASURED"
+        else:
+            verdict = "PASS" if (abs(delta) <= EPS_EFF_BAND and dec) else "FAIL"
+        cond2.append({"mode": mode, "eps_eff": e, "ref": ref, "delta": delta,
+                      "strictly_decreasing": dec, "band": EPS_EFF_BAND,
+                      "verdict": verdict, "why": "; ".join(why) or None})
 
-    void = any(m.get("void_if_unchanged") for m in moves)
+    # ---- condition 3: the analytic census --------------------------------
+    census = {
+        "endpoint": ENDPOINT,
+        "analytic_betas_A": list(BETA_REF_DOC),
+        "analytic_betas_B": list(BETA_REF_B_ORDERED),
+        "n_analytic_below_endpoint_A": sum(1 for b in BETA_REF_DOC if b < ENDPOINT),
+        "n_analytic_below_endpoint_B": sum(1 for b in BETA_REF_B_ORDERED
+                                           if b < ENDPOINT),
+        "n_solver_roots_below_endpoint_B": sum(1 for b in roots_b if b < ENDPOINT),
+        "fourth_analytic_mode_exists": False,
+        "note": "the analytic census has exactly three modes strictly below "
+                "sqrt(eps_r)*k0; a retained candidate can therefore pair to no "
+                "fourth analytic mode (addendum section 5). Candidates at the "
+                "endpoint and candidates with beta^2 < 0 are not counted.",
+    }
+    census_ok = (census["n_analytic_below_endpoint_A"] == 3
+                 and census["n_analytic_below_endpoint_B"] == 3)
+    cond3 = []
+    for i, mode in enumerate((1, 2, 3)):
+        pa, pb = pair_a[i]["paired"], pair_b[i]["paired"]
+        if not (pa and pb):
+            verdict, why = "NOT MEASURED", "mode not paired in geometry %s" % (
+                "A" if not pa else "B")
+        elif not census_ok:
+            verdict, why = "FAIL", "analytic census is not three below the endpoint"
+        else:
+            verdict, why = "PASS", None
+        cond3.append({"mode": mode, "paired_A": pa, "paired_B": pb,
+                      "census_ok": census_ok, "verdict": verdict, "why": why})
+
+    # ---- condition 4: the anchor is connected (as written) ---------------
+    cond4 = []
+    for i, mode in enumerate((1, 2, 3)):
+        r = cond1[i]["r"]
+        if r is None:
+            cond4.append({"mode": mode, "move": None, "void_move": VOID_MOVE,
+                          "void": None, "verdict": "NOT MEASURED"})
+        else:
+            v = bool(abs(r) < VOID_MOVE)
+            cond4.append({"mode": mode, "move": r, "void_move": VOID_MOVE,
+                          "void": v, "verdict": "VOID" if v else "PASS"})
+    void = any(c["void"] for c in cond4 if c["void"] is not None)
+
+    # ---- verdict ----------------------------------------------------------
+    not_measured = [i + 1 for i in range(3)
+                    if not (pair_a[i]["paired"] and pair_b[i]["paired"])]
+    any_fail = any(c["verdict"] == "FAIL"
+                   for group in (cond1, cond2, cond3) for c in group)
+    if void:
+        overall, code = "VOID", 2
+    elif any_fail:
+        overall, code = "FAIL", 1
+    elif not_measured:
+        overall, code = "NOT MEASURED", 1
+    else:
+        overall, code = "PASS", 0
+
+    print()
+    print("  %-4s %-19s %-19s %-12s %-12s %-12s %-5s %-5s %-5s %s"
+          % ("mode", "beta_A", "beta_B", "r", "p", "r-p", "C1", "C2", "C3", "C4"))
+    for i in range(3):
+        ca, cb = pair_a[i]["candidate"], pair_b[i]["candidate"]
+        print("  %-4d %-19s %-19s %-12s %-12s %-12s %-5s %-5s %-5s %s"
+              % (i + 1,
+                 _fmt_beta(None if ca is None else ca["beta"]),
+                 _fmt_beta(None if cb is None else cb["beta"]),
+                 "n/m" if cond1[i]["r"] is None else "%+.6f" % cond1[i]["r"],
+                 "%+.6f" % cond1[i]["p"],
+                 "n/m" if cond1[i]["r_minus_p"] is None
+                 else "%+.3e" % cond1[i]["r_minus_p"],
+                 cond1[i]["verdict"][:4], cond2[i]["verdict"][:4],
+                 cond3[i]["verdict"][:4], cond4[i]["verdict"][:4]))
+    print("  condition 3 census: A %d, B %d analytic modes below the endpoint %.12f;"
+          " solver roots below it in B: %d"
+          % (census["n_analytic_below_endpoint_A"],
+             census["n_analytic_below_endpoint_B"], ENDPOINT,
+             census["n_solver_roots_below_endpoint_B"]))
+    print("  harness void (section 6.4 / addendum section 6):", void)
+    print("  OVERALL: %s  (exit %d)" % (overall, code))
+
     payload = {
         "step": "4 (negative control, section 6)",
-        "level": L,
-        "geometry": "B (t = b/8)",
-        "t": T_B,
-        "ny": ny,
-        "nx": nx,
-        "h": h,
-        "sigma": SIGMA,
+        "addendum": {"path": str(ADDENDUM.relative_to(ROOT)), "sha256": addendum_sha},
+        "input_record": {
+            "path": str(RECORD_A.relative_to(ROOT)), "sha256": record_sha,
+            "retention_route": route_a,
+            "kept": kept_a, "dropped": dropped_a, "physical_retained": phys_a,
+            "matched_by_order_in_record": rec_a["classification"]["matched_by_order"],
+            "matched_by_order_note": "not used: positional matching pairs an "
+                                     "artifact at level 1 (addendum section 2)",
+        },
+        "geometry": "B (t = b/8)", "level": L, "ny": ny, "nx": nx, "h": h,
+        "t_A": T, "t_B": T_B, "t_node_index": node_index,
+        "t_node_line_bit_exact": node_exact,
+        "b": B, "a": A, "eps_r": EPS_R, "k0": K0, "sigma": SIGMA,
         "k_candidates": K_CAND,
-        "reference_geometry_B": ref_check,
-        "poles_B": sorted(poles(T_B)),
-        "rejected_brackets_B": [[b, rr, sc] for (b, rr, sc) in rejected],
-        "n_pec": int(res.n_pec),
-        "n_free": int(res.n_dof),
+        "analytic": {
+            "A": {"beta": list(BETA_REF_DOC), "eps_eff": list(EPS_EFF_DOC)},
+            "B": {"beta": BETA_REF_B_ORDERED, "eps_eff": eps_eff_ref_b,
+                  "poles": sorted(poles(T_B)), "roots": [float(b) for b in roots_b],
+                  "rejected_brackets": [[b, rr, sc] for (b, rr, sc) in rejected],
+                  "diagnose": ref_check},
+        },
+        "measured": {
+            "A": {"source": "records/level1.json", "candidates": phys_a},
+            "B": {"source": "live undeflated solve",
+                  "solver_beta": float(res.beta),
+                  "solver_eps_eff": float(res.eps_eff),
+                  "solver_residual": float(res.residual),
+                  "solver_module": mode2d.__file__,
+                  "n_pec": int(res.n_pec), "n_free": int(res.n_dof),
+                  "candidates_all": rec_b["candidates_all"],
+                  "retained": rec_b["retained"],
+                  "unpaired_retained": surplus_b,
+                  "solve_wall_s": wall_b},
+        },
+        "pairings": {
+            "rule": "addendum section 2: nearest retained physical candidate "
+                    "within the distance, each geometry against its own "
+                    "analytic betas, then A to B through the shared analytic "
+                    "mode index",
+            "tol_relative": PAIR_TOL, "A": pair_a, "B": pair_b,
+            "unpaired_retained_A": surplus_a,
+        },
+        "conditions": {
+            "1_movement": {"rule": "|r - p| <= %.2f" % MOVE_BAND,
+                           "band": MOVE_BAND, "per_mode": cond1},
+            "2_eps_eff": {"rule": "|eps_eff - ref| <= %.2f and the measured "
+                                  "triple strictly decreasing in mode index"
+                                  % EPS_EFF_BAND,
+                          "band": EPS_EFF_BAND, "ref": eps_eff_ref_b,
+                          "per_mode": cond2},
+            "3_census": {"census": census, "per_mode": cond3},
+            "4_connected": {"rule": "void iff |beta_B - beta_A| / beta_A < %.0e"
+                                    " for any paired mode" % VOID_MOVE,
+                            "void_move": VOID_MOVE, "per_mode": cond4,
+                            "harness_void": void},
+        },
+        "verdict": overall,
+        "exit_code": code,
+        "exit_code_semantics": {
+            "0": "overall PASS: all four conditions hold on all three modes",
+            "2": "VOID: |beta_B - beta_A| / beta_A < 1e-6 for a paired mode "
+                 "(section 6.4 / addendum section 6); the exercise is void",
+            "1": "FAIL or NOT MEASURED: a measured condition failed, or a mode "
+                 "could not be paired inside the distance; NOT MEASURED is not "
+                 "a pass and not a fail",
+        },
+        "not_measured_modes": not_measured,
         "wall_time_s": time.time() - t0,
-        "classification": rec_b,
-        "movements": moves,
-        "harness_void": bool(void),
-        "void_rule": "section 6.4: |beta_B - beta_A| / beta_A < %.0e for any of "
-                     "the three -> the whole exercise is void" % VOID_MOVE,
-        "crossing_check": "order pairing and eps_eff fingerprint to be read off "
-                          "the two matched_by_order tables",
     }
     dump(OUT / "negative_control.json", payload)
-    print("  harness void:", void)
+    return code
 
 
 def main(argv):
@@ -464,7 +784,7 @@ def main(argv):
     elif what == "mixed":
         run_mixed([int(a) for a in argv[1:]] or [1, 2, 3])
     elif what == "control":
-        run_control()
+        return run_control()
     else:
         raise SystemExit("usage: ladder.py {driven|mixed|control} [levels...]")
     return 0
