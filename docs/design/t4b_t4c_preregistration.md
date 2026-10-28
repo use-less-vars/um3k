@@ -542,3 +542,196 @@ the `T4c` PASS must never be cited as support for `T4_amp` or for the `T4b` clau
   never accuracy. What is new is that `T4c`'s PASS needs the identical caution for the identical reason:
   self-consistency without a dense anchor is not accuracy, and a converged `lambda` is not a converged
   `R`. The pass is a convergence result and it certifies no physics (§3.6).
+
+## 8. Dispatch 42 — `T4b` scored as new work, `T4c` cited by reference, two errata recorded append-only
+
+**What this section is.** Dispatch 42 scores `T4b` from the cross-mesh overlap artefact, which no earlier
+section scores; it cites `T4c`'s already-recorded PASS without restating it; and it records two errata
+against text that is left standing. No existing line of this document is edited, reworded, renumbered or
+deleted. Where this section and an earlier line disagree, both stay on the page and the disagreement is
+named: a correction written over the record is a correction nobody can audit afterwards.
+
+### 8.1 Provenance
+
+Supplied with the dispatch, recorded unaltered. None of it is re-derived in this section.
+
+- HEAD at time of writing: `d981e17`.
+- `tools/host/sparse-probe/out_mesh/mode_overlap.json` introduced at commit `0a28615` ("sparse-probe:
+  cross-mesh mode overlap -- the hump is NOT branch tracking").
+- `T4c` PASS scored at commit `9b04455` ("T4c: score the eigenvalue ladder at its registered 1e-4 (PASS), ..."),
+  on evidence `tools/host/sparse-probe/out_highres/high_res_sweep.json` plus the three points
+  `tools/host/sparse-probe/out_highres/points/hi40k_nx835.json`, `hi50k_nx1043.json`, `hi60k_nx1251.json`.
+- Registration commit for this document: `d74f6ce`.
+- The artefact as scored: `27,282` bytes, sha256
+  `95f21ebe8f7f26d1dbc44cac649eecea5cc12e5518d8cc32cf7b1dae7e3e19df`, written by
+  `tools/host/sparse-probe/mode_overlap.py`.
+
+**No calendar date is asserted for this section.** The artefact carries its own
+`generated_utc = 2026-10-28T03:00:56Z`; that stamps the JSON, and it is quoted here in that role only.
+
+### 8.2 `T4b`, scored: **PASS** on both clauses
+
+**Registered thresholds, unchanged.** `e_z_vv`: `min` over the 10 pairs `>= 0.99` (`:94`). `e_y`: `min`
+over the 10 pairs `>= 0.98` (`:119`). The registered statistic is the `strip_footprint` slab of §2.1 —
+`Y0 <= y <= Y1 (+tol); row mask, all z` — masked to `31` rows for `e_z_vv` and `30` rows for `e_y`. No
+threshold, region or definition was moved to score it, and the numbers below were recomputed from the
+artefact rather than copied from §2.2 or from `:100`-`:112`.
+
+| pair | `e_z_vv` at `strip_footprint` | `e_y` at `strip_footprint` |
+|---|---|---|
+| `M5`-`M1` | `0.99954204353945142` | `0.99780350156729081` |
+| `M5`-`M2` | `0.99882262337369532` | `0.98894088905801447` |
+| `M5`-`M3` | `0.99895580049367994` | `0.98563753484926198` |
+| `M5`-`M4` | `0.99894149934256637` | `0.98708786933438752` |
+| `M1`-`M2` | `0.99891402947726948` | `0.9905964431537051` |
+| `M1`-`M3` | `0.99919052192113` | `0.98862869688521127` |
+| `M1`-`M4` | `0.99917844746464868` | `0.9899229788322117` |
+| `M2`-`M3` | `0.99931341005953978` | `0.99505334990176519` |
+| `M2`-`M4` | `0.99937328561166217` | `0.99282464644427737` |
+| `M3`-`M4` | `0.99994267018046767` | `0.99636376950559491` |
+
+- **`e_z_vv`** — `min = 0.99882262337369532` at `M5`-`M2`; `max = 0.99994267018046767` at `M3`-`M4`;
+  `spread = 0.0011200468067723568`; `margin = +0.0088226233736953263` against `0.99`. **PASS.**
+- **`e_y`** — `min = 0.98563753484926198` at `M5`-`M3`; `max = 0.99780350156729081` at `M5`-`M1`;
+  `spread = 0.012165966718028831`; `margin = +0.0056375348492619937` against `0.98`. **PASS.**
+
+**Both clauses PASS.** The binding clause is `e_y`, exactly as `:512` expected it to be, and it clears
+its bar by `0.0056` — the small margin is recorded rather than rounded. §6's two rows at `:511`-`:512`
+recorded both `T4b` clauses as unevaluated; this section is their evaluation, and those rows are left as
+they stand, so the status of `T4b` is read from the two places together.
+
+**The exact command that produced every number above**, run from the repository root, output shown
+nowhere and numbers transcribed above:
+
+```bash
+python3 - <<'PY'
+import json, itertools
+g17 = lambda x: '%.17g' % x
+d = json.load(open('tools/host/sparse-probe/out_mesh/mode_overlap.json'))
+LAB = d['labels']; S = {l: l.split('_')[0] for l in LAB}
+PR = [(a, b) for a, b in itertools.combinations(LAB, 2)]
+REG = 'strip_footprint'
+THR = {'e_z_vv': 0.99, 'e_y': 0.98}
+print('artefact   : tools/host/sparse-probe/out_mesh/mode_overlap.json')
+print('generated  :', d['generated_utc'])
+print('region     :', REG, '=', d['region_notes'][REG])
+print('mask counts:', d['region_notes']['mask_counts'])
+print('thresholds :', THR, '(preregistered)')
+print('pairs      :', len(PR))
+for f in ('e_z_vv', 'e_y'):
+    M = d['pairwise_abs_corr'][f][REG]
+    RA = d['reference_agreement'][f]
+    rows = [(abs(M[a][b]), a, b) for a, b in PR]
+    print('\n== %s @ %s ==' % (f, REG))
+    for v, a, b in rows:
+        print('   %-3s-%-3s %s' % (S[a], S[b], g17(v)))
+    lo = min(rows); hi = max(rows)
+    print('   min      %s  at %s-%s' % (g17(lo[0]), S[lo[1]], S[lo[2]]))
+    print('   max      %s  at %s-%s' % (g17(hi[0]), S[hi[1]], S[hi[2]]))
+    print('   spread   %s' % g17(hi[0] - lo[0]))
+    print('   margin   %s   (min minus %s)' % (g17(lo[0] - THR[f]), g17(THR[f])))
+    print('   verdict  %s (min against %s)' % ('PASS' if lo[0] >= THR[f] else 'FAIL', g17(THR[f])))
+    cons = [(abs(M[a][b]) - max(abs(RA[a]), abs(RA[b])), a, b) for a, b in PR]
+    np_ = sum(1 for r, a, b in cons if r >= 0)
+    print('   consistency @ %s: npairs %d npass %d margin_min %s margin_max %s'
+          % (REG, len(cons), np_, g17(min(r for r, a, b in cons)), g17(max(r for r, a, b in cons))))
+    print('   fails    : %s' % (', '.join('%s-%s' % (S[a], S[b]) for r, a, b in cons if r < 0) or 'none'))
+    G = d['pairwise_abs_corr'][f]['global']
+    gl = [abs(G[a][b]) - max(abs(RA[a]), abs(RA[b])) for a, b in PR]
+    print('   [global-domain recompute] npass %d margin_min %s margin_max %s'
+          % (sum(1 for x in gl if x >= 0), g17(min(gl)), g17(max(gl))))
+    print('   [stored consistency block] npass %d margin_min %s margin_max %s'
+          % (d['consistency'][f]['npass'], g17(d['consistency'][f]['margin_min']), g17(d['consistency'][f]['margin_max'])))
+res = [(e['residual'], e['label']) for e in d['meshes']]
+print('\n== residuals (rule 4: <= 1e-6) ==')
+for v, l in res:
+    print('   %-3s %s  <=1e-6 %s' % (S[l], g17(v), v <= 1e-6))
+print('   span %s .. %s ; all<=1e-6 %s' % (g17(min(v for v, _ in res)), g17(max(v for v, _ in res)), all(v <= 1e-6 for v, _ in res)))
+print('\n== reference_agreement (range per field) ==')
+for f in ('e_z_vv', 'e_y'):
+    vs = list(d['reference_agreement'][f].values())
+    print('   %s min %s max %s' % (f, g17(min(vs)), g17(max(vs))))
+PY
+```
+
+### 8.3 What the pass certifies: mesh-independence, never accuracy
+
+`T4b` compares meshes against each other. A pass says the conductor-region field is the same field on
+every mesh in the set; it says nothing about whether that field is right, and §2.4 (`:127`) already says
+so. The artefact measures the distance this test does not close: `reference_agreement` against the
+analytic reference is `0.96650791654954193` to `0.97706884522780824` for `e_z_vv`, and
+`0.96992994184855863` to `0.98595478750123633` for `e_y`. Mutual agreement at `0.9988` between meshes
+that each sit near `0.97` with the reference is a statement about the meshes. The accuracy question stays
+with `T4_amp` and with the dense Route-C reference, and this section moves neither.
+
+### 8.4 §4's residual rule: satisfied `5 of 5`
+
+The rule at `:452`-`:455`: any solve reporting residual `> 1e-6` is invalid and may not be banked, scored
+or cited. The artefact carries one residual per mesh:
+
+- `M5_ctrl_rung4` `1.3817866142195237e-11`
+- `M1_fe11888` `1.100478257696839e-12`
+- `M2_fe19665` `3.5519869473546238e-12`
+- `M3_fe28980` `3.2639272825896974e-12`
+- `M4_fe30672` `6.0610533647728821e-11`
+
+All five are `<= 1e-6`: five of five, so every mesh in the `T4b` set is admissible to be scored at all.
+This is a precondition, not a result; it certifies nothing about the answers.
+
+### 8.5 `T4c` — cited by reference, not restated
+
+`T4c` is **PASS** at its registered `1e-4`, recorded in §3.5 (`:244`) and scored at commit `9b04455` on
+the `40k`/`50k`/`60k` ladder with the evidence files named in §8.1. This section does not restate that
+verdict, re-quote its margins or re-score it, because a verdict recorded twice is a verdict that can
+drift, and the second copy is always the one that gets cited.
+
+### 8.6 Errata E1 — the stored `consistency` block is global-domain, and §2's statistic is not
+
+`mode_overlap.json` carries a `consistency` block, quoted at `:141`-`:147` as `10/10` for `e_z_vv`
+(`margin_min = 0.009012094703758966`) and `4/10` for `e_y` (`margin_min = -0.007177504813400626`,
+failing `M5` x `{M2, M3, M4}` and `M1` x `{M2, M3, M4}`). Those figures are computed over the **global**
+field domain, not over the `strip_footprint` slab that §2.1 registers as the statistic. Recomputed at
+`strip_footprint` under the block's own definition,
+`|corr(a,b)| - max(|corr(a,ref)|, |corr(b,ref)|) >= 0`:
+
+| field | npairs | npass | `margin_min` | `margin_max` | failing pairs |
+|---|---|---|---|---|---|
+| `e_z_vv` | `10` | `10` | `0.021886955265871699` | `0.029370002975015019` | none |
+| `e_y` | `10` | `9` | `-0.00031725265197435348` | `0.020968676452317814` | `M5`-`M3` |
+
+**How the domain mismatch was identified, rather than inferred.** Recomputing the same definition from
+the **global** matrix reproduces the stored block to the last digit in both fields — `10/10`,
+`0.009012094703758966` / `0.021942535331667679` for `e_z_vv`; `4/10`, `-0.0071775048134006258` /
+`0.013072794511649999` for `e_y`. The block is internally consistent; it is answering a different
+question than the one §2 registers.
+
+**What follows from this, and what does not.** The document understates itself: at the registered region
+`e_y` is `9/10` with a single failing pair, not `4/10` with six. The error is conservative — the document
+claims less than its own registered region supports — and **no verdict changes**: both `T4b` clauses are
+`min` over pairwise absolute correlation (`:511`-`:512`) and never consult the `consistency` block, so
+the PASS in §8.2 rests on numbers this errata does not touch. The block also remains unusable as an
+accuracy check in either domain, for the reason `:147` gives. Lines `:141`-`:147` are left exactly as
+written.
+
+### 8.7 Errata E2 — the residual span at `:490` is too narrow at the bottom
+
+`:490` states that the banked residuals span `1e-11` to `6e-11`. Three of the five values listed on the
+following two lines are `1e-12`, not `1e-11`: `M1` `1.100478257696839e-12`, `M2`
+`3.5519869473546238e-12`, `M3` `3.2639272825896974e-12`. The true span is `1.100478257696839e-12` to
+`6.0610533647728821e-11`, i.e. `1.10e-12` to `6.06e-11`. The five listed values are right and the
+sentence bounding them is wrong. Nothing gates on the span — the gate is `<= 1e-6` (§4) and it is
+satisfied five of five (§8.4) — so no verdict moves either way. `:490` is left as written.
+
+### 8.8 `T4_amp` — unchanged
+
+`T4_amp` is **FAIL** (Physics) against `|Q - 1| <= 0.10` (`decisions.md:8176`), measured at `44.09 %`
+(`decisions.md:8234`), and that bar is not moved, not widened and not re-scoped here; no re-run is
+planned. A `T4b` pass cannot soften it: §5's boundary clause (`:498`) already forbids reading an
+additional test as an excuse, and §8.3 says the same in the other direction.
+
+### 8.9 Append-only note
+
+This section was appended to the end of the document. No existing line was modified, reworded, renumbered
+or deleted: the two errata of §8.6 and §8.7 point at the lines they correct instead of overwriting them,
+and the `T4b` scoring of §8.2 stands beside §6's rows rather than replacing them.
+
