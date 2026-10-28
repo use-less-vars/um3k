@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:emfit:job:v1",
+  "title": "emfit.job.v1 — a job submitted to the emfit resource",
+  "description": "The input document of the emfit resource contract. It is specified at decisions.md:7012-7093 (section 101.19, subsection (b)) and restated, with the readings behind every choice, in docs/design/job_schema.md. A job states what is to be solved: the geometry, the materials, the excitation ports, the observables wanted, the frequencies and the tolerance. What stays on the tool's side of the boundary — meshing, time stepping, iteration count, choice of solver — is not expressible here, by design (decisions.md:7016-7022). Units: every numeric member carries its unit in its name; the job is unit-suffixed, the tool's interior is SI, and the conversion happens at the boundary (emfit/demos.py:76, :77, :91). The one unit trap this schema cannot leave to the caller is the frequency, which is in GHz and not Hz; see the description of frequencies_ghz. The object is closed (additionalProperties false) so that a typo is refused at submit time; the tolerance obligation of decisions.md:7061-7063 — that a reader must ignore members it does not know — is carried by the reading side, not by this schema, and the asymmetry is recorded in docs/design/job_schema.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "geometry",
+    "materials",
+    "sources",
+    "observables",
+    "frequencies_ghz",
+    "tolerance"
+  ],
+  "properties": {
+    "schema": {
+      "description": "The document's own name and version. It is a constant, not a hint: a document that says anything else is not an emfit.job.v1 and must be refused rather than reinterpreted (decisions.md:7059).",
+      "const": "emfit.job.v1"
+    },
+    "geometry": {
+      "description": "What is to be solved, as either a board file or a parametric shape. Exactly one of the two forms is accepted, discriminated by the kind member (decisions.md:7028, :7036-7038).",
+      "oneOf": [
+        { "$ref": "#/$defs/geometry_kicad" },
+        { "$ref": "#/$defs/geometry_parametric" }
+      ]
+    },
+    "materials": {
+      "description": "The substrate the geometry is built on. Nothing else is stated here: conductor and boundary treatments are the tool's, per the boundary rule at decisions.md:7016-7022.",
+      "$ref": "#/$defs/materials"
+    },
+    "sources": {
+      "description": "The excitation ports, at least one. Order is not significant, and a port is named so that observables and provenance can refer to it by name rather than by position (decisions.md:7030).",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "observables": {
+      "description": "What the caller wants back, at least one, named in the same language the result uses for tolerance_achieved (decisions.md:7031, :7050). An observable this schema cannot name cannot be asked for; that is the version-bump rule, not an oversight.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/observable" }
+    },
+    "frequencies_ghz": {
+      "description": "The frequencies at which the observables are wanted, at least one. The numbers are GIGAHERTZ, not hertz: the tool's interior is SI and this field is the boundary, where the conversion is a single multiplication by 1e9 (emfit/demos.py:91, f_target=float(f0_ghz) * 1e9). A caller who writes 2.4e9 here has written a valid number and a 2.4 EHz request, which no type keyword can catch — hence the normative ceiling of 1000.0 GHz (1 THz) below. The ceiling is a unit guard, not a physics claim: every fixture in this repository runs between 1 and 20 GHz (emfit/demos.py:392). A time-domain solver accumulates at these frequencies and echoes the set back in its provenance; a frequency-domain solver solves at them (docs/design/core_contract.md, section 2).",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "description": "One frequency, in gigahertz. Must be positive and no greater than 1000.0 GHz.",
+        "type": "number",
+        "exclusiveMinimum": 0.0,
+        "maximum": 1000.0
+      }
+    },
+    "tolerance": {
+      "description": "The accuracy the caller requires. The kind names the measure and the value is its magnitude in that measure's own units, so the pair is never ambiguous about what 1e-3 is 1e-3 of. Scope: as drafted at decisions.md:7032 the tolerance is one value for the whole job while the result's tolerance_achieved is keyed per observable; that asymmetry is a recorded defect (decisions.md:7087-7089) and this schema does not repair it — it reproduces the draft, and the repair is deferred to emfit.job.v2 rather than made silently here.",
+      "$ref": "#/$defs/tolerance"
+    }
+  },
+  "$defs": {
+    "geometry_kicad": {
+      "title": "geometry, board-file form",
+      "description": "A geometry read out of a KiCad board file, which is the form decisions.md:7028 shows and the only one it shows.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator of the board-file form. It is the constant kicad, so that a reader knows which members to expect before reading them.",
+          "const": "kicad"
+        },
+        "path": {
+          "description": "Path to a .kicad_pcb file, interpreted relative to the directory holding the job document unless it is absolute. The schema checks only that it is a non-empty string: existence, readability and stackup are the tool's business and a path check here would be a second, weaker truth (decisions.md:7016-7022). The board reader that would consume it already exists (emfit/cli.py, the board subcommand).",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      }
+    },
+    "geometry_parametric": {
+      "title": "geometry, parametric form",
+      "description": "A geometry stated as dimensions rather than as a file. Required by decisions.md:7036-7038, which records that every fixture in this repository is parametric and that a board-only schema could not express a single test that justifies it. The members are deliberately physical and not mesh-shaped: cell counts, time stepping and station placement stay solver-side (decisions.md:7016-7022).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "box_length_mm", "strip_width_mm", "substrate_cells"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator of the parametric form. It is the constant parametric, and it is what a reader switches on.",
+          "const": "parametric"
+        },
+        "box_length_mm": {
+          "description": "Total length of the computational box along the line direction, in millimetres, absorber included. This is the quantity the tree reports as geometry['length'] in metres (emfit/studies.py:3262); the job states it in millimetres because every human-facing length in the tree does (emfit/demos.py:389, :407-409).",
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "strip_width_mm": {
+          "description": "Width of the conducting strip, in millimetres. The tree derives it as strip_cells * cell with cell = substrate_h_mm / substrate_cells (emfit/demos.py:76-77); the job states the width itself so that the mesh relation is not baked into the contract.",
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "substrate_cells": {
+          "description": "How many cells the substrate slab is discretised into. It is dimensionless because it is a count, and it is here rather than solver-side because it is the one mesh parameter the realised cell size depends on, cell = substrate_h_mm / substrate_cells (emfit/demos.py:76-77).",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "materials": {
+      "title": "materials",
+      "description": "The substrate: permittivity and thickness, both required. An absent thickness would leave the cell size undefined for the parametric form, so neither is optional.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["substrate_eps_r", "substrate_h_mm"],
+      "properties": {
+        "substrate_eps_r": {
+          "description": "Relative permittivity of the substrate slab, dimensionless and therefore unit-free. It must be at least 1.0: a value below vacuum would be a metamaterial claim the tool does not make, and the demo studies restrict themselves to 1.0-16.0 (emfit/demos.py:386).",
+          "type": "number",
+          "minimum": 1.0
+        },
+        "substrate_h_mm": {
+          "description": "Thickness of the substrate slab, in millimetres, strictly positive. It is also the length that sets the cell size, cell = substrate_h_mm / substrate_cells, exactly as the demo does it (emfit/demos.py:76-77); the tool converts to metres at the boundary.",
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        }
+      }
+    },
+    "source": {
+      "title": "one excitation port",
+      "description": "One port. A port is placed either by board net or by parametric position, and by exactly one of the two: the oneOf below requires that at least one of net and x_mm be present, and the design note records that the cross-document rule — net goes with kicad geometry, x_mm with parametric — is deliberately not enforced here, because JSON Schema cannot see the sibling geometry from inside this object without duplicating the whole document.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "oneOf": [
+        { "required": ["net"] },
+        { "required": ["x_mm"] }
+      ],
+      "properties": {
+        "kind": {
+          "description": "The kind of source. Only modal_port is named: a modal port excites the mode the extraction layer computes, which is the only excitation the tree has a measurement path for (emfit/ports.py, the mode profile and DftAccumulator machinery).",
+          "const": "modal_port"
+        },
+        "name": {
+          "description": "Name of the port, unique within the job. It is the handle the result's provenance uses to say which port a tolerance was achieved on, so it must be a stable identifier rather than a label: letters, digits and underscores, starting with a letter (decisions.md:7030).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+        },
+        "net": {
+          "description": "Board net the port sits on, for the board-file geometry form. It must match a net the board reader reports; the schema cannot check that, and a name that matches nothing is a tool-side failure rather than a schema failure (decisions.md:7030).",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "x_mm": {
+          "description": "Position of the port plane along the line direction, in millimetres from the near wall of the box, for the parametric geometry form. This is the job-level spelling of the tree's ix_port * cell (emfit/studies.py:2566), which is a node count times a cell size and therefore not a contract quantity.",
+          "type": "number",
+          "minimum": 0.0
+        }
+      }
+    },
+    "observable": {
+      "title": "one observable",
+      "description": "One quantity the caller wants back. Only scattering parameters are named, because only they have a Touchstone artefact to live in (decisions.md:7031, :7047-7053).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": {
+          "description": "The kind of observable. Only sparam is named; a field dump would be a different kind and would need a different result artefact, which is a version bump.",
+          "const": "sparam"
+        },
+        "name": {
+          "description": "The S-parameter, in the form S<output><input> with two digits each, e.g. S11 or S21. The two-digit form is not decoration: it is what makes S1 and S21 distinguishable, and it is the key the result's tolerance_achieved uses, so a laxer pattern here would produce a result the caller cannot look up (decisions.md:7031, :7050).",
+          "type": "string",
+          "pattern": "^S[0-9]{2}$"
+        }
+      }
+    },
+    "tolerance": {
+      "title": "tolerance",
+      "description": "The accuracy required, as a kind/units pair. The kind fixes what the number measures so that the number alone is never ambiguous.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "description": "The measure the tolerance is expressed in. sparam_abs means absolute magnitude on the complex S-parameter, the form decisions.md:7033 shows and the only one this version defines.",
+          "const": "sparam_abs"
+        },
+        "value": {
+          "description": "The magnitude of the tolerance, in the units the kind names: for sparam_abs it is an absolute difference in the complex S-parameter, dimensionless, and it must be strictly positive. It is the number the tool compares its own achieved error against before it may return status ok rather than degraded (decisions.md:7055-7057).",
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        }
+      }
+    }
+  }
+}

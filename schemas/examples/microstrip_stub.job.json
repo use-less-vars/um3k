@@ -1,0 +1,31 @@
+{
+  "schema": "emfit.job.v1",
+  "geometry": {
+    "kind": "parametric",
+    "box_length_mm": 36.8,
+    "strip_width_mm": 4.8,
+    "substrate_cells": 2
+  },
+  "materials": {
+    "substrate_eps_r": 4.4,
+    "substrate_h_mm": 1.6
+  },
+  "sources": [
+    {
+      "kind": "modal_port",
+      "name": "P1",
+      "x_mm": 4.8
+    }
+  ],
+  "observables": [
+    {
+      "kind": "sparam",
+      "name": "S11"
+    }
+  ],
+  "frequencies_ghz": [5.0],
+  "tolerance": {
+    "kind": "sparam_abs",
+    "value": 0.001
+  }
+}
