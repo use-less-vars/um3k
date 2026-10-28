@@ -76,7 +76,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.linalg import cholesky as _dense_cholesky
 from scipy.linalg import eig as _dense_eig
+from scipy.linalg import qr as _dense_qr
+from scipy.linalg import solve_triangular as _solve_triangular
 from scipy.sparse import coo_matrix, csr_matrix, hstack, vstack
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import (
@@ -99,6 +102,7 @@ __all__ = [
     "pec_edge_mask",
     "pec_node_mask",
     "solve_modes",
+    "solve_modes_deflated",
     "solve_modes_mixed",
     "structured_mesh",
 ]
@@ -643,6 +647,13 @@ class Mode2D:
                             include it -- see the note there.
         mesh        Mesh2D  the triangulation; ``nodes``, ``tris`` and ``edges``
                             are properties onto it
+        deflation   dict    diagnostics of :func:`solve_modes_deflated`
+                            (``None`` on the two undeflated paths): the built
+                            dimension of ``Z`` against the structural count,
+                            the measured ``||Z^T B R||`` and ``||R^T B R - I||``
+                            residuals, the conditioning of the block ``R`` was
+                            built from, and the three residual ratios of the
+                            preregistration 2.d
 
     ``e_t`` is the *edge* representation: ``e_t[i]`` is ``INT_edge E . dl`` in
     volts at unit field amplitude, i.e. the edge length is already folded in.
@@ -664,6 +675,7 @@ class Mode2D:
     e_t: np.ndarray
     mesh: Mesh2D
     e_z: np.ndarray | None = None
+    deflation: dict | None = None
 
     # -- geometry pass-throughs -------------------------------------------
     @property
@@ -868,6 +880,46 @@ def solve_modes(
     vals, vecs = eigsh(c_free, k=n_k, M=b_free, sigma=sigma, which="LM")
     vals = np.asarray(vals, dtype=float)
 
+    return _select_and_pack(
+        mesh=mesh,
+        k0=k0,
+        sigma=sigma,
+        k_q=k_q,
+        c_free=c_free,
+        b_free=b_free,
+        free=free,
+        mask=mask,
+        n_dof=n_dof,
+        n_k=n_k,
+        vals=vals,
+        vecs=vecs,
+    )
+
+
+def _select_and_pack(
+    mesh: Mesh2D,
+    k0: float,
+    sigma: float,
+    k_q,
+    c_free,
+    b_free,
+    free: np.ndarray,
+    mask: np.ndarray,
+    n_dof: int,
+    n_k: int,
+    vals: np.ndarray,
+    vecs: np.ndarray,
+    extra: dict | None = None,
+) -> Mode2D:
+    """Normalise, select and pack the raw ``eigsh`` output for a free-DOF pencil.
+
+    This is the tail of the historical :func:`solve_modes` body, moved out
+    verbatim (same variable names, same arithmetic) so that
+    :func:`solve_modes_deflated` applies *exactly* the same normalisation and
+    selection rules (preregistration 2.e) to a deflated pencil.  Nothing here
+    knows about deflation; ``extra`` is merged into the returned
+    :class:`Mode2D` as extra keyword fields (the ``deflation`` diagnostics).
+    """
     # --- normalise each candidate so that e^T B e = 1 ---------------------
     ratios = np.empty(n_k)
     residuals = np.empty(n_k)
@@ -914,6 +966,7 @@ def solve_modes(
     e_t[free] = normalised[:, chosen]
 
     beta_sq = float(vals[chosen])
+    fields = {} if extra is None else dict(extra)
     return Mode2D(
         freq=float(k0 * C0 / (2.0 * np.pi)),
         k0=k0,
@@ -929,6 +982,376 @@ def solve_modes(
         n_pec=int(mask.sum()),
         e_t=e_t,
         mesh=mesh,
+        **fields,
+    )
+
+
+# ----------------------------------------------------------------------
+# deflation of the discrete gradient subspace
+# ----------------------------------------------------------------------
+#: Largest number of free DOFs for which the dense ``Z -> R`` construction in
+#: :func:`solve_modes_deflated` is attempted.  :func:`_complement_basis` holds a
+#: dense ``n x n`` Cholesky factor (``8 n^2`` bytes), a dense ``n x p`` remainder
+#: basis and one temporary of the same size, i.e. roughly ``24 n^2`` bytes: 6000
+#: DOFs is about 0.9 GB, while 24288 DOFs (the finest rung of the preregistered
+#: ladder) would be about 14 GB.  Above the limit the deflated solve raises
+#: :class:`NotImplementedError` instead of exhausting memory; see the note in
+#: :func:`solve_modes_deflated`.
+_DEFLATED_DENSE_MAX = 6000
+
+
+def _frob_norm(mat) -> float:
+    """Frobenius norm of a dense array or of a scipy sparse matrix."""
+    data = getattr(mat, "data", mat)
+    return float(np.sqrt(np.sum(np.asarray(data, dtype=float) ** 2)))
+
+
+def _ratio(num: float, den: float) -> float:
+    """``num / den``, or ``NaN`` when ``den <= 0`` (the operator is empty)."""
+    return float(num / den) if den > 0.0 else float("nan")
+
+
+def _gradient_columns(
+    mesh: Mesh2D,
+    eps_t: np.ndarray,
+    mu_t: np.ndarray,
+    node_pec: np.ndarray,
+    region_tol: float = 0.0,
+) -> np.ndarray:
+    """Nodes usable as columns of the discrete gradient subspace ``Z``.
+
+    Preregistration 2.a / 2.b: on a triangle where ``eps_r == 1 / mu_r`` the
+    pencil row ``k0^2 M_eps - K_q`` is a multiple of the pure gradient row
+    ``M_mu @ grad``, so a *node* whose whole star is such a triangle carries the
+    nodal-gradient field ``e = Z[:, i]`` that the shift-invert solve sees as a
+    spurious state at ``beta^2 = k0^2``.  A node qualifies when
+
+    * every triangle adjacent to it satisfies ``|eps_r - 1/mu_r| <= region_tol``
+      (exact equality at the default ``region_tol = 0.0``, which is what the
+      exactness hypothesis H2 requires), and
+    * it is **not** on a PEC predicate (:func:`pec_node_mask`), because the PEC
+      rows and columns are deleted and a PEC node carries no free DOF pattern.
+
+    Returns the qualifying node indices, ascending.
+    """
+    node_pec = np.asarray(node_pec, dtype=bool)
+    if node_pec.shape != (mesh.n_nodes,):
+        raise ValueError(
+            f"node_pec must have shape ({mesh.n_nodes},), got {node_pec.shape}"
+        )
+    eps_t = np.asarray(eps_t, dtype=float)
+    mu_t = np.asarray(mu_t, dtype=float)
+    on_region = np.abs(eps_t - 1.0 / mu_t) <= float(region_tol)
+    owner = np.repeat(np.arange(mesh.n_tris), mesh.tris.shape[1])
+    outside = mesh.tris.reshape(-1)[~on_region[owner]]
+    in_region = np.ones(mesh.n_nodes, dtype=bool)
+    in_region[outside] = False
+    return np.flatnonzero(in_region & ~node_pec)
+
+
+def _incidence(mesh: Mesh2D, free: np.ndarray, cols: np.ndarray) -> csr_matrix:
+    """Nodal-to-edge matrix of the free edges restricted to the nodes ``cols``.
+
+    ``Z[e, i] = +1`` when the free edge ``e`` runs *into* ``cols[i]`` (the node is
+    its ``hi`` endpoint) and ``-1`` when it runs *out of* it (the node is its
+    ``lo`` endpoint).  Since the global DOF of edge ``(lo, hi)`` is
+    ``INT E . dl`` directed ``lo -> hi``, ``Z[:, i]`` is exactly the edge-DOF
+    pattern of the gradient of the ``P1`` nodal function that is one at
+    ``cols[i]`` and zero at every other node -- the restricted gradient operator.
+
+    Rows are the free edges in the order of ``free``, columns the order of
+    ``cols``.
+    """
+    free = np.asarray(free, dtype=np.int64)
+    cols = np.asarray(cols, dtype=np.int64)
+    position = np.full(mesh.n_nodes, -1, dtype=np.int64)
+    position[cols] = np.arange(cols.size, dtype=np.int64)
+    sub = mesh.edges[free]
+    i_lo = position[sub[:, 0]]
+    i_hi = position[sub[:, 1]]
+    hit_hi = np.flatnonzero(i_hi >= 0)
+    hit_lo = np.flatnonzero(i_lo >= 0)
+    data = np.concatenate([np.ones(hit_hi.size), -np.ones(hit_lo.size)])
+    rows = np.concatenate([hit_hi, hit_lo])
+    colidx = np.concatenate([i_hi[hit_hi], i_lo[hit_lo]])
+    return coo_matrix(
+        (data, (rows, colidx)), shape=(free.size, cols.size)
+    ).tocsr()
+
+
+#: Height fraction ``y = y_min + _LADDER_REGION_FRAC * (y_max - y_min)`` at which
+#: the pre-registered ladder's air region ``eps_r == 1 / mu_r`` begins.  The
+#: ladder's graded substrate occupies the lower quarter, so the region that
+#: carries the gradient columns is the upper ``3 ny / 4`` rows -- the same
+#: ``3 ny / 4`` that appears in the closed form ``(nx - 1) (3 ny / 4 - 1)`` --
+#: and the line is therefore at a quarter of ``Ly``.
+_LADDER_REGION_FRAC = 0.25
+
+
+def _closed_form_dim(mesh: Mesh2D, in_region: np.ndarray) -> int | None:
+    """Closed-form column count ``(nx - 1) (3 ny / 4 - 1)`` of the ladder meshes.
+
+    A cross-check on :func:`_gradient_columns` for the pre-registered ladder
+    only, and ``None`` for everything else -- a diagnostic that reports a wrong
+    number is worse than one that reports nothing.
+
+    The closed form counts the interior nodes of the air block, so it is only
+    quoted when the mesh really is the pre-registered geometry: a structured
+    ``(nx, ny)`` cell mesh, ``nx >= 2``, ``ny >= 4``, ``ny`` a multiple of 4,
+    *and* the air region ``eps_r == 1 / mu_r`` exactly filling the upper
+    ``3 ny / 4`` rows -- every triangle whose centroid is above the line
+    ``y = y_min + Ly / 4`` inside it, every triangle below it outside it.
+
+    Parameters
+    ----------
+    mesh : Mesh2D
+        The mesh the columns came from.
+    in_region : (nt,) bool array
+        Per-triangle region predicate (``|eps_r - 1 / mu_r| <= region_tol``),
+        passed in by :func:`solve_modes_deflated` so that this function never
+        has to know about ``eps_r`` or ``mu_r``.
+
+    Returns ``None`` when the mesh is not of that shape (the columns actually
+    used are whatever :func:`_gradient_columns` returns; this number is
+    diagnostics only).
+    """
+    axes = getattr(mesh, "grid_axes", ()) or ()
+    if len(axes) != 2:
+        return None
+    xs, ys = axes
+    xs = np.asarray(xs, dtype=float).ravel()
+    ys = np.asarray(ys, dtype=float).ravel()
+    nx = int(xs.size) - 1
+    ny = int(ys.size) - 1
+    if nx < 2 or ny < 4 or ny % 4 != 0:
+        return None
+    in_region = np.asarray(in_region, dtype=bool)
+    if in_region.shape != (mesh.n_tris,):
+        raise ValueError(
+            f"in_region must have shape ({mesh.n_tris},), got {in_region.shape}"
+        )
+    y_min = float(np.min(ys))
+    y_line = y_min + _LADDER_REGION_FRAC * (float(np.max(ys)) - y_min)
+    above = np.asarray(mesh.centroid[:, 1], dtype=float) > y_line
+    if not np.all(in_region[above]):
+        return None
+    if np.any(in_region[~above]):
+        return None
+    return (nx - 1) * (3 * ny // 4 - 1)
+
+
+def _complement_basis(b_free, z, dense_max: int = _DEFLATED_DENSE_MAX):
+    """Dense basis ``R`` of the ``B``-orthogonal complement of ``Z``.
+
+    With ``B = L L^T`` (Cholesky of the free-DOF mass matrix) and the full QR
+    ``L^T Z = Q1 R1``, take ``Q = Q1[:, m:]`` (the trailing ``n - m`` columns) and
+    set ``R := L^{-T} Q``.  Then ``Z^T B R = R1[:, m:]^T Q = 0`` exactly, and
+    ``R^T B R = Q^T Q = I``, so ``eigsh`` on ``(R^T C R, R^T B R)`` is a genuine
+    symmetric-definite pencil and the candidates come back already
+    mass-normalised.
+
+    Returns ``(R, info)`` with ``R`` dense ``(n, n - m)`` and ``info`` carrying
+    ``z_dim``, ``n_free``, ``block_diag_ratio`` (smallest over largest column
+    norm of the triangular factor of ``L^T Z`` -- the ``m by m`` block used to
+    decide the split), ``z_orthogonality_abs`` (``||Z^T B R||_F``),
+    ``z_orthogonality_rel`` (the same, normalised by ``||Z^T B||_F ||R||_F``) and
+    ``r_gram_dev`` (``||R^T B R - I||_F / sqrt(n - m)``).
+
+    Raises :class:`NotImplementedError` above ``dense_max`` DOFs (the dense
+    factor alone is ``8 n^2`` bytes) and :class:`ValueError` when ``B`` is not
+    positive definite on the free DOFs.
+    """
+    b_dense = b_free.toarray() if hasattr(b_free, "toarray") else np.asarray(
+        b_free, dtype=float
+    )
+    b_dense = np.asarray(b_dense, dtype=float)
+    z_dense = z.toarray() if hasattr(z, "toarray") else np.asarray(z, dtype=float)
+    z_dense = np.asarray(z_dense, dtype=float)
+    n = int(b_dense.shape[0])
+    m = int(z_dense.shape[1])
+    if n > int(dense_max):
+        raise NotImplementedError(
+            f"the deflated solve builds a dense {n} x {n} Cholesky factor "
+            f"(about {24.0 * n * n / 1e9:.1f} GB); this route is limited to "
+            f"{int(dense_max)} free DOFs (see _DEFLATED_DENSE_MAX).  A sparse "
+            "or matrix-free complement belongs in a dated amendment of the "
+            "preregistration, not in this function."
+        )
+    if m == 0:
+        raise ValueError(
+            "no gradient columns: no node has its whole star in the "
+            "eps_r == 1/mu_r region, so there is nothing to deflate"
+        )
+    b_dense = 0.5 * (b_dense + b_dense.T)
+    try:
+        l_factor = _dense_cholesky(b_dense, lower=True)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(
+            f"B is not positive definite on the free DOFs: {exc}"
+        ) from exc
+    w = l_factor.T @ z_dense
+    q_full, r_factor = _dense_qr(w, mode="full")
+    diag = np.abs(np.diag(r_factor)[:m])
+    if not np.isfinite(diag).all() or diag.min() <= 0.0:
+        raise RuntimeError(
+            f"the gradient columns are rank deficient: |R1| diagonal {diag.tolist()}"
+        )
+    block_diag_ratio = float(diag.min() / diag.max())
+    q = q_full[:, m:]
+    p = int(n - m)
+    r_basis = _solve_triangular(l_factor.T, q, lower=False)
+    ztb = (z.T @ b_free).tocsr()
+    orth = _frob_norm(ztb @ r_basis)
+    if p > 0:
+        gram_dev = _frob_norm(r_basis.T @ (b_free @ r_basis) - np.eye(p)) / np.sqrt(p)
+    else:
+        gram_dev = float("nan")
+    info = {
+        "z_dim": m,
+        "n_free": n,
+        "block_diag_ratio": block_diag_ratio,
+        "z_orthogonality_abs": orth,
+        "z_orthogonality_rel": _ratio(orth, _frob_norm(ztb) * _frob_norm(r_basis)),
+        "r_gram_dev": gram_dev,
+    }
+    return r_basis, info
+
+
+def solve_modes_deflated(
+    mesh: Mesh2D,
+    k0: float,
+    sigma: float,
+    *,
+    eps_r=1.0,
+    mu_r=1.0,
+    boundaries=(),
+    k: int = 4,
+) -> Mode2D:
+    """Solve the same pencil as :func:`solve_modes`, with the gradient space deflated.
+
+    The pencil is unchanged -- ``A = k0^2 M_eps - K_q``, ``B = M_mu`` -- and so
+    are the normalisation and the selection rule.  What changes is the subspace
+    the ``eigsh`` call lives on.
+
+    **Z (preregistration 2.a / 2.b).**  ``Z`` collects the nodal-gradient edge
+    patterns of every node whose whole star lies in a region with
+    ``eps_r == 1 / mu_r`` and which is not on a PEC predicate
+    (:func:`_gradient_columns`, :func:`_incidence`).  On the pre-registered
+    ladder that is ``11, 69, 329, 1425, 5921`` columns at levels 1-5, against
+    ``78, 348, 1464, 6000, 24288`` free DOFs; these are the spurious states that
+    sit at ``beta^2 = k0^2`` and otherwise win the "largest positive beta^2"
+    selection whenever the physical mode is below them.
+
+    **R (2.c / 2.d).**  ``R`` spans the ``B``-orthogonal complement of ``Z``
+    with ``Z^T B R = 0`` and ``R^T B R = I`` (:func:`_complement_basis`).  The
+    eigenproblem is solved on the deflated pair
+    ``(R^T A R, R^T B R)`` and each eigenvector is lifted back with ``x = R y``,
+    so the candidates returned are ordinary free-DOF fields.
+
+    **Selection (2.e) is unchanged.**  The candidates are handed to the same
+    normalisation and selection code as :func:`solve_modes`
+    (:func:`_select_and_pack`), so ``chosen``, ``candidates`` and ``curl_ratio``
+    mean exactly what they mean there -- except that the deflated gradient states
+    are no longer among the candidates.
+
+    **Diagnostics.**  ``mode.deflation`` is a dict with ``z_dim``,
+    ``z_dim_closed_form`` (the ladder closed form, or ``None`` off the ladder),
+    ``n_free``, ``n_dof``, ``n_columns`` (the dimension of ``R``),
+    ``block_diag_ratio``, ``z_orthogonality_abs``, ``z_orthogonality_rel``,
+    ``r_gram_dev``, and the scale-free residuals ``residual_grad``
+    (``||K_q Z||``), ``residual_eps_mu`` (``||(M_eps - M_mu) Z||``) and
+    ``residual_pencil`` (``||(A - k0^2 B) Z||``), each normalised by the
+    correspondingly scaled norms so that ``0`` means "exactly in the null space".
+
+    **Limit.**  Building ``R`` densely costs about ``24 n^2`` bytes, so this
+    route is capped at ``_DEFLATED_DENSE_MAX = 6000`` free DOFs and raises
+    :class:`NotImplementedError` above it.  That cap is reported, not worked
+    around: a sparse or matrix-free complement is a change of method and
+    belongs in a dated amendment of the preregistration.
+    """
+    k0 = float(k0)
+    sigma = float(sigma)
+    if not np.isfinite(k0) or k0 <= 0.0:
+        raise ValueError(f"k0 must be positive and finite, got {k0!r}")
+    if not np.isfinite(sigma):
+        raise ValueError(f"sigma must be finite, got {sigma!r}")
+
+    eps_t = _per_triangle(eps_r, mesh, "eps_r")
+    mu_t = _per_triangle(mu_r, mesh, "mu_r")
+    if np.any(mu_t == 0.0):
+        raise ValueError("mu_r must be non-zero on every triangle")
+
+    k_q, m_mu, m_eps = assemble(mesh, eps_r=eps_t, mu_r=mu_t)
+    mask = pec_edge_mask(mesh, boundaries)
+    free = np.flatnonzero(~mask)
+    n_dof = int(free.size)
+    if n_dof < 3:
+        raise ValueError(f"only {n_dof} free edge DOFs after the PEC cut")
+
+    c = (k0 * k0 * m_eps - k_q).tocsr()
+    b = m_mu.tocsr()
+    c_free = c[free][:, free]
+    b_free = b[free][:, free]
+
+    cols = _gradient_columns(mesh, eps_t, mu_t, pec_node_mask(mesh, boundaries))
+    z = _incidence(mesh, free, cols)
+    r_basis, info = _complement_basis(b_free, z)
+    n_columns = int(r_basis.shape[1])
+    if n_columns < 1:
+        raise ValueError(
+            f"the gradient subspace has dimension {info['z_dim']} of {n_dof} "
+            "free DOFs; nothing is left to solve for"
+        )
+
+    n_k = min(int(k), n_dof - 1)
+    if n_k < 1:
+        raise ValueError(f"cannot ask for {k} modes with {n_dof} DOFs")
+    if n_k > n_columns - 1:
+        raise ValueError(
+            f"cannot ask for {n_k} modes: the deflated basis has only "
+            f"{n_columns} columns"
+        )
+
+    a_c = r_basis.T @ (c_free @ r_basis)
+    b_c = r_basis.T @ (b_free @ r_basis)
+    a_c = csr_matrix(0.5 * (a_c + a_c.T))
+    b_c = csr_matrix(0.5 * (b_c + b_c.T))
+    vals, y = eigsh(a_c, k=n_k, M=b_c, sigma=sigma, which="LM")
+    vals = np.asarray(vals, dtype=float)
+    vecs = r_basis @ y
+
+    kq_f = k_q[free][:, free]
+    me_f = m_eps[free][:, free]
+    mm_f = m_mu[free][:, free]
+    z_norm = _frob_norm(z)
+    on_region = np.abs(eps_t - 1.0 / mu_t) <= 0.0  # same as _gradient_columns' default
+    info["z_dim_closed_form"] = _closed_form_dim(mesh, on_region)
+    info["n_dof"] = n_dof
+    info["n_columns"] = n_columns
+    info["residual_grad"] = _ratio(_frob_norm(kq_f @ z), _frob_norm(kq_f) * z_norm)
+    info["residual_eps_mu"] = _ratio(
+        _frob_norm((me_f - mm_f) @ z),
+        (_frob_norm(me_f) + _frob_norm(mm_f)) * z_norm,
+    )
+    info["residual_pencil"] = _ratio(
+        _frob_norm(c_free @ z - k0 * k0 * (b_free @ z)),
+        (_frob_norm(c_free) + k0 * k0 * _frob_norm(b_free)) * z_norm,
+    )
+
+    return _select_and_pack(
+        mesh=mesh,
+        k0=k0,
+        sigma=sigma,
+        k_q=k_q,
+        c_free=c_free,
+        b_free=b_free,
+        free=free,
+        mask=mask,
+        n_dof=n_dof,
+        n_k=n_k,
+        vals=vals,
+        vecs=vecs,
+        extra={"deflation": info},
     )
 
 
