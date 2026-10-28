@@ -1,15 +1,23 @@
 \section{Mode shape: a cross-section field, and a comparison that was wrong}
 \label{sec:modes}
 
-% TODO: full chapter --- reader: an engineer who wants to know whether the extracted
-% cross-section field is the mode the analytic basis describes; test: they can read the
-% BEFORE and AFTER rows of Figure~\ref{fig:mode-ez-pairing} against the REFERENCE and
-% EXTRACTED rows of Figure~\ref{fig:mode-ey-pairing}, see that only the e_z pairing
-% changes, and check the printed correlations against the audit table. PLACEHOLDER:
-% captions and figures only, no chapter prose. Still to write: why the longitudinal and
-% the vertical component are different objects, what e_z_superseded measures physically,
-% and what the residual rim at the strip edges and the substrate interface says about the
-% discretisation.
+\noindent\emph{Status: draft -- this section reads the cross-section field of one solved mode rather than its
+frequency, and it records one comparison of that field that was wrong, and its correction. The wrong comparison
+is not a numerical error and is not reported as one: two arrays that were never the same quantity were
+correlated, a small number came out, and the small number was read as the mode failing to match its analytic
+basis. Paired correctly, the same two banked runs give $+0.9353$ and $+0.9369$. What is still open is not the
+shape of the field but the question the field was being asked to settle, and that question is answered here by
+a different statistic on the same meshes.}
+
+A solved mode is a frequency and a field, and almost everything else in this report reads the frequency. The
+field is the harder object: it lives on a cross-section, it has more than one component, and each component sits
+on its own lattice, so that comparing two of them is a statement about which lattice was sampled as much as
+about the mode. This section reads one such field, the microstrip mode of the two banked runs, in two figures.
+Figure~\ref{fig:mode-ez-pairing} is the component the comparison got wrong, and the correction;
+Figure~\ref{fig:mode-ey-pairing} is a component the mis-pairing never touched, carried through the identical
+metric, normalisation and plotting path, so that the two figures differ in the object and in nothing else. In
+both, every field is divided by its own RMS before it is drawn, so every panel is dimensionless and the two runs
+are directly comparable.
 
 \begin{figure}[H]
   \centering
@@ -32,6 +40,23 @@
   \label{fig:mode-ez-pairing}
 \end{figure}
 
+The panel to read in Figure~\ref{fig:mode-ez-pairing} is the pair within a row --- reference against extracted
+field --- with the printed correlation as the number that pair shares. Read down a column, not across. The top
+row is the comparison as it was banked: the analytic \emph{vertical} reference against the extracted
+\emph{longitudinal} field $e_{z,\text{superseded}} = -\mathrm{interp}(\beta z_{\text{free}})$, a quantity
+reconstructed along the propagation direction from the modal phase constant and then laid beside a vertical mode
+profile. It reads $+0.1192$ (PMC) and $+0.1473$ (PEC), and that is the correct answer to a question with no
+content: a longitudinal field and a vertical field are different objects, not two measurements of one object, and
+the correlation is small because nothing was being measured. The middle row repeats the comparison with the
+pairing repaired --- component~$1$ of the banked $e_t$ eigenvector sampled on the $A_{ez}$ lattice, vertical
+against vertical --- and reads $+0.9353$ and $+0.9369$, so the two panels of that row carry the same structure
+and the eye can check the correlation column by column instead of taking it on trust. The bottom row is the
+difference after minus before, which is the size of the mis-pairing itself: $\max|\Delta| = 5.87$ and $5.86$
+with $\mathrm{rms}(\Delta)/\mathrm{rms} = 1.24$ and $1.23$, a residual larger than the field it is a residual
+to. The mode shape in the banked comparison was therefore materially wrong in the only sense that matters --- it
+was not the shape the basis describes --- and is materially right once the field is paired against the mesh and
+the run it belongs to, with no arithmetic changed between the rows.
+
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\textwidth]{../figures/fig_ey_before_after.pdf}
@@ -48,3 +73,65 @@
   boundary effect rather than a shape error.}
   \label{fig:mode-ey-pairing}
 \end{figure}
+
+The panel to read in Figure~\ref{fig:mode-ey-pairing} is again the pair within a row, and the number it shares
+is $+0.9208$ (PMC) and $+0.9123$ (PEC) --- the same size, to within one and a half points, as the corrected
+$e_z$ row of the previous figure. Nothing in the mis-pairing ever touched this component, so this is the value
+the metric gives when the two things in it do belong together, and it is what makes
+Figure~\ref{fig:mode-ez-pairing} legible:
+$+0.92$ here and $+0.12$ there cannot both mean ``the extracted field agrees with the analytic basis'', because
+the metric, the normalisation and the plotting path are the same in both and only one of the two was a
+comparison at all. The bottom row is worth the second look for the opposite reason to the previous one. Its
+$\max|\Delta| = 16.16$ and $16.04$ is a large number, but what the row shows is a near-blank field with a bright
+rim at the strip edges and at the substrate interface --- the disagreement is not spread over the cross-section,
+it is pinned to the two places where the analytic field is not smooth and where the discretisation is tightest.
+That is the residual a pairing cannot remove, and it is a property of the discretisation rather than of the
+comparison: refining the strip band from $12$ to $36$ cells moves these correlations by about $10^{-3}$
+($+0.9353 \to +0.9352$ on $e_z$, $+0.9208 \to +0.9213$ on $e_y$), so the rim is not the strip band failing to
+resolve the edge. It is what a conductor edge and a material interface cost when the field next to them is
+sampled on a fixed lattice, and it sets the size of the agreement any mesh in hand can be asked for.
+
+The mesh says in its own construction why a single whole-domain number cannot answer a convergence question
+here. Its first axis carries three bands --- $9$ air cells, the $12$-cell strip band, $9$ air cells --- and its
+second axis three more: $8$ cells of substrate, a $4$-cell interface band and $4$ cells of air, which is the
+$31\times17$ node mesh the two figures are drawn on. Each band is a separate convergence question with its own
+cell size and its own limit, and the field's energy is not distributed over them in proportion. Restricted to
+one region each, the energy ratio $R = \sum e_{z,vv}^2 / \sum e_y^2$ --- the $e_z$ component at its $vv$
+lattice placement over the $e_y$ component --- runs $24.57$ to $35.94$ over the strip footprint, $6.18$ to $6.99$
+over the substrate and $0.855$ to $0.960$ in the air across the ten meshes of the axis sweep
+--- the same field, three regions, regional ratios spanning a factor of $26$ to $42$. The global $R$ of about
+$3.42$ to $3.74$ is a weighted average of those three, and the weights are themselves mesh-dependent, so a
+whole-domain amplitude number answers a question about the mixture while being quoted as a question about the
+parts. The conductor region, the air above it and the substrate band below it must be converged separately
+before any one number over all three can be said to have converged, and the meshes in hand do not converge all
+three at once.
+
+That is the reason the metric this section reports is \texttt{T4b\_conductor\_corr} and not \texttt{T4\_amp}. It
+asks the one question the meshes in hand can answer: \emph{is the conductor-region field the same field on every
+mesh?} The statistic is the absolute correlation of the field over the strip footprint between two meshes,
+registered on the ten off-diagonal pairs of the five campaign meshes, at a bar of $0.99$ for the $e_{z,vv}$ field
+and $0.98$ for $e_y$ stated separately so that the stronger number cannot hide the weaker one. It passes on
+both: $\min|\mathrm{corr}| = 0.9988226233736953$ against $0.99$ for $e_{z,vv}$, and
+$\min|\mathrm{corr}| = 0.985637534849262$ against $0.98$ for $e_y$, with the $e_z$ pair spread running only to
+$0.9999426701804677$ at the top. The conductor field is the same field on every mesh in hand.
+
+\texttt{T4\_amp} asks what those meshes cannot answer. It grades one global amplitude ratio against the
+analytic value, $|Q - 1| \le 0.10$ on $Q = R_{\text{extracted}}/R_{\text{analytic}}$, and it fails: the banked
+ratio is $Q = 1.440865461991999$ against $R_{\text{analytic}} = 2.8101021387524523$, a miss of $44.09$ per cent
+and $4.41$ times the half-width, and the failure is not a shortage of resolution. Refining the strip band from
+$12$ to $36$ cells leaves $R$ flat to $0.13$ per cent; widening the first-axis air bands from $6$ to $22$ cells,
+with everything else held, moves it from $4.4382$ to $3.2761$; and $R$ turns over along the transverse axis taken
+alone and along the $z$ axis taken alone. A number that is insensitive to one band, dominated by another, and
+non-monotone in both is not a number that more cells will converge, so an amplitude test built on it interrogates
+the mixture and reports the answer as though it were the mode.
+
+None of which withdraws a verdict or rescues a ratio. \texttt{T4b} certifies mesh-independence and never
+accuracy: a pass says the conductor field stops changing as the mesh changes, not that the field is right, and
+on the same record each campaign mesh agrees with the independent dense reference only at $|\mathrm{corr}|$
+$0.967$ to $0.986$ in the global domain --- below the $0.99$ that \texttt{T4b} requires of a mesh \emph{pair}.
+\texttt{T4c} certifies eigenvalue convergence, at $1.0327881939\times10^{-5}$ and $5.5832778758\times10^{-6}$ per
+step against the $10^{-4}$ bar, and it does not certify $R_{\text{extracted}}$, which is flat and non-monotone
+across the same three rungs. \texttt{T4\_amp} remains FAIL, in Physics, at $44.09$ per cent; the correction in
+Figure~\ref{fig:mode-ez-pairing} repairs a comparison and moves no threshold. What this section changes is the
+reading of one figure and the choice of instrument, and the record should be quoted with both numbers --- the
+correlation that passes and the ratio that does not --- or with neither.
