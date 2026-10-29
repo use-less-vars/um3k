@@ -24,7 +24,7 @@ Three numbers carry the weight:
 
 The API is two solvers and one shared result type: :func:`emfit.mode2d.solve_modes`
 (sparse, ``eigsh`` shift-invert, ``emfit/mode2d.py:795-804``) and
-:func:`emfit.mode2d.solve_modes_mixed` (dense QZ, ``emfit/mode2d.py:935-945``),
+:func:`emfit.mode2d.solve_modes_mixed` (dense QZ, ``emfit/mode2d.py:1674``),
 both returning a :class:`~emfit.mode2d.Mode2D` whose ``candidates`` is the
 *complete* spectrum as ``(beta_sq, eps_eff)`` pairs (``emfit/mode2d.py:1197``).
 ``eps_eff`` is exactly ``beta_sq / k0^2`` (``emfit/mode2d.py:1195``), which is

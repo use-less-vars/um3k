@@ -859,10 +859,27 @@ compares two ways of obtaining the same object, not two equal amounts of work, a
 statement is that the sparse path is **validated** at the largest rung and **cheap when
 bracketed** - not that it replaces the dense ladder as a blind search.
 
-One defect recorded, not fixed, in the manner of 10.9: `rung4_routeC_probe.py:858` raises
-`KeyError: 'n'` in `print_summary` after the report has been written, so the probe exits non-zero
-while its report carries `verdict.overall.exit_code = 0`. The numbers above are read from the
-written report and are unaffected; the printed summary is.
+**STALE - repaired by dispatch 57 Task 1, 2026-10-29.** One defect was recorded here, not
+fixed, in the manner of 10.9: the preserved traceback in `evidence/t4/rung4_routeC_run.log` shows
+`KeyError: 'n'` raised in `print_summary` after the report had been written, so the *process*
+exited non-zero (`child returncode = 1`) while its report carries
+`verdict.overall.exit_code = 0`. Both halves of that sentence are true and neither number is
+edited: `exit_code` is the value `main()` computed from the verdict and it was written to disk
+before `print_summary` ran, so the field reports what `main()` returned while the process exited
+1. The code has since been repaired - the verdict now carries `n` / `nnz_S` through
+`entry.get()` - and the same command re-run on 2026-10-29 exits 0, which is also what
+`evidence/t4/rung4_routeC_peak_rss.json`'s `post_fix_rerun` records. Both recorded copies of the
+report now carry an `amendments` entry (AC-1.2) that records the discrepancy rather than erasing
+it. The numbers above are read from the written report and are unaffected by the crash: this
+paragraph is superseded, the numbers are not.
+
+The report's own `verdict.overall.note` said "no dense reference exists at rung 4" while its
+`agreement.status` was `REPRODUCES_REFERENCE` and its `dense_anchor_present` was `true`. The note
+contradicted the file it lived in, and it contradicted
+`tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10/c1_spectrum.npz` (738 560 423 B, written
+2026-10-28T01:51:16Z, four minutes before the report) and the probe's own docstring, whose claim
+that no `c1_spectrum.npz` existed for this rung was false when it was written. Both are fixed at
+their generators and in both recorded copies (AC-1.1, AC-1.3); no measured value moves.
 
 ### 13.7 The verdict
 

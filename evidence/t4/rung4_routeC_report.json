@@ -285,8 +285,38 @@
       "route_C_self_consistent": true,
       "route_C_agrees_with_anchor": true,
       "agreement_evaluated": true,
-      "note": "no dense reference exists at rung 4, so no 'reproduces_reference' claim is made anywhere in this report",
+      "note": "dense anchor supplied (/workspace/evidence/t4/rung4_dense_anchor.json): agreement was evaluated against it and verdict.route_C.rung4.agreement.status is \"REPRODUCES_REFERENCE\"",
       "exit_code": 0
     }
-  }
+  },
+  "amendments": [
+    {
+      "defect": "AC-1.1 (a)",
+      "pointer": "/verdict/overall/note",
+      "original": "no dense reference exists at rung 4, so no 'reproduces_reference' claim is made anywhere in this report",
+      "corrected": "dense anchor supplied (/workspace/evidence/t4/rung4_dense_anchor.json): agreement was evaluated against it and verdict.route_C.rung4.agreement.status is \"REPRODUCES_REFERENCE\"",
+      "why": "The note contradicted three fields in the same file: /verdict/overall/dense_anchor_present = true, /verdict/overall/agreement_evaluated = true and /verdict/route_C/rung4/agreement/status = REPRODUCES_REFERENCE (digits_beta_sq = 11.492308060949373, digits_R = 11.750793344542036, meets_thresholds = true). It also contradicted the dense record itself: tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10/c1_spectrum.npz exists (738560423 B, mtime 2026-10-28T01:51:16Z) and was written before this report (mtime 2026-10-28T01:55:14Z). Defect fixed at its generator, not only here.",
+      "fixed_at": "generator: tools/host/sparse-probe/rung4_routeC_probe.py, verdict.overall.note (now conditional on --dense-anchor), and in every recorded copy of this report",
+  "generator_behaviour": "with --dense-anchor the note names the anchor and the agreement status; without it the surviving text reads: no dense anchor was supplied to this run, so no reproduces_reference claim is made anywhere in this report",
+      "measured_values_changed": false
+    },
+    {
+      "defect": "AC-1.2 (b)",
+      "pointer": "/verdict/overall/exit_code",
+      "original": 0,
+      "corrected": 0,
+      "why": "The recorded process exit status was 1, not 0: evidence/t4/rung4_routeC_run.log and evidence/t4/rung4_routeC_run_run1.log both end in KeyError: 'n' raised in print_summary (rung4_routeC_probe.py line 858) called from main (line 1055), with the wrapper reporting 'child returncode = 1' and peak child RSS 237.9 MB. The field itself is not false: exit_code is the value main() computed from the verdict and it was written to disk (line 1055) BEFORE print_summary (line 1058) raised, so the report says what main() returned while the PROCESS exited 1. Neither value is edited; the discrepancy is recorded. The code was fixed after the evidence run (verdict_of now carries \"n\"/\"nnz_S\" through entry.get()); the same command re-run on 2026-10-29 exits 0, which is also what evidence/t4/rung4_routeC_peak_rss.json 'post_fix_rerun' records. The standing 'recorded, not fixed' note in docs/design/t4_amp_ratio.md is stale and is marked stale by dispatch 57 Task 1.",
+      "recorded_process_exit_status": 1,
+      "measured_values_changed": false
+    },
+    {
+      "defect": "AC-1.3 (c)",
+      "pointer": "probe module docstring (rung4_routeC_probe.py, section 'WHAT IS ***NOT*** MEASURED HERE'), not a field of this report",
+      "original": "There is also NO dense anchor at rung 4 (the ladder has written no ``c1_spectrum.npz`` for this rung), so every agreement field is reported as null ... never a reproduction verdict.",
+      "corrected": "A dense record DOES exist at rung 4: ``out/rung4_s36_a22_z20-10-10/c1_spectrum.npz`` (738560423 B, written 2026-10-28T01:51:16Z), and ``evidence/t4/rung4_dense_anchor.json`` is the banked record extracted from it. The record is opt-in via ``--dense-anchor PATH``.",
+      "why": "The probe docstring asserted there is no dense anchor at rung 4 and that the ladder had written no c1_spectrum.npz for the rung. Both halves were false at the time the report was written: tools/host/sparse-probe/out/rung4_s36_a22_z20-10-10/c1_spectrum.npz exists, 738560423 B, mtime 2026-10-28T01:51:16Z, four minutes before the first report (2026-10-28T01:55:14Z), and the ladder's rung-4 dense run.log in the same directory is 6773 B at 2026-10-28T01:51:17Z. The docstring was not a field of this report, so no report value moves; it is recorded here because every quotation of this report inherits the docstring's claim.",
+      "fixed_at": "tools/host/sparse-probe/rung4_routeC_probe.py module docstring",
+      "measured_values_changed": false
+    }
+  ]
 }

@@ -38,12 +38,21 @@ unanchored until it is implemented and gated.
 > **EXTRAPOLATED**: they were not measured at the target mesh, and not at ladder
 > rung 4.
 
+> **LINE REFERENCES (dispatch 57, 2026-10-29).** ``emfit/mode2d.py`` has grown since this note
+> was written; it is 2129 lines today. The citations repaired in this pass are the four AC-1.4
+> names, each re-derived from the current file: ``solve_modes_mixed`` at ``:1674``,
+> ``_MIXED_DENSE_MAX`` at ``:157``, ``_MIXED_RESIDUAL_TOL`` at ``:156``, and the ``use_dense``
+> guard at ``:1833-1838`` with its ``NotImplementedError`` at ``:1835``. The note's **other**
+> ``emfit/mode2d.py`` citations still carry their pre-landing line numbers and were NOT
+> re-derived here; they are reported as outstanding rather than silently renumbered. Treat every
+> line number below as a pointer to re-derive by symbol, as F5 requires.
+
 ## 1. Scope, and what this note is not
 
-`solve_modes_mixed` (`emfit/mode2d.py:935`) currently has exactly one working
+`solve_modes_mixed` (`emfit/mode2d.py:1674`) currently has exactly one working
 path: assemble, condense the longitudinal block densely, and hand the resulting
 `beta^2`-pencil to a dense QZ solve. The iterative path is a stub that raises
-(`emfit/mode2d.py:1095-1099`). This note asks what a sparse path would have to
+(`emfit/mode2d.py:1833-1838`). This note asks what a sparse path would have to
 be, and what it would cost, on the meshes the audit actually wants.
 
 This note **is**: a statement of the pencil the code builds (section 3), a
@@ -66,7 +75,7 @@ The dense path is a `scipy.linalg.eig` (QZ) call on a `n_e x n_e` pair
 (`emfit/mode2d.py:1114-1116`): `d_dense = lu_h.solve(np.eye(n_n))`,
 `a_dense = k0*k0*m_eps_f.toarray() - k_q_f.toarray()`,
 `b_dense = m1_f.toarray() - (c_f @ d_dense) @ c_f.toarray().T`. `_MIXED_DENSE_MAX
-= 3000` (`emfit/mode2d.py:151`) exists because of this cost; `c1_audit.py:395-398`
+= 3000` (`emfit/mode2d.py:157`) exists because of this cost; `c1_audit.py:395-398`
 turns the limit into a `SystemExit`.
 
 Two meshes matter.
@@ -491,7 +500,7 @@ semi-definite* `M`. Only buckling mode names an indefinite `M`, and buckling mod
 is a different problem (`A x = lambda M x` with `M` indefinite and `A` fixed —
 not our pencil). So `eigsh(A, k, M=B, sigma=...)` would be a documented-contract
 violation, not a matter of taste. This is the real reason
-`emfit/mode2d.py:1095-1099` is blocked: not just that `A - sigma B` is dense, but
+`emfit/mode2d.py:1833-1838` is blocked: not just that `A - sigma B` is dense, but
 that even with a sparse `A - sigma B` the driver would be out of contract.
 **MEASURED** (Cholesky failure) + **documented** (quoted contract).
 
@@ -627,7 +636,7 @@ The dense path returns the **complete spectrum** and then picks one candidate
 * `:1150` `order = np.argsort(-beta_sq)` — sort the whole candidate set;
 * `:1156-1160` `eligible = (np.isfinite(beta_sq) & (beta_sq > 0.0) &
   (residuals < _MIXED_RESIDUAL_TOL))`, with `_MIXED_RESIDUAL_TOL = 1.0e-3`
-  (`emfit/mode2d.py:150`);
+  (`emfit/mode2d.py:156`);
 * `:1161-1166` raise if nothing is eligible;
 * `:1167` `chosen = int(np.flatnonzero(eligible)[np.argmax(beta_sq[eligible])])`
   — a **global argmax of `beta^2` over the eligible candidates**, i.e. over the

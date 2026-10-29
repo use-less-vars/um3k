@@ -713,3 +713,25 @@ prove that either number is right.
 
 Sections 8 and 9 were appended to this file only. No file under `emfit/` was edited and nothing was
 committed.
+
+## Dispatch 57 addendum (2026-10-29): the line numbers above have shifted
+
+The citations in this audit were exact for the revision it audited and they are left standing as
+written: this is a record of what was in the file then, and rewriting them would forge that record.
+`emfit/mode2d.py` has since grown to 2129 lines, so every citation above now points at different
+code. Verified mapping for the four constructs dispatch 57 AC-1.4 names, re-derived by symbol
+against the current file (not by arithmetic on the old numbers):
+
+| construct | cited in this audit | current |
+| --- | --- | --- |
+| `def solve_modes_mixed` | `:935` | `:1674` |
+| `use_dense = (n_e <= _MIXED_DENSE_MAX) ...` | `:1094` | `:1833` |
+| `if not use_dense:` | `:1095` | `:1834` |
+| `raise NotImplementedError(` | `:1096` | `:1835` |
+| the raise's closing paren (end of guard) | `:1099` | `:1838` |
+| `_MIXED_DENSE_MAX = 3000` | `:151` (per `sparse_eigenmode.md`) | `:157` |
+| `_MIXED_RESIDUAL_TOL = 1.0e-3` | `:150` (per `sparse_eigenmode.md`) | `:156` |
+
+The audit's **other** `mode2d.py` citations (`:795`, `:868`, `:1114`, `:1150-1167`, the
+`:1038`-`:1042` docstring and the rest) were not re-derived in this pass and are reported as
+outstanding, not silently renumbered.

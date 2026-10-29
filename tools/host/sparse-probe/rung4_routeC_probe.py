@@ -55,13 +55,17 @@ describe a DIFFERENT and BIGGER mesh, and they are NOT measured at rung 4.
 Nothing in this script re-derives them and nothing here measures them: rung 4 is
 9604 free edges, not 30000.  Do not quote 0.084 GB / ~0.2 s as rung-4 numbers.
 
-There is also NO dense anchor at rung 4 (the ladder has written no
-``c1_spectrum.npz`` for this rung), so every agreement field is reported as
-null: ``dense_targets`` is null, ``comparison`` is null and the verdict is a
+A dense record DOES exist at rung 4: the ladder wrote
+``out/rung4_s36_a22_z20-10-10/c1_spectrum.npz`` (738560423 B, written
+2026-10-28T01:51:16Z -- four minutes before this probe first ran), and
+``evidence/t4/rung4_dense_anchor.json`` is the banked record extracted from it.
+That record is OPT-IN: it reaches this probe only through ``--dense-anchor
+PATH``.  Without the flag every agreement field is reported as null:
+``dense_targets`` is null, ``comparison`` is null and the verdict is a
 SELF-CONSISTENCY verdict (residuals and the ``x2 == h^-1 c^T x1`` identity),
-never a reproduction verdict.  ``--dense-anchor PATH`` optionally supplies
-``{beta_sq, R, eps_eff, corr_ey, corr_ez_vv}`` from a banked record and only
-then are the agreement fields filled in.
+never a reproduction verdict.  ``--dense-anchor PATH`` supplies
+``{beta_sq, R, eps_eff, corr_ey, corr_ez_vv}`` from that banked record, and
+only then are the agreement fields filled in.
 
 OUTPUT
 ------
@@ -1043,9 +1047,14 @@ def main(argv=None):
                 "route_C_agrees_with_anchor": (None if anchor is None
                                                else bool(agree_ok)),
                 "agreement_evaluated": anchor is not None,
-                "note": ("no dense reference exists at rung 4, so no "
-                         "'reproduces_reference' claim is made anywhere in this "
-                         "report"),
+                "note": (("no dense anchor was supplied to this run, so no "
+                          "'reproduces_reference' claim is made anywhere in "
+                          "this report") if anchor is None else
+                         ("dense anchor supplied (%s): agreement was evaluated "
+                          "against it and "
+                          "verdict.route_C.rung4.agreement.status is \"%s\""
+                          % (anchor_path,
+                             (entry_v.get("agreement") or {}).get("status")))),
                 "exit_code": exit_code,
             },
         },
