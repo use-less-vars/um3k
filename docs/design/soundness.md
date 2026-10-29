@@ -211,11 +211,16 @@ row or rows it rests on, and a claim resting on two rows takes the weaker.
 `promotion requires` cell below says what specific thing is missing. If I could not name
 it, the claim is not in 5.1.
 
+**AMENDED (dispatch 54).** Two of the rows this ledger rests on were demoted after this section
+was written: A17 and A18 are UNVERIFIED at `pairing_rule_preregistration.md:477-483`. C1 loses one
+of its four rows and C9 loses both of its own. The two claim rows below are amended in place, and
+section 13 carries the reasoning and the tier each of them lands on.
+
 ### 5.1 Citable claims
 
 | id | claim | tier | scope limit | evidence (row ids) | depends on | expires when | promotion requires |
 |---|---|---|---|---|---|---|---|
-| C1 | claim C1: the eigenfrequency beta agrees with the analytic value for a closed PEC box partially filled with dielectric, eps_r in [1.5, 3.5], levels 1-3 | E3 | that geometry, that eps_r range, levels 1-3 only. No level 4+, no open boundaries, no extrapolation in eps_r. The vacuum anchor holds at one mesh only (row A01) | A01, A18, A19, A20 | C2, C3 | any change to the sigma policy, to the mode-selection argmax (row C13), or to the box geometry | an independent analytic reference for the *dielectric-filled* box, swept at 3+ resolutions with the observed order reported. The E2 scope is the target, not the current grade: what exists is a 1.022e-4 anchor in vacuum and a converging-but-orderless +0.90/+0.64/+0.48% eigen route (rows A01, A19) |
+| C1 | claim C1: the eigenfrequency beta agrees with the analytic value for a closed PEC box partially filled with dielectric, eps_r in [1.5, 3.5], levels 1-3 | E3 | that geometry, that eps_r range, levels 1-3 only. No level 4+, no open boundaries, no extrapolation in eps_r. The vacuum anchor holds at one mesh only (row A01) | A01, A19, A20 -- A18 lost to UNVERIFIED, section 13; three of four remain | C2, C3 | any change to the sigma policy, to the mode-selection argmax (row C13), or to the box geometry | an independent analytic reference for the *dielectric-filled* box, swept at 3+ resolutions with the observed order reported. The E2 scope is the target, not the current grade: what exists is a 1.022e-4 anchor in vacuum and a converging-but-orderless +0.90/+0.64/+0.48% eigen route (rows A01, A19) |
 | C2 | claim C2: homogeneous-region deflation is exact when eps_r = mu_r = 1 in the deflated regions | E3 | eps_r = mu_r = 1 regions only. Nothing here licenses a dielectric block | C11, C05, C04 | — | a change to B or M_C assembly | a written proof, 3-5 lines of linear algebra, that the deflated spectrum carries the full physical spectrum plus only the k0^2 null block. The doc states exactness and proves inertia and symmetry; the exactness sentence is asserted (rows C04, C05, C11 are E1 for the structure, not for the exactness) |
 | C3 | claim C3: deflation is safe in the presence of dielectric — **HYPOTHESIS** above eps_r 3.5 | E3 | measured at eps_r <= 3.5 only. eps_r up to about 5 is EXTRAPOLATED and is a HYPOTHESIS in this claim, not a result | C10, A09, C11, C08 | C2 | an indefinite M_C at any rung ends this: the nonsingularity is one rung, 1927 x 1927 (rows C10, A09) | one inertia computation per rung at eps_r = 1.5 / 2.5 / 3.5 / 5.0 on the target mesh |
 | C4 | claim C4: the S-parameters are quotable | E5 | none: nothing about quotability is measured | D09, F14, G04, G06 (each a recorded FAIL against it) | C1, C19 | the recorded T4_amp and T2_agree FAILs stand until superseded | a recorded T4_amp pass inside a stated band on 3+ meshes with a demonstrated order and a stated error bar, plus T2_agree inside 0.5%. Until then every S-parameter number is a diagnostic |
@@ -223,7 +228,7 @@ it, the claim is not in 5.1.
 | C6 | claim C6: the pencil has the structural properties the solver assumes: B indefinite, every block but c D c^T exactly symmetric, h SPD with the negativity in the Schur complement, sigma an input rather than an output | E1 | the audited assembly path only (`mode2d.py`, `c1_audit.py`) | C04, C05, C06, C11, C12, C14 | — | the moment the assembly changes; a code edit, not new evidence, expires this | nothing: E1 is the ceiling |
 | C7 | claim C7: the seven invariants are blind to a curl-curl sign flip and to a coupling sign flip, and coupling detection is conditional on the modal share s_c | E1 | detection is conditional: order 2 eps s_c, so a small modal share hides a 1e-3 perturbation (row B07) | B05, B06, B07, B11, B14 | — | a change to I1-I7 or to the normalisation | nothing |
 | C8 | claim C8: the numeric tolerances are derived rather than picked — gamma_n from u = 2^-53, the residual bound in the B^-1 norm, and the mixed pencil's 1e-3 kept as a diagnostic | E1 | the symmetric pencil. The mixed pencil keeps no proven bound, by construction (row B04) | B02, B03, B04 | — | a change to B or to the residual definition | nothing |
-| C9 | claim C9: two different bases on one geometry disagree on beta by 5.46% | E3 | one mesh, 1444 free edges; the harness that produced the comparison is itself suspect (row B10) | B08, A17, A18 | — | re-running the harness on a banked capture | the same comparison on 3 meshes with the harness repaired and reviewed |
+| C9 | claim C9: two different bases on one geometry disagree on beta by 5.46% -- **WITHDRAWN**, section 13 | **Withdrawn** | one mesh, 1444 free edges; the harness that produced the comparison is itself suspect (row B10) | B08 only -- A17 and A18 lost to UNVERIFIED, section 13 | — | re-running the harness on a banked capture | the same comparison on 3 meshes with the harness repaired and reviewed |
 | C10 | claim C10: `job_schema` rejects malformed input, closes every property-bearing node, and distinguishes exit 1 (checked and wrong) from exit 2 (could not check) | E1 | the schema as committed; per-observable tolerances deferred to v2 | A26, A27, A29, A31 | — | a schema revision | nothing |
 | C11 | claim C11: the schema example does not reproduce `demo_microstrip_stub` — the example is unloaded, the demo defaults to load_value 200.0 at 12.8 mm | E1 | arithmetic on cited defaults against the schema field map | A30, A31, A33 | — | a change to `demos.py` defaults or to schema v2 | nothing |
 | C12 | claim C12: an independent validator agrees with the schema on the shipped example | E4 | agreement with a second library; no internal error analysis | A25, A28 | — | a jsonschema major-version change | a validator written against the standard by someone else, plus an external check of the 21-keyword inventory (row A28 is the validator's own self-report) |
@@ -296,7 +301,7 @@ this session]; the findings are the readings behind rows I can name.
 |---|---|---|---|---|
 | `core_contract.md` | 372 | `A01`-`A08` (8) | E3 1, E4 1, E5 6 | The `0.02` self-test tolerance is reused as the swap gate with no derivation (row A02); three driver literals are grid-bound with nothing counting them (rows A04, A05, A06); the one calibrated claim is a wall time (row A07). |
 | `cpp_solver_arch.md` | 314 | `A09`-`A16` (8) | E3 8 | Nothing above E3. Every measurement is one size with no independent reference and no reported convergence; the costing rows are single samples (row A14); row four of the section 5 criterion table cites nothing measurable. |
-| `modalport_ownership.md` | 217 | `A17`-`A24` (8) | E1 2, E3 5, E5 1 | The `+5.46%` and `+8.61%` gaps are measured against a "reference" the document admits is a fit on the same capture (rows A17, A18). `emfit/modal.py` is absent from the repository (row A22), so no reader can re-run the comparison. |
+| `modalport_ownership.md` | 217 | `A17`-`A24` (8) | E1 2, E3 5, E5 1 as committed; graded E1 2, E3 3, E5 1, UNVERIFIED 2 -- A17 and A18, section 13 | The `+5.46%` and `+8.61%` gaps are measured against a "reference" the document admits is a fit on the same capture (rows A17, A18). `emfit/modal.py` is absent from the repository (row A22), so no reader can re-run the comparison. |
 | `job_schema.md` | 278 | `A25`-`A32` (8) | E1 5, E3 1, E4 1, E5 1 | J1-J7 are said to have been frozen before any artefact existed, and the preregistration sits in gitignored `.scratch` (row A32). The five E1 rows are E1 because they are arithmetic and commit history, not measurement. |
 | `normalization_scheme.md` | 352 | `A33`-`A41` (9) | E1 3, E3 4, E5 1, UNKNOWN 1 | A `1e8` unit defect inside a printed ratio (row A33), found and traced and repaired. The repaired ratio still rests on no reference (rows A35, A39), and every V/m in the document is a dimensional inference (row A41). |
 | `visual_engine_arch.md` | 436 | `A42`-`A47` (6) | E1 4, E5 1, UNKNOWN 1 | A proposal whose own discipline statement says no code ran and nothing was measured (row A44). Its load-bearing content is a negative: the shipped test forbids client-side script on all five page types (row A45). The isosurface library's licence is unverified (row A47). |
@@ -707,3 +712,90 @@ Stripping what dispatch 53 appended re-hashes the remainder to 56975 bytes /
 `4c861fbbd0c7814edeaaee9dbbc67e83bc81b54c659e3b53dcfb87baea5c5f5c`. It sits after section 11
 rather than after section 9, so it reads as an appendix to an amendment; section 9(a) is meant to be
 read with it open.
+
+---
+
+## 13. The A17/A18 demotion, and the two claims it reaches
+
+The pairing rule demoted two ledger rows after sections 5 and 6 were written, and the ceiling rule
+in section 5 is what makes that the ledger's problem rather than the rule's. This section records
+the demotion, the rows it reaches in this document, and the tier each affected claim lands on. It
+is appended rather than woven in, for the reason section 10 gives at its end: everything above
+keeps the bytes it already had, except the five sites named near the bottom of this section.
+
+**What was demoted, and where the demotion is written.** Rows A17 and A18, both from
+`modalport_ownership.md`. The rule is section 4.4 of `docs/design/pairing_rule_preregistration.md`:
+each row's reference ladder was built from a converged run's own output on another geometry, which
+the rule names as inadmissible route 5 (`:404-407`, `:435-437`). The consequence is expressed as
+retroactive and it is not softened: the recorded numbers are kept, the order verdicts are
+withdrawn, and the rows "count as **UNVERIFIED**, and any later document that cites them must say
+so" (`:477-483`); the re-derivation is outstanding and is not scheduled by that revision
+(`:972-977`). The demotion is written in the pairing rule and not in
+`preservation_gate_preregistration.md`, which carries no A17/A18 text at all.
+
+**The rule being applied, quoted, because the grading below is arithmetic and not judgement.**
+Section 5: "A row's tier is a ceiling. No claim here is promoted above the tier of the inventory
+row or rows it rests on, and a claim resting on two rows takes the weaker." Two consequences
+follow, and they are not the same consequence. A claim that loses a row it did not exclusively
+depend on loses breadth; its ceiling is recomputed over the rows that survive, and it can come out
+unchanged. A claim that loses its whole evidential basis does not get a lower grade, because a
+lower grade is a statement about evidence and there is none left to make it about.
+
+**Claim C1 -- loses A18, lands on E3, on three rows of four.** C1 rested on A01, A18, A19 and A20.
+A18 is the post-repair placed route (+5.46 / +5.52 / +5.58 % over three meshes) and it is one of
+the claim's two measurement legs; A19 is the eigen route (+0.90 / +0.64 / +0.48 %) and A20 is the
+`sum(e_z^2)/sum(e_y^2)` drift that says the ratio is not converged. A18 goes and the other three
+stay. All three surviving rows are E3, so the ceiling is still E3 and C1's grade does not move.
+What moves is what C1 is entitled to say: it no longer carries the placed route, so the
++5.46 / +5.52 / +5.58 % series is not citable on C1's authority, and what is left is a one-mesh
+vacuum anchor against a closed-form value plus an orderless eigen route against a reference that
+is not independent. The evidence cell says this; the tier cell does not change. A grade that
+survives a demotion by arithmetic and a grade that survives it by inattention are identical in a
+table nobody touched, and separating the two is the whole of the work here.
+
+**Claim C9 -- loses A17 and A18, lands on Withdrawn.** C9 said that two bases on one geometry
+disagree on beta by 5.46 %. Its evidence cell named B08, A17 and A18. A17 and A18 are not
+supporting legs of that claim, they are its subject: the disagreement C9 reports is the one those
+two rows measure. B08 is the harness row, and that row's own scope cell already records that the
+harness which produced the comparison "is itself suspect" and that the comparison is one mesh of
+1444 free edges. One suspect survivor and a withdrawn measurement is not a weak E3, and it is not
+an E5 either, because the number C9 exists in order to state is A18's number. It is marked
+**Withdrawn** in section 5.1 rather than degraded, on the reasoning `docs/design/d54_acceptance.md`
+section 5 states and this ledger accepts: a degraded claim invites a later reader to treat it as
+weak evidence when it is not evidence at all. If the placed route is re-derived against an
+admissible ladder, C9 is re-entered from the new rows and not resurrected from these.
+
+**What did not change, and the dependants.** C1 is depended on by C4 and C19; its grade did not
+move, so neither dependence is invalidated, and a reader who traces C4 or C19 back to C1 traces it
+to an E3 claim resting on three E3 rows. No row in 5.1 names C9 in its `depends on` cell, so the
+withdrawal propagates no further. Section 6 is a statement about the inventory's committed tier
+cells, and those cells are deliberately left reading E3 where the demotion was recorded, so the
+`modalport_ownership.md` spread is annotated in place: the inventory grades that document E1 2,
+E3 5, E5 1, and the graded spread is E1 2, E3 3, E5 1, UNVERIFIED 2, over the same eight rows. The
+inventory file is not edited here, and neither is any other document's copy of these rows.
+
+**Citing these rows from now on.** Any document citing A17, A18 or C9 must say the rows are
+UNVERIFIED and that the re-derivation is outstanding; `pairing_rule_preregistration.md:483`
+requires that sentence and is not satisfied by a bare row number. The recorded numbers are not
+retracted. What is retracted is their use as convergence-order evidence, as validation of any
+constant, and as precedent for a ladder construction.
+
+**The revision the pairing rule says was not made.** That revision records at `:979-981` that
+`soundness.md` and `decisions.md` were untouched. That was true of the revision. It is not true of
+the dispatch, and this section is the point at which it stops being true; `decisions.md` carries
+its own entry.
+
+**The five sites, and the byte accounting.** Section 5.1 now carries one inserted marker above the
+table, the C1 evidence cell loses A18, the C9 row reads **Withdrawn** with both lost rows named,
+section 6's `modalport_ownership.md` tier-spread cell is annotated, and this section is appended.
+Nothing else in this file moved. The pre-state is 709 lines, 60839 bytes, sha256
+`15a7c0290ef137e40b6a0baec186bca0b6dd2db6f171de611571e4714f96bbab`, and that digest is
+reproducible: reverse the four substitutions above, delete every byte after the former final line,
+and hashing the result returns exactly that value. The post-state line count, byte count and digest
+are not carried inside this file, because writing them here would change the very bytes they
+describe; they are cited externally instead, in version control and in the dispatch ledger entry for
+this revision, each of which records the file's hash against the file's content. The check is not a
+prefix claim, because this revision edits four lines as well as appending: reconstructing the
+post-state from the pre-state by those four substitutions and by the bytes after its former final
+line reproduces the post-state digest recorded there exactly, so no byte outside the five named
+places moved.

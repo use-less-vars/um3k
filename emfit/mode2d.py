@@ -632,6 +632,12 @@ class Mode2D:
                             term, and the quasi-TEM mode of a layered line has a
                             small but non-zero value
         chosen      int     index into ``candidates`` of the mode reported above
+        candidate_residuals
+                    tuple   ``||C e - beta_sq B e|| / ||B e||`` per candidate,
+                            index-aligned with ``candidates``; the chosen mode's
+                            value is the scalar ``residual`` above, and the rest
+                            are carried so a root paired to a candidate that was
+                            *not* chosen can still be scored.
         sigma       float   the shift handed to ``eigsh``
         n_dof       int     free (non-PEC) edge count the solve ran on
         n_pec       int     eliminated edges
@@ -678,6 +684,7 @@ class Mode2D:
     mesh: Mesh2D
     e_z: np.ndarray | None = None
     deflation: dict | None = None
+    candidate_residuals: tuple = ()
 
     # -- geometry pass-throughs -------------------------------------------
     @property
@@ -814,7 +821,11 @@ def candidate_records(res) -> tuple:
     fail the solver's ``acceptable`` curl test).  The key names and the
     ``beta``-from-``beta_sq`` convention match ``candidate_rows`` in
     ``tools/host/anchor/ladder.py``: ``beta`` is ``sqrt(beta_sq)`` and is
-    ``None`` when ``beta_sq < 0`` (below cutoff).
+    ``None`` when ``beta_sq < 0`` (below cutoff).  ``residual`` is that
+    candidate's own ``||C e - beta_sq B e|| / ||B e||`` -- the scalar the chosen
+    mode reports as ``Mode2D.residual``, carried per candidate so a root paired
+    to a candidate that was *not* chosen can still be scored; it is ``None``
+    when the result does not carry ``candidate_residuals``.
 
     Every value is a plain Python ``int``/``float`` (or ``None``), never a
     numpy scalar, so the tuple drops straight into ``json.dump``.
@@ -824,10 +835,16 @@ def candidate_records(res) -> tuple:
     """
     pairs = list(res.candidates)
     ratios = list(res.curl_ratio)
+    residuals = list(getattr(res, "candidate_residuals", ()) or ())
     if len(ratios) != len(pairs):
         raise ValueError(
             f"mode 2D result is inconsistent: {len(pairs)} candidates but "
             f"{len(ratios)} curl ratios; the two must be index-aligned"
+        )
+    if residuals and len(residuals) != len(pairs):
+        raise ValueError(
+            f"mode 2D result is inconsistent: {len(pairs)} candidates but "
+            f"{len(residuals)} residuals; the two must be index-aligned"
         )
     records = []
     for i, ((beta_sq, eps_eff), curl_ratio) in enumerate(zip(pairs, ratios)):
@@ -841,6 +858,7 @@ def candidate_records(res) -> tuple:
                 "eps_eff": float(eps_eff),
                 "curl_ratio": cr,
                 "abs_curl_ratio": abs(cr),
+                "residual": float(residuals[i]) if residuals else None,
             }
         )
     return tuple(records)
@@ -1029,6 +1047,7 @@ def _select_and_pack(
         residual=float(residuals[chosen]),
         candidates=tuple((float(v), float(v / (k0 * k0))) for v in vals),
         curl_ratio=tuple(float(r) for r in ratios),
+        candidate_residuals=tuple(float(r) for r in residuals),
         chosen=chosen,
         sigma=sigma,
         n_dof=n_dof,

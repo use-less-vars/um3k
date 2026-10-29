@@ -669,6 +669,8 @@ threshold. Verbatim from the gate source:
 
 P1: all three `e_{o,k}` present and `e_{o,1} > e_{o,2} > e_{o,3}` strictly.
 P2: both `p_k = log2(e_{o,k} / e_{o,k+1})` in `[1.7, 2.3]`.
+
+[REVISION 6 MARKER — appended at dispatch 54; the line above is untouched. The second order's `p_2` exists in two committed copies with different fourth digits: `2.0087` at `docs/design/preservation_gate_preregistration.md:54` (the order-2 row's `p_2` cell of the pre-run table at `:51-55`) and `2.0089` at `docs/design/preservation_gate_results_a35.md:64`. The order-2 residuals `1.264530e-04` and `3.141941e-05` settle it: `log2(1.264530e-04 / 3.141941e-05) = 2.008873`, i.e. `2.0089` to four decimal places, so `2.0087` is the defective copy. The defective site is a FROZEN file (`docs/design/preservation_gate_preregistration.md:3`, "Status: frozen.") and lies outside this dispatch's write footprint, so the correction is recorded here, in section 14, and in the D54 errata block of `decisions.md`; the frozen line is not edited. This document contains neither string: its own `p_k` statements are the `[1.7, 2.3]` band only (lines 354, 671).]
 P3: bound `5e-3`. It is computed and recorded but is **not** a verdict condition -- the source
 computes `p3` and never reads it back -- so no PASS or FAIL in this document depends on it,
 and section 8 cites it only as a diagnostic.
@@ -1237,6 +1239,8 @@ for `tol_1`.
   mode), mean `2.02`, described at `:211` as apparent second-order convergence; and the same
   quantity for the A-3.5 case below is `1.9256` and `1.9815`, derived from the `rho_1 = 3.799`,
   `rho_2 = 3.949` already tabulated at line 506 of this document.
+
+[REVISION 6 MARKER — appended at dispatch 54; wording defect only, in the bullet that carries line 1236. The four numbers there, `2.038`, `2.009`, `2.034` and `2.008`, are base-two LOGARITHMS of successive error ratios — `p_k = log2(e_k/e_{k+1})`, defined at line 354 and applied as P2 at line 671, and reported as logarithms at `docs/design/d45_anchor_results.md:209` — and not ratios themselves. The word `ratios` mislabels them; no number in the bullet changes.]
 - The gate has already pre-registered the exponent band: `ORDER_LO = 1.7`, `ORDER_HI = 2.3`
   (`tools/host/anchor/preservation_gate.py:64-65`), section 3 P2. So `p` is not a new constant --
   it is the band the gate already applies.
@@ -1264,6 +1268,8 @@ residual, and none of it is a constant anyone has chosen.
 - It is not inert either: a level whose error were `1.231` times the `p = 2` prediction would fall
   outside the `p = 1.7` edge and be refused. So a `C h^p` tolerance both passes the one datum
   that must pass and can fail.
+
+[REVISION 6 MARKER — appended at dispatch 54, applying to line 1264. The multiplier is `1.231` exactly, as written there; the `1.23x` form used elsewhere in this corpus is a rounded paraphrase of it and not a second value.]
 - The exponent, not a prefactor, is what is being frozen. `C` is estimated at the coarsest level of
   each run and never carried between runs; no value of `C` -- not the three above, not any
   rounding of them -- is proposed as a constant of the rule.
@@ -1295,3 +1301,36 @@ extended, no overlap was evaluated on any pair, no deflated set was recorded, no
 added, no token or reason code was created, no gate was run, no test was written, no build was
 made, and nothing in section 13 is in force. AT-1, AT-3, AT-5 and AT-7 remain open; the section 11
 status cells now say so with a pointer here and nothing else. The pairing rule is not frozen.
+
+## 14. Change log for revision 6 (2026-10-29)
+
+Revision 6 adds no clause to the rule, changes no constant and re-derives nothing. It records four things about AT-7's datum and about the second-order exponent: what kind of statement AT-7 makes and why it is not section 3.1 reopened; that the datum is composed across two runs, so the band it yields is provisional; that one member of the ratio is not the same kind of quantity as the other two, which is an open defect; and that contrast is definitional. Written against revision 5 as committed; the revision 5 file is recoverable from git HEAD. The rule is not frozen, and revision 6 is not a freeze.
+
+### 14.1 Absolute-distance tolerance vs ratio-consistency band
+
+Section 3.1 rejected `tol(level) = tol_1 * 4^-(level-1)`, a fixed tolerance on the absolute pairing DISTANCE scaled by the refinement factor, and rejected it correctly: the quantity it bounds scales with `h` and with geometry, so no constant set before A-3.5 could be shown not to be a fit to A-3.5 (lines 119-130; line 343 puts the same point in one sentence -- the rejected `tol_1` "had to be set above `7.09799e-02`, the failing datum itself"). AT-7, derived in section 13.4, does something else: it derives a BAND ON RATIOS of successive level errors, `p_k = log2(e_k/e_{k+1})` in `[1.7, 2.3]` (lines 1259-1263). Each ratio compares two errors of the same root, at two successive levels, to each other; no error is compared to a fixed distance anywhere in it. AT-7 therefore does not reopen section 3.1, and it is not "a bigger tolerance". The repair it specifies replaces absolute-distance pairing with ratio-consistency pairing: a different criterion, not a looser one.
+
+The concrete numbers, all quoted from lines 1259-1263 of this document and not re-derived here. At level 2 the admissible window for `e_2/e_1` is `[0.20306, 0.30779]` (`p = 2.3` and `p = 1.7`), against a recorded `0.26321`; clearances `1.296` times above the lower edge and `1.169` times below the upper. At level 3 the window is `[0.04123, 0.09473]` against a recorded `0.06665`, clearances `1.616` and `1.421`. The datum therefore sits inside the band with clearance in the range 1.17 times to 1.62 times, at both levels and at both edges. That clearance is a self-consistency margin between successive errors, which is the only kind of margin a ratio band can report; it is not a distance, and it is not comparable to `PAIR_TOL = 2e-2`.
+
+### 14.2 The datum is composed across two runs -- the band is provisional
+
+Lines 1249-1250 read the worst root's level distances as `7.09799e-02, 1.86827e-02, 4.73091e-03`, and section 13.4 treats the three as one series. They are three order-4 pairing distances and they do not come from a single run. The level-1 value comes from the registered run that stopped at level 1: `.scratch/d51/pg_a35.log:41-42` records `VERDICT: STOPPED` with reason "gate section 8: root unpaired at level 1 (possible annihilation); run stopped, no verdict issued". The level-2 and level-3 values come from a supplementary levels-2-3 run whose own verdict is `FAILED-TO-MEASURE` (`.scratch/d51/pg_a35_l23.log:47`). `docs/design/preservation_gate_results_a35.md:81` states both the composition and its limit: "The A-3.5 column is a composed series and is labelled as one. Its level-1 entry comes from the `STOPPED` registered record and its level-2 and level-3 entries from the separate levels-2-3 record ... no single run ever produced A-3.5 at all three levels ... it is not a single run and must not be cited as one."
+
+What supports the composition is agreement between the runs, not a single process. The implied constants of the `h^2` form at lines 1255-1257 are `2.977113e+05`, `3.134437e+05` and `3.174860e+05`, ratios `1.0528` and `1.0129`, one constant "stable to `6.6` percent across two refinements (`C_3/C_1 = 1.0664`)". Cross-run agreement of that size is evidence that the two processes shared a series; it is not evidence that a single run would have produced the same series.
+
+The band in section 14.1 is therefore PROVISIONAL, and the rule for lifting or amending it is stated here in advance. CONFIRMED if a future single run produces all three levels of A-3.5 in one process and its `C_k` agrees with the composed constants above to within the same `6.6` percent; in that case the band stands as written and the confirmation is recorded against it. AMENDED if such a run's values differ: the band is then replaced by the single-run values and re-registered before it is used to refuse anything. Nothing in section 13.4's derivation is withdrawn by this paragraph, and no number above is recomputed here.
+
+### 14.3 Kind mismatch in the derivation (open defect)
+
+`7.09799e-02` is not an eigenvalue error `e_k`. It is a pairing DISTANCE: the order-4 root's relative distance to its nearest real-beta candidate on the level-1 mesh. `.scratch/d51/pg_a35.log:39` records it as one, in "nearest candidate distances {3: 0.022353452578831652, 4: 0.07097988161867323}", and `docs/design/preservation_gate_results_a35.md:27-32` tabulates it in that role, under the header "| order | relative distance | against `PAIR_TOL = 2e-2` |". The three members of the series are of one kind with each other -- all three are distances -- but they are not eigenvalue errors, and this document's own prose treats the same number as an error: line 520 calls it "the expected level-1 error", and lines 733 and 774 call it "the level-1 error".
+
+The consequence is recorded and not repaired. In `e_2/e_1` and in `C_1 = e_1/h_1^2`, the level-1 member is a pairing distance while the level-2 and level-3 members are being used as errors, so the level-2 ratio and the "stable to `6.6` percent" claim about `C_k` may be comparing a distance against an error. This is an OPEN DEFECT that can invalidate the derivation; it is not a wording problem and it is not resolved by relabelling. AT-7 cannot be frozen while it stands. Nothing here fixes it and nothing here re-derives it: closing it needs either a measured level-1 eigenvalue error for order 4 or a band derived from distances alone, and neither exists in the tree today.
+
+### 14.4 Contrast is definitional
+
+Contrast is defined in this document as `c = eps_r - 1` (line 81), so "contrast 2.5" and `eps_r = 3.5` name the same geometry and are not two readings of it; the "Recorded discrepancy, not resolved here" at lines 1271-1276 is a labelling confusion rather than a contradiction between a label and an artefact. The correction, its exact sites and its settling arithmetic are recorded in the D54 errata block of `decisions.md`.
+
+### 14.5 Not done here
+
+No gate run, no test, no solver, no build; no measurement in section 13 or in this section has been taken; `emfit/`, the frozen A-1.5 module, `preservation_gate.py`, `preservation_gate_preregistration.py` and `soundness.md` are untouched; no attack is marked closed; no commit. The three annotations added by this revision are markers placed after the lines they apply to, and no existing line, number or sentence was edited, reordered or deleted: the p2 marker after the P2 statement at line 671, the logarithms marker after the bullet at lines 1235-1239, and the `1.231` marker after the bullet at lines 1264-1266. `decisions.md` was appended to, as the errata record, and is the only other file this dispatch wrote. The pairing rule is not frozen.
+
