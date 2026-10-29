@@ -5,6 +5,32 @@ second, verdict third. No slope is reported in this document: the study has not 
 
 ---
 
+## G0. What this document gates, in one page
+
+Read this page alone and you cannot be misled about what the study may claim.
+
+**What is scored.** The convergence order `p` of `eps_eff` over the five MEASURED rungs of §D:
+`free_e` 1444 / 2404 / 3604 / 5044 / 9604, strip cells 36 / 22 / 20 / 10 / 10, `eps_eff`
+3.629512208 / 3.610786479 / 3.600429077 / 3.593927956 / 3.589425284. A **mixed-knob** ladder, so
+`p` is a composite rate, and §F2 bounds what one strip geometry can prove.
+
+**What is not scored.** `R_analytic` (a different object, §C); `T4_amp`'s ratio `Q`, its bar and
+its verdict; any `emfit/` behaviour. No uniform single-knob ladder exists and none will be run
+(§E.0.1). A confirmed `p` does not validate the sparse solver: this document scores a physical
+convergence rate, not a solver's fidelity, and §F2 is the only warrant for generalisation.
+
+**The band.** `p` in `[1.70, 2.30]` → H_p **CONFIRMED**. Any `p` outside `[1.70, 2.30]` → H_p
+**REFUTED**. One band, single-valued, no grey zone, no graded verdict, no "study declared failed"
+clause (§F.3).
+
+**The decision rule, in this order.** (1) estimator verdict tokens (§E.2.1); (2) gates **G1-G4**
+(§F.6): **G1** fewer than four usable rungs; **G2** a sign change among the four consecutive
+`delta_i`; **G3** rung 0 fails to reproduce `4.0489791163982565` at the registered tolerance;
+**G4** the two estimators, or the two analyses, cannot be reconciled. If no gate fails, the study
+has produced a number, *whatever that number is*, and §F.3 alone decides it. If a gate fails, no
+order is reported and that failure is the whole verdict: no re-run to a kinder tolerance, no
+wider band, no relabelling.
+
 ## A. Identity
 
 | field | value |
@@ -312,6 +338,26 @@ widen the band.
 `D` values already visible in the MEASURED sequence (1.8080, 1.5932, 1.4438; DERIVED) are
 recorded here as inputs to §G and are **not** converted into a `p` in this document.
 
+#### E.2.1 Named verdict tokens for estimator failure (decision)
+
+A failed inversion is a **verdict**, not an exception. The estimator never raises on a degenerate
+input: a raised exception is caught by a harness, dropped by a caller, and turns a real result into
+a missing line. Instead it writes exactly one of these tokens, verbatim, into the `verdict` field
+of the result record and into the report line, and the study continues to the gate evaluation of
+§F.6 with the token recorded.
+
+| token | emitted when |
+|---|---|
+| `ESTIMATOR_NO_SIGN_CHANGE` | `f(p) - D` does not change sign on the declared bracket `[0, 8]` |
+| `ESTIMATOR_ROOT_OUTSIDE_BRACKET` | the unique root lies at `p < 0` or `p > 8` |
+| `ESTIMATOR_DEGENERATE_RATIO` | `r_1 == r_2`, or either ratio `<= 1`, so the pair carries no refinement |
+| `ESTIMATOR_NONFINITE_OBSERVABLE` | a `Delta_i` is zero, wrongly signed, `inf` or `nan` |
+
+A token is a terminal verdict for that estimator and a gate-failure input. It is never reported as
+an order, as a bound on an order, or as "inconclusive"; it never appears in a document as a number;
+and it must be quoted verbatim in the acceptance record. A run whose log contains
+`ESTIMATOR_NO_SIGN_CHANGE` has not measured `p`, whatever else it contains.
+
 ### E.3 Two mesh parameters, both reported (decision)
 
 The ladder has no single unambiguous mesh spacing, because strip, air and z move together.
@@ -498,6 +544,17 @@ from this list.
   `r = 1.3333`; 1.4613-1.6707 at 1.25; 1.3634-1.5210 at 1.20; 1.9923-2.5410 at 1.50. The
   bands from adjacent `r` overlap, so `r` must be *declared and uniform* for the reading to
   be single-valued. This is the arithmetic justification for the declared noise floor of §E.2.
+
+**Scope of the sentence above (decision, registered before the run).** This is a requirement on the
+*simplified secondary reading* of §E.2 — the unweighted OLS slope of `log|Delta|` on
+`log sqrt(h_i h_{i+1})`, whose consecutive abscissa intervals overlap when `r` varies, which is why
+that particular reading needs a uniform ratio to be single-valued. It is **not** a precondition on
+the registered target. The five rungs of §D form a mixed-knob ladder with non-uniform ratios
+(§E.0), and the primary estimator is built to accept exactly that: the two-level unequal-ratio
+root-find needs two declared, unequal ratios `r_1 != r_2` and nothing more. Non-uniformity, or an
+undeclared ratio, therefore cannot be used to withhold, discount, defer or re-register the primary
+number, and the absence of a uniform ladder is not a failure condition of §F.3 nor of any gate
+G1-G4.
 
 ---
 
