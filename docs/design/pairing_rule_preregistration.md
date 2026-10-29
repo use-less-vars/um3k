@@ -63,6 +63,11 @@ i.e. `ny` in {16, 32, 64}, `k0 = 1407.433509`, `sigma = 990434.5409`, `t = 0.001
 `b = 0.0078125`, `k_candidates = 16`, `arpack_budget_factor = 40`, solver
 `emfit.mode2d.solve_modes_deflated_v2`.
 
+`k_candidates = 16` is the ARPACK request `k`, not a post-solve truncation: the solver returns every
+requested candidate and the record keeps each one, so the number is an input to the solve and not a
+window applied to its output. Section 4.3 establishes this against the tree, and R0 governs what the
+constant is and is not allowed to decide.
+
 ## 2. The defect
 
 The frozen gate pairs each analytic reference root to a computed candidate if and only if
@@ -157,6 +162,91 @@ Notation: `L = 3` is the finest solved level; frozen reference roots `r_o`, `o =
 descending order; `C_k` is the set of computed candidates with real `beta` on level `k`;
 `e_{o,k} = |c - r_o| / r_o` for the candidate `c` assigned to root `o` at level `k`.
 
+**R0 -- Candidate order and the `k_candidates` boundary (AT-2).** This clause is an addition, not a
+revision: no ordering term and no cut term exists in R1 to R6, and section 1 is the only place the
+constant occurs. The gap it closes is the one the constant's own comment points at --
+`tools/host/anchor/ladder.py:62` annotates `K_CAND = 16` with "section 4.3 rule 1 / 8.4", and the
+section it names contains no candidate rule at all.
+
+*Hazard H-AT2.* Two records of one physical case can carry different verdicts because the candidate
+list was ordered by a different key. The order exists in code and not in this document: the runner
+builds its rows with `pairs.sort(key=lambda p: (-p[0][0], p[1]))`
+(`tools/host/anchor/ladder.py:128`), i.e. `beta_sq` descending and then `curl_ratio` ascending, and
+the record's `index` field is the position in that sorted list, not the solver's return position.
+The order was never written down, so an implementation default has been standing in for a rule. The
+hazard is not bookkeeping in at least one live place: the mixed path sorts with
+`order = np.argsort(-beta_sq)` (`emfit/mode2d.py:1870`), whose default kind is quicksort and is
+therefore not stable, and then selects `chosen = np.flatnonzero(eligible)[np.argmax(beta_sq[eligible])]`
+(`emfit/mode2d.py:1887`). Among eligible candidates tied in `beta_sq`, which candidate is chosen is
+decided by the argsort's tie permutation. A re-sort can change the selected mode with no change to
+the physics.
+
+**The canonical key.** Candidates are ordered by the lexicographic key
+
+    K(c) = (-beta_sq(c),  +curl_ratio(c),  +index(c))
+
+read as `beta_sq` descending, then `curl_ratio` ascending, then `index` ascending. `beta_sq` and
+`curl_ratio` are the only two numbers in the candidate record that are independent of each other:
+`eps_eff = beta_sq / k0^2` is a function of `beta_sq` and cannot break a tie in it. The direction is
+fixed here and not derived: `beta_sq` descending puts the fastest-varying modes first, which is the
+order the runner already uses, and `curl_ratio` ascending is the runner's existing second term. This
+clause therefore ratifies the runner's behaviour rather than inventing a competing order, and the
+fact that the behaviour predates the rule is precisely the defect being closed.
+
+`index` is the last term and only the last term. Because the record's `index` is currently the
+position in the sorted list, it is redundant with the first two terms and cannot serve as an
+identity; a key that used it earlier would be circular. Its role is to make the order total over
+whatever list the record actually contains, whatever labelling convention the producer used.
+
+**Totality, and what is not distinguishable.** K is total wherever `beta_sq` and `curl_ratio` are
+comparable reals or the values `inf` and `-inf`. Two records are *indistinguishable* if and only if
+they agree on `beta_sq` and on `curl_ratio` to double precision; then and only then is the order
+between them undetermined. No key over these fields can do better, because the fields are equal.
+The indistinguishability is a statement about the physics rather than an ordering defect: two
+candidates equal in both numerics at double precision are one state up to a rotation of a degenerate
+eigenspace, and no verdict in this rule separates them either. `index` separates them in the list; it
+does not make them different states.
+
+A record whose `beta_sq` or `curl_ratio` is `NaN`, or whose fields are not comparable, is not ordered
+by K. The run does not then fall back to insertion order: it emits FAILED-TO-MEASURE with reason
+`sort_key_undefined`. A `NaN` `curl_ratio` is already reachable at the selection site, where `ratios`
+is initialised to `NaN` wherever `m1x` vanishes (`emfit/mode2d.py:1861-1865`), so this is a state the
+rule has to name and not a guard against the impossible.
+
+**The `k_candidates` boundary, as a pre-registered quantity.** (a) The key is computed after the
+solve, on the candidate records the solver returned; it is not an instruction to the solver.
+(b) `k_candidates` is the ARPACK request count, the `k` of the solve call, and the solver asks for
+`n_k = min(int(k), n_dof - 1)` (`emfit/mode2d.py:1557` deflated, `:930` undeflated). (c) There is no
+post-solve truncation to `k_candidates`: every returned candidate is written to `candidates_all` and
+then classified into `retained` or `dropped`, and the only filters are the two of AMENDMENT v2 --
+`|eps_eff - 1| <= 1e-8` and then a six-decade gap between `max dropped |curl_ratio|` and `min
+retained |curl_ratio|` (`tools/host/anchor/ladder.py:223`). Both are `max`/`min` over a set and are
+therefore invariant under any reordering of the record. In this tree the `k_candidates` cut moves
+nothing. (d) The guarantee given here is invariance of membership under reordering of the input
+records: the solve's inputs are the mesh and the parameters, and the candidate list is an output. A
+changed request, tolerance or shift is a different measurement, outside the guarantee; a comparison
+across such a change compares two measurements, not one. (e) The set that is genuinely at risk is the
+degenerate cluster at `beta_sq = k0^2`, whose observed multiplicity rises from 11 to at least 14 as
+the mesh refines (`decisions.md:8525`): a request of 16 against a cluster of that size can return a
+different subset on a different run. Every member of the cluster is a distinct record with a distinct
+`beta_sq`, so no ordering can settle which members were requested. This is stated as the residual of
+AT-2 in section 4.3, not argued away. (f) Records that cannot be ordered carry the reason
+`sort_key_undefined` under FAILED-TO-MEASURE. No sixth token is created: a NO-VERDICT is a
+FAILED-TO-MEASURE with a named reason, which is already how `levels_incomplete`, `spectrum_short`,
+`attribution_conflict`, `contrast_beyond_validated` and `assign_collision` are handled in section 6.
+
+**Comparability.** Two records of one physical case are comparable under K if and only if both carry
+the fields K reads, at the same `k0`, under the same `k_candidates` request. The record must carry
+`beta_sq`, `curl_ratio`, `index` and both constants per level; a record missing any of them is
+`sort_key_undefined` and is not comparable. Comparability is a property of the record, not a
+reader's choice of sort.
+
+**Ordering ties are non-verdicts by construction.** An exact tie at the seed cannot become a verdict:
+R1's minimisation over `C_L` is undefined between candidates equal in `beta_sq` and `curl_ratio`, and
+the run reports FAILED-TO-MEASURE with reason `tie_at_seed` rather than picking one. A tie inside the
+competitor set is already covered, because R3 reports `ambiguous` whenever `|S| >= 2`. The residual
+ambiguity left by K is in every case a non-verdict, so K needs no further tie-break to be sound.
+
 **R1 -- Seed (finest level only).** For each root `o`, let `c*` minimise `e_{o,L}` over
 `C_L`, giving `e_{o,L}`. The root seeds if and only if both hold:
   (a) `e_{o,L} <= SEED_TOL` with `SEED_TOL = 2e-2` (unchanged);
@@ -223,6 +313,16 @@ are evaluated exactly as frozen (section 7). A root that produced `e_{o,k}` for 
 supplies them; a root that did not cannot supply P1, and P1 is then unevaluable rather than
 satisfied.
 
+**R7 -- Reference provenance.** The reference ladder must come from the analytic routine or from an
+external tool, and never from the solver's own converged output. No verdict is produced against a
+ladder that is not independent of the run it scores.
+
+An entry whose provenance is absent, outside the fixed vocabulary, or numerically equal to a value
+the run has already recorded from the solver is **FAILED-TO-MEASURE**, reason
+`reference_not_independent` -- neither a PASS nor a FAIL. Section 4.4 gives the admissible and
+inadmissible constructions, the vocabulary, and the two checks that do not rely on the declared
+field.
+
 ### 4.1 Constants and their provenance
 
 `SEED_TOL = 2e-2` is the existing `PAIR_TOL`, unchanged in value, retained only where it was
@@ -257,6 +357,133 @@ that pairs cleanly and then fails P2 is a **FAIL**, which is a statement about t
 and not a FAILED-TO-MEASURE, which is a statement about the instrument. Were the pairing band
 as narrow as P2, P2 could never fire, and the gate would be unable to distinguish a wrong
 rate from an untracked one.
+
+### 4.3 Sort key: provenance and what it cannot reach
+
+R0 states the key. This subsection states where it came from and what it does not settle, because
+the closure of AT-2 turns on the difference.
+
+**Provenance.** No sort-key clause and no truncation clause existed in R1 to R6 before revision 3.
+Section 4 never mentioned ordering, and `k_candidates = 16` occurred once, in the constants list of
+section 1. The order the runner used was `(-beta_sq, +curl_ratio)`
+(`tools/host/anchor/ladder.py:128`), written in code, documented nowhere in the rule, and the
+record's `index` field was a position in that sorted list rather than an identity. R0 is therefore an
+**addition**, not a revision of an existing clause, and the review's phrasing -- re-sorting by a
+different key -- presupposes a clause that was never there. The distinction matters for the history:
+nothing in this document is contradicted by R0, and no earlier reading of R1 to R6 is overturned.
+
+**Closure: PARTIALLY CLOSED.** Closed in the rule: the key and its direction, its totality, the
+last-term status of `index`, the `sort_key_undefined` reason, and the statement that ordering ties
+are non-verdicts. A reader can now reproduce the order from the document alone, which was the
+requirement.
+
+Not closed, and not closeable by a key: the membership of the 16 returned candidates. The cut is an
+ARPACK request, not a window applied to the output -- `n_k = min(int(k), n_dof - 1)`
+(`emfit/mode2d.py:1557`, `:930`), every returned candidate recorded, and the only filters those of
+v2, which are order-invariant `max`/`min` over a set. Ordering cannot make a solver return a
+deterministic subset of a degenerate cluster, and the cluster at `beta_sq = k0^2` has multiplicity 11
+rising to at least 14 (`decisions.md:8525`), so a request of 16 is not a request that resolves it.
+The residual is stated as a condition a later reader can test: **if two runs of one physical case
+return candidate sets that differ inside the `beta_sq = k0^2` cluster, the difference is outside
+R0's guarantee and the pair is not comparable under K; the run that shows it is a NO-VERDICT --
+FAILED-TO-MEASURE, reason `cluster_membership_unstable` -- and not a disagreement between records.**
+That is a reason, not a token: the set stays at five.
+
+AT-2 therefore reduces to a defect of the rule book, now closed, plus a measurement defect in the
+solver's cluster resolution, which a rule cannot close. Calling AT-2 CLOSED would claim the second
+by fixing the first.
+
+### 4.4 Reference provenance: which ladders are admissible (AT-4)
+
+**The hazard, H-AT4.** Every order verdict in this rule -- P1, P2, P3, route 3 -- is a statement
+about the *distance between* the computed sequence and a reference. If the reference is built from
+the solver's own converged output, the statement is about the solver's agreement with itself: a
+coarse run used to score a fine run, the same run read at a different level, or a fit to the run's
+own sequence all produce a clean, in-band contraction that certifies nothing. This is the one attack
+in section 11 that this project has already carried out rather than merely imagined: ledger rows
+**A17 and A18** record the reference ladder being built from a converged run's own output on another
+geometry. It is stated before it is forbidden because a rule that had only implied the route was
+undesirable would leave those results standing, and they are the reason to expect the attack to
+recur in normal use rather than in principle.
+
+**The rule.** R7, in one sentence: analytic routine or external tool, never the solver's own
+converged output. What follows makes that sentence operational and nothing else.
+
+**Admissible, exhaustively.**
+
+1. `analytic:<routine>/<routine-revision>@k` -- the frozen analytic routine, the same one that
+   produced the frozen reference roots, evaluated at the resolution of ladder level `k`. Evaluating
+   the routine's own discretised form at the coarse levels is admissible and is what section 5
+   already scores against; the routine is not the code under test.
+2. `external:<tool>/<version>#<input-hash>` -- an independent solver or library, version and input
+   hash pinned, not the code under test, with its own convergence record at the two finest levels
+   carried in the artefact.
+
+Nothing else is admissible. Both are reproducible: re-running the registered construction on the
+registered inputs must reproduce the registered value -- to the last bit for (1), a deterministic
+routine, and within the tool's own stated noise for (2).
+
+**Inadmissible, exhaustively.**
+
+1. A coarser run of the same solver: levels 1-2 solved to score level 3.
+2. The same run at a different level, or any restriction, permutation or re-projection of it.
+3. Any quantity already recorded in the run's own output -- betas from `candidates_all`, residuals
+   `e_{o,k}`, seeds `c*`, or a previous verdict.
+4. A fit, interpolation or extrapolation to the solver's own sequence, including a convergence-order
+   fit through the solver's own errors.
+5. A ladder copied from another run's solver output, or rounded from one. This is the corpus's
+   A17/A18 route and it is inadmissible even though it is not the *current* run's output: it is
+   still the code under test, and a second run of the same code is the same witness.
+
+**What was previously misread.** Revision 3 treated a solver-derived ladder as admissible if it was
+*declared*: the AT-4 row and section 11 asked only for "generator, source rows, hash" in the schema
+that registers the run, which reads as permitting a declared solver-derived ladder while disapproving
+of it. Declaration is now necessary and not sufficient. One construction moves the other way, and it
+is recorded as a judgement call: evaluating the analytic routine at the coarse resolutions rather
+than only at closed-form exact values could be read as forbidden under revision 3's phrase "may not
+be produced by the solver being graded", and it is admissible here, because the routine is not the
+solver and section 5 depends on it.
+
+**Detection, mechanically.** Three checks, none of which is good faith.
+
+  - **Declared provenance.** Every ladder entry carries `reference_ladder[i].provenance` drawn from
+    the fixed vocabulary in the list above. A missing field, a value outside the vocabulary, or a
+    field that disagrees with the construction actually used stops the gate before a verdict: the
+    gate does not produce one.
+  - **Numeric identity, field-independent.** For each ladder entry, the gate compares its value
+    against every value the run has already recorded from the solver (all levels of
+    `candidates_all`, the residuals `e_{o,k}`, the seeds `c*`). Equality is **exact**, bit-for-bit on
+    the round-tripped double, with no tolerance. A tolerance is not needed and would be harmful
+    here: a copied value differs from the analytic value by the solver's own error, which on this
+    geometry is `1e-4` to `1e-3` (section 2), four to six orders above any tolerance a deterministic
+    routine's rounding would need. So a tolerance buys nothing, and exact equality cannot be evaded
+    by perturbing the copy: the third check catches the perturbation.
+  - **Recomputation.** For a declared `analytic` entry the gate re-evaluates the frozen routine at
+    the registered resolution and requires agreement to `1e-12` relative; for a declared `external`
+    entry it re-reads the pinned tool output and input hash. A solver value perturbed by any amount
+    large enough to break exact equality is then still wrong by the solver's error and fails this
+    bar, so the pair of checks has no gap between them. This check does not consult the provenance
+    field except to decide which construction to recompute.
+
+**The token.** A detected violation is **FAILED-TO-MEASURE**, exit 2, reason
+`reference_not_independent`, with `reference_provenance_check` naming which check fired
+(`declared`, `identity` or `recompute`) and the offending entry's index. It is not a PASS, because a
+run scored against itself has not been measured and a PASS would be quoted downstream as evidence.
+It is not a FAIL, because a FAIL is a claim about the physics and this is a claim about provenance:
+the same reason R2 reports an instrument failure as FAILED-TO-MEASURE rather than FAIL, and the same
+reason AT-6's aggregation puts instrument tokens where they cannot masquerade as findings. It is not
+STOPPED either -- no annihilation is being asserted.
+
+**Retroactive consequence for rows A17 and A18.** They are not grandfathered, and this rule does not
+claim they were fine. Their recorded numbers are kept, their order verdicts are withdrawn as of this
+revision, and they may not be cited as convergence-order evidence, as validation of any constant, or
+as precedent for a ladder construction until they are re-derived against an admissible ladder. The
+re-derivation is not done by this revision and is recorded as outstanding work in section 12.1.
+Until it is done the rows count as UNVERIFIED, and any later document that cites them must say so.
+
+**What this clause still does not test.** R7 constrains where the reference came from, not whether
+it is correct: limit 1 of section 9 stands unchanged, and an analytic root that is wrong will still
+be agreed with cleanly.
 
 ## 5. Feasibility of the rule on its target case
 
@@ -324,6 +551,10 @@ is not a passed one.
 `assign_collision` are **reasons**, not tokens. Each is reported under FAILED-TO-MEASURE, so
 the token set stays at five and the exit codes stay distinct.
 
+> **Superseded in place -- revision 3.** The precedence paragraph and the total order below are
+> retained verbatim as the revision 2 text and are withdrawn as a rule. Section 6.1 replaces them.
+> They are history; they are not the current ordering.
+
 **Precedence.** One run yields one token, and the order is fixed here because a reader uses it
 to decide whether annihilation was reported:
 
@@ -335,6 +566,90 @@ resolution failure anywhere means the run cannot certify that a missing mode was
 rather than lost to the mesh. `STOPPED` outranks `FAIL` because a suspected annihilation is a
 stronger claim than a wrong rate. `FAIL` outranks `PASS` trivially. Every per-root outcome is
 written to the record, so a token that loses precedence is not lost.
+
+> **End of the superseded block -- revision 3.** Everything from the "Superseded in place" marker
+> above to this line is withdrawn as a rule and is kept as history.
+
+### 6.1 Per-root verdicts and run-level aggregation (AT-6)
+
+**Why the total order above is withdrawn.** A total order over tokens applied to a whole run is a
+join: the highest-precedence token in the vector wins the record, which is what "one run yields one
+token" meant. That makes the record's summary a function of the least informative root. The failure
+is one-directional and harmful: a root whose physics failed -- a wrong contraction rate, or a mode
+genuinely absent -- is masked by any other root that failed to measure, so the record reports an
+instrument problem about a run that made a physics finding. The withdrawn order is not wrong because
+precedence is wrong; it is wrong because the object it ordered was the run rather than the root.
+
+**The sentence at the end of the withdrawn paragraph.** Revision 2 wrote: "Every per-root outcome is
+written to the record, so a token that loses precedence is not lost." That sentence is hereby
+promoted from a description to a **requirement on the artefact**, and it is not true of the current
+artefact. The record as produced today carries per-root outcomes only as diagnostics, inside whatever
+per-level structure the run wrote; it carries no per-root verdict vector. The requirement therefore
+creates work, and the work is the field `root_verdicts`. Nothing below should be read as claiming
+that field exists.
+
+**Per-root vocabulary.** Each root receives one token from the same fixed set of five -- `PASS`,
+`FAIL`, `FAILED-TO-MEASURE`, `STOPPED`, `UNTRACKED-AT-COARSE` -- under R1 to R6 applied to that root
+alone. No per-root token is invented and no per-root token means anything different from what section
+6 already says it means. A root that cannot be given a token is FAILED-TO-MEASURE with a reason,
+never a sixth symbol.
+
+**Run-level aggregation, as a total function.** Let `v_o` be the token of root `o`, `o = 1..n`, let
+`V` be the vector, and let the run token be `A(V)`, evaluated in this order with the first match
+winning:
+
+1. **Record-level defects first.** If the record as a whole is defective -- `levels_incomplete`, or
+   R2's global `no seed` gate meaning that no root seeded at all, or `spectrum_short` in the sense of
+   a level-3 real-beta count below the number of roots -- the run is FAILED-TO-MEASURE before any
+   aggregation. Per-root tokens may be present and are still recorded, but they are not the basis of
+   the run token, because a vector over an incomplete reference set is not a measurement of that set.
+2. Any `STOPPED` in `V` gives `STOPPED`.
+3. Otherwise any `FAIL` in `V` gives `FAIL`.
+4. Otherwise any `FAILED-TO-MEASURE` in `V` gives `FAILED-TO-MEASURE`.
+5. Otherwise any `UNTRACKED-AT-COARSE` in `V` gives `UNTRACKED-AT-COARSE`.
+6. Otherwise, all `PASS`, the run is `PASS`.
+
+`A` is total: clauses 1 to 6 cover every vector over the five tokens, the last being the conjunction
+of the negations of the others.
+
+The order inside `A` is not the withdrawn order and must not be read as its continuation. Two
+properties fix it. **Physics outranks the instrument**: `STOPPED` and `FAIL` are claims about the
+spectrum, the other two are claims about the measurement, and a claim about the spectrum made from a
+complete measurement is not falsified by another root's incomplete one. This is the inversion AT-6
+was about and the only place where revision 3 reverses revision 2. `STOPPED` above `FAIL` is carried
+over unchanged from the withdrawn order for the reason given there -- a suspected annihilation is the
+stronger claim -- while the rest of the old order is dropped, and with it the masking: no
+FAILED-TO-MEASURE can hide a FAIL, and no UNTRACKED-AT-COARSE can hide a STOPPED.
+
+**When roots disagree.** Disagreement is a normal outcome and is reported, never resolved. There is
+no averaging of tokens, no vote, no majority, and no rule that prefers the more favourable root or
+the less favourable one. That any `V` which is not all-`PASS` cannot produce a run `PASS` follows
+from clause 6 and needs no separate clause. The record carries, per root, the token `v_o` and, where
+the token is FAILED-TO-MEASURE, its reason; it also carries `root_verdicts`, the vector `V`, and a
+`disagreement` flag set when `V` is not constant. `disagreement` describes the record and is not a
+token: it changes no exit code, and a run whose roots disagree is as reportable as one whose roots
+agree.
+
+**Diagnostics are mandatory and are not verdict conditions.** Per root and per level the record
+carries the triple `e_{o,k}`, the solve's `residual_eps_mu`, and the `p3` quantity whose bound is
+P3_MAX. These are required fields. None of them is a test: the rule is R1 to R6 on `e` and the rates,
+and a diagnostic outside any band changes no token. The precedent is explicit in this document --
+`residual_eps_mu` is carried by the solve and never gated, and section 7 records that P3_MAX is
+computed and never consulted. Revision 3 does not promote either into a condition, because a bound
+introduced after a prediction is a degree of freedom.
+
+**Closure: CLOSED in the rule, not in force.** The aggregation is total, it is asymmetric in the
+required direction, and every combination has a stated outcome, so AT-6 is closed as text. It is not
+in force: the enforcement point is the artefact field `root_verdicts`, which does not exist, and until
+a run writes it the current artefact cannot distinguish a masked record from an unmasked one. A
+reader checking AT-6 checks the field, not this paragraph.
+
+One judgement call is disclosed rather than buried: clause 1 lets R2's global `no seed` gate override
+a per-root `STOPPED` or `FAIL`, which is the one place where an instrument outcome outranks a physics
+outcome after the inversion above. The justification is that `no seed` is not a per-root measurement
+failure but a statement that the reference set was not seen at the finest level at all, so there is no
+spectrum against which "annihilated" or "wrong rate" could be claimed. If that reading is contested,
+clause 1 is the line to contest; clauses 2 to 6 do not depend on it.
 
 ## 7. What does not change
 
@@ -496,6 +811,8 @@ R2, R3, R4, R5 and section 6 for findings 1, 3, 4, 5, 6, 7, 11 and 12, and secti
 8 and 9 for findings 8, 9, 10, 13 and 2. The document is still not in force; freezing remains a
 separate act.
 
+Revision 3 is recorded in section 12, with line numbers as of revision 2.
+
 ## 11. Attacks constructed and not executed
 
 An independent review is not an adversarial test of a gate. This section records attacks built by
@@ -505,7 +822,11 @@ not a demonstrated vulnerability: it is a claim that a specified report would be
 mechanism stated so that a later run can confirm it or drop it. AT-1 to AT-4 are the four themes
 the dispatch named, in the order it named them; the dispatch gave themes rather than enumerated
 constructions, so the input and the wording of each row are mine. AT-5 is drawn from this
-document's own sections 2 and 6, and AT-6 is mine.
+document's own sections 2 and 6, and AT-6 is mine. AT-7 is drawn from the same review that produced AT-5 -- a genuine solver-side loss
+of a mode at `c <= 2.5` -- and is mine in the same sense: the coverage row below names the `c <= 2.5`
+STOPPED licence as not distinguishable and points at it, without enumerating the construction. There
+are **seven** rows below, AT-1 to AT-7. That is the governing count for this section; the six that
+the review named is the count of the review, not of the table.
 
 ### 11.1 Coverage of the five attacks the dispatch named
 
@@ -522,13 +843,13 @@ named, that it was answered here and by what.
 
 | id | attack | constructed input | what the gate reports | why that report is wrong | minimum revision that closes it | closed today? |
 |---|---|---|---|---|---|---|
-| AT-1 | mode identity by column ordering when two modes are near-degenerate | two reference roots about 4.2% apart (above route 3's `0.04`) with their two computed candidates exchanged, by the same amount, at every level -- for instance a dielectric step moved so the two modes cross between two of the levels | PASS: every track stays inside `SEED_TOL` at level 3, both contractions stay inside `[2.5, 6.0]`, and route 3 is read off the reference list at 0.042 | the rule tests that a beta lies near a root and never that the mode is the same mode. A swap that is self-consistent across levels leaves every distance and every ratio inside band, so cross-level identity is assumed by the assignment rather than measured. The ledger's claim C21 is the row that says this needs an overlap test, and the invariant layer that might have caught a swap has no measured result at all (inventory row B01, E5, not citable) | one eigenvector overlap per tracked pair, `abs(v_k . v_k+1)` with a stated bar, recorded per track per level and required before a track may continue | no -- section 9.7 discloses the family of geometric chains; no term of the rule detects one |
-| AT-2 | decorrelation of the pairing assignment when the mode set is re-sorted by a different key | one physical case run twice, candidates sorted by `abs(beta)` and then by `Re(beta)` (or ascending against descending), with the `k_candidates = 16` cut falling between two different betas in the two runs | not one wrong report but a report that changes between runs: PASS, or FAILED-TO-MEASURE from `ambiguous` or `assign_collision`, or UNTRACKED-AT-COARSE, depending on which side of the cut a surviving mode lands | the physics is identical and the verdict is not. The sort key appears nowhere in the rule, so two records cannot be compared without it, and the collision and ambiguity tokens are defined on an assignment that the cut can move. A verdict a re-sort can flip is not a measurement | pin one canonical sort key in the rule and in the record, and state the `k_candidates` window as a pre-registered quantity rather than as an implementation default | no -- section 1 fixes `k_candidates = 16` and says nothing about ordering |
-| AT-3 | a gate applied to a level where the deflation subspace itself changed | three levels of which the coarsest deflates a spurious pair of the recorded kind (`t4_amp_ratio.md` section 15.8: five shifts returned a bogus pair at residual `9.89e-01`), while levels 2-3 deflate nothing spurious | PASS whenever a track exists: nothing in R1-R6 reads the deflated set, and `spectrum_short` counts only the level-3 real betas against the number of roots | the three levels are then not three discretisations of one operator, and the contraction band measures the difference between two operator splittings as if it were a refinement rate. The rule names the shift and the budget and never the set the shift deflates | record the deflated eigenvalue set per level in the artefact, and refuse a track whose level-`L` candidate lies inside a coarser level's deflated set, with its own token | no |
-| AT-4 | a pass achieved by comparing a run against itself | a reference ladder produced by the solver under test -- the converged `ny = 64` betas used as the level-3 reference, and the same procedure at 32 and 16 | the exact version is FAILED-TO-MEASURE, because `e = 0` collapses the window onto `E_FLOOR` and `rho = +inf` sits outside the band: finding 11 catches it, not the design. Add a small geometric perturbation to each level's reference and the same run reports PASS | the record then measures self-consistency, and a clean PASS is evidence about the code rather than about the physics. R1 tests the distance to the reference and cannot see where the reference came from; section 9.1 says this in words and nothing enforces it | a provenance field on the reference ladder -- generator, source rows, hash -- in the schema, plus a rule that the ladder may not be produced by the solver being graded | no -- disclosed in section 9.1, not implemented |
-| AT-5 | annihilation misreported through the STOPPED and UNTRACKED-AT-COARSE precedence | a genuine loss of a mode at contrast `<= 2.5`, and separately a coarse-rung solver failure that loses the mode at level 1 only | STOPPED (exit 3, "annihilation suspected") for the first, UNTRACKED-AT-COARSE (exit 4) for the second | both tokens assert a cause the rule cannot establish. The frozen gate's STOPPED at contrast 2.5 was itself a discretisation artefact with no physical event (section 2), and this rule changes the vocabulary and adds preconditions without adding a discriminator between a lost mode and a lost track. Sections 9.2 and 9.5 concede exactly that | solver-side evidence before either token may be emitted -- an inertia computation per rung, or the residual and overlap of the vanishing branch -- otherwise FAILED-TO-MEASURE | no -- partial mitigation only, from `contrast_beyond_validated` (finding 5) and `spectrum_short` (finding 3) |
-| AT-6 | one root's instrument failure masks another root's physics failure, through the total order in section 6 | a four-root record at contrast 2.5 in which root 3 truly vanishes while roots 2 and 3 are degenerate enough to raise `attribution_conflict` or `assign_collision` | FAILED-TO-MEASURE (exit 2). The order FAILED-TO-MEASURE, then UNTRACKED-AT-COARSE, then STOPPED, then FAIL, then PASS is a join over roots, so the least informative outcome wins the record | the record contains a physical event and reports an instrument problem, and the token carries no trace of the root that vanished; a reader downstream sees "could not measure" about a run that measured something. The order is defended as conservative and is conservative in the wrong direction here, protecting the instrument's reputation at the cost of the finding | emit per-root verdicts as a vector and keep the joined token for compatibility, and require the unpaired-root list in the artefact under every token rather than only under STOPPED | no -- section 6 defines the order and does not say the per-root detail survives it |
-| AT-7 | a genuine solver-side loss of a mode at contrast `<= 2.5`, correctly attributed and with a complete spectrum | a root whose computed branch the solver annihilates at contrast 2.5, with the pairing clean (one candidate, uniquely paired, so `attribution_conflict` is not raised), all three levels present and `spectrum_short` not raised -- a real loss that the record can attribute correctly | PASS or FAIL on the surviving roots, with no token recording that a mode was lost | the rule can only report a vanishing mode through STOPPED, and AT-5 shows that token has no discriminator. Once the loss is attributed correctly and the spectrum is complete, `contrast_beyond_validated` and `spectrum_short` are both silent, so a cleanly measured loss of a real mode produces no report at all: the record reads as a complete measurement of a spectrum that is missing a mode | the same solver-side evidence AT-5 asks for -- per-rung inertia, or the residual and overlap of the vanishing branch -- promoted from a precondition of STOPPED to a required per-root artefact field, so that a lost mode is reported with no cause claim attached | no |
+| AT-1 | mode identity by column ordering when two modes are near-degenerate | two reference roots about 4.2% apart (above route 3's `0.04`) with their two computed candidates exchanged, by the same amount, at every level -- for instance a dielectric step moved so the two modes cross between two of the levels | PASS: every track stays inside `SEED_TOL` at level 3, both contractions stay inside `[2.5, 6.0]`, and route 3 is read off the reference list at 0.042 | the rule tests that a beta lies near a root and never that the mode is the same mode. A swap that is self-consistent across levels leaves every distance and every ratio inside band, so cross-level identity is assumed by the assignment rather than measured. The ledger's claim C21 is the row that says this needs an overlap test, and the invariant layer that might have caught a swap has no measured result at all (inventory row B01, E5, not citable) | one eigenvector overlap per tracked pair, `abs(v_k . v_k+1)` with a stated bar, recorded per track per level and required before a track may continue | **open** -- closing measurement specified in section 13.1; nothing in the rule reads it today |
+| AT-2 | decorrelation of the pairing assignment when the mode set is re-sorted by a different key | one physical case run twice, candidates sorted by `abs(beta)` and then by `Re(beta)` (or ascending against descending), with the runs differing in their `k_candidates` request, so that the 16 returned candidates are not the same 16 -- in particular inside the degenerate cluster at `beta_sq = k0^2`, multiplicity 11 rising to at least 14 (`decisions.md:8525`) | a report that can change between runs, but not by the mechanism this row named: there is no post-solve truncation to `k_candidates` (the constant is the ARPACK request `k`, `n_k = min(int(k), n_dof-1)`), and the only filters on retained candidates are v2's threshold and six-decade gap, both `max`/`min` over a set and so order-invariant. What can change is which members of the degenerate cluster the request returns | the physics is identical and the verdict is not. The sort key appeared nowhere in the rule, so two records could not be compared without it: the runner's order `(-beta_sq, +curl_ratio)` lived only in code (`ladder.py:128`), the record's `index` was a sorted position and not an identity, and the mixed path sorted with a non-stable `argsort` before an `argmax` (`emfit/mode2d.py:1870`, `:1887`), leaving the selected mode among `beta_sq` ties to the tie permutation. A verdict a re-sort can flip is not a measurement | pin one canonical sort key in the rule and in the record, and state the `k_candidates` boundary as a pre-registered quantity rather than as an implementation default | **done in revision 3, in part**: R0 pins the key (an addition, not a revision -- no ordering or cut clause existed in R1-R6), fixes its direction to the runner's existing `beta_sq` DESC then `curl_ratio` ASC, makes ordering ties non-verdicts (`tie_at_seed`; R3's `ambiguous`) and adds the `sort_key_undefined` reason, with the boundary answers (a)-(f) and the comparability requirement; section 4.3 states the residual. The membership of the returned 16 is not settled by a key **PARTIALLY CLOSED** -- rule bookkeeping closed, cluster membership open; the residual is the testable condition `cluster_membership_unstable` in section 4.3 |
+| AT-3 | a gate applied to a level where the deflation subspace itself changed | three levels of which the coarsest deflates a spurious pair of the recorded kind (`t4_amp_ratio.md` section 15.8: five shifts returned a bogus pair at residual `9.89e-01`), while levels 2-3 deflate nothing spurious | PASS whenever a track exists: nothing in R1-R6 reads the deflated set, and `spectrum_short` counts only the level-3 real betas against the number of roots | the three levels are then not three discretisations of one operator, and the contraction band measures the difference between two operator splittings as if it were a refinement rate. The rule names the shift and the budget and never the set the shift deflates | record the deflated eigenvalue set per level in the artefact, and refuse a track whose level-`L` candidate lies inside a coarser level's deflated set, with its own token | **open** -- closing measurement specified in section 13.2; nothing in the rule reads it today |
+| AT-4 | a pass achieved by comparing a run against itself | a reference ladder produced by the solver under test -- the converged `ny = 64` betas used as the level-3 reference, and the same procedure at 32 and 16 | the exact version is FAILED-TO-MEASURE, because `e = 0` collapses the window onto `E_FLOOR` and `rho = +inf` sits outside the band: finding 11 catches it, not the design. **Superseded in place, revision 4.** The next sentence is revision 3's claim, retained verbatim as the record of why this attack is worth carrying: "Add a small geometric perturbation to each level's reference and the same run reports PASS". It was true of revision 3 and is false under R7. **End of superseded text.** A perturbed ladder built from the solver's own output is still solver-derived, so under R7 and section 4.4 the same run returns FAILED-TO-MEASURE, exit 2, reason `reference_not_independent` (check `identity` or `recompute`), and cannot return PASS. | the record then measures self-consistency, and a clean PASS is evidence about the code rather than about the physics. R1 tests the distance to the reference and cannot see where the reference came from; section 9.1 says this in words and nothing enforces it | a provenance field on the reference ladder -- generator, source rows, hash -- in the schema, plus a rule that the ladder may not be produced by the solver being graded | **CLOSED IN THE RULE, NOT IN FORCE** -- R7 and section 4.4 forbid a solver-derived ladder, fix the provenance vocabulary, and make a violation detectable by two checks that do not trust the declared field, with token FAILED-TO-MEASURE / `reference_not_independent`; the enforcement point is the gate's ladder-ingest check (`reference_ladder[i].provenance` plus the numeric identity test against `candidates_all`), which does not exist yet, so nothing is in force |
+| AT-5 | annihilation misreported through the STOPPED and UNTRACKED-AT-COARSE precedence | a genuine loss of a mode at contrast `<= 2.5`, and separately a coarse-rung solver failure that loses the mode at level 1 only | STOPPED (exit 3, "annihilation suspected") for the first, UNTRACKED-AT-COARSE (exit 4) for the second | both tokens assert a cause the rule cannot establish. The frozen gate's STOPPED at contrast 2.5 was itself a discretisation artefact with no physical event (section 2), and this rule changes the vocabulary and adds preconditions without adding a discriminator between a lost mode and a lost track. Sections 9.2 and 9.5 concede exactly that | solver-side evidence before either token may be emitted -- an inertia computation per rung, or the residual and overlap of the vanishing branch -- otherwise FAILED-TO-MEASURE | **open** -- closing measurement specified in section 13.3; nothing in the rule reads it today |
+| AT-6 | one root's instrument failure masks another root's physics failure, through the total order in section 6 | a four-root record at contrast 2.5 in which root 3 truly vanishes while roots 2 and 3 are degenerate enough to raise `attribution_conflict` or `assign_collision` | before revision 3, FAILED-TO-MEASURE (exit 2), because the join over roots let the least informative token win the record. After revision 3, any `STOPPED` in the vector takes the run, so the vanished root 3 is reported as STOPPED while the other root's instrument failure is recorded in `root_verdicts` and masks nothing | the record contains a physical event and reports an instrument problem, and the token carries no trace of the root that vanished; a reader downstream sees "could not measure" about a run that measured something. The order is defended as conservative and is conservative in the wrong direction here, protecting the instrument's reputation at the cost of the finding | emit per-root verdicts as a vector and keep a joined token for compatibility, and require the per-root detail in the artefact under every token rather than only under STOPPED | **done in revision 3, in the rule**: section 6.1 withdraws the total order, defines the total aggregation function, states the disagreement rules, and promotes revision 2's record sentence to a requirement -- the record must carry `root_verdicts`, `disagreement` and per-root reasons. The current artefact carries per-root outcomes only as diagnostics and has no such vector, so nothing is in force until the field exists **CLOSED in the rule, not in force** -- enforcement point is the artefact field `root_verdicts` |
+| AT-7 | a genuine solver-side loss of a mode at contrast `<= 2.5`, correctly attributed and with a complete spectrum | a root whose computed branch the solver annihilates at contrast 2.5, with the pairing clean (one candidate, uniquely paired, so `attribution_conflict` is not raised), all three levels present and `spectrum_short` not raised -- a real loss that the record can attribute correctly | PASS or FAIL on the surviving roots, with no token recording that a mode was lost | the rule can only report a vanishing mode through STOPPED, and AT-5 shows that token has no discriminator. Once the loss is attributed correctly and the spectrum is complete, `contrast_beyond_validated` and `spectrum_short` are both silent, so a cleanly measured loss of a real mode produces no report at all: the record reads as a complete measurement of a spectrum that is missing a mode | the same solver-side evidence AT-5 asks for -- per-rung inertia, or the residual and overlap of the vanishing branch -- promoted from a precondition of STOPPED to a required per-root artefact field, so that a lost mode is reported with no cause claim attached | **open** -- closing measurement specified in section 13.4; nothing in the rule reads it today |
 
 **What I would change first.** One revision closes most of this surface, and it is not a change to
 the rule's arithmetic: extend the record, not the tolerance. Two additions -- a per-track
@@ -538,17 +859,439 @@ array per level. Neither touches `SEED_TOL`, the contraction band, P1, P2, P3 or
 section 8's prediction is unaffected and the revision cannot be accused of being tuned to protect
 it. AT-2 and AT-6 are cheaper still: a canonical sort key written into the rule, and a per-root
 verdict vector written into the artefact, are text and format changes with no numerical content.
+> **Superseded in place -- revision 4.** The two sentences below are revision 3's placement
+> decision for AT-4 and are withdrawn: the provenance rule is now in the rule body (R7, section
+> 4.4) and the enforcement point is the gate's ladder ingest, not the schema alone.
+
 AT-4 cannot be closed inside the gate at all, because it is a statement about where the reference
 came from, and it belongs in the schema that registers the run.
+
+> **End of the superseded block -- revision 4.** R7 and section 4.4 replace them. A declared
+> solver-derived ladder is no longer admissible with a declaration: the schema field is necessary
+> and not sufficient, and the gate must refuse a verdict on its own numeric evidence.
 
 **The vacuous-pass direction, stated separately.** AT-1, AT-2 and AT-4 can produce PASS. AT-3
 produces PASS unless the deflated set is recorded. AT-5 and AT-6 do not produce PASS: they convert
 a report into a different report, and AT-6 removes the record's ability to say that a mode was
 lost, which is the one outcome this rule exists to preserve. The asymmetry is worth stating
 because the attacks that produce PASS are the ones that will be cited: a FAIL invites a rerun, a
-FAILED-TO-MEASURE invites a repair, and a PASS is quoted. Of the six, AT-4 is the one I would
+FAILED-TO-MEASURE invites a repair, and a PASS is quoted. Of the seven, AT-4 is the one I would
 expect to bite in normal use rather than in principle, because nothing in the workflow forecloses
 building the reference ladder from a converged run's own output -- which is what inventory rows
 A17 and A18 record the corpus already doing on another geometry -- and because section 8 here
 predicts a PASS at the contrast that motivated the redesign, so the first clean PASS arrives at
 the configuration where a vacuous pass is hardest to see.
+
+## 12. Change log for revision 3 (2026-10-29)
+
+Revision 3 is written against revision 2 as committed. Line numbers are revision 2 numbers. Nothing
+was deleted: every pre-existing line is either untouched or rewritten in place, and the revision 2
+file is recoverable from git HEAD.
+
+**Added.**
+- After line 64 (section 1 constants): that `k_candidates = 16` is the ARPACK request `k` and not a
+  post-solve truncation, with a pointer to section 4.3 and R0.
+- After line 158, before R1: **R0 -- Candidate order and the `k_candidates` boundary (AT-2)**, a new
+  normative clause. An addition, not a revision: revision 2 has no ordering term and no cut term.
+- After line 259 (end of section 4.2): **section 4.3, Sort key: provenance and what it cannot
+  reach**, carrying the AT-2 closure, PARTIALLY CLOSED.
+- Before line 327: a marker declaring the precedence paragraph superseded in place, revision 3.
+- After line 337 (end of section 6) with a closing marker: **section 6.1, Per-root verdicts and
+  run-level aggregation (AT-6)** -- the withdrawal of the total order, the promoted record sentence,
+  the aggregation function, the disagreement rules, the diagnostic requirements, the AT-6 closure, and
+  the disclosed judgement call on R2's `no seed` gate.
+- After line 508 (section 11 preamble): the provenance of AT-7, and the statement that seven is the
+  governing row count.
+- After line 497: a pointer to this section from the revision record.
+- This section.
+
+**Superseded in place, with old line numbers.** Lines 327 to 337 -- the "Precedence." paragraph, the
+total order, its defence and its qualifier -- are retained verbatim at their original lines inside
+the superseded markers and are withdrawn as a rule by section 6.1. They are not altered, so this log
+needs only to point at them. Line 526 (the AT-2 row) and line 530 (the AT-6 row) are rewritten in
+place: in 526 the constructed input, the expected report, the reason the report is wrong and the
+"closed today?" cell; in 530 the expected report and the "closed today?" cell. The revision 2 text of
+both rows is at git HEAD. Line 549 is edited in place: "Of the six, AT-4 is the one I would" becomes
+"Of the seven, AT-4 is the one I would". The count was wrong in revision 2 -- the table from line 523
+on has seven rows, AT-1 to AT-7, while the preamble accounted for six.
+
+**Statuses after revision 3.** AT-2 **PARTIALLY CLOSED**: the ordering defect is closed in R0 and in
+section 4.3, and the membership of the returned 16 is not closeable by a key, with the residual stated
+as the testable condition `cluster_membership_unstable`. AT-6 **CLOSED in the rule, not in force**:
+section 6.1's aggregation is total and puts physics tokens above instrument tokens, and the
+enforcement point is the artefact field `root_verdicts`, which does not yet exist. AT-1, AT-3, AT-4,
+AT-5 and AT-7 are unchanged and remain open.
+
+> **Superseded in place -- revision 4.** The sentence above -- "AT-1, AT-3, AT-4, AT-5 and AT-7 are
+> unchanged and remain open" -- was true of revision 3 and is not true of the file it now sits in:
+> AT-4 is closed in the rule as of revision 4. The statuses after revision 4 are in section 12.1.
+
+**Not done here.** No code was run. No gate, test, solver or build was executed, nothing under
+`emfit/` was edited, no record was modified, and the rule is not frozen; revision 3 is not a freeze.
+
+**Outstanding elsewhere, recorded so it is not lost.** `decisions.md` carries the stale count "six" at
+lines 8662, 8670 and 8674, the last of which also names AT-7, so the number and the list disagree
+inside one sentence. That file is outside this revision and is not edited by it.
+
+### 12.1 Change log for revision 4 (2026-10-29)
+
+Revision 4 closes AT-4 and touches nothing else. It is written against revision 3 as committed; the
+revision 3 file is recoverable from git HEAD.
+
+**Added.**
+- Before section 4.1 (after R6): **R7 -- Reference provenance**, a new normative clause, and the
+  clause the rest of this revision hangs on. An addition, not a revision: revision 3 had no
+  provenance requirement in the rule body.
+- Before section 5 (after section 4.3): **section 4.4, Reference provenance: which ladders are
+  admissible (AT-4)** -- the hazard H-AT4 with the A17/A18 citation, the exhaustive admissible and
+  inadmissible constructions, the construction revision 3 misread, the three-field detection design
+  (declared vocabulary, numeric identity at exact equality, recomputation), the floating-point
+  policy and why a tolerance cannot hide a copied ladder, the verdict token and why it is neither
+  PASS nor FAIL, the retroactive consequence for A17 and A18, and the residual limit against
+  section 9 limit 1.
+- This subsection.
+
+**Rewritten in place.** The AT-4 row's "closed today?" cell, from "no -- disclosed in section 9.1,
+not implemented" to **CLOSED IN THE RULE, NOT IN FORCE**, naming the enforcement point. The row and
+section 4.4 agree; the row's "minimum revision that closes it" cell is untouched and is now satisfied
+by R7.
+
+**Superseded in place, with old line numbers.** Line 760-761 ("AT-4 cannot be closed inside the gate
+at all ..."), revision 3's placement decision, marked and retained verbatim inside the revision 4
+markers at its original lines; and the last sentence of the revision 3 status paragraph in section
+12 ("AT-1, AT-3, AT-4, AT-5 and AT-7 are unchanged and remain open."), marked as true of revision 3
+and false of this file. Neither is deleted.
+
+**Statuses after revision 4.** AT-4 **CLOSED IN THE RULE, NOT IN FORCE**: R7 and section 4.4 are
+total -- every ladder entry is either in the vocabulary or refused, and two of the three checks do
+not consult the field -- and the enforcement point is the gate's ladder ingest, which does not exist
+yet. AT-6 remains **CLOSED in the rule, not in force**. AT-2 remains **PARTIALLY CLOSED**. AT-1,
+AT-3, AT-5 and AT-7 remain open. AT-4 was the last of the seven for which the rule could be
+completed; what remains for all of them is code, not prose.
+
+**Outstanding work, recorded so it is not lost.** Ledger rows A17 and A18 are demoted by section 4.4
+and must be re-derived against an admissible (analytic or pinned-external) ladder; this revision does
+not re-derive them and does not run anything. The gate does not yet read
+`reference_ladder[i].provenance`, does not run the numeric identity test, and does not emit
+`reference_not_independent`; until it does, nothing in R7 is enforced and no run may be described as
+complying with it.
+
+**Not done here.** No gate run, no test, no solver, no build; nothing under `emfit/` edited; the
+frozen A-1.5 module and `preservation_gate.py` untouched; `soundness.md` and `decisions.md` untouched;
+no commit. The pairing rule is not frozen, and revision 4 is not a freeze.
+
+### 12.2 Repairs to the revision 4 text (2026-10-29)
+
+Two defects that revision 4 created or exposed, fixed here and nowhere else. No section renumbered and
+nothing outside the section 11 table and the one AT-4 cell was reflowed.
+
+**Rewritten in place.** The AT-4 row's "what the gate reports" cell. Revision 3's sentence -- "Add a
+small geometric perturbation to each level's reference and the same run reports PASS" -- is retained
+verbatim inside a superseded-in-place marker within the cell, and the operative sentence now gives
+**FAILED-TO-MEASURE**, exit 2, reason `reference_not_independent`, which is what R7 and section 4.4
+require of a perturbed ladder built from the solver's own output. The old claim is kept rather than
+overwritten because it is the record of why this attack was worth carrying: the corpus's own workflow
+made the self-derived ladder easy to build and its result clean.
+
+**Table width, and the choice made.** Section 11's attack table had a seven-cell header, seven cells in
+the AT-1, AT-3, AT-4, AT-5 and AT-7 rows, and eight in the AT-2 and AT-6 rows, whose eighth cell was a
+status label appended by revision 3. The table is now seven cells wide everywhere, matching the header.
+The choice was to **fold** the appended cell into the one it belongs to rather than to add an eighth
+column: the last column is named "minimum revision that closes it" in the header but carries the
+closed-today status in every populated row, and revision 3's extra cell was the status label belonging
+to that same question, so folding puts each row's status under the column that asks it. Adding a column
+was rejected because five rows would then carry an empty cell and because "what was done" and "what the
+status is" would both have had to live under one new heading anyway. No content was lost: AT-2's and
+AT-6's revision 3 narrative and status label are both present, in that order, in the merged cell.
+
+**Pipe characters.** No cell in this table contains a pipe, escaped or bare; each row splits on `|` into
+exactly its cell count and re-joins to itself byte for byte. The standing hazard recorded against the
+claim inventory's rows -- unescaped pipes shifting columns -- does not reach this table, and nothing was
+escaped because nothing needed to be.
+
+**Not done here.** No gate run, no test, no solver, no build; `emfit/`, the frozen A-1.5 module,
+`preservation_gate.py`, `soundness.md` and `decisions.md` untouched; no commit; the rule is not frozen.
+
+### 12.3 Change log for revision 5
+
+**Added.** Section 13: one subsection per attack that is still open (AT-1, AT-3, AT-5, AT-7), each
+stating the same four things -- what the attack defeats, the measurement that detects it, whether
+that measurement exists in the tree today (with `file:line`) or must be built, and what the rule
+would read from it. Section 13.3 carries an explicit statement that AT-5 is ungoverned by the
+brief. Section 13.4 derives a tolerance of the form `C h^p` from the element order actually
+implemented, with a feasibility argument at `eps_r = 3.5`.
+
+**Rewritten in place.** The status cell of the four open rows in the section 11 table (AT-1, AT-3,
+AT-5, AT-7) now reads "open, closing measurement specified in section 13.n". The statuses
+themselves do not change: still open, still not in force.
+
+**Statuses after revision 5.** AT-4 CLOSED IN THE RULE, NOT IN FORCE; AT-6 CLOSED IN THE RULE,
+NOT IN FORCE; AT-2 PARTIALLY CLOSED; AT-1, AT-3, AT-5, AT-7 open, each now with a specified
+closing measurement. Zero fully CLOSED. Unchanged from revision 4 except for the pointer.
+
+**Not done here.** No gate run, no test, no solver, no build; no measurement specified in section
+13 has been taken; nothing in section 13 is in force; no attack is marked closed; no commit; the
+pairing rule is not frozen.
+
+## 13. Closing measurements for the four remaining attacks
+
+Section 11 lists four attacks still open: AT-1, AT-3, AT-5 and AT-7. For each, that table already
+names a minimum revision that would close it. This section turns each of those one-line
+prescriptions into a *measurement*: what the attack defeats, what is measured, whether the
+measurement can be taken with what is already in the tree today or must be built, and what the
+rule would read from it.
+
+Specifying a measurement is not closing an attack. Nothing here is in force, no term of the rule
+reads any of it, no measurement described below has been taken, and every one of the four attacks
+remains open. The section exists so that the closing revisions are specified rather than improvised
+later -- the same reason R1 to R7 are specified before any gate run.
+
+The provenance rule of section 4.4 applies to this section's own claims: every number quoted below
+is either read from a named file or labelled a derivation. Where a number is a derivation it is
+labelled as one and is not evidence of anything until a run produces it.
+
+### 13.1 AT-1 -- the eigenvector-validated geometric chain
+
+**What the attack defeats.** A sequence of *distinct* eigenvalue branches can be arranged so that
+consecutive levels' candidates are each other's nearest neighbours by value, and only by value.
+The chain is then paired by R1, tracked by R4, and contracted through R5, while the eigenvectors
+of the successive levels have nothing to do with one another. Every quantity the rule reads -- the
+beta distances, the contraction ratios, the window -- is satisfied by construction. Section 9.7
+discloses the family; no term of R1 to R6 detects a member of it.
+
+**The measurement that detects it.** One eigenvector overlap per tracked pair, per level:
+
+    O_k = | v_k^T B v_{k+1} | / sqrt( (v_k^T B v_k) (v_{k+1}^T B v_{k+1}) )
+
+with `B = M_mu` (so the bar is the field-energy overlap, not the raw coordinate inner product), and
+`v_k` the edge-DOF vector of the root at level `k`. A genuine branch has `O_k` near one at every
+level; a geometric chain has `O_k` near zero at the level where the chain passes to the next
+branch. The bar is a stated number, recorded per track per level, and required before a track may
+continue -- the same shape as `SEED_TOL`, not a diagnostic.
+
+**EXISTS TODAY.** The pieces exist; the record does not.
+- `B = M_mu` is the pencil's own mass matrix: `emfit/mode2d.py:29` states the pencil as
+  `C e = beta^2 B e, C = k0^2 M_eps - K_q, B = M_mu`, and `assemble()` at `emfit/mode2d.py:403`
+  returns `(K_q, M_mu, M_eps)` with `M_mu[e, f] = INT (1/mu_r) W_e . W_f dA`
+  (`emfit/mode2d.py:407`). The B-inner product above is therefore computable today.
+- The DOF vector survives the solve: `Mode2D.e_t` at `emfit/mode2d.py:677`, a numpy array on the
+  free edge DOFs.
+- A normalised overlap already exists twice: `corr(a, b)` at
+  `tools/host/sparse-probe/rung4_routeC_probe.py:182-189` (cosine overlap, "copied verbatim from
+  `c1_audit.py:302-313`", and present at `tools/host/c1-audit/c1_audit.py:302`), and a whole
+  cross-mesh overlap campaign built on it in `tools/host/sparse-probe/mode_overlap.py`
+  (`corr_matrix` at `:443`, `corr_block_matrix` at `:450`).
+
+**MUST BE BUILT.** The per-track per-level field. Two facts make this a build and not a wiring
+change. First, the artefact's per-candidate record carries no vector and no overlap:
+`candidate_records()` (`emfit/mode2d.py:798`) emits exactly `index`, `beta`, `beta_sq`, `eps_eff`,
+`curl_ratio`, `abs_curl_ratio`, and `solve_level()` copies exactly that tuple into the artefact
+(`tools/host/anchor/preservation_gate.py:300`). Second, the vector is not kept anywhere else:
+`tools/host/sparse-probe/mode_overlap.py:17-19` records that the Route-C driver "keeps the
+eigenvector in memory only" and that the probe had to monkeypatch `field_scalars` to see it. So the
+overlap is computable today by a probe on the Route-C campaign, and only there; the gate has no
+path from a paired candidate to its vector. What must be built is: retention of `e_t` for each
+tracked pair, the B-weighted overlap, the bar, and the artefact field.
+
+**What the rule would read from it.** A new required field per track per level. `O_k` below the bar
+stops the track (a stop, not a pass) and is recorded as its own token; a missing field at a level
+where a track continues is FAILED-TO-MEASURE with its own reason code, in the shape of
+`reference_not_independent` in section 4.4 -- absence of the evidence must not be able to read as
+silence.
+
+### 13.2 AT-3 -- the deflation subspace that changed between levels
+
+**What the attack defeats.** Deflation is a statement about *which* pencil was solved. If the
+deflated set differs between levels -- the recorded instance is a spurious pair returned at
+residual `9.89e-01` from five shifts (`t4_amp_ratio.md` section 15.8) -- then the three levels are
+not three discretisations of one operator, and R5's contraction band measures the difference
+between two operator splittings as if it were a refinement rate. The rule names the shift and the
+ARPACK budget; it never names the set the shift deflated.
+
+**The measurement that detects it.** Per level, record the deflated set (the region the deflated
+columns span, and the eigenvalues removed), and refuse a track whose level-`L` candidate lies
+inside a coarser level's deflated set, within a stated tolerance, with its own token.
+
+**EXISTS TODAY.** The subspace machinery and most of its diagnostics.
+- `solve_modes_deflated()` at `emfit/mode2d.py:1445` and `solve_modes_deflated_v2()` at
+  `emfit/mode2d.py:1473` (the latter deflating every other homogeneous contrast block as well),
+  with the column set built by `_deflation_columns()` at `emfit/mode2d.py:1287`, documented as
+  returning "the deflated column set, and a description of the region it spans".
+- The diagnostic dict is rich: `z_dim`, `z_dim_closed_form`, `n_free`, `n_dof`, `n_columns`,
+  `block_diag_ratio`, `z_orthogonality_abs`, `z_orthogonality_rel`, `r_gram_dev`,
+  `residual_grad`, `residual_eps_mu`, `residual_pencil`, and the Amendment 3 additions
+  `column_region`, `columns_v1`, `columns_added`, `z_dim_v2`, `region_contrast`, `region_rows`,
+  `z_dim_closed_form_v2` (`emfit/mode2d.py:1494-1517`).
+
+**MUST BE BUILT.** Two things.
+- The record is truncated at the artefact. `solve_level()` copies four keys and four only --
+  `z_dim`, `column_region`, `residual_eps_mu`, `residual_pencil`
+  (`tools/host/anchor/preservation_gate.py:303-306`). The region descriptors `region_contrast`,
+  `region_rows` and the widened total `z_dim_v2` are dropped, so the stored artefact cannot even
+  be compared level to level for the thing the attack varies.
+- The removed *eigenvalue* set does not exist to record. Deflation removes columns from the
+  pencil; the eigenvalues those columns would have carried are never computed on either route, so
+  the "deflated eigenvalue set" AT-3 asks for is not a field waiting to be exported -- it is a
+  small extra solve (or an inertia-style count) that has to be built, and its cost is part of the
+  build.
+- The containment test itself (candidate inside a coarser level's deflated set) does not exist in
+  any form, and no reason code names it.
+
+**What the rule would read from it.** Two recorded fields per level and one refusal. The refusal
+needs its own token in the exit-2 family, because "the operator changed under the track" is not any
+of the eleven existing reasons: none of them is a statement about the pencil rather than about the
+candidates.
+
+### 13.3 AT-5 -- solver-side evidence before either token
+
+**UNGOVERNED BY THE BRIEF.** The brief that produced AT-1 to AT-4 and, through a second review,
+AT-5 to AT-7, is silent on what AT-5 asks for: it says nothing about inertia, nothing about the
+residual or overlap of a vanishing branch, and nothing about solver-side evidence as a precondition
+for emitting a token. The criterion used here is therefore not taken from the brief. It is taken
+from this document: section 11.1's coverage table row (5) and the AT-5 row of the section 11
+table. The first records that nothing in the rule separates a genuinely lost mode from a
+discretisation artefact at `c <= 2.5`, against a `NOT DISTINGUISHABLE` verdict in the coverage
+column; the second names the closing revision as "solver-side evidence before either token may be
+emitted -- an inertia computation per rung, or the residual and overlap of the vanishing branch --
+otherwise FAILED-TO-MEASURE". That is the whole authority for what follows, and it is a weaker
+authority than the brief would be: it is the document grading itself.
+
+**What the attack defeats.** Both tokens that report a lost mode -- STOPPED and
+UNTRACKED-AT-COARSE -- are statements about the *solver's* behaviour inferred from the *paired
+sequence*. If the branch vanished because the solve missed it (a shift too far from a nearby
+eigenvalue, an ARPACK budget exhausted, a spurious pair crowding the window), the rule reports an
+annihilation that did not happen, or reports it at the wrong root. The report is the same report a
+genuine annihilation produces; nothing in R1 to R6 distinguishes them.
+
+**The measurement that detects it.** Solver-side evidence, taken before either token may be
+emitted: either an inertia computation per rung, or the residual and the overlap of the vanishing
+branch. Absent both, the token is FAILED-TO-MEASURE rather than STOPPED.
+
+**EXISTS TODAY.** Both halves, in the wrong place.
+- The per-mode pencil residual is already computed by the solver:
+  `Mode2D.residual` is documented at `emfit/mode2d.py:622` as
+  `||C e - beta_sq B e|| / ||B e||` of the chosen mode, computed at `emfit/mode2d.py:994`
+  (`residuals[i] = norm(c_free @ v - vals[i]*be) / b_norm[i]`) and stored at
+  `emfit/mode2d.py:1029`. The mixed path goes further and screens *every* candidate on its own
+  residual (`emfit/mode2d.py:1857-1879`, `_MIXED_RESIDUAL_TOL`). So the quantity AT-5 wants is
+  already computed inside the solver, per candidate, on one of the two routes.
+- Inertia is already a stated correctness check with a measured reference value: the positive /
+  negative / zero split of `M_C` is tabulated as `1444 / 483 / 0` at `docs/design/cpp_solver_arch.md:44`
+  (with `free_e = 1444`, `M_C` of order 1927, cited there to `sparse_eigenmode.md:529-533` and
+  `:336`), and `cpp_solver_arch.md:59` states that a factoriser reporting a different inertia "has
+  taken a different path through the pivots, and the discrepancy is a finding about the
+  factoriser". A working inertia computation exists at
+  `tools/host/sparse-probe/mc_inertia_check.py:134-136` (counting the sign of the eigenvalues of
+  the factorised block `D`).
+
+**MUST BE BUILT.** The path from that number to the artefact, and the per-root scope.
+- `Mode2D.residual` is one float for the *chosen* mode. The residuals of the other candidates are
+  computed into an array at `emfit/mode2d.py:978-1000` and then discarded; only `residuals[chosen]`
+  survives (`emfit/mode2d.py:1029`). The vanishing branch is by definition not the chosen mode, so
+  the number AT-5 asks for is exactly the one that is dropped.
+- Nothing carries it into the artefact either: `candidate_records()` (`emfit/mode2d.py:798`) emits
+  `index`, `beta`, `beta_sq`, `eps_eff`, `curl_ratio`, `abs_curl_ratio` and no residual, and the
+  level record copies that tuple unchanged (`tools/host/anchor/preservation_gate.py:300`).
+- No per-rung inertia is computed by the gate at all. `solve_level()` calls
+  `solve_modes_deflated_v2()` and never forms or factorises `M_C` itself
+  (`tools/host/anchor/preservation_gate.py:279-296`); the `1444/483/0` figure belongs to a
+  different, larger problem and cannot be used as a reference here.
+- The residual series exists as a container but not as a measurement: the artefact field
+  `residual_series` in `.scratch/d51/pg_a35.json` holds `values: [[1, 0.05592958825659055]]`,
+  `ratios: []`, `anomaly: true`, `why: "not recorded at every solved level; decay is not
+  assessable"` -- it is the deflation diagnostic `residual_eps_mu`, not a per-root residual, and
+  `residual_series()` at `tools/host/anchor/preservation_gate.py:361` says so by refusing to
+  compute ratios.
+
+**What the rule would read from it.** One required per-root artefact field (residual, and overlap
+where a pair exists; or the per-rung inertia), read before STOPPED or UNTRACKED-AT-COARSE may be
+emitted. Missing evidence converts the token to FAILED-TO-MEASURE with its own reason code. This
+does not make either token correct; it makes an unevidenced token impossible.
+
+### 13.4 AT-7 -- annihilation misreport at `c <= 2.5`, and the tolerance it needs
+
+**What the attack defeats.** The precedence between STOPPED and UNTRACKED-AT-COARSE, at contrasts
+where the rule still licenses STOPPED (`c <= 2.5`). Below that bound the rule will say "a mode was
+lost" when what happened was that a discretisation artefact moved a candidate out of the window.
+AT-7 is AT-5's sibling: AT-5 asks for evidence before the token, AT-7 asks for the same evidence
+promoted from a precondition of STOPPED to a required per-root artefact field, so that the evidence
+is present whether or not a stop is taken.
+
+**The measurement that detects it.** The same solver-side evidence -- per-rung inertia, or the
+residual and overlap of the vanishing branch -- recorded per root at every level, and compared
+against a tolerance that scales with the discretisation rather than being a fixed constant. A fixed
+absolute tolerance cannot do this job: section 3.1 already records why, from the other direction,
+for `tol_1`.
+
+**The tolerance is `C h^p`, and `p` is derived from the scheme in the tree, not chosen.**
+- The scheme actually implemented is first-order Nedelec / Whitney 1-forms: `emfit/mode2d.py:1`
+  ("transverse `e_t`, Whitney 1-forms") and `emfit/mode2d.py:48-52` ("First-order Nedelec /
+  Whitney 1-forms on a structured quad mesh split into two triangles per quad ..., 3-point
+  barycentric Gauss quadrature (exact for the degree-2 products that appear)").
+- For that discretisation the eigenvalue error is second order in `h`, and the derivation is
+  already on the record: `docs/design/anchor_preregistration.md:506-518`,
+  `|beta_h - beta| / beta = O(h^2)`, with its two hypotheses (mesh-aligned interface, no
+  re-entrant corner singularity) stated and marked PROVISIONAL at `:520-524`.
+- The measurement agrees: `docs/design/d45_anchor_results.md:209` reports base-two logarithms of
+  the successive error ratios of `2.038` and `2.009` (second mode) and `2.034` and `2.008` (third
+  mode), mean `2.02`, described at `:211` as apparent second-order convergence; and the same
+  quantity for the A-3.5 case below is `1.9256` and `1.9815`, derived from the `rho_1 = 3.799`,
+  `rho_2 = 3.949` already tabulated at line 506 of this document.
+- The gate has already pre-registered the exponent band: `ORDER_LO = 1.7`, `ORDER_HI = 2.3`
+  (`tools/host/anchor/preservation_gate.py:64-65`), section 3 P2. So `p` is not a new constant --
+  it is the band the gate already applies.
+
+**Feasibility at `eps_r = 3.5`.** The A-3.5 record is the case at `eps_r = 3.5`: the artefact's
+geometry block (`.scratch/d51/pg_a35.json`) reads `eps_r 3.5, t 0.001953125, b 0.0078125,
+k0 1407.4335088082273`, and the gate that produced it fixes `EPS_R_A35 = 3.5` at
+`tools/host/anchor/preservation_gate_a35.py:73`. Its levels refine by two (`ny = 16, 32, 64`,
+`nx = 2, 4, 8`, from `ladder.LEVEL_NY` at `tools/host/anchor/ladder.py:57`), so
+`h = 4.8828125e-4, 2.44140625e-4, 1.220703125e-4` and `h_{k+1}/h_k = 1/2`. The worst root's
+level distances are `7.09799e-02, 1.86827e-02, 4.73091e-03` (line 506 of this document, row 4).
+
+Everything below is a *derivation from those recorded numbers*. None of it is a measurement of a
+residual, and none of it is a constant anyone has chosen.
+
+- The implied constant of the `h^2` form, `C_k = e_k / h_k^2`, is
+  `2.977113e+05`, `3.134437e+05`, `3.174860e+05`: ratios `1.0528` and `1.0129`, i.e. one constant
+  stable to `6.6` percent across two refinements (`C_3/C_1 = 1.0664`). The `h^2` form is therefore
+  consistent with the accepted datum, which is the datum a tolerance must not fail.
+- A tolerance anchored once and applied forward, `T_k = C_1 h_k^p` with `p` in the pre-registered
+  band, admits at level 2 the window `e_2/e_1` in `[0.20306, 0.30779]` (`p = 2.3`, `p = 1.7`);
+  the recorded value is `0.26321`, margins `1.296` times above the lower edge and `1.169` times
+  below the upper. At level 3 the window is `[0.04123, 0.09473]` against a recorded `0.06665`,
+  margins `1.616` and `1.421`. The band is not empty and the datum sits inside it.
+- It is not inert either: a level whose error were `1.231` times the `p = 2` prediction would fall
+  outside the `p = 1.7` edge and be refused. So a `C h^p` tolerance both passes the one datum
+  that must pass and can fail.
+- The exponent, not a prefactor, is what is being frozen. `C` is estimated at the coarsest level of
+  each run and never carried between runs; no value of `C` -- not the three above, not any
+  rounding of them -- is proposed as a constant of the rule.
+
+**Recorded discrepancy, not resolved here.** Section 5 describes this same datum as "geometry
+A-3.5, contrast 2.5", and section 9 limit 6 speaks of `SEED_TOL` validated at `c <= 2.5`. The
+artefact's own geometry block says `eps_r = 3.5` and the gate that wrote it fixes 3.5. One of the
+two is wrong, and the feasibility argument above uses the `eps_r = 3.5` reading because that is
+what the file says. Resolving it is a separate finding and nothing here depends on the answer
+except the label on the numbers.
+
+**EXISTS TODAY / MUST BE BUILT.** The exponent band exists (`preservation_gate.py:64-65`); the
+`h` per level exists (`tools/host/anchor/ladder.py:57`, and in every level record as
+`"h": float(h)`, `tools/host/anchor/preservation_gate.py:294`). The per-root residual to compare
+does not exist for a non-chosen candidate (section 13.3), no inertia is computed per rung, and no
+term of the rule consults `h` at all today except to store it.
+
+**What the rule would read from it.** A required per-root artefact field carrying the solver-side
+evidence, and a tolerance `T_k = C h_k^p` computed per run from the coarsest level with `p` in
+`[ORDER_LO, ORDER_HI]`. A root whose evidence exceeds `T_k` at any level is refused; a root with
+no evidence is FAILED-TO-MEASURE. This is deliberately not a repair of section 9 limit 7:
+`P3_MAX = 5e-3` (`tools/host/anchor/preservation_gate.py:66`) stays computed and unconsulted, and
+the absolute-accuracy question it would bound stays open.
+
+### 13.5 What this section does not do
+
+No measurement in section 13 has been taken. No inertia was computed, no residual series was
+extended, no overlap was evaluated on any pair, no deflated set was recorded, no artefact field was
+added, no token or reason code was created, no gate was run, no test was written, no build was
+made, and nothing in section 13 is in force. AT-1, AT-3, AT-5 and AT-7 remain open; the section 11
+status cells now say so with a pointer here and nothing else. The pairing rule is not frozen.

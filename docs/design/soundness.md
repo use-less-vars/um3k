@@ -531,6 +531,9 @@ ledger is capped at E3 by construction.
 This section distrusts the artefact rather than the documents. The heading is not modesty;
 each item below is a way the ledger could be wrong while every row in it is right.
 
+**AMENDED (dispatch 53).** The reasoning below is right that E2 could be unsatisfiable by
+construction; the conclusion drawn from the empty row is wrong. E2 is empty because the
+instrument is uncalibrated, not because the category is null. See section 12.
 **(a) The E2 bar may be unreachable by construction, which would make E2 a null category.**
 E2 requires an *independent* analytic reference with a demonstrated convergence rate at three
 or more resolutions. In this problem class the only independent reference in the tree is a
@@ -652,3 +655,55 @@ a pre-registered normalisation change. It is cited as evidence inside claim C7 (
 section 6 (line 304) and section 8 (lines 513-514), but it has no row of its own in 5.1 or 5.2 --
 so a reader of the ledger alone cannot see that the criterion row is empty because a
 pre-registration is queued, not because a test is missing.
+
+## 12. Amendment to section 9(a): E2 is empty because the instrument is uncalibrated
+
+Section 9(a) asked whether E2 might be unsatisfiable by construction. The question was the right
+one; the answer is no, and the conclusion drawn from the empty row was wrong. This section records
+the correction. Section 9(a) is not edited in place and its text stands as written.
+
+**Ruling.** E2 is not a null category. The row in section 4 is empty because the gate that would
+have produced the numbers is known to be foolable seven ways, so it cannot certify what it
+measured. That is a statement about the instrument. It is not a statement about the corpus, and
+this section exists so that the two cannot be read as one.
+
+**The evidence.** Geometry A, eps_r = 3.5, three resolutions. The measured orders are 2.0068,
+2.0378, 2.0337 at `preservation_gate_preregistration.md:53-55`,
+`preservation_gate_results_a35.md:63-65` and `decisions.md:8620` [VERIFIED this session]. A
+first-order Nedelec discretisation (Whitney 1-forms) predicts order 2, so this is the convergence
+rate E2 asks for: three resolutions, and a reference the solver did not produce.
+
+Two defects in that evidence, recorded because they bound it.
+
+(i) The second order is not consistent across its three copies -- 2.0087 at
+`preservation_gate_preregistration.md:54` against 2.0089 at `preservation_gate_results_a35.md:64`
+and `decisions.md:8620` [DISCREPANCY, UNRESOLVED]. Which copy is the transcription error has not
+been found, so the rate is quoted to three figures and no tighter.
+
+(ii) A second pair of orders, 1.9819 and 1.9955, is sometimes cited alongside the first. It is not
+citable: the only records are `.scratch/d50/pg_a15.json:775-776` and the run log, and the inputs
+are nowhere in the tree. It corroborates; it is not evidence, and it is not used here.
+
+**The distinction.** Two claims are available here and they are not the same claim. The first is
+that a convergence measurement exists for E2, on a configuration with a demonstrated rate. That is
+true. The second is that the measuring instrument is trustworthy. That is not yet true. E2 stays
+empty because the second claim fails, not because the first one does; a ledger that reports an
+empty E2 without saying which of the two it means overstates what was found out.
+
+**Consequence for the ledger.** The E2 count of 0 is a statement about the gate's calibration, not
+about the corpus. It must not be read as "no E2 evidence exists", and no reader of section 4 alone
+is entitled to infer that nothing was measured. When the gate is repaired the row becomes fillable
+from evidence already in the tree; until then it stays empty, and its emptiness is a to-do about
+the instrument, not a finding about the documents.
+
+Section 9(a) proposed splitting E2 rather than leaving an empty column that implies everything
+measured was weak. The split is not made here -- E2 remains one row -- because the implication 9(a)
+worried about is removed by the two paragraphs above instead: the column is empty for a reason local
+to the gate, and this section says so where a reader of the row will come looking.
+
+This section was appended on dispatch 53 rather than edited into sections 9 or 10, for the reason
+section 10 already gives at its end: the text up to the former final line stays byte-identical.
+Stripping what dispatch 53 appended re-hashes the remainder to 56975 bytes /
+`4c861fbbd0c7814edeaaee9dbbc67e83bc81b54c659e3b53dcfb87baea5c5f5c`. It sits after section 11
+rather than after section 9, so it reads as an appendix to an amendment; section 9(a) is meant to be
+read with it open.
