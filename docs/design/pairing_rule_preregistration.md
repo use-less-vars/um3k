@@ -1,5 +1,48 @@
 # Pairing rule pre-registration
 
+## 0. Ledger consequence, written before the rule is frozen
+
+This block was added after the rule was drafted and before it froze. It answers three questions
+a reader of `docs/design/soundness.md` will ask, without moving that document's ledger: a
+pre-registration promotes nothing on its own, and section 8's prediction demotes nothing.
+
+**What a pass promotes: nothing, and nothing above E3 by construction.** No row of that ledger's
+section 5.1 cites the pairing step, so no claim's "promotion requires" column names a pairing
+run. The two rows a pass can support are claim C21 (E3, "the mode is the same mode at every mesh
+size", whose scope limit says "identity is by overlap, not against an analytic mode") and claim
+C3 (E3, "deflation is safe in the presence of dielectric", a HYPOTHESIS above eps_r 3.5). A
+pass adds a pre-registered, reference-root-based cross-mesh identity result at one contrast to
+claim C21's evidence, and a measured absence of mode loss at contrast 2.5 to claim C3's. It meets
+neither promotion requirement: claim C21's is "an analytic mode shape for the same geometry" and
+claim C3's is "one inertia computation per rung at eps_r = 1.5 / 2.5 / 3.5 / 5.0". The ceiling
+is not E3 for want of data either: E2 is an empty category in that ledger (section 4, zero of 143
+rows), so there is no grade between E3 and E2 for a result of this kind to occupy, and a reader
+who expects this rule to produce one is expecting the vocabulary to award something it has never
+awarded.
+
+**What a fail would demote.** Claim C21 (E3) is the row a clean FAIL contradicts: if a mode is
+not the same mode at two mesh sizes on this geometry, the sentence "the mode is the same mode at
+every mesh size" is false for that geometry, and the ledger has no grade meaning measured-and-
+refuted. The nearest available action is withdrawal in the sense of its section 7.1 -- a FAIL
+here moves claim C21 from E3 to X, or forces a cut-down scope; E5 would be the wrong
+destination, because E5 means believed but unmeasured and would understate a counterexample.
+Claim C3 (E3) is not demoted by the same failure: it is a statement about M_C's nonsingularity,
+measured by inertia, and a mode that evaporates does not make a matrix indefinite. What a FAIL
+removes is the reading of the contrast-2.5 record as "nothing was lost", which claim C3 does not
+carry. A FAILED-TO-MEASURE demotes nothing: that is the point of the token, and section 4.2
+exists so that a physics failure cannot be laundered into one.
+
+**What happens to claim C1 if this fails: nothing.** claim C1 (E3) is that beta agrees with the
+analytic value for a closed PEC box partially filled with dielectric over eps_r in [1.5, 3.5] at
+levels 1-3, and it rests on inventory row A01's 1.022e-4 vacuum anchor plus rows A18-A20, not on
+the pairing step. A pairing failure is a statement about which computed eigenvalue is identified
+with which reference root -- identification and tracking -- and not about the distance between a
+beta and its analytic value: the distances are this rule's input, and they are recorded whether a
+pair is accepted or refused. A-3.5 makes it concrete: the frozen gate's STOPPED left 2.23535e-02
+unpaired at level 1, and that number is as usable as evidence about beta accuracy after the
+refusal as before it. So a FAIL here leaves claim C1 untouched, removes claim C21 (E3), and
+endangers claim C3's (E3) reading of the contrast-2.5 record as a record of nothing lost.
+
 ## 1. Status and scope
 
 This document specifies a replacement for the frozen preservation gate's pairing step. It does
@@ -452,3 +495,60 @@ in this order.
 R2, R3, R4, R5 and section 6 for findings 1, 3, 4, 5, 6, 7, 11 and 12, and sections 4.1, 5, 7,
 8 and 9 for findings 8, 9, 10, 13 and 2. The document is still not in force; freezing remains a
 separate act.
+
+## 11. Attacks constructed and not executed
+
+An independent review is not an adversarial test of a gate. This section records attacks built by
+reading this rule and the frozen gate's source. **None of them was executed.** No code was run,
+no record was modified, and no number below is a measurement. A constructed attack is therefore
+not a demonstrated vulnerability: it is a claim that a specified report would be wrong, with the
+mechanism stated so that a later run can confirm it or drop it. AT-1 to AT-4 are the four themes
+the dispatch named, in the order it named them; the dispatch gave themes rather than enumerated
+constructions, so the input and the wording of each row are mine. AT-5 is drawn from this
+document's own sections 2 and 6, and AT-6 is mine.
+
+### 11.1 Coverage of the five attacks the dispatch named
+
+This subsection exists so that a reader can check, for each of the five attacks the dispatch
+named, that it was answered here and by what.
+
+| dispatched attack | status | where answered |
+|---|---|---|
+| (1) mode identity by column ordering when two modes are near-degenerate | OPENED (new row) | AT-1 below; the mechanism is stated there in full, and its ledger consequence is section 0 against claim C21 |
+| (2) decorrelation of the pairing assignment when the mode set is re-sorted by a different key | OPENED (new row) | AT-2 below |
+| (3) a gate applied to a level where the deflation subspace itself changed | OPENED (new row) | AT-3 below |
+| (4) a pass achieved by comparing a run against itself | CLOSED (pre-existing) | section 10, finding 11: `E_FLOOR` and `rho = +inf` already make the exact degenerate form FAILED-TO-MEASURE, without anything in this section. Only the perturbed form -- a self-generated ladder carrying a small non-zero perturbation -- survives, as AT-4 below |
+| (5) annihilation misreport via the STOPPED/UNTRACKED-AT-COARSE precedence (the `c <= 2.5` STOPPED licence) | NOT DISTINGUISHABLE | section 10, findings 4 and 5 close the attribution-misreport case and withdraw the licence for `c > 2.5`, but nothing in the rule separates a genuinely lost mode from a discretisation artefact at `c <= 2.5`; the part that is still open is recorded as AT-7 below |
+
+| id | attack | constructed input | what the gate reports | why that report is wrong | minimum revision that closes it | closed today? |
+|---|---|---|---|---|---|---|
+| AT-1 | mode identity by column ordering when two modes are near-degenerate | two reference roots about 4.2% apart (above route 3's `0.04`) with their two computed candidates exchanged, by the same amount, at every level -- for instance a dielectric step moved so the two modes cross between two of the levels | PASS: every track stays inside `SEED_TOL` at level 3, both contractions stay inside `[2.5, 6.0]`, and route 3 is read off the reference list at 0.042 | the rule tests that a beta lies near a root and never that the mode is the same mode. A swap that is self-consistent across levels leaves every distance and every ratio inside band, so cross-level identity is assumed by the assignment rather than measured. The ledger's claim C21 is the row that says this needs an overlap test, and the invariant layer that might have caught a swap has no measured result at all (inventory row B01, E5, not citable) | one eigenvector overlap per tracked pair, `abs(v_k . v_k+1)` with a stated bar, recorded per track per level and required before a track may continue | no -- section 9.7 discloses the family of geometric chains; no term of the rule detects one |
+| AT-2 | decorrelation of the pairing assignment when the mode set is re-sorted by a different key | one physical case run twice, candidates sorted by `abs(beta)` and then by `Re(beta)` (or ascending against descending), with the `k_candidates = 16` cut falling between two different betas in the two runs | not one wrong report but a report that changes between runs: PASS, or FAILED-TO-MEASURE from `ambiguous` or `assign_collision`, or UNTRACKED-AT-COARSE, depending on which side of the cut a surviving mode lands | the physics is identical and the verdict is not. The sort key appears nowhere in the rule, so two records cannot be compared without it, and the collision and ambiguity tokens are defined on an assignment that the cut can move. A verdict a re-sort can flip is not a measurement | pin one canonical sort key in the rule and in the record, and state the `k_candidates` window as a pre-registered quantity rather than as an implementation default | no -- section 1 fixes `k_candidates = 16` and says nothing about ordering |
+| AT-3 | a gate applied to a level where the deflation subspace itself changed | three levels of which the coarsest deflates a spurious pair of the recorded kind (`t4_amp_ratio.md` section 15.8: five shifts returned a bogus pair at residual `9.89e-01`), while levels 2-3 deflate nothing spurious | PASS whenever a track exists: nothing in R1-R6 reads the deflated set, and `spectrum_short` counts only the level-3 real betas against the number of roots | the three levels are then not three discretisations of one operator, and the contraction band measures the difference between two operator splittings as if it were a refinement rate. The rule names the shift and the budget and never the set the shift deflates | record the deflated eigenvalue set per level in the artefact, and refuse a track whose level-`L` candidate lies inside a coarser level's deflated set, with its own token | no |
+| AT-4 | a pass achieved by comparing a run against itself | a reference ladder produced by the solver under test -- the converged `ny = 64` betas used as the level-3 reference, and the same procedure at 32 and 16 | the exact version is FAILED-TO-MEASURE, because `e = 0` collapses the window onto `E_FLOOR` and `rho = +inf` sits outside the band: finding 11 catches it, not the design. Add a small geometric perturbation to each level's reference and the same run reports PASS | the record then measures self-consistency, and a clean PASS is evidence about the code rather than about the physics. R1 tests the distance to the reference and cannot see where the reference came from; section 9.1 says this in words and nothing enforces it | a provenance field on the reference ladder -- generator, source rows, hash -- in the schema, plus a rule that the ladder may not be produced by the solver being graded | no -- disclosed in section 9.1, not implemented |
+| AT-5 | annihilation misreported through the STOPPED and UNTRACKED-AT-COARSE precedence | a genuine loss of a mode at contrast `<= 2.5`, and separately a coarse-rung solver failure that loses the mode at level 1 only | STOPPED (exit 3, "annihilation suspected") for the first, UNTRACKED-AT-COARSE (exit 4) for the second | both tokens assert a cause the rule cannot establish. The frozen gate's STOPPED at contrast 2.5 was itself a discretisation artefact with no physical event (section 2), and this rule changes the vocabulary and adds preconditions without adding a discriminator between a lost mode and a lost track. Sections 9.2 and 9.5 concede exactly that | solver-side evidence before either token may be emitted -- an inertia computation per rung, or the residual and overlap of the vanishing branch -- otherwise FAILED-TO-MEASURE | no -- partial mitigation only, from `contrast_beyond_validated` (finding 5) and `spectrum_short` (finding 3) |
+| AT-6 | one root's instrument failure masks another root's physics failure, through the total order in section 6 | a four-root record at contrast 2.5 in which root 3 truly vanishes while roots 2 and 3 are degenerate enough to raise `attribution_conflict` or `assign_collision` | FAILED-TO-MEASURE (exit 2). The order FAILED-TO-MEASURE, then UNTRACKED-AT-COARSE, then STOPPED, then FAIL, then PASS is a join over roots, so the least informative outcome wins the record | the record contains a physical event and reports an instrument problem, and the token carries no trace of the root that vanished; a reader downstream sees "could not measure" about a run that measured something. The order is defended as conservative and is conservative in the wrong direction here, protecting the instrument's reputation at the cost of the finding | emit per-root verdicts as a vector and keep the joined token for compatibility, and require the unpaired-root list in the artefact under every token rather than only under STOPPED | no -- section 6 defines the order and does not say the per-root detail survives it |
+| AT-7 | a genuine solver-side loss of a mode at contrast `<= 2.5`, correctly attributed and with a complete spectrum | a root whose computed branch the solver annihilates at contrast 2.5, with the pairing clean (one candidate, uniquely paired, so `attribution_conflict` is not raised), all three levels present and `spectrum_short` not raised -- a real loss that the record can attribute correctly | PASS or FAIL on the surviving roots, with no token recording that a mode was lost | the rule can only report a vanishing mode through STOPPED, and AT-5 shows that token has no discriminator. Once the loss is attributed correctly and the spectrum is complete, `contrast_beyond_validated` and `spectrum_short` are both silent, so a cleanly measured loss of a real mode produces no report at all: the record reads as a complete measurement of a spectrum that is missing a mode | the same solver-side evidence AT-5 asks for -- per-rung inertia, or the residual and overlap of the vanishing branch -- promoted from a precondition of STOPPED to a required per-root artefact field, so that a lost mode is reported with no cause claim attached | no |
+
+**What I would change first.** One revision closes most of this surface, and it is not a change to
+the rule's arithmetic: extend the record, not the tolerance. Two additions -- a per-track
+cross-level eigenvector overlap with a stated bar, and the deflated eigenvalue set per level --
+make AT-1, AT-3 and AT-5's missing discriminator decidable, and they cost two columns and one
+array per level. Neither touches `SEED_TOL`, the contraction band, P1, P2, P3 or route 3, so
+section 8's prediction is unaffected and the revision cannot be accused of being tuned to protect
+it. AT-2 and AT-6 are cheaper still: a canonical sort key written into the rule, and a per-root
+verdict vector written into the artefact, are text and format changes with no numerical content.
+AT-4 cannot be closed inside the gate at all, because it is a statement about where the reference
+came from, and it belongs in the schema that registers the run.
+
+**The vacuous-pass direction, stated separately.** AT-1, AT-2 and AT-4 can produce PASS. AT-3
+produces PASS unless the deflated set is recorded. AT-5 and AT-6 do not produce PASS: they convert
+a report into a different report, and AT-6 removes the record's ability to say that a mode was
+lost, which is the one outcome this rule exists to preserve. The asymmetry is worth stating
+because the attacks that produce PASS are the ones that will be cited: a FAIL invites a rerun, a
+FAILED-TO-MEASURE invites a repair, and a PASS is quoted. Of the six, AT-4 is the one I would
+expect to bite in normal use rather than in principle, because nothing in the workflow forecloses
+building the reference ladder from a converged run's own output -- which is what inventory rows
+A17 and A18 record the corpus already doing on another geometry -- and because section 8 here
+predicts a PASS at the contrast that motivated the redesign, so the first clean PASS arrives at
+the configuration where a vacuous pass is hardest to see.

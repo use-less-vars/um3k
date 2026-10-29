@@ -241,10 +241,10 @@ One honest qualification, recorded so the block is not over-read: `decisions.md:
 
 | statistic | threshold | verdict if exceeded | citable for |
 |---|---|---|---|
-| `|rel|` on `beta^2`, both meshes | `1e-11` | PASS or FAIL, reported only | nothing: not validation, not port defect (5.3) |
-| `|rel|` on `beta^2`, same run | `1e-8` | PASS or FAIL, binding | fidelity of the port to the Python on the same pencil, and nothing beyond it (5.4, 9.1) |
-| analytic anchor (9.1) | not set here | reference only, no verdict | whether the Python itself is right. UNMEASURED (9.1) |
-| physics invariants (9.1) | not set here | reference only, no verdict | passivity, mode purity and `beta` against an analytic value. UNMEASURED (9.1) |
+| `|rel|` on `beta^2`, both meshes | `1e-11` | PASS or FAIL, reported only | nothing: not validation, not port defect (5.3). The threshold is sized from the measured nulls of claim C24 (E3) — an 8.13e-11 thread null and a 9.79e-12 round-off, single samples with no repeats or variance — which is why it sits at the instrument's own floor |
+| `|rel|` on `beta^2`, same run | `1e-8` | PASS or FAIL, binding | fidelity of the port to the Python on the same pencil, and nothing beyond it (5.4, 9.1). Its clearance over that floor is arithmetic on the same nulls under claim C24 (E3); no C++ port has been run, so this row certifies a comparison that does not yet exist |
+| analytic anchor (9.1) | not set here | no verdict from this row | whether the Python itself is right, inside the geometry of claim C1 (E3) only: eps_r in [1.5, 3.5], levels 1-3, vacuum anchor at one mesh. The anchor's literals and its protocol are asserted and uncitable — ledger 5.2 entries A04, A05 and B13, all E5 |
+| physics invariants (9.1) | not set here | no verdict from this row | passivity, mode purity and `beta` against an analytic value. Seven invariants I1-I7 are specified under claim C7 (E1) with derived tolerances under claim C8 (E1), and none is measured: claim B01 (E5). The criterion therefore has a ledger entry at E5 and no verdict is available from it |
 The thresholds do not move: `1e-6` on the residual on either side is still not a result, self-agreement in 5.5 is still bitwise and its failure still invalidates the harness rather than the port, and the environment block of 5.8 still voids any comparison when it differs. What changes is the fourth column, which now says what each row is allowed to certify, and the last two rows are commitments recorded in 9.1 rather than measurements. Those three are retained and were not dropped: they sit outside the criterion table because they are not accuracy criteria and not wrongness criteria.
 
 ---
