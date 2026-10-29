@@ -1334,3 +1334,14 @@ Contrast is defined in this document as `c = eps_r - 1` (line 81), so "contrast 
 
 No gate run, no test, no solver, no build; no measurement in section 13 or in this section has been taken; `emfit/`, the frozen A-1.5 module, `preservation_gate.py`, `preservation_gate_preregistration.py` and `soundness.md` are untouched; no attack is marked closed; no commit. The three annotations added by this revision are markers placed after the lines they apply to, and no existing line, number or sentence was edited, reordered or deleted: the p2 marker after the P2 statement at line 671, the logarithms marker after the bullet at lines 1235-1239, and the `1.231` marker after the bullet at lines 1264-1266. `decisions.md` was appended to, as the errata record, and is the only other file this dispatch wrote. The pairing rule is not frozen.
 
+### 14.6 Forward pointer after dispatch 55A: the "untouched" claim is revision-scoped
+
+Section 12.1 records that revision 4 made no edit to `soundness.md` or `decisions.md`, and no edit to
+`preservation_gate.py`. That was true of revision 4. It stopped being true of dispatch 54, which wrote
+both, and it is not true after dispatch 55A, which edits `soundness.md` again. Section 14 is therefore
+the last place a reader should look for a statement about which files have moved, and the statements
+that count are in `soundness.md` section 13 (dispatch 54's five sites and their byte accounting) and in
+`decisions.md` (the D54 errata block at `:8734`, `:8738`, `:8740`). Nothing in this file is edited here:
+this is an appended pointer, and section 12.1 keeps the bytes it had. The pairing rule is still not
+frozen, and this appendix is not a freeze.
+

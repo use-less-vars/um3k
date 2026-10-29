@@ -685,6 +685,15 @@ Two defects in that evidence, recorded because they bound it.
 and `decisions.md:8620` [DISCREPANCY, UNRESOLVED]. Which copy is the transcription error has not
 been found, so the rate is quoted to three figures and no tighter.
 
+**AMENDED (dispatch 55A).** The discrepancy in (i) is resolved, and the defective copy is the
+preregistration. The two residuals the rate rests on are committed at
+`preservation_gate_results_a35.md:64` -- 1.264530e-04 and 3.141941e-05 -- and
+log2(1.264530e-04 / 3.141941e-05) = 2.0088732694540137, so the second order is 2.0089. The cell at
+`preservation_gate_preregistration.md:54` reads 2.0087 and is the transcription error; that file is
+frozen and is not edited here, and the full record is the D54 ERRATA entry in `decisions.md`
+(`:8734`, `:8738`, `:8740`). The rate is quoted as 2.0089, and (i)'s sentence about three figures is
+superseded.
+
 (ii) A second pair of orders, 1.9819 and 1.9955, is sometimes cited alongside the first. It is not
 citable: the only records are `.scratch/d50/pg_a15.json:775-776` and the run log, and the inputs
 are nowhere in the tree. It corroborates; it is not evidence, and it is not used here.
@@ -799,3 +808,22 @@ prefix claim, because this revision edits four lines as well as appending: recon
 post-state from the pre-state by those four substitutions and by the bytes after its former final
 line reproduces the post-state digest recorded there exactly, so no byte outside the five named
 places moved.
+
+**Byte accounting after dispatch 55A.** Section 12's defect (i) is amended inside section 12 itself,
+in bytes that dispatch 53 appended, so the amendment cannot reach a strip of that append. That is
+measurable rather than argued: truncating immediately before the `## 12.` heading, with the blank line
+that precedes a heading counted as part of that heading's block, returns 57809 bytes / 662 lines /
+`d6834154b2554c1a822b1ff534d1b55c8c77b346f300b7cc5c2d6202baea9f70` both before and after this
+dispatch, byte for byte. Section 13's recipe needs one reversal more than it names: undo the
+dispatch-55A amendment as well as the four substitutions, then delete every byte after the former
+final line.
+
+The two byte figures those sections carry were **not** recomputed at dispatch 55A, and this is the
+place to say so: neither reproduces from the text that survives. Truncating before `## 12.` gives
+57809 bytes against section 12's 56975, a gap of 834; truncating at the former final line gives 61417
+against section 13's 60839, a gap of 578. The two gaps differ by 256 bytes, which is an arithmetic
+consequence of the two figures themselves: section 12's appended block measures 3608 bytes, so
+56975 + 3608 = 60583 cannot equal section 13's 60839. At most one of the two figures is right, and
+neither can be re-derived without the pre-dispatch-54 text, which this tree no longer carries. Both
+sections keep the bytes they have; this is a disclosed defect in sections 12 and 13, not a repair,
+and closing it is not dispatch 55A's to do.

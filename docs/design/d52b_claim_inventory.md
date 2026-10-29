@@ -8,6 +8,14 @@ not a substitute for the ledger: `soundness.md` is the ledger of record and carr
 citable claim, with scope, dependencies, expiry trigger and promotion requirement. This file
 is the working record underneath it.
 
+**Pointer on rows A17 and A18 (appended, dispatch 55A).** The row grades at lines 107-108 below
+(both E3) are superseded for citational use: A17 and A18 are **UNVERIFIED** under
+`docs/design/pairing_rule_preregistration.md:477-483`, which requires any document citing them to say
+so. The graded position is in `docs/design/soundness.md` section 6 (the `modalport_ownership.md`
+tier-spread cell, annotated in place) and section 13 (C1 loses A18 and stays E3; C9 is Withdrawn).
+No cell of this file is altered; both tier cells still read E3, because this file is the sweep output
+and not a rewrite of it.
+
 **How it was produced.** One evidence auditor, one pass, twelve standing design documents,
 13 sections — `t4_amp_ratio.md` was swept in two halves and so appears twice in the sweep
 notes. There was no second auditor, no second pass and no inter-rater check. The notes were

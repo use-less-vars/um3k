@@ -539,6 +539,14 @@ def fine_edge_field(coarse_res, fine_mesh):
     The result is expressed on the FULL fine edge list, in the same global
     ``(lo, hi)`` orientation the solver's own ``e_t`` uses, so the two vectors
     are directly comparable -- see :func:`cross_level_overlap`.
+
+
+    TRANSPORT SCOPE. This is the midpoint rule: the coarse mode's field is evaluated at the fine mesh's
+    edge midpoints (`coarse_res.e_at(mid)`) and contracted with the fine edge vectors, so the coarse
+    field is re-expressed as INT_edge E . dl on the FINE edge list. That is exact for a constant field
+    and first order for a real mode. It is enough to catch a gross mismatch such as a mode swap between levels, and it does
+    not resolve a subtle one; a clean comparison here is evidence against a gross swap and against
+    nothing finer.
     """
     import numpy as np
     nodes = np.asarray(fine_mesh.nodes, float)
@@ -562,6 +570,28 @@ def _overlap_row(coarse_res, res_f, mesh_f, b_f, e_f, order_, ic, it) -> dict:
     order of the reasons below, so a row never reports a reason it could not
     actually establish.  ``dot`` and the two B-norms are recorded even when the
     cosine is refused, so a refusal is inspectable.
+
+
+    NORMALISATION COUPLING. The overlap above is a cosine in the pencil's B inner product, which is
+    only a cosine -- bounded by 1, comparable between rows -- if both modes are B-normalised. The solver
+    route this gate drives normalises e^T B e = 1; the mixed path normalises by the plain 2-norm
+    instead, and that convention is disputed elsewhere in this corpus rather than settled. AT-1's
+    transport therefore rests on a convention that is not settled everywhere: if it is the wrong one,
+    the cosine is not bounded by 1 and a comparison against a mode normalised a different way is not
+    interpretable. Read near-1 and near-0 the same way, but do not read 0.9 vs 0.95 as a resolved
+    difference between levels.
+
+    TRANSPORT SCOPE. The coarse mode's field is evaluated at the fine mesh's edge midpoints and
+    contracted with the fine edge vectors, so the coarse mode is re-expressed as INT_edge E . dl on the
+    fine edge list, by a midpoint rule: exact for a constant field, first order for a real mode.
+    AT-1 therefore detects GROSS mismatches -- a mode swap between levels, a mode missing or an
+    unrelated mode picked up -- and does not resolve subtle ones. A passing AT-1 is evidence against a
+    gross swap between the levels compared and against nothing finer; it is not a convergence measure and
+    nothing here tightens as the mesh refines.
+
+    NON-VERDICT DIAGNOSTIC. The value produced below is reported and not gated. It carries the same
+    standing as residual_eps_mu (section 7: reported, not gated): it is printed for a reader, no
+    condition in this module reads it, and verdict() and judge_root() see none of it.
     """
     import numpy as np
     row = {"order": order_, "candidate_from": ic, "candidate_to": it,
