@@ -123,3 +123,52 @@ Validation caveats, stated rather than buried: the final measurement run reprodu
 - The eps-weighted comparator is the one number that decides whether R's energy label can be honoured at all. It is measured here once, primary convention only, and it widens Q. Confirming it under the bracket convention, and against the de-staggered lattice, is worth doing before the label is retired.
 - If the interface under-jump is the cause, the next measurement is a jump test in the solver's own discretisation rather than in a re-reduction of its output, to establish whether the 13.85 % deficit is created by the solve or by the extraction.
 - The amplitude-ratio reading and the energy-ratio reading of R differ by the substrate content of E_y, and no existing measurement separates them. Any future metric for this geometry should state which one it is before it is computed.
+
+## 9. Addendum: Q is R / R_analytic, so the 44 % offset is the only load-bearing number
+
+This section records a verification requested after the close-out was committed. It changes no measurement and no number above; it collapses two named failures into one.
+
+### 9.1 The definition is declarative, not inferred [ARTIFACT]
+
+evidence/t4/ladder_convergence.json carries its own constants block, which states the definition in words: `"Q_definition": "Q = R_extracted / R_analytic, scored |Q - 1| <= tol_rel (frozen note section 9.1)"`, alongside `"R_analytic": 2.8101021387524523` and `"tol_rel": 0.1`. The same file's per-rung records carry `R`, `Q`, `err_pct` and `in_band` together, so the ratio is not reconstructed at display time.
+
+### 9.2 Three code paths, all a bare division [ARTIFACT]
+
+- tools/host/sparse-probe/high_res_sweep.py: `Q = None if R_extracted is None else float(R_extracted) / R_ANALYTIC`
+- tools/host/sparse-probe/high_res_run.py: `Q = last["R_extracted"] / R_ANALYTIC`
+- tools/host/sparse-probe/routeC_mesh_probe.py: `"Q": vals["R_extracted"] / R_ANALYTIC` and `"abs_Q_minus_1": abs(vals["R_extracted"] / R_ANALYTIC - 1.0)`
+
+Each divides that rung's R by the single pinned constant `R_ANALYTIC = 2.8101021387524523`. A search for any other construction of Q (`Q_reg`, `Q_scored`, `Q_extr`, and any square-root form) found none; the only other `q` in the tree is an unrelated length-scaled quantity in ab_decompose.py. There is no second estimator, no fit, and no alternative reference.
+
+### 9.3 The band is the same inequality, written on R [ARTIFACT]
+
+tools/host/sparse-probe/high_res_run.py defines `Q_BAND = 0.10`, `BAND_LO = R_ANALYTIC * (1.0 - Q_BAND)  # 2.52909192487721`, `BAND_HI = R_ANALYTIC * (1.0 + Q_BAND)  # 3.09111235262770`. The band is applied to R in one script (`inside = BAND_LO <= last["R_extracted"] <= BAND_HI`) and to Q in another (`q_ok = ... abs(Q - 1.0) <= Q_BAR`). These are the same test, because BAND_LO and BAND_HI are literally R_ANALYTIC times (1 -/+ 0.10). This settles disagreement 6 above: there was never a second interval, only a second spelling of the first.
+
+### 9.4 The 44.09 % is Q - 1 [ARTIFACT]
+
+The printed statistic is `100.0 * abs(Q - 1.0)` scored against a 10 % allowance, which for rung 0 is 44.086546199199894. So the "T4_amp 44.09 % FAIL" and the "Q band failure" are one number expressed two ways:
+
+- Q - 1 = 0.4408654619908656 = 44.0865 %, reproducing the banked value [MEASURED]
+- |R0 - R_analytic| / R_analytic = 1.2388769776426192 / 2.8101021387524523 = 0.4408654619908656 [DERIVED]
+
+Equivalently G = R_analytic * (Q - 1). The decomposition in section 3 is therefore a decomposition of one number, not of a difference between two independent measurements: every entry in its "delta as % of G" column is a fraction of R_analytic * 0.4408654619908656.
+
+### 9.5 The disjointness is a property of the pin, not of the gates [DERIVED]
+
+docs/design/57c_closeout.md states that the control gate and the band gate admit no common value of R. That is true, and it is contingent. The control pins R to 4.0489791163982565 within a relative 1e-6 (ANCHOR_R_EXTRACTED in tools/host/c1-audit/c1_audit.py, R_REGISTERED in tools/host/sparse-probe/high_res_run.py), while the band's upper edge is 3.09111235262770. The pin sits 30.99 % above that edge, which is exactly the "excess over band hi" column the frozen table already tabulates.
+
+So the two gates are disjoint because the pin is 44 % from the reference, not because they measure different things. Re-register the pin to any value inside the band and the gates nest, with the control becoming the binding one. Nothing in the record establishes the pin's value as physics; it is a reproducibility anchor, and it should be read as one.
+
+### 9.6 One documented discrepancy, restated so it is not rediscovered [ARTIFACT]
+
+Rung 4 appears as 3.575412753195199 in the ladder table of docs/design/t4_amp_ratio.md and as 3.5754127532015456 in the route_C block of evidence/t4/rung4_routeC_report.json. The two strings as written differ by 6.35e-12 (6.3466e-12 exactly; 6.346478897967245e-12 in floating point), and within that one report they are its dense-anchor reading and its sparse Route-C reading, so the pair is that report's own sparse-against-dense comparison. Both are tabulated side by side in docs/design/t4_amp_ratio.md, which prints 1.77503391525794e-12 beside them in the column headed "relative difference"; that is the document's figure for the pair, and it is not the subtraction quoted here. Either value yields Q = 1.2723. It does not affect 9.1 to 9.5.
+
+### 9.7 What this changes [DERIVED]
+
+Nothing numeric. Section 0's verdicts stand and the sentence "no combination enters the band" is unchanged. What changes is the accounting: the extraction layer has exactly one number to fix, the 44.0865 % offset, and the lattice, measure and eps corrections of section 3 are three ways of measuring that one number rather than three independent defects. Band entry requires removing 77.4 % of it, and the largest single available correction moves it the wrong way by 292.9 %.
+
+## 10. Addendum: fences, and the scratch-hygiene rule
+
+Section 7 discloses "one transient scratch script under tools/host/c1-audit/, created and deleted in the same session" without naming it. The name is tools/host/c1-audit/_tmp_field_audit.py. It is absent from disk, absent from version control, and referenced by no tracked file [ARTIFACT]. The disclosure was accurate but unverifiable by a reader, which is the defect: name the file, not just the class of file.
+
+Rule adopted: transient scratch goes in .scratch/ at the repository root, which is gitignored, and never in a tracked directory. Untracked scratch inside a tracked directory is how a careless `git add -A` becomes a committed artefact, and this project has already lost a file that way once. tools/host/c1-audit/ contained no untracked entry at the time of this addendum; the only untracked artefacts outside viz/ are six pre-existing files that predate D58.1 and are not this task's to commit.
