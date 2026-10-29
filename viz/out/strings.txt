@@ -1,52 +1,57 @@
-59V Phase B — one field you may look at, and one number you may not
-Two panels, two artefacts already on disk. No solve was run and no solver output was regenerated. Every number on this figure is either a value stored
-in an array read from disk, or a value quoted from docs/design/soundness.md; each panel carries the tier badge its quantity's ledger row gives it.
-Badge encoding: viz/acceptance.md §3.1.
-PANEL 1 · A FIELD YOU MAY LOOK AT — mixed-mode e_z, raw node vector
-File: /workspace/.scratch/s10118_mixed_mode.npz · Key: e_z_node · dtype <f8 · raw shape
-(527,) as stored.
-Reshape (declared, not a transform of values): (527,) → (17, 31) in C order — rows are the
-zs index, columns the xs index. Basis: .scratch/logs/s10118_basis.py:321, 'structured_mesh
-node index must be j*nx + i for (XS[i], ZS[j])', with nx = len(xs) = 31 and nz = len(zs) =
-17. The transpose (31, 17) is deliberately NOT used: it would put xs on the vertical axis
-and put the field on its side against that line.
-Display transform (declared): colour = diverging linear on the stored e_z_node values,
-interpolation='nearest', limits ±max|e_z_node| = ±12.3606 on both sides, no normalisation,
-no smoothing, no cropping, no dB, no interpolation onto a finer grid. Colourbar tick labels
-are stored values under that same linear mapping. Units are not stored on the array or on
-either axis, so none are supplied.
-What this panel is not: this is a raw plot of one eigenvector component. No mode amplitude
-is normalised, no power, flux or impedance is formed, no effective index is computed.
-Whether the profile is physically correct is a separate question that needs a convergence
-study this cached file cannot supply.
+60V — committed artefacts only: one field withheld, one number refused
+Two panels, two artefacts, zero committed arrays. Nothing under .scratch/ was opened by this build: criterion B2 treats it as absent. Panel 1
+therefore renders a withheld card instead of a field image (B4); panel 2 quotes committed text for its shapes and refusal (B3/B6). Badge encoding:
+viz/acceptance.md §3.1. Status tags are drawn from {COMMITTED, UNCOMMITTED-WITHHELD} and appear on every panel (B3).
+PANEL 1 · A FIELD THAT IS NOT RENDERED — mixed-mode e_z, withheld
+rendered from uncommitted data - not reproducible, badge withheld
+source path (not loaded): .scratch/s10118_mixed_mode.npz :: e_z_node
+reason: no committed array artefact exists anywhere in the
+tree at HEAD 1cbe2fc. There are ZERO committed .npz files in
+this repository; the only field arrays are gitignored under
+.scratch/. A screen drawn from one would not be reproducible
+from the repository, so the field image, its colourbar and
+every number derived from it are withheld.
+field image withheld — this frame is deliberately empty
+UNCOMMITTED-WITHHELD · badge withheld
+?
+PROVENANCE · artefact path: .scratch/s10118_mixed_mode.npz · pointer: viz/acceptance.md ::
+§4 row 1 (committed; type/shape only) · key: e_z_node · type/shape: float64 (527,) as
+stored, documented as (527,) -> (31,17) on xs(31), zs(17) · status: UNCOMMITTED-WITHHELD.
+TIER · the profile has no row in docs/design/soundness.md naming it, so its tier is UNKNOWN
+(acceptance.md §4, row 1). Under B4 the badge is withheld rather than drawn as a tier: a
+tier on an unreproducible image would assert more than the repository supports.
+WHAT WOULD UNBLOCK IT · one committed array artefact holding e_z_node (527,) together with
+its xs(31) and zs(17) axes, at a path tracked in the repository rather than gitignored.
+Nothing else is required: the reshape, the diverging linear colour map and the
+±max|e_z_node| limits are already declared in the 59V spec.
 PANEL 2 · A NUMBER YOU MAY NOT — the S-parameter refusal
+PROVENANCE · artefact path: .scratch/host/m3a-smoke/plane_record.npz · pointer: viz/acceptance.md :: §4 row 8 · key set: 12 S-parameter keys · type/shape: npz, all zero-length (shapes below) · status: UNCOMMITTED-WITHHELD.
 Sought: a quotable complex s11 or s21 — a number with a true error bar — for the nine station planes this same file records.
-Looked in: /workspace/.scratch/host/m3a-smoke/plane_record.npz (8845003 bytes on disk). Keys, dtypes and shapes were read from the archive headers; the arrays themselves were never loaded.
-Found: 12 S-parameter-related keys, all present, and 12 of them carry ZERO samples. Nothing was substituted for them: no zero, no placeholder curve, no reconstruction, no simulated line.
-  key               dtype        shape     reading
-  f                 <f8          (0,)      no frequency axis
-  v                 <c16         (0, 9)    no wave amplitudes at the stations
-  i                 <c16         (0, 9)    no currents at the stations
-  z0                <c16         (0,)      no reference impedance
-  beta              <f8          (0,)      no propagation constant
-  s11_measured      <f8          (0,)      no measured reflection
-  s11_port          <f8          (0,)      no port-plane reflection
-  s21               <f8          (0,)      no transmission
-  s21_power         <f8          (0,)      no power-wave transmission
-  passivity         <f8          (0,)      no passivity check
-  passivity_power   <f8          (0,)      no power-wave passivity check
-  refused           <f8          (0,)      no refusal flags
-For contrast, in the same file plane_Ez is stored as (9, 201, 76) <c16 — the field planes are real. The field is present; the S-parameter is absent. That asymmetry is this panel.
+Found, quoted from the committed source and NOT read this run: 12 S-parameter-related keys, all present, all carrying ZERO samples. Nothing was substituted for them: no zero, no placeholder curve, no reconstruction, no simulated line. The npz itself was never opened (B2: .scratch/ is treated as absent).
+  key                shape     reading
+  f                  (0,)                no frequency axis
+  v                  (0,9)               no wave amplitudes at the stations
+  i                  (0,9)               no currents at the stations
+  z0                 not stated          no reference impedance
+  beta               not stated          no propagation constant
+  s11_measured       (0,) via `s11_*`    no measured reflection
+  s11_port           (0,) via `s11_*`    no port-plane reflection
+  s21                (0,) via `s21*`     no transmission
+  s21_power          (0,) via `s21*`     no power-wave transmission
+  passivity          (0,) via `passivity*` no passivity check
+  passivity_power    (0,) via `passivity*` no power-wave passivity check
+  refused            not stated          no refusal flags
+For contrast, in the same file plane_Ez is stored as complex128 (9,201,76) per the committed §4 row 6 — the field planes are real. The field is present; the S-parameter is absent. That asymmetry is this panel.
 E5 — NOT CITABLE
 s21
 struck through: the value this figure is not allowed to show
-soundness.md row C4: 'claim C4: the S-parameters are quotable' — tier E5, scope 'none: nothing about quotability is measured'.
+docs/design/soundness.md :: row C4: 'claim C4: the S-parameters are quotable' — tier E5, scope 'none: nothing about quotability is measured'.
 Recorded against it: D09, F14, G04, G06 — each a recorded FAIL; T4_amp stands FAIL at 44.09 %, T2_agree at 9.03x tol.
 NONE ON DISK — this box carries no value because the file carries none.
 A tier is a ceiling: it can be lowered by new evidence, not raised by emphasis. E5 is assertion, not measurement; it must not be quoted.
 This panel contains values that are not citable.
-Badge legend — the three styles below are STYLE SAMPLES ONLY. No quantity on this figure is E1; the E1 sample is drawn so that the E5 style can be
-compared against a citable style in greyscale (acceptance.md A7).
+Badge legend — the three styles below are STYLE SAMPLES ONLY. No quantity on this figure is E1; the E1 sample is drawn so the withdrawn/UNKNOWN style
+can be compared against a citable style in greyscale (acceptance.md A7).
 E1 PROVEN
 single solid 1.5 pt rule, plain field, value
 unstruck — style sample only.
@@ -54,40 +59,8 @@ E5  NOT CITABLE
 s21
 double rule + 45° hatch + value struck through
 — this is panel 2's badge.
-UNKNOWN
+UNCOMMITTED-WITHHELD
 ?
-dotted rule + 50 % grey '?' tiling + boxed '?'
-— this is panel 1's badge.
-UNKNOWN
-?
-no row in docs/design/soundness.md names e_z_node or the mixed-mode
-profile, so panel 1 is badged UNKNOWN and not given a neighbour's tier
-(acceptance.md §4).
-0.0000
-0.0025
-0.0050
-0.0075
-0.0100
-0.0125
-0.0150
-0.0175
-0.0200
-0.000
-0.001
-0.002
-0.003
-0.004
-0.005
-0.006
-0.007
-0.008
-xs — stored axis, units not stored
-zs — stored axis, units not stored
-−15
-−10
-−5
-0
-5
-10
-15
-stored e_z_node value, units not stored
+dotted rule + 50 % grey hatched field + boxed
+'?' — this is panel 1's status tag; its tier
+badge is withheld (B4).

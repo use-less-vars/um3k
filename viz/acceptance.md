@@ -222,3 +222,19 @@ the only binding limit; there is no lower bound blocking a small mesh, and
    run time was not).
 9. Whether the 18 `.scratch/logs/*_planes.npz` records actually contain populated
    `plane_*` arrays — only the schema and the empty scalar arrays were verified.
+
+## 60V — committed-data-only screen (dispatch 60V)
+
+B1  Writes are confined to `viz/`. Verified by an mtime fence: no file outside `viz/` has mtime newer than the start of the run.
+B2  No `.scratch/` access at build time. Every screen generation must succeed with `.scratch/` treated as absent.
+B3  Every panel carries a provenance line: artefact path, key/JSON pointer, type/shape, and a status tag drawn from {COMMITTED, UNCOMMITTED-WITHHELD}. A panel without a status tag is a FAIL.
+B4  Panel 1 of `d59v_screen.py` is tagged UNCOMMITTED-WITHHELD: the field image is not rendered, the literal text `rendered from uncommitted data - not reproducible, badge withheld` appears on the panel, the source path is named, and the reason is named (no committed array artefact exists anywhere in the tree at HEAD).
+B5  Every panel carries a tier badge. No unbadged panel.
+B6  The new screen renders from committed artefacts only, and every plotted number is traceable to one committed file by a JSON pointer recorded in the screen's machine-readable output. Invented, interpolated, or hand-typed numbers are a FAIL.
+B7  Determinism: two consecutive runs produce byte-identical PNG and byte-identical SVG (fix all writer metadata; the SVG writer rejects the `Software` key that PNG accepts).
+B8  Static only: no framework, no animation, no JavaScript, no interactive widget.
+B9  `viz/acceptance.md` is append-only: sha256 of the 59V portion is unchanged before/after this dispatch, and both hashes are reported.
+B10 Greyscale-safe: any two distinct badge tiers remain distinguishable in greyscale by at least 3:1 on the luminance proxy.
+B11 The 0.10 gate threshold is drawn and labelled as a reference line. If committed data puts the quantity above the bar, the rendering must not soften it (no log-scale rescue, no cropping, no 'zoom' inset that hides the crossing).
+B12 The report states what could NOT be built from committed data, and exactly what would have to be committed before it could be.
+
