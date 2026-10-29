@@ -8795,3 +8795,53 @@ Two errata, both small and both closed here rather than argued away. Neither is 
 - **Defect recorded so it is not rediscovered.** matplotlib 3.11's SVG writer rejects the metadata key `Software` (the PNG writer accepts it): `ValueError: Unknown metadata key(s) passed to SVG writer: Software`. Each writer needs its own metadata dict - png `{"Software": None}`, svg `{"Date": None}`. This cost the first delivery attempt its SVG. [VERIFIED this session]
 
 **Append-only.** This block was appended to `decisions.md` on 2026-10-29 as the last act of dispatch 59V, after the screen and its four output files were written and re-run twice. The pre-state is 8,778 lines, 1,275,772 bytes, sha256 `9e0cc9b8789f00bde083953676a97a70a242523f9caf03c4c0435cd09eced70a`; the append is verified the way the previous blocks were verified, by hashing the first 1,275,772 bytes of the file after writing and reproducing that digest exactly, so every byte that carried the old digest is unchanged and the new material lies entirely after them. Everything this dispatch wrote before this block lies inside `viz/`: `viz/acceptance.md` (frozen), `viz/d59v_screen.py` and `viz/out/screen.png`, `viz/out/screen.svg`, `viz/out/screen.json`, `viz/out/strings.txt`. No frozen document, no `emfit/` file, no `tools/` file, no evidence file was touched and no gate was run. The provenance hole and the matplotlib defect above are recorded and left standing.
+
+
+## D58.2 close-out — R retired as a gate, D-R1 preserved as an open defect, T4 closed report-only (dispatch 60)
+
+**Status: close-out only.** Nothing in the primary pipeline is touched. One gate is retired, one gate is closed report-only, and one previously-accepted defect is reclassified from *acceptance criterion* to *recorded defect without a criterion*. No frozen document, no `emfit/`, no `tools/`, no evidence file, no solver and no tolerance is modified. No test is run.
+
+### (1) `T4_amp` (`R`) is retired as a gate
+
+`R = Σ(e_z²) / Σ(e_y²)` is evaluated over two **staggered, different** lattices. The `e_y` samples sit on one set of edges and the `e_z` samples on another, so the two sums are taken over different cells: there is no common measure, no ε weighting, and no common support. Consequently `R` is not an energy, not an integral of field intensity, and not a field-shape ratio — it is a ratio of two unrelated quadratic forms. Because it has no definition to converge to, its refinement behaviour cannot change a verdict: a quantity that is not an approximation of anything cannot be judged accurate or inaccurate. It also has no localizing power, since it collapses the whole cross-section to a scalar and therefore cannot say *where* a field is wrong.
+
+The refinement evidence agrees that the quantity is not converging to a definition. `R` plateaus at **3.567 / 3.613 / 3.575** across the ladder — it wanders at the ~1 % level with no trend toward `R_analytic = 2.8101021387524523`.
+
+The bar under which the recorded failure was scored is now **closed**: half-width `C = 0.1`, giving the acceptance band `[2.5290919248772, 3.0911123526277]` as a multiplicative band around `R_analytic`. The bar was locked *after* the miss was already known (`t4_amp_ratio.md:89`, `:114-116`; `high_res_run.py:114-116`), and `high_res_run.py:195` records the governing rule inside the tooling itself — post-hoc use of the observed values to move the bar is a breach.
+
+**The recorded FAIL stands as a historical fact about that quantity.** It is not withdrawn and not reinterpreted; what is withdrawn is `R`'s standing *as a gate*. Two scorers produced two different FAIL readings, and both are on the record:
+
+- the **registration reading**, which scores the rung-0 operand `4.0489791163982565` against `R_analytic = 2.8101021387524523`, giving ratio `1.440865461991999` = **`44.086546199199894 %`** = `4.408654619919989×` the half-width (`t4_amp_ratio.md:72`);
+- the **ladder driver**, which scores the LAST COMPLETED rung `R = 3.575412753195199`, giving ratio `1.272342632636` = **`27.2343 %`** = `2.7234×` the half-width (`out/summary_HIGHRES.txt:258-263`).
+
+### (2) `D-R1` remains OPEN, with no acceptance criterion
+
+The finding behind the retired gate is **kept**. Under identical construction the mode-path amplitude partition departs from the analytic value by **27–44 %** (both numbers above). That is too large to be discretisation at the tested resolutions, it reproduces across rungs, and it is unexplained. It is a real signal about the field solution and it stays visible.
+
+What changes is its status. `D-R1` now carries **no acceptance criterion**: it is, exactly, *a signal without a ruler*. It is not promotable back to a gate until something localizes it — a gate requires a quantity with a definition, and `R` is not one.
+
+**Why retiring a gate here does not hide a problem.** Retiring a gate that *caught a real defect* would hide that defect. Retiring a gate that *measures an undefined quantity* removes noise. `R` is the second kind: the defect it happened to sit next to is preserved separately as `D-R1`, with its numbers, and stays open. The rule applied is: preserve the finding, retire the instrument.
+
+**Not to be done.** Neither of the following is to be run: **(A)** the own-mesh test, since re-evaluating `R` against a value produced by the same construction would only show that the construction agrees with itself; **(B)** an independent derivation of `2.8101021387524523`, since it would only confirm that the metric does not converge, which the plateau already establishes.
+
+**No replacement metric is to be built.** The replacement is the extraction gate, which does not exist yet; building a fresh secondary metric to replace a retired secondary metric would repeat the pattern this close-out is meant to end.
+
+### (3) T4 closed, report-only
+
+T4 closes without further measurement. Its outstanding items are discharged as recorded, not repaired: 10.10.2, absolute difference `0.0` between the readings compared there, so there is no discrepancy to chase; 10.10.3, provenance settled and the operand's origin documented; 10.10.4, `D-C1` deflated, since `n_eligible = 1` makes the column choice inert and the pass carries no information about column identity; 10.10.5, the two scorers separated — both readings are named in (1) and neither is withdrawn; 10.10.6, `repro: FAIL` on rungs 1–4 is **not** a defect, because a quantity that is not converging has no reason to reproduce, which is the same fact as (1) rather than a new one; 10.10.7, the offset banked and the bar closed; 10.10.8, branch (d2) recorded — **the mesh is NOT the mechanism.**
+
+### (4) Standing rule
+
+> Defects in the primary pipeline — field, extraction, S-parameters — get chased immediately. Defects in secondary metrics, gates, and bookkeeping get recorded, triaged, and deprioritized.
+
+Why the rule exists: eight consecutive dispatches on this unit each found a real defect, and every one of them was in a secondary quantity (`R`, `Q`, `PAIR_TOL`, `REPRO`), while the extraction layer — the layer that produces the numbers a user actually sees — has never been exercised end to end. Gate mechanics were refined while the S-parameter chain remained at stage 1 of its own ownership document.
+
+### (5) Next unit: phase 58.3, the extraction gate (phase 1, straight guide)
+
+The next unit builds and runs a straight-guide extraction test: a uniform through-line with no discontinuity, whose closed form is `S11 = 0` and `S21 =` a known phase, driven through the whole pipeline (mode basis → volume solve → capture/projection → extraction), and reports `S11`/`S21` against closed form. The acceptance band is to be **pre-registered before the run and derived, not chosen**, and relaxing it after seeing numbers is the same breach as `high_res_run.py:195`. Stated plainly: if a straight guide does not give `S11 ≈ 0` and `S21 ≈ 1`, nothing downstream is trustworthy.
+
+Not to be done in 58.3: (A) and (B) as listed in (2).
+
+**Bookkeeping (secondary).** `D-C1` is recorded as an OPEN bookkeeping observation only. `n_eligible = 1` and `eligible_cols == [bank_col]`, so the column-identity pass cannot distinguish column identity and the 738-vs-732 discrepancy is inert under a single eligible column. OPEN is retained for provenance, not for repair.
+
+**Append-only.** Pre-state: 8,797 lines, 1,279,795 bytes; md5 `da5f835ee0d9f7e3d81d9b4cfdad6259` over the whole file. The append is proved by `head -c 1279795 decisions.md | md5sum` returning `da5f835ee0d9f7e3d81d9b4cfdad6259` after the write. No frozen doc, no `emfit/`, no `tools/`, no evidence file, no gate, no solver touched; no test run.
