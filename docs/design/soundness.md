@@ -818,12 +818,20 @@ dispatch, byte for byte. Section 13's recipe needs one reversal more than it nam
 dispatch-55A amendment as well as the four substitutions, then delete every byte after the former
 final line.
 
-The two byte figures those sections carry were **not** recomputed at dispatch 55A, and this is the
-place to say so: neither reproduces from the text that survives. Truncating before `## 12.` gives
-57809 bytes against section 12's 56975, a gap of 834; truncating at the former final line gives 61417
-against section 13's 60839, a gap of 578. The two gaps differ by 256 bytes, which is an arithmetic
-consequence of the two figures themselves: section 12's appended block measures 3608 bytes, so
-56975 + 3608 = 60583 cannot equal section 13's 60839. At most one of the two figures is right, and
-neither can be re-derived without the pre-dispatch-54 text, which this tree no longer carries. Both
-sections keep the bytes they have; this is a disclosed defect in sections 12 and 13, not a repair,
-and closing it is not dispatch 55A's to do.
+Neither figure was recomputed at dispatch 55A; both were checked afterwards against version control,
+and both reproduce exactly, so the defect lies in the sentence that joins them rather than in either
+figure. The copy of this file at commit `a909508` is 56975 bytes, 654 lines,
+`4c861fbbd0c7814edeaaee9dbbc67e83bc81b54c659e3b53dcfb87baea5c5f5c`, which is section 12's figure;
+the copy at `53a651b` is 60839 bytes, 709 lines,
+`15a7c0290ef137e40b6a0baec186bca0b6dd2db6f171de611571e4714f96bbab`, which is section 13's.
+
+What section 12 gets wrong is its account of how the strip reaches that figure. Dispatch 53 made two
+insertions into `a909508`, not one: a three-line, 256-byte `**AMENDED (dispatch 53).**` block at
+`53a651b:534-536`, inside section 9(a), and the section 12 block below, 52 lines and 3608 bytes, at
+`53a651b:658-709`. Deleting both from `53a651b` returns `a909508` byte for byte, and the arithmetic
+closes exactly: 56975 + 256 + 3608 = 60839, and 654 + 3 + 52 = 709. Stripping what dispatch 53
+appended therefore leaves 57231 bytes and not 56975, 256 bytes high, because the strip removes
+section 12 and leaves the section 9(a) amendment behind; `4c861fbb…` is the digest of the file as it
+stood before either insertion. Section 12 understates the remainder of its own strip by 256 bytes and
+should name the second insertion. Section 13's figure needs no correction, and the recipe above is
+the one that reaches it. Neither section's bytes are edited here.
