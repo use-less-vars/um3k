@@ -167,3 +167,75 @@ docs/design/d58_closeout.md contains, in this order: (1) R's definition, or the 
 ### 9.6 Fences for 58.1
 
 docs/design/d58_acceptance.md belongs to the other agent and is not written by me. decisions.md belongs to the other agent. viz/ is fenced. emfit/ is untouched except what Task 3 strictly requires, and none is expected: all three corrections are re-reductions of persisted arrays. New work lands in tools/host/c1-audit/ and docs/design/d58_closeout.md only. Commits are selective by path, never all-path.
+
+## 10. D58.2 acceptance criteria: the jump in the solver's own discretisation, and whether it converges
+
+### 10.1 Scope
+
+D58.2 measures ONE thing: the vertical electric field `e_z` on the solver's own
+output, immediately below and immediately above the dielectric interface, as a
+ratio against the eps contrast 4.4, and then whether that deficit shrinks as the
+mesh is refined. It is a question about the discretisation, not about the
+estimator. D58.2 does NOT re-open the estimator question: per section 9 of
+`docs/design/d58_closeout.md`, the three corrections to the extraction are
+finished and their residual (the ~44% offset) is a separate, still-open problem.
+No new estimator, no new operand, no re-derivation of R is in scope. This section
+is written BEFORE any field value is loaded: every `result` cell below is
+`PENDING`, and the interpretation table in 10.3 is fixed now, in advance.
+
+### 10.2 Criteria
+
+| id | criterion | bar | result |
+| --- | --- | --- | --- |
+| T1 | Measure `e_z` just below and just above the interface on the solver's own banked eigenvectors; report the ratio below/above against eps_r = 4.4 | The under-jump is stated as a percentage with its own uncertainty (an interval, not a point) | PENDING |
+| T2 | Determine the element space that `e_z` actually lives on, and derive the smearing the actual basis must produce | A predicted under-jump percentage, falsifiable, written down BEFORE T3 runs | PENDING |
+| T3 | Convergence test of the measured under-jump at three or more resolutions of the same ladder | Whether the under-jump shrinks with h, and at what rate: a fitted exponent with a standard error | PENDING |
+| T4 | Replace the exact-float REPRO equality in the audit with a relative tolerance that is derived, not chosen | Tolerance derived in the document, and the count of banked statuses that flip reported | PENDING |
+| T5 | Commit the field artefacts that viz panel 1 needs | A provenance line for each committed artefact, and the tier that becomes eligible | PENDING |
+
+On T2 the predicted number is `derivation deferred to T2 execution` until the
+space is read out of the code; no number is pre-registered here that the code has
+not yet been shown to imply. If a continuous (P1) basis is confirmed, the
+derivation to be reported is the standard nodal smearing: a nodal P1 field
+carries the interface value as a weighted average of the two one-sided limits, so
+on a uniform mesh the first node off the interface sees a fraction of the jump
+proportional to the distance to that node divided by the cell size, and the
+under-jump is that fraction of the full 1 - 1/eps_r contrast. The two lines of
+algebra and the resulting percentage belong in T2's own record, not here.
+
+### 10.3 Pre-registration: what each outcome will mean
+
+The discriminator is T3's fitted exponent `p` in `under-jump ~ C h^p`. Exactly
+one of the following three rows is the interpretation, and the row is chosen by
+the fitted value alone, not by which answer is convenient.
+
+| observed | fitted exponent | pre-registered interpretation |
+| --- | --- | --- |
+| under-jump shrinks with h | `p` consistent with 1 or 2 (O(h) or O(h^2)) | DISCRETISATION: the jump converges away, 13.85% is a mesh artefact of the sampled lattice, and the residual 44% offset is a separate solve defect, not a basis limitation |
+| under-jump constant | `p` consistent with 0 (interval covering 0) | STRUCTURAL: the formulation cannot represent a discontinuous normal component, the jump never converges, and the remedy is a different unknown (D_z = eps_r E_z, the continuous one) or an interface-aligned mesh - not more refinement |
+| e_z found on a discontinuous basis | T2 fails its own premise | T2 is VOID and the under-jump is a solve defect; T3 then measures solver convergence rather than basis representability, and the 10.2 T2 row is scored as void, not as pass |
+
+The interpretation is fixed HERE, before T1 and T3 are computed. Any later
+revision of this table must be recorded as an ERRATUM appended to this section
+(section 9.0 is the precedent), never as an edit to the rows above.
+
+### 10.4 Why the test is cheap
+
+Every rung of the ladder already has its eigenvectors banked:
+`tools/host/sparse-probe/out/rung{0..4}_*/c1_spectrum.npz`, each with 38 keys
+including `vecs_real` (all eigenvectors), `free_e`, `free_n`, `xs`, `zs` (which
+alone rebuild the mesh), `k0`, `f0`, `beta` and the metric arrays. No solve is
+needed to obtain `e_z` on any rung: only the mesh rebuild, the mixed assembly and
+a sparse LU back-substitution for the longitudinal block. The analytic references
+`A_ey` and `A_ez` in those files are references, not solver output, and are not
+what T1 measures. Re-solving rung 4 is out of scope for D58.2 without explicit
+authorisation from the author: the rung-4 artefact is 738,560,423 bytes and its
+eigenvectors are already banked.
+
+### 10.5 Fences for 58.2
+
+Work lands in `tools/host/` and `docs/design/d58_*` only. `emfit/` is untouched
+unless T2 proves that a basis change is actually needed, and that is reported to
+the author BEFORE anything in `emfit/` is touched. `viz/`, `decisions.md` and
+`docs/design/d58_acceptance.md` belong to another agent and are not written by
+me. Scratch goes in `.scratch/`. Commits are selective by path, never all-path.
