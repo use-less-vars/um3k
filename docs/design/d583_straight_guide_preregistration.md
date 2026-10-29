@@ -285,6 +285,126 @@ published dispersion figure). If no such source exists at run time, the run may 
 graded pass/fail on (i)–(iii); only the **order** criterion of §3 is gradable. That is a
 weaker verdict and it is the honest one — no number will be produced retroactively.
 
+### 2.4 Provenance of C_2 (frozen — added after §2.3, nothing above changed)
+
+§2.3 left `C_2` symbolic. This subsection *fills it in from sources that existed before the
+run*, exactly as the freeze protocol there demands, and records one sign contradiction against
+§3.4 rather than resolving it. **Nothing in §1–§2.3 is edited, weakened or deleted by this
+addition.**
+
+**What `dt` is.** The stepper's default step is `cfl_dt` (`emfit/evolve.py:68-79`):
+
+```
+dt = safety / ( c * sqrt( sum_{axis in x,y,z} 1 / min(widths(axis))^2 ) ),  safety = 0.99, c = C0
+```
+
+Docstring `evolve.py:69-73`: "Courant-limited time step `safety/(c sqrt(sum_axis 1/d_axis^2))`;
+`d_axis` is the *smallest* cell width on that axis". It is one 3-D expression with no 2-D branch,
+consumed as the default at `evolve.py:140` (`self.dt = float(cfl_dt(cc.grid) if dt is None else dt)`),
+and duplicated with `safety=1.0` at `emfit/maxwell.py:79-86` (`FITSystem.cfl_dt`). For a grid of
+cubic cells `h` in vacuum this gives `dt = 0.99*h/(C0*sqrt(3))`, i.e. an **axial Courant number**
+
+```
+S := c*dt/h = 0.99/sqrt(3) = 0.5715768,   S^2 = 0.3267000
+```
+
+`dt ∝ h`, so **`S` does not move with the rung** — which is precisely what lets a constant `C_2`
+stand in (B1). *Proviso:* `dt` is pinned by the smallest width on each axis, so if a rung's grid is
+graded, `S_x = c*dt/h_x ≠ 0.5716` and `C_2` below must be recomputed from the logged `Stepper.dt`.
+That must be logged, not assumed.
+
+**Does a closed form exist? Yes — in the test suite, not in `emfit/`.** `tests/test_modalport.py:377-396`
+`_dispersion(cc, m_eps, m_mu, dt, f)` implements the 1-D Yee dispersion from the fixture's own
+material matrices:
+
+```
+sin^2(beta dx/2)/dx^2 = sin^2(omega dt/2)/(c^2 dt^2),   c^2 = 1/(eps mu)  from an E_y edge and an E_z face
+s    = sqrt(c1*l1)/dt * sin(omega*dt/2)
+beta = 2/DX * arcsin(s)                                    # :393
+c_num = DX/sqrt(c1*l1);  vg = c_num*cos(beta*DX/2)/cos(omega*dt/2)   # :394-395
+```
+
+Its own docstring says it is "Analytic, computable before the run, nothing fitted" (`:380-382`).
+`tests/test_periodic.py:192-227` holds the same relation in the form
+`sin(w dt/2) = S sin(k dx/2)`, `k = 2*arcsin(sin(w dt/2)/S)/H`, `v_g = C0 cos(kH/2)/cos(w dt/2)`
+(`:220-223`). What the *library* offers instead is only the half-step stagger, closed-form:
+`emfit/plane_phasor.py:94-118` `half_step_angle = -pi*f*dt` and `:121-137` `destagger`. That is a
+*time-origin* correction with no `k`-dependence and therefore **not** a dispersion coefficient —
+nothing in `emfit/` quantifies `beta` error (`emfit/microstrip.py:358` is the continuum
+`c0/sqrt(eps_eff)`). So the closed form is available, and `C_2` is *derived*, not guessed; but the
+production path does not contain it.
+
+**FROZEN: the homogeneous axial coefficient.** Expand the discrete relation at fixed drive `omega_0`
+against the continuum `k_ref = omega_0/c` of the same medium. With `theta = k_ref*h/2`:
+
+```
+sin(k_num h/2) = sin(S*theta)/S,   sin(S*theta)/S = theta - S^2 theta^3/6 + O(theta^5)
+arcsin(theta - S^2 theta^3/6) = theta + (1 - S^2) theta^3/6
+=> k_num = k_ref * [ 1 + (1 - S^2)(k_ref h)^2 / 24 ]
+=> (beta_num^2 - beta_ref^2)/beta_ref^2 = [(1 - S^2)/12] * (k0 h)^2
+```
+
+so, with `S` the **medium's** Courant number `S_med = C0*dt/h / sqrt(eps_r)`:
+
+```
+(2.4a)   C_2^hom = (1 - S_med^2) / 12      [frozen; general axial form C_2 = (1 - S_x^2)/12, S_x = c*dt/dx]
+```
+
+| medium | `S_med` | `S_med^2` | **`C_2^hom`** |
+|---|---|---|---|
+| air, `eps_r = 1` | 0.5715768 | 0.3267000 | **+0.0561083** |
+| substrate, `eps_r = 4.4` | 0.2724885 | 0.0742500 | **+0.0771458** |
+
+This reproduces §2.3 exactly: (B2) `|dbeta/beta| = eps2/2` and (B1) `eps2 = C_2 (k0h)^2` are the
+same two statements as the expansion above, to the order kept. Evaluating §2.3's band with the
+frozen constant (`beta*L = 2.51502*sqrt(eps_eff)` rad, `L = 12 mm`):
+
+| rung | `h` | `(k0h)^2` | `eps2` (air) | `eps2` (substrate) | `\|dphi\|/sqrt(eps_eff)` (air) |
+|---|---|---|---|---|---|
+| R1 | 0.20 mm | 1.7570e-03 | 9.8585e-05 | 1.3555e-04 | 1.2397e-04 rad |
+| R2 | 0.10 mm | 4.3926e-04 | 2.4646e-05 | 3.3887e-05 | 3.0993e-05 rad |
+| R3 | 0.05 mm | 1.0982e-04 | 6.1615e-06 | 8.4718e-06 | 7.7482e-06 rad |
+
+**STILL SYMBOLIC — what this does NOT freeze.**
+
+1. **The interface / staircase term.** The line is a staircase of PEC strip and `eps_r` jump on a
+   Cartesian mesh. That contribution is an `O(h)` *geometric* error converted to a phase error
+   through field sensitivity at the edge; its sign is not fixed a priori (a staircase may over- or
+   under-estimate the local `C'` and the edge-field concentration) and its scaling is **not**
+   cleanly `(k0h)^2`. It is therefore **not derivable**, and it is left symbolic together with
+   **`delta_E`** (§2.3, still no value anywhere in the evidence).
+2. **Consequence, stated as an argument and not an assertion.** `C_2^hom` is the *homogeneous axial*
+   contribution — definite sign, variance-free, present at every point of the medium. It is a bound
+   on the observed error only under the extra stated assumption that the staircase term is
+   negligible or of the same sign. The measured `eps2` is the **sum** of (i) and (ii), so
+   `C_2 ≈ +0.056…+0.077` is a *central value / predicted contribution*, not a floor. The **order**
+   and the rung ratios of §3.1–§3.3 remain the primary gradable criterion; §2.3's freeze protocol
+   still forbids grading pass/fail on (i)–(iii) if the staircase term is not pinned.
+3. **A-refl is untouched.** Nothing here derives the per-cell *reflection* amplitude of (iii); that
+   remains the stated assumption it always was.
+4. **Range of validity.** `C_2 (k0h)^2` is asymptotic in `h` against *both* `lambda` and the
+   transverse scale (1.6 mm substrate): transverse evanescent content enters at `O((h/H)^2)`, not
+   proportional to `(k0h)^2`. At R1 (`k0h = 0.042`) the neglected `O((k0h)^4)` term is ~1e-3 of
+   `eps2`, so the rung ratios of §3.1 are unaffected at that level.
+
+**RECORDED CONTRADICTION (added, not resolved; §3.4 is not edited).** `C_2^hom > 0` in *both*
+media, so the discrete line is **phase-fast**: `beta_num > beta_ref`, hence
+
+```
+dphi = arg(A2/A1) + beta_ref*L = (beta_ref - beta_num)*L < 0   =>   dphi NEGATIVE at every rung.
+```
+
+§3.4 infers the opposite (`dphi > 0`) from `c2_slab`'s `all_rel_negative: true`. **The two cannot
+both hold.** This document records the contradiction and does not settle it: §3.4's inference is
+about a *finite-element cross-section eigensolve* of a 2B slab, this derivation is about the *FDTD
+leapfrog axial relation* on a cubic grid — different discretisations, so neither refutes the other.
+§3.4 stays exactly as written and is still not a pass/fail item; the sign is to be *reported as
+measured*, and a measurement of `dphi > 0` would be evidence that the staircase term (ii) is
+negative and dominant, not that `C_2^hom` is wrong. Numeric coincidence, **not** a result: at
+`k0h = 0.025`, `C_2^air (k0h)^2 = +3.5068e-05` against `c2_slab`'s `max_abs_rel_dev = -3.1410e-05`
+— same magnitude, opposite sign, and (see above) different geometry and discretisation. At the
+rung-2 design point `k0h = 0.020959` the same comparison reads `+2.4646e-05` against `-3.1410e-05`.
+
 ---
 
 ## 3. Refinement ladder and the pre-registered order prediction
