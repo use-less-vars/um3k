@@ -436,3 +436,18 @@ place, by this document's own rule that amendments are appended.
 
 Neither defect moves a verdict, and both are transcription errors in a document whose subject is
 the cost of untraced transcription, which is why they are here rather than quietly fixed.
+
+3. Added in a second reconciliation, and it amends the count in the paragraph above rather than only
+   adding to it: disagreement 4 in section 7 places the stale "six" at `decisions.md:8667`, `:8676`
+   and `:8679`. All three are wrong. The file was 8674 lines when this document was written, so
+   8676 and 8679 did not exist at all, and after the dispatch-53 append the three stale phrases sit
+   at 8662, 8670 and 8674. This document therefore carries three transcription defects, not two.
+
+4. The count in item 7 of the brief list, "the four places that say `six`", cannot be resolved from
+   the tree as it now stands. Three of the four are the `decisions.md` lines corrected in item 3
+   above. The fourth is quoted in section 7 as `pairing_rule_preregistration.md:549`, a citation
+   made against the 554-line version of that file; at line 549 the present 1297-line file has a
+   blank line, so that citation moved when the file grew and has not been re-located. The verified
+   count is three, all in `decisions.md`. The word "four" is left standing rather than corrected,
+   because this document is append-only and because a count that cannot be checked is the kind of
+   thing this document exists to keep rather than to tidy away.
