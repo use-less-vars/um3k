@@ -1,7 +1,8 @@
 60V — committed artefacts only: one field withheld, one number refused
-Two panels, two artefacts, zero committed arrays. Nothing under .scratch/ was opened by this build: criterion B2 treats it as absent. Panel 1
-therefore renders a withheld card instead of a field image (B4); panel 2 quotes committed text for its shapes and refusal (B3/B6). Badge encoding:
-viz/acceptance.md §3.1. Status tags are drawn from {COMMITTED, UNCOMMITTED-WITHHELD} and appear on every panel (B3).
+Three panels, three artefacts, zero committed arrays. Nothing under .scratch/ was opened by this build: criterion B2 treats it as absent. Panel 1
+therefore renders a withheld card instead of a field image (B4); panel 2 quotes committed text for its shapes and refusal (B3/B6); panel 3 draws every
+number from committed JSON only (B6). Badge encoding: viz/acceptance.md §3.1. Status tags are drawn from {COMMITTED, UNCOMMITTED-WITHHELD} and appear
+on every panel (B3).
 PANEL 1 · A FIELD THAT IS NOT RENDERED — mixed-mode e_z, withheld
 rendered from uncommitted data - not reproducible, badge withheld
 source path (not loaded): .scratch/s10118_mixed_mode.npz :: e_z_node
@@ -50,8 +51,8 @@ Recorded against it: D09, F14, G04, G06 — each a recorded FAIL; T4_amp stands 
 NONE ON DISK — this box carries no value because the file carries none.
 A tier is a ceiling: it can be lowered by new evidence, not raised by emphasis. E5 is assertion, not measurement; it must not be quoted.
 This panel contains values that are not citable.
-Badge legend — the three styles below are STYLE SAMPLES ONLY. No quantity on this figure is E1; the E1 sample is drawn so the withdrawn/UNKNOWN style
-can be compared against a citable style in greyscale (acceptance.md A7).
+Badge legend — the three styles below are STYLE SAMPLES ONLY and grade no quantity on this figure; the E1 sample is drawn so the withdrawn/UNKNOWN
+style can be compared against a citable style in greyscale (acceptance.md A7).
 E1 PROVEN
 single solid 1.5 pt rule, plain field, value
 unstruck — style sample only.
@@ -64,3 +65,55 @@ UNCOMMITTED-WITHHELD
 dotted rule + 50 % grey hatched field + boxed
 '?' — this is panel 1's status tag; its tier
 badge is withheld (B4).
+Panel 3 — the T4 amplitude bar: all five rungs sit ABOVE the pre-registered band
+/verdict/T4_amp = "FAIL (unmoved)"   |   |Q-1| at rung 4 = 2.7234 x allowance   (allowance = 0.1)
+Q = R_extracted / R_analytic at the five rungs (x = free_e); band |Q-1| <= 0.10 shaded
+pre-registered band  0.90 <= Q <= 1.10  (|Q-1| <= 0.10)
+Q = 1.10 — band edge (bar, not a soft guide)
+Q = 0.90 — band edge (bar, not a soft guide)
+Q=1.4409  |Q-1|=0.4409
+Q=1.3453  |Q-1|=0.3453
+Q=1.2695  |Q-1|=0.2695
+Q=1.2856  |Q-1|=0.2856
+Q=1.2723  |Q-1|=0.2723
+BOXED INSET — Route C cross-check at the rung-4 mesh
+agreement: beta_sq_digits = 11.4923, R_digits = 11.7508 matching digits, against the
+dense solve at this same mesh
+cost: factor_nnz = 1,369,259, fill_per_row = 106.9149, factor_memory_gb = 0.016431
+CAPTION (mandatory): the 11-digit agreement is with the SAME-MESH DENSE SOLVE, NOT
+with R_analytic — therefore it does not mean the gate passed.
+purpose (verbatim, /route_c_cross_check/purpose): one sparse (Route C) solve at the
+rung-4 mesh, scored against the dense answer at that same mesh -- a validation of the
+sparse path at the largest rung, NOT a convergence result and NOT a scaling law
+status: REPRODUCES_REFERENCE (/verdict/route_C/rung4/agreement/status)
+SOURCES (committed JSON, tier E1) — evidence/t4/ladder_convergence.json :: /constants{R_analytic, band_lo, band_hi,
+tol_rel}, /rungs[i]{rung, free_e, Q, err_pct, in_band} located by the "rung" field never by position, /verdict{T4_amp,
+Q, Q_minus_1_abs, allowance, multiple_of_allowance}, /route_c_cross_check{agreement.beta_sq_digits,
+agreement.R_digits, cost_measured.factor_nnz, cost_measured.fill_per_row, cost_measured.factor_memory_gb, purpose} ||
+evidence/t4/rung4_routeC_report.json :: /verdict/route_C/rung4/agreement/status
+E1 — PROVEN
+committed JSON only · reproducible from the repository
+badge fill #FDFDFD (L 0.9823, grey 253.0) · ink #111111
+(L 0.0056, grey 17.0) · contrast 18.56:1 computed in
+code, gate >= 3.0 PASS
+status: COMMITTED — every number on this panel
+is read from committed JSON at HEAD (B3)
+57c_acceptance.md, section "Numbers carried in, all [RELAYED], all unverified", writes "Q = 1.272" for rung 4 —
+correct: this panel reads 1.2723426326355907. Its "Q = 0.441 and 0.345" for rungs 0-1 are |Q-1|, not Q; this
+panel's Q, from committed JSON, are 1.440865461991999 and 1.3452649773413672. Those doc numbers are [RELAYED] —
+"carried from a dispatch, brief or prior agent, unverified"; every number here is read from committed JSON at
+HEAD. docs/design/57c_closeout.md, verdict A: "T4_amp: FAIL was decided before any rung ran" — the registered
+quantity and gate, not the solver.
+1444
+2404
+3604
+5044
+9604
+0.8
+0.9
+1.0
+1.1
+1.2
+1.3
+1.4
+1.5

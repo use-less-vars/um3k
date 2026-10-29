@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """60V Phase A -- the 59V screen, rebuilt so that NOTHING is loaded from .scratch/.
 
-Two panels, two artefacts, zero committed arrays.
+Three panels, three artefacts, zero committed arrays.
   panel 1  mixed-mode e_z_node        -> UNCOMMITTED-WITHHELD (no field image is drawn)
   panel 2  the S-parameter refusal    -> E5, provenance quoted from committed text
+  panel 3  the Q ladder vs its pre-registered band -> E1, every number quoted from committed JSON
 
 Criterion B2: `.scratch/` is treated as absent. This script never opens, stats or
 lists anything under it. The only `.scratch` strings in this file are PROVENANCE
@@ -30,6 +31,10 @@ from matplotlib.patches import Rectangle
 from matplotlib.lines import Line2D
 from PIL import Image
 
+# panel 3 is a sibling module; running `python3 viz/d59v_screen.py` puts viz/ on
+# sys.path[0], so the plain sibling import resolves with no sys.path surgery.
+from panel3 import draw_panel3
+
 ROOT = "/workspace"
 HERE = os.path.join(ROOT, "viz")
 OUT = os.path.join(HERE, "out")
@@ -50,8 +55,24 @@ P1_REASON = ("reason: no committed array artefact exists anywhere in the tree at
              "gitignored under .scratch/. A screen drawn from one would not be reproducible from "
              "the repository, so the field image, its colourbar and every number derived from it are withheld.")
 
-DPI, FIGW, FIGH = 130, 16.0, 9.0
+DPI, FIGW, FIGH = 130, 16.0, 13.60
+OLD_FIGH = 9.00      # the canvas panels 1-2 were laid out on, before panel 3 existed
 os.makedirs(OUT, exist_ok=True)
+
+
+def ymap(y_old):
+    """y-fraction on the ORIGINAL 9.00 in canvas -> y-fraction on the taller figure.
+
+    The original canvas is pinned to the TOP of the new figure, so panels 1-2 keep
+    their absolute position and size and the added height is free for panel 3.
+    x is untouched: the figure is not widened.
+    """
+    return 1.0 - (1.0 - y_old) * (OLD_FIGH / FIGH)
+
+
+def hmap(h_old):
+    """height-fraction on the ORIGINAL canvas -> height-fraction on the new one."""
+    return h_old * (OLD_FIGH / FIGH)
 
 # ---- B10 tier tones -------------------------------------------------------------------
 # ONE source of truth: the hexes below. Every luminance/ratio is computed FROM these hexes.
@@ -142,20 +163,21 @@ plt.rcParams.update({
 })
 fig = plt.figure(figsize=(FIGW, FIGH), dpi=DPI)
 
-fig.text(0.5, 0.982, rec("60V \u2014 committed artefacts only: one field withheld, one number refused"),
+fig.text(0.5, ymap(0.982), rec("60V \u2014 committed artefacts only: one field withheld, one number refused"),
          ha="center", va="top", fontsize=15, weight="bold")
-fig.text(0.5, 0.947,
-         fill("Two panels, two artefacts, zero committed arrays. Nothing under .scratch/ was opened by this build: "
+fig.text(0.5, ymap(0.947),
+         fill("Three panels, three artefacts, zero committed arrays. Nothing under .scratch/ was opened by this build: "
               "criterion B2 treats it as absent. Panel 1 therefore renders a withheld card instead of a field image "
-              "(B4); panel 2 quotes committed text for its shapes and refusal (B3/B6). Badge encoding: viz/acceptance.md "
+              "(B4); panel 2 quotes committed text for its shapes and refusal (B3/B6); panel 3 draws every number from "
+              "committed JSON only (B6). Badge encoding: viz/acceptance.md "
               "\u00a73.1. Status tags are drawn from {COMMITTED, UNCOMMITTED-WITHHELD} and appear on every panel (B3).", 150),
          ha="center", va="top", fontsize=8.2)
 
 # ------------------------------------------------------------------- panel 1
-fig.text(0.040, 0.884, rec("PANEL 1 \u00b7 A FIELD THAT IS NOT RENDERED \u2014 mixed-mode e_z, withheld"),
+fig.text(0.040, ymap(0.884), rec("PANEL 1 \u00b7 A FIELD THAT IS NOT RENDERED \u2014 mixed-mode e_z, withheld"),
          fontsize=11, weight="bold", va="bottom")
 
-AX1 = [0.050, 0.400, 0.335, 0.450]
+AX1 = [0.050, ymap(0.400), 0.335, hmap(0.450)]
 ax1 = fig.add_axes(AX1)
 ax1.set_xlim(0, 1)
 ax1.set_ylim(0, 1)
@@ -197,12 +219,13 @@ cap1 = [
          "reshape, the diverging linear colour map and the \u00b1max|e_z_node| limits are already declared in the 59V spec.",
          92),
 ]
-fig.text(0.040, 0.382, "\n".join(cap1), fontsize=6.9, va="top", linespacing=1.42)
+fig.text(0.040, ymap(0.382), "\n".join(cap1), fontsize=6.9, va="top", linespacing=1.42)
 
 # ------------------------------------------------------------------- panel 2
-fig.text(0.470, 0.884, rec("PANEL 2 \u00b7 A NUMBER YOU MAY NOT \u2014 the S-parameter refusal"),
+fig.text(0.470, ymap(0.884), rec("PANEL 2 \u00b7 A NUMBER YOU MAY NOT \u2014 the S-parameter refusal"),
          fontsize=11, weight="bold", va="bottom")
-ax2 = fig.add_axes([0.470, 0.372, 0.520, 0.478])
+AX2R = [0.470, ymap(0.372), 0.520, hmap(0.478)]
+ax2 = fig.add_axes(AX2R)
 ax2.set_xlim(0, 1)
 ax2.set_ylim(0, 1)
 ax2.set_axis_off()
@@ -279,15 +302,16 @@ for _l in ax2.lines:               # the strike-through follows the ink, not bla
     _l.set_color(TIER_INK["E5"])
 
 # ---------------------------------------------------------- fixed sentences
-fig.text(0.040, 0.223, rec(S1), fontsize=7.8, va="top", style="italic")
-fig.text(0.470, 0.223, rec(S2), fontsize=7.8, va="top", style="italic", weight="bold")
+fig.text(0.040, ymap(0.223), rec(S1), fontsize=7.8, va="top", style="italic")
+fig.text(0.470, ymap(0.223), rec(S2), fontsize=7.8, va="top", style="italic", weight="bold")
 
 # ------------------------------------------------------------- badge legend
-axL = fig.add_axes([0.040, 0.030, 0.925, 0.150])
+AXLR = [0.040, ymap(0.030), 0.925, hmap(0.150)]
+axL = fig.add_axes(AXLR)
 axL.set_xlim(0, 1)
 axL.set_ylim(0, 1)
 axL.set_axis_off()
-axL.text(0.000, 1.02, fill("Badge legend \u2014 the three styles below are STYLE SAMPLES ONLY. No quantity on this figure is E1; the E1 "
+axL.text(0.000, 1.02, fill("Badge legend \u2014 the three styles below are STYLE SAMPLES ONLY and grade no quantity on this figure; the E1 "
                            "sample is drawn so the withdrawn/UNKNOWN style can be compared against a citable style in greyscale "
                            "(acceptance.md A7).", 150),
          fontsize=7.0, va="bottom")
@@ -328,6 +352,8 @@ sample(0.340, 0.300, "E5  NOT CITABLE",
 sample(0.680, 0.300, "UNCOMMITTED-WITHHELD",
        "dotted rule + 50 % grey hatched field + boxed '?' \u2014 this is panel 1's status tag; its tier badge is withheld (B4).",
        ls=":", lw=1.2, grey="0.83", qmark=True, hatch="//")
+
+panel3_record = draw_panel3(fig, DRAWN)
 
 # --------------------------------------------------------------- save, deterministic
 for _a in fig.axes:
@@ -373,9 +399,11 @@ def fy(ax, fy0, fy1):
 
 p1_field = region(fx(AX1, 0.13, 0.87)[0], fy(AX1, 0.115, 0.415)[0], fx(AX1, 0.13, 0.87)[1], fy(AX1, 0.115, 0.415)[1])
 p1_badge = region(fx(AX1, 0.02, 0.98)[0], fy(AX1, 0.025, 0.095)[0], fx(AX1, 0.02, 0.98)[1], fy(AX1, 0.025, 0.095)[1])
-e5 = region(0.470 + 0.006 * 0.520, 0.372 + 0.012 * 0.478, 0.470 + 0.988 * 0.520, 0.372 + 0.300 * 0.478)
-e1 = region(0.040, 0.030 + 0.36 * 0.150, 0.040 + 0.300 * 0.925, 0.030 + 0.80 * 0.150)
-unk = region(0.040 + 0.680 * 0.925, 0.030 + 0.36 * 0.150, 0.040 + 0.980 * 0.925, 0.030 + 0.80 * 0.150)
+e5 = region(AX2R[0] + 0.006 * AX2R[2], AX2R[1] + 0.012 * AX2R[3],
+            AX2R[0] + 0.988 * AX2R[2], AX2R[1] + 0.300 * AX2R[3])
+e1 = region(AXLR[0], AXLR[1] + 0.36 * AXLR[3], AXLR[0] + 0.300 * AXLR[2], AXLR[1] + 0.80 * AXLR[3])
+unk = region(AXLR[0] + 0.680 * AXLR[2], AXLR[1] + 0.36 * AXLR[3],
+             AXLR[0] + 0.980 * AXLR[2], AXLR[1] + 0.80 * AXLR[3])
 
 
 # B10 is a property of the TONE TABLE, not of mean pixel grey: the ratios were computed
@@ -407,6 +435,7 @@ json.dump({
          "tier_source_verified": all((CHK["c4_row_in_soundness_md"], CHK["c4_scope_in_soundness_md"])),
          "display_transforms": ["none: no array values were read by this build"], "derived_labels": []},
     ],
+    "panel3": panel3_record,
     "committed_source_checks": CHK,
     "fixed_sentences": {"ceiling": S1, "not_citable": S2},
     "fixed_sentences_verbatim_in_acceptance_md": FIXED_CHECK,

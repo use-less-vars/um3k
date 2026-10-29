@@ -4,7 +4,7 @@
   "svg": "viz/out/screen.svg",
   "pixels": [
    2080,
-   1170
+   1768
   ],
   "dpi": 130,
   "static_only": true,
@@ -77,6 +77,135 @@
    "derived_labels": []
   }
  ],
+ "panel3": {
+  "panel": 3,
+  "rendered": "five Q points against the pre-registered band, full-weight band bars, Route C cross-check inset, E1 badge, committed provenance",
+  "tier": "E1",
+  "status_tag": "COMMITTED",
+  "tier_note": "every number drawn is read from committed JSON at HEAD; nothing comes from .scratch/ and nothing is uncommitted",
+  "sources": [
+   "evidence/t4/ladder_convergence.json",
+   "evidence/t4/rung4_routeC_report.json"
+  ],
+  "pointers": [
+   "evidence/t4/ladder_convergence.json :: /constants",
+   "evidence/t4/ladder_convergence.json :: /rungs[i] (located by the \"rung\" field)",
+   "evidence/t4/ladder_convergence.json :: /verdict",
+   "evidence/t4/ladder_convergence.json :: /route_c_cross_check",
+   "evidence/t4/rung4_routeC_report.json :: /verdict/route_C/rung4/agreement/status"
+  ],
+  "band": {
+   "tol_rel": 0.1,
+   "lo": 0.9,
+   "hi": 1.1,
+   "lo_via_R_over_Ranalytic": 0.9000000000000011,
+   "hi_via_R_over_Ranalytic": 1.1000000000000008,
+   "lo_difference": 1.1102230246251565e-15,
+   "hi_difference": 6.661338147750939e-16,
+   "agreement_limit": 1e-12
+  },
+  "points": [
+   {
+    "rung": 0,
+    "free_e": 1444,
+    "Q": 1.440865461991999,
+    "abs_Q_minus_1": 0.44086546199199894,
+    "err_pct": 44.086546199199894,
+    "in_band": false
+   },
+   {
+    "rung": 1,
+    "free_e": 2404,
+    "Q": 1.3452649773413672,
+    "abs_Q_minus_1": 0.3452649773413672,
+    "err_pct": 34.52649773413672,
+    "in_band": false
+   },
+   {
+    "rung": 2,
+    "free_e": 3604,
+    "Q": 1.2694586048427758,
+    "abs_Q_minus_1": 0.26945860484277584,
+    "err_pct": 26.945860484277585,
+    "in_band": false
+   },
+   {
+    "rung": 3,
+    "free_e": 5044,
+    "Q": 1.2856176932036034,
+    "abs_Q_minus_1": 0.2856176932036034,
+    "err_pct": 28.56176932036034,
+    "in_band": false
+   },
+   {
+    "rung": 4,
+    "free_e": 9604,
+    "Q": 1.2723426326355907,
+    "abs_Q_minus_1": 0.27234263263559066,
+    "err_pct": 27.234263263559065,
+    "in_band": false
+   }
+  ],
+  "verdict": {
+   "T4_amp": "FAIL (unmoved)",
+   "Q": 1.2723426326355907,
+   "Q_minus_1_abs": 0.27234263263559066,
+   "allowance": 0.1,
+   "multiple_of_allowance": 2.7234263263559066,
+   "headline": "/verdict/T4_amp = \"FAIL (unmoved)\"   |   |Q-1| at rung 4 = 2.7234 x allowance   (allowance = 0.1)"
+  },
+  "route_c": {
+   "beta_sq_digits": 11.492308060949373,
+   "R_digits": 11.750793344542036,
+   "factor_nnz": 1369259,
+   "fill_per_row": 106.91489029437027,
+   "factor_memory_gb": 0.016431108,
+   "agreement_status": "REPRODUCES_REFERENCE",
+   "caption": "CAPTION (mandatory): the 11-digit agreement is with the SAME-MESH DENSE SOLVE, NOT with R_analytic \u2014 therefore it does not mean the gate passed.",
+   "purpose": "one sparse (Route C) solve at the rung-4 mesh, scored against the dense answer at that same mesh -- a validation of the sparse path at the largest rung, NOT a convergence result and NOT a scaling law"
+  },
+  "badge": {
+   "tier": "E1",
+   "fill": "#FDFDFD",
+   "ink": "#111111",
+   "L_fill": 0.9822505503331171,
+   "L_ink": 0.005605391624202723,
+   "grey8_fill": 253.0,
+   "grey8_ink": 17.0,
+   "contrast_ratio": 18.56385721207332,
+   "contrast_gate": 3.0
+  },
+  "footnote": {
+   "acceptance_md_Q_quote": "57c_acceptance.md, section \"Numbers carried in, all [RELAYED], all unverified\", writes \"Q = 1.272\" for rung 4 \u2014 correct: this panel reads 1.2723426326355907.",
+   "acceptance_md_absQ_quote": "Its \"Q = 0.441 and 0.345\" for rungs 0-1 are |Q-1|, not Q; this panel's Q, from committed JSON, are 1.440865461991999 and 1.3452649773413672.",
+   "acceptance_md_relayed_tag": "Those doc numbers are [RELAYED] \u2014 \"carried from a dispatch, brief or prior agent, unverified\"; every number here is read from committed JSON at HEAD.",
+   "closeout_verdict_quote": "docs/design/57c_closeout.md, verdict A: \"T4_amp: FAIL was decided before any rung ran\" \u2014 the registered quantity and gate, not the solver.",
+   "true_Q_rung0": 1.440865461991999,
+   "true_Q_rung1": 1.3452649773413672
+  },
+  "axes": {
+   "panel3_plot": [
+    0.05,
+    0.118,
+    0.405,
+    0.162
+   ],
+   "route_c_inset": [
+    0.495,
+    0.145,
+    0.3,
+    0.135
+   ],
+   "badge_box": [
+    0.8,
+    0.232,
+    0.185,
+    0.048
+   ]
+  },
+  "out_dir": "/workspace/viz/out",
+  "strings_drawn": 39
+ },
  "committed_source_checks": {
   "p1_shape_quote_in_acceptance_md": true,
   "p2_empty_quote_in_acceptance_md": true,
@@ -97,7 +226,7 @@
   "not_citable": true
  },
  "greyscale": {
-  "rgb_unique": 256,
+  "rgb_unique": 731,
   "L_unique_full": 256,
   "L_unique_half": 256,
   "p1_withheld_field": {
@@ -116,14 +245,14 @@
    "levels": 211
   },
   "e1_sample": {
-   "dark_frac": 0.0511827860181413,
-   "mean_grey": 240.8939206374215,
+   "dark_frac": 0.0382632964955322,
+   "mean_grey": 243.69663958225485,
    "levels": 154
   },
   "withheld_sample": {
-   "dark_frac": 0.012851966058205226,
-   "mean_grey": 152.48529113867068,
-   "levels": 243
+   "dark_frac": 0.008462940871953003,
+   "mean_grey": 152.38373584820727,
+   "levels": 235
   },
   "tier_fills": {
    "E1": "#FDFDFD",
@@ -147,9 +276,9 @@
   },
   "wcag_min_over_3_1": true,
   "rendered_means": {
-   "e1": 240.9,
+   "e1": 243.7,
    "e5": 96.3,
-   "withheld": 152.5,
+   "withheld": 152.4,
    "withheld_field": 225.0
   }
  }
