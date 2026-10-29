@@ -8845,3 +8845,42 @@ Not to be done in 58.3: (A) and (B) as listed in (2).
 **Bookkeeping (secondary).** `D-C1` is recorded as an OPEN bookkeeping observation only. `n_eligible = 1` and `eligible_cols == [bank_col]`, so the column-identity pass cannot distinguish column identity and the 738-vs-732 discrepancy is inert under a single eligible column. OPEN is retained for provenance, not for repair.
 
 **Append-only.** Pre-state: 8,797 lines, 1,279,795 bytes; md5 `da5f835ee0d9f7e3d81d9b4cfdad6259` over the whole file. The append is proved by `head -c 1279795 decisions.md | md5sum` returning `da5f835ee0d9f7e3d81d9b4cfdad6259` after the write. No frozen doc, no `emfit/`, no `tools/`, no evidence file, no gate, no solver touched; no test run.
+
+## 58.4 — Phase A entry (worker; `tools/modal_splitfix.py`; 9.20 s total; 2 cases, one run)
+
+Replaces the record's split (`split_forward_backward`, which splits the scalar `a_e`
+between two positions and throws `a_h` away) with the two-field per-station split
+`a_pm = (a_e*v_mode ± Z*a_h*i_mode) / (2*v_mode) ≡ (a_e ± a_h)/2`, both temporal H
+de-stagger signs, plus the bound test. Harness reproduction in CASE A is exact:
+classic pairwise |a_f| = 3.740134e5, 2.859922e5 (record identical), beta_classic =
+480.827718698 (record identical), beta_raw = 473.459888 (record identical).
+
+| | CASE A 48x18x14, st 14/26/38, d = 2.4 mm | CASE B 104x18x14, line 96, st 40..70, d = 1.2 mm |
+|---|---|---|
+| alpha raw a_e | +113.563 /m (+0.986 dB/mm) | +120.853 /m (+1.050 dB/mm) |
+| alpha two-field | +111.225 /m (+0.966 dB/mm) | +118.824 /m (+1.032 dB/mm) |
+| alpha two-field, other H sign | +111.279 /m | +118.818 /m |
+| alpha classic pipeline | +111.803 /m | +119.682 /m |
+| a_e/a_h magnitude spread | +1.0811e-01 (10.8 %) | +2.6215e-02 (2.6 %) |
+| a_e/a_h phase spread | 3.0751 deg | 1.8993 deg |
+| |a_b|/|a_f| max | 0.1213 | 0.1196 |
+| beta (phase slope of a_f) | 478.513435 /m, eps_eff 5.202837, phase rms 0.4518 deg | 472.790348 /m, eps_eff 5.079128, phase rms 0.1366 deg |
+| beta*d | 65.8003 deg | 32.5067 deg |
+| d(beta)/beta per 1 deg over d | 1.5197 % | 3.0763 % |
+| pi*f*dt (H de-stagger) | 0.6870 deg; sign flip moves arg a_h by 1.3740 deg | same |
+
+Verdict: the two-field split does not remove alpha (0.5 %). The 10.8 % a_e/a_h spread
+in CASE A is source/end near field and is not the cause of alpha (CASE B is flat at
+2.6 % and alpha is *larger*). Lengthening the line does not fix alpha: it makes the
+decay cleaner and slightly stronger (log-amp residual rms 4.9e-3 -> 1.1e-3, phase
+residual 0.452 -> 0.137 deg), a textbook exponential of ~1.03 dB/mm over 6.0 mm.
+Measured Z = 132.5..136.0 ohm, arg +11.0..+12.9 deg, |Z|/z0 = 0.913..0.937 against
+z0_power = 145.168526 ohm (eta_eff 183.616029 ohm, discrete_power 1.000000).
+|a_f|^2 - |a_b|^2 falls 2.008279e8 -> 4.810654e7 (6.2 dB) over 6 mm: the power loss
+tracks the amplitude loss exactly.
+
+- CORRECTION (58.4): the temporal H de-stagger is worth pi*f*dt = 0.687 deg = 1.0% of beta over the 66.1 deg baseline, so it is NOT the cause of the 17% gap; it is real but small. The structural defect is that the split discards H entirely.
+- WITHDRAWN (58.4, engineer): BOTH of the above causes are dead. The H de-stagger is 0.687 deg and the H split buys 0.5 % of alpha (111.803 -> 111.225 /m). Neither is to be revisited.
+- NEW (58.4): a SECOND, independent, reference-free failing null test. Any bound mode of a structure whose maximum permittivity is eps_r_max must satisfy beta <= k0*sqrt(eps_r_max) = 440.05 /m at f0 = 10.009556808 GHz. Measured: CASE A 478.513 /m (+8.7 % over), CASE B 472.790 /m (+7.4 % over). There are two anomalies (alpha != 0, beta over bound), not one; a PML-inside-the-tail story explains alpha but not obviously beta. Both stay alive.
+- NOTE (58.4): "the two-field split does not respond to trial beta" is a NON-FINDING and is struck: a_f = (a_e + Z*a_h)/2 is a local single-station decomposition with no beta in it, so it cannot respond. What matters is that the CLASSICAL multi-station iteration is beta-invariant — its pair slope gives +119.68 /m at every trial beta in ±10 % (CASE B), 111.80 /m in CASE A — which is the real reason to distrust the classical path.
+
