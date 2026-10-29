@@ -351,8 +351,19 @@ def draw_panel3(fig, drawn, out=None):
            "unverified\"; every number here is read from committed JSON at HEAD.")
     fn4 = ("docs/design/57c_closeout.md, verdict A: \"T4_amp: FAIL was decided before any rung ran\" "
            "\u2014 the registered quantity and gate, not the solver.")
+    # reconciliation: rung 0 is the widest point; the headline names rung 4 because that is where
+    # /verdict/T4_amp is registered. Both ratios are computed here -- never typed in (B6).
+    absq = [abs(q - 1.0) for q in qs]
+    worst_i = max(range(len(absq)), key=lambda i: absq[i])
+    worst_rung, worst_ratio = order[worst_i], absq[worst_i] / tol
+    head_i = [i for i in range(len(qs)) if qs[i] == float(verdict["Q"])][0]
+    headline_rung, headline_ratio = order[head_i], absq[head_i] / tol
+    fn5 = ("Rung %d is the widest excursion (%.2fx the half-width) while this panel headlines rung %d "
+           "(%.2fx) only because /verdict/T4_amp is registered at that rung \u2014 the two records "
+           "agree; the headline follows the verdict, not the worst point."
+           % (worst_rung, worst_ratio, headline_rung, headline_ratio))
     yf = 0.092
-    for ln in textwrap.wrap(" ".join((fn1 + " " + fn2 + " " + fn3 + " " + fn4).split()), width=112):
+    for ln in textwrap.wrap(" ".join((fn1 + " " + fn2 + " " + fn3 + " " + fn4 + " " + fn5).split()), width=112):
         fig.text(0.012, yf, rec(ln), fontsize=6.4, color=INK, va="top")
         yf -= 0.010
 
@@ -419,6 +430,9 @@ def draw_panel3(fig, drawn, out=None):
             "acceptance_md_absQ_quote": fn2,
             "acceptance_md_relayed_tag": fn3,
             "closeout_verdict_quote": fn4,
+            "worst_rung": worst_rung,
+            "worst_ratio": worst_ratio,
+            "headline_ratio": headline_ratio,
             "true_Q_rung0": qs[0],
             "true_Q_rung1": qs[1],
         },

@@ -180,6 +180,9 @@
    "acceptance_md_absQ_quote": "Its \"Q = 0.441 and 0.345\" for rungs 0-1 are |Q-1|, not Q; this panel's Q, from committed JSON, are 1.440865461991999 and 1.3452649773413672.",
    "acceptance_md_relayed_tag": "Those doc numbers are [RELAYED] \u2014 \"carried from a dispatch, brief or prior agent, unverified\"; every number here is read from committed JSON at HEAD.",
    "closeout_verdict_quote": "docs/design/57c_closeout.md, verdict A: \"T4_amp: FAIL was decided before any rung ran\" \u2014 the registered quantity and gate, not the solver.",
+   "worst_rung": 0,
+   "worst_ratio": 4.408654619919989,
+   "headline_ratio": 2.7234263263559066,
    "true_Q_rung0": 1.440865461991999,
    "true_Q_rung1": 1.3452649773413672
   },
@@ -204,7 +207,7 @@
    ]
   },
   "out_dir": "/workspace/viz/out",
-  "strings_drawn": 39
+  "strings_drawn": 41
  },
  "committed_source_checks": {
   "p1_shape_quote_in_acceptance_md": true,

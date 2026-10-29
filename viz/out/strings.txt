@@ -103,7 +103,9 @@ correct: this panel reads 1.2723426326355907. Its "Q = 0.441 and 0.345" for rung
 panel's Q, from committed JSON, are 1.440865461991999 and 1.3452649773413672. Those doc numbers are [RELAYED] —
 "carried from a dispatch, brief or prior agent, unverified"; every number here is read from committed JSON at
 HEAD. docs/design/57c_closeout.md, verdict A: "T4_amp: FAIL was decided before any rung ran" — the registered
-quantity and gate, not the solver.
+quantity and gate, not the solver. Rung 0 is the widest excursion (4.41x the half-width) while this panel
+headlines rung 4 (2.72x) only because /verdict/T4_amp is registered at that rung — the two records agree; the
+headline follows the verdict, not the worst point.
 1444
 2404
 3604
