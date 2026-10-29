@@ -89,3 +89,81 @@ This dispatch does not: fix the extraction, write the new operand, land the spar
 ## 8. Location and provenance
 
 This document was first committed at `docs/design/d58_acceptance.md`. That path was already occupied: it carries another dispatch's acceptance document (a component-map / staleness-mechanism task, committed at `9cece7b`), so the instruction to write this file at that path was a collision rather than a free slot. The collision was found after the fact, the other document was restored byte-for-byte from `9cece7b`, and this document moved to its present path in the same change. The acceptance criteria above are unchanged by the move. The collision is itself a disagreement between the brief and the artifacts and is recorded as such in the close-out.
+
+## 9. Dispatch 58.1 acceptance criteria (frozen before measurement)
+
+Provenance tags: [ARTIFACT] = read from a file in this repository; [MEASURED] = computed by a validated run and recorded in this document; [ARCHIVE] = quoted from the user's brief; [DERIVED] = algebra on the above; [PROPOSED] = invented here, not in the record. No line numbers (R6). The artifact wins over this document.
+
+### 9.0 Erratum: R's formula, as stated in the D58 status report (my error, #34)
+
+The D58 status report, and the D58.1 brief after it, wrote `R = sum(e_y**2)/sum(e_z**2)`. That is inverted.
+
+- [ARTIFACT] tools/host/c1-audit/c1_audit.py accumulates `energies.append((float(np.sum(e_y ** 2)), float(np.sum(e_z_vv ** 2))))` and then forms R_by_col as `ez / ey` per column. Therefore **R = sum(E_z**2) / sum(E_y**2)**.
+- [DERIVED] The numerator sums E_z over the staggered cell-centre-in-z lattice (201 x 76 = 15276 samples); the denominator sums E_y over the Yee lattice (200 x 77 = 15400 samples). The two sums are over different sample counts and different z-measures.
+- [ARTIFACT] The analytic identity asserted in the comment at the point where A_ez is read is the same orientation, `sum(A_ez**2)/sum(A_ey**2)`. The comment is the only place it appears; no code computes it.
+- No measured number in D58 changes: 4.0489791163950715 was produced by the code, not by the prose. But every direction-of-effect argument must be redone against the corrected formula, which 9.2 does.
+- Standing rule added: a formula quoted out of code is checked against the assignment of the output variable, not against the accumulation tuple. That is exactly the error made here.
+
+### 9.1 Task 1 acceptance: what R is supposed to measure
+
+Verdict is exactly one of three, each supported by quoted tokens:
+
+(a) an energy ratio. The quotes must contain a permittivity factor or an explicit 'energy' characterisation applied to the sums. If the record says R is an energy ratio, the estimator is required to carry eps, and Task 3 proceeds as written.
+(b) a field-shape ratio. The quotes must characterise R as a shape or amplitude quantity and must not attach eps. Then the eps correction is out of scope for Task 3 and must be reported as out of scope rather than silently performed.
+(c) no stated definition. The honest verdict if no document states the quantity, only the formula.
+
+Searched locations, with hit and absence counts reported per location: every file in docs/design/ (t4_amp_ratio.md and the routeC design documents named explicitly), decisions.md, docs/report/*.tex, and the docstrings and comments in tools/host/c1-audit/ and tools/host/sparse-probe/.
+
+If (c): a definition is proposed and argued, and the proposal must state (i) what physical quantity R proxies, (ii) why that quantity is the right comparator for the analytic deposition, (iii) what measurement would refute the proposal. A proposal that no measurement could refute is not acceptable.
+
+### 9.2 Task 2 acceptance: the eps-weighting test, pre-registered
+
+Frozen definitions:
+
+- eps(z) = 4.4 for z < 0.0016, 1.0 for z > 0.0016 [ARTIFACT .scratch/tol/logs/TOLFLUX.json: eps_r = 4.4, air = 1.0].
+- f_y = sum over substrate z of E_y**2, divided by the full sum of E_y**2. f_z likewise for E_z. Each computed on its own lattice with plain np.sum and no measure, so that f is a pure distribution statistic.
+- R_eps = sum(eps * E_z**2) / sum(eps * E_y**2), plain sums otherwise.
+- [DERIVED] R_eps/R = (1 + 3.4 f_z)/(1 + 3.4 f_y). Therefore **R_eps < R iff f_z < f_y**, exactly, with no further assumption.
+
+That biconditional is the pre-registered claim. It replaces the brief's bare 'eps-weighting can only reduce R'. That sentence holds only under f_z < f_y, and the brief does not establish it: it is what is being measured. If the measurement falsifies the brief's direction, the brief is wrong and the arithmetic is not.
+
+Also registered [PROPOSED, to be checked, not assumed]: E_y carries the quasi-TEM displacement under the strip and should therefore be substrate-heavy, f_y well above f_z, so R_eps < R is expected. The magnitude is not registered.
+
+Must report: f_y, f_z, R0, R_eps, R_eps/R0, and delta R_eps = R0 - R_eps.
+
+Validation hook, non-negotiable: the reconstruction must reproduce R0 = 4.0489791163950715 bit-exactly before any eps-weighted number is reported. If it does not, stop; a ratio derived from the wrong field is not reportable.
+
+Interface ambiguity: the z-node at z = 0.0016 belongs to the E_y lattice and lies exactly on the interface. f_y and R_eps are therefore reported twice, once with that node assigned to the substrate and once to air, with the spread stated. It is the one genuinely ambiguous assignment in the calculation.
+
+### 9.3 Task 3 acceptance: the decomposition (the deliverable)
+
+Three corrections, each reported alone and then cumulatively in this frozen order:
+
+1. eps only: R_eps as in 9.2.
+2. measure only: R_m = sum(w_z * E_z**2)/sum(w_y * E_y**2), no eps, where w are dual-cell area weights on the non-uniform z-axis [MEASURED: substrate z-cells 0.2 mm, air z-cells 0.5 mm]. Rationale [DERIVED]: the dual length of a Yee sample is the z-spacing around it, and omitting it over-weights the fine (substrate) side by 2.5x.
+3. lattice only: bring both sums onto a common sampling. Accepted implementation is the co-located staggered pairs, i.e. both components at z-cell-centres with E_y reduced to z-centres, with no interpolation across the interface. Any cross-interface interpolation is reported as a separate variant with its own number, because interpolating across a 4.4 jump is itself an error source.
+4. all three together, interface-aware.
+
+Then report: corrected R; corrected Q = R / 2.8101021387524523; and the band test. Q lies inside [2.52909192487721, 3.09111235262770] iff R_corrected <= 3.09111235262770 [DERIVED: the band is R_REGISTERED x [1 +/- 0.10]].
+
+The deliverable: for each of the three corrections, delta R and its share of the gap G = R0 - R_ANALYTIC = 4.0489791163950715 - 2.8101021387524523 = 1.2388769776426192, as a percentage of G. The shares plus the residual must account for G. Convention frozen here: the interaction term is assigned to the last correction applied and is reported explicitly as interaction, never silently absorbed.
+
+The equivalent requirement, to be quoted and tested rather than paraphrased: the corrections must remove at least 23.66% of R0, equivalently at least 77.4% of G, for corrected Q to enter the band. 'It got closer' is not a result.
+
+A negative decomposition is a legitimate result and is reported as such, with the sign of each delta R.
+
+### 9.4 Task 4 acceptance: the jump test, redesigned
+
+- Mask, frozen: interface-adjacent rows only, meaning rows whose y lies outside the strip span y in [0.0085, 0.0115] (strip centre row 100 at y = 0.01, strip width 0.003) [MEASURED]. The span is excluded because under the conductor E_t = 0 dominates and the normal-component jump there is not the quantity under test.
+- Quantity: J1 = |E_z(k=16)| / |E_z(k=15)|, the two z-cell-centres straddling the interface.
+- Expectation: **4.4**, from eps_r = 4.4 and air = 1.0 [ARTIFACT]. 3.6 is eps_eff and is not the expectation; the D58 brief's 3.6 was error #30 and is retired here.
+- Report: median and interquartile range of J1 over the masked rows, d = |median/4.4 - 1|, the masked row count, and the in-strip count for completeness. Report row 86 (strip edge) separately and flag it as an edge row.
+- Agreement verdict requires |median/4.4 - 1| <= 0.10, the same 10% convention as the Q band.
+
+### 9.5 Close-out requirements
+
+docs/design/d58_closeout.md contains, in this order: (1) R's definition, or the finding that it has none, with the search table; (2) f_y, f_z and the eps verdict tested against the 9.2 biconditional; (3) the 9.3 decomposition with numbers; (4) the 9.4 jump under the frozen mask; (5) a disagreements section listing every point where measurement contradicts the D58.1 brief, the D58 brief, or my own earlier reports, each with the contradictory sentence quoted; (6) a fence statement naming every file touched.
+
+### 9.6 Fences for 58.1
+
+docs/design/d58_acceptance.md belongs to the other agent and is not written by me. decisions.md belongs to the other agent. viz/ is fenced. emfit/ is untouched except what Task 3 strictly requires, and none is expected: all three corrections are re-reductions of persisted arrays. New work lands in tools/host/c1-audit/ and docs/design/d58_closeout.md only. Commits are selective by path, never all-path.
