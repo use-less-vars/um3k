@@ -1,0 +1,162 @@
+{
+ "figure": {
+  "png": "viz/out/screen.png",
+  "svg": "viz/out/screen.svg",
+  "pixels": [
+   2080,
+   1170
+  ],
+  "dpi": 130
+ },
+ "panels": [
+  {
+   "panel": 1,
+   "title": "e_z_node \u2190 .scratch/s10118_mixed_mode.npz",
+   "source_path": "/workspace/.scratch/s10118_mixed_mode.npz",
+   "keys": [
+    "e_z_node",
+    "xs",
+    "zs"
+   ],
+   "shape": [
+    17,
+    31
+   ],
+   "raw_shape": [
+    527
+   ],
+   "dtype": "<f8",
+   "tier": "UNKNOWN",
+   "tier_source": "no row in docs/design/soundness.md names e_z_node or the mixed-mode profile; acceptance.md \u00a74 sets UNKNOWN",
+   "display_transforms": [
+    "reshape (527,) -> (17,31) in C order, rows=zs, cols=xs; basis .scratch/logs/s10118_basis.py:321",
+    "colour = diverging linear on stored e_z_node, limits +/-max|e_z_node| = +/-12.360561316914213",
+    "cmap RdBu_r, interpolation='nearest', origin='lower', aspect='equal'"
+   ],
+   "derived_labels": []
+  },
+  {
+   "panel": 2,
+   "title": "the S-parameter refusal",
+   "source_path": "/workspace/.scratch/host/m3a-smoke/plane_record.npz",
+   "keys": [
+    "f",
+    "v",
+    "i",
+    "z0",
+    "beta",
+    "s11_measured",
+    "s11_port",
+    "s21",
+    "s21_power",
+    "passivity",
+    "passivity_power",
+    "refused"
+   ],
+   "headers_only": true,
+   "shapes": {
+    "f": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    },
+    "v": {
+     "dtype": "<c16",
+     "shape": [
+      0,
+      9
+     ]
+    },
+    "i": {
+     "dtype": "<c16",
+     "shape": [
+      0,
+      9
+     ]
+    },
+    "z0": {
+     "dtype": "<c16",
+     "shape": [
+      0
+     ]
+    },
+    "beta": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    },
+    "s11_measured": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    },
+    "s11_port": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    },
+    "s21": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    },
+    "s21_power": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    },
+    "passivity": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    },
+    "passivity_power": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    },
+    "refused": {
+     "dtype": "<f8",
+     "shape": [
+      0
+     ]
+    }
+   },
+   "zero_length_keys": 12,
+   "nonempty_keys": [],
+   "tier": "E5",
+   "tier_source": "docs/design/soundness.md row C4",
+   "display_transforms": [
+    "none: no array values were read (headers only)"
+   ],
+   "derived_labels": []
+  }
+ ],
+ "fixed_sentences": {
+  "ceiling": "A tier is a ceiling: it can be lowered by new evidence, not raised by emphasis. E5 is assertion, not measurement; it must not be quoted.",
+  "not_citable": "This panel contains values that are not citable."
+ },
+ "fixed_sentences_verbatim_in_acceptance_md": {
+  "ceiling": true,
+  "not_citable": true
+ },
+ "greyscale": {
+  "rgb_unique": 1336,
+  "L_unique_full": 256,
+  "L_unique_half": 256,
+  "e5_badge_dark_frac": 0.2474640088593577,
+  "e5_badge_levels": 256,
+  "e1_sample_dark_frac": 0.06041099282000495,
+  "e1_sample_levels": 235,
+  "unknown_sample_dark_frac": 0.022395282360620314,
+  "unknown_sample_levels": 223
+ }
+}
