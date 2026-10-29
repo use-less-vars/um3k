@@ -239,3 +239,141 @@ unless T2 proves that a basis change is actually needed, and that is reported to
 the author BEFORE anything in `emfit/` is touched. `viz/`, `decisions.md` and
 `docs/design/d58_acceptance.md` belong to another agent and are not written by
 me. Scratch goes in `.scratch/`. Commits are selective by path, never all-path.
+
+## 10.6 ERRATUM (appended before T1 step 0, before any field value is loaded)
+
+Clause 10.3 required that any revision of this pre-registration be recorded as an
+ERRATUM appended to this section, never as an edit to the rows above. This is that
+erratum. It was written after sections 10.2 and 10.3 were committed (db5a9ec) and
+before any field value was measured. Sections 10.2 and 10.3 stand unedited. What
+follows pre-registers a fourth outcome, pins a direction convention and a naming
+convention, amends the T1 measurement definition, re-aims T2, and bounds what T3
+is allowed to claim.
+
+### 10.6.1 The direction convention, pinned
+
+The normal component of D is continuous across the interface,
+eps_below * E_below = eps_above * E_above. The dielectric occupies the region
+below the interface with eps_below = 4.4, and air occupies the region above with
+eps_above = 1.0. Therefore
+
+    E_below / E_above = 1 / 4.4 = 0.2273
+    E_above / E_below = 4.4
+
+The quantity compared against 4.4 is E_above / E_below: the interface-normal
+component just above the interface, divided by the same component just below it.
+T1 reports BOTH orientations. Writing "the ratio against 4.4" without naming the
+orientation is a factor-of-4.4 defect and is not permitted in this document.
+
+### 10.6.2 The quantity named by role, not by letter
+
+Three naming systems collide in this codebase. m2.structured_mesh(XS, ZS) makes
+the SECOND coordinate the height. mode2d's longitudinal field e_z is the
+PROPAGATION direction. And e_at(...)[...,1] is the height component. The "z" in
+corr_ez_vv therefore does not denote the same object as the "z" in e_z.
+
+The component compared in this test is the one NORMAL TO THE INTERFACE,
+e_at(...)[...,1] * CELL, the second cross-section coordinate. The longitudinal
+field mode.e_z is TANGENTIAL to the interface and is not part of this test: it
+must be continuous, and a jump of 4.4 must not be sought in it. A reader who
+resolves "e_z" by letter measures the wrong field, obtains a ratio near 1.0, and
+concludes that the physics is broken.
+
+### 10.6.3 T1 amended: three constructions, and the control
+
+For each rung, T1 reports THREE ratios of the same component, each in both
+orientations:
+
+  (a) metric-lattice one-row-either-side. The reporting grid is 201 x 76 over
+      20 x 7.6 mm, so dy = 0.1 mm, and the interface falls on row 16 exactly.
+      This is the construction corr_ez_vv already lives on.
+  (b) mesh one-cell-either-side. Here delta = dz, which shrinks across the
+      ladder: 2.0e-4, 1.6e-4, 1.333e-4, 1.143e-4, 8.0e-5 m.
+  (c) extrapolated one-sided limits. The interface value from below and the
+      interface value from above, each obtained by extrapolating from the two
+      samples on its own side. THIS IS THE PRIMARY NUMBER.
+
+Each of (a), (b) and (c) is computed identically on corr_ez_vv (the solver's
+extracted field) and on A_ez (the exact analytic field).
+
+The measured quantity is not E(h - delta) / E(h + delta) itself. To first order
+that ratio is
+
+    E(h - d) / E(h + d) ~ [ E(h-) / E(h+) ] * (1 - delta / L_below - delta / L_above)
+
+so it carries a physical term proportional to delta on top of whatever
+discretisation error exists. And delta is fixed by the construction, not by the
+solver: on the metric lattice delta is 0.1 mm on every rung and does not shrink
+at all, while on the mesh delta = dz shrinks by a factor of 2.5 across the
+ladder. The same solver therefore yields a constant deficit (fitted exponent ~ 0,
+which 10.3 scores as STRUCTURAL) or a shrinking deficit (fitted exponent ~ 1,
+which 10.3 scores as DISCRETISATION) purely according to which lattice is read.
+Constructions (a) and (b) are reported in order to DEMONSTRATE that dependence.
+Neither is interpreted.
+
+The discrimination quantity, stated once so that there is no ambiguity later:
+
+    The only number whose h-dependence means anything is the
+    solver-minus-analytic residual, computed identically on both
+    fields, at the extrapolated one-sided limits of construction (c).
+
+Neither absolute deficit qualifies.
+
+### 10.6.4 Fourth outcome, pre-registered: the sampling artefact
+
+| observed | condition | pre-registered interpretation |
+| --- | --- | --- |
+| the solver-minus-analytic residual of construction (c) is consistent with zero at every rung | the residual interval covers zero across the whole ladder | SAMPLING ARTEFACT: there is no under-jump defect. The deficit seen in the naive constructions is the physical variation of the mode across one sampling step, and the exact analytic field reproduces it under identical sampling. The 13.85% under-jump claim recorded in D58.1 is WITHDRAWN as an erratum. The T1/T2/T3 line measured a sampling convention, and the ~44% R offset requires an entirely different explanation. |
+
+This outcome is live, and it is the one that matters most, because it would mean
+two dispatches were spent on an artefact while the real offset sits unexplained.
+It is pre-registered here, before the measurement. It takes precedence over both
+rows of 10.3 whenever its condition holds.
+
+### 10.6.5 T2 re-aimed: the Nedelec normal component
+
+The measured component lives in the first-order Nedelec (Whitney) space of e_t,
+not in the continuous P1 space of the nodal longitudinal field. Across an
+interior edge the Nedelec space constrains the tangential component and leaves
+the normal component unconstrained, so a normal jump of 4.4 is REPRESENTABLE by
+this basis. Moreover R3 established that the interface coincides with a mesh line
+on all five rungs (HSUB/dz = 8, 10, 12, 14, 20, residual exactly 0), so no
+triangle straddles the interface and eps_r evaluated at the triangle centroid is
+exact everywhere. The eps-misassignment hypothesis is therefore dead, and with it
+the reading of the under-jump as P1 nodal smearing.
+
+T2's target is the smearing that the Nedelec basis actually produces for the
+normal component. The standard nodal P1 smearing derivation is retained in this
+document only as a note recording why it does not apply: it addresses the wrong
+space for this component.
+
+### 10.6.6 T3's resolving power, stated before it is used
+
+dz spans 2.0e-4 to 8.0e-5 m, a factor of 2.5, over five rungs (interface node
+index 8, 10, 12, 14, 20). A fitted exponent over that span will carry a standard
+error of order 0.3. That is enough to separate p ~ 0 from p ~ 1, which is the
+discrimination 10.3 asks for. It is NOT enough to certify a rate, to distinguish
+p = 1 from p = 2, or to support any statement of the form "converges at first
+order". No such statement is to be made from T3.
+
+### 10.6.7 What R3 and R4 settled
+
+R3, interface geometry. The interface is p[:,1] = HSUB = 0.0016 m, dielectric
+below with eps_r = 4.4, air above (c1_audit.py:405-406, HSUB from the geojson
+fixture at c1_audit.py:348). The axes are band-built and non-uniform
+(c1_audit.py:394-397) and the mesh is m2.structured_mesh(XS, ZS). The interface is
+a mesh line on every rung. Per-rung resolution from npz metadata only: nodes
+527 / 861 / 1275 / 1769 / 3321; edges 1486 / 2460 / 3674 / 5128 / 9720; free
+edges 1444 / 2404 / 3604 / 5044 / 9604; free nodes 483 / 803 / 1203 / 1683 / 3203.
+
+R4, the REPRO gate. c1_audit.py:990-998 guards the gate behind bank_col >= 0 and
+banked_col == int(bank_col); the comparison is R_extracted == ANCHOR_R_EXTRACTED
+with ANCHOR_R_EXTRACTED = 4.0489791163982565 at c1_audit.py:214. The sibling gates
+REPRO e_y and REPRO e_z already use the relative tolerance REPRO_RTOL = 1e-6 at
+c1_audit.py:262; only R is exact. The gate has never fired: zero occurrences of
+the banked REPRO R line exist in the repository, and all 14 recorded R lines take
+the no-anchor branch. A derived relative tolerance therefore re-scores ZERO
+historical records. It removes a latent trap, in that rung-0 re-runs sit 7.87e-13
+from the anchor and would fail exact equality, without changing any verdict.
+Whether the column-identity guard should also be changed is reported by D58.2,
+not decided by it.
