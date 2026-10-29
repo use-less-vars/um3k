@@ -768,3 +768,215 @@ its R). No new solves: construction (D) reads the field banked in the rung
 archives, exactly as §10.7-§10.8 did. This document's §10.6.6 restriction applies
 unchanged: the intercept is reported as an intercept with an error bar, not as a
 demonstration that anything "converges at first order".
+
+## 10.10 ERRATUM III - R DEFINITION, R_analytic PROVENANCE, AND RECORD CLARIFICATIONS
+
+Appended under clause 10.3. Nothing above this line is edited. Section 10.8.1
+stands as written; 10.10.5 exists only so that two different scored quantities are
+never merged. No threshold is moved by anything in 10.10.
+
+### 10.10.1 WHAT R IS, AND WHY IT IS NOT AN INTERFACE STATISTIC
+
+The definition D58 never stated, recovered from source and then proved by
+exact reproduction (10.10.2):
+
+    R_extracted = sum(e_z_vv**2) / sum(e_y**2)
+
+- Lattices, `tools/host/c1-audit/c1_audit.py:573-587`: CELL = 1e-4 over the whole
+domain. `e_y` is component 0 on `(NYN-1, NZN)` = y-midpoints x z-nodes; rung 0 is
+`(200, 77)`, 15400 points. `e_z_vv` is component 1 on `(NYN, NZN-1)` = y-nodes x
+z-midpoints; rung 0 is `(201, 76)`, 15276 points. The two lattices are staggered
+against each other, as a Yee mesh requires.
+- Sampling, `c1_audit.py:679-687` and `:705`: `E_t = MODE.e_at(_ey_pts)` reshaped
+`(NYN-1, NZN)`, `e_y = E_t[:,:,0]*CELL`; `E_tz = MODE.e_at(_ezc_pts)` reshaped
+`(NYN, NZN-1)`, `e_z_vv = E_tz[:,:,1]*CELL`; per-column energies are the two sums
+of squares.
+- Ratio and column selection, `c1_audit.py:743-766`: `R_by_col = [ez/ey ...]`, the
+banked column found by matching `float(r[1]) == mode.beta_sq`, with fallbacks of
+the unique criterion-passing column and then best `|corr_e_y|`.
+
+So R is a **global energy-partition ratio of the height component to the in-plane
+component over the whole domain**. It is not per-row, carries no median, mean or
+quantile, applies no `abs()`, and applies no epsilon, area element or mesh
+weighting; both sums carry the same `*CELL` and the factor cancels. The `7*HSUB`
+pair is not in R - that belongs to the interface audit. The `e_z_node` / LU
+interpolant at `:662-665` and `:689-696` is the superseded longitudinal
+mis-pairing, banked as `corr_ez_superseded_longitudinal`, and is not in R either.
+
+10.8.1's statement that the gate scores R and not the jump is correct. This clause
+sharpens it: R cannot be read as an interface statistic at all, and no defect in
+the interface construction can move it except through the global field.
+
+### 10.10.2 RUNG-0 RECONSTRUCTION REPRODUCED BIT-IDENTICALLY
+
+One run against the archive `tools/host/sparse-probe/out/rung0_s12_a9_z8-4-4/c1_spectrum.npz`,
+reconstruction reused verbatim from the promoted `t1_probe.py`, with the axes
+asserted `array_equal` to the archive's `xs` / `zs` and the mesh asserted at
+n_edges 1486 / n_nodes 527:
+
+| quantity | value |
+| --- | --- |
+| `sum(e_y**2)` | 0.08977401529330839 |
+| `sum(e_z_vv**2)` | 0.3634931131175374 |
+| `R` from those sums | 4.0489791163950715 |
+| banked `R_extracted` | 4.0489791163950715 |
+| absolute difference | 0.0 |
+| relative difference | 0.0 |
+| points | 15400 / 15276 |
+
+10.10.1 is therefore not a reading of the source; it is proved by exact
+reproduction of the banked operand.
+
+### 10.10.3 R_analytic PROVENANCE SETTLED - THE REFERENCE IS SOUND
+
+`R_analytic = 2.8101021387524523` is the SAME formula on the SAME two lattices,
+applied to the analytic field's own arrays: `A_ez = PANA.e_z` on `(201, 76)` and
+`A_ey = PANA.e_y` on `(200, 77)` (`c1_audit.py:593-594`, sampled at `:600-602`,
+banked at `:871`). Verified bit-exactly from the banked arrays:
+
+    sum(A_ez**2) = 303.61490934246586   (15276 points)
+    sum(A_ey**2) = 108.04408322227604   (15400 points)
+    quotient     = 2.8101021387524523
+
+which is exactly the constant carried in every script, e.g.
+`tools/host/sparse-probe/high_res_run.py:112`, and recorded in
+`docs/design/t4_amp_ratio.md:9-11`. The lattice-size asymmetry is symmetric
+between the two sides - both carry 15400 / 15276 - so the comparison is
+like-for-like. The only convention that moves the reference is the per-sample
+variant `2.832912603875` (`t4_amp_ratio.md:12`), which is +0.812 %, far below the
+17-44 % effects at issue.
+
+**This closes one of the two competing explanations for the R offset.** The
+question raised when R's definition was recovered - whether 2.810 might have been
+computed by a different formula, in a different component convention, or in closed
+form, and so might not be a valid benchmark - is answered NO. It is the identical
+estimator, on identical lattices and identical point counts. What remains open
+about the reference is **provenance, not physics**: no code computes it (it exists
+in code only as the comment at `c1_audit.py:872-878`, and numerically only as a
+hand-transcribed literal in four scripts), and there is no independent analytic
+derivation of it anywhere, as `docs/design/d52b_claim_inventory.md:269` already
+records. That gap is real and it is a gap on the reference side; it is not a
+defect in the extraction, and it does not license a smaller claim on D-R1.
+
+### 10.10.4 D-C1 IS MATERIALLY DEFLATED
+
+Every rung of the ladder records `n_eligible 1` with `eligible_cols == [bank_col]`
+- 732 / 1224 / 1826 / 2561 / 5133 - and `R_by_col` of length 1. The selection logic
+at `:743-766` therefore cannot change the number: `R_extracted == R_by_col[0]`
+whichever branch fires.
+
+The rung-0 discrepancy `identified_col` 738 versus `bank_col` 732 is consequently
+**numerically inert**. D-C1 as filed implies a column-identity exposure that the
+data does not support, and must be downgraded to a bookkeeping observation with no
+numerical consequence. This is recorded here for whoever owns that entry to apply;
+the tracker itself is not edited by this document.
+
+### 10.10.5 TWO SCORERS, ONE OPERAND FAMILY - DO NOT CONFLATE
+
+Two different quantities are scored against the same reference, and neither may be
+quoted as "the" gate number without naming which artefact is meant.
+
+- **Registration reading of record** (no ladder existed when it was registered):
+`t4_amp_ratio.md:72` scores the banked rung-0 operand `4.0489791163982565` against
+`2.8101021387524523`, giving `Q = 1.440865461991999`, a relative error of
+`44.086546199199894 %`, which is `4.408654619919989x` the +/-10 % half-width. FAIL.
+- **Ladder driver's own verdict**: `high_res_run.py:820-832` scores the LAST
+COMPLETED rung via `last_rr, last = meas[-1]`. In the recorded five-rung pass that
+is rung 4, `R_extracted = 3.575412753195199`, `Q = 1.272342632636`, relative error
+`27.2343 %`, `2.7234x` the half-width, "R_extracted is OUTSIDE the band
+[2.5290919248772, 3.0911123526277]", `T4_amp: FAIL`
+(`out/summary_HIGHRES.txt:258-263`). A default `[0, 1, 2, 3]` run would score rung 3
+at `Q = 1.285617693`.
+
+Both readings FAIL, but they differ in operand and in magnitude. 10.8.1's statement
+that `R_REGISTERED` is the rung-0 value is correct about the **registration anchor**
+and must not be read as a statement about the driver's verdict. 44.1 % and 27.2 %
+are two different scored quantities.
+
+### 10.10.6 THE R IDENTITY ANCHOR IS UNREACHABLE; THE `repro` FIELD IS NOT A DEFECT
+
+The reproduction gate (`c1_audit.py:957-1001`) is a relative-tolerance check,
+`REPRO_RTOL = 1e-6` (`:261`), on two correlation fingerprints against the banked
+rung-0 anchors `ANCHOR_CORR_EY = 0.9207707848111418` and
+`ANCHOR_CORR_EZ = 0.11916043239134175` (`:190-192`). A separate R identity check at
+`:986-999` uses EXACT equality and fires only if `bank_col >= 0` and
+`banked_col == identified_col`.
+
+**That branch is unreachable on the recorded data.** On rung 0 `identified_col` is
+738 while `bank_col` is 732; on rungs 1-4 `identified_col` is -1. The exact-equality
+R anchor therefore never executes and `c1_audit.py:194-203` records "(no anchor)"
+instead. Had it executed on rung 0 it would have compared `4.0489791163950715`
+against `ANCHOR_R_EXTRACTED = 4.0489791163982565` and failed an exact test by
+`3.185e-12` absolute, `7.87e-13` relative - a tolerance question, not a numerical
+one. This is the concrete instance for T4's derived-relative-tolerance item.
+Reported, not changed.
+
+The `repro: FAIL` fields on rungs 1-4 (`out/summary_HIGHRES.txt:89, :110, :131,
+:152`) are **not** a defect and must not be reported as one. The anchors are rung-0
+banked values, so a deliberately remeshed rung cannot pass; `c1_audit.py:105-106`
+and `:484-486` state the failure is expected - "loud, not fatal". The recorded
+numbers confirm the mechanism rather than a fault: rung 0 measures `0.920770785`
+and passes, rungs 1-4 measure 0.938 / 0.947 / 0.957 / 0.970, six orders of magnitude
+outside a 1e-6 tolerance. Nothing acts on the field - `high_res_run.py` compiles it
+out of the DONE line (`:461-475`) and prints it as one diagnostic line (`:523`); no
+gate, refusal or verdict reads it. Every rung records `n_eligible 1` and
+`R_extracted ok=True`.
+
+### 10.10.7 THE OFFSET IS ALREADY BANKED - 10.8 IS NOT A DISCOVERY AND THE BAR IS NOT RE-OPENED
+
+The offset, the FAIL and the defect all predate section 10.8. `t4_amp_ratio.md:72`
+and `:106-108` carry the FAIL and the 44.086546199199894 % figure;
+`d52b_claim_inventory.md:230` already records "yes - metric documented bad, R
+non-convergent, no mesh in band", with the reference-side caveats at `:269` (no
+independent derivation), `:272` (bar uncited, fixed after the miss was known) and
+`:279` (unproven limit quoted as fact).
+
+The +/-10 % bar is locked (`t4_amp_ratio.md:89`, `:114-116`; `high_res_run.py:114-116`)
+and its single permitted revisit IS the re-meshed ladder, which has been run:
+`high_res_run.py:849-851` - "its one permitted revisit is the mechanism this ladder
+already is (a re-meshed run), and it is spent by running it, not by failing it."
+And `high_res_run.py:195`: "POST-HOC USE OF A NUMBER FROM THIS LADDER TO MOVE THE
+BAR IS A BREACH, not a correction."
+
+10.8's table is therefore corroboration of a banked defect, not a new measurement
+capable of moving the bar, and 10.9's construction (D) is a diagnostic on the
+interface statistic J - never a route to moving R's bar.
+
+### 10.10.8 THE LADDER'S PRE-REGISTERED OUTCOME IS ALREADY ON FILE AND AGREES
+
+`out/summary_HIGHRES.txt:264-267` records step 4, the pre-registered (d1)/(d2)
+diagnostic: `|R - R_analytic|` per rung r0 1.238877, r1 0.970230, r2 0.757206,
+r3 0.802615, r4 0.765311; "non-increasing with refinement: NO"; "-> branch (d2)
+the mesh is NOT the mechanism: refinement has been eliminated".
+
+That agrees with 10.8.1's "there is no shrinking trend to fit" and with the
+plateau at rungs 2-4. It also means R's mesh mechanism was eliminated before this
+audit began. The contribution of this phase is the definition (10.10.1), the
+bit-identical reproduction (10.10.2) and the reference provenance (10.10.3) - not
+the negative convergence finding, which was already recorded.
+
+### 10.10.9 ARTEFACT WARNING
+
+`tools/host/sparse-probe/evidence/ladder/summary_HIGHRES.txt` is not citable. It
+prints "rung 0 did not run: the ladder is unanchored and nothing below applies"
+(`:126`) and then still prints a scored verdict (`:131`). The current driver returns
+before the scoring block in the unanchored case (`high_res_run.py:791-819`), so that
+file cannot have been produced by the code as it stands; it is stale or hand-edited.
+The citable verdict files are `out/summary_HIGHRES.txt` (five rungs) and
+`out/run_a/` and `out/run_b/` (rung 0 only).
+
+### 10.10.10 SUMMARY OF WHAT THIS ERRATUM CHANGES
+
+- 10.10.1-10.10.2: R is defined and the rung-0 operand reproduced bit-identically.
+- 10.10.3: one of the two competing explanations for the R offset is closed - the
+reference is the identical estimator on identical lattices. The other, that the
+field's global energy partition is wrong, is untouched by this erratum and stands.
+- 10.10.4: D-C1 downgraded to a bookkeeping observation.
+- 10.10.5: two scorers kept apart; 44.1 % and 27.2 % are not interchangeable.
+- 10.10.6: T4's tolerance item gets its concrete instance; the `repro` field on
+rungs 1-4 is the expected signature of a remeshed run, not a defect.
+- 10.10.7-10.10.8: 10.8 is corroboration of a banked defect; the bar is locked and
+its revisit is spent.
+- 10.10.9: one artefact withdrawn from citation.
+
+Nothing in 10.10 revises 10.8's outcome or withdraws a claim of record.
