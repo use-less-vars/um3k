@@ -119,10 +119,12 @@ Fixed across all three rungs (this is what makes the run reproducible):
 | launch | soft source, `ModalPort.inject` (`emfit/modalport.py:316`), the `plane_mode` profile placed at the launch index | see §5 clause on soft sources |
 | station 1 | `x1 = 6.0 mm` | ≥ 30 cells from the launch: evanescent contamination < 1e-6 by then |
 | station 2 | `x2 = 18.0 mm` | `L = x2 - x1 = 12.0 mm` |
-| run length | `T < 2*(20.0 - 6.0) mm / v_g` | **stops before the far-end echo reaches station 1** — there is no absorber in this codebase (`emfit/modalport.py:15-25`: "There is no absorbing port in this codebase"), so a hard-truncated line *does* reflect, and the phasor accumulator has no time gate (`emfit/studies.py:2783-2817`). Truncation of the *run*, not a window on the accumulator, is the only available protection. This is a real limitation of the measurement, recorded here deliberately. |
+| run length | `T < 2*(20.0 - 6.0) mm / v_g` | **stops before the far-end echo reaches station 1** — there is no absorber in this codebase (`emfit/modalport.py:15-25`: "There is no absorbing port in this codebase"), so a hard-truncated line *does* reflect, and the phasor accumulator has no time gate (`emfit/studies.py:2783-2817`). Truncation of the *run*, not a window on the accumulator, is the protection used here; deliberately time-gating the run *before* the far-end echo returns is, for a time-stepper, the **correct** transient S-parameter method rather than a limitation of the measurement. It is recorded here as the intended method, not as a concession. |
 
 `k0 = 2*pi*1e10 / 2.99792458e8 = 209.5853 rad/m`; hence `k0*h` = **0.041917** (rung 1),
 **0.020959** (rung 2), **0.010479** (rung 3).
+
+**NAMED GAP (added, disclosed before any run): there is no absorbing port.** The present port implementation is a hard PEC/PMC wall with a recorded and replayed incident field, not a matched termination (`modalport.py:15-25`); nothing in it absorbs the outgoing wave. For the straight guide this is not a blocker — the reflected field is small and the echo is gated out as described above — but it is a **real gap in the code**, and it must exist (a proper absorbing or matched port) before any non-trivial board, bend, junction or discontinuity is attempted. Naming it here keeps it from being discovered as a surprise later.
 
 ### 1.5 The five stages, each with its function and file:line
 
@@ -285,6 +287,12 @@ published dispersion figure). If no such source exists at run time, the run may 
 graded pass/fail on (i)–(iii); only the **order** criterion of §3 is gradable. That is a
 weaker verdict and it is the honest one — no number will be produced retroactively.
 
+**Grading status of `C_2` (added).** The *graded* quantity is not the magnitude of `C_2` but the **measured exponent `beta_pipeline`**, obtained from the two-station phase difference as `beta_pipeline = -(phi2 - phi1)/L` (equivalently `beta_ref - dphi/L` under the convention recorded above). Its **primary reference** is `emfit.mode2d.solve_modes_mixed`; `k0*sqrt(eps_eff)` is a **secondary** cross-check only. Because the quantity is **local**, this comparison needs no absorber, no long propagation and no echo discipline.
+
+What is graded: `p = 2.0 ± 0.2` for `beta_pipeline`, plus `|S21| -> 1` and `|S11| -> 0` as `h -> 0`, plus passivity within `delta_E`.
+
+What is **demoted**: the `C_2` **magnitude bands** are demoted to *reported reference values* — they are recorded for information and are not pass/fail — for the reason given here (magnitude depends on the singular field near the edge and on the reference solver's own discretisation, whereas the exponent does not). Global `S21` accuracy is likewise demoted, since it is contaminated by the quantities listed in §1.4.
+
 ### 2.4 Provenance of C_2 (frozen — added after §2.3, nothing above changed)
 
 §2.3 left `C_2` symbolic. This subsection *fills it in from sources that existed before the
@@ -367,25 +375,24 @@ frozen constant (`beta*L = 2.51502*sqrt(eps_eff)` rad, `L = 12 mm`):
 
 **STILL SYMBOLIC — what this does NOT freeze.**
 
-1. **The interface / staircase term.** The line is a staircase of PEC strip and `eps_r` jump on a
-   Cartesian mesh. That contribution is an `O(h)` *geometric* error converted to a phase error
-   through field sensitivity at the edge; its sign is not fixed a priori (a staircase may over- or
-   under-estimate the local `C'` and the edge-field concentration) and its scaling is **not**
-   cleanly `(k0h)^2`. It is therefore **not derivable**, and it is left symbolic together with
-   **`delta_E`** (§2.3, still no value anywhere in the evidence).
-2. **Consequence, stated as an argument and not an assertion.** `C_2^hom` is the *homogeneous axial*
-   contribution — definite sign, variance-free, present at every point of the medium. It is a bound
-   on the observed error only under the extra stated assumption that the staircase term is
-   negligible or of the same sign. The measured `eps2` is the **sum** of (i) and (ii), so
-   `C_2 ≈ +0.056…+0.077` is a *central value / predicted contribution*, not a floor. The **order**
-   and the rung ratios of §3.1–§3.3 remain the primary gradable criterion; §2.3's freeze protocol
-   still forbids grading pass/fail on (i)–(iii) if the staircase term is not pinned.
+1. **The interface / edge-regularity term (RETRACTED as stated; this item replaces the former "interface / staircase term" and its companion item on mesh staircasing).** The earlier wording blamed "the staircase" for a loss of order. That diagnosis is **withdrawn**: there is NO staircase in this discretisation. The conductor edges and the dielectric interface are axis-aligned and the mesh is built band-by-band, so the substrate is represented by an *exact integer* number of cells (8 / 10 / 12 / 14 / 20 across the refinement ladder) rather than by a jagged approximation. Geometry is therefore not the mechanism.
+
+2. **The surviving candidate is limited solution regularity.** What remains is the known loss of regularity of the field at the conductor-edge singularity and across the dielectric interface: the exact solution there is not smooth, so pointwise (and, in the worst case, integral) convergence rates are capped below the formal order of the scheme. The **sign and size of this effect are not established here**; they must be **MEASURED**, not assumed. Note also that a *reduced pointwise* rate frequently coexists with *fast integral and phase* convergence, so the frozen band `p = 2.0 ± 0.2` may well turn out to be *satisfiable* rather than generous. Nothing in this item licenses moving that band.
+
 3. **A-refl is untouched.** Nothing here derives the per-cell *reflection* amplitude of (iii); that
    remains the stated assumption it always was.
 4. **Range of validity.** `C_2 (k0h)^2` is asymptotic in `h` against *both* `lambda` and the
    transverse scale (1.6 mm substrate): transverse evanescent content enters at `O((h/H)^2)`, not
    proportional to `(k0h)^2`. At R1 (`k0h = 0.042`) the neglected `O((k0h)^4)` term is ~1e-3 of
    `eps2`, so the rung ratios of §3.1 are unaffected at that level.
+
+**Phase convention (added; this paragraph fixes the sign convention for every phase statement below).** The pipeline runs a time-harmonic convention of `exp(+j*omega*t)`; the accumulator correlates against `exp(-2j*pi*f0*n*dt)` (`studies.py:2788`, `plane_phasor.py:80`), and a forward-travelling wave is written `exp(-1j*beta*x)` (`ports.py:1681-1684`, `animate.py:29`, `studies.py:1249`). Under that pair the two-station phase difference for a wave travelling `+x` includes a `-beta*L` term, so the measured quantity is
+
+```
+dphi = (phi2 - phi1) + beta_ref*L = -(delta_beta)*L
+```
+
+Consequently `C_2 > 0` (which means `beta_num > beta_ref`, a slower numerical wave) implies `dphi < 0`, not `dphi > 0`. This sign is **convention-dependent**: adopting the opposite pair flips the sign of `dphi` while leaving `|dphi|` and `C_2` unchanged. Any frozen expectation of the sign of `dphi` must therefore state its convention explicitly.
 
 **RECORDED CONTRADICTION (added, not resolved; §3.4 is not edited).** `C_2^hom > 0` in *both*
 media, so the discrete line is **phase-fast**: `beta_num > beta_ref`, hence
@@ -394,12 +401,22 @@ media, so the discrete line is **phase-fast**: `beta_num > beta_ref`, hence
 dphi = arg(A2/A1) + beta_ref*L = (beta_ref - beta_num)*L < 0   =>   dphi NEGATIVE at every rung.
 ```
 
+**What `all_rel_negative` actually is (checked in the source, not assumed).** `rel_dev` is defined in `.scratch/mode2d/c2_slab.py:198` as
+
+```
+rel_dev = (pk["beta_sq"] - an_b2) / an_b2
+```
+
+i.e. the *relative deviation of `beta^2`* (not of `beta`), and the same ratio is recomputed at `c2_slab2.py:131`. The flag is then `all_rel_negative = bool(all(d[2] < 0.0 for d in devs))` at `c2_slab_finish.py:77`. A ratio of `beta^2` eigenvalues is a real, scalar, convention-free number: it carries no `±j` factor that a time-convention choice could flip. So the flag cannot be a notational artefact.
+
+**Verdict: the disagreement survives the convention fix.** With the convention now recorded above, the pipeline side gives `dphi > 0` for a slow FEM line (a numerical wave slower than `beta_ref`, so the phase falls behind and the residual is positive), while the frozen `C_2 > 0` expectation demands `dphi < 0`. The two still disagree; the conflict is **real, not notational**, and it is left unresolved here.
+
 §3.4 infers the opposite (`dphi > 0`) from `c2_slab`'s `all_rel_negative: true`. **The two cannot
-both hold.** This document records the contradiction and does not settle it: §3.4's inference is
+both hold — and, as the paragraph above shows, the disagreement is not a convention artefact.** This document records the contradiction and does not settle it: §3.4's inference is
 about a *finite-element cross-section eigensolve* of a 2B slab, this derivation is about the *FDTD
 leapfrog axial relation* on a cubic grid — different discretisations, so neither refutes the other.
 §3.4 stays exactly as written and is still not a pass/fail item; the sign is to be *reported as
-measured*, and a measurement of `dphi > 0` would be evidence that the staircase term (ii) is
+measured*, and a measurement of `dphi > 0` would be evidence that the interface/edge-regularity term (ii) is
 negative and dominant, not that `C_2^hom` is wrong. Numeric coincidence, **not** a result: at
 `k0h = 0.025`, `C_2^air (k0h)^2 = +3.5068e-05` against `c2_slab`'s `max_abs_rel_dev = -3.1410e-05`
 — same magnitude, opposite sign, and (see above) different geometry and discretisation. At the
@@ -441,7 +458,9 @@ without that, the ladder measures geometry error, not discretisation error.
    has `all_rel_negative: true`, i.e. the finite-element cross-section eigensolve
    under-estimates `beta²`. If the FDTD volume solve inherits the same conservative
    under-estimate, `beta_num < beta_ref` and therefore **`dphi > 0`** at every rung. This
-   is recorded as an inference, flagged as such, and must not be turned into a band.
+   is recorded as an inference, flagged as such, and must not be turned into a band. (Note added with the amendments: this inference was written before the phase convention was pinned down, so it is convention-blind. It is annotated, not deleted, and it is not to be used as either a prediction or a tolerance.)
+
+**Grading status after the amendments (predictions 1-4).** Prediction 1 (mesh convergence of the exponent) and prediction 2 (`|S21| -> 1`) remain graded as written. Prediction 3 (passivity within `delta_E`) remains graded. Prediction 4 is annotated rather than deleted: it was written before the phase convention was recorded, so its sign expectation cannot be scored; only its *magnitude* (`|dphi|`) should be compared, and even that is reported rather than graded.
 
 Cost note: R3 is ~64× R1 and ~8× R2 in cells·steps; R3 should be scheduled last and its
 result reported even if only R1/R2 complete — two rungs give a ratio but *not* an exponent,
@@ -491,9 +510,36 @@ compares to another mode's `beta` is not a test of anything.
 | R2_production | 0.10 | 10.0 | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
 | R3_fine | 0.05 | 10.0 | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
 
+**Primary columns (added).** Fill `p` from `beta_pipeline` (the primary graded quantity); record `beta_eig` alongside it as the secondary eigenvalue-based exponent. Only `beta_pipeline` is scored against `2.0 ± 0.2`.
+
+| quantity | column | status |
+|---|---|---|
+| `beta_pipeline` | `p` | primary, graded |
+| `beta_eig` | secondary column | reported only |
+| `beta_ref` (`solve_modes_mixed`) | reference | primary reference |
+| `k0*sqrt(eps_eff)` | reference | secondary cross-check |
+
+The table below is pending measurement:
+
+| h | `beta_pipeline` | `p` | `beta_eig` | `|S21|` | `|S11|` | passivity |
+|---|---|---|---|---|---|---|
+|  |  |  |  |  |  |  |
+
 Fitted exponent: `p = ______` (required `2.0 ± 0.2`) ·
 Rung ratios `|dphi|(R1)/|dphi|(R2) = ______`, `|dphi|(R2)/|dphi|(R3) = ______`
 (required `3.8 – 4.2`) · `|S11|` ratios `______`, `______` (required `1.9 – 2.1`).
 `C_2` used (if any) and its pre-existing source: `______`.
 Overall: *(pending)* — **this table may be filled only after §2 and §3 are frozen, and may
 not be edited afterwards.**
+
+## Amendments (all made before any run; disclosed)
+
+This document was amended, before any data were taken, in five places. Nothing was moved after seeing results.
+
+1. **§1 phase convention.** Added the explicit `exp(+j*omega*t)` / `exp(-1j*beta*x)` convention and the sign rule `dphi = -(delta_beta)*L`, so that `C_2 > 0` implies `dphi < 0` rather than `dphi > 0`.
+2. **Hypothesis / contradiction section.** Recorded what `rel_dev` actually is (`(beta_sq - an_b2)/an_b2`, a real eigenvalue ratio) and what `all_rel_negative` therefore means, and recorded the verdict explicitly: the sign disagreement **survives** the convention fix and is real, not notational. §3.4 itself is not edited.
+3. **§3.4 causal attempts.** Retracted the "staircase" diagnosis (there is no staircase: axis-aligned edges and interface, band-built mesh, exact integer 8/10/12/14/20 cells) and replaced it with limited solution regularity at the conductor-edge singularity and dielectric interface, flagged as unmeasured. The band `p = 2.0 ± 0.2` is unchanged; no longer is the interface term assumed to consume it.
+4. **Grading status.** Made `beta_pipeline` (from the two-station phase difference) the primary graded quantity against `solve_modes_mixed`, with `k0*sqrt(eps_eff)` secondary; demoted the `C_2` magnitude bands and global `S21` to reported values for stated reasons; added a grading-status note for predictions 1-4 and a primary-columns note with a pending table.
+5. **§1.4 / §1.5.** Restated time-gating before the far-end echo as the correct transient method for a time-stepper rather than a limitation, and named the missing absorbing port as a disclosed gap that is not a blocker for the straight guide but must be implemented before any non-trivial board.
+
+**Prediction 4 is annotated, not deleted**: it was written convention-blind, so its sign is unscorable and only its magnitude is reported. **The refinement ladder (8 / 10 / 12 / 14 / 20 substrate cells) is untouched** by any of these amendments.
