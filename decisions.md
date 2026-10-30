@@ -9044,7 +9044,9 @@ The modal solution was swept in lateral/top clearance with the FDTD cross-sectio
 - **Demotion.** The ALPHA DIAGNOSTIC line prints `alpha` in dB/mm, `alpha*(L/H)`, and a WARNING when over the floor, but it **never changes exit status**. The `LadderError` raise is gone; `--alpha-floor-db-per-mm` help says DIAGNOSTIC ONLY; meta carries `alpha_floor_enforced = False`.
 - **The floor itself.** 0.0139 dB/mm is the most permissive of the three fits available (default box **0.02145**, npml-10 span **0.0278**, lid sweep **0.01388**).
 
-## 125. 58.8 - THE THREE-RUNG HOST RUN: GAPS +0.8946 / +0.7451 / +0.6674 %, MONOTONE, AND IT STOPS ON THE MEMORY CEILING.
+## 125. 58.8 - THE THREE-RUNG HOST RUN: GAPS +0.8946 / +0.7453 / +0.6673 %, MONOTONE, AND IT STOPS ON THE MEMORY CEILING.
+
+- **PROVENANCE - the fourth digit is not artifact-backed.** The three-rung bin-14 series was **never written to disk as a multi-rung JSON**; only the **single-rung JSONs** were produced. **h=0.4 is the only rung with a retained full-precision record** - `beta_fdtd` **389.0223223928527**, `beta_eig` **392.50249027403123**, `rel_gap_pct` **0.8945933641473949**. The h=0.26667 and h=0.2 gap values therefore exist **at 4 decimal places only**, in `.scratch/d588/ladder3.log`, and the **fourth digit** for those two rungs is **NOT** backed by any retained full-precision artifact. The **values of record are 0.7453 and 0.6673**; the earlier **0.7451 / 0.6674** transcription **should not be used**, and neither figure should be quoted beyond **4 significant figures**. `tools/host_ladder.py` now writes **per-rung records**, so a future multi-rung run will not have this problem.
 
 Tone 10.198626 GHz, strip 0.8 mm, clearance 3H, npml 6:
 
@@ -9058,7 +9060,7 @@ Tone 10.198626 GHz, strip 0.8 mm, clearance 3H, npml 6:
 - **The strip is now 0.800000 mm at EVERY rung**, and the h=0.4 and h=0.2 meshes reproduce the d585 reference boxes **EXACTLY** (ny 26 / nz 16 / free_e 1262 / n_dof 1691 and ny 52 / nz 32 / free_e 5020 / n_dof 6711; cf. `.scratch/d585/sparse_h04.log` and `sparse_h02.log`).
 - **Why it stops.** Container peak RSS reached **413.8 MB** at h=0.2, so the run stops on its own `--mem-ceiling-mb` **400** default - not on physics and not on a box check. It now reports `LADDER INCOMPLETE (memory ceiling)` and exits **1**, with all rows up to that rung valid. A one-rung run at h=0.4 gives `LADDER OK`, exit **0**, max_rel_gap **0.8946 %**, peak **149.7 MB**.
 - **L is not exactly constant.** 24.8000 / 23.7333 / 23.2000 mm, because nx is an integer cell count for a nominal length, so each rung is a slightly different line. Benign for `beta`; it is also why `alpha*(L/H)` drifts.
-- **OPEN OBSERVATION, unverified.** At h=0.26667 `n_edges` and `free_e` both print **2829** (zero edges removed), whereas 1290 -> 1262 and 5076 -> 5020 remove 28 and 56. Worth a check before anyone relies on that row's counts.
+- **OBSERVATION, since RESOLVED - see 137.** At h=0.26667 `n_edges` and `free_e` both print **2829** (zero edges removed), whereas 1290 -> 1262 and 5076 -> 5020 remove 28 and 56. This is not a mesh anomaly: it is the pre-fix `GEO` mislabel of **127**, the value shown being `free_e`. The true `n_edges` there is **2871**, so **42** edges are removed - normal, and between the 28 and 56 of the other rungs. 137 closes it without a rerun; the `n_edges` cell of that row in the table above should be read as 2871.
 
 ## 126. TWO TONE CONVENTIONS COEXIST: THE LADDER RUNS AT 10.198626 GHz, THE d585 REFERENCE AT 10.009557 GHz.
 
@@ -9073,4 +9075,114 @@ Tone 10.198626 GHz, strip 0.8 mm, clearance 3H, npml 6:
 
 - **Fix.** The `GEO` line had been printing `free_e` under the label `n_edges`; corrected, and `free_e` is now printed explicitly alongside it.
 - **Two quantities, one name.** `studies.microstrip_wave`'s `gy["n_edges"]` is the **3-D CellComplex** edge count (**164730** at h=0.4), not the **transverse modal mesh** count (**1290**). Any other line that reads `n_edges` should be checked for which of the two it means.
+
+
+**TONE LEDGER LINE (authoritative, D58.9).** The ladder runs at the DFT bin and uses the ACTUAL frequency for k0 (f0 = round(f_target*span)/span, span = 1.372734e-9 s, bin spacing 0.728473 GHz; bin 14 = 10.198626214572733 GHz, bin 16 = 11.655573 GHz). Any result not taken at a DFT bin, or whose k0 differs from its run frequency, is not comparable and must be labelled superseded.
+
+## 128. MILESTONE STATE, GRADED T3.
+
+- **There is NO analytic reference in this problem.** No closed-form solution exists for this geometry, so no comparison in this record is a comparison against truth.
+- **The "reference" is a second discretisation.** `beta_EIG` is a modal/eigenvalue solve on the same geometry, discretised independently of the FDTD marching scheme. Agreement between them measures self-consistency of two numerical routes, not correctness.
+- **Grade is therefore T3**, i.e. two independent discretisations agreeing to ~0.4 % after both boxes are converged (131). It is **not** T2, which would require agreement with analytic truth. **Do not claim T2 anywhere in this file or in any summary of it.**
+- **Provenance.** This is a re-grading of the same measurements already on file; no new run was made for it.
+
+## 129. THE PML SCALING FINDING (the main result of D58.9).
+
+- **The defect.** `npml` was pinned at **6** for every rung, so the absorber's PHYSICAL thickness shrank as the mesh refined: **2.4 mm at h=0.4, 1.6 mm at h=0.26667, 1.2 mm at h=0.2**. Every "PML is fixed" statement in the ladder record was therefore false in the only units that matter.
+- **The sweep that exposed it.** h=0.4, clearance 3, default tone, single-rung runs, one process each:
+
+| npml | thickness | beta_FDTD | alpha dB/mm | \|b/a\| | gap % |
+|---|---|---|---|---|---|
+| 3 | 1.2 mm | 391.204254 | 0.046843 | 0.054536 | 0.3319 |
+| 6 | 2.4 mm | 389.022322 | 0.042807 | 0.009078 | 0.8946 |
+| 8 | 3.2 mm | 388.554675 | 0.037395 | 0.007765 | 1.0160 |
+| 12 | 4.8 mm | 387.977990 | 0.024724 | 0.006412 | 1.1662 |
+| 16 | 6.4 mm | 388.019588 | 0.006989 | 0.006646 | 1.1553 |
+
+- **(i) alpha is a function of the absorber's PHYSICAL THICKNESS ALONE.** 0.046843 at 1.2 mm falls to 0.006989 at 6.4 mm, a **6.7x collapse**, still falling at 16 cells. It transfers across meshes at matched thickness: `alpha(h=0.2, 1.2 mm) = 0.048248` against `alpha(h=0.4, 1.2 mm) = 0.046843`, **3 % apart**. Therefore alpha was measuring the absorber and never the line, and **alpha is NOT a convergence indicator**.
+- **(ii) Adequate PML makes the gap WORSE, not better.** gap rises monotonically **0.3319 -> 0.8946 -> 1.1662 %** as the absorber thickens, and the leaky npml=3 case (|b/a| = 0.054536, six times the npml=6 value) has the SMALLEST gap. So PML inadequacy is **not** the cause of the gap; it **MASKS** it.
+- **(iii) beta_FDTD is converged by 4.8 mm**: 387.977990 there against 388.019588 at 6.4 mm, **0.011 % apart**.
+- **(iv) Consequence, which must not be softened.** The ladder's monotone gap decrease **0.8946 -> 0.7453 -> 0.6673 %** was measured while the absorber thinned **2.4 -> 1.6 -> 1.2 mm**, and thinning **DEFLATES** the gap. Part of that "convergence" is an absorber artefact, not mesh convergence.
+- **(v) Fix, in the tool.** `--pml-mm` holds the physical thickness fixed and re-derives `npml = max(3, round(pml_mm/h))` per rung; **4.8 mm is adopted**. `--npml` and `--pml-mm` are mutually exclusive (argparse error, exit 2). Verified: `--pml-mm 4.8` at h=0.4/clearance 8 reproduces the npml-12 joint run bit-for-bit (beta_FDTD 388.0850985927105, beta_EIG 389.57442893012643, gap 0.3837638556122367 %), RSS 301.4 against 301.0 MB.
+
+## 130. THE BOUNDARY TRUNCATION FINDING.
+
+- **beta_EIG was never checked against its own box.** Modal cross-section sweep at h=0.4, everything else fixed:
+
+| clearance (H) | beta_EIG |
+|---|---|
+| 3 | 392.502482 |
+| 4.0 | 390.538542 |
+| 6.0 | 389.674273 |
+| 8.0 | 389.574420 |
+| 12.0 | 389.560981 |
+
+All residuals **3e-14**.
+- **What it says.** beta_EIG falls **0.749 %** between clearance 3 and 12 and is converged by clearance **~8** (the 8 -> 12 change is 0.746 -> 0.749 %, i.e. 0.003 pp).
+- **Consequence.** The ladder's clearance **3.0** was **inflating the reference by ~0.75 %**, which is the single largest term in the 0.895 % gap of 125.
+- **Adopted.** Clearance **8 H**.
+
+## 131. THE (clearance x npml) FACTORIAL AT h=0.4, default tone, all measured.
+
+| case | beta_FDTD | beta_EIG | gap % |
+|---|---|---|---|
+| cl3 / npml6 | 389.0223 | 392.5025 | 0.894593 |
+| cl3 / npml12 | 387.9780 | 392.5025 | 1.166174 |
+| cl8 / npml6 | 388.5839 | 389.5744 | 0.254905 |
+| cl8 / npml12 | 388.0851 | 389.5744 | 0.383764 |
+
+- **beta_EIG is EXACTLY separable.** 392.5025 at cl 3 for both npml values, 389.5744 at cl 8 for both, identical to the last digit. Its npml interaction is **exactly zero**.
+- **So 100 % of the interaction lives in beta_FDTD.** clearance 3 -> 8 moves beta_FDTD by **-0.1127 %** at npml 6 but **+0.0276 %** at npml 12 (sign flip); npml 6 -> 12 moves it **-0.2685 %** at cl 3 but **-0.1284 %** at cl 8.
+- **The arithmetic.** Additive prediction `0.8946 - 0.6397 + 0.2716 = 0.5265 pp` against measured `0.3838 pp`, i.e. a **real interaction of -0.1427 pp** (-27.1 % of the additive effect). The half-difference form gives the same -0.1427, so the 2x2 is self-consistent.
+- **The figure that replaces 0.895 %.** With both boxes converged the h=0.4 gap is **0.384 %**, not 0.895 %.
+
+## 132. THE 0.58 % LIMIT.
+
+- **Separate extrapolation of each side**, bin 14, three rungs, h ratio 1.5: beta_FDTD decrements **0.8732 then 0.4247** (ratio **0.4864**, p = **1.777**) -> beta_FDTD(h->0) = **387.32**; beta_EIG decrements **1.4607 then 0.7301** (ratio **0.4998**, p = **1.710**) -> beta_EIG(h->0) = **389.58**; ratio **+0.583 %**.
+- **First-order-in-h fit to the gap** over the same three rungs: g(h->0) = **0.447 %** at bin 14 and **0.443 %** at bin 16. These agree with each other and with the box-converged h=0.4 value of **0.384 %** (131).
+- **The limit is NOT bin-dependent.** At the second DFT bin (bin 16, 11.655573 GHz, +14 % in frequency) the three gaps are **0.7530 / 0.6496 / 0.6148 %** against bin 14's **0.8946 / 0.7453 / 0.6673 %**, ratios **0.842 / 0.872 / 0.921**. Both tones extrapolate to the SAME nonzero limit.
+- **Two different ratios, previously conflated.** The **beta-decrement** ratio is **0.486** (FDTD) and **0.500** (EIG), i.e. near the previously quoted **0.522**. The **gap-decrement** ratios are **0.833** and **0.895**. These are not the same quantity, and earlier entries in this file used one for the other.
+
+## 133. DISPERSION IS RULED OUT.
+
+- **The Courant factor is constant by construction.** `S = C0*dt/cell` = **0.57157673 / 0.57157669 / 0.57157681** for the three rungs, identical to **1e-7** because the dt schedule is derived from it.
+- **The coefficient.** `C2 = (1 - S^2)/12 = 0.0561083`, which confirms the ~0.056 already on file.
+- **The prediction, against the observation.** FIT numerical-dispersion correction **0.1383 / 0.0615 / 0.0346 %** against observed gaps **0.8946 / 0.7453 / 0.6673 %**: the correction is **6.5x / 12.1x / 19.3x too small**, and it gets **WORSE** as h refines, which is the opposite of the required behaviour.
+- **Coefficient bookkeeping, which was previously loose.** `(1 - S^2)/12` corrects **beta_squared**, which is what the eigenvalue pencil returns; the correction to **beta itself** carries `(1 - S^2)/24`. Either way the term is **O(h^2)** and vanishes as h -> 0, so it cannot produce a nonzero limit.
+
+## 134. VERDICT for the 0.58 % / 0.38 % residual, in the owner's four categories.
+
+- **BOUNDARY: the single largest contributor.** 0.75 pp of the 0.895 pp gap, removed by moving the modal box to clearance 8 H (130).
+- **PML: ruled out as a cause, and it acts in the OPPOSITE direction.** Making the absorber adequate **adds** +0.27 pp (129).
+- **DISPERSION: ruled out** by a factor 6-19 and by its h->0 behaviour (133).
+- **What remains.** **0.384 % at h=0.4**, consistent with the **0.443-0.447 %** extrapolated limit (132), and it is **UNEXPLAINED by any knob we can turn**: it survives fully converged boxes on both sides and both tones.
+- **Record it as an unexplained residual, not as a small error bar.** No uncertainty statement in this file may absorb it.
+
+## 135. OWNER CORRECTION - the alpha*(L/H) = 17.3 amplification.
+
+- **The amplified quantity was an artefact.** The true `alpha*(L/H)` values are **0.6635 / 0.6838 / 0.6996 dB/mm** across the three rungs, i.e. **SLOWLY RISING** at **3.3 % per rung**.
+- **Where 17.3 came from.** The drifting strip length L in the ratio, not alpha itself. 119's "constant at ~17.3" does not describe this box and must not be cited as evidence about alpha.
+- **Logged as owner error #41.** Owner error #40 (the alpha floor calibration) is already logged.
+
+## 136. TOOLING.
+
+- **(i) `--pml-mm`** added to `tools/host_ladder.py`, mutually exclusive with `--npml`, per-rung `npml = max(3, round(pml_mm/h))`; row carries `pml_mm`, meta carries `pml_mm` / `npml` (None in pml mode) / `npml_per_rung` / `npml_note`; a NOTE goes to stderr when the derived npml exceeds 24. See 129.
+- **(ii) `pick_mode` now ENFORCES the residual it always documented.** Previously it accepted any candidate whose residual was merely non-None, which is how an h=0.2, clearance 6 candidate with residual **9.86e-01** was once selected as the fundamental. `TOL_RESID` stays **1e-8**, and the failure path now names the best rejected residual and reports `residual n/N`.
+- **(iii) Memory.** `--mem-ceiling-mb` default raised **400 -> 2000 MB** for host use, with a startup cgroup check that warns when the cgroup limit under-cuts the ceiling (this container: **536870912 B = 512.0 MB**).
+
+## 137. RESOLVED as a LABEL BUG, not a mesh anomaly: the h=0.26667 `n_edges` item is closed without a rerun.
+
+- **Conclusion.** Nothing was ever wrong with the mesh. The pre-fix `GEO` format printed `free_e` in the `n_edges` column - the labelling defect recorded in **127**. `.scratch/d588/ladder3.log` predates that fix, so its three rung values **1262 / 2829 / 5020** are `free_e` counts, and they are **exactly** the `free_e` values the post-fix log `.scratch/d589/bin16.log` prints on the same three rungs. Three independent rows agreeing with `free_e` to the count is not a coincidence: it is one quantity printed twice, under two labels.
+- **The 42 is normal, not an anomaly.** Where both quantities are printed, `n_edges - free_e` is **42** at h=0.26667 (2871 - 2829), against **28** at h=0.4 (1290 - 1262) and **56** at h=0.2 (5076 - 5020). Those are the removed / Dirichlet edges, rising with the transverse perimeter cell count - exactly what is expected.
+- **Which run reported which, verbatim.** `.scratch/d588/ladder3.log:16` (three-rung bin-14 ladder, h=0.26667 rung):
+
+      GEO   h=0.26667 mm cell=0.266667 mm n_sub=6 n_strip=3 W_mm=0.800000 ny=39 nz=24 n_edges=2829 n_dof=3785
+
+  `.scratch/d589/bin16.log:17` (three-rung bin-16 ladder, h=0.26667 rung):
+
+      GEO   h=0.26667 mm cell=0.266667 mm n_sub=6 n_strip=3 W_mm=0.800000 ny=39 nz=24 n_edges=2871 free_e=2829 n_dof=3785
+
+- **The neighbouring rungs of the same two logs, for contrast.** d588: h=0.4 `n_edges=1262` (line 10), h=0.2 `n_edges=5020` (line 22). d589: h=0.4 `n_edges=1290 free_e=1262` (line 10), h=0.2 `n_edges=5076 free_e=5020` (line 23). In both logs `ny`, `nz`, `n_sub`, `n_strip`, `W_mm` and `n_dof` agree rung for rung, so no geometry input differed - and every d588 value is a `free_e` value.
+- **What this does and does not change.** The counts themselves were never wrong; only the column label they appeared under was, and **no rerun is needed to close this**. The one place it bites is **125**'s table, whose h=0.26667 `n_edges` cell reads **2829** - the `free_e` figure, because that row was transcribed from a pre-fix log - where the true edge count is **2871**; its h=0.4 (1290 / 1262) and h=0.2 (5076 / 5020) rows are post-fix and correct. Edges removed at that rung are **42**, not zero, and the row may be cited as such.
+- **Note.** The "OPEN OBSERVATION" of 125 on the same rung is this item; 125's bullet now points here, and no item is left open.
 

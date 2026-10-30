@@ -1,4 +1,22 @@
-"""58.5 -- clearance sweep on the SAME FDTD measurement pipeline as d584_widebox.
+"""SUPERSEDED TONE CONVENTION -- READ BEFORE CITING ANY NUMBER FROM THIS SCRIPT.
+
+This script PREDATES the ladder's DFT-bin tone convention.  It fixes the DFT bin
+INDEX (``K_BIN = 8``) and then takes ``f0 = K_BIN / (n_acc * dt)``, which at the
+recorded reference settings (CELL = 200 um, n_acc = 2096, span 7.992361853e-10 s)
+evaluates to **f = 10.009557 GHz**.  The ladder (``tools/host_ladder.py`` /
+``emfit/studies.py``) instead runs at the DFT bin of ITS OWN span, which is
+**f = 10.198626 GHz** -- a +1.888 % offset.  The two tones differ, so this
+script's ``beta``, ``alpha``, ``k0``, ``eps_eff`` and ``gap`` numbers are NOT
+comparable with ``host_ladder.py`` output: they must be rescaled by
+``k0_actual / k0_requested`` (or re-derived at matched frequency) before any
+comparison, and any comparison that does not do that is WRONG.  See
+``decisions.md`` 126 and the tone ledger line in ``decisions.md``.  Behaviour and
+physics are unchanged by this notice; ``main()`` prints the same warning to
+stderr at run time and names the frequency it is actually using.
+
+---
+
+58.5 -- clearance sweep on the SAME FDTD measurement pipeline as d584_widebox.
 
 One process, a batch of configurations, one JSON line appended (and flushed)
 per completed case.  Everything the measurement depends on is held fixed and
@@ -40,6 +58,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 import traceback
 
@@ -331,6 +350,15 @@ def main():
     ap.add_argument("--spec", required=True)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+
+    print(
+        "SUPERSEDED TONE: d585_sweep.py runs at f = K_BIN/(n_acc*dt) with "
+        "K_BIN=8, i.e. f = 10.009557 GHz at the recorded reference "
+        "(CELL=200 um, n_acc=2096, span=7.992361853e-10 s).  That is NOT the "
+        "ladder's DFT-bin tone (10.198626 GHz, +1.888 %).  Its beta/alpha/k0/"
+        "eps_eff/gap numbers are therefore NOT comparable with "
+        "host_ladder.py output without rescaling.  See decisions.md 126.",
+        file=sys.stderr, flush=True)
 
     with open(args.spec) as fh:
         spec = json.load(fh)

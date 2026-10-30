@@ -135,6 +135,31 @@ def rss_mb():
     return raw / 1024.0, "linux: ru_maxrss is KiB, divided by 1024"
 
 
+CGROUP_V2 = "/sys/fs/cgroup/memory.max"
+CGROUP_V1 = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+CGROUP_IMPLAUSIBLE_MB = 1e9           # cgroup v1 says "unlimited" with a huge number
+
+
+def cgroup_limit_mb():
+    """The cgroup memory limit in MB, or None when there is no finite limit."""
+    for path in (CGROUP_V2, CGROUP_V1):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                raw = fh.read().strip()
+        except OSError:
+            continue
+        if not raw or raw == "max":
+            return None
+        try:
+            value_mb = float(raw) / (1024.0 * 1024.0)
+        except ValueError:
+            continue
+        if value_mb >= CGROUP_IMPLAUSIBLE_MB:
+            return None
+        return value_mb
+    return None
+
+
 def git_rev():
     """Short HEAD, or a string saying why it could not be read."""
     try:
@@ -394,7 +419,8 @@ def pick_mode(rows):
     """The fundamental: the largest ``beta^2`` among the physical candidates."""
     good = [r for r in rows
             if r["guard_imag"] and r["guard_curl"] and r["guard_eps"]
-            and r["beta"] is not None and r["residual"] is not None]
+            and r["beta"] is not None and r["residual"] is not None
+            and r["residual"] < TOL_RESID]
     if not good:
         return None, []
     good.sort(key=lambda r: r["beta_sq"], reverse=True)
@@ -422,27 +448,62 @@ def no_candidate_reason(rows, rec, h_mm):
     n_imag = sum(1 for r in rows if not r["guard_imag"])
     n_curl = sum(1 for r in rows if not r["guard_curl"])
     n_eps = sum(1 for r in rows if not r["guard_eps"])
+    # FIX: the residual gate now actually rejects, so it has to be reportable.
+    # It used to be invisible here -- pick_mode accepted any non-None value --
+    # and that is how an h=0.2 candidate with residual 9.86e-01 became "the
+    # fundamental".  Naming the best rejected residual makes the verdict
+    # legible instead of a bare "none physical".
+    n_res = sum(1 for r in rows
+                if r["residual"] is None or not r["residual"] < TOL_RESID)
     killers = [name for name, count in (("imag", n_imag), ("curl", n_curl),
-                                        ("eps", n_eps)) if count == n]
+                                        ("eps", n_eps),
+                                        ("residual", n_res)) if count == n]
     ir = [r["imag_rel"] for r in rows]
-    head = (f"h = {h_mm:g} mm: {n} converged pairs, all rejected"
-            if killers else
-            f"h = {h_mm:g} mm: {n} converged pairs, none physical")
+    rr = [r["residual"] for r in rows if r["residual"] is not None]
+    res_best = f"{min(rr):.2e}" if rr else "n/a (no residual recorded)"
+    head = (f"h = {h_mm:g} mm: all {n} candidates rejected, best residual "
+            f"{res_best}" if killers else
+            f"h = {h_mm:g} mm: {n} converged pairs, none physical, best "
+            f"residual {res_best}")
     return (f"{head} -- per-guard rejections: imag {n_imag}/{n} "
             f"(needs |imag|/|lam| < {TOL_RESID:g}), curl {n_curl}/{n} "
             f"(needs |curl| >= {CURL_FLOOR:g}), eps {n_eps}/{n} "
-            f"(needs eps_eff < {ER - 1e-6:g}); guard(s) rejecting every "
+            f"(needs eps_eff < {ER - 1e-6:g}), residual {n_res}/{n} "
+            f"(needs |residual| < {TOL_RESID:g}); guard(s) rejecting every "
             f"pair: {', '.join(killers) if killers else 'none'}; "
             f"|imag|/|lam| over the {n} pairs spans [{min(ir):.3e}, "
             f"{max(ir):.3e}].  eigs itself converged (n_conv = {n}), so this "
             f"is a spectrum/guard verdict, not a solver failure")
 
 
+def npml_for_rung(args, h_mm):
+    """Absorber cells for this rung: a fixed count, or a fixed depth in mm.
+
+    The absorber's effect on beta and alpha tracks its thickness in
+    MILLIMETRES, not its cell count, so a fixed --npml thins as h refines
+    (2.4 mm at h = 0.4 down to 1.2 mm at h = 0.2).  --pml-mm holds the
+    thickness fixed and re-derives the count on every rung.
+    """
+    if args.pml_mm is None:
+        return int(args.npml)
+    npml = max(3, int(round(args.pml_mm / h_mm)))
+    if npml > 24:
+        print(f"NOTE  h = {h_mm:g} mm: --pml-mm {args.pml_mm:g} mm needs "
+              f"npml = {npml} cells per face (> 24 cells) -- that is where "
+              f"the box gets expensive", file=sys.stderr, flush=True)
+    return npml
+
+
 def run_rung(h_mm, args, rss_branch):
     """FDTD and modal on the same box at one cell size; returns the row."""
-    print(f"\n=== rung h = {h_mm:g} mm ===", flush=True)
+    npml = npml_for_rung(args, h_mm)
+    if args.pml_mm is None:
+        print(f"\n=== rung h = {h_mm:g} mm ===", flush=True)
+    else:
+        print(f"\n=== rung h = {h_mm:g} mm (pml {args.pml_mm:g} mm -> "
+              f"npml {npml}) ===", flush=True)
     n_strip, w_m, w_requested_m = resolve_strip(h_mm, args)
-    fd = run_fdtd(h_mm, clearance=args.clearance, npml=args.npml,
+    fd = run_fdtd(h_mm, clearance=args.clearance, npml=npml,
                   nsteps=args.nsteps, f0_hz=args.f0_ghz * 1e9,
                   n_strip=n_strip, w_m=w_m)
     gy = fd["geometry"]
@@ -579,6 +640,7 @@ def run_rung(h_mm, args, rss_branch):
         strip_width_m=float(w_m), strip_width_mm=float(w_m * 1e3),
         grid=[int(gy["nx"]), int(gy["ny"]), int(gy["nz"])],
         npml=int(gy["n_pml"]), n_top=int(gy["n_top"]),
+        pml_mm=(None if args.pml_mm is None else float(args.pml_mm)),
         nsteps=int(fd["nsteps"]), f_hz=float(gy["f"]),
         f_target_hz=float(gy["f_target"]), k0=float(k0),
         dt_s=float(gy["dt"]), n_acc=int(gy["n_acc"]),
@@ -700,17 +762,29 @@ def main(argv=None):
                          "(default 3.0)")
     ap.add_argument("--json", default=OUT_DEF, metavar="PATH",
                     help=f"where to write the results (default {OUT_DEF})")
-    ap.add_argument("--mem-ceiling-mb", type=float, default=400.0,
+    ap.add_argument("--mem-ceiling-mb", type=float, default=2000.0,
                     metavar="MB", help="abort above this peak RSS "
-                                       "(default 400)")
+                                       "(default 2000, which suits a "
+                                       "host/laptop run; a container should "
+                                       "pass a value below its cgroup limit)")
     ap.add_argument("--alpha-floor-db-per-mm", type=float, default=0.0139,
                     metavar="DB",
                     help="WARNING threshold for the ALPHA DIAGNOSTIC line "
                          "(dB/mm).  DIAGNOSTIC ONLY -- this never changes "
                          "exit status (default 0.0139)")
-    ap.add_argument("--npml", type=int, default=studies.MS_N_PML, metavar="N",
-                    help=f"absorbing cells per face "
-                         f"(default {studies.MS_N_PML})")
+    ap.add_argument("--npml", type=int, default=None, metavar="N",
+                    help=f"absorbing cells per face, held as a FIXED CELL "
+                         f"COUNT (default {studies.MS_N_PML}); mutually "
+                         f"exclusive with --pml-mm")
+    ap.add_argument("--pml-mm", type=float, default=None, metavar="MM",
+                    help="absorbing-layer thickness in mm, held FIXED across "
+                         "rungs: npml = max(3, round(MM/h)) re-derived on "
+                         "every rung.  The absorber must be a fixed "
+                         "PHYSICAL THICKNESS, not a fixed cell count -- with "
+                         "a fixed --npml the layer thins as h refines (2.4 mm "
+                         "at h = 0.4 down to 1.2 mm at h = 0.2), which "
+                         "silently deflates the beta gap toward zero.  "
+                         "Mutually exclusive with --npml.")
     ap.add_argument("--nsteps", type=int, default=None, metavar="N",
                     help="leapfrog steps; default scales MS_NSTEPS with the "
                          "cell so the record keeps its length in time")
@@ -727,6 +801,23 @@ def main(argv=None):
     ap.add_argument("--k", type=int, default=K_EIGS, metavar="K",
                     help=f"eigenpairs per rung (default {K_EIGS})")
     args = ap.parse_args(argv)
+    if args.npml is not None and args.pml_mm is not None:
+        ap.error("--npml and --pml-mm are mutually exclusive: --npml fixes "
+                 "the absorber's CELL COUNT while --pml-mm fixes its "
+                 "PHYSICAL THICKNESS (npml = round(pml_mm/h) per rung), so "
+                 "only one of them can define the layer")
+    if args.npml is None and args.pml_mm is None:
+        args.npml = int(studies.MS_N_PML)
+
+    cg_mb = cgroup_limit_mb()
+    if cg_mb is not None and cg_mb < args.mem_ceiling_mb:
+        print(f"WARN  CGROUP container memory limit {cg_mb:.1f} MB is below "
+              f"--mem-ceiling-mb {args.mem_ceiling_mb:.1f} MB: the effective "
+              f"ceiling is the cgroup limit ({cg_mb:.1f} MB), and the process "
+              f"will be OOM-killed BEFORE the tool's own check can fire -- "
+              f"pass --mem-ceiling-mb below {cg_mb:.1f} MB "
+              f"(e.g. {cg_mb * 0.8:.0f}) so the run aborts cleanly instead",
+              file=sys.stderr, flush=True)
 
     rungs = RUNGS_MM if args.max_rungs == 0 else RUNGS_MM[:max(args.max_rungs, 0)]
     if args.h is not None:
@@ -743,8 +834,10 @@ def main(argv=None):
                   if args.strip_cells is not None
                   else f"--strip-width-mm {args.strip_width_mm:g} mm "
                        f"(pinned in metres)")
+    pml_desc = (f"npml {args.npml}" if args.pml_mm is None else
+                f"pml {args.pml_mm:g} mm -> npml round(pml/h) per rung")
     print(f"boxes: h/H = 1/{H_SUB/1e-3:g}*n_sub, clearance {args.clearance:g} H, "
-          f"npml {args.npml}, strip {strip_desc}, "
+          f"{pml_desc}, strip {strip_desc}, "
           f"eps_r {ER:g}", flush=True)
     print(f"attenuation floor {args.alpha_floor_db_per_mm:g} dB/mm -- "
           f"DIAGNOSTIC ONLY, never an abort "
@@ -798,7 +891,12 @@ def main(argv=None):
         strip_pinned=("metres: n_strip = max(round(W/cell), 1) per rung"
                       if args.strip_cells is None
                       else "cells (DEPRECATED): W = n_strip*cell drifts with h"),
-        npml=int(args.npml),
+        npml=(None if args.pml_mm is not None else int(args.npml)),
+        pml_mm=(None if args.pml_mm is None else float(args.pml_mm)),
+        npml_per_rung=[int(r["npml"]) for r in rows],
+        npml_note="--pml-mm holds the absorber's physical thickness fixed, "
+                  "so npml is re-derived per rung and varies across the "
+                  "ladder; npml_per_rung is the count actually used",
         eps_r=ER, h_substrate_m=H_SUB,
         sigma_mult=SIGMA_MULT,
         sigma_per_rung=[float(r["k0"] ** 2 * ER * SIGMA_MULT) for r in rows],
@@ -820,6 +918,7 @@ def main(argv=None):
                          "(0.02145 / 0.0278 / 0.01388)",
         alpha_floor_enforced=False,
         mem_ceiling_mb=float(args.mem_ceiling_mb),
+        cgroup_limit_mb=(None if cg_mb is None else float(cg_mb)),
         f0_requested_ghz=float(args.f0_ghz),
         rss_branch=branch,
         rss_basis="resource.getrusage(RUSAGE_SELF).ru_maxrss, a process-wide "
