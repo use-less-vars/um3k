@@ -30,10 +30,13 @@ Where it runs
 -------------
 On the **host**, not in a container: ``python3 tools/host_ladder.py`` from the
 repository root, with numpy, scipy and the repository importable.  It reads
-the repository and writes exactly one file, the JSON named by ``--json`` --
-and it writes nothing at all if any rung fails a hard check, because a
-partial sweep presented as a sweep is a lie.  Hard failures, each of which
-stops the run with a non-zero exit:
+the repository and writes one file, the JSON named by ``--json``, on every run
+that starts the ladder -- including the runs that stop early.  ``status`` in
+that file says which one it is: ``"ok"`` is the whole sweep, ``"incomplete"``
+is the rungs that did finish, with ``abort_reason`` and ``failure`` naming the
+check that stopped the run and the rung it stopped on, so a partial sweep
+arrives labelled instead of withheld.  Hard failures, each of which stops the
+run with a non-zero exit:
 
   * peak RSS above ``--mem-ceiling-mb``;
   * an eigenpair whose residual exceeds ``1e-8``;
@@ -110,7 +113,7 @@ ALPHA_MEASURED = (
 
 
 class LadderError(RuntimeError):
-    """A rung failed a hard check.  The ladder stops and writes no JSON."""
+    """A rung failed a hard check.  The ladder stops and labels the JSON."""
 
 
 class MemoryCeilingError(LadderError):
@@ -182,6 +185,23 @@ def num(value, spec=".4f"):
     except (TypeError, ValueError):
         return "n/a"
     return f"{v:{spec}}" if math.isfinite(v) else "n/a"
+
+
+def opt_float(value):
+    """A plain float, or ``None`` when the fit refused to produce one.
+
+    ``None`` covers all three ways a number can be missing here: the driver
+    never computed it, it computed a NaN/inf, or it is not a number at all.
+    Storing ``None`` keeps a refused fit distinguishable from a measured zero
+    all the way into the JSON.
+    """
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +537,13 @@ def run_rung(h_mm, args, rss_branch):
     eps_fdtd = float(wave.eps_eff)
     ba = abs(complex(wave.gamma))
     n_stations = int(len(wave.station_x))
+    # the other three beta estimates the driver banks, kept beside the
+    # one-wave fit rather than folded into it: a refused fit is None, never a
+    # NaN dressed up as a measurement.
+    beta_two_wave = opt_float(getattr(wave, "beta_two_wave", None))
+    beta_two_station = opt_float(getattr(wave, "beta_two_station", None))
+    beta_model = opt_float(getattr(wave, "beta_model", None))
+    fit_residual_one = opt_float(getattr(wave, "fit_residual", None))
     print(f"  FDTD  cells={fd['n_cells']} nx,ny,nz="
           f"{gy['nx']},{gy['ny']},{gy['nz']} cell={gy['cell']*1e3:.6f} mm "
           f"nsteps={fd['nsteps']} f={float(gy['f'])/1e9:.6f} GHz "
@@ -628,6 +655,21 @@ def run_rung(h_mm, args, rss_branch):
           f"res={best['residual']:.3e} t_splu={rec['t_splu_s']:.2f} "
           f"t_eigs={rec['t_eigs_s']:.2f} wall={t_eig:.2f} s", flush=True)
 
+    # All four beta estimates on one line: the one-wave fit is what the rest
+    # of the table reports, so the two-wave fit, the two-station phase
+    # difference and the Hammerstad-Jensen value are shown beside it -- with
+    # the two spreads that say whether the number can be believed at all.
+    # A missing fit prints as n/a through num() and never aborts the rung.
+    d_one_two = (None if (beta_two_wave is None or not beta_fdtd)
+                 else 100.0 * (beta_two_wave - beta_fdtd) / beta_fdtd)
+    d_two_eig = (None if (beta_two_wave is None or not beta_eig)
+                 else 100.0 * (beta_two_wave - beta_eig) / beta_eig)
+    print(f"  BETA  fit_one={num(beta_fdtd)} fit_two={num(beta_two_wave)} "
+          f"two_stn={num(beta_two_station)} HJ_model={num(beta_model)} "
+          f"resid1={num(fit_residual_one, '.3e')}  "
+          f"(fit_one vs fit_two: {num(d_one_two, '+.2f')}% ; "
+          f"fit_two vs EIG: {num(d_two_eig, '+.2f')}%)", flush=True)
+
     gap_pct = 100.0 * (beta_eig - beta_fdtd) / beta_fdtd
     cavity_pct = 100.0 * (k0 * k0 * ER - beta_eig * beta_eig) / (k0 * k0 * ER)
     peak_mb, branch = rss_mb()
@@ -645,6 +687,9 @@ def run_rung(h_mm, args, rss_branch):
         f_target_hz=float(gy["f_target"]), k0=float(k0),
         dt_s=float(gy["dt"]), n_acc=int(gy["n_acc"]),
         beta_fdtd=beta_fdtd, beta_eig=beta_eig, rel_gap_pct=float(gap_pct),
+        beta_fit_one=beta_fdtd, beta_fit_two=beta_two_wave,
+        beta_two_station=beta_two_station, beta_model=beta_model,
+        fit_residual_one=fit_residual_one,
         alpha_fdtd_db_per_mm=alpha_db_mm, b_over_a=float(ba),
         alpha_scaled_L_over_H=float(alpha_scaled),
         alpha_floor_db_per_mm=float(args.alpha_floor_db_per_mm),
@@ -728,6 +773,26 @@ def print_table(rows):
           "(warning only, never an abort).")
 
 
+def write_payload(path, meta, rows):
+    """Write ``dict(meta=meta, rungs=rows)`` to ``path``; return the path.
+
+    Called from BOTH exits of the ladder, so what a run measured survives the
+    run.  ``meta["status"]`` is what tells the two files apart: ``"ok"`` is
+    the whole sweep, ``"incomplete"`` is a labelled fragment carrying
+    ``abort_reason`` and ``failure``, so a partial file can never be mistaken
+    for a sweep.  An empty ``rows`` still writes a valid payload -- a ladder
+    that died on its first rung is evidence too.
+    """
+    payload = dict(meta=meta, rungs=rows)
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    return path
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="host_ladder.py",
@@ -735,14 +800,20 @@ def main(argv=None):
         description=(
             "FDTD against the sparse mixed-pencil modal reference, on one box,\n"
             "across cell sizes h = H/n_sub (H = 1.6 mm).  Host-only: needs\n"
-            "numpy, scipy and the repository importable.  Writes only --json,\n"
-            "and writes nothing at all if a rung fails a hard check."),
+            "numpy, scipy and the repository importable.  Writes one file,\n"
+            "--json, on every run that starts the ladder: its status says\n"
+            "whether it is the whole sweep or the rungs that finished before\n"
+            "a hard check stopped the run."),
         epilog=(
-            "exit status 1 means a rung failed a HARD check: peak RSS over the\n"
-            "ceiling, an eigenpair whose residual exceeds 1e-8, or a modal box\n"
-            "that is not the FDTD box minus its absorbers (all compared in\n"
-            "metres).  The last line is always\n"
-            "'LADDER OK/FAIL rungs=N max_rel_gap=X%'.\n\n"
+            "exit status 1 means a rung failed a HARD check, or the process\n"
+            "ran out of its RSS budget: peak RSS over the ceiling, an\n"
+            "eigenpair whose residual exceeds 1e-8, or a modal box that is not\n"
+            "the FDTD box minus its absorbers (all compared in metres).  The\n"
+            "verdict line reads 'LADDER OK/FAIL rungs=N max_rel_gap=X%' (a\n"
+            "memory-ceiling abort says 'LADDER INCOMPLETE'), and the JSON is\n"
+            "written either way: meta.status is 'ok' or 'incomplete', and an\n"
+            "incomplete file names what stopped the run in meta.abort_reason\n"
+            "('ladder_error' / 'memory_ceiling') and meta.failure.\n\n"
             "the strip is pinned in METRES by --strip-width-mm (default\n"
             "0.8 mm); the cell count is re-derived every rung, so all rungs\n"
             "mesh the SAME line.  --strip-cells is DEPRECATED: it pins the\n"
@@ -866,17 +937,17 @@ def main(argv=None):
     wall_total = time.perf_counter() - t_start
 
     if failed is not None:
-        peak_mb, _ = rss_mb()
-        print(f"\nLADDER FAIL rungs={len(rows)} max_rel_gap="
-              f"{(max((r['rel_gap_pct'] for r in rows), default=0.0)):.4f}%: "
+        gap_max = max((r["rel_gap_pct"] for r in rows), default=0.0)
+        print(f"\nLADDER FAIL rungs={len(rows)} max_rel_gap={gap_max:.4f}%: "
               f"{failed}")
-        print(f"no JSON written to {args.json}; {wall_total:.1f} s, peak "
-              f"{peak_mb:.1f} MB")
-        return 1
-
-    print_table(rows)
-    gap_max = max(abs(r["rel_gap_pct"]) for r in rows)
-    peak_mb, _ = rss_mb()
+        peak_mb, _ = rss_mb()
+    else:
+        print_table(rows)
+        gap_max = max(abs(r["rel_gap_pct"]) for r in rows)
+        peak_mb, _ = rss_mb()
+    # A ladder that wrote no rung has no tone to report; None keeps the keys
+    # present in the payload instead of dropping the whole meta block.
+    tone = tone_facts(rows[0]) if rows else (None,) * 5
     meta = dict(
         command_line=" ".join([os.path.basename(sys.argv[0])] + sys.argv[1:]),
         argv=list(sys.argv), git_rev=git_rev(),
@@ -929,23 +1000,25 @@ def main(argv=None):
                      assembly_s=float(sum(r["t_assembly_s"] for r in rows))),
         max_abs_rel_gap_pct=float(gap_max),
         peak_rss_mb=float(peak_mb),
-        tone_f_requested_ghz=tone_facts(rows[0])[0],
-        tone_f_actual_ghz=tone_facts(rows[0])[1],
-        tone_detune_pct=tone_facts(rows[0])[2],
-        tone_warn=tone_facts(rows[0])[4],
-        complete=(aborted is None),
-        abort_reason=(None if aborted is None else "memory_ceiling"),
-        status=("ok" if aborted is None else "incomplete"),
+        tone_f_requested_ghz=tone[0],
+        tone_f_actual_ghz=tone[1],
+        tone_detune_pct=tone[2],
+        tone_warn=tone[4],
+        complete=(aborted is None and failed is None),
+        abort_reason=("memory_ceiling" if aborted is not None
+                      else ("ladder_error" if failed is not None else None)),
+        status=("ok" if (aborted is None and failed is None)
+                else "incomplete"),
     )
-    payload = dict(meta=meta, rungs=rows)
-    path = args.json
-    parent = os.path.dirname(os.path.abspath(path))
-    if parent and not os.path.isdir(parent):
-        os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2, sort_keys=True)
-        fh.write("\n")
+    if failed is not None:
+        meta["failure"] = failed
+    path = write_payload(args.json, meta, rows)
 
+    if failed is not None:
+        print(f"\npartial JSON: {path} ({len(rows)} of {len(rungs)} rungs, "
+              f"status incomplete)")
+        print(f"wall total {wall_total:.1f} s, peak RSS {peak_mb:.1f} MB")
+        return 1
     print(f"\nJSON: {path}")
     print(f"wall total {wall_total:.1f} s "
           f"(FDTD {meta['timings']['fdtd_s']:.1f} s, "

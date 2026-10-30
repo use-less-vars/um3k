@@ -12,7 +12,8 @@ Three questions, one cross-section:
 ``refine``
     fixed clearance, ``H / h = 8, 12, 16``: the observed order ``p`` of
     ``beta(h) = beta_exact + C h^p`` against the Hammerstad quasi-static
-    ``beta = 365 rad/m``.
+    ``beta`` computed at the run's own tone by :func:`hammerstad_beta`
+    (the historical frozen ``365 rad/m`` is kept only as provenance).
 ``validate``
     the two solvers on one geometry: the sparse ARPACK engine
     (:func:`emfit.mode2d.solve_modes`) against the dense mixed QZ
@@ -44,12 +45,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import time
 
 import numpy as np
 
 from emfit import mode2d
+from emfit.microstrip import Microstrip
 
 C0 = 299792458.0
 
@@ -58,7 +61,81 @@ W_DEF = 8e-4
 ER_DEF = 4.4
 FREQ_DEF = 10.0096e9
 TOL = 1e-9
-HAMMERSTAD_BETA = 365.0
+# ``HAMMERSTAD_BETA = 365.0`` is what this file used to carry.  Retired: it is
+# **0.374 % low** against the quasi-static value at 10.0096 GHz (366.3698 rad/m)
+# and **2.220 % low** at 10.198626 GHz (373.2885 rad/m), and it never said which
+# tone it had been computed at.  Kept here as provenance only; it is not the
+# graded basis and nothing compares against it any more.
+HAMMERSTAD_BETA_HISTORICAL = 365.0
+
+
+def hammerstad_beta_qs(f, *, W=W_DEF, H=H_DEF, eps_r=ER_DEF, t=0.0):
+    """Quasi-static Hammerstad-Jensen beta (rad/m).  Dispersion NOT applied.
+
+    This is ``emfit.microstrip.Microstrip.beta(f)`` -- the same quasi-static
+    model ``tools/host_ladder.py`` reaches through ``line.beta(f0)``.  Despite
+    taking ``f`` as an argument it applies **no** dispersion: the frequency
+    enters only through the ``k0`` factor, and the effective permittivity is the
+    zero-frequency one.  At 10.198626 GHz that leaves it **3.04 % below** the
+    dispersive value, so it is a reference for the quasi-static limit and not
+    the graded basis.
+    """
+    return float(Microstrip(w=W, h=H, eps_r=eps_r, t=t).beta(f))
+
+
+def kirschning_jansen_peff(f_hz, W, H, eps_r):
+    """Kirschning-Jansen dispersion exponent ``P(f)`` (dimensionless).
+
+    Kirschning & Jansen, IEEE Trans. MTT-32 no. 1, pp. 83-90, Jan 1984, with
+    ``fh = f[GHz] * h[mm]`` and ``u = W/H``; ``W`` and ``H`` in metres, ``f_hz``
+    in Hz.  ``emfit`` does **not** implement this, so it is written out here.
+    """
+    u = W / H
+    fh = (f_hz * 1e-9) * (H * 1e3)                    # f_GHz * h_mm
+    p1 = (0.27488 + (0.6315 + 0.525 / (1.0 + 0.0157 * fh) ** 20) * u
+          - 0.065683 * math.exp(-8.7513 * u))
+    p2 = 0.33622 * (1.0 - math.exp(-0.03442 * eps_r))
+    p3 = 0.0363 * math.exp(-4.6 * u) * (1.0 - math.exp(-((fh / 3.87) ** 4.97)))
+    p4 = 1.0 + 2.751 * (1.0 - math.exp(-((eps_r / 15.916) ** 8)))
+    return p1 * p2 * ((0.1844 + p3 * p4) * fh) ** 1.5763
+
+
+def hammerstad_beta(f, *, W=W_DEF, H=H_DEF, eps_r=ER_DEF, t=0.0, verbose=True):
+    """Hammerstad-Jensen beta (rad/m) at the run's actual tone, BOTH bases.
+
+    Two numbers that are never conflated, returned as a dict:
+
+    * ``beta_qs`` / ``eps_eff_qs`` -- :func:`hammerstad_beta_qs`, i.e.
+      ``emfit.microstrip.Microstrip.beta(f)``.  That model is **quasi-static**:
+      it does NOT apply the Kirschning-Jansen correction, and its ``eps_eff`` is
+      the zero-frequency value.
+    * ``beta`` / ``eps_eff_f`` / ``P_f`` -- the same quasi-static ``eps_eff``
+      pushed through the Kirschning-Jansen dispersion exponent, which is
+      implemented here (:func:`kirschning_jansen_peff`) because ``emfit`` does
+      not provide it:
+      ``eps_eff_f = eps_r - (eps_r - eps_eff_qs) / (1 + P)``, ``beta =
+      k0*sqrt(eps_eff_f)``.  **THIS is the graded/printed basis** (decisions.md
+      144, 146).
+    """
+    k0 = 2.0 * math.pi * f / C0
+    beta_qs = hammerstad_beta_qs(f, W=W, H=H, eps_r=eps_r, t=t)
+    eps_qs = (beta_qs / k0) ** 2
+    p_f = kirschning_jansen_peff(f, W, H, eps_r)
+    eps_f = eps_r - (eps_r - eps_qs) / (1.0 + p_f)
+    out = dict(beta=float(k0 * math.sqrt(eps_f)), beta_qs=beta_qs,
+               f_hz=float(f), eps_eff_qs=eps_qs, eps_eff_f=eps_f, P_f=p_f)
+    if verbose:
+        print(f"HAMMERSTAD beta={out['beta']:.4f} rad/m @ f={f/1e9:.6f} GHz "
+              f"(HJ + Kirschning-Jansen, dispersive) "
+              f"(W={W*1e3:.4f} H={H*1e3:.4f} eps_r={eps_r:.4f} "
+              f"eps_eff_qs={eps_qs:.6f} P={p_f:.6f} eps_eff_f={eps_f:.6f})"
+              f"  [quasi-static, dispersion NOT applied: "
+              f"{beta_qs:.4f} rad/m]  (historical hardcoded value "
+              f"{HAMMERSTAD_BETA_HISTORICAL:g} \u2014 superseded, computed "
+              f"basis now recorded)", flush=True)
+    return out
+
+
 OUT_DEF = "/workspace/.scratch/d585/modal.json"
 
 
@@ -132,12 +209,20 @@ def f_sub_transverse(mesh, geo, e_t, *, er=ER_DEF):
 # ---------------------------------------------------------------------------
 # the two engines
 # ---------------------------------------------------------------------------
-def _header(geo, closure, engine, bounds, n_free_edge, n_free_node):
+def _header(geo, closure, engine, bounds, n_free_edge, n_free_node,
+            *, er=ER_DEF):
+    f_run = float(geo["k0"] * C0 / (2.0 * np.pi))
+    hbs = hammerstad_beta(f_run, W=geo["W"], H=geo["H"], eps_r=er,
+                          verbose=False)
     return dict(
         engine=engine, closure=closure, h=geo["h"], cell=geo["cell"],
         clearance=geo["clearance"], clearance_lateral=geo["clearance_lateral"],
         ny=geo["ny"], nz=geo["nz"], ly=geo["ly"], lz=geo["lz"],
         h_ratio=geo["h_ratio"], k0=geo["k0"],
+        hammerstad_beta=hbs["beta"], hammerstad_beta_qs=hbs["beta_qs"],
+        hammerstad_beta_f_hz=hbs["f_hz"],
+        hammerstad_eps_eff_qs=hbs["eps_eff_qs"],
+        hammerstad_eps_eff_f=hbs["eps_eff_f"], hammerstad_P_f=hbs["P_f"],
         n_free_edge=n_free_edge,
         n_free_node=n_free_node if n_free_node is not None else None,
         n_dof=n_free_edge + (n_free_node or 0),
@@ -160,7 +245,7 @@ def _modes_from(mode, rec, f_sub_chosen, er):
                    else None),
             is_builtin_pick=bool(i == mode.chosen),
             physical=bool(1.0 < e_eff < er),
-            beta_over_hammerstad=float(np.sqrt(b_sq) / HAMMERSTAD_BETA),
+            beta_over_hammerstad=float(np.sqrt(b_sq) / rec["hammerstad_beta"]),
         ))
     return rec
 
@@ -172,7 +257,7 @@ def solve_arpack(geo, closure, *, er=ER_DEF, k=6, max_dof=None,
     bounds = boxes(geo)[closure]
     eps = eps_fun(geo, er)
     n_fe = int((~mode2d.pec_edge_mask(mesh, bounds)).sum())
-    rec = _header(geo, closure, "arpack", bounds, n_fe, None)
+    rec = _header(geo, closure, "arpack", bounds, n_fe, None, er=er)
     mode, err = None, None
     for mult in shifts:
         sigma = mult * k0 * k0 * er
@@ -218,7 +303,7 @@ def solve_deflated(geo, closure, *, er=ER_DEF, k=6, max_dof=None,
     bounds = boxes(geo)[closure]
     eps = eps_fun(geo, er)
     n_fe = int((~mode2d.pec_edge_mask(mesh, bounds)).sum())
-    rec = _header(geo, closure, "deflated", bounds, n_fe, None)
+    rec = _header(geo, closure, "deflated", bounds, n_fe, None, er=er)
     mode, err = None, None
     for mult in shifts:
         sigma = mult * k0 * k0 * er
@@ -259,7 +344,7 @@ def solve_dense(geo, closure, *, er=ER_DEF, max_dof=1400):
     eps = eps_fun(geo, er)
     n_fe = int((~mode2d.pec_edge_mask(mesh, bounds)).sum())
     n_fn = int((~mode2d.pec_node_mask(mesh, bounds)).sum())
-    rec = _header(geo, closure, "mixed_dense", bounds, n_fe, n_fn)
+    rec = _header(geo, closure, "mixed_dense", bounds, n_fe, n_fn, er=er)
     if n_fe > max_dof:
         rec["status"] = (f"skipped: {n_fe} free edges exceed --max-dof={max_dof} "
                          f"(dense QZ)")
@@ -380,9 +465,11 @@ def cmd_airsweep(args, out):
 
 def cmd_refine(args, out):
     name = args.engine or ENGINE_DEF
+    hb = hammerstad_beta(FREQ_DEF, W=args.W, H=args.H, eps_r=args.er,
+                         verbose=False)["beta"]
     print(f"# refine: closure={args.closure}, engine={name}, "
           f"clearance={args.clearance:g}H, Hammerstad beta = "
-          f"{HAMMERSTAD_BETA:g} /m", flush=True)
+          f"{hb:g} /m (HJ + Kirschning-Jansen, dispersive)", flush=True)
     pts = []
     for h in [float(v) for v in args.hs.split(",")]:
         geo = section(h, args.clearance, H=args.H, W=args.W,
@@ -435,8 +522,16 @@ def cmd_validate(args, out):
         print(f"  -> quasi-TEM: dense {bd:.3f} /m, arpack {ba:.3f} /m, "
               f"rel diff {rel*100:.3f}%  => "
               f"{'AGREE (<1%)' if agree else 'DISAGREE (>=1%)'}", flush=True)
+        hbs = hammerstad_beta(FREQ_DEF, W=args.W, H=args.H, eps_r=args.er,
+                              verbose=False)
         out.append(dict(kind="validate", beta_dense=bd, beta_arpack=ba,
-                        rel_diff=rel, agree=bool(agree)))
+                        rel_diff=rel, agree=bool(agree),
+                        hammerstad_beta=hbs["beta"],
+                        hammerstad_beta_qs=hbs["beta_qs"],
+                        hammerstad_beta_f_hz=hbs["f_hz"],
+                        hammerstad_eps_eff_qs=hbs["eps_eff_qs"],
+                        hammerstad_eps_eff_f=hbs["eps_eff_f"],
+                        hammerstad_P_f=hbs["P_f"]))
         flush(out, args.out)
     return out
 
@@ -497,10 +592,14 @@ def _report_order(pts, out, args):
     if len(pts) < 3:
         print("  (need >= 3 meshes for a 3-point order)", flush=True)
         return
-    print("  H/h     cell/mm    beta/m   vs Hammerstad", flush=True)
+    hbs = hammerstad_beta(FREQ_DEF, W=args.W, H=args.H, eps_r=args.er,
+                          verbose=False)
+    hb = hbs["beta"]
+    print("  H/h     cell/mm    beta/m   vs Hammerstad (KJ, dispersive)",
+          flush=True)
     for cell, beta, hr in pts:
         print(f"  {hr:5.2f}  {cell*1e3:8.5f}  {beta:9.4f}  "
-              f"{beta-HAMMERSTAD_BETA:+8.4f}", flush=True)
+              f"{beta-hb:+8.4f}", flush=True)
     (c1, b1, r1), (c2, b2, r2), (c3, b3, r3) = pts[-3:]
     try:
         p, beta0, c = _order_triple(c1, b1, c2, b2, c3, b3)
@@ -517,16 +616,22 @@ def _report_order(pts, out, args):
                cell_1=c1, cell_2=c2, cell_3=c3,
                beta_1=b1, beta_2=b2, beta_3=b3,
                order_p=p, beta_exact=beta0, C=c,
-               beta_exact_minus_hammerstad=beta0 - HAMMERSTAD_BETA,
-               beta_exact_over_hammerstad=beta0 / HAMMERSTAD_BETA,
+               beta_exact_minus_hammerstad=beta0 - hb,
+               beta_exact_over_hammerstad=beta0 / hb,
+               hammerstad_beta=hbs["beta"],
+               hammerstad_beta_qs=hbs["beta_qs"],
+               hammerstad_beta_f_hz=hbs["f_hz"],
+               hammerstad_eps_eff_qs=hbs["eps_eff_qs"],
+               hammerstad_eps_eff_f=hbs["eps_eff_f"],
+               hammerstad_P_f=hbs["P_f"],
                note="3-point fit beta0 + C h^p through the three finest "
                     "meshes (bisection on f(p), non-uniform cells allowed)")
     out.append(rec)
     flush(out, args.out)
     print(f"  triple H/h {r1:g}/{r2:g}/{r3:g}: p = {p:.4f}, C = {c:+.4g}, "
-          f"beta0 = {beta0:.4f} /m ({beta0-HAMMERSTAD_BETA:+.4f} vs "
-          f"Hammerstad {HAMMERSTAD_BETA:g}, "
-          f"{100.0*(beta0/HAMMERSTAD_BETA - 1.0):+.3f}%)", flush=True)
+          f"beta0 = {beta0:.4f} /m ({beta0-hb:+.4f} vs "
+          f"Hammerstad {hb:.4f}, "
+          f"{100.0*(beta0/hb - 1.0):+.3f}%)", flush=True)
 
 
 def main(argv=None):
@@ -555,6 +660,8 @@ def main(argv=None):
     for name in ("closures", "airsweep", "refine", "validate"):
         sub.add_parser(name, parents=[common])
     args = p.parse_args(argv)
+
+    hammerstad_beta(FREQ_DEF, W=args.W, H=args.H, eps_r=args.er)
 
     out = []
     {"closures": cmd_closures, "airsweep": cmd_airsweep, "refine": cmd_refine,
