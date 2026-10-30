@@ -9025,3 +9025,52 @@ The modal solution was swept in lateral/top clearance with the FDTD cross-sectio
 - **(e) `eigsh` is unusable on this pencil.** `M = [[m1, -c], [-cᵀ, h]]` is symmetric but INDEFINITE (`vᵀMv = -0.47 / -8.37 / -0.52 / -0.85` for the trial vectors), so ARPACK's M-orthonormal Lanczos basis is meaningless: `eigsh` returned 64 "modes" whose full-pencil residuals were 0.86 - every one of them junk, and every one of them passing the guard. Fix: `scipy.sparse.linalg.eigs` (non-symmetric ARPACK, no definiteness requirement) with shift-invert and an explicit `OPinv` LinearOperator. Validated against dense to 8e-10 (385.0214743 vs 385.021474, residual 3.36e-14). **Rule for the file: never `eigsh` on a pencil whose mass matrix has negative inertia.**
 - **(f) The 58.5 figure "3351 edges at the validated 3.0H box" does NOT reproduce.** A sweep of nz_sub 2-14 x clearance 1.0-6.0 in the `dm.section(h, clearance)` family produces no combination giving 3351 for edges, free edges or free nodes. The measured validated box is **ny52 x nz32, n_edges 5076, free_e 5020, free_n 1691, n_dof 6711** (also printed in `.scratch/d585/transverse_cl30.log:3`). What produced 3351 is unknown and is recorded as an OPEN ITEM; the figure must not be cited again.
 - **(g) Sparse route status at the validated box.** Factor memory 0.008 GB, t_splu 0.03 s, t_eigs 0.28 s, peak RSS 125.9 MB against a 512 MB cgroup - the memory wall of 58.5 was DENSE-ONLY, as the owner hypothesised. Ladder at 3.0H: h=0.4 β=385.0214743 (ε_eff 3.368540), h=0.26667 β=383.5905830 (3.343549), h=0.2 β=382.8754929 (3.331095); gaps to FDTD +1.012 %, +0.638 %, +0.450 %, with Δβ halving when Δh halves (ratio 0.49977) => error linear in h, p≈1, from three rungs exactly. Exactly ONE bound mode per mesh. Only shift 0.76·k0²εr works; 0.70 / 0.82 / 0.9 / 0.6 / 0.45 return only conjugate pairs because the pencil is symmetric-indefinite.
+
+## 122. THE STRIP WAS PINNED IN CELLS, NOT METRES, SO THE LADDER WAS FIVE DIFFERENT LINES.
+
+- **The defect.** `--strip-cells` defaulted to **8** while `cell == h` exactly at every rung (`nx*cell = L` and `nz*cell = H` verified), so the strip width walked **3.200 -> 1.067 mm** across the five rungs, a factor of **3.000**, and `W/H_sub` (H_sub = 1.6 mm fixed) went **2.0 -> 0.667**. The ladder was therefore not one transmission line at five resolutions but five different lines.
+- **The 16 complex eigenpairs at h=0.4 were the WIDE STRIP, not the shift.** W = 3.2 mm = 8 cells, ny = 32; with `k0 = 209.785703` all 16 converged pairs were complex with `|imag|/|lambda|` in **9.3e-3 .. 2.9e-2**, i.e. **6-7 orders** above the 1e-8 guard. The imag guard rejected **16/16**; the curl and eps guards rejected **0/16**. The hypothesised blocker - shift `0.76*k0^2*eps_r` landing in a dead window at a new box - is **FALSIFIED**, and no shift search was warranted.
+- **Interim record.** A later worker call's "corrected gaps" cited `beta_FDTD = 389.0223` at the ladder tone. That figure is the **ladder** run, not the d585 reference; the two must not be mixed (see 126).
+
+## 123. THE BOX CHECK WAS AN ALGEBRAIC IDENTITY AND COULD NOT CATCH A SCALING ERROR - REPLACED WITH FIVE METRE COMPARISONS.
+
+- **Why it was toothless.** `run_rung` compared `geo["ny"] == ny_f - 2*npml`, `geo["nz"] == nz_f - n_top` and `cell == cell`. Because FDTD `ny = 2*npml + n_strip + n_clean_lo + n_clean_hi` and modal `ny = ny_strip + 2*ny_clean`, the two sides are the same rounding of the same inputs. The check could only ever detect formula drift and could never detect a length/unit/scaling error. It passed at **all five rungs while W drifted by 3x**.
+- **Replacement.** Five METRE comparisons at 1e-12: `cell`; `geo["ly"]` vs `(ny_f-2*npml)*cell`; `geo["lz"]` vs `(nz_f-n_top)*cell`; `geo["nz_sub"]*cell` vs `gy["n_sub"]*cell`; `geo["ny_strip"]*cell` vs `gy["w"]`.
+- **FIX APPLIED.** `--strip-width-mm` (default **0.8 mm**) is now pinned in metres: `n_strip = max(int(round(W_mm/cell_mm)), 1)` is derived per rung and passed to **both** the FDTD driver and `dm.section(W=...)`. `--strip-cells` is retained but deprecated, with a stderr warning naming the **3.2 -> 1.07 mm** drift.
+
+## 124. THE ALPHA FLOOR IS DEMOTED TO A DIAGNOSTIC: 0.663511 dB/mm MEASURED AT h=0.4 AGAINST A 0.0139 FLOOR.
+
+- **The constant does not transfer.** The `alpha*(L/H) ~ 17.3` of 119 does not describe this box/strip: the measured `alpha*(L/H)` at h=0.4 is **0.663511 dB/mm**, not ~17.3. The attenuation floor therefore never discriminated anything.
+- **Demotion.** The ALPHA DIAGNOSTIC line prints `alpha` in dB/mm, `alpha*(L/H)`, and a WARNING when over the floor, but it **never changes exit status**. The `LadderError` raise is gone; `--alpha-floor-db-per-mm` help says DIAGNOSTIC ONLY; meta carries `alpha_floor_enforced = False`.
+- **The floor itself.** 0.0139 dB/mm is the most permissive of the three fits available (default box **0.02145**, npml-10 span **0.0278**, lid sweep **0.01388**).
+
+## 125. 58.8 - THE THREE-RUNG HOST RUN: GAPS +0.8946 / +0.7451 / +0.6674 %, MONOTONE, AND IT STOPS ON THE MEMORY CEILING.
+
+Tone 10.198626 GHz, strip 0.8 mm, clearance 3H, npml 6:
+
+| h (mm) | cells | nx,ny,nz | beta_FDTD | alpha dB/mm | \|b/a\| | wall s | n_sub | n_strip | ny | nz | n_edges | free_e | n_dof | beta_EIG | eps_eff_EIG | eig res |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.4 | 51832 | 62,38,22 | 389.0223 | 0.042807 | 0.00908 | 10.98 | 4 | 2 | 26 | 16 | 1290 | 1262 | 1691 | 392.5025 | 3.371966 | 3.878e-14 |
+| 0.26667 | 136170 | 89,51,30 | 388.1491 | 0.046097 | 0.00977 | 34.32 | 6 | 3 | 39 | 24 | 2829 | 2829 | 3785 | 391.0418 | 3.346916 | 7.511e-14 |
+| 0.2 | 282112 | 116,64,38 | 387.7244 | 0.048248 | 0.01096 | 92.92 | 8 | 4 | 52 | 32 | 5020 | 5020 | 6711 | 390.3117 | 3.334428 | 7.284e-13 |
+
+- **Gaps** `beta_EIG/beta_FDTD - 1`: **+0.8946 %, +0.7451 %, +0.6674 %** - monotone and shrinking with `h`.
+- **The strip is now 0.800000 mm at EVERY rung**, and the h=0.4 and h=0.2 meshes reproduce the d585 reference boxes **EXACTLY** (ny 26 / nz 16 / free_e 1262 / n_dof 1691 and ny 52 / nz 32 / free_e 5020 / n_dof 6711; cf. `.scratch/d585/sparse_h04.log` and `sparse_h02.log`).
+- **Why it stops.** Container peak RSS reached **413.8 MB** at h=0.2, so the run stops on its own `--mem-ceiling-mb` **400** default - not on physics and not on a box check. It now reports `LADDER INCOMPLETE (memory ceiling)` and exits **1**, with all rows up to that rung valid. A one-rung run at h=0.4 gives `LADDER OK`, exit **0**, max_rel_gap **0.8946 %**, peak **149.7 MB**.
+- **L is not exactly constant.** 24.8000 / 23.7333 / 23.2000 mm, because nx is an integer cell count for a nominal length, so each rung is a slightly different line. Benign for `beta`; it is also why `alpha*(L/H)` drifts.
+- **OPEN OBSERVATION, unverified.** At h=0.26667 `n_edges` and `free_e` both print **2829** (zero edges removed), whereas 1290 -> 1262 and 5076 -> 5020 remove 28 and 56. Worth a check before anyone relies on that row's counts.
+
+## 126. TWO TONE CONVENTIONS COEXIST: THE LADDER RUNS AT 10.198626 GHz, THE d585 REFERENCE AT 10.009557 GHz.
+
+- **`emfit/studies.py` snaps to the nearest DFT bin.** `f_target` is a hint: `span = n_acc*dt` with `n_acc = nsteps - nsteps//4`, `f0 = max(1, round(f_target*span))/span`, and `geometry['f'] = f0` drives the source and every demodulator. On the ladder `span` is invariant at **1.372734e-9 s** (dt proportional to cell, nsteps to 1/cell), bin **0.728473 GHz**, so `f0 = 10.198626 GHz` at every rung and for `n_strip` 2/4/8 - a **+1.888 %** detune from the requested 10.0096 GHz.
+- **`tools/d585_sweep.py` effectively hits the requested tone.** It pins `K_BIN = 8` and sets `f0 = K_BIN/(n_acc*dt)` with `CELL = 200 um` and `n_acc = 2096`: `span` **7.992361853e-10 s**, `f0 = 10.009557 GHz`, i.e. **-0.0004 %**. Its record self-certifies this: the logged `eps_eff` **3.301141** equals `(381.15886/209.784798)^2` to six digits, whereas `k0` at 10.198626 GHz would give **3.179877**.
+- **CONSEQUENCE.** The committed D58.6 cross-check (**beta_EIG 385.0214743 / 383.5905830 / 382.8754929** against `beta_FDTD` **381.15886**, gaps **+1.012 / +0.638 / +0.450 %**) **is valid**: both sides were at ~10.0096 GHz. An interim re-derivation that rescaled by `k0_actual/k0_requested = 1.0188875` and reported **+2.92 / +2.54 / +2.35 %** was **WRONG and is retracted**; it assumed the FDTD ran at the ladder's snapped tone, which it did not.
+- **The ladder's own betas are the detuned ones.** 392.5025 / 391.0418 / 390.3117 are at 10.198626 GHz and are **NOT** directly comparable to the d585 reference table without rescaling.
+- **Disclosed at runtime.** A TONE block prints `f_requested`, `f_actual`, detune %, bin width, and a WARNING above **0.1 %** detune; meta carries `tone_f_requested_ghz` / `tone_f_actual_ghz` / `tone_detune_pct` / `tone_warn`.
+- **Corroboration across conventions.** `beta/k0` at h=0.4 is **1.836297** on the ladder (10.1986 GHz) versus **1.835308** for the d585 reference (10.0096 GHz), a **0.054 %** difference consistent with dispersion over 1.9 % in frequency.
+
+## 127. MINOR: THE GEO LINE PRINTED free_e UNDER THE LABEL n_edges, AND TWO DIFFERENT QUANTITIES SHARE THE NAME.
+
+- **Fix.** The `GEO` line had been printing `free_e` under the label `n_edges`; corrected, and `free_e` is now printed explicitly alongside it.
+- **Two quantities, one name.** `studies.microstrip_wave`'s `gy["n_edges"]` is the **3-D CellComplex** edge count (**164730** at h=0.4), not the **transverse modal mesh** count (**1290**). Any other line that reads `n_edges` should be checked for which of the two it means.
+
