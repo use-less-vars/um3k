@@ -8884,3 +8884,86 @@ tracks the amplitude loss exactly.
 - NEW (58.4): a SECOND, independent, reference-free failing null test. Any bound mode of a structure whose maximum permittivity is eps_r_max must satisfy beta <= k0*sqrt(eps_r_max) = 440.05 /m at f0 = 10.009556808 GHz. Measured: CASE A 478.513 /m (+8.7 % over), CASE B 472.790 /m (+7.4 % over). There are two anomalies (alpha != 0, beta over bound), not one; a PML-inside-the-tail story explains alpha but not obviously beta. Both stay alive.
 - NOTE (58.4): "the two-field split does not respond to trial beta" is a NON-FINDING and is struck: a_f = (a_e + Z*a_h)/2 is a local single-station decomposition with no beta in it, so it cannot respond. What matters is that the CLASSICAL multi-station iteration is beta-invariant — its pair slope gives +119.68 /m at every trial beta in ±10 % (CASE B), 111.80 /m in CASE A — which is the real reason to distrust the classical path.
 
+## 102. DISPATCH 58.5 — THE TRANSVERSE BOX WAS THE WHOLE ERROR.
+
+For three dispatches the beta error was attributed to (i) the substrate/air split arithmetic, (ii) H de-staggering, (iii) the truncation window. All three are wrong. The transverse box (air clearance around the strip) was never varied. When it was varied, at fixed h=0.2mm, nx=104, stations 40..70, n_acc=2096, W=0.8mm, H=1.6mm, er=4.4:
+  clearance | ny x nz | cells  | wall  | alpha /m | beta /m  | beta/bound
+  1.50H     | 36 x 24 |  89856 | 26.4s | 18.28932 | 386.3694 | 0.878016
+  1.75H     | 40 x 26 | 108160 | 35.5s | 13.99349 | 384.1284 | 0.872923
+  2.00H     | 44 x 28 | 128128 | 38.2s | 11.08903 | 382.8135 | 0.869935
+  2.50H     | 52 x 32 | 173056 | 51.8s |  7.63509 | 381.5678 | 0.867104
+  3.00H     | 60 x 36 | 224640 | 68.5s |  5.83772 | 381.1589 | 0.866175
+  4.00H     | 76 x 44 | 347776 | 105.2s|  4.31939 | 381.1630 | 0.866184
+The 3.00H row reproduces the previously committed value exactly, which validates the harness. beta converges: 2.50H -> 3.00H is 0.107%, 3.00H -> 4.00H is 0.0011%. beta/bound moves 1.0744 -> 0.866175, i.e. from violating the dielectric bound to 13.4% under it. alpha falls by a factor 20.4 (18.29 -> 4.32 /m). THE alpha IMPROVEMENT AND THE beta IMPROVEMENT ARE THE SAME PHENOMENON, not two fixes.
+Minimum defensible clearance: 3.0H. 2.5H costs 0.107% and saves 23% of cells; 2.0H costs 0.43%, too much. The hoped 2-3x cost saving is NOT available - 2.0H is already outside tolerance.
+
+## 103. alpha IS A BOX ARTIFACT, NOT INTRINSIC LOSS.
+
+alpha does not converge to a nonzero floor. alpha x (L/H) = 27.4 / 24.5 / 22.2 / 19.1 / 17.5 / 17.3 /m.H for L = 1.5H..4H. For L >= 2.5H, alpha ~ 17.3/(L/H) /m: predicts 5.77 at 3H (observed 5.838) and 4.32 at 4H (observed 4.319). alpha -> 0 as L -> infinity. Reporting alpha as attenuation would be reporting the box. Corroboration: alpha/|a_back/a_fwd|_max = 383/336/307/278/270/279, near-constant 270-280 for L >= 2.5H, i.e. alpha is proportional to the backward wave that the transverse walls generate.
+
+## 104. COST SCALING: the plan said cells scale as 1/h^2. They do not.
+
+Clearance must scale as 1/h, so the transverse air region contributes ~h^-2 AND the x-extent contributes h^-1: total cells ~ h^-3, and wall time ~ cells^1.33 ~ h^-4. Measured anchor: 65.9 s for 224640 cells at h=0.2mm, cl=3H. Consequence: h=0.1mm is ~16x, i.e. ~1050 s per rung, which the container cannot run at all (see the infra section). Any cost plan built on h^-2 understates by two powers of two.
+
+## 105. TWO FALSIFICATIONS, STATED PRECISELY.
+
+(a) "beta <= k0 sqrt(er)" PASSES, but by 13.4%, not by the 1% that was being claimed in the acceptance criteria. The bound is 440.048305 /m; the converged value is 381.16 /m. A criterion that is met with 13x the margin it asked for is not evidence of accuracy - it is evidence that the criterion was too weak to detect the bug that was actually present (beta/bound was 1.0744 before the box fix, i.e. FAILING, and nobody was testing that).
+(b) "alpha converges" FAILS. There is no converged alpha; see above. This was previously reported as "alpha 5.84 /m" with no convergence test attached at all.
+
+## 106. REPORTABLE beta IS 380.5 +- 0.6 /m, NOT 381.1589.
+
+beta is not window-invariant. Window sweep (8 windows, cl=3H, nx=104) gives beta 378.25..381.64. The value 381.1589 comes from a 0.73-guide-wavelength window. Windows of at least 2 guide wavelengths give 379.90 (nx=104, cells 20..95) and 380.43 (nx=140). Reportable: 380.5 +- 0.6 /m, eps_eff 3.290.
+The truncation-window hypothesis for alpha is REFUTED independently: receding the far PML by 1.35x (nx 104 -> 140) changes alpha by -0.6% (5.838 -> 5.801) and beta by +0.02%. The far-end echo was already negligible, so the truncation window was never the cause of alpha and could not have been.
+
+## 107. THE alpha RIPPLE IS A STANDING WAVE AT lambda_g/2 - IT IS NOT NOISE.
+
+Pairwise decomposition of alpha over 34 station pairs: ripple peak period 41.087 cells at nx=104 and 38.31 cells at nx=140; lambda_g/2 = 41.21 cells. Agreement 0.3%. Ripple amplitude 2.50 /m on a mean of 5.25 /m. All 34 pair-wise alpha_i are POSITIVE (min 2.88, max 12.75 /m), with zero sign changes, so there is a genuine net decay term underneath the ripple. The largest values sit at BOTH ends (2.88 near the source, 11.1-12.8 near the far PML): end effects. Model alpha(x) = alpha0 + A cos(4 pi x / lambda_g + phi) with alpha0 = 5.5 +- 0.4 /m and A = 2.5 /m at cl=3H; a long window (84 cells = 2.04 periods) gives the unbiased alpha0 = 5.25 /m. Pearson(alpha_i, r_i) is unstable (0.376/0.378 at nx=104; 0.131/0.500/-0.706 at nx=140), so the per-pair extracted reflection coefficient does NOT explain alpha_i pair by pair - the ripple is not a simple two-wave interference with a fixed r.
+
+## 108. alpha's INFLUENCE ON beta IS BOUNDED WELL BELOW beta's OWN UNCERTAINTY (derived, not asserted).
+
+Pure amplitude decay does not bias beta to first order. Second order gives delta_beta/beta ~ 0.5 (alpha/2beta)^2 = 2.6e-5, i.e. delta_beta = 0.010 rad/m; the crude form alpha^2/(2 beta) gives 0.040 rad/m. beta's own window spread is +-1.7 rad/m (0.45%). So alpha's effect on beta is 40x to 170x BELOW beta's measurement spread. This is why the acceptance question "does alpha corrupt beta" can be closed without removing alpha: it cannot move beta by as much as the window choice already does.
+
+## 109. THE 58.3 "CLOSURES AGREE/DISAGREE" COMPARISON WAS NEVER CONTROLLED.
+
+The historical probe compared 345.43 /m (pec_box) against 411.05 /m (open) at 18x14 and concluded a closure effect. The two runs used different boxes. Re-run at a matched box (cl=1.0, h=0.2mm, 20x16, deflated engine, k=16): open gives 364.794 /m (eps_eff 3.0237, curl_ratio 3670) and pec_box gives 353.770 /m (eps_eff 2.8437, curl_ratio 6220). The closure effect at a matched box is 3.0%, not 19%. So closures DO differ, but the 19% figure was mostly box size. Separately, pec_box removes the last residual gradient state (16 candidates/1 low-curl -> 15/0).
+Also in this family: the eigensolve beta is box-size dominated. 20x16 dense-mixed gives 406.984 where the same mesh via the deflated transverse pencil gives 364.794 - an 11.6% split between two engines on an IDENTICAL mesh, i.e. a pencil/formulation difference (transverse-only vs mixed with e_z), and 406.984 appears nowhere in the deflated census. Do not quote a modal beta without naming the pencil AND the box.
+
+## 110. THE DENSE EIGENSOLVE CANNOT RUN AT THE VALIDATED BOX - AND THE MEMORY CAP IS NOT WHAT THE TOOL SAYS.
+
+Measured: container cgroup memory.max = 536870912 (512 MB) and is FIXED; the tool's mem_limit="6g" is silently ignored. solve_modes_mixed is a dense QZ gated at _MIXED_DENSE_MAX = 3000 free edges; the cl=3.0H box is 3351 edges. Measured cost: 972 edges = 16-24 s, 3351 edges = OOM-killed at ~650 s. The deflated dense route needs ~24 n^2 bytes for R (270 MB at 3351 edges) on top of dense B/Q and also dies. Consequence: the eigensolve as built cannot be evaluated at the box the FDTD just validated, and cannot be refined (H/h=16 is ~13480 edges). Record this as an infrastructure limit, not as a physics result.
+
+## 111. THREE SELECTION RULES, THREE WRONG ANSWERS - beta ORDERING IS NOT A MODE IDENTIFIER.
+
+On the same pencil at cl=1.0, h=0.2, 20x16, k=16, deflated (region_widen=True):
+  beta/eps_eff/curl_ratio of the census: 440.050/4.4000/2.6e-10 | 364.794/3.0237/3670 | 347.767/2.7480/1110 | 345.332/2.7097/368 | 345.093/2.7059/254 | 344.887/2.7027/119 | 344.861/2.7023/102 | 344.796/2.7013/57.1 | 344.790/2.7012/53 | 344.763/2.7008/34.3 | 344.761/2.7008/33 | 344.748/2.7005/24.1 | 344.747/2.7005/23.7 | 344.741/2.7004/19.3 | 344.741/2.7004/19.2 | 344.738/2.7004/17.3
+  (i) "largest positive beta^2" picks the 440.050 state, whose curl_ratio 2.6e-10 identifies it as a pure gradient (null-space) state, not a field.
+  (ii) the predicate "1.0 < eps_eff < er" calls that same state physical, because eps_eff evaluates to 4.3999999 against a bound of 4.4. Needs eps_eff < er - 1e-6.
+  (iii) "smallest beta / lowest eps_eff among bound" picks the 344.7 near-degenerate family (9 candidates inside 3 /m, curl_ratio 17-368) instead of the quasi-TEM at 364.794.
+The quasi-TEM is the max-|curl_ratio| candidate (3670 at open, 6220 at pec_box) and it is the one that lands on the analytic reference: 364.794 /m and eps_eff 3.0237 against Hammerstad 365 / 3.04, i.e. 0.06%. A refinement series on it is monotone: 364.259 (H/h=4) / 364.604 (6) / 364.794 (8) / 364.913 (10) / 365.457 (13) - total mesh sensitivity 0.33%, which is 9x SMALLER than the 3.0% closure effect on the same box. So on this box the closure dominates the discretisation, and an order-p estimate is not determinable (the nominal 1.25 ratio snapped to 1.231 because round(H/h) gave nz_sub=13, leaving successive differences that do not decrease). Report p as UNDETERMINED rather than fitting the three points anyway.
+
+## 112. THE DEFLATED NULL SPACE IS NOT JUST AIR.
+
+The 331-fold gradient null space decomposes into 168 air-gradient columns plus 147 substrate-interior columns (z_dim_v1 168, z_dim_v2 315, region_contrast 3.4, region_rows 1..7). region_widen=False deflates only the air block: 6 of the top 6 returned candidates are still spurious (beta 440.050 six times) and the physical mode is not found at all. region_widen=True plus k>=16 drops the residual-gradient count from 6/6 to 1/16 and costs 3.0 s instead of 12.8 s at k=6. Earlier failure mode explained: plain ARPACK with sigma = 1.02 k0^2 er put the shift nearer the spurious cluster than the physical mode; moving the shift alone does not fix it (sigma multiplier 0.20 returned 344.75 six times, still degenerate inside the near-gradient manifold).
+CAUTION recorded: the 344.7-347.8 cluster's curl_ratio decays smoothly to 17.3 with no gap, so it is a partially deflated near-gradient manifold. A |curl_ratio| < 1e-3 test reports 1 per shift; a < 100 test reports 9. Do not call that cluster physical without an independent check.
+
+## 113. MODE SELECTION CHANGED IN emfit/ (see the separate section for the code change and the suite result).
+
+Old behaviour retained behind a flag so both can be exercised. Selection is no longer based on beta magnitude or eps_eff band ordering; see §115 for why all three orderings failed.
+
+## 114. WHAT THE OWNER'S THREE HYPOTHESES GOT WRONG, IN ONE LINE EACH.
+
+split + H de-stagger: the arithmetic was correct; changing it changed nothing because the transverse box, not the split, was setting beta.
+truncation window: refuted before it was tested - alpha does not respond to truncation at all (-0.6% for a 1.35x far-PML recession), and beta moves +0.02%.
+the fix that worked: varying the air clearance, which had never been varied. beta/bound 1.0744 -> 0.866175, alpha 18.29 -> 4.32 /m.
+
+## 115. THE MODE-ELIGIBILITY GUARD IN emfit/mode2d.py, AND THE FULL-SUITE RESULT.
+
+WHAT CHANGED. `_CURL_RATIO_MIN` and `_EPS_EFF_RTOL` plus one helper, `_guarded_choice()`, applied at the single point of selection in both pencils (`_select_and_pack` for the (k_q, m_eps) pencil, and `solve_modes_mixed` for the mixed one). The guard intersects the caller's own eligibility mask with (|curl_ratio| >= 1e-6) and (eps_eff < max(eps_r) - 1e-6), and then applies the historical rule unchanged - largest positive beta^2 - to the survivors. If nothing survives it raises ValueError naming the beta^2, eps_eff and curl_ratio of every candidate; it does not fall back silently. `guard=False` on `solve_modes`, `solve_modes_deflated`, `solve_modes_deflated_v2` and `solve_modes_mixed` restores the old expression verbatim, so both behaviours are reachable.
+
+FIRST ATTEMPT, AND WHY IT WAS WRONG. The curl threshold was first written as 1e2, absolutely. That is the wrong kind of number for a normalised quantity: candidates are normalised so that e^T B e = 1 before the ratio is formed, so curl_ratio is dimensionless and its scale is set by the pencil. On the 5x5 air box used by tests/test_mode2d_deflated.py and tests/test_mode2d_candidate_records.py the entire spectrum is O(1-10) - curl_ratio 2.47 / 9.31 / 9.89 - and the guard rejected all three otherwise-eligible candidates. Result of that run: 3 failed, 20 passed, 1 xfailed in 94.6 s, all three failures the same ValueError. The threshold is now 1e-6, which sits four decades above the measured curl of a gradient state (2.6e-10 against a physical state's 3670 at the 20x16 box, i.e. 7e-14 of it) and seven decades below the weakest non-gradient candidate in the observed census (17.3).
+
+RESULT AFTER THE FIX. tests/test_mode2d.py, test_mode2d_candidate_records.py, test_mode2d_deflated.py, test_mode2d_deflated_v2.py: 23 passed, 1 xfailed in 93.3 s, all 24 collected items accounted for, no failures and no errors. Full suite (43 files, 505 tests): 474 passed, 1 skipped, 6 failed in 780.2 s. All six failures are pytest-timeout kills at the 60 s per-test cap that was imposed to make an 800 s suite survive a container that reclaims at ~150 s; not one is an assertion failure or an error. Four of the six are test_demo_picker.py and test_mode_profile.py nodes, in files that do not reference mode2d at all (grep for mode2d|solve_modes|Mode2D: no match). The other two are test_studies.py nodes that time out inside studies.microstrip_wave -> evolve.step -> pml.damp_e, i.e. FDTD stepping. Re-run in isolation with --timeout=300 all six pass, in 16.47 s. So the six red lines are contention in a 512 MB capped container, not the guard.
+
+WHY THIS FORM AND NOT A RANKING CHANGE. With the gradient states removed, the largest positive beta^2 among survivors IS 364.794, so the ranking rule was never the defect - the missing filter was. On the undeflated spectrum, where the top six candidates are all 440.050, the guard rejects every one of them and raises; that loud refusal is the intended behaviour, and it is the reason the threshold is checked rather than assumed.
+
+WHAT THIS DOES NOT FIX. The guard does not touch the mixed-pencil outlier: `solve_modes_mixed` still returns 406.984 on the cl=1.0 box, because its curl_ratio (416) passes the guard and its eps_eff (3.7636) is inside the 4.4 bound. The 11.6% disagreement between the mixed and deflated routes is a formulation difference between the two pencils, is recorded in 111, and remains open.

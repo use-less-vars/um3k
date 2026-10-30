@@ -136,6 +136,34 @@ _QUAD_WEIGHT = 1.0 / 3.0
 #: reason this is not ``0.0`` is the matrix-vector product's roundoff.
 _CURL_RTOL = 1.0e-10
 
+#: Mode-eligibility guard, applied at the point of selection in both the
+#: ``(k_q, m_eps)`` pencil (:func:`_select_and_pack`) and the mixed pencil
+#: (:func:`solve_modes_mixed`).  A candidate is not a candidate for the mode of
+#: a cross-section unless
+#:
+#: (i) it carries real curl energy.  Candidates are normalised so that
+#:     ``e^T B e == 1`` *before* the ratio is formed, so ``curl_ratio`` is
+#:     dimensionless and comparable across the candidates of one pencil: a
+#:     discrete gradient state has ``e^T K_q e == 0`` in exact arithmetic and
+#:     measures at roundoff -- 2.6e-10 against a physical state's 3670 at the
+#:     20 x 16 box, i.e. 7e-14 of it.  The floor sits four decades above that
+#:     measurement and seven decades below the weakest non-gradient candidate in
+#:     the observed census (17.3), so it separates the two populations with a
+#:     wide margin on both sides.  It was first written as ``1e2``; that is
+#:     wrong for a normalised quantity and it rejected legitimate fields on
+#:     small synthetic pencils, where the whole spectrum is O(1-10).
+#: (ii) it is *slower* than the fastest material present,
+#:     ``eps_eff < max(eps_r) - _EPS_EFF_RTOL``.  Test (ii) is what removes the
+#:     homogeneous states at ``beta^2 = k0^2 eps_r`` that otherwise compete for
+#:     "largest beta^2" and win, the epsilon being the 4.3999999-versus-4.4
+#:     roundoff that the band predicate alone cannot see.
+#:
+#: The guard only ever removes candidates, so a pick that already satisfied it
+#: is unchanged.  ``guard=False`` on the solvers switches it off entirely and
+#: restores the unguarded selection verbatim.
+_CURL_RATIO_MIN = 1.0e-6
+_EPS_EFF_RTOL = 1.0e-6
+
 #: Relative slack allowed when locating a point in a structured cell, so that a
 #: point sitting exactly on a cell boundary (which is where a quadrature node of
 #: the neighbouring cell lives) is accepted instead of rejected.
@@ -884,6 +912,7 @@ def solve_modes(
     mu_r=1.0,
     boundaries=(),
     k: int = 4,
+    guard: bool = True,
 ) -> Mode2D:
     """Solve ``C e = beta^2 B e`` for the ``k`` modes nearest the shift ``sigma``.
 
@@ -903,6 +932,13 @@ def solve_modes(
         PEC predicates, as for :func:`pec_edge_mask`.
     k:
         Number of candidates to return.
+    guard:
+        Apply the mode-eligibility guard (:data:`_CURL_RATIO_MIN`,
+        :data:`_EPS_EFF_RTOL`) at the point of selection: reject candidates with
+        ``|curl_ratio| < 1e-6`` and candidates with
+        ``eps_eff >= max(eps_r) - 1e-6``, then take the largest positive
+        ``beta_sq`` among the survivors.  ``guard=False`` restores the unguarded
+        selection verbatim.
 
     Returns
     -------
@@ -933,7 +969,9 @@ def solve_modes(
     if not np.isfinite(sigma):
         raise ValueError(f"sigma must be finite, got {sigma!r}")
 
-    k_q, m_mu, m_eps = assemble(mesh, eps_r=eps_r, mu_r=mu_r)
+    eps_t = _per_triangle(eps_r, mesh, "eps_r")
+    eps_max = float(np.max(eps_t))
+    k_q, m_mu, m_eps = assemble(mesh, eps_r=eps_t, mu_r=mu_r)
     mask = pec_edge_mask(mesh, boundaries)
     free = np.flatnonzero(~mask)
     n_dof = int(free.size)
@@ -964,7 +1002,47 @@ def solve_modes(
         n_k=n_k,
         vals=vals,
         vecs=vecs,
+        eps_max=eps_max,
+        guard=guard,
     )
+
+
+def _guarded_choice(
+    *,
+    eligible: np.ndarray,
+    beta_sq: np.ndarray,
+    eps_eff: np.ndarray,
+    curl: np.ndarray,
+    eps_max: float,
+    where: str,
+) -> int:
+    """Index of the largest ``beta_sq`` among the *guard-passing* candidates.
+
+    ``eligible`` is the caller's own eligibility mask (curl-free filter, positive
+    ``beta^2``, residual tolerance); the guard is intersected with it.  On the
+    surviving set the historical rule is applied unchanged -- largest positive
+    ``beta^2`` -- so a pick that already satisfies the guard is not moved.
+
+    Raises
+    ------
+    ValueError
+        When the guard rejects every otherwise-eligible candidate.  That is a
+        statement about the candidate set, not a silent fallback: the list is
+        printed so the caller can see whether the shift returned gradient states
+        only.
+    """
+    passes = (np.abs(curl) >= _CURL_RATIO_MIN) & (eps_eff < eps_max - _EPS_EFF_RTOL)
+    keep = np.asarray(eligible, dtype=bool) & passes
+    if not np.any(keep):
+        raise ValueError(
+            f"the mode-eligibility guard rejects every candidate of {where} "
+            f"(|curl_ratio| >= {_CURL_RATIO_MIN:g} and "
+            f"eps_eff < {eps_max:g} - {_EPS_EFF_RTOL:g}): "
+            f"beta^2 = {beta_sq.tolist()}, eps_eff = {eps_eff.tolist()}, "
+            f"curl_ratio = {curl.tolist()}; pass guard=False to restore the "
+            "unguarded selection"
+        )
+    return int(np.flatnonzero(keep)[np.argmax(beta_sq[keep])])
 
 
 def _select_and_pack(
@@ -980,6 +1058,8 @@ def _select_and_pack(
     n_k: int,
     vals: np.ndarray,
     vecs: np.ndarray,
+    eps_max: float,
+    guard: bool = True,
     extra: dict | None = None,
 ) -> Mode2D:
     """Normalise, select and pack the raw ``eigsh`` output for a free-DOF pencil.
@@ -990,6 +1070,11 @@ def _select_and_pack(
     selection rules (preregistration 2.e) to a deflated pencil.  Nothing here
     knows about deflation; ``extra`` is merged into the returned
     :class:`Mode2D` as extra keyword fields (the ``deflation`` diagnostics).
+
+    ``guard=True`` intersects the eligibility mask with the mode-eligibility
+    guard (:func:`_guarded_choice`) before the historical "largest positive
+    ``beta_sq``" rule is applied; ``eps_max`` is ``max(eps_r)`` over the mesh,
+    the material bound of the guard's second test.
     """
     # --- normalise each candidate so that e^T B e = 1 ---------------------
     ratios = np.empty(n_k)
@@ -1031,7 +1116,17 @@ def _select_and_pack(
             "shift sigma is probably outside the propagating part of the "
             "spectrum"
         )
-    chosen = int(np.flatnonzero(eligible)[np.argmax(vals[eligible])])
+    if guard:
+        chosen = _guarded_choice(
+            eligible=eligible,
+            beta_sq=vals,
+            eps_eff=vals / (k0 * k0),
+            curl=ratios,
+            eps_max=eps_max,
+            where="the (k_q, m_eps) pencil",
+        )
+    else:
+        chosen = int(np.flatnonzero(eligible)[np.argmax(vals[eligible])])
 
     e_t = np.zeros(mesh.n_edges)
     e_t[free] = normalised[:, chosen]
@@ -1471,6 +1566,7 @@ def solve_modes_deflated(
     boundaries=(),
     k: int = 4,
     region_widen: bool = False,
+    guard: bool = True,
 ) -> Mode2D:
     """Solve the same pencil as :func:`solve_modes`, with the gradient space deflated.
 
@@ -1508,7 +1604,8 @@ def solve_modes_deflated(
     normalisation and selection code as :func:`solve_modes`
     (:func:`_select_and_pack`), so ``chosen``, ``candidates`` and ``curl_ratio``
     mean exactly what they mean there -- except that the deflated gradient states
-    are no longer among the candidates.
+    are no longer among the candidates.  ``guard`` is that function's
+    mode-eligibility guard, passed through unchanged.
 
     **Diagnostics.**  ``mode.deflation`` is a dict with ``z_dim``,
     ``z_dim_closed_form`` (the ladder closed form, or ``None`` off the ladder),
@@ -1630,6 +1727,8 @@ def solve_modes_deflated(
         n_k=n_k,
         vals=vals,
         vecs=vecs,
+        eps_max=float(np.max(eps_t)),
+        guard=guard,
         extra={"deflation": info},
     )
 
@@ -1643,6 +1742,7 @@ def solve_modes_deflated_v2(
     mu_r=1.0,
     boundaries=(),
     k: int = 4,
+    guard: bool = True,
 ) -> Mode2D:
     """The Amendment 3 (5.b) widened deflation route.
 
@@ -1668,6 +1768,7 @@ def solve_modes_deflated_v2(
         boundaries=boundaries,
         k=k,
         region_widen=True,
+        guard=guard,
     )
 
 
@@ -1681,6 +1782,7 @@ def solve_modes_mixed(
     boundaries=(),
     k: int = 8,
     dense: bool | None = None,
+    guard: bool = True,
 ) -> Mode2D:
     """Solve the mixed ``(e_t, e_z)`` pencil ``A x = beta^2 B x``.
 
@@ -1707,6 +1809,10 @@ def solve_modes_mixed(
         ``None`` (default) takes the dense path when the number of free edges
         is at most ``_MIXED_DENSE_MAX``.  ``dense=False`` raises
         ``NotImplementedError`` -- see the Notes.
+    guard:
+        Mode-eligibility guard, as for :func:`solve_modes`: reject candidates
+        with ``|curl_ratio| < 1e-6`` or ``eps_eff >= max(eps_r) - 1e-6`` before
+        taking the largest positive ``beta^2``; ``guard=False`` disables it.
 
     Returns
     -------
@@ -1787,6 +1893,7 @@ def solve_modes_mixed(
     if not np.isfinite(sigma):
         raise ValueError(f"sigma must be finite, got {sigma!r}")
 
+    eps_max = float(np.max(_per_triangle(eps_r, mesh, "eps_r")))
     k_q, m_mu, m_eps = assemble(mesh, eps_r=eps_r, mu_r=mu_r)
     m1, m_eps_mixed, c, k_zz, m_zz = assemble_mixed(mesh, eps_r=eps_r, mu_r=mu_r)
     if m1.shape != k_q.shape or m1.shape != m_eps.shape:
@@ -1903,7 +2010,17 @@ def solve_modes_mixed(
             f"below {_MIXED_RESIDUAL_TOL:g}: beta^2 = {beta_sq.tolist()}, "
             f"residuals = {residuals.tolist()}"
         )
-    chosen = int(np.flatnonzero(eligible)[np.argmax(beta_sq[eligible])])
+    if guard:
+        chosen = _guarded_choice(
+            eligible=eligible,
+            beta_sq=beta_sq,
+            eps_eff=beta_sq / (k0 * k0),
+            curl=ratios,
+            eps_max=eps_max,
+            where="the mixed (e_t, e_z) pencil",
+        )
+    else:
+        chosen = int(np.flatnonzero(eligible)[np.argmax(beta_sq[eligible])])
 
     x = normalised[:, chosen]
     beta = float(np.sqrt(beta_sq[chosen]))
