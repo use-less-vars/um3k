@@ -149,6 +149,7 @@ def test_vertical_drop_over_every_strip_column_is_one_volt():
     )
 
 
+@pytest.mark.slow
 def test_placed_profile_keeps_its_normalisation():
     """Placement is an integer index shift, so the 1 V drop survives the copy.
 
@@ -174,6 +175,7 @@ def test_placed_profile_keeps_its_normalisation():
 # ---------------------------------------------------------------------------
 # 3. the sign and the direction of the gap field
 # ---------------------------------------------------------------------------
+@pytest.mark.slow
 def test_normalisation_domain_is_the_projection_window():
     """Unit power is measured on the clipped plane, not on the wide box.
 

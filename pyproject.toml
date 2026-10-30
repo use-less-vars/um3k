@@ -33,6 +33,8 @@ packages = ["emfit"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+# pytest-timeout default. The FDTD/modal studies below need minutes, not 60 s.
+timeout = 300
 markers = [
     "slow: runs a multi-thousand-step time loop, minutes under a loaded container; deselect with -m 'not slow'",
 ]

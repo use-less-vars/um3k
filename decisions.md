@@ -8967,3 +8967,61 @@ RESULT AFTER THE FIX. tests/test_mode2d.py, test_mode2d_candidate_records.py, te
 WHY THIS FORM AND NOT A RANKING CHANGE. With the gradient states removed, the largest positive beta^2 among survivors IS 364.794, so the ranking rule was never the defect - the missing filter was. On the undeflated spectrum, where the top six candidates are all 440.050, the guard rejects every one of them and raises; that loud refusal is the intended behaviour, and it is the reason the threshold is checked rather than assumed.
 
 WHAT THIS DOES NOT FIX. The guard does not touch the mixed-pencil outlier: `solve_modes_mixed` still returns 406.984 on the cl=1.0 box, because its curl_ratio (416) passes the guard and its eps_eff (3.7636) is inside the 4.4 bound. The 11.6% disagreement between the mixed and deflated routes is a formulation difference between the two pencils, is recorded in 111, and remains open.
+
+## 116. THE ε_eff NEAR-MISS AT 4.3999999 IS ROUNDOFF, AND THE GUARD BOUNDARY IS A GENUINE TRAP.
+
+An eigenstate at the validated box came back with ε_eff = 4.3999999 against the dielectric ceiling εr = 4.4, a near-miss that sits inside the guard `ε_eff < εr - 1e-6` by 1e-7.
+
+- **Certification.** ROUNDOFF, not a physical state. 4.3999999 is the ceiling itself resolved to the last representable digit: the state satisfies `β² = k0²·εr` to double precision, which is precisely the identity the mixed pencil's own docstring warns about. It appears when the β-coupling term is not doing its job, so the "mode" is the identity relation restated, not a guided field.
+- **The boundary is a trap, not a tolerance.** `ε_eff < εr - 1e-6` admits it; `ε_eff < εr - 1e-5` does not. A threshold picked to be "just tight enough" therefore decides membership on a value that is not measuring the state at all.
+- **Rule.** A value within ~1e-6 of the ceiling is read as "this is the ceiling", never as "this is 0.0001 below the ceiling". Any guard on ε_eff must be stated together with why it is at least an order of magnitude clear of roundoff on the ceiling, or the design must not depend on ε_eff.
+- **Provenance.** The 4.3999999 value and the 1e-7 margin are the owner's figures from this pass; they were not re-located in the `.scratch/d585/` logs read here, so they are recorded as reported rather than as re-derived `[unverified]`.
+
+## 117. THE CURL GUARD'S FIRST THRESHOLD, 1e2, WAS THE WRONG KIND OF NUMBER - CORRECTED TO A DIMENSIONLESS 1e-6.
+
+The curl guard was first written as an absolute floor of 1e2 on a raw curl measure.
+
+- **Wrong kind of number, not merely wrong magnitude.** A raw curl carries units of field per length, so its absolute size scales with the excitation amplitude, the mesh spacing and the field units. It moves when the mesh is refined even though the mode does not change. Any threshold stated in those units silently changes meaning between meshes.
+- **Replacement.** A dimensionless ratio, `|curl|` normalised by the state's own field magnitude per unit dimension, threshold **1e-6**. Invariant under amplitude rescaling (numerator and denominator scale together) and under mesh refinement (the length cancels in the normalisation).
+- **Why this is recorded.** The original threshold looked innocuous and would have silently admitted junk states on fine meshes, where a raw curl falls with `h`, while rejecting good ones on coarse meshes. The failure mode was mesh-dependent in the worst direction: refining the mesh would have loosened the guard.
+- **Where it lives now.** The dimensionless floor survives in `tools/host_ladder.py` as `CURL_FLOOR = 1e-6`, applied as a rejection test on every rung of the ladder.
+
+## 118. CLEARANCE CONVERGENCE: THE MODE STOPS MOVING AT THE PER-CENT LEVEL BY 2.0H, AND THAT IS WHY THE LADDER IS RUN AT 3.0H.
+
+The modal solution was swept in lateral/top clearance with the FDTD cross-section at fixed `h`; `β/β_bound` from `.scratch/d585/clearance.jsonl` (`clearance_scale` x 3.0H):
+
+| clearance | `β/β_bound` | change to next point |
+|---|---|---|
+| 1.5 H | 0.878016 | 0.58 % |
+| 1.75 H | 0.872923 | 0.34 % |
+| 2.0 H | 0.869935 | 0.33 % |
+| 2.5 H | 0.867104 | 0.11 % |
+| 4.0 H | 0.866184 | - |
+
+- **The figure that matters.** The clearance at which `β` stops moving at the per-cent level is **2.0H**; by 2.5H the residual motion is a tenth of a per cent per 1.5H of box, so the 3.0H working point is on the flat part of the curve with margin, and 4.0H buys 0.11 % for a materially larger box.
+- **Consequence for the ladder.** This is why `tools/host_ladder.py` runs at `--clearance 3.0` (units of H) and why the modal box is required to equal the FDTD physical box **cell-for-cell** (`ny == gy_ny - 2*npml`, `nz == gy_nz - n_top`, same `cell`): a clearance mismatch of the size visible in the table above is larger than the mesh gaps the ladder is trying to measure.
+- **Which quantity is converged matters.** `α` does *not* converge in this sweep - it falls 18.289, 11.089, 7.635 per metre at 1.5H, 2.0H, 2.5H - so the clearance sweep certifies `β` only. The `α` behaviour is the subject of 119.
+
+## 119. α·(L/H) COMES OUT CONSTANT AT ~17.3, WHICH IDENTIFIES THE ATTENUATION AS GRID LEAKAGE, NOT LOSS.
+
+- **The observation.** The measured attenuation multiplied by `L/H` is essentially constant, **≈ 17.3**, across meshes that differ in `h`. A physical conductor/dielectric attenuation cannot be invariant in that combination while the number of cells per height changes: real loss depends on the material and the field overlap, not on how many cells span the substrate. Per-cell leakage does scale exactly that way.
+- **Conclusion.** The attenuation measured on this grid is a NUMERICAL artifact of the discretisation, and the constant `α·(L/H) ≈ 17.3` is the evidence, not a coincidence to be tuned away.
+- **Independent corroboration.** In `.scratch/d585/clearance.jsonl`, at fixed `h`, `α` moves 18.289 → 11.089 → 7.635 per metre as the box opens from 1.5H to 2.5H. A material loss cannot depend on where the wall sits; a grid leakage term can and does.
+- **How it is policed.** `tools/host_ladder.py --alpha-floor-db-per-mm` defaults to **0.0139**, the most permissive of the three measured floors (default box fit **0.02145**, npml10 span fit **0.0278**, lid sweep **0.01388**), so a rung that fails it is a genuine failure and a rung that passes has not thereby demonstrated physical loss. The floor is a junk detector, not a measurement of α.
+
+## 120. β/β_bound CORRECTED FROM 1.0744 TO 0.866175 - THE SUPERSEDED FIGURE MUST NOT BE CITED.
+
+- **What was wrong.** An earlier entry quoted `β/β_bound = 1.0744`, i.e. a mode ABOVE the dielectric ceiling. That is impossible for a bound mode, so the entry was wrong by construction. The error was in the ratio's denominator/reference, not in `β`.
+- **Corrected value.** **0.866175**, so the mode sits **13.38 % (≈ 13.4 %)** below the dielectric bound, which is the physically required sign.
+- **Corroboration.** Every ratio in `.scratch/d585/clearance.jsonl` is below 1 (0.878016 at 1.5H down to 0.866184 at 4.0H), and the 4.0H value 0.866184 agrees with 0.866175 to 1e-5.
+- **Rule.** The 1.0744 figure is superseded and must not be cited. Any `β/β_bound >= 1` is by construction an error or a spurious state, never a result.
+
+## 121. 58.6 - THE 58.5 MODAL VERDICT IS RETRACTED: 406.984 IS THE MODE, 364.794 IS NOT IN THAT PENCIL, AND THE 11.6 % SPLIT IS FORMULATION.
+
+- **(a) Retraction.** 58.5 recorded "406.984 is the outlier; 364.794 is the physical mode". That is WRONG. A dense ground-truth diagonalisation of the mixed pencil at the cl=1.0H box (n_edges 996, free_e 972, free_n 331, n_dof 1303, explicit `B = m1 - c·h⁻¹·cᵀ`, `‖B-Bᵀ‖ = 1.9e-16`, `cond(B) = 2.55e4`, 972 eigenvalues in 9.14 s: 922 real, 50 complex = 25 pairs) contains **exactly one** bound eigenvalue, **β = 406.9837519** (ε_eff 3.763591, curl 416.5, residual 4.95e-12), and **364.794 is absent from the entire `(0, k0²εr]` interval**. So 406.984 is a genuine eigenvalue of the mixed pencil, 364.79 is not in that pencil at all, and the Hammerstad agreement (0.06 %) that made 364.79 look physical is a coincidence of a *different pencil* picking a *different state*.
+- **(b) Verdict on the 11.6 % split: FORMULATION.** Not selection - the guard is a no-op: guard=True and guard=False give the identical pick in all four configurations tested, always candidate index 0 = max `β²`, with all three guard components already satisfied. Not conditioning - `cond(h) = k_zz - k0²m_zz = 4.83e2` with eigmin 1.63e-2, eigmax 7.88, n_neg 0, and residuals 5e-12 (mixed) / 9e-8 (transverse). The two pencils are simply different discretisations: transverse `solve_modes` and `solve_modes_deflated` are the SAME engine numerically (bit-identical 364.7937835), and each pencil's top candidate wins one clearance (cl=1.0: mixed 3.764 vs transverse 3.024; cl=3.0: mixed 3.331 vs transverse 3.803 - the sign flips).
+- **(c) The discriminator that settles it is FDTD at the validated box.** Mixed gives 382.8754929 against FDTD 381.1589 (+0.45 %, converging monotonically as h -> 0); transverse gives 409.1140381 (+7.33 %), selecting a substrate-dominated high-curl state (curl 1.0751e4, ε_eff 3.803).
+- **(d) Deflation is currently a NO-OP.** At this shift the deflated census is bit-identical to the plain transverse census (nothing competitive was removed). `residual_grad` 5.84e-19 is clean, but **`residual_eps_mu = 0.02164`**, i.e. the widened basis is NOT ε/μ-consistent, plus `residual_pencil` 1.70e-5, `z_dim` 315, `columns_v1` 168, `columns_added` 147, `region_contrast` 3.4, `block_diag_ratio` 0.3269. Deflation must not be described as doing work until `residual_eps_mu` is driven down.
+- **(e) `eigsh` is unusable on this pencil.** `M = [[m1, -c], [-cᵀ, h]]` is symmetric but INDEFINITE (`vᵀMv = -0.47 / -8.37 / -0.52 / -0.85` for the trial vectors), so ARPACK's M-orthonormal Lanczos basis is meaningless: `eigsh` returned 64 "modes" whose full-pencil residuals were 0.86 - every one of them junk, and every one of them passing the guard. Fix: `scipy.sparse.linalg.eigs` (non-symmetric ARPACK, no definiteness requirement) with shift-invert and an explicit `OPinv` LinearOperator. Validated against dense to 8e-10 (385.0214743 vs 385.021474, residual 3.36e-14). **Rule for the file: never `eigsh` on a pencil whose mass matrix has negative inertia.**
+- **(f) The 58.5 figure "3351 edges at the validated 3.0H box" does NOT reproduce.** A sweep of nz_sub 2-14 x clearance 1.0-6.0 in the `dm.section(h, clearance)` family produces no combination giving 3351 for edges, free edges or free nodes. The measured validated box is **ny52 x nz32, n_edges 5076, free_e 5020, free_n 1691, n_dof 6711** (also printed in `.scratch/d585/transverse_cl30.log:3`). What produced 3351 is unknown and is recorded as an OPEN ITEM; the figure must not be cited again.
+- **(g) Sparse route status at the validated box.** Factor memory 0.008 GB, t_splu 0.03 s, t_eigs 0.28 s, peak RSS 125.9 MB against a 512 MB cgroup - the memory wall of 58.5 was DENSE-ONLY, as the owner hypothesised. Ladder at 3.0H: h=0.4 β=385.0214743 (ε_eff 3.368540), h=0.26667 β=383.5905830 (3.343549), h=0.2 β=382.8754929 (3.331095); gaps to FDTD +1.012 %, +0.638 %, +0.450 %, with Δβ halving when Δh halves (ratio 0.49977) => error linear in h, p≈1, from three rungs exactly. Exactly ONE bound mode per mesh. Only shift 0.76·k0²εr works; 0.70 / 0.82 / 0.9 / 0.6 / 0.45 return only conjugate pairs because the pencil is symmetric-indefinite.
