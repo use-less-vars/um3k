@@ -96,6 +96,8 @@ def _request(server, method: str, path: str, data: dict = None):
 def _no_script(body: bytes) -> None:
     """This front end is JavaScript-free on purpose; a page is not exempt."""
     assert b"<script" not in body, "a response carries a <script> block"
+    # Narrow on purpose: this pins the literal ``://cdn.`` shape only, not every off-host URL.
+    assert b"://cdn." not in body, "a response references a CDN"
 
 
 def test_landing_offers_a_javascript_free_demo_picker(server):
