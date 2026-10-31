@@ -425,7 +425,8 @@ def resolve_strip(h_mm, args):
 # FDTD half
 # ---------------------------------------------------------------------------
 def run_fdtd(h_mm, *, clearance, npml, nsteps, f0_hz, n_strip, w_m,
-             lateral_mult=1.0, lid_mult=1.0):
+             lateral_mult=1.0, lid_mult=1.0,
+             n_stations: int = studies.MS_N_STATIONS):
     """One straight-guide microstrip run on the repository's own driver.
 
     The physical box is ``strip + 2 * (clearance * H)`` wide and
@@ -476,7 +477,7 @@ def run_fdtd(h_mm, *, clearance, npml, nsteps, f0_hz, n_strip, w_m,
         n_strip=n_strip, n_clean=n_clean,
         n_pml=npml, n_ref=studies.MS_N_REF, n_line=n_line,
         x_first=studies.MS_X_FIRST, x_last=studies.MS_X_LAST,
-        n_stations=studies.MS_N_STATIONS, f_target=f0_hz, nsteps=nsteps,
+        n_stations=n_stations, f_target=f0_hz, nsteps=nsteps,
         keep_slice=False, audit=False, sink=studies.FigureSink())
     wall = time.perf_counter() - t0
     gy = dict(wave.geometry)
@@ -810,7 +811,7 @@ def run_rung(h_mm, args, rss_branch):
                   nsteps=args.nsteps, f0_hz=args.f0_ghz * 1e9,
                   n_strip=n_strip, w_m=w_m,
                   lateral_mult=args.box_lateral_mult,
-                  lid_mult=args.box_lid_mult)
+                  lid_mult=args.box_lid_mult, n_stations=args.stations)
     gy = fd["geometry"]
     k0 = 2.0 * math.pi * float(gy["f"]) / C0
     wave = fd["wave"]
@@ -1179,6 +1180,13 @@ def main(argv=None):
                          "at h = 0.4 down to 1.2 mm at h = 0.2), which "
                          "silently deflates the beta gap toward zero.  "
                          "Mutually exclusive with --npml.")
+    # PARAMETER ONLY: sets the probe-station count over the existing span;
+    # no mesh, box, PML or solver change (the span is untouched).
+    ap.add_argument("--stations", type=int, default=studies.MS_N_STATIONS,
+                    metavar="N",
+                    help=f"probe-station count over the existing span; "
+                         f"PARAMETER ONLY -- no mesh/box/PML/solver change "
+                         f"(default {studies.MS_N_STATIONS})")
     ap.add_argument("--nsteps", type=int, default=None, metavar="N",
                     help="leapfrog steps; default scales MS_NSTEPS with the "
                          "cell so the record keeps its length in time")

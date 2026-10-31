@@ -234,6 +234,19 @@ erratum on the rung-C pre-registration covers, so G3's letter is unsatisfied a *
 
 ---
 
+## G. Link 3 was abbreviated in §B.2, not misrecorded
+
+- **G.1 The full value, and the tree that already carries it [M].** Link 3 is
+  `0d7191973fe7babf53463205a1da968befcca205e725027ed83dc0267b190c9b` (1395 L). Six renderings of that exact
+  string stand under `evidence/`: `rung_c/SUMMARY.md` L271, `strip_width/ERRATA_002.md` L114,
+  `strip_width/_make_EIG_strip_width.py` L151, `strip_width/EIG_strip_width.json` L7 (`host_ladder_sha256`),
+  and `strip_width/ERRATA_003.md` L70 and L77 [M, `grep -rn` plus a substring walk over `evidence/`].
+- **G.2 The §B.2 abbreviation is faithful.** `0d719197…0c9b` keeps that value's first 8 hex and its last 4
+  (`…dc0267b190c9b`); both match, so the table shortened a value it had — it did not misrecord one.
+- **G.3 The contrast with §A.6.** There the 37-character `git_rev` was a real defect: the truncation was the
+  only rendering and it dropped a character from the middle. Here nothing was dropped; the abbreviation is a
+  display convention, and the full form was recoverable from this tree throughout.
+
 ## What this erratum does not do
 
 It does not claim G3 is satisfied: the hash moved a **second** time and the letter of the clause is unmet, and
