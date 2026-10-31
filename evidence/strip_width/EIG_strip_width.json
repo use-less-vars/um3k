@@ -1,0 +1,421 @@
+{
+ "file": "evidence/strip_width/EIG_strip_width.json",
+ "title": "Strip-width sweep, EIG (modal) side -- companion to W08/W12/W16/W20",
+ "status": "companion measurement; supersedes no frozen artefact and changes no verdict by fiat",
+ "provenance": {
+  "eigenpath": "tools/host_ladder.py -- build_modal + route_c + pick_mode, driven by the new solve_ladder(). NOT emfit/mode2d.py: that module was not imported, not edited, and is not the eigenpath that produced these numbers (it keeps its pin b820a3fd4acbfd425e440910685da81c03c8a8ee7b3988e5bdb7a6a7f199c534)",
+  "host_ladder_sha256": "0d7191973fe7babf53463205a1da968befcca205e725027ed83dc0267b190c9b",
+  "method": "function-level, in-container: d585_modal.build_modal(0.4e-3, clearance=3.0, n_strip=N, w_m=W, k0=213.74739982558222, lateral_mult=8.0, lid_mult=1.0) then solve_ladder(pb, k0, k=16) -- the same ascending sigma ladder the edited tool now ships",
+  "generator": "evidence/strip_width/_make_EIG_strip_width.py (recomputes everything except the four measured EIG values)",
+  "no_fdtd": "no FDTD was run by this dispatch: in-container FDTD is 30-60x the host cost (~30-50 min per arm). The FDTD column is therefore quoted from disk (arm n_strip=2) or owner-asserted (arms 3-5)",
+  "container_vs_host": "wall_eig_s 34.68 s at n_strip=2 in-container vs 0.529885 s for the row of record on host (~65x)",
+  "f_hz": 10198626214.57275,
+  "f_hz_note": "realised tone of the W08 row of record (meta.tone_f_actual_ghz); the HJ+KJ reference is re-derived per width at this tone",
+  "cell_mm": 0.4,
+  "h_mm": 0.4,
+  "clearance_h": 3.0,
+  "box_lateral_mult": 8.0,
+  "box_lid_mult": 1.0,
+  "pml_mm": 4.8,
+  "eps_r": 4.4,
+  "h_substrate_m": 0.0016,
+  "k0": 213.74739982558222,
+  "reference": "d585_modal.hammerstad_beta(f_hz, W=W, H=1.6e-3, eps_r=4.4)['beta'] (HJ+KJ), recomputed per arm",
+  "reference_validation": "recompute at W=0.8 mm gives 384.74897567707814, equal to W08.json rungs[0].beta_hj_kj_graded bit-for-bit, which validates the per-arm re-derivation",
+  "cross_warrant": "the 0.76-attempt junk residuals measured here (9.559803168921627e-01 / 9.374781042952944e-01 / 9.327792913828687e-01 at n_strip 3/4/5) are the numbers printed in W12/W16/W20 meta.failure ('best residual 9.56e-01 / 9.37e-01 / 9.33e-01'), so the in-container modal path reproduces the host runs that emitted the frozen artefacts",
+  "sigma_formula_check": "sigma = sigma_mult * k0^2 * ER verified for every accepted arm to 1e-6 relative",
+  "delta_min_pp": 0.0734,
+  "three_delta_min_pp": 0.2202
+ },
+ "d_definition": "d = 100*(beta/ref - 1) in percentage points (pp); Delta_min 0.0734 pp, 3*Delta_min 0.2202 pp (PREREG section 4)",
+ "arms": [
+  {
+   "n_strip": 2,
+   "W_mm": 0.8,
+   "beta_eig": 389.7256713378306,
+   "residual": 3.2771050989170236e-14,
+   "eps_eff_eig": 3.3244235252556544,
+   "curl_ratio": 5013.2375568531115,
+   "lam": 151886.09889972274,
+   "sigma": 152780.5079172678,
+   "sigma_mult_used": 0.76,
+   "sigma_retries": 0,
+   "n_dof": 12443,
+   "wall_eig_s": 34.68,
+   "n_converged": 16,
+   "n_physical": 1,
+   "attempts": [
+    {
+     "sigma_mult": 0.76,
+     "sigma": 152780.5079172678,
+     "n_converged": 16,
+     "n_physical": 1,
+     "best_residual": 3.2771050989170236e-14,
+     "accepted": true
+    }
+   ],
+   "beta_hj_kj_ref": 384.74897567707814,
+   "W_over_cell": 2.0,
+   "d_EIG_pp": 1.293491594615559,
+   "beta_fdtd": 388.21946125247325,
+   "d_FDTD_pp": 0.9020129473477523,
+   "d_FDTD_provenance": "measured [M] -- banked in evidence/strip_width/W08.json rungs[0].beta_fdtd",
+   "rel_gap_eig_minus_fdtd_pp": 0.3914786472678067,
+   "provenance_EIG": "measured [M] in-container by this dispatch (sigma ladder in tools/host_ladder.py)",
+   "n_strip_pinning": "strip width pinned to n_strip exactly; build_modal asserts ny_strip == n_strip"
+  },
+  {
+   "n_strip": 3,
+   "W_mm": 1.2,
+   "beta_eig": 394.5069378715431,
+   "residual": 3.134813785874957e-14,
+   "eps_eff_eig": 3.4064938534834055,
+   "curl_ratio": 5488.979826663936,
+   "lam": 155635.72402878155,
+   "sigma": 155795.91267879284,
+   "sigma_mult_used": 0.775,
+   "sigma_retries": 1,
+   "n_dof": 12505,
+   "wall_eig_s": null,
+   "n_converged": 16,
+   "n_physical": 1,
+   "attempts": [
+    {
+     "sigma_mult": 0.76,
+     "sigma": null,
+     "n_converged": 16,
+     "n_physical": 0,
+     "best_residual": 0.9559803168921627,
+     "accepted": false
+    },
+    {
+     "sigma_mult": 0.775,
+     "sigma": 155795.91267879284,
+     "n_converged": 16,
+     "n_physical": 1,
+     "best_residual": 3.134813785874957e-14,
+     "accepted": true
+    }
+   ],
+   "beta_hj_kj_ref": 390.0472372151286,
+   "W_over_cell": 3.0,
+   "d_EIG_pp": 1.143374502087502,
+   "beta_fdtd": null,
+   "d_FDTD_pp": 0.702,
+   "d_FDTD_provenance": "OWNER-ASSERTED, console only, NOT ON DISK -- W12.json carries rungs:[] and no beta_fdtd, so d_FDTD cannot be re-derived from this tree",
+   "rel_gap_eig_minus_fdtd_pp": 0.44137450208750195,
+   "provenance_EIG": "measured [M] in-container by this dispatch (sigma ladder in tools/host_ladder.py)",
+   "n_strip_pinning": "strip width pinned to n_strip exactly; build_modal asserts ny_strip == n_strip"
+  },
+  {
+   "n_strip": 4,
+   "W_mm": 1.6,
+   "beta_eig": 398.68271603684286,
+   "residual": 3.3010964892506367e-14,
+   "eps_eff_eig": 3.4789896422012605,
+   "curl_ratio": 5838.6774934040795,
+   "lam": 158947.90806651386,
+   "sigma": 158811.31744031786,
+   "sigma_mult_used": 0.79,
+   "sigma_retries": 2,
+   "n_dof": 12567,
+   "wall_eig_s": null,
+   "n_converged": null,
+   "n_physical": 1,
+   "attempts": [
+    {
+     "sigma_mult": 0.76,
+     "sigma": null,
+     "n_converged": null,
+     "n_physical": null,
+     "best_residual": 0.9374781042952944,
+     "accepted": false
+    },
+    {
+     "sigma_mult": 0.775,
+     "sigma": null,
+     "n_converged": null,
+     "n_physical": null,
+     "best_residual": 0.9523820823233484,
+     "accepted": false
+    },
+    {
+     "sigma_mult": 0.79,
+     "sigma": 158811.31744031786,
+     "n_converged": null,
+     "n_physical": 1,
+     "best_residual": 3.3010964892506367e-14,
+     "accepted": true
+    }
+   ],
+   "beta_hj_kj_ref": 394.7445116131979,
+   "W_over_cell": 4.0,
+   "d_EIG_pp": 0.9976590700528698,
+   "beta_fdtd": null,
+   "d_FDTD_pp": 0.504,
+   "d_FDTD_provenance": "OWNER-ASSERTED, console only, NOT ON DISK -- W16.json carries rungs:[] and no beta_fdtd, so d_FDTD cannot be re-derived from this tree",
+   "rel_gap_eig_minus_fdtd_pp": 0.4936590700528698,
+   "provenance_EIG": "measured [M] in-container by this dispatch (sigma ladder in tools/host_ladder.py)",
+   "n_strip_pinning": "strip width pinned to n_strip exactly; build_modal asserts ny_strip == n_strip"
+  },
+  {
+   "n_strip": 5,
+   "W_mm": 2.0,
+   "beta_eig": 402.37133087951725,
+   "residual": 2.977090364577061e-14,
+   "eps_eff_eig": 3.543662707789715,
+   "curl_ratio": 6087.793123935508,
+   "lam": 161902.68791375397,
+   "sigma": 161826.7222018429,
+   "sigma_mult_used": 0.805,
+   "sigma_retries": 3,
+   "n_dof": 12629,
+   "wall_eig_s": null,
+   "n_converged": null,
+   "n_physical": 1,
+   "attempts": [
+    {
+     "sigma_mult": 0.76,
+     "sigma": null,
+     "n_converged": null,
+     "n_physical": null,
+     "best_residual": 0.9327792913828687,
+     "accepted": false
+    },
+    {
+     "sigma_mult": 0.775,
+     "sigma": null,
+     "n_converged": null,
+     "n_physical": null,
+     "best_residual": 0.9650183697692649,
+     "accepted": false
+    },
+    {
+     "sigma_mult": 0.79,
+     "sigma": null,
+     "n_converged": null,
+     "n_physical": null,
+     "best_residual": 0.9221065847163377,
+     "accepted": false
+    },
+    {
+     "sigma_mult": 0.805,
+     "sigma": 161826.7222018429,
+     "n_converged": null,
+     "n_physical": 1,
+     "best_residual": 2.977090364577061e-14,
+     "accepted": true
+    }
+   ],
+   "beta_hj_kj_ref": 398.88704687479526,
+   "W_over_cell": 5.0,
+   "d_EIG_pp": 0.8735014165089261,
+   "beta_fdtd": null,
+   "d_FDTD_pp": 0.333,
+   "d_FDTD_provenance": "OWNER-ASSERTED, console only, NOT ON DISK -- W20.json carries rungs:[] and no beta_fdtd, so d_FDTD cannot be re-derived from this tree",
+   "rel_gap_eig_minus_fdtd_pp": 0.5405014165089261,
+   "provenance_EIG": "measured [M] in-container by this dispatch (sigma ladder in tools/host_ladder.py)",
+   "n_strip_pinning": "strip width pinned to n_strip exactly; build_modal asserts ny_strip == n_strip"
+  }
+ ],
+ "grading": {
+  "prereg_4_1_verbatim": "**CONFIRMED (strip meshing implicated)** -- all of: 1. `|d_W|` falls at **each** of the three consecutive steps `2 -> 3 -> 4 -> 5`, i.e. each step is a fall of more than `Delta_min`; a step smaller than the floor does not count as a fall; 2. total fall `|d_W(2)| - |d_W(5)| > 0.2202 pp`; 3. at least half the `n_strip = 2` residual is removed: `|d_W(5)| <= 0.5 * |d_W(2)|`; 4. the EIG side does not move *against* the FDTD side by more than `0.2202 pp` (the modal half meshes the same strip and checks `ny_strip == n_strip` against the FDTD half [M, `build_modal` source ~345-360], so it is a second, independent read on the same quantity; a large disagreement means the two halves did not measure the same change); 5. no guard in section 10 fired. / **REFUTED (meshing is not the explanation)** -- any of: the sequence is not strictly falling by more than `Delta_min` at each step; total fall `<= 0.2202 pp` (this is what \"flat\" means, quantified); the half-residual condition (3) fails. Then the residual at `n_strip = 2` survives a strip `2.5x` wider in cells and is not attributable to how the strip is meshed at this `h`. / **INCONCLUSIVE** -- anything else: any arm aborted or missing (`meta.abort_reason` not `None`, non-zero exit, no row); any arm tripping the section 5 gate; guard G1/G2/G4/G6 fired; the two solver sides disagreeing per (4). Not a weak confirmation and not a weak refutation. / Precedence: **guards first**, then the rule.",
+  "prereg_source": "evidence/strip_width/PREREG.md L118-139 (frozen, read on disk)",
+  "EIG_side": {
+   "d_pp": [
+    1.293491594615559,
+    1.143374502087502,
+    0.9976590700528698,
+    0.8735014165089261
+   ],
+   "steps_pp": [
+    0.15011709252805705,
+    0.1457154320346321,
+    0.1241576535439437
+   ],
+   "leg1_strict_falling_by_more_than_delta_min": {
+    "pass_": true,
+    "steps_pp": [
+     0.15011709252805705,
+     0.1457154320346321,
+     0.1241576535439437
+    ],
+    "delta_min_pp": 0.0734
+   },
+   "leg2_total_fall_gt_3delta_min": {
+    "pass_": true,
+    "total_fall_pp": 0.41999017810663286,
+    "threshold_pp": 0.2202
+   },
+   "leg3_half_residual_removed": {
+    "pass_": false,
+    "ratio": 0.6753050581426786,
+    "threshold": 0.5,
+    "max_allowed_d5_pp": 0.6467457973077795
+   },
+   "leg4_eig_not_against_fdtd": {
+    "pass_": true,
+    "gap_pp": [
+     0.3914786472678067,
+     0.44137450208750195,
+     0.4936590700528698,
+     0.5405014165089261
+    ],
+    "threshold_pp": -0.2202
+   },
+   "leg5_no_section_10_guard": {
+    "pass_": true,
+    "detail": {
+     "curl_floor_1e_6": {
+      "pass_": true,
+      "values": [
+       5013.2375568531115,
+       5488.979826663936,
+       5838.6774934040795,
+       6087.793123935508
+      ],
+      "note": "PREREG section 10 curl guard: |curl|/|lam| must exceed 1e-6; all values are 5.0e3..6.1e3"
+     },
+     "residual_limit_1e_8": {
+      "pass_": true,
+      "values": [
+       3.2771050989170236e-14,
+       3.134813785874957e-14,
+       3.3010964892506367e-14,
+       2.977090364577061e-14
+      ],
+      "note": "pencil residual < TOL_RESID; the shipped limit is 1e-8 (W08 meta.residual_limit), not 1e-6"
+     },
+     "eps_eff_below_eps_r": {
+      "pass_": true,
+      "values": [
+       3.3244235252556544,
+       3.4064938534834055,
+       3.4789896422012605,
+       3.543662707789715
+      ],
+      "eps_r": 4.4
+     },
+     "alpha_floor": {
+      "fired": false,
+      "note": "alpha_floor_exceeded is true only in W08n.json (lateral box 1x, a different arm) and is a labelled DIAGNOSTIC (alpha_floor_enforced false, meta.alpha_floor_note); it is NOT a section 10 guard and fires on no arm here"
+     }
+    }
+   },
+   "note": "identical rule set with d_EIG substituted for d_W"
+  },
+  "FDTD_side": {
+   "d_pp": [
+    0.9020129473477523,
+    0.702,
+    0.504,
+    0.333
+   ],
+   "steps_pp": [
+    0.20001294734775232,
+    0.19799999999999995,
+    0.17099999999999999
+   ],
+   "leg1_strict_falling_by_more_than_delta_min": {
+    "pass_": true,
+    "steps_pp": [
+     0.20001294734775232,
+     0.19799999999999995,
+     0.17099999999999999
+    ],
+    "delta_min_pp": 0.0734
+   },
+   "leg2_total_fall_gt_3delta_min": {
+    "pass_": true,
+    "total_fall_pp": 0.5690129473477523,
+    "threshold_pp": 0.2202
+   },
+   "leg3_half_residual_removed": {
+    "pass_": true,
+    "ratio": 0.3691743017427208,
+    "threshold": 0.5,
+    "max_allowed_d5_pp": 0.45100647367387614
+   },
+   "leg4_eig_not_against_fdtd": {
+    "pass_": true,
+    "gap_pp": [
+     0.3914786472678067,
+     0.44137450208750195,
+     0.4936590700528698,
+     0.5405014165089261
+    ],
+    "threshold_pp": -0.2202
+   },
+   "leg5_no_section_10_guard": {
+    "pass_": true,
+    "detail": {
+     "curl_floor_1e_6": {
+      "pass_": true,
+      "values": [
+       5013.2375568531115,
+       5488.979826663936,
+       5838.6774934040795,
+       6087.793123935508
+      ],
+      "note": "PREREG section 10 curl guard: |curl|/|lam| must exceed 1e-6; all values are 5.0e3..6.1e3"
+     },
+     "residual_limit_1e_8": {
+      "pass_": true,
+      "values": [
+       3.2771050989170236e-14,
+       3.134813785874957e-14,
+       3.3010964892506367e-14,
+       2.977090364577061e-14
+      ],
+      "note": "pencil residual < TOL_RESID; the shipped limit is 1e-8 (W08 meta.residual_limit), not 1e-6"
+     },
+     "eps_eff_below_eps_r": {
+      "pass_": true,
+      "values": [
+       3.3244235252556544,
+       3.4064938534834055,
+       3.4789896422012605,
+       3.543662707789715
+      ],
+      "eps_r": 4.4
+     },
+     "alpha_floor": {
+      "fired": false,
+      "note": "alpha_floor_exceeded is true only in W08n.json (lateral box 1x, a different arm) and is a labelled DIAGNOSTIC (alpha_floor_enforced false, meta.alpha_floor_note); it is NOT a section 10 guard and fires on no arm here"
+     }
+    }
+   },
+   "caveat": "d_FDTD(2) is measured and on disk; d_FDTD(3/4/5) are owner-asserted console values, so the FDTD side cannot be certified from this tree alone"
+  },
+  "legs_summary": {
+   "leg1": "PASS on both sides",
+   "leg2": "PASS on both sides",
+   "leg3": "PASS on FDTD (0.3692 <= 0.5) / FAIL on EIG (0.6753 > 0.5, i.e. 0.8735 pp against an allowed 0.6467 pp)",
+   "leg4": "PASS (EIG above FDTD at every width; gap 0.3915 -> 0.5405 pp widens, never reverses)",
+   "leg5": "PASS on both sides (no section 10 guard fired on any accepted arm)"
+  },
+  "verdict": "Reading A (letter of section 4.1: the graded quantity d_W is the FDTD one, the EIG side entering only via leg 4): all five legs pass, so CONFIRMED -- but this reading is NOT certifiable from the tree as frozen, because arms n_strip 3/4/5 carry rungs:[] (no row, no beta_fdtd) and the INCONCLUSIVE clause makes 'any arm aborted or missing' decisive; it rests on owner-asserted console numbers. Reading B (EIG graded as an independent quantity, which is what this file exists to make possible): leg 3 FAILS, so INCONCLUSIVE. Both readings agree it is not REFUTED: legs 1 and 2 hold on both sides, so the sequence really does fall and the total fall really does exceed 3*Delta_min. This dispatch does not pick between the readings; the owner must rule whether the FDTD side is authoritative."
+ },
+ "reference_implication_test": {
+  "question": "a falling d_W is consistent both with 'FDTD resolves the strip as cells rise' and with 'the HJ+KJ reference drifts with W at fixed f'",
+  "why_four_points_cannot_separate": "both hypotheses predict a monotone falling d_W in n_strip. Four points, four widths, one solver, one reference: the two explanations are observationally identical in that design",
+  "separator": "a second independent solver at the SAME W -- the modal EIG value, which meshes the same strip exactly (build_modal asserts ny_strip == n_strip) and never touches the FDTD grid",
+  "outcome": "EIG sits 0.3915 / 0.4414 / 0.4937 / 0.5405 pp ABOVE FDTD. The reference is therefore implicated in DIRECTION: two independent solvers both drift away from HJ+KJ as W grows, so the reference is not exact at wider strips. It is NOT implicated in magnitude: if reference drift were the whole story both sides would fall by the same amount, and they do not -- the gap widens monotonically. The surviving residual is solver-specific (EIG-side); the 0.902 pp n_strip=2 residual is NOT removed by wider meshing on the EIG side",
+  "permitted_conclusion": "the strip-meshing explanation is not sufficient on its own; leg 3 fails on the EIG side",
+  "forbidden_conclusion": "that the reference explains the residual away, or that wider meshing fixes it -- neither is supported by these numbers"
+ },
+ "absent_fdtd_log_finding": {
+  "search": "grep -rl 'fit_one' / grep -rl 'BETA  fit_one' / find -name '*.log' '*.txt' '*.out' over the whole workspace",
+  "result": "only evidence/h_refine/h040.log, evidence/h_refine/h0267.log and .scratch/d5811/fit2_h04.log carry FDTD BETA lines. No log, txt or out file exists for W=1.2/1.6/2.0 anywhere; the only files matching 'strip-width-mm 1.x/2.0' are W12/W16/W20.json themselves. NOTHING WAS HARVESTED",
+  "why_w12_w16_w20_show_fdtd_s_zero": "meta.timings.fdtd_s is 0.0 only because rows is empty (fdtd_s sums over rows). wall_total_s of 54.46 / 55.72 / 59.00 s is consistent with the ~54.37 s FDTD of W08 having actually run and then being discarded by the abort: the FDTD most likely ran but was never banked",
+  "consequence": "d_FDTD for arms 3-5 stays owner-asserted; it is not evidence on disk and is labelled as such here"
+ },
+ "caveats": [
+  "these EIG rows are NOT the frozen artefacts: W12/W16/W20 remain aborted shells (rungs:[], abort_reason 'ladder_error'). This file is a separate companion and rewrites nothing",
+  "the parent arms were preregistered with the single-shift solver (sigma_mult 0.76). The numbers above come from the ascending ladder; at n_strip=2 the ladder's first shift reproduces the single-shift result bit-for-bit, so the EIG column is comparable",
+  "sigma_retries > 0 on arms 3/4/5 is a solver-side recovery, not a physics change: only the ARPACK shift moved; the pencil, the guards and the reference are untouched",
+  "n_converged is recorded only where it was transcribed; on the failed attempts it was 16 (ARPACK convergence on the inverted operator) while the pencil residual was 0.92-0.97, so n_converged is not evidence of a usable spectrum",
+  "the section 5 resource gate is not restated: these are rung-level modal runs (seconds, not minutes) and no FDTD was performed"
+ ],
+ "written_by": "dispatch: sigma ladder in tools/host_ladder.py + strip-width EIG companion (worker, no commit)"
+}

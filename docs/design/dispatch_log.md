@@ -30,3 +30,47 @@ its committed block is ratified. The rule binds from 57c onward.
 *and* what the replacement does or does not establish. Retiring "no sparse route exists at any
 resolution" is recorded together with the measured fact that Route C fails its own quality gate at
 every rung including rung 0 — so that no future reader infers the replacement is validated.
+
+## Contradictions recorded: sigma ladder in `tools/host_ladder.py` + strip-width EIG companion (2026-10-31)
+
+Appended by the worker that edited `tools/host_ladder.py` (scope: that file, `evidence/strip_width/**`, this
+append; no commit). These six statements have been made about this work, or follow naturally from the artefacts,
+and are **false as written**. They are recorded here rather than argued in chat so that no later reader
+inherits one of them. Numbers: `evidence/strip_width/EIG_strip_width.json`.
+
+1. **The eigenpath.** The strip-width EIG numbers come from `tools/host_ladder.py` (`build_modal` + `route_c` +
+   `pick_mode`, driven by the new `solve_ladder()`), **not** from `emfit/mode2d.py`. `emfit/mode2d.py` was not
+   imported, not edited, and keeps its pin `b820a3fd4acbfd425e440910685da81c03c8a8ee7b3988e5bdb7a6a7f199c534`.
+   Any sentence of the form "mode2d produced the EIG column" is wrong.
+
+2. **"The FDTD was banked."** `W12.json`, `W16.json` and `W20.json` carry `rungs: []` and no `beta_fdtd`. The
+   `d_FDTD` values for `n_strip = 3/4/5` (`0.7020 / 0.5040 / 0.3330` pp) exist only as owner-asserted console
+   output; they are not evidence on disk and cannot be re-derived from this tree. Only `n_strip = 2`
+   (`beta_fdtd 388.21946125247325`, `d_FDTD 0.9020` pp) is measured and banked. Related, and also easy to get
+   wrong: `W12/W16/W20` show `meta.timings.fdtd_s = 0.0` only because that field sums over rows and `rows` is
+   empty; their `wall_total_s` of `54.46 / 55.72 / 59.00` s is consistent with the ~`54.37` s FDTD of `W08`
+   having actually run and then been discarded by the abort. The FDTD most likely ran but was never banked.
+
+3. **The residual limit.** The shipped acceptance limit is `TOL_RESID = 1e-8` (`W08.json`
+   `meta.residual_limit = 1e-08`), not `1e-6`. `1e-6` is `CURL_FLOOR`, a *different* guard
+   (`|curl|/|lam| > 1e-6`). Quoting `1e-6` for the pencil residual understates the acceptance bar by seven
+   decades and would mis-grade every row in this tree.
+
+4. **`--max-rungs 1` is inert, not a safety limit.** It was passed on every arm alongside `--h 0.4`. In `main()`
+   the line `if args.h is not None: rungs = (args.h,)` overrides `rungs_requested`, so `--max-rungs 1` is
+   silently ignored. Nothing about these runs was bounded by it, and citing it as evidence that "only one rung
+   was attempted" proves nothing; the bound that actually held is that `--h` names a single height.
+
+5. **The descending ladder.** "Try `sigma` downwards" is refuted **by measurement**, not by argument: at
+   `n_strip = 3`, multipliers `0.76 / 0.757 / 0.754 / 0.751 / 0.748 / 0.745 / 0.700 / 0.600 / 0.900` all yielded
+   **zero** real (physical) pairs, while ascending `0.775 / 0.79 / 0.805` recover arms `n_strip = 3 / 4 / 5`
+   (`beta_eig 394.5069378715431 / 398.68271603684286 / 402.37133087951725`, residuals `~3e-14`). The owner
+   ruling for ascending-first is therefore a measurement result; presenting it as a preference would misstate
+   the evidence. The junk residual is also not monotone in `sigma` (`0.9375 -> 0.9524` going `0.76 -> 0.775` at
+   `n_strip = 4`), so it cannot be used as a search objective either.
+
+6. **`n_conv = 16` is not a usable spectrum.** On the aborted `W12/W16/W20` runs the 16 candidates did converge
+   inside ARPACK on the inverted operator (`S = (KC - sigma*MC)^-1`), but they were never eigenpairs of the
+   pencil: the pencil residuals were `0.92 - 0.97`, i.e. no better than a random vector. `n_converged = 16`
+   therefore says nothing about whether the modal basis was found, and the `W12/W16/W20` console text that reads
+   like "16 converged, 0 physical" must not be read as "the solver nearly worked".

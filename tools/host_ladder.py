@@ -107,7 +107,25 @@ C0 = 299792458.0
 H_SUB = 1.6e-3                      # substrate thickness, studies.MS_H
 ER = 4.4                            # studies.MS_EPS_R
 RUNGS_MM = (0.4, 0.26667, 0.2, 0.16, 0.13333)
-SIGMA_MULT = 0.76                   # sigma = 0.76 * k0^2 * eps_r
+SIGMA_MULT = 0.76                   # sigma = 0.76 * k0^2 * eps_r -- the
+                                    # LOWEST shift of SIGMA_LADDER below
+# Shift ladder, ASCENDING and residual-driven.  The shift has to sit a little
+# BELOW the wanted eigenvalue: sigma = 0.76*k0^2*eps_r is ~1.4% under the
+# h = 0.4 mm mode.  beta^2 is not width-independent though -- it walks
+# 151886 -> 155636 -> 158948 -> 161903 (rad/m)^2 over n_strip 2..5 -- while
+# sigma is width-independent, so ONE fixed factor drifts further below the
+# mode as the strip widens (894 -> 9123) until the 16 converged pairs stop
+# being eigenpairs of the pencil at all (pencil residual 0.93-0.99) and every
+# one of them is rejected.  Descending from 0.76 does not help: a measured
+# sweep over 0.760, 0.757, 0.754, 0.751, 0.748, 0.745, 0.700, 0.600 and 0.900
+# recovered nothing real at n_strip = 3, so the ladder ASCENDS instead.
+#
+# Each rung takes the FIRST factor whose picked pair passes every guard and
+# whose pencil residual is < TOL_RESID, and still ABORTS -- dumping the
+# spectrum -- when no factor does.  The ladder searches over where to put the
+# shift; it is not a threshold: TOL_RESID, CURL_FLOOR and ER are untouched,
+# and no factor is ever accepted on a pair that fails a guard or the residual.
+SIGMA_LADDER = (SIGMA_MULT, 0.775, 0.79, 0.805, 0.82, 0.85)
 K_EIGS = 16
 TOL_RESID = 1e-8
 CURL_FLOOR = 1e-6
@@ -627,6 +645,91 @@ def pick_mode(rows):
     return good[0], good[:3]
 
 
+def solve_ladder(pb, k0, k, mults=SIGMA_LADDER):
+    """Ascending shift ladder: the FIRST shift that yields a pick wins.
+
+    ``sigma = mult * k0^2 * eps_r``, tried in ``mults`` order -- low to high,
+    because a shift below the mode is what makes the inverted operator
+    well-conditioned and a shift above it converges to the same junk (see
+    SIGMA_LADDER).  A shift is accepted only when ``pick_mode`` finds a pair
+    that passes every guard *and* carries a pencil residual < TOL_RESID; the
+    first such shift stops the search.  Nothing here relaxes a threshold: a
+    rung whose every shift fails still fails, and the caller aborts on it.
+
+    Returns dict(best, near, rows, rec, sigma, mult, attempts, wall_s):
+
+    * ``best`` is None when no shift produced an acceptable pair;
+    * ``rows``/``rec``/``sigma``/``mult`` describe the shift that is
+      reported -- the accepted one, or (on failure) the attempted shift with
+      the smallest residual, which is the spectrum worth dumping;
+    * ``attempts`` is one write-only diagnostic record per shift tried, in
+      the order tried (a rung's ``sigma_retries`` is how many of them were
+      rejected before the accepted one);
+    * ``wall_s`` is the total time spent inside ``route_c`` over ALL shifts,
+      so the rung's eig timing stays honest rather than counting only the
+      shift that happened to win.
+
+    Factorisation reuse across shifts is deliberately NOT done: ``S = KC -
+    sigma*MC`` changes with sigma, so every shift needs its own ``splu`` --
+    and that splu is ~0.09 s here while ARPACK is the cost, so reuse would
+    buy nothing.
+    """
+    attempts, t_all, fallback = [], 0.0, None
+    last_rec = {}
+    for mult in mults:
+        sigma = float(mult) * k0 * k0 * ER
+        t0 = time.perf_counter()
+        rec, lam, vec = route_c(pb, sigma, k)
+        t_all += time.perf_counter() - t0
+        last_rec = rec
+        if lam is None:
+            attempts.append(dict(sigma_mult=float(mult), sigma=sigma,
+                                 n_converged=0, n_physical=0,
+                                 best_residual=None, accepted=False,
+                                 eigs_error=rec.get("eigs_error")))
+            print(f"  EIG   sigma ladder mult={mult:g} sigma={sigma:.6f}: "
+                  f"eigs failed -- "
+                  f"{rec.get('eigs_error', 'no converged pair')}; "
+                  f"ascending", flush=True)
+            continue
+        rows = candidates(pb, lam, vec, k0)
+        best, near = pick_mode(rows)
+        res_min = min((r["residual"] for r in rows
+                       if r["residual"] is not None), default=None)
+        attempts.append(dict(sigma_mult=float(mult), sigma=sigma,
+                             n_converged=len(rows), n_physical=len(near),
+                             best_residual=res_min,
+                             accepted=bool(best is not None)))
+        if best is not None:
+            return dict(mult=float(mult), sigma=sigma, rec=rec, rows=rows,
+                        best=best, near=near, attempts=attempts,
+                        wall_s=t_all)
+        print(f"  EIG   sigma ladder mult={mult:g} sigma={sigma:.6f}: "
+              f"{len(rows)} pairs, {len(near)} physical, best residual "
+              f"{num(res_min, '.3e')} -- rejected; ascending", flush=True)
+        score = math.inf if res_min is None else res_min
+        if fallback is None or score < fallback[0]:
+            fallback = (score, float(mult), sigma, rec, rows)
+    if fallback is None:            # every shift failed inside eigs itself
+        return dict(mult=None, sigma=None, rec=last_rec, rows=[], best=None,
+                    near=[], attempts=attempts, wall_s=t_all)
+    _score, mult, sigma, rec, rows = fallback
+    return dict(mult=mult, sigma=sigma, rec=rec, rows=rows, best=None,
+                near=[], attempts=attempts, wall_s=t_all)
+
+
+def ladder_trace(attempts):
+    """One-line trace of a failed ladder: ``mult:pairs/residual`` each."""
+    parts = []
+    for a in attempts:
+        if a.get("eigs_error") is not None:
+            parts.append(f"{a['sigma_mult']:g}:eigs-error")
+        else:
+            parts.append(f"{a['sigma_mult']:g}:{a['n_converged']}p/"
+                         f"{num(a['best_residual'], '.2e')}")
+    return "[" + ", ".join(parts) + "]"
+
+
 # ---------------------------------------------------------------------------
 # one rung
 # ---------------------------------------------------------------------------
@@ -802,18 +905,19 @@ def run_rung(h_mm, args, rss_branch):
                 f"nx,ny,nz,strip = {gy['nx']},{gy['ny']},{gy['nz']},"
                 f"{gy['n_strip']} cells, npml {gy['n_pml']}, n_top "
                 f"{gy['n_top']})")
-    sigma = SIGMA_MULT * k0 * k0 * ER
-    t0 = time.perf_counter()
-    rec, lam, vec = route_c(pb, sigma, args.k)
-    t_eig = time.perf_counter() - t0
-    if lam is None:
-        raise LadderError(f"h = {h_mm:g} mm: eigs failed -- "
-                          f"{rec.get('eigs_error', 'no converged pair')}")
-    rows = candidates(pb, lam, vec, k0)
-    best, near = pick_mode(rows)
+    # Ascending residual-driven shift ladder: the first shift whose picked
+    # pair passes every guard and the residual gate is the one this rung
+    # reports.  sigma is the shift that was ACCEPTED, not the fixed 0.76
+    # multiplier -- on a wider strip those differ, and reporting the constant
+    # while solving at another one is how the 0.8 mm tuning stayed invisible.
+    lad = solve_ladder(pb, k0, args.k)
+    sigma, rec, t_eig = lad["sigma"], lad["rec"], lad["wall_s"]
+    attempts, rows = lad["attempts"], lad["rows"]
+    best, near = lad["best"], lad["near"]
     if best is None:
-        print(f"  EIG   {len(rows)} converged pairs, none physical -- "
-              f"per-pair verdicts below", flush=True)
+        print(f"  EIG   sigma ladder found no acceptable pair in "
+              f"{len(attempts)} shift(s) -- per-pair verdicts for the "
+              f"closest attempt below", flush=True)
         for r in sorted(rows, key=lambda r: r["lam"], reverse=True):
             print(f"        j={r['j']:2d} lam={r['lam']:.9e} "
                   f"|imag|/|lam|={r['imag_rel']:.4e} "
@@ -824,7 +928,10 @@ def run_rung(h_mm, args, rss_branch):
                   f"imag={'pass' if r['guard_imag'] else 'FAIL'} "
                   f"curl={'pass' if r['guard_curl'] else 'FAIL'} "
                   f"eps={'pass' if r['guard_eps'] else 'FAIL'}", flush=True)
-        raise LadderError(no_candidate_reason(rows, rec, h_mm))
+        raise LadderError(
+            f"sigma ladder exhausted after {len(attempts)} ascending "
+            f"shift(s) {ladder_trace(attempts)} -- "
+            f"{no_candidate_reason(rows, rec, h_mm)}")
     if not (best["residual"] is not None and best["residual"] < TOL_RESID):
         raise LadderError(f"h = {h_mm:g} mm: residual "
                           f"{best['residual']!r} exceeds {TOL_RESID:g} at "
@@ -832,7 +939,9 @@ def run_rung(h_mm, args, rss_branch):
     beta_eig = float(best["beta"])
     eps_eig = float(best["eps_eff"])
     print(f"  EIG   n_dof={pb['n_e'] + pb['n_n']} free_e={pb['n_e']} "
-          f"n_n={pb['n_n']} sigma={sigma:.6f} nnz(S)={rec['nnz_S']} "
+          f"n_n={pb['n_n']} sigma={sigma:.6f} "
+          f"sigma_mult={lad['mult']:g} "
+          f"sigma_retries={len(attempts) - 1} nnz(S)={rec['nnz_S']} "
           f"factor_nnz={rec['factor_nnz']} "
           f"factor_mem={rec['factor_memory_gb_measured']:.3f} GB "
           f"beta={beta_eig:.4f} eps_eff={eps_eig:.6f} "
@@ -879,7 +988,10 @@ def run_rung(h_mm, args, rss_branch):
         box_lid_mult=float(args.box_lid_mult),
         pml_mm=(None if args.pml_mm is None else float(args.pml_mm)),
         nsteps=int(fd["nsteps"]), f_hz=float(gy["f"]),
-        f_target_hz=float(gy["f_target"]), k0=float(k0),
+        f_target_hz=float(gy["f_target"]), k0=float(k0), sigma=float(sigma),
+        sigma_mult_used=float(lad["mult"]),
+        sigma_retries=int(max(0, len(attempts) - 1)),
+        sigma_attempts=[dict(a) for a in attempts],
         dt_s=float(gy["dt"]), n_acc=int(gy["n_acc"]),
         beta_fdtd=beta_fdtd, beta_eig=beta_eig, rel_gap_pct=float(gap_pct),
         beta_fit_one=beta_fdtd, beta_fit_two=beta_two_wave,
@@ -1126,7 +1238,10 @@ def main(argv=None):
           f"DIAGNOSTIC ONLY, never an abort "
           f"(measured: default box fit 0.02145, npml10 span fit 0.0278, "
           f"lid sweep 0.01388 -- 0.0139 is the most permissive)", flush=True)
-    print(f"eigs: k={args.k}, sigma={SIGMA_MULT:g}*k0^2*{ER:g}, "
+    lad_desc = "/".join(f"{m:g}" for m in SIGMA_LADDER)
+    print(f"eigs: k={args.k}, sigma={SIGMA_MULT:g}*k0^2*{ER:g} "
+          f"ascending ladder {lad_desc} (first shift that passes the "
+          f"guards and the residual gate wins), "
           f"maxiter={EIGS_MAXITER}, tol={EIGS_TOL}, which=LM, "
           f"residual limit {TOL_RESID:g}", flush=True)
     print(f"peak rss {peak_mb:.1f} MB -- {branch}", flush=True)
@@ -1192,9 +1307,28 @@ def main(argv=None):
                   "ladder; npml_per_rung is the count actually used",
         eps_r=ER, h_substrate_m=H_SUB,
         sigma_mult=SIGMA_MULT,
-        sigma_per_rung=[float(r["k0"] ** 2 * ER * SIGMA_MULT) for r in rows],
+        sigma_per_rung=[float(r["k0"] ** 2 * ER
+                              * r.get("sigma_mult_used", SIGMA_MULT))
+                        for r in rows],
         sigma_note="sigma = sigma_mult * k0^2 * eps_r, k0 from the FDTD's "
                    "DFT-snapped tone for that rung",
+        sigma_ladder=[float(m) for m in SIGMA_LADDER],
+        sigma_used_per_rung=[float(r["sigma"]) for r in rows],
+        sigma_retries=[int(r.get("sigma_retries", 0)) for r in rows],
+        sigma_attempts=[list(r.get("sigma_attempts", [])) for r in rows],
+        sigma_ladder_note="the shift is searched ASCENDING over sigma_ladder "
+                          "(multipliers of k0^2*eps_r): a rung takes the "
+                          "first multiplier whose picked pair passes every "
+                          "guard and whose pencil residual is < "
+                          "residual_limit, so sigma_mult_used and "
+                          "sigma_used_per_rung can differ from the constant "
+                          "sigma_mult on a wider strip.  sigma_retries is "
+                          "the number of shifts rejected before the "
+                          "accepted one; sigma_attempts is the full trace.  "
+                          "sigma_per_rung keeps the old expression "
+                          "(k0^2*eps_r*sigma_mult) and therefore its old "
+                          "value bit for bit when 0.76 is accepted, but the "
+                          "multiplier in it is the ACCEPTED one.",
         eigs=dict(solver="scipy.sparse.linalg.eigs (NOT eigsh: M is "
                          "indefinite)", k=int(args.k),
                   which="LM", maxiter=EIGS_MAXITER, tol=EIGS_TOL,
