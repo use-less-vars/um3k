@@ -1,0 +1,394 @@
+{
+ "tag": "h080",
+ "h_m": 0.0008,
+ "n_e": 319,
+ "n_n": 110,
+ "k0": 209.78570331727553,
+ "mesh": {
+  "ny": 13,
+  "nz": 8,
+  "cell": 0.0008,
+  "ly": 0.010400000000000001,
+  "lz": 0.0064
+ },
+ "asymmetry": {
+  "rows": [
+   {
+    "name": "m1",
+    "shape": [
+     333,
+     333
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 0.6666666666666672,
+    "nnz": 1561
+   },
+   {
+    "name": "m_eps_mixed",
+    "shape": [
+     333,
+     333
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 2.9333333333333353,
+    "nnz": 1561
+   },
+   {
+    "name": "k_q",
+    "shape": [
+     333,
+     333
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 6250000.000000013,
+    "nnz": 1581
+   },
+   {
+    "name": "m_mu",
+    "shape": [
+     333,
+     333
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 0.6666666666666672,
+    "nnz": 1561
+   },
+   {
+    "name": "m_eps_assemble",
+    "shape": [
+     333,
+     333
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 2.9333333333333353,
+    "nnz": 1561
+   },
+   {
+    "name": "k_zz",
+    "shape": [
+     126,
+     126
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 4.000000000000001,
+    "nnz": 584
+   },
+   {
+    "name": "m_zz",
+    "shape": [
+     126,
+     126
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 1.4080000000000007e-06,
+    "nnz": 792
+   },
+   {
+    "name": "c_rect",
+    "shape": [
+     333,
+     126
+    ],
+    "square": false,
+    "max_abs": 0.8333333333333344,
+    "nnz": 1248
+   },
+   {
+    "name": "A_unsym",
+    "shape": [
+     319,
+     319
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 6235329.986227905,
+    "nnz": 1507
+   },
+   {
+    "name": "B_before_cDcT",
+    "shape": [
+     319,
+     319
+    ],
+    "square": true,
+    "fro_rel": 0.0,
+    "fro_abs": 0.0,
+    "max_abs_asym": 0.0,
+    "argmax": [
+     0,
+     0
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 0,
+    "max_abs_X": 0.6666666666666672,
+    "nnz": 1487
+   },
+   {
+    "name": "cDcT",
+    "shape": [
+     319,
+     319
+    ],
+    "square": true,
+    "fro_rel": 3.1440552342011215e-15,
+    "fro_abs": 2.4580926888015945e-14,
+    "max_abs_asym": 8.951173136040325e-16,
+    "argmax": [
+     269,
+     276
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 99810,
+    "max_abs_X": 0.4626828157682366,
+    "nnz": 101761
+   },
+   {
+    "name": "B_unsym",
+    "shape": [
+     319,
+     319
+    ],
+    "square": true,
+    "fro_rel": 3.6215078139527615e-15,
+    "fro_abs": 2.4580926888015945e-14,
+    "max_abs_asym": 8.951173136040325e-16,
+    "argmax": [
+     269,
+     276
+    ],
+    "n_entries_gt_tol": 0,
+    "n_entries_nonzero": 99810,
+    "max_abs_X": 0.47514499079424455,
+    "nnz": 101761
+   },
+   {
+    "name": "D=splu(h).solve(I)",
+    "shape": [
+     110,
+     110
+    ],
+    "fro_rel": 2.77e-16,
+    "max_abs_asym": 1.11e-15,
+    "argmax": [
+     77,
+     104
+    ],
+    "n_entries_gt_tol": 0
+   }
+  ]
+ },
+ "thresholds": {
+  "median_abs_lambda": 18135959.173563845,
+  "zero": 0.18135959173563845,
+  "inf_like": 1813595917356384.5,
+  "rule": "ZERO if |l|<=1e-8*med, INFINITE-LIKE if |l|>=1e8*med, med over finite non-zero |l|"
+ },
+ "gradient": {
+  "n_cols": 84,
+  "dim_spanZ": 84,
+  "info": {
+   "column_region": "v1",
+   "columns_v1": 84,
+   "columns_added": 14,
+   "z_dim_v2": 98,
+   "region_contrast": [
+    3.4000000000000004
+   ]
+  },
+  "rayleigh": {
+   "rayleigh_min": -12130667.173209066,
+   "rayleigh_median": -4545891.568719691,
+   "rayleigh_max": -145293.05607109723,
+   "k0_sq": 44010.04131632395,
+   "rel_dist_median": 104.2921449913194,
+   "resid_median": 0.8294863478227906,
+   "resid_max": 0.8958804204761196,
+   "n_resid_lt_1e6": 0,
+   "dim": 84
+  }
+ },
+ "kerB": {
+  "dim": 0,
+  "tol": 7.607539417728621e-14,
+  "sigma_min": 0.000603729424491951,
+  "sigma_max": 1.0740223099338237
+ },
+ "classes": {
+  "ZERO": {
+   "count": 0
+  },
+  "FINITE": {
+   "count": 319,
+   "abs_median": 18135959.173563845,
+   "abs_min": 36734.34118094825,
+   "abs_max": 56047730.248834744,
+   "re_median": -18135959.173563845,
+   "projZ_median": 0.835358345375928,
+   "projZ_min": 0.031941703614553174,
+   "projZ_max": 0.9999497932538303,
+   "projZperp_median": 0.5497057711274205,
+   "projKerB_median": 0.0,
+   "resid_median": 2.656375662838729e-07
+  },
+  "INFINITE-LIKE": {
+   "count": 0
+  },
+  "NONFINITE": {
+   "count": 0
+  }
+ },
+ "log10_bins": [
+  {
+   "log10": [
+    4,
+    5
+   ],
+   "count": 2,
+   "abs_median": 65173.77498223732,
+   "re_median": -65173.77498223732,
+   "projZ_median": 0.7811034362332412,
+   "projZ_max": 0.9787327326809742,
+   "resid_median": 5.3330487823656064e-08
+  },
+  {
+   "log10": [
+    5,
+    6
+   ],
+   "count": 10,
+   "abs_median": 592739.3893052262,
+   "re_median": -592739.3893052262,
+   "projZ_median": 0.7312245725464395,
+   "projZ_max": 0.9913006449807965,
+   "resid_median": 9.072081494988749e-08
+  },
+  {
+   "log10": [
+    6,
+    7
+   ],
+   "count": 88,
+   "abs_median": 5702378.870453749,
+   "re_median": -5702378.870453749,
+   "projZ_median": 0.8839812072412709,
+   "projZ_max": 0.9954415914900819,
+   "resid_median": 1.8261480730959392e-07
+  },
+  {
+   "log10": [
+    7,
+    8
+   ],
+   "count": 219,
+   "abs_median": 28046788.505491707,
+   "re_median": -28046788.505491707,
+   "projZ_median": 0.8033060436478434,
+   "projZ_max": 0.9999497932538303,
+   "resid_median": 3.03923570768916e-07
+  }
+ ],
+ "physical": {
+  "beta_expected_qs": 377.343366741485,
+  "index": 130,
+  "lam_re": 151598.91501195132,
+  "lam_im": 0.0,
+  "beta": 389.3570533738298,
+  "abs_lam": 151598.91501195132,
+  "class_": "FINITE",
+  "residual": 4.909413869757069e-08,
+  "projZ": 0.20237610795325947,
+  "projZperp": 0.9793078734135103,
+  "projKerB": 0.0,
+  "eps_eff": 3.4446437785033646
+ },
+ "arms": {
+  "t_sym": 0.6932091539492831,
+  "dtype": "real (A,B real symmetric)"
+ },
+ "qz_done": true,
+ "environment": {
+  "scipy": "1.18.1",
+  "numpy": "2.5.4",
+  "case": "2D FEM d585 anchor, clearance 3.0 mm, eps_r 4.4, W 10.4 mm, H 6.4 mm",
+  "k0_str": "k0 = 209.78570331727553 1/m (FREQ_DEF)",
+  "pencil": "A = k0^2 M_eps,ff - K_q,ff ; B = M1,ff - C_f (K_zz,ff - k0^2 M_zz,ff)^-1 C_f^T (dense splu solve, as in solve_modes_mixed)",
+  "dtype": "A, B real (not complex); scipy QZ = dggev"
+ },
+ "commands": [
+  "python3 /tmp/run_d.py  (Task D, both meshes)",
+  "python3 /tmp/run_c2.py h080 0.8  (Task C, QZ 319x319 in 0.69 s)",
+  "python3 -c '<splu(h).solve(I) asymmetry check>'"
+ ],
+ "verdict": "NEITHER - the classification is not clean: no eigenvalue reaches the ZERO or INFINITE-LIKE threshold on either mesh (0/319 and 0/1262), ker(B) is trivial, and the gradient subspace is not an invariant/near-invariant subspace of the reduced pencil"
+}
