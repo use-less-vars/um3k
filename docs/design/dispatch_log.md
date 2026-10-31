@@ -12,6 +12,7 @@ conflict was caught only at commit time. A dispatch that is not on this list is 
 | 57c | as 57b, plus `docs/design/dispatch_log.md` | OPEN — T0 landed; T3a baseline next; T3b CANCELLED and replaced by the `Q` diagnosis |
 | 58 | `docs/design/component_map.md`, `docs/design/d58_acceptance.md`, `decisions.md` (scope as issued) | CLOSED — `9cece7b`, ratified |
 | 59V | visualisation acceptance doc and `viz/**` (scope as issued) | CLOSED — `39b0657`, `1cbe2fc`, authorised retroactively |
+| box-sweep-2026-10-31 *(dated slug in place of a dispatch number — none is verifiable in this tree)* | `evidence/box_sweep/**` (7 JSONs + `SUMMARY.md`), `docs/design/box_sweep_preregistration.md`, one row in this file | CLOSED — six preregistered box-sweep arms at h = 0.4 mm run post-freeze, all guards G1–G5 pass, frozen verdict **INCONCLUSIVE** (`evidence/box_sweep/SUMMARY.md` §5); §148(h) left open; no `decisions.md` write claimed |
 
 ## Standing rules
 
