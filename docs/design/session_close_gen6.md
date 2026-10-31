@@ -300,40 +300,47 @@ destroy the instrument that produced the banked rows.
 - Grader basis-point printing convention (a printed value 100x the `pp` threshold): zero hits — "basis point" 0, "grader" 0, `1e4`/`10000` 13 (none a printing convention), `90.2` 9 (all inside longer numerals such as `390.25`), `bp` 18 (all binary-file noise). Every definition in this tree is percent-based, `d = 100*(beta/ref - 1)` in pp: `evidence/strip_width/EIG_strip_width.json:30`, `evidence/rung_c/SUMMARY.md:10`.
 - `evidence/rung_c/PREREG.md`: zero hits for `rung_c/PREREG`, and that directory holds only `SUMMARY.md` and `h020.json`; the 19 citations of a rung-C pre-registration in this tree point at `evidence/rung_c_errata/PREREG.md`, which exists (19 193 B).
 
-### 6.3 Twenty-seven errors, and the generation rate is the defect
+### 6.3 Twenty-eight errors, and the generation rate is the defect
 
-This session's error count is 27. It stood at 23 earlier in the session. The four additions are not new species of failure; they are the same species recurring at a higher rate under load. The count is kept as data, in the register of the drift log, because the quantity that matters is not the number of errors but the ratio of generated specifics to verified specifics, and that ratio is what moved.
+This session's error count is 28. It stood at 23 when the catalogue was first tabulated. The additions are not new species of failure; they are the same species recurring at a higher rate under load. The count is kept as data, in the register of the drift log, because the quantity that matters is not the number of errors but the ratio of generated specifics to verified specifics, and that ratio is what moved.
+
+A second number exists in the record and is not this one: an earlier worker self-report put the count at 17. Two counts, two authors, both [M] from working-doc notes. They are distinguished rather than merged.
 
 Count by class:
 
 ```
-class                       at 23    later      total
-Fabrication                     2                   2
-Arithmetic                      2                   2
-Inverted inference              1                   1
-Unit conflation                 1      #26          2
-Timer-as-measurement            1                   1
-Path/citation                   9                   9
-Parameter                       2                   2
-Specification defect            3      #27          4
-Premise                         2                   2
-  -- unclassified                     #24, #25
-                              ------
-                               23                 25 of 27
+class                       n     later entries
+Fabrication                 2
+Arithmetic                  3     #28
+Inverted inference          1
+Unit conflation             2     #26
+Timer-as-measurement        1
+Path/citation               9
+Parameter                   3     #24
+Specification defect        4     #27
+Premise                     3     #25
+                          ---
+                           28
 ```
 
-The table reconciles as 23 + #26 + #27 = 25, plus #24 and #25, which carry no class yet, = 27. #24 is "ker S" used as the name of an object whose record name is `B = m1 - cDc^T`. #25 is "in ker A or ker S" as a proposition about where a state lives, which is ill-posed. Both are plausible-sounding generated specifics, which is the dominant failure mode of the later entries. They are left unclassed rather than force-fitted into a box.
+The table as first drafted read 23 while the count was quoted as 27. That discrepancy is #28: a total that the parts did not support. It was caught by recomputing the sum, and it was not reconciled by redistributing entries into boxes to make it close, because forcing the sum would have produced the very class of defect this section catalogues.
+
+#24 is "ker S" used as the name of an object whose record name is `B = m1 - cDc^T` - Parameter: a borrowed name for an object that does not have that name.
+
+#25 is "in ker A or ker S" as a proposition about where a state lives - Premise: a proposition asserted that is not well-posed.
 
 #26 is the 201164.3 unit error: `213.747` is the FDTD k₀ (`tools/host_ladder.py:1060`, ratio 1.0188875), not the modal k₀, whose value is `209.7857`, giving `eps_r k0^2 = 193644.1818`. The error was jointly authored: the wrong k₀ was supplied and the earlier report inherited it before re-derivation from source caught it.
 
 #27 is a dispatch defect rather than a code defect. Dispatches touching a large file did not state the edit protocol: read and rewrite inside a single call, append via `open(path,'a')`, never a redirect from a temporary file. A 1.5 MB ledger was truncated to 0 bytes by a redirect from a `/tmp` file that did not survive into the next container. Recovery was from git at `40bbc85`; zero bytes were lost.
 
+#28 is the arithmetic slip above, class Arithmetic. It is the only entry in the catalogue whose subject is the catalogue.
+
 > Every specific I generated this session - a number, a path, a citation, a ratio, a parameter name, a file's existence - was [R] by default, and was [M] only when it pointed at an artefact the worker had pasted or git could resolve. The catch rate held because the worker reads carefully and git compares hashes. The catch rate is not free. The generation rate is the problem. The fix is fewer unverified claims per message, not better catch.
 
-> Two of the 27 were fabrications - the Gen-7 close-out document and the `D-beta-ts` citation. Both were plausible-shaped. Both were caught by search, not by reasoning. The asymmetry is not severity but residue: an arithmetic slip leaves a recomputation to catch it, but a fabricated entity leaves nothing to check because the thing that would have held the residue does not exist. Both go into this section named, not softened.
+> Two of the 28 were fabrications - the Gen-7 close-out document and the `D-beta-ts` citation. Both were plausible-shaped. Both were caught by search, not by reasoning. The asymmetry is not severity but residue: an arithmetic slip leaves a recomputation to catch it, but a fabricated entity leaves nothing to check because the thing that would have held the residue does not exist. Both go into this section named, not softened.
 
-> One of the 27 was jointly authored: the 201164.3 unit error, where I supplied the wrong k₀ and the worker's earlier report inherited it before re-derivation caught it. Shared errors are not less serious than solo ones; they are more, because each party can think the other has checked. The recovery is the same as for solo errors: re-derive from source, tag the source, name the error.
+> One of the 28 was jointly authored: the 201164.3 unit error, where I supplied the wrong k₀ and the worker's earlier report inherited it before re-derivation caught it. Shared errors are not less serious than solo ones; they are more, because each party can think the other has checked. The recovery is the same as for solo errors: re-derive from source, tag the source, name the error.
 
-Whether `projZ 0.2162` was ever stated as a squared cosine is under check. If it was, that becomes #28 and the count above is 27 as of this writing.
+Whether `projZ 0.2162` was ever stated as a squared cosine is under check and is not counted. The record says `projZ` was reported by the worker's Task C as `0.20238 / 0.21621`, and "a projection norm, not a squared cosine" was stated after the fact and is the correct reading. If the record shows it was asserted as cos^2, that becomes #29. No entry is made against an allegation the record does not show.
 
 The conceptual correction that came out of the same pass - that the beta^2 = eps_r k0^2 family is a transverse-pencil construction artefact already rejected by the guard, not a mixed-pencil defect - is `decisions.md` §161, not this section. This section is only the accounting.
