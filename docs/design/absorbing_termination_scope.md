@@ -215,7 +215,7 @@ that is informative rather than merely negative.
 ## 5. (c) Pre-registered acceptance criteria
 
 Written before the run and committed with the change, so that no number can choose its own
-bar after the fact. Six criteria, in the order they would go wrong; AC-1 is the one that
+bar after the fact. Seven criteria, in the order they would go wrong; AC-1 is the one that
 would be violated most quietly. They are stated as bounds on evidence that does not exist
 yet, which is the point of pre-registering them.
 
@@ -262,6 +262,12 @@ units, plane index - and the index of the plane the S-parameters were extracted 
 `decisions.md:463` records that the current path reports a plane the audit never looks at;
 AC-6 is the criterion that makes that sentence stop being true, and it costs one
 dictionary key.
+
+**AC-7 - phase fidelity.** Extract `beta_FDTD = -d(arg S21)/dL` from two line lengths;
+compare against `beta_modal` from `emfit.mode_profile` on the same geometry. Threshold:
+`|beta_FDTD - beta_modal| / beta_modal <= 1.0e-3`, matching AC-3's relative-band scale.
+Rationale: AC-3 (`|S11| <= 1.0e-3`) proves matching, not `beta` accuracy - a phase-wrong
+termination can pass all magnitude criteria. AC-7 is the independent phase check.
 
 **Falsifier of last resort.** A bar that fails is recorded, not moved. And if a matched
 load leaves `|S11|` where it was - unmoved at `3.618e-4`, no better - then termination was
@@ -423,6 +429,34 @@ Three questions for the owner, each of which changes a number above:
 3. **The load range.** 25 and 50 ohm only, where the element is validated within 1 per cent,
    or include 100 ohm as a recorded degradation point at 9.04 per cent (`decisions.md:421`)?
 
+**Post-build follow-up: the beta-basis comparison.** The one item in this section that is
+asked for *after* the build rather than before it [R], appended here rather than opened as
+a section because it is a follow-up this document does not run. At the production
+cross-sections - `h = 0.4` (`evidence/h_refine/h040.json:148`, `wall_fdtd_s`
+232.00763625791296) and `h = 0.2` (`evidence/rung_c/h020.json:191`,
+1335.5644034249708) [M] - compare the propagation constant the mode profile implies,
+`beta_modal`, against the one the production route returns, `beta_production`, and require
+agreement to `0.1 pp` [R]. Both are *derived* quantities rather than existing symbols:
+neither `emfit/mode_profile.py` nor `emfit/quasistatic.py` contains the string `beta` (zero
+matches in each) [M], and `emfit/quasistatic._solve` returns `(phi, K, length)`
+(`quasistatic.py:252-253`) out of one sparse direct solve (`:270-272`) [M]. The two sides
+are therefore the profile's `k0 * sqrt(eps_eff)` (`mode_profile.py:280`, with
+`eps_eff = c_prime / c_prime_air` at `:244`, both from that same solve) and the same
+construction built from `quasistatic.capacitance_per_length` (`:276`) through
+`z0_eps_eff`, imported at `mode_profile.py:121` [M]. The names `beta_modal` and
+`beta_production` are this follow-up's convention [R], and `0.1 pp` is set here because no
+tolerance for this quantity exists in the tree [R] - it is not a recorded drift.
+
+The expected outcome, to be tested rather than assumed: the static Laplace route is
+adequate for the production `beta`, and `emfit/mode2d.py` stays validation-only [R]. That
+route's static-ness is the module's own statement ("a 2-D Laplace solve has no eigenvalue
+to produce them", `mode_profile.py:93-95`) [M], and the full-wave alternative is capped
+and refuses above the cap (`solve_modes_mixed`, `mode2d.py:1775`; `_MIXED_DENSE_MAX = 3000`
+at `:185`; the refusal at `:1940-1945`) [M] - `decisions.md:6758` records the cap and
+`:6769` records that no order `p` is obtainable with the present dense-only path [L]. If
+the comparison fails at `0.1 pp`, the response is to report the failure and not to switch
+the production basis, per the falsifier of last resort (L272).
+
 ---
 
 ## 10. References
@@ -509,3 +543,51 @@ sentence ending "asserted with the same 3 %" runs straight into "the discretisat
 with a word missing. The 3 % itself is real and is asserted at `:358` and `:360`. Recorded
 because the citation audit surfaced it, and not fixed, because the settlement of section 6
 holds and a docstring edit is a code change this document does not authorise.
+
+## 12. Appendix: the phase question, appended 2026-10-31
+
+Provenance: **[M]** for the grep and the line citations; **[R]** for the question
+that prompted them.
+
+The question relayed after this document closed was whether the *phase* of the
+reflection — phase-ramp termination in particular — is covered by it. It is not.
+`grep -ni 'phase' docs/design/absorbing_termination_scope.md` returns **zero
+matches** across all 511 lines of the document as it stood before this appendix,
+in every section from §1 to §11 and in the references table [M].
+
+That is not a gap in wording, it is the shape of the criteria. §5 is written
+entirely in magnitudes: AC-1 (L222) is bit-for-bit losslessness when no load is
+specified; AC-3 (L235) bounds `|S11| <= 1.0e-3` and `||S21| - 1| <= 1.0e-3`;
+AC-4 (L246) asks the load's *value* to matter, with the two unmatched loads'
+`|Gamma|` within 3 %; AC-5 (L251) rejects any `|s21| > 1 + 1e-5`; AC-2 (L231),
+AC-6 (L260) and the falsifier of last resort (L272) are about widening,
+provenance and the fallback. All six are therefore blind, by construction, to the
+phase of the reflected wave, and a termination that satisfied every one of them
+while placing the reflection's phase wrongly could not be caught by any of them.
+
+It is recorded as a **limit, not a seventh criterion**, and deliberately so. §5
+(L215) is *pre-registered* acceptance criteria, and a criterion added after the
+answers are known is not pre-registered; the document already carries an instinct
+against exactly that kind of widening (AC-2, L231). Since this document is
+append-only for later passes, the vehicle is an addendum to AC-3 rather than an
+edit to it:
+
+**Recorded decision (superseded 2026-10-31, [R]).** Declined a phase criterion;
+corrected by **AC-7** in section 5 (L266); original reasoning retained below, unedited.
+
+**AC-3 addendum (appended 2026-10-31, [R]).** AC-3 constrains the *magnitude* of
+the reflection at the extraction plane and says nothing about its phase. A
+candidate load that passes AC-3 has therefore not been shown to place the
+reflected wave's phase correctly, and no result in this document may be reported
+as though it had. Closing that gap needs a phase-referenced criterion at the
+extraction plane, pre-registered in the same pass as the control it is compared
+against and with its tolerance named there. This addendum names no tolerance,
+authorises no code change, and does not itself decide that such a criterion is
+required.
+
+Two things this appendix does not do. It does not assert that phase-ramp
+termination is in scope: §9 (L413), "What this document does not decide", stands
+unamended, and phase is now one of the things it does not decide rather than one
+of the things it overlooked. And it does not re-open §2's five disagreements or
+§11's three rulings, all of which were made about magnitudes and remain as ruled.
+
