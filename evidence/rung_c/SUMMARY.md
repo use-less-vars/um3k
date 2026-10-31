@@ -323,3 +323,48 @@ separation, `2|Gamma|/d_probe`, which a **longer** arm *does* reduce: there the 
 separation, so lengthening the arm is the move. §8 is committed and is **not edited**; it keeps its words and
 this clause carries the narrower claim beside it. The recommendation §8 makes is unchanged, because the budget
 it spends is the *station baseline*, and a longer arm was never one of its two candidates.
+
+(f) **§5's `0.377` pp is derived, not sourceless, and §5's `0.72` pp leg is still open. Neither number is
+re-graded and §5 is not edited.** This item corrects the two bullets of §5 L115-120 on their provenance
+only. The printed numbers at L112 (`0.372884` pp / `0.755037` pp) stand.
+
+*The `0.377` pp extraction bias.* §11(b) L298-299 reads *"`0.377` has no artefact, log, JSON field or prose
+source behind it"*. **That is wrong as to "source" and right as to "artefact", and the distinction is the
+correction.** `decisions.md` §143 carries the arithmetic at L9235-9239: `delta_beta ~ 2*|Gamma| / d_probe =
+2 * 0.00701664 / 0.0096 = 1.4618 rad/m`, *"i.e. **0.3767 % of beta**"*, entered there with the standing
+instruction *"Hand-computed; recompute as `2*b_over_a/0.0096` before quoting"* [L]. Recomputed from §142's
+own inputs at L9222 (`b_over_a = 0.007016643681108853`, `beta_fdtd = 388.0850985927105`, source
+`.scratch/d589/pmlmm_h04.json`): `2 * 0.007016643681108853 / 0.0096 = 1.4618007668976778 rad/m`;
+`1.4618007668976778 / 388.0850985927105 = 0.37667016 %` — **`0.377` pp at three decimals** [M], and §143's
+own `Ratio 1.019` reproduces as `1.4893 / 1.4618 = 1.0188`. So the number has a derivation in this tree and
+is not an orphan relayed from nowhere. What is absent is a **banked artefact carrying the literal string
+`0.377`** — no JSON field, no log line — which is exactly what §11(b) found, stated one word too strongly.
+
+The `[R]` tag nevertheless **stands**, and it stands for the **relay**, not for "no provenance": nothing in
+this tree shows that the brief's `0.377` is *this* derivation rather than a coincidence at three decimal
+places, so it is not promoted and §11(b)'s disposition is unchanged. What changes is what a reader is told
+is missing. The lever is the one §11(e) L321-323 already names, `2|Gamma|/d_probe`, now carrying its
+number — and that is the same lever §11(b)'s "not graded" line leaves open, not a second one.
+
+*The `0.72` pp transverse-box leg.* §5 L118-120 cites `evidence/box_sweep/SUMMARY.md` §8.1 for `+0.72` pp,
+and L122-124 already refuses the transfer to rung C. The refusal is right; the transfer is nonetheless
+**live in another document**, and this item records the disagreement rather than settling it. box_sweep's
+sentence is scoped to the base box — *"**any EIG number taken at the base box** carries ≈ +0.72 pp of
+transverse-box error"* [L, §8.1 L177-178] — and box_sweep's own table records `−0.72172 pp` for `lateral
+8× × EIG` as the **improvement** that moving off the base box delivered (`|d0| 2.01522 → |d_arm| 1.29349`;
+difference `0.72173` pp [M, L124]). The `0.72` is therefore **spent at `lat 8 / lid 1`, not live there**.
+`evidence/strip_width/SUMMARY.md` L162-164 reinstates it as a live cap at exactly that box (*"EIG's approach
+is capped by its own transverse-box error (~`0.72` pp at clearance `3.0` … the box was held fixed at
+`lat 8 / lid 1` throughout, so nothing in this sweep reduced it"*), and repeats it at L348. **UNRESOLVED,
+and recorded as unresolved**: choosing between those two readings needs a box sweep at `h = 0.2`, which has
+not been run. §5's own wording at L122-124 ("an error that the box sweep *removed*") agrees with box_sweep
+and `decisions.md` §156(m) ("removed at clearance `3.0`"), so the document out of line is
+`strip_width/SUMMARY.md`, not this report — and the out-of-line document is not edited by this item, because
+it is not this report's to edit and the arithmetic does not by itself decide whether a *residual* box error
+survives the `8×` move.
+
+*One document explicitly needs no correction.* `evidence/strip_width/SUMMARY.md` carries **no `0.377`
+text at all** — a case-insensitive search of the file for `0.377`, `0.3767` and `provenance` returns no hit
+[M] — so the first half of this item does not reach that document and nothing there is amended for it.
+Both halves are cross-referenced from `evidence/rung_c_errata/ERRATA_004.md` §E.4 and `decisions.md` §157.
+

@@ -45,6 +45,22 @@ erratum on the rung-C pre-registration covers, so G3's letter is unsatisfied a *
   `1335.56 s` [M]. §150(h)(iv)'s *condition* was procedural — an explicit authorisation in the log — and on
   that condition the record is **half satisfied**: authorised yes, attributed no. Both halves are recorded
   rather than one being traded for the other.
+- **A.6 A.4's `meta.git_rev` quote is three hex characters short, and the artefact is the authority.** A.4
+  (above) quotes `meta.git_rev = '3092129843d79939579684d1af59b393ce0b3'`; the artefact carries
+  `3092129843d79939580779684d1af59b393ce0b3` [M, `evidence/rung_c/h020.json` → `meta.git_rev`]. The quoted
+  string is **37** hex characters and the artefact's is **40** [M, `len()` on both]. The relationship is
+  exact rather than approximate: the quoted string is the true string with the three characters `807`
+  dropped at offset **17** (`true[17:20] == '807'`, `quoted[17:] == true[20:]`, first divergence at index
+  17) [M]. So this is a transcription slip inside this erratum and **not** a second `git_rev` in the file:
+  `meta.git_rev_source` is `head-loose` on the artefact either way, and no number in §A-§F depends on the
+  hash's length. Two consequences are stated rather than left implicit. (i) The artefact's value is the
+  **full 40-hex** form, which is what the three-layer resolver recorded at the `cleanups-cd-2026-10-31` row
+  of `docs/design/dispatch_log.md` emits (the short rev was the *old* code's output), so A.4's `[M]` tag is
+  right and only the transcription is wrong. (ii) The 37-character form appears in exactly **two** places
+  in this tree — A.4 L38 here, and `docs/design/session_close_gen6.md` L278, where the session-close
+  document flags it as a defect — and in **none** under `evidence/` [M, search]; that is what a typo looks
+  like, not what a revised artefact looks like. A.4 keeps its words, on the rule §A-§F apply everywhere
+  else: the print stays where it was made and the correction is carried beside it.
 
 ## B. G3: the letter is unsatisfied a **second** time, and by a link no erratum covers
 
@@ -165,6 +181,29 @@ erratum on the rung-C pre-registration covers, so G3's letter is unsatisfied a *
 - **E.3 The §6 counter-example note stands.** Rung C's `sigma_mult_used = 0.76` at an effective `n_strip = 4`
   is a counter-example to the closed form `0.76 + 0.015*(n_strip − 2)` recorded at §152.11 — the multiplier
   follows the residual, and one row is not a law's refutation but is a reason not to quote it as one [M].
+- **E.4 E.2's `0.377` sentence is corrected: the number has a derivation, and only its artefact is missing.**
+  E.2 (above) reads *"finds no provenance for `0.377` at all"*. That is one word too strong, and the
+  correction is carried where a reader of the report will look for it — `evidence/rung_c/SUMMARY.md` §11(f).
+  `decisions.md` §143 derives the number at L9235-9239: `delta_beta ~ 2*|Gamma| / d_probe =
+  2 * 0.00701664 / 0.0096 = 1.4618 rad/m`, *"i.e. **0.3767 % of beta**"*, entered there with the standing
+  instruction *"Hand-computed; recompute as `2*b_over_a/0.0096` before quoting"* [L]. Recomputed from §142's
+  own inputs `b_over_a = 0.007016643681108853` and `beta_fdtd = 388.0850985927105`:
+  `2 * 0.007016643681108853 / 0.0096 = 1.4618007668976778 rad/m`, and `1.4618007668976778 /
+  388.0850985927105 = 0.37667016 %` — **`0.377` pp at three decimals** [M]. So what is absent is a **banked
+  artefact carrying the literal string `0.377`** (no JSON field, no log line), which is exactly what a search
+  of `evidence/` finds; the arithmetic is not absent. The `[R]` tag nevertheless **stands**, because nothing
+  in this tree ties the brief's `0.377` to this derivation rather than to a coincidence at three decimal
+  places, and E.2's disposition — neither number promoted — is therefore **unchanged**. This item corrects
+  the *reason* E.2 gives, not the *grade* it assigns. It also carries, as **unresolved**, the second half of
+  the same subject: `evidence/strip_width/SUMMARY.md` L162-164 and L348 reinstate the `≈ 0.72` pp
+  transverse-box figure as a **live** cap at `lat 8 / lid 1`, while `evidence/box_sweep/SUMMARY.md` §8.1
+  L177-178 scopes that figure to *"any EIG number taken at the **base box**"* and the same section's table
+  records `−0.72172 pp` for `lateral 8× × EIG` as the **improvement** gained *by* leaving the base box
+  (`2.01522 → 1.29349`; difference `0.72173` pp [M, L124]). `decisions.md` §157(b) states the disagreement in
+  full and says why this erratum does not settle it: the choice needs a box sweep at `h = 0.2` that has not
+  been run. `evidence/strip_width/SUMMARY.md` carries **no `0.377` text** (no hit for `0.377`, `0.3767` or
+  `provenance`) [M, search], so the first half of this item reaches nothing in that document and amends
+  nothing there.
 
 ## F. The six guards, re-derived clause by clause
 
