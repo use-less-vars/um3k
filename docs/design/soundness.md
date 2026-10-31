@@ -718,7 +718,7 @@ to the gate, and this section says so where a reader of the row will come lookin
 This section was appended on dispatch 53 rather than edited into sections 9 or 10, for the reason
 section 10 already gives at its end: the text up to the former final line stays byte-identical.
 Stripping what dispatch 53 appended re-hashes the remainder to 56975 bytes /
-`4c861fbbd0c7814edeaaee9dbbc67e83bc81b54c659e3b53dcfb87baea5c5f5c`. It sits after section 11
+`4c861fbbd0c7814edeaaee9dbbc67e83bc81b54c659e3b53dcfb87baea5c5f5c`. **Correction:** this tally omits the second, unnamed insertion -- the three-line `**AMENDED (dispatch 53).**` block inside section 9(a) -- and therefore understates the remainder by 256 bytes; the arithmetic is in section 13. It sits after section 11
 rather than after section 9, so it reads as an appendix to an amendment; section 9(a) is meant to be
 read with it open.
 

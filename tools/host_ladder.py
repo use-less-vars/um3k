@@ -60,6 +60,17 @@ different lines wearing one name -- and every rung still passed an
 index-for-index box check.  ``--strip-cells`` survives only as a deprecated
 override that warns on stderr.
 
+The box is one structure too, but not one number.  ``--clearance`` sets the
+padding on every open face at once, and the faces are not the same boundary:
+the lid sits over the strip, where the field is strong, while the side walls
+are far field.  So the padding is split into two, each in units of ``H``:
+``--box-lateral-mult`` scales the lateral clearance only (``n_clean`` in the
+FDTD box, ``clearance_lateral`` in the modal one) and ``--box-lid-mult`` the
+top clearance only (``n_air`` up to the zmax absorber).  Both default to 1.0,
+i.e. ``--clearance`` on all four open sides; both are passed to *both* halves,
+so the modal box is still the FDTD box minus its absorbers and the metre
+check below still has something to fail on.
+
 The frequency the two halves are compared at is not the requested tone but
 the tone the FDTD actually accumulated its phasors at: the geometry the driver
 returns carries the DFT-snapped ``f``, and ``k0 = 2 pi f / c`` is built from
@@ -110,6 +121,13 @@ ALPHA_MEASURED = (
     ("npml10 span fit", 0.0278),
     ("lid sweep", 0.01388),
 )
+# The beta of record for the h = 0.4 mm rung is 384.7489672644 rad/m: the
+# DISPERSIVE Hammerstad-Jansen beta, i.e. dm.hammerstad_beta() evaluated on
+# the Kirschning-Jansen effective permittivity dm.kirschning_jansen_peff().
+# Neither the quasi-static value 373.2885249107 rad/m
+# (dm.hammerstad_beta_qs(), which ignores the dispersion) nor the frozen
+# 365.0 is that number; the d585 reference table
+# (385.0214743 / 383.5905830 / 382.8754929) is a different structure's row set.
 
 
 class LadderError(RuntimeError):
@@ -250,7 +268,8 @@ def resolve_strip(h_mm, args):
 # ---------------------------------------------------------------------------
 # FDTD half
 # ---------------------------------------------------------------------------
-def run_fdtd(h_mm, *, clearance, npml, nsteps, f0_hz, n_strip, w_m):
+def run_fdtd(h_mm, *, clearance, npml, nsteps, f0_hz, n_strip, w_m,
+             lateral_mult=1.0, lid_mult=1.0):
     """One straight-guide microstrip run on the repository's own driver.
 
     The physical box is ``strip + 2 * (clearance * H)`` wide and
@@ -264,6 +283,10 @@ def run_fdtd(h_mm, *, clearance, npml, nsteps, f0_hz, n_strip, w_m):
     physics is) and ``n_strip`` the whole number of cells it spans (what the
     mesh is).  They are produced together by :func:`resolve_strip`, so the
     driver can never silently mesh a width that is not the one asked for.
+
+    ``lateral_mult`` and ``lid_mult`` scale the lateral and the top clearance
+    separately; both default to 1.0, which is ``clearance`` on all four open
+    sides, the box every earlier run measured.
     """
     h_m = h_mm * 1e-3
     n_sub = int(round(H_SUB / h_m))
@@ -271,19 +294,30 @@ def run_fdtd(h_mm, *, clearance, npml, nsteps, f0_hz, n_strip, w_m):
         raise LadderError(f"h = {h_mm:g} mm is coarser than the substrate "
                           f"H = {H_SUB * 1e3:g} mm")
     cell = H_SUB / n_sub
-    n_edge_f = clearance * H_SUB / cell
-    n_edge = int(round(n_edge_f))
-    if abs(n_edge - n_edge_f) > 1e-9:
-        raise LadderError(f"clearance {clearance:g} H is not a whole number of "
-                          f"cells at h = {h_mm:g} mm ({n_edge_f:.6f})")
+    # The lateral padding and the lid padding are counted apart: they are two
+    # different boundaries (--box-lateral-mult / --box-lid-mult), and each
+    # still has to land on a whole number of cells or the box is not the one
+    # --clearance names.
+    n_clean_f = clearance * lateral_mult * H_SUB / cell
+    n_clean = int(round(n_clean_f))
+    if abs(n_clean - n_clean_f) > 1e-9:
+        raise LadderError(
+            f"lateral clearance {clearance:g} H x {lateral_mult:g} is not a "
+            f"whole number of cells at h = {h_mm:g} mm ({n_clean_f:.6f})")
+    n_air_f = clearance * lid_mult * H_SUB / cell
+    n_air = int(round(n_air_f))
+    if abs(n_air - n_air_f) > 1e-9:
+        raise LadderError(
+            f"lid clearance {clearance:g} H x {lid_mult:g} is not a whole "
+            f"number of cells at h = {h_mm:g} mm ({n_air_f:.6f})")
     if nsteps is None:
         nsteps = int(round(studies.MS_NSTEPS * n_sub / studies.MS_N_SUB))
     n_line = int(round(studies.MS_N_LINE * (H_SUB / studies.MS_N_SUB) / cell))
     t0 = time.perf_counter()
     wave = studies.microstrip_wave(
         h=H_SUB, w=w_m, eps_r=ER,
-        n_sub=n_sub, n_air=n_edge, n_top=npml,
-        n_strip=n_strip, n_clean=n_edge,
+        n_sub=n_sub, n_air=n_air, n_top=npml,
+        n_strip=n_strip, n_clean=n_clean,
         n_pml=npml, n_ref=studies.MS_N_REF, n_line=n_line,
         x_first=studies.MS_X_FIRST, x_last=studies.MS_X_LAST,
         n_stations=studies.MS_N_STATIONS, f_target=f0_hz, nsteps=nsteps,
@@ -291,7 +325,7 @@ def run_fdtd(h_mm, *, clearance, npml, nsteps, f0_hz, n_strip, w_m):
     wall = time.perf_counter() - t0
     gy = dict(wave.geometry)
     return dict(wave=wave, wall=wall, geometry=gy, n_sub=n_sub, cell=cell,
-                n_edge=n_edge, nsteps=nsteps, n_line=n_line,
+                n_clean=n_clean, n_air=n_air, nsteps=nsteps, n_line=n_line,
                 n_cells=int(gy["nx"]) * int(gy["ny"]) * int(gy["nz"]))
 
 
@@ -309,8 +343,15 @@ class CountedSolve:
         return self.lu.solve(np.asarray(b).ravel())
 
 
-def build_modal(h_m, *, clearance, n_strip, w_m, k0, er=ER):
-    """Assemble the transverse box and both pencils at cell ``h``."""
+def build_modal(h_m, *, clearance, n_strip, w_m, k0, er=ER,
+                lateral_mult=1.0, lid_mult=1.0):
+    """Assemble the transverse box and both pencils at cell ``h``.
+
+    ``lateral_mult``/``lid_mult`` are the same two paddings the FDTD half
+    takes: the lid is ``clearance * lid_mult * H`` and the side walls
+    ``clearance * lateral_mult * H``.  Both default to 1.0, i.e. ``clearance``
+    on both, which is the box every earlier run measured.
+    """
     nz_sub = int(round(H_SUB / h_m))
     if nz_sub < 1:
         raise LadderError(f"h = {h_m * 1e3:g} mm is coarser than H")
@@ -318,7 +359,8 @@ def build_modal(h_m, *, clearance, n_strip, w_m, k0, er=ER):
     # W is the strip the FDTD mesh actually contains (n_strip cells), not
     # dm's 0.8 mm default: dm re-derives ny_strip = round(W/cell), so W must
     # be the meshed width or the two boxes would differ by the rounding.
-    geo = dm.section(h_m, clearance, H=H_SUB, W=w_m)
+    geo = dm.section(h_m, clearance * lid_mult, H=H_SUB, W=w_m,
+                     clearance_lateral=clearance * lateral_mult)
     if int(geo["ny_strip"]) != int(n_strip):
         raise LadderError(
             f"h = {h_m * 1e3:g} mm: the modal builder made a "
@@ -525,7 +567,9 @@ def run_rung(h_mm, args, rss_branch):
     n_strip, w_m, w_requested_m = resolve_strip(h_mm, args)
     fd = run_fdtd(h_mm, clearance=args.clearance, npml=npml,
                   nsteps=args.nsteps, f0_hz=args.f0_ghz * 1e9,
-                  n_strip=n_strip, w_m=w_m)
+                  n_strip=n_strip, w_m=w_m,
+                  lateral_mult=args.box_lateral_mult,
+                  lid_mult=args.box_lid_mult)
     gy = fd["geometry"]
     k0 = 2.0 * math.pi * float(gy["f"]) / C0
     wave = fd["wave"]
@@ -569,7 +613,9 @@ def run_rung(h_mm, args, rss_branch):
           f" -- diagnostic only, never an abort", flush=True)
 
     pb = build_modal(h_mm * 1e-3, clearance=args.clearance,
-                     n_strip=n_strip, w_m=w_m, k0=k0)
+                     n_strip=n_strip, w_m=w_m, k0=k0,
+                     lateral_mult=args.box_lateral_mult,
+                     lid_mult=args.box_lid_mult)
     geo = pb["geo"]
     print(f"  GEO   h={h_mm:g} mm cell={float(geo['cell']) * 1e3:.6f} mm "
           f"n_sub={int(geo['nz_sub'])} n_strip={int(n_strip)} "
@@ -682,6 +728,9 @@ def run_rung(h_mm, args, rss_branch):
         strip_width_m=float(w_m), strip_width_mm=float(w_m * 1e3),
         grid=[int(gy["nx"]), int(gy["ny"]), int(gy["nz"])],
         npml=int(gy["n_pml"]), n_top=int(gy["n_top"]),
+        n_clean=int(gy["n_clean"]), n_air=int(gy["n_air"]),
+        box_lateral_mult=float(args.box_lateral_mult),
+        box_lid_mult=float(args.box_lid_mult),
         pml_mm=(None if args.pml_mm is None else float(args.pml_mm)),
         nsteps=int(fd["nsteps"]), f_hz=float(gy["f"]),
         f_target_hz=float(gy["f_target"]), k0=float(k0),
@@ -831,6 +880,17 @@ def main(argv=None):
     ap.add_argument("--clearance", type=float, default=3.0, metavar="NH",
                     help="lateral/top clearance, in units of H "
                          "(default 3.0)")
+    ap.add_argument("--box-lateral-mult", type=float, default=1.0,
+                    metavar="M",
+                    help="scale the LATERAL clearance only: the side walls "
+                         "sit at M * --clearance * H, and the modal box "
+                         "gets the same M * --clearance laterally "
+                         "(default 1.0)")
+    ap.add_argument("--box-lid-mult", type=float, default=1.0, metavar="M",
+                    help="scale the LID clearance only: the air between the "
+                         "strip and the top absorber is M * --clearance * "
+                         "H, and the modal box gets the same on top "
+                         "(default 1.0)")
     ap.add_argument("--json", default=OUT_DEF, metavar="PATH",
                     help=f"where to write the results (default {OUT_DEF})")
     ap.add_argument("--mem-ceiling-mb", type=float, default=2000.0,
@@ -907,7 +967,8 @@ def main(argv=None):
                        f"(pinned in metres)")
     pml_desc = (f"npml {args.npml}" if args.pml_mm is None else
                 f"pml {args.pml_mm:g} mm -> npml round(pml/h) per rung")
-    print(f"boxes: h/H = 1/{H_SUB/1e-3:g}*n_sub, clearance {args.clearance:g} H, "
+    print(f"boxes: h/H = 1/{H_SUB/1e-3:g}*n_sub, clearance {args.clearance:g} H "
+          f"(lateral x{args.box_lateral_mult:g}, lid x{args.box_lid_mult:g}), "
           f"{pml_desc}, strip {strip_desc}, "
           f"eps_r {ER:g}", flush=True)
     print(f"attenuation floor {args.alpha_floor_db_per_mm:g} dB/mm -- "
@@ -956,6 +1017,12 @@ def main(argv=None):
         rungs_mm=[float(r["h_mm"]) for r in rows],
         rungs_requested=[float(h) for h in rungs],
         max_rungs=int(args.max_rungs), clearance_h=float(args.clearance),
+        box_lateral_mult=float(args.box_lateral_mult),
+        box_lid_mult=float(args.box_lid_mult),
+        box_note="clearance_h * box_lateral_mult is the side-wall padding in "
+                 "units of H (FDTD n_clean, modal clearance_lateral); "
+                 "clearance_h * box_lid_mult is the top padding (FDTD n_air, "
+                 "modal clearance)",
         strip_width_mm=float(args.strip_width_mm),
         strip_cells=(None if args.strip_cells is None
                      else int(args.strip_cells)),

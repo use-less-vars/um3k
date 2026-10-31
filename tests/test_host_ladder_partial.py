@@ -176,3 +176,80 @@ def test_memory_ceiling_abort_keeps_its_partial_payload(monkeypatch, tmp_path):
     assert payload["meta"]["abort_reason"] == "memory_ceiling"
     assert payload["meta"]["status"] == "incomplete"
     assert payload["meta"]["complete"] is False
+
+
+def test_box_padding_flags_split_the_lateral_and_lid_clearances(
+        monkeypatch, tmp_path):
+    """``--box-lateral-mult`` / ``--box-lid-mult`` must reach BOTH halves.
+
+    The two paddings are one CLI pair feeding two different builders: the FDTD
+    half takes them as cell counts (``n_clean`` lateral, ``n_air`` lid) and the
+    modal half as clearance in units of H (``dm.section``'s positional lid
+    clearance and its ``clearance_lateral``).  A flag reaching only one of the
+    two would leave the halves meshing different boxes -- the very thing the
+    metre check exists to catch -- so both front doors are checked here.
+
+    ``run_rung`` is the real one: only ``run_fdtd`` and ``dm.section`` are
+    stubbed, and each raises ``_Stop`` as soon as it has recorded its call, so
+    no FDTD run and no modal assembly ever happens.
+    """
+    class _Stop(Exception):
+        pass
+
+    seen = {}
+    argv = ["--h", "0.4", "--clearance", "3.0",
+            "--box-lateral-mult", "2.0", "--box-lid-mult", "1.5",
+            "--json", str(tmp_path / "ladder.json")]
+
+    # --- FDTD half: what does run_rung hand to run_fdtd? -------------------
+    def fake_run_fdtd(h_mm, **kw):
+        seen["fdtd"] = dict(kw, h_mm=h_mm)
+        raise _Stop()
+
+    monkeypatch.setattr(host_ladder, "run_fdtd", fake_run_fdtd)
+    with pytest.raises(_Stop):
+        host_ladder.main(argv)
+    assert seen["fdtd"]["clearance"] == pytest.approx(3.0)
+    assert seen["fdtd"]["lateral_mult"] == pytest.approx(2.0), (
+        "the lateral multiplier never reached the FDTD half")
+    assert seen["fdtd"]["lid_mult"] == pytest.approx(1.5), (
+        "the lid multiplier never reached the FDTD half")
+
+    # --- modal half: what does run_rung hand to dm.section? ---------------
+    class _Fit:
+        alpha = 1.0e-3
+
+    class _Wave:
+        loss_fit = _Fit()
+        beta = 380.0
+        eps_eff = 3.0
+        gamma = 380.0j
+        station_x = [0.0, 1.0]
+
+    fake_fd = {
+        "geometry": {"f": 10.0096e9, "nx": 41, "ny": 21, "nz": 41,
+                     "cell": 4.0e-4, "length": 100.0e-3, "h": 0.4e-3},
+        "wave": _Wave(), "n_cells": 1000, "nsteps": 120, "wall": 1.0,
+        "n_clean": 12, "n_air": 18,
+    }
+
+    def fake_run_fdtd_ok(h_mm, **kw):
+        seen["fdtd_ok"] = dict(kw, h_mm=h_mm)
+        return fake_fd
+
+    def fake_section(*a, **kw):
+        seen["section"] = {"args": list(a), "kwargs": dict(kw)}
+        raise _Stop()
+
+    monkeypatch.setattr(host_ladder, "run_fdtd", fake_run_fdtd_ok)
+    monkeypatch.setattr(host_ladder.dm, "section", fake_section)
+    with pytest.raises(_Stop):
+        host_ladder.main(argv)
+
+    assert seen["fdtd_ok"]["lateral_mult"] == pytest.approx(2.0)
+    assert seen["fdtd_ok"]["lid_mult"] == pytest.approx(1.5)
+    section = seen["section"]
+    assert section["args"][1] == pytest.approx(3.0 * 1.5), (
+        "dm.section's positional clearance is the LID: clearance * lid_mult")
+    assert section["kwargs"]["clearance_lateral"] == pytest.approx(3.0 * 2.0), (
+        "dm.section's clearance_lateral must be clearance * lateral_mult")
