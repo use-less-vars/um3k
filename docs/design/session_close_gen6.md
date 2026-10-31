@@ -259,6 +259,7 @@ destroy the instrument that produced the banked rows.
   is the one covered by `rung_c_errata/ERRATA_001.md` §3 [L]. `strip_width/ERRATA_001.md` is the twin
   filed against the strip-width PREREG for the **same two metadata edits** [L, `rung_c_errata/ERRATA_001.md`
   §1], i.e. it is the *first* link's document. The row is not edited here; the discrepancy is recorded.
+*Forward corrections to earlier sessions are collected in section 6.*
 
 ## 5. What to distrust about this document
 
@@ -283,3 +284,18 @@ destroy the instrument that produced the banked rows.
 - The joint most likely to be wrong in §3.2 is not the counter-example, which is two field reads, but the
   word "domain": `h = 0.4` versus `h = 0.2` is read from `SUMMARY.md` §11(c), not measured, and if that
   reading is wrong then the counter-example is stronger than I have claimed, not weaker.
+
+## 6. Forward corrections to earlier sessions
+
+### 6.1 Corrections
+
+- The eigensolver is not what costs the wall: at `h = 0.4` mm the measured split is `t_eigs` 0.10 s against `t_fdtd` 14.49 s, i.e. 0.7 % of wall time, and the `~94 %` modal-solve share with `4.2 s` at 37k dof has no producer anywhere in this tree (earlier claim at `decisions.md:9951`, where it is quoted and marked UNATTRIBUTED).
+- `assemble()`'s "symmetric by construction" is now a measurement and not an assertion: every assembled block of the d585 anchor pencil is exactly symmetric on two meshes (relative asymmetry `0.0`), and the one quantity that is not, `B = m1 - c D c^T`, is asymmetric only at `3.6e-15` (h080) / `8.6e-15` (h040) relative, i.e. pure LU round-off and no structural defect; artefacts under `evidence/matrix_audit/`, commit `3018720` (earlier claim at `emfit/mode2d.py:438`, "All three are real symmetric").
+- The 37k-dof-class mixed pencil has no sparse route and no caller that would find one: `mode2d.py:1940` sets `use_dense` against `_MIXED_DENSE_MAX = 3000` (`:185`) and `:1941-1946` raises `NotImplementedError`, while `tools/host_ladder.py` carries its own local `eigs` rather than calling `mode2d`'s solvers (earlier claim at `decisions.md:9951`).
+- The ker A vs ker M inversion is UNTESTED, not refuted: the reduced pencil eliminates the algebraic block by construction, so settling it needs the 2x2 block pencil at `mode2d.py:2034-2039` assembled and probed directly, which has not been done (earlier statement at `decisions.md:9959`).
+
+### 6.2 Checked, not asserted in this tree
+
+- Refinement ladder over `h = 1.2 / 1.6 / 2.0` mm: no earlier assertion located — 5 hits for "refinement series|refinement study|ladder over", 1 hit for `h = 1.2` (the correction itself, `decisions.md:9955`), 1 hit for `117-dof`. All three spacings in fact give the identical 117-dof mesh (`nz_sub` 1, cell 1.6 mm, `7 x 4`), so a ladder over them is not a refinement and cannot carry a convergence claim; recorded at `decisions.md:9955`, not re-derived here.
+- Grader basis-point printing convention (a printed value 100x the `pp` threshold): zero hits — "basis point" 0, "grader" 0, `1e4`/`10000` 13 (none a printing convention), `90.2` 9 (all inside longer numerals such as `390.25`), `bp` 18 (all binary-file noise). Every definition in this tree is percent-based, `d = 100*(beta/ref - 1)` in pp: `evidence/strip_width/EIG_strip_width.json:30`, `evidence/rung_c/SUMMARY.md:10`.
+- `evidence/rung_c/PREREG.md`: zero hits for `rung_c/PREREG`, and that directory holds only `SUMMARY.md` and `h020.json`; the 19 citations of a rung-C pre-registration in this tree point at `evidence/rung_c_errata/PREREG.md`, which exists (19 193 B).
