@@ -181,9 +181,9 @@ against `diag(Sigma)` and not against any run.
 
 ### R2 - the integration rung: replace a terminal, do not add one
 
-`tests/test_port_parallel_plate.py:270` records a measured `S11` of `3.618e-4` and, at
-`:277`, `|S21| = 1.000000583` on the current path. Those two numbers are the demonstrated
-floor of the existing extraction, and they are the reason this rung can be written without
+`tests/test_port_parallel_plate.py:277` records a measured `S11` of `3.618e-4` and a
+`|S21|` of `1.000000583` on the current path. Those two numbers are the demonstrated floor
+of the existing extraction, and they are the reason this rung can be written without
 inventing a target: the same geometry, the same source, the same mesh, with the far
 terminal's PML replaced by a matched load at the cut. The case must then reproduce the same
 two numbers to the section 5 bars, and the oblique case at `:334` must still land on the
@@ -234,10 +234,14 @@ finding rather than applied.
 
 **AC-3. The extraction floor moves.** On the matched load, `|S11| <= 1.0e-3` and
 `| |S21| - 1 | <= 1.0e-3`. The demonstrated floor is `3.618e-4`
-(`test_port_parallel_plate.py:270`); `1.0e-3` is 2.8 times it, set as a bar that a real fix
+(`test_port_parallel_plate.py:277`); `1.0e-3` is 2.8 times it, set as a bar that a real fix
 clears and a nominal one does not. It is deliberately not set at the demonstrated floor,
 because matching the floor would only prove the load did not make things worse. Whether it
-should be `1.0e-3` or `3.618e-4` is question 1 of section 9.
+should be `1.0e-3` or `3.618e-4` was question 1 of section 9; ruling 1 of section 11 keeps
+`1.0e-3`, on the ground that the bar's job is to show the load absorbs enough to be worth
+having, not that the load is perfect. The verdict therefore reports the achieved `|S11|`
+beside the pass or the fail, so that a result sitting at the floor and a result just inside
+the bar cannot be read as the same outcome.
 
 **AC-4. The load value has to matter.** For at least two unmatched loads, `|Gamma|` within
 3 % of `|R - Zc| / (R + Zc)`. The 3 % is the tolerance already recorded for the Fresnel
@@ -245,12 +249,13 @@ case at `:337-339`; it is borrowed, not invented, and if it is the wrong toleran
 quantity then that is a legitimate objection to it rather than a reason to pick another.
 
 **AC-5. No passivity violation, and the seam is measured rather than assumed.** No `|s21|`
-above `1 + 1e-5` anywhere in the batch - the existing floor is `5.8e-7`, so the tripwire
-sits 17 times above it and fires on exactly the defect recorded at `decisions.md:433`,
-where the default path returns `|s21| > 1`. And the `beta` standard error on the open
-control is reported against a PML-terminated reference run in the same batch: if it is not
-at least 3 times smaller than the `57` on record, the seam is not fixed, whatever `S11`
-says.
+above `1 + 1e-5` anywhere in the batch. The smallest `|S21|` deviation on record is
+`5.8e-7`, which is the arithmetic remainder of `1.000000583`
+(`tests/test_port_parallel_plate.py:277`) and not a recorded floor, so the tripwire sits 17
+times above it and fires on exactly the defect recorded at `decisions.md:433`, where the
+default path returns `|s21| > 1`. And the `beta` standard error on the open control is
+reported against a PML-terminated reference run in the same batch: if it is not at least 3
+times smaller than the `57` on record, the seam is not fixed, whatever `S11` says.
 
 **AC-6. Provenance in the artefact.** The run JSON carries the load specification - value,
 units, plane index - and the index of the plane the S-parameters were extracted from.
@@ -259,7 +264,7 @@ AC-6 is the criterion that makes that sentence stop being true, and it costs one
 dictionary key.
 
 **Falsifier of last resort.** A bar that fails is recorded, not moved. And if a matched
-load leaves `|S11|` where it was - unmoved near `3.6e-4`, no better - then termination was
+load leaves `|S11|` where it was - unmoved at `3.618e-4`, no better - then termination was
 never the extraction floor, the premise of this document is wrong, and the right response
 is to record that and stop rather than to go looking for a smaller number by another route.
 
@@ -319,12 +324,14 @@ memory figure is marked as an estimate because no record in the tree contains on
 this line of work is larger than a run already recorded. The cost of the change is not in
 cells.
 
-**Wall: the ladder fits at h = 0.4 and does not fit at h = 0.2.** At h = 0.4 the three R3
-cases are at most 3 x 232.0 s = 696.0 s, comfortably inside the frozen 1400 s wall gate. At
-h = 0.2 they are 3 x 1335.5644 s = **4006.7 s**, which is 2.86 times the gate - and even a
-single h = 0.2 run sits at 1.048 of the gate, which is why only one such run at a time has
-been attempted. So the h = 0.2 leg of the ladder is either one load per session or a gate
-revision, and the gate is not mine to revise.
+**Wall: the gate is per run, and each run of the ladder sits inside it.** The frozen clause
+is `wall_fdtd_s > 1400` against one run's measured `wall_fdtd_s`, so what it constrains is
+each run and not a batch. At h = 0.4 a single R3 case is 232.0 s, `0.166` of the gate, and
+three of them are 696.0 s of session time. At h = 0.2 a single case is 1335.5644 s, `1.048`
+of the gate: it passes, with 64 s of headroom, which is why only one such run at a time has
+been attempted. The three h = 0.2 cases together are `4006.7 s` of session time, about 67
+minutes, a scheduling cost and not a gate comparison - and reading that sum as `2.86` times
+the gate was wrong, which ruling 2 of section 11 records and settles.
 
 **Memory: an estimate, and labelled one.** The stepper's state is a handful of
 `(n_edges,)` and `(n_cells,)` double arrays; the change adds one `(n_edges,)` diagonal, and
@@ -444,3 +451,61 @@ the audit found no contradiction, two range drifts (`evolve.py`'s PEC zeroing is
 | Mesh counts | `emfit/studies.py:2556-2559`; `emfit/grid.py:113-114`; `emfit/board.py:566` |
 | Cost, measured | `evidence/h_refine/h040.json:105,124,134,148`; `evidence/rung_c/h020.json:135,154,164,191`; `evidence/stations_n18.json:193` |
 | Section 161 stands | `decisions.md` section 161 |
+
+---
+
+## 11. Rulings and forward corrections
+
+The three questions put in section 9 are ruled. One of them exposed a factual error in
+section 7, corrected separately; the question text in section 9 is left as written, because
+a question that turned out to rest on a misreading is part of the record and not something
+to tidy away afterwards.
+
+**Ruling 1 - AC-3 stays at `1.0e-3`, and the verdict reports the achieved reflection beside
+the pass.** The reasoning is a distinction this document had not drawn. Matching the
+demonstrated floor would not have proved the load works: the wrong-plane failure - a load
+placed where the PML already absorbs - would *pass* a floor bar, because the PML reflects
+`3.618e-4` on its own and the load contributes nothing to that number. No bar catches that
+failure; A2, placing the element at a transverse cut, is what catches it. The bar's job is
+therefore to show the load absorbs enough to be worth having, not to show the load is
+perfect, and `1.0e-3` does that job. What follows for reporting is folded into AC-3: the
+verdict states the pass or fail *and* the achieved `|S11|`, so that a result at the floor
+and a result just inside the bar are visibly different outcomes for the next iteration
+rather than two ways of printing PASS.
+
+**Ruling 2 - the wall gate is per run, and this document had it wrong.** The frozen clause
+compares one run's measured `wall_fdtd_s` against `1400`. Its subject is per rung, rung C's
+own measured `wall_fdtd_s`, the run's measured `wall_fdtd_s`; no batch, session or
+cumulative subject appears in any gate clause, and no code in the tree aggregates wall time
+across runs or compares a summed total to the ceiling. Three separate runs at `1335.5644 s`
+each are each inside the gate at `1.048` of it, and the `4006.7 s` figure is session time -
+about 67 minutes - which is a scheduling cost and not a gate comparison at all. The reading
+of that sum as `2.86` times the gate was this author's and is corrected in section 7. No
+gate revision is made or needed.
+
+**Ruling 3 - 25 and 50 Ohm are graded against AC-3; 100 Ohm is exploratory.** On the 100 Ohm
+arm the analytic reflection is `1/3` and sub-cell discretisation moves it - `9.04 %` low on
+the existing record (`decisions.md:421`). Gating that would make a recorded limit read as a
+defect, so it is not gated. It is still run, and its reflection is reported against an
+expected band of `[0.30, 0.37]`, because what it tests is whether the model handles mismatch
+at all, which the two graded loads cannot answer on their own.
+
+**Citation audit after the fact.** Every citation in sections 4 and 5 was re-read against
+the tree once this document was committed. All of them resolve to a real `path:line` except
+as corrected below. Three corrections follow:
+
+1. `3.618e-4` is recorded at `tests/test_port_parallel_plate.py:277`, not at `:270`, which
+is the test definition rather than the measurement. Sections 4 and 5 cited `:270` in two
+places; both now read `:277`.
+2. `5.8e-7` is not a recorded floor. It is the arithmetic remainder of `1.000000583`
+(`tests/test_port_parallel_plate.py:277`), and AC-5 now says so, because a tripwire
+anchored to an arithmetic remainder is a weaker instrument than one anchored to a recorded
+measurement and should be visible as the weaker instrument.
+3. The gate reading in section 7, corrected under ruling 2.
+
+**One finding that is not this document's to fix.**
+`tests/test_port_parallel_plate.py:339-340` carries a defective docstring in the tree: the
+sentence ending "asserted with the same 3 %" runs straight into "the discretisation earns"
+with a word missing. The 3 % itself is real and is asserted at `:358` and `:360`. Recorded
+because the citation audit surfaced it, and not fixed, because the settlement of section 6
+holds and a docstring edit is a code change this document does not authorise.
