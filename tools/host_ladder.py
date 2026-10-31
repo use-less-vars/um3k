@@ -181,17 +181,155 @@ def cgroup_limit_mb():
     return None
 
 
-def git_rev():
-    """Short HEAD, or a string saying why it could not be read."""
+def _rev_ok(text):
+    """A 40- or 64-char lowercase hex object name, optionally ``-dirty``."""
+    if not text:
+        return False
+    body = text[:-6] if text.endswith("-dirty") else text
+    if len(body) not in (40, 64):
+        return False
+    return all(ch in "0123456789abcdef" for ch in body)
+
+
+def _git_dir(start_dir):
+    """The ``.git`` directory for ``start_dir``, walking up to the root.
+
+    ``.git`` is a DIRECTORY in a normal clone and a FILE (``gitdir: ...``) in
+    a worktree or a submodule; both are followed.  ``None`` means there is no
+    repository above the starting point at all.
+    """
+    here = os.path.abspath(start_dir)
+    while True:
+        cand = os.path.join(here, ".git")
+        if os.path.isdir(cand):
+            return cand
+        if os.path.isfile(cand):
+            try:
+                with open(cand, "r", encoding="utf-8",
+                          errors="replace") as fh:
+                    first = fh.readline().strip()
+            except OSError:
+                return None
+            if not first.lower().startswith("gitdir:"):
+                return None
+            target = first.split(":", 1)[1].strip()
+            if not os.path.isabs(target):
+                target = os.path.join(here, target)
+            return os.path.normpath(target)
+        parent = os.path.dirname(here)
+        if parent == here:
+            return None
+        here = parent
+
+
+def _packed_ref(git_dir, ref):
+    """The object name ``ref`` points at in ``.git/packed-refs``, or None.
+
+    Comment lines (``#``) and peeled tags (``^``) are skipped, so a packed
+    tag cannot be mistaken for the commit it peels to.
+    """
     try:
-        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError) as exc:       # noqa: BLE001
-        return f"unavailable: {type(exc).__name__}: {exc}"
-    if out.returncode != 0:
-        return f"unavailable: git exited {out.returncode}: " \
-               f"{(out.stderr or '').strip()}"
-    return out.stdout.strip()
+        with open(os.path.join(git_dir, "packed-refs"), "r",
+                  encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return None
+    for line in lines:
+        line = line.strip()
+        if not line or line[0] in "#^":
+            continue
+        fields = line.split()
+        if len(fields) == 2 and fields[1] == ref and _rev_ok(fields[0]):
+            return fields[0]
+    return None
+
+
+def _read_first(path):
+    """First stripped line of ``path``, or ``None`` when it is unreadable."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.readline().strip()
+    except OSError:
+        return None
+
+
+def git_rev():
+    """The run's revision and how it was found -- no subprocess, no ``git``.
+
+    Three layers, tried in this order, and EVERY layer that failed is named
+    in the failure string, so ``meta`` can never carry a bare ``null``:
+
+    1. ``EMFIT_GIT_REV`` -- a 40/64-char lowercase hex id, optionally with a
+       ``-dirty`` suffix.  An invalid value is rejected, not used;
+    2. ``.git/HEAD`` found by walking up from this file's own path -- a
+       ``ref: <ref>`` line is resolved as the loose file ``.git/<ref>``
+       first and then through ``.git/packed-refs``; a raw 40-char object
+       name (detached HEAD) is used as it stands;
+    3. a rev file, ``EMFIT_GIT_REV_FILE`` when set else ``.git/emfit_git_rev``
+       -- the first 40/64-char hex token in it.
+
+    Returns ``(rev, source)``, ``source`` being one of ``env``,
+    ``head-loose``, ``head-packed``, ``head-detached``, ``file`` or
+    ``unavailable``.
+    """
+    tried = []
+    env_rev = (os.environ.get("EMFIT_GIT_REV") or "").strip()
+    if env_rev and _rev_ok(env_rev):
+        return env_rev, "env"
+    if env_rev:
+        tried.append(f"env EMFIT_GIT_REV invalid: {env_rev!r} is neither "
+                     f"40- nor 64-char lowercase hex (optional -dirty)")
+    else:
+        tried.append("env EMFIT_GIT_REV unset or empty")
+
+    git_dir = _git_dir(os.path.dirname(os.path.abspath(__file__)))
+    if git_dir is None:
+        tried.append("head: no .git directory above this file")
+    else:
+        head_path = os.path.join(git_dir, "HEAD")
+        head = _read_first(head_path)
+        if head is None:
+            tried.append(f"head: {head_path} unreadable")
+        elif head.lower().startswith("ref:"):
+            ref = head.split(":", 1)[1].strip()
+            loose = os.path.join(git_dir, *ref.split("/"))
+            sha = _read_first(loose)
+            if sha is not None and _rev_ok(sha):
+                return sha, "head-loose"
+            packed = _packed_ref(git_dir, ref)
+            if packed:
+                return packed, "head-packed"
+            tried.append(f"head: ref {ref!r} is neither in {loose} nor in "
+                         f"packed-refs")
+        elif _rev_ok(head):
+            return head, "head-detached"
+        else:
+            tried.append(f"head: {head_path} holds neither 'ref: <ref>' nor "
+                         f"a 40/64-char hex object name: {head!r}")
+
+    rev_file = (os.environ.get("EMFIT_GIT_REV_FILE") or "").strip()
+    if not rev_file:
+        rev_file = (None if git_dir is None
+                    else os.path.join(git_dir, "emfit_git_rev"))
+    if rev_file is None:
+        tried.append("file: no EMFIT_GIT_REV_FILE and no .git to hold one")
+    else:
+        try:
+            with open(rev_file, "r", encoding="utf-8",
+                      errors="replace") as fh:
+                tokens = fh.read().split()
+        except OSError as exc:
+            tokens = []
+            tried.append(f"file: {rev_file} unreadable: "
+                         f"{type(exc).__name__}")
+        for token in tokens:
+            if _rev_ok(token):
+                return token, "file"
+        if not any(t.startswith("file:") for t in tried):
+            tried.append(f"file: {rev_file} holds no 40/64-char hex token"
+                         + (f" (first token {tokens[0]!r})" if tokens
+                            else " (empty)"))
+    return "unavailable:" + ";".join(tried), "unavailable"
 
 
 def num(value, spec=".4f"):
@@ -722,6 +860,14 @@ def run_rung(h_mm, args, rss_branch):
     if branch != rss_branch:
         raise LadderError(f"the ru_maxrss unit branch changed mid-run: "
                           f"{branch!r} against {rss_branch!r}")
+    # The GRADED reference for a strip arm: dispersive Hammerstad-Jensen at
+    # THIS run's realised tone, on the arm's MESHED strip width.  Recomputed
+    # rather than reused: the ladder's FDTD/modal path never calls
+    # dm.hammerstad_beta, so there is no in-scope value to reuse.  The tone
+    # is the same float(gy["f"]) the row banks as f_hz -- not a second tone.
+    beta_hj_kj = float(dm.hammerstad_beta(
+        float(gy["f"]), W=float(w_m), H=H_SUB, eps_r=ER,
+        verbose=False)["beta"])
     row = dict(
         h_mm=float(h_mm), cell_m=float(gy["cell"]), n_cells=fd["n_cells"],
         n_sub=int(gy["n_sub"]), n_strip=int(n_strip),
@@ -737,7 +883,12 @@ def run_rung(h_mm, args, rss_branch):
         dt_s=float(gy["dt"]), n_acc=int(gy["n_acc"]),
         beta_fdtd=beta_fdtd, beta_eig=beta_eig, rel_gap_pct=float(gap_pct),
         beta_fit_one=beta_fdtd, beta_fit_two=beta_two_wave,
-        beta_two_station=beta_two_station, beta_model=beta_model,
+        beta_two_station=beta_two_station,
+        beta_quasistatic_retired=beta_model,
+        beta_model_basis=("quasistatic emfit.microstrip.Microstrip.beta; "
+                          "superseded per decisions.md 146/148(b); "
+                          "retained for continuity, not graded"),
+        beta_hj_kj_graded=beta_hj_kj,
         fit_residual_one=fit_residual_one,
         alpha_fdtd_db_per_mm=alpha_db_mm, b_over_a=float(ba),
         alpha_scaled_L_over_H=float(alpha_scaled),
@@ -1009,9 +1160,13 @@ def main(argv=None):
     # A ladder that wrote no rung has no tone to report; None keeps the keys
     # present in the payload instead of dropping the whole meta block.
     tone = tone_facts(rows[0]) if rows else (None,) * 5
+    # The revision AND the layer that produced it, both in meta.  A failed
+    # resolution is a string naming every layer tried -- never None, never
+    # "", so a bare meta.git_rev: null is impossible.
+    rev, rev_source = git_rev()
     meta = dict(
         command_line=" ".join([os.path.basename(sys.argv[0])] + sys.argv[1:]),
-        argv=list(sys.argv), git_rev=git_rev(),
+        argv=list(sys.argv), git_rev=rev, git_rev_source=rev_source,
         cwd=os.getcwd(), python=platform.python_version(),
         platform=platform.platform(), cpu_count=os.cpu_count(),
         rungs_mm=[float(r["h_mm"]) for r in rows],
