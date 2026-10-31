@@ -234,7 +234,7 @@ wall gate and `≈ 4.3 GB > 4000 MB` on the memory ceiling — while the station
 
 **Recommendation, stated as a recommendation:** keep `h = 0.2` (four cells across the strip, which is
 what makes §2's fall interpretable) and spend the budget on the **station baseline** — the `9.6 mm`
-station span and the `8` stations — rather than on the arm, because a shorter span is what de-aliases
+station span and the `8` stations (§11) — rather than on the arm, because a shorter span is what de-aliases
 the two-station estimate and a longer arm does not. The
 `beta_two_station -267.886` [M] in §6 is aliased by a full `2*pi` wrap, and a longer arm does not fix
 that: the alias is set by the station span, so the repair is to **shorten** the span (or add stations),
@@ -275,3 +275,51 @@ lines) are **byte-identical** to their pins [M]. So §9 **G3** is **not** satisf
 this report does not claim it is: gradeability rests on `ERRATA_001.md` §3's argument (G3's letter
 "superseded, not satisfied", the protected object — the byte-identical reference module and the
 untouched numerical path — preserved prospectively), which is the erratum this row cites.
+
+## 11. Corrections carried after the run
+
+Appended after the report was written. **Nothing in §0-§10 is re-graded, no number is re-derived, no
+gate is re-priced and no verdict moves** — the items below are the corrections this report owes,
+not a second reading of the ladder. Where an item touches a printed number, the number stays where it
+was printed and this section names it by line.
+
+(a) **L237's "the `8` stations" is wrong: there are nine stations.** `emfit/studies.py` L1176-1180
+sets `MS_X_FIRST = 10.4e-3`, `MS_X_LAST = 20.0e-3` and `MS_N_STATIONS = 9` [L], and the rung-C row
+itself carries `n_stations: 9` [M, `evidence/rung_c/h020.json`]. The arithmetic is not a matter of
+taste: a `9.6 mm` span at `1.2 mm` spacing is **eight intervals**, and eight intervals is **nine**
+stations. The count changes nothing the recommendation rests on — the wrap modulus `654.498 rad/m` is
+a function of the *span*, not of the station count, so the `2*pi` alias argued in §6/§7 and the advice
+to spend the budget on the station baseline stand exactly as written. Only the noun is wrong; the
+sentence at L237 now carries a `(§11)` pointer and is otherwise untouched.
+
+(b) **`0.59` (order) and the relayed `0.377` pp (floor) remain [R] / [UNVERIFIED].** A further search
+of this tree found no provenance for either: `0.59` reproduces from **no** pairing of the three banked
+rungs (§3 still holds — pairwise `1.2185 / 1.3532 / 1.2744` FDTD, `0.8016 / 0.7415 / 0.7767` EIG, LSQ
+`p = 0.9739 / 0.9987`), and `0.377` has no artefact, log, JSON field or prose source behind it. Both
+are carried as relayed numbers and **not graded**; this section does not promote either to measured.
+
+(c) **`sigma_retries = 0` on rung C stays a counter-example to the closed form in `decisions.md`
+§152.11.** That rule predicts `sigma_retries == n_strip - 2`, i.e. `2` for rung C's four-cell strip;
+the artefact records `0` [M]. The rule is a *strip-width-sweep* fact measured at `h = 0.4`, and rung C
+was run at a different `h`, so it lies outside the rule's domain. The counter-example is recorded as a
+counter-example and is **not** reconciled away by declaring the rule wrong in the sweep it came from.
+
+(d) **Pointer to the erratum, and to the guard that fails for the second time.** Every item above is
+argued at length in `evidence/rung_c_errata/ERRATA_004.md` §A-§F — §A the authorisation/attribution
+split of §150(h)(iv), §B the third link of the `1106 → 1261 → 1395` hash chain, §C the §151(f)
+carry-in, §D this dispatch's two rows in `docs/design/dispatch_log.md`, §E these corrections, §F the
+six guards — together with the standing correction that this report's own §9 **G3 fails its letter a
+second time**: it was already failed in `ERRATA_001` §9 (argued there as "superseded, not satisfied"),
+and `ERRATA_004` repeats that argument rather than repairing the letter. The alternative reading —
+G3 admits no amendment, therefore rung C is not gradeable at all — is **not** defeated by anything in
+this section or in the erratum; it stays on the record. `ERRATA_004` adds no measurement, and this
+section adds none either.
+
+(e) **§8 L239's "a longer arm does not fix that" is too broad, and this clause narrows it.** The sentence is
+true of the `beta_two_station -267.886` wrap: that alias is set by the **station span** against
+`lambda_g/2 = 8.135 mm` (the `2*pi` wrap modulus `654.498 rad/m` over `9.6 mm`), so what fixes it is a
+**shorter** span, or more stations — not a longer arm. It is not true of the extraction bias from finite probe
+separation, `2|Gamma|/d_probe`, which a **longer** arm *does* reduce: there the bias falls with probe
+separation, so lengthening the arm is the move. §8 is committed and is **not edited**; it keeps its words and
+this clause carries the narrower claim beside it. The recommendation §8 makes is unchanged, because the budget
+it spends is the *station baseline*, and a longer arm was never one of its two candidates.
