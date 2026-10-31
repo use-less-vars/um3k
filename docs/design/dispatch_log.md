@@ -13,6 +13,8 @@ conflict was caught only at commit time. A dispatch that is not on this list is 
 | 58 | `docs/design/component_map.md`, `docs/design/d58_acceptance.md`, `decisions.md` (scope as issued) | CLOSED — `9cece7b`, ratified |
 | 59V | visualisation acceptance doc and `viz/**` (scope as issued) | CLOSED — `39b0657`, `1cbe2fc`, authorised retroactively |
 | box-sweep-2026-10-31 *(dated slug in place of a dispatch number — none is verifiable in this tree)* | `evidence/box_sweep/**` (7 JSONs + `SUMMARY.md`), `docs/design/box_sweep_preregistration.md`, one row in this file | CLOSED — six preregistered box-sweep arms at h = 0.4 mm run post-freeze, all guards G1–G5 pass, frozen verdict **INCONCLUSIVE** (`evidence/box_sweep/SUMMARY.md` §5); §148(h) left open; no `decisions.md` write claimed |
+| h-refine-2026-10-31 *(dated slug — no dispatch number verifiable in this tree)* | `evidence/h_refine/**` (PREREG, SUMMARY, `analyse.py`, `h040.json/.log`, `h0267.json/.log`), one row in this file, and the `## 150.` block in `decisions.md` (append-only, on this dispatch's authorisation) | CLOSED — frozen `h` refinement at `lat 8 / lid 1`, two rungs (`h 0.4` and `0.26667`) run with per-run HJ+KJ re-derivation (pin `384.7489672644` passes at `2.2e-8`); rung `h 0.2` **priced and refused** on the pre-registered 900 s sizing gate (`3.27 M` cells / `1163` s / `2195` MB); frozen verdict **INCONCLUSIVE** (`evidence/h_refine/SUMMARY.md` §4, third clause); post-hoc fall `0.35166` pp FDTD / `0.35890` pp EIG = `1.6 x` the `3*Delta_min` threshold with an h-invariant gap (`0.38798 → 0.38213 %`); order NOT determined, rung C affordable but withheld pending errata authorisation |
+
 
 ## Standing rules
 
