@@ -1,0 +1,52 @@
+{
+ "_source": "Extract of .scratch/d585/modal.json entry[0] (file is a 3-entry list, 29987 B, not durable and not committed). Box parameters and mode 0 verbatim; the full 9-mode list is NOT reproduced here. w_m is not stored in the source artefact.",
+ "box": {
+  "engine": "deflated",
+  "closure": "open",
+  "h": 0.0004,
+  "cell": 0.0004,
+  "clearance": 1.0,
+  "clearance_lateral": 1.0,
+  "ny": 10,
+  "nz": 8,
+  "ly": 0.004,
+  "lz": 0.0032,
+  "h_ratio": 4.0,
+  "k0": 209.78570331727553,
+  "n_free_edge": 246,
+  "n_free_node": null,
+  "n_dof": 246,
+  "status": "ok",
+  "sigma_mult": 1.02,
+  "sigma": 197517.0654276619,
+  "region_widen": true,
+  "n_candidates": 16,
+  "chosen": 1,
+  "beta_builtin_pick": 364.2590740103016,
+  "eps_eff_builtin_pick": 3.014872720640409,
+  "residual_chosen": 6.483661754651842e-08,
+  "f_sub_builtin_pick": 0.8760412708727903
+ },
+ "deflation": {
+  "z_dim": 77,
+  "columns_v1": 44,
+  "columns_added": 33,
+  "z_dim_v2": 77,
+  "n_columns": 169,
+  "residual_grad": 1.5318609492545723e-18,
+  "residual_eps_mu": 0.042527931132126016,
+  "residual_pencil": 0.00013211636732405745
+ },
+ "mode_0": {
+  "index": 0,
+  "eigenvalue_beta": 440.050203717505,
+  "beta_sq": 193644.18179181765,
+  "eps_eff": 4.3999999999998245,
+  "curl_ratio": 1.4425236393218298e-22,
+  "residual": 6.282028902029157e-08,
+  "f_sub": null,
+  "is_builtin_pick": false,
+  "physical": true,
+  "beta_over_hammerstad": 1.205616996486315
+ }
+}
