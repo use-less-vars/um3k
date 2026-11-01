@@ -1752,13 +1752,33 @@ class LineReference:
         )
 
     def forward_ratio(self, x1: float, x2: float) -> complex:
-        """``a+(x2) / a+(x1)`` on this reference [dimensionless].
+        """``a+(x2) / a+(x1)`` on this reference, rescaled to the planes.
 
-        ``x1`` and ``x2`` are the planes the caller wants normalised against
-        and must be this reference's own first and last station [m]: a ratio
-        taken on other planes is a ratio of a different piece of line, and
-        normalising a loaded run by it would silently divide out something that
-        was never in it.  A mismatch raises instead.
+        The ratio is measured across this reference's own span -- its first to
+        its last station [m].  Computing ``a+`` has already divided out
+        ``exp(gamma x)``, so that measured ratio is a *residual*: it is 1 for a
+        line whose stations agree with the fit and departs from 1 only where
+        the line departs from it.  It is not the line's own transport between
+        two planes.
+
+        A departure from the fit grows like ``exp(dgamma L)`` over the span
+        ``L`` it was measured on, so rescaling the residual onto a run's span
+        is a power of the span ratio, ``ratio ** (run_span / station_span)``.
+        On a uniform line that is exact, it composes (a residual rescaled to an
+        intermediate span and then on again equals the one rescaled directly),
+        and on the station planes themselves the exponent is 1, so the measured
+        ratio comes back untouched, bit for bit.
+
+        The requested planes may therefore fall outside the station span.  That
+        extrapolates how the residual scales with span, not the data: a perfect
+        reference carries no information about what happens elsewhere, and
+        rescaling it returns 1 whatever the planes.  It is, though, exactly the
+        case of a load inside the line, whose cut plane lies past the last
+        probe, where refusing would leave the load unmeasurable.
+
+        The power is taken through the principal branch of the complex
+        logarithm, so a residual whose phase exceeds pi is rescaled with that
+        phase wrapped.
 
         Args:
             x1, x2: The two planes of the run being normalised [m].
@@ -1767,17 +1787,15 @@ class LineReference:
             The complex forward-amplitude ratio across them.
 
         Raises:
-            ValueError: If the planes are not this reference's own (closer than
-                a nanometre), or if it has no forward amplitude to divide by.
+            ValueError: If it has no forward amplitude at its first station to
+                divide by, or if its stations span zero metres, or if it has no
+                forward amplitude at its last station to rescale, or if a
+                rescale is needed and the fitted ``gamma`` is missing or not
+                finite.  The last of these cannot happen in practice, since
+                computing ``a+`` already used ``gamma``; it is kept as defence
+                in depth.
         """
         planes = (float(self.station_x[0]), float(self.station_x[-1]))
-        for want, got in zip((float(x1), float(x2)), planes):
-            if abs(want - got) > 1e-9:
-                raise ValueError(
-                    f"reference stations span {planes} m but the run's planes "
-                    f"are {(float(x1), float(x2))} m: s21 is normalised by a "
-                    f"ratio measured on the same two planes of the same mesh, "
-                    f"or not at all")
         a = forward_wave_amplitude(self.v_stations, self.i_stations,
                                    self.station_x, self.gamma, self.zc,
                                    indices=[0, -1])
@@ -1785,7 +1803,29 @@ class LineReference:
             raise ValueError(
                 "the reference has no forward amplitude at its first station: "
                 "there is nothing to normalise by")
-        return complex(a[1] / a[0])
+        ratio = complex(a[1] / a[0])
+        want = (float(x1), float(x2))
+        if all(abs(w - g) <= 1e-9 for w, g in zip(want, planes)):
+            return ratio
+        span = planes[1] - planes[0]
+        run_span = want[1] - want[0]
+        if span == 0.0:
+            raise ValueError(
+                f"this reference's stations span {span} m: there is no span "
+                f"to measure a residual over, so nothing can be rescaled")
+        if ratio == 0.0:
+            raise ValueError(
+                "the reference has no forward amplitude at its last station: "
+                "there is no residual to rescale")
+        gamma = self.gamma
+        if gamma is None or not all(np.isfinite((gamma.real, gamma.imag))):
+            raise ValueError(
+                f"reference stations span {planes} m but the run's planes are "
+                f"{want} m: rescaling the residual onto other planes needs "
+                f"the fitted propagation constant, and this reference has none")
+        # The residual behaves like exp(dgamma*L) over the span it was measured
+        # on, so rescaling it onto a run's span is a power of the span ratio.
+        return complex(np.exp(np.log(ratio) * (run_span / span)))
 
 
 def _blank_station_fit(reference_plane: float, beta: float,

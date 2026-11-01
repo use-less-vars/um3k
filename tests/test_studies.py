@@ -32,6 +32,7 @@ Only two kinds of claim are made here, and both are cheap:
 
 from __future__ import annotations
 
+import cmath
 import dataclasses
 import time
 from pathlib import Path
@@ -811,8 +812,18 @@ def test_the_ratio_of_ratios_does_not_care_what_alpha_it_was_told():
     assert lossless == pytest.approx(0.6, rel=1e-14)
 
 
-def test_the_reference_only_answers_on_its_own_two_planes():
-    """A ratio measured on other planes is a ratio of another piece of line."""
+def test_the_reference_transports_off_its_own_two_planes():
+    """Other planes get the station residual rescaled, not a refusal.
+
+    The measurement exists only on the station planes, and what it holds is a
+    residual: the split is de-embedded to ``x = 0``, where this pure travelling
+    wave is a constant, so the measured ratio is ``1`` -- a run that agrees with
+    its own fit has nothing left to measure.  A residual of 1 rescales to 1 over
+    any span, which is the point: another pair of planes may only rescale what
+    was measured, never add a correction of its own.  It is emphatically *not*
+    the local phasor ratio ``exp(-gamma (x2 - x1))``, a quantity this method
+    does not return.
+    """
     a = 1.0e5
     fwd_wave = a * np.exp(-GAMMA * X)
     reference = studies.LineReference(gamma=GAMMA, zc=ZC, station_x=X,
@@ -821,11 +832,11 @@ def test_the_reference_only_answers_on_its_own_two_planes():
     # a run consistent with its own reference de-embeds to a constant, so its
     # own ratio is 1 -- there is no decay left in it to measure
     assert reference.forward_ratio(X[0], X[-1]) == pytest.approx(1.0, abs=1e-15)
-    with pytest.raises(ValueError):        # the wrong downstream plane
-        reference.forward_ratio(X[0], X[-2])
-    with pytest.raises(ValueError):        # the wrong upstream plane
-        reference.forward_ratio(X[1], X[-1])
-
+    for x1, x2 in ((X[0], X[-2]), (X[1], X[-1]), (X[0], X[-1] + 4e-3)):
+        got = reference.forward_ratio(x1, x2)
+        assert got == pytest.approx(1.0, abs=1e-14)
+        # and not the local phasor ratio, which is a different quantity
+        assert abs(got - complex(np.exp(-GAMMA * (float(x2) - float(x1))))) > 0.1
     # a reference with no forward wave has nothing to normalise by
     silent = studies.LineReference(gamma=GAMMA, zc=ZC, station_x=X,
                                    v_stations=np.zeros_like(X, dtype=complex),
@@ -1229,4 +1240,203 @@ def test_microstrip_wave_accepts_the_strip_w_names():
     assert geo["cell"] == pytest.approx(1.6e-3)
     assert geo["n_strip"] * geo["cell"] == pytest.approx(geo["w"])
     assert geo["w"] == pytest.approx(studies.MS_W)
+
+
+# ---------------------------------------------------------------------------
+# forward_ratio away from the station planes: how a residual rescales
+# ---------------------------------------------------------------------------
+# Synthetic stations on the default coupon's own geometry: 0.4 mm apart from
+# 10.4 mm, the span a real run's probes sit on, over a gamma and a zc that are
+# the default run's (see GAMMA / ZC above), so nothing here is a toy and
+# nothing here solves a field.
+XS = 10.4e-3 + 0.4e-3 * np.arange(25)
+# The two planes the default run is normalised between -- a port at 3.2 mm and
+# a cut at 20 mm, so the upstream plane is 7.2 mm before the first station.
+RUN_A = (3.2e-3, 20.0e-3)
+# Gamma 1.77 % away from the fit: the residual such a reference leaves behind
+# is a couple of degrees over the station span, not a quarter turn.
+GAMMA_OFF = GAMMA * 1.0177
+# Those residuals, read off the library once and pinned here: 2.2630 deg over
+# the 9.6 mm station span, 3.9603 deg over Run A's 16.8 mm.
+RESIDUAL_REF = complex(0.9996394917219922, 0.03950369287789778)
+RESIDUAL_RUN_A = complex(0.9983450395985279, 0.06911614195418925)
+
+
+class TestForwardRatioTransport:
+    """``LineReference.forward_ratio`` off its own two planes.
+
+    The measurement exists on the station planes only, and the ratio there is a
+    *residual*: 1 for a line that agrees with its own fit, because the split has
+    already divided out ``exp(gamma x)``.  Off those planes the residual is
+    rescaled as ``ratio ** (run_span / station_span)`` -- a departure from the
+    fit grows like ``exp(dgamma L)`` over the span ``L`` it was measured on --
+    which is exact on a uniform line, composes, and so never invents a
+    correction the measurement did not contain.
+    """
+
+    @staticmethod
+    def _reference(gamma=GAMMA, amplitude=1.0e5):
+        """A load-free coupon, split with the matched ``gamma``.
+
+        ``v = A exp(-gamma x)``, ``i = v / zc`` with the coupon's own ``gamma``
+        -- the convention :func:`studies.forward_wave_amplitude` documents --
+        so the split hands back ``A`` at every station and the residual across
+        any pair of stations is 1.  Only the ``LineReference``'s own ``gamma``
+        is the caller's to override; the wave is always built matched, so
+        ``None``, ``nan`` and ``inf`` describe a reference that disagrees with
+        the data rather than a fixture that cannot be built.
+        """
+        wave = amplitude * np.exp(-GAMMA * XS)
+        reference = studies.LineReference(
+            gamma=gamma, zc=ZC, station_x=XS, v_stations=wave,
+            i_stations=wave / ZC)
+        a = studies.forward_wave_amplitude(wave, wave / ZC, XS, GAMMA, ZC,
+                                          indices=[0, -1])
+        return reference, a
+
+    def test_matching_endpoints_is_bit_identical(self):
+        """On the station planes the method is exactly what it always was.
+
+        The residual formed there is the same ``a[1] / a[0]`` the split hands
+        back, on the same array path, so the two are the same IEEE number and
+        ``==`` -- not ``approx`` -- holds: no existing normalisation moved.
+        Asked the other way round the residual is its reciprocal, which is a
+        different number, so the pair cannot silently collapse to a constant.
+        """
+        reference, a = self._reference()
+        assert reference.forward_ratio(XS[0], XS[-1]) == complex(a[1] / a[0])
+        assert reference.forward_ratio(XS[-1], XS[0]) != complex(a[1] / a[0])
+
+    def test_a_perfect_reference_rescales_to_one(self):
+        """A plane change never invents a correction the measurement lacks.
+
+        A reference whose stations agree with its own fit has a residual of 1
+        and knows nothing else, so every pair of planes must rescale to 1 --
+        inside its span, beyond it, and on the real Run A pair whose upstream
+        plane sits 7.2 mm before the first station.  That is the whole safety
+        argument for answering off-plane at all.
+        """
+        reference, _ = self._reference()
+        assert reference.forward_ratio(XS[0], XS[-1]) == pytest.approx(
+            1.0, abs=1e-15)
+        for x1, x2 in ((XS[0], XS[-2]), (XS[1], XS[-1]),
+                       (XS[0], XS[-1] + 4e-3), RUN_A, (0.0, 0.2)):
+            assert reference.forward_ratio(x1, x2) == pytest.approx(
+                1.0, abs=1e-14)
+
+    def test_residual_rescales_as_a_power_of_the_span(self):
+        """A residual measured over 9.6 mm rescales to any span as its power.
+
+        With ``gamma`` 1.77 % off the fit, the residual is 2.26 deg over the
+        9.6 mm station span; a departure that grows like ``exp(dgamma L)`` puts
+        3.96 deg over Run A's 16.8 mm.  That is a power of the measured
+        residual -- ``1.75`` of it -- and not the line's own transport.  Both
+        forms are pinned: the independent ``M ** (run_span / station_span)``
+        and the number itself.
+        """
+        reference, _ = self._reference(gamma=GAMMA_OFF)
+        station_span = float(XS[-1]) - float(XS[0])
+        run_span = RUN_A[1] - RUN_A[0]
+        residual = reference.forward_ratio(XS[0], XS[-1])
+        assert residual == pytest.approx(RESIDUAL_REF, rel=1e-12)
+        assert np.degrees(cmath.phase(residual)) == pytest.approx(2.26,
+                                                                 abs=0.01)
+        got = reference.forward_ratio(*RUN_A)
+        assert got == pytest.approx(residual ** (run_span / station_span),
+                                   rel=1e-12)
+        assert got == pytest.approx(RESIDUAL_RUN_A, rel=1e-12)
+        assert np.degrees(cmath.phase(got)) == pytest.approx(3.96, abs=0.01)
+
+    def test_the_transport_does_not_rotate_the_residual(self):
+        """Rescaling a near-unity residual must not inject the line's phase.
+
+        The residual is 2.26 deg, so over a longer span it can only grow to a
+        few degrees.  Multiplying it by the line's own transport instead
+        applies ``exp(-gamma delta)`` -- 95 deg of phase here -- a second time,
+        while leaving the magnitude within 2 % of 1: only the phase reveals
+        that mistake, so the phase is pinned first and the rejected operator is
+        then shown to be nowhere near the answer.
+        """
+        reference, _ = self._reference(gamma=GAMMA_OFF)
+        value = reference.forward_ratio(*RUN_A)
+        assert abs(cmath.phase(value)) < 0.1
+        assert abs(abs(value) - 1.0) < 1e-2
+        delta = (RUN_A[1] - RUN_A[0]) - (float(XS[-1]) - float(XS[0]))
+        assert abs(value - complex(np.exp(-GAMMA * delta))) > 0.5
+
+    def test_rescaling_composes(self):
+        """Two rescaling steps must equal the one across their outer planes.
+
+        Composition is the property a span rescaling has to have, and it is
+        what the rejected operator failed.  It has to be measured on a
+        reference whose residual is not 1 -- on a matched one every value is 1
+        and the test would prove nothing -- so the residual of an off-gamma
+        reference carried to 15 mm and then on to 20 mm is compared with the
+        residual carried straight to 20 mm.
+        """
+        reference, _ = self._reference(gamma=GAMMA_OFF)
+        product = (reference.forward_ratio(3.2e-3, 15.0e-3)
+                   * reference.forward_ratio(15.0e-3, 20.0e-3))
+        assert product == pytest.approx(reference.forward_ratio(3.2e-3,
+                                                              20.0e-3),
+                                       rel=1e-12)
+
+    def test_reversing_the_planes_inverts_the_ratio(self):
+        """The two directions are one measurement and its reciprocal.
+
+        A residual over a signed span must rescale to the reciprocal when the
+        span is taken the other way, so the pair multiplies to 1.  Off-gamma,
+        where the residual is not 1, that is a real constraint rather than an
+        identity.
+        """
+        reference, _ = self._reference(gamma=GAMMA_OFF)
+        assert (reference.forward_ratio(*RUN_A)
+                * reference.forward_ratio(RUN_A[1], RUN_A[0])) == pytest.approx(
+                    1.0, rel=1e-12)
+
+    def test_guards(self):
+        """What it refuses -- and what the old path answers before it can.
+
+        No span to measure a residual over, no forward amplitude left at the
+        last station, and a ``gamma`` that is ``nan`` or ``inf`` each refuse
+        with a ``ValueError`` naming the thing that is missing.  ``None`` never
+        reaches that guard: the split itself uses ``gamma`` and raises
+        ``TypeError`` first, on the station planes as much as off them, so the
+        guard is defence in depth.  A degenerate reference asked about its own
+        planes is likewise answered by the endpoint branch before the span is
+        looked at, and returns 1 rather than raising.
+        """
+        # (a) nothing to measure a residual over -- own planes answered first
+        flat = studies.LineReference(
+            gamma=GAMMA, zc=ZC, station_x=np.array([5e-3, 5e-3]),
+            v_stations=np.full(2, 1.0e5, dtype=complex),
+            i_stations=np.full(2, 1.0e5 / ZC, dtype=complex))
+        assert flat.forward_ratio(5e-3, 5e-3) == pytest.approx(1.0, abs=1e-15)
+        with pytest.raises(ValueError, match="span"):
+            flat.forward_ratio(*RUN_A)
+
+        # (b) no forward amplitude at the last station: no residual to rescale
+        reference, _ = self._reference()
+        v = np.array(reference.v_stations, dtype=complex)
+        i = np.array(reference.i_stations, dtype=complex)
+        v[-1] = 0.0
+        i[-1] = 0.0
+        dead = studies.LineReference(gamma=GAMMA, zc=ZC, station_x=XS,
+                                     v_stations=v, i_stations=i)
+        with pytest.raises(ValueError, match="residual"):
+            dead.forward_ratio(*RUN_A)
+
+        # (c) a propagation constant that cannot rescale anything
+        for gamma in (complex(np.nan, 0.0), complex(np.inf, 0.0),
+                      complex(0.0, np.inf)):
+            broken, _ = self._reference(gamma=gamma)
+            with pytest.raises(ValueError, match="propagation constant"):
+                broken.forward_ratio(*RUN_A)
+
+        # (d) no gamma at all: the split refuses before the guard is reached
+        missing, _ = self._reference(gamma=None)
+        with pytest.raises(TypeError):
+            missing.forward_ratio(*RUN_A)
+        with pytest.raises(TypeError):            # the station planes too
+            missing.forward_ratio(XS[0], XS[-1])
 
