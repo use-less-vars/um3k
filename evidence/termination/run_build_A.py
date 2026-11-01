@@ -381,16 +381,20 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
     # `line_s21` de-embeds with the run's OWN measured beta: `emfit/ports.py:
     # 1707-1731` returns `s21 * exp(+1j*beta*distance)`, and the cut branch
     # calls it as `line_s21(a_port, x_port, a_cut, x_cut, beta)`
-    # (`emfit/studies.py:3242`).  So, with `t` the load's own transmission and
+    # (`emfit/studies.py:3261`).  So, with `t` the load's own transmission and
     # `d` the extraction distance,
     #
     #     arg(s21)     = arg t + (beta_meas - beta_true) * d   -> flat in L
+    #                                                    iff beta_meas = beta_true
     #     arg(s21_raw) = arg t - beta_true * d                -> slope -beta
     #
-    # The de-embedded phase is degenerate by construction: whatever the line
-    # does, its slope in L is ~0 because the de-embedding has already removed
-    # beta*d using a beta measured from that same run.  AC-7 is therefore scored
-    # on `s21.raw_phase_deg`, never on `s21.phase_deg`.
+    # So the de-embedded phase is flat in L only to the extent that the run's
+    # own measured beta is right -- it is NOT ~0 by construction, and these
+    # artefacts show it is not ~0 in fact (30.05, 50.02 and -74.52 deg on A, B
+    # and E; A against E is 104.57 deg over 10.0 mm, the +182.51 rad/m that
+    # `graded.json` records).  AC-7 is therefore scored on `s21.raw_phase_deg`,
+    # never on `s21.phase_deg`: the de-embedded phase carries the de-embedding's
+    # own error rather than removing it.
     #
     # Between two runs the SAME load's arg t cancels exactly (d(arg t)/dL = 0),
     # which is why AC-7 specifies two line lengths.  Within ONE run the
@@ -503,7 +507,9 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
                    "beta_FDTD = -d(arg S21)/dL from TWO line lengths",
             "which_phase": ("s21.raw_phase_deg -> s21.raw_phase_rad. NOT "
                             "s21.phase_deg: that one is de-embedded with this "
-                            "run's own measured beta and is flat in L by "
+                            "run's own measured beta, so it is flat in L only "
+                            "to the extent that beta is exact -- what "
+                            "survives is (beta_meas - beta_true)*dL, not 0 by "
                             "construction (see phase_degeneracy below)."),
             "achieved": None,
             "pass": None,
@@ -526,13 +532,20 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
                 "expected_deembedded_slope_rad_per_m": 0.0,
                 "single_run_branch_spacing_rad_per_m": 2.0 * math.pi / d_l,
                 "single_run_beta_resolved_only_modulo_branch": True,
-                "note": ("The de-embedded slope is the one that should read "
-                         "~0 -- it is degenerate by construction and must "
-                         "never be quoted as a beta. The raw slope is the "
-                         "AC-7 quantity, but from ONE run it equals "
-                         "beta - arg(t)/dL: that assumes arg t = 0, and it is "
-                         "only defined modulo the branch spacing above. "
-                         "Neither number is an AC-7 verdict."),
+                "note": ("The de-embedded slope should read ~0 only if this "
+                         "run's own measured beta were exact: what the "
+                         "de-embedding leaves is arg t + (beta_meas - "
+                         "beta_true)*dL, so a non-zero value here is the "
+                         "de-embedding's own residual and not a property of "
+                         "the line -- it must never be quoted as a beta. The "
+                         "raw slope is the AC-7 quantity, but from ONE run it "
+                         "equals beta - arg(t)/dL: that assumes arg t = 0, and "
+                         "it is only defined modulo the branch spacing above. "
+                         "Neither number is an AC-7 verdict, and neither is "
+                         "the field of the same name in graded.json's AC-7 "
+                         "block: that one is taken across TWO runs, between "
+                         "their `s21.planes_m[1]`, over the 10.0 mm between "
+                         "them."),
             },
         },
     }
@@ -719,9 +732,17 @@ def main(argv: list[str] | None = None) -> int:
             "raw_phase_rad": float(np.angle(s21_raw)),
             "raw_phase_deg": float(np.degrees(np.angle(s21_raw))),
             "phase_deg_basis": (
-                "s21 de-embedded with this run's own measured beta "
-                "(line_s21, emfit/ports.py:1729): slope in L ~0 BY "
-                "CONSTRUCTION. Not the AC-7 quantity."),
+                "s21 de-embedded with this run's own measured beta: "
+                "line_s21 (emfit/studies.py:1242, called at :3261) "
+                "multiplies by exp(+1j*beta*distance) "
+                "(emfit/ports.py:1707-1731). Flat in L only to the extent "
+                "that beta is exact -- what the de-embedding leaves is "
+                "arg t + (beta_meas - beta_true)*d, so the slope recorded "
+                "in phase_degeneracy.deembedded_slope_rad_per_m is this "
+                "run's de-embedding residual, NOT ~0 by construction. Not "
+                "the AC-7 quantity, and not the same number as the field "
+                "of that name in graded.json's AC-7 block, which "
+                "differences two runs over 10.0 mm."),
             "raw_phase_deg_basis": (
                 "s21_raw, no de-embedding applied: this is the AC-7 "
                 "quantity, and it carries -beta*L."),
