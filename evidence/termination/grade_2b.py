@@ -53,8 +53,146 @@ def load(path: str) -> dict:
         return json.load(fh)
 
 
+_MISSING = object()
+
+
+def dig(doc, path: str):
+    """Fetch a dotted path (``a.b[0].c``), or ``_MISSING`` if it is absent."""
+    cur = doc
+    for part in path.split("."):
+        index = None
+        if part.endswith("]") and "[" in part:
+            part, _, rest = part.partition("[")
+            try:
+                index = int(rest[:-1])
+            except ValueError:
+                return _MISSING
+        if not isinstance(cur, dict) or part not in cur:
+            return _MISSING
+        cur = cur[part]
+        if index is not None:
+            if not isinstance(cur, list) or index >= len(cur):
+                return _MISSING
+            cur = cur[index]
+    return cur
+
+
+def finite_number(value):
+    """``float(value)`` when it is a finite number, else ``None``.
+
+    A NaN or an inf in an artefact is not a value to grade against: it would
+    score a criterion silently.  It is reported as a problem instead.
+    """
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
+def json_safe(value):
+    return None if value is _MISSING else value
+
+
 def label_of(doc: dict) -> str:
     return str(doc.get("meta", {}).get("label") or doc.get("run", {}).get("label"))
+
+
+REQUIRED_NUMERIC = (
+    "run.kwargs.h_m",
+    "run.kwargs.n_strip",
+    "run.kwargs.n_sub",
+    "run.kwargs.n_clean",
+    "run.kwargs.n_air",
+    "run.kwargs.n_line",
+    "geometry.cell_m",
+    "geometry.f_hz",
+    "s21.magnitude",
+    "s21.phase_rad",
+    "s21.raw_phase_rad",
+    "s11.magnitude",
+)
+
+
+def validate(doc: dict, src: str, problems: list, warnings: list) -> bool:
+    """Check every key and number this grader reads.  No exception escapes.
+
+    Missing keys and non-finite numbers become entries in ``problems`` naming
+    the artefact and the path, so the run reports what is wrong with the input
+    instead of dying in a traceback (and instead of scoring a NaN silently).
+    """
+    ok = True
+    if not label_of(doc).strip():
+        problems.append(f"{src}: missing required key `meta.label` "
+                        f"(or `run.label`) -- the artefact cannot be "
+                        f"identified")
+        ok = False
+
+    loads = dig(doc, "run.kwargs.loads")
+    if not isinstance(loads, list) or len(loads) != 1:
+        if loads is _MISSING:
+            found = "nothing (key absent)"
+        elif isinstance(loads, list):
+            found = f"{len(loads)} loads"
+        else:
+            found = type(loads).__name__
+        problems.append(f"{src}: `run.kwargs.loads` must hold exactly one "
+                        f"load; found {found}")
+        ok = False
+    else:
+        value = dig(doc, "run.kwargs.loads[0].value")
+        if value is _MISSING:
+            problems.append(f"{src}: missing required key "
+                            f"`run.kwargs.loads[0].value`")
+            ok = False
+        elif finite_number(value) is None:
+            problems.append(f"{src}: `run.kwargs.loads[0].value` is not a "
+                            f"finite number ({value!r})")
+            ok = False
+
+    for path in REQUIRED_NUMERIC:
+        value = dig(doc, path)
+        if value is _MISSING:
+            problems.append(f"{src}: missing required key `{path}`")
+            ok = False
+        elif finite_number(value) is None:
+            problems.append(f"{src}: `{path}` is not a finite number "
+                            f"({value!r})")
+            ok = False
+
+    planes = dig(doc, "s21.planes_m")
+    if planes is _MISSING:
+        problems.append(f"{src}: missing required key `s21.planes_m`")
+        ok = False
+    elif not isinstance(planes, list) or len(planes) < 2:
+        problems.append(f"{src}: `s21.planes_m` must list at least two cut "
+                        f"positions (got {planes!r})")
+        ok = False
+    else:
+        for i, value in enumerate(planes[:2]):
+            if finite_number(value) is None:
+                problems.append(f"{src}: `s21.planes_m[{i}]` is not a finite "
+                                f"number ({value!r})")
+                ok = False
+
+    ac6 = dig(doc, "ac.AC-6.achieved")
+    if ac6 is _MISSING:
+        problems.append(f"{src}: missing required key `ac.AC-6.achieved`")
+        ok = False
+    elif not isinstance(ac6, dict):
+        problems.append(f"{src}: `ac.AC-6.achieved` must be an object (got "
+                        f"{type(ac6).__name__})")
+        ok = False
+
+    hj = dig(doc, "line.beta_model")
+    if hj is _MISSING:
+        warnings.append(f"{src}: optional key `line.beta_model` absent -- the "
+                        f"Hammerstad comparison is reported as null")
+    elif finite_number(hj) is None:
+        problems.append(f"{src}: `line.beta_model` is not a finite number "
+                        f"({hj!r})")
+        ok = False
+    return ok
 
 
 def load_ohm(doc: dict) -> float:
@@ -130,7 +268,7 @@ def grade_a(a: dict) -> dict:
             "s21_margin": S21_BAR - abs(s21 - 1.0),
         },
         "pass": bool(s11 <= S11_BAR and abs(s21 - 1.0) <= S21_BAR),
-        "source_artefact": a["meta"]["label"],
+        "source_artefact": label_of(a),
     }
 
     ac6 = a["ac"]["AC-6"]
@@ -159,7 +297,7 @@ def grade_a(a: dict) -> dict:
         "pass": bool(all(k in got and got[k] is not None for k in keys)
                      and loaded_plane is not None and s21_plane is not None
                      and int(loaded_plane) == int(s21_plane)),
-        "source_artefact": a["meta"]["label"],
+        "source_artefact": label_of(a),
         "note": ("re-derived here from the artefact, not copied from the "
                  "artefact's own AC-6 verdict"),
     }
@@ -234,6 +372,17 @@ def grade_ac7(a: dict, e: dict) -> dict:
 
     lam_g = 2.0 * math.pi / bm
     branch_ok = bool(d_l < 0.5 * lam_g)
+    if branch_ok:
+        verdict = bool(rel <= BETA_REL_BAR)
+        status = ("scored" if verdict else "scored: outside the "
+                  f"{BETA_REL_BAR:g} bar")
+    else:
+        # The raw phase difference is only known modulo 2*pi/dL; a wrapped
+        # beta_FDTD must not be scored as if it were a measurement.
+        verdict = None
+        status = ("unscored: the raw phase difference aliases (dL >= "
+                  "lambda_g/2), so beta_FDTD is only determined modulo "
+                  "2*pi/dL and |beta_FDTD - beta_modal| is meaningless")
 
     sig = {}
     for deg in (0.1, 1.0):
@@ -256,8 +405,8 @@ def grade_ac7(a: dict, e: dict) -> dict:
                         "own measured beta and is flat in L by construction."),
         "achieved": {
             "dL_m": d_l,
-            "dL_from": (f"s21.planes_m[1] of {e['meta']['label']} minus that of "
-                        f"{a['meta']['label']}"),
+            "dL_from": (f"s21.planes_m[1] of {label_of(e)} minus that of "
+                        f"{label_of(a)}"),
             "raw_phase_deg": [math.degrees(raw_a), math.degrees(raw_e)],
             "delta_raw_phase_rad": d_raw,
             "delta_raw_phase_deg": math.degrees(d_raw),
@@ -275,7 +424,8 @@ def grade_ac7(a: dict, e: dict) -> dict:
                             f"{0.5 * lam_g * 1e3:.4f} mm against dL = "
                             f"{d_l * 1e3:.4f} mm."),
         },
-        "pass": bool(rel <= BETA_REL_BAR),
+        "pass": verdict,
+        "status": status,
         "reference_spread": {
             "beta_mode_profile": bm,
             "beta_hammerstad": hj,
@@ -337,13 +487,39 @@ def main(argv: list[str] | None = None) -> int:
                     help="write the graded JSON here (default: stdout only)")
     args = ap.parse_args(argv)
 
-    docs = [load(p) for p in args.artefacts]
-    by_value: dict[float, list[dict]] = {}
-    for doc in docs:
-        by_value.setdefault(load_ohm(doc), []).append(doc)
+    problems: list[str] = []
+    warnings: list[str] = []
+    docs: list[tuple[str, dict]] = []
+    for path in args.artefacts:
+        try:
+            doc = load(path)
+        except OSError as exc:
+            problems.append(f"{path}: cannot read artefact "
+                            f"({exc.strerror or exc.__class__.__name__})")
+            continue
+        except json.JSONDecodeError as exc:
+            problems.append(f"{path}: not valid JSON ({exc.msg} at line "
+                            f"{exc.lineno} column {exc.colno})")
+            continue
+        if not isinstance(doc, dict):
+            problems.append(f"{path}: artefact must be a JSON object, got "
+                            f"{type(doc).__name__}")
+            continue
+        validate(doc, path, problems, warnings)
+        docs.append((path, doc))
 
-    fifty = sorted(by_value.get(50.0, []), key=cut_mm)
-    hundred = by_value.get(100.0, [])
+    inputs = {}
+    for path, doc in docs:
+        cut = finite_number(dig(doc, "s21.planes_m[1]"))
+        inputs[label_of(doc) or Path(path).name] = {
+            "path": path,
+            "load_ohm": finite_number(dig(doc, "run.kwargs.loads[0].value")),
+            "cut_mm": None if cut is None else cut * 1e3,
+            "n_line": json_safe(dig(doc, "run.kwargs.n_line")),
+            "cells": json_safe(dig(doc, "geometry.cells")),
+            "grid": json_safe(dig(doc, "geometry.grid")),
+        }
+
     graded: dict = {
         "schema_version": 1,
         "scope": SCOPE,
@@ -352,33 +528,52 @@ def main(argv: list[str] | None = None) -> int:
             "s21_tripwire": S21_TRIPWIRE, "beta_relative": BETA_REL_BAR,
             "gamma_relative_AC4": GAMMA_REL_TOL,
         },
-        "inputs": {label_of(d): {
-            "path": str(p),
-            "load_ohm": load_ohm(d),
-            "cut_mm": cut_mm(d),
-            "n_line": d["run"]["kwargs"]["n_line"],
-            "cells": d["geometry"]["cells"],
-            "grid": d["geometry"]["grid"],
-        } for d, p in zip(docs, args.artefacts)},
+        "inputs": inputs,
     }
-    problems = []
-    if len(fifty) != 2:
-        problems.append(f"need exactly two 50 ohm artefacts (A and E), found "
-                        f"{len(fifty)}")
-    if len(hundred) > 1:
-        problems.append(f"found {len(hundred)} 100 ohm artefacts")
 
-    if len(fifty) == 2:
+    fifty: list[dict] = []
+    hundred: list[dict] = []
+    if not problems:
+        by_value: dict[float, list[dict]] = {}
+        for _path, doc in docs:
+            by_value.setdefault(load_ohm(doc), []).append(doc)
+        fifty = sorted(by_value.get(50.0, []), key=cut_mm)
+        hundred = by_value.get(100.0, [])
+        if len(fifty) != 2:
+            problems.append(f"need exactly two 50 ohm artefacts (A and E), "
+                            f"found {len(fifty)}")
+        if len(hundred) > 1:
+            problems.append(f"found {len(hundred)} 100 ohm artefacts")
+
+    if not problems:
         a, e = fifty
-        graded["criteria"] = grade_a(a)
-        graded["criteria"]["AC-7"] = grade_ac7(a, e)
+        criteria = grade_a(a)
+        ac7 = grade_ac7(a, e)
+        criteria["AC-7"] = ac7
+        graded["criteria"] = criteria
+        if not ac7["achieved"]["branch_unambiguous"]:
+            problems.append(
+                "AC-7: dL = "
+                f"{ac7['achieved']['dL_m'] * 1e3:.4f} mm is not below "
+                f"lambda_g/2 = "
+                f"{0.5 * ac7['achieved']['lambda_g_m'] * 1e3:.4f} mm, so the "
+                "raw phase difference aliases and beta_FDTD is only known "
+                "modulo 2*pi/dL; AC-7 is left unscored (pass: null) instead "
+                "of being scored against a wrapped beta")
+            graded["status"] = ("scored except AC-7, which is unscored: see "
+                                "`problems`")
         if hundred:
-            prof_z0 = grade_ac7(a, e)["achieved"]["beta_modal"]["z0_ohm"]
-            graded["exploratory_100ohm"] = grade_b(hundred[0], prof_z0)
+            graded["exploratory_100ohm"] = grade_b(
+                hundred[0], ac7["achieved"]["beta_modal"]["z0_ohm"])
         graded["verdict"] = {
-            k: v.get("pass") for k, v in graded["criteria"].items()}
+            k: v.get("pass") for k, v in criteria.items()}
+
     if problems:
         graded["problems"] = problems
+        graded.setdefault("status", f"unscored: {len(problems)} problem(s) in "
+                                    f"the input artefacts")
+    if warnings:
+        graded["warnings"] = warnings
 
     text = json.dumps(graded, indent=2, sort_keys=True)
     if args.out:
@@ -388,8 +583,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {out}")
     else:
         print(text)
+    for msg in problems:
+        print(f"problem: {msg}", file=sys.stderr)
+    for msg in warnings:
+        print(f"warning: {msg}", file=sys.stderr)
     v = graded.get("verdict", {})
-    print("verdict: " + "  ".join(f"{k}={v[k]}" for k in sorted(v)))
+    if v:
+        print("verdict: " + "  ".join(f"{k}={v[k]}" for k in sorted(v)))
+    else:
+        print("verdict: unscored -- " + "; ".join(problems))
     return 0 if not problems else 1
 
 
