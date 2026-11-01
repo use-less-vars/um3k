@@ -10,7 +10,7 @@
 6. One sparse direct solve: `spla.spsolve(K[free][:, free].tocsc(), -(K[free][:, held] @ vd[held]))` -> `emfit/quasistatic.py:270-272` -> [M]
 7. So the production basis is one sparse direct Laplace solve, not a pencil; where they disagree, the tree wins -> (no artefact) -> [M]
 8. "3.06 % / 2.99 %, span 6.24 %" does not close: `3.06 - 2.99 = 0.07`, so a `6.24 %` span needs opposite signs -> `tools/gates_101_20.py:481-493` -> [UNVERIFIED]
-   Checked 2026-11-01: `|3.06 - 2.99| = 0.07` and `3.06 + 2.99 = 6.05`; neither reproduces `6.24`, so the item's own inference does not close either and the quoted `6.24 %` span stays a **live open item**, not closed by argument. The `[UNVERIFIED]` tag stands; the two sums are `[M]`, the check date is `[R]`.
+   Checked 2026-11-01: |3.06-2.99|=0.07, 3.06+2.99=6.05; neither reproduces 6.24. The value is UNVERIFIED and does not close under either sign combination. It will be replaced by the AC-7 measurement when the basis comparison runs. Do not quote 6.24 as a measured number until then.
 9. "826.43 s CPU" alone -> `decisions.md:6751` -> [M] SUPPORTED for the CPU figure only; `2 205 844 kB` `:6753`, no eigenvalue/npz `:6755`, `7208 free edges` `:6747`/`:6758`
 10. "int 68-90 s at 1592 dof and 100 s at 1804 dof" -> `decisions.md:6758` -> [M] SUPPORTED
 11. "1.36 s static Laplace ladder" -> `decisions.md:6760` -> [M] SUPPORTED
