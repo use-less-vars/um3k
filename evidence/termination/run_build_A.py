@@ -232,9 +232,18 @@ def build_kwargs(args: argparse.Namespace) -> dict:
     """The one call's arguments, assembled in one place so nothing is retyped.
 
     The mesh is the h = 0.4 mm *cell* configuration: substrate 1.6 mm / ``n_sub``
-    4 = 0.4 mm cell, ``n_air`` 12, ``n_top`` 6, ``n_clean`` 96 (0.8 mm strip ->
-    ``n_strip`` 2 cells at that cell), ``n_pml`` 6, ``n_ref`` 2, and ``n_line``
-    taken from ``--n-line``.
+    4 = 0.4 mm cell, ``n_air`` 12, ``n_top`` 6, ``n_clean`` 96, ``n_pml`` 6,
+    ``n_ref`` 2, and ``n_line`` taken from ``--n-line``.  ``n_strip`` is NOT
+    passed: it falls to the library default ``MS_N_STRIP`` 8
+    (``emfit/studies.py:1195-1196``), which is 8 x 0.4 mm = 3.2 mm = ``MS_W`` --
+    the strip the closed-form reference in ``emfit/microstrip.py`` actually
+    describes, and the width the artefact records as ``geometry.w``.  This file
+    used to pass ``n_strip`` 2 (0.8 mm) while ``w`` stayed ``MS_W`` 3.2 mm, so the
+    mesh was 4x narrower than the strip the phase reference is computed for: a
+    disagreement only the AC-7 comparison could see, because ``w`` sizes nothing
+    in the grid (``emfit/studies.py:3129-3130`` vs the strip loop at
+    ``emfit/studies.py:2595-2600``).  ``emfit/studies.py:2582`` now raises on that
+    disagreement rather than meshing one strip and quoting another.
 
     ``n_top`` is 6, and it is 6 *because* ``n_pml`` is 6: the zmax face is a
     matched layer, not a lid, and one PML object carries one thickness for every
@@ -254,28 +263,41 @@ def build_kwargs(args: argparse.Namespace) -> dict:
     this repo records it.
 
     PRICE, corrected 2026-11-01 (``n_top`` 12 -> 6 shortened z from 28 to 22
-    cells, so the earlier 357,616 read 27.3 % high): at the default ``n_line``
-    54 the grid is **62 x 206 x 22 = 280,984 cells** (``nx = n_pml + n_ref +
-    n_line = 6+2+54``; ``ny = 2*n_pml + n_strip + 2*n_clean = 12+2+192``;
-    ``nz = n_sub + n_air + n_top = 4+12+6``; ``ix_port = n_pml + n_ref = 8``),
-    dt 7.626299478123987e-13 s (set by the 0.4 mm cell, so the z extent does not
-    move it), 2400 steps, 1.830 ns simulated.  Run E (``n_line`` 79) is
-    87 x 206 x 22 = 394,284 cells.  An earlier revision of this file said
-    68 x 218 x 28 = 415,072 cells, borrowed from ``evidence/h_refine/h040.json``
-    [M]: that grid belongs to the eigensolver ladder row and is WRONG here.  The
-    corrected figure is the one in ``README.md`` and in the commit message.
+    cells and ``n_strip`` 2 -> 8 widened y from 206 to 212, so the earlier
+    357,616 read 23.7 % high): at the default ``n_line`` 54 the grid is
+    **62 x 212 x 22 = 289,168 cells** (``nx = n_pml + n_ref + n_line = 6+2+54``;
+    ``ny = 2*n_pml + n_strip + 2*n_clean = 12+8+192``; ``nz = n_sub + n_air +
+    n_top = 4+12+6``; ``ix_port = n_pml + n_ref = 8``), dt
+    7.626299478123987e-13 s (set by the 0.4 mm cell, so neither the z nor the y
+    extent moves it), 2400 steps, 1.830 ns simulated.  Run E (``n_line`` 79) is
+    87 x 212 x 22 = 405,768 cells.  Both are +2.91 % on the 206-wide grid the
+    ``n_strip`` 2 revision priced and ran (280,984 and 394,284 cells, the figures
+    the artefacts and ``README.md`` record), so cell count is not the reason to
+    re-measure.  An earlier revision of this file said 68 x 218 x 28 = 415,072
+    cells, borrowed from ``evidence/h_refine/h040.json`` [M]: that grid belongs
+    to the eigensolver ladder row and is WRONG here.
 
-    Cost, and it is a FLOOR rather than a measurement: the six field components
-    alone are ``6 x 8 B x cells`` = 13.5 MB on Run A (6 x 8 x 280,984 =
-    13,487,232 B) and 18.9 MB on Run E (6 x 8 x 394,284 = 18,925,632 B).  That
-    arithmetic excludes the materials matrices, the edge lists and interpreter
-    overhead, so a peak RSS is strictly larger and is UNMEASURED -- as is the
-    wall time, since no run of this build has ever been recorded
-    (``evidence/termination/`` holds no ``build_A_50ohm.json`` and no
-    ``build_E_50ohm.json``) -- against the per-run 1400 s wall gate and the
-    ``--mem-ceiling-mb 2000`` trip that both runs are launched under; a trip
-    writes a ``.trip.json`` marker and exits 3 or 4, and a trip is not a
-    licence to relaunch.
+    Cost, and it is a MEASUREMENT, not a floor: the runs of this build are
+    recorded, and each artefact carries its own ``peak_rss_mb`` and
+    ``wall_total_s`` [M] -- Run A 297.82 MB / 38.76 s
+    (``build_A_50ohm.json``), Run B 297.46 MB / 40.65 s (``build_B_100ohm.json``),
+    Run E 380.99 MB / 52.20 s (``build_E_50ohm.json``).  Against the per-run
+    1400 s wall gate that is 2.8 % on Run A and 3.7 % on Run E; against the
+    ``--mem-ceiling-mb 2000`` trip both runs are launched under, it is 14.9 % and
+    19.0 %.
+    A trip writes a ``.trip.json`` marker and exits 3 or 4, and a trip is not a
+    licence to relaunch.  The floor this paragraph used to quote -- the six field
+    components alone, ``6 x 8 B x cells`` = 13.5 MB on Run A (6 x 8 x 280,984 =
+    13,487,232 B) and 18.9 MB on Run E (6 x 8 x 394,284 = 18,925,632 B) -- is
+    what the measured RSS contains on top of the materials matrices, the edge
+    lists and interpreter overhead; it is retained only as the reason the
+    measured figure is ~20x it.  CAVEAT, and it matters because the mesh above
+    changed after those numbers were taken: every figure in this paragraph was
+    measured on the ``n_strip`` 2 mesh, i.e. 206 cells wide, 280,984 cells (Run A)
+    and 394,284 (Run E).  The corrected grid is 212 wide, 289,168 and 405,768
+    cells (+2.91 %), and no run of this script has been recorded on it, so the
+    recorded RSS and wall times are a LOWER BOUND for the corrected grid rather
+    than a measurement of it.
 
     The load adds no cell, no column and no solver state: it is a conductance on
     edges that already exist.  The grid is therefore recorded as ACHIEVED in the
@@ -291,7 +313,6 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         "n_air": 12,
         "n_top": 6,
         "n_clean": 96,
-        "n_strip": 2,
         "n_line": int(args.n_line),
         "n_pml": 6,
         "nsteps": 2400,
@@ -307,6 +328,7 @@ def build_kwargs(args: argparse.Namespace) -> dict:
 def describe_kwargs(kwargs: dict) -> dict:
     """JSON-safe view of the call, including the load specification (AC-6)."""
     from emfit.board import Load  # noqa: F401  (documented import site)
+    from emfit.studies import MS_N_STRIP  # the library's own n_strip default
 
     loads = kwargs["loads"]
     return {
@@ -316,7 +338,7 @@ def describe_kwargs(kwargs: dict) -> dict:
         "n_air": kwargs["n_air"],
         "n_top": kwargs["n_top"],
         "n_clean": kwargs["n_clean"],
-        "n_strip": kwargs["n_strip"],
+        "n_strip": kwargs.get("n_strip", MS_N_STRIP),
         "n_line": kwargs["n_line"],
         "n_pml": kwargs["n_pml"],
         "nsteps": kwargs["nsteps"],
@@ -348,7 +370,7 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
     import math
 
     s21 = complex(res.s21)
-    s11 = complex(res.s11)
+    s11 = complex(res.gamma_plane)
     s21_abs = abs(s21)
     s11_abs = abs(s11)
     gamma_plane = res.gamma_plane
@@ -652,7 +674,7 @@ def main(argv: list[str] | None = None) -> int:
     s21 = complex(res.s21)
     s21_raw = complex(res.s21_raw)
     gp = complex(res.gamma_plane)
-    s11 = complex(res.s11)
+    s11 = complex(res.gamma_plane)
 
     payload = {
         "meta": dict(meta, **{

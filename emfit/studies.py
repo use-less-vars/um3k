@@ -2504,8 +2504,9 @@ def microstrip_wave(
 
     Raises:
         ValueError: If the mesh or the station span leaves no interior to
-            probe, if fewer than four stations survive, or if warm-up leaves no
-            record to transform.
+            probe, if fewer than four stations survive, if warm-up leaves no
+            record to transform, or if ``n_strip`` and ``w`` name different
+            strip widths.
     """
     # --- the plane-capture channel ------------------------------------------
     # One decision, made once: an explicit flag beats the environment, and the
@@ -2580,6 +2581,24 @@ def microstrip_wave(
             f"{n_clean_lo!r} and {n_clean_hi!r}")
 
     cell = float(h) / n_sub
+
+    # --- the strip the mesh builds, against the strip the model prices ------
+    # ``w`` sizes nothing in this grid: the strip is ``n_strip`` cells wide
+    # (``j0``/``j1`` below), and ``w`` is only read back when the closed-form
+    # reference is constructed (``Microstrip(w=w, ...)``).  Two independent
+    # arguments for one width therefore fail silently on their own -- one run
+    # can mesh 0.8 mm and quote the phase constant of 3.2 mm -- so they are
+    # compared here, before the grid is built, and refused when they name
+    # different strips.
+    if n_strip is not None and w is not None and abs(n_strip * cell - float(w)) >= 0.5 * cell:
+        raise ValueError(
+            f"n_strip={n_strip} cells x {cell!r} m = {n_strip * cell!r} m across "
+            f"the strip, but w={float(w)!r} m: the mesh is built from n_strip and "
+            f"the closed-form reference from w, and nothing else ties them, so "
+            f"one of the two is wrong. Pass n_strip="
+            f"{int(round(float(w) / cell))} for w={float(w)!r} m at this cell, "
+            f"or w={n_strip * cell!r} m for n_strip={n_strip}")
+
     nx = n_pml + n_ref + n_line
     ny = 2 * n_pml + n_strip + n_clean_lo + n_clean_hi  # SHIFT-IMPL
     nz = n_sub + n_air + n_top

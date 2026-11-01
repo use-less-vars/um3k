@@ -23,6 +23,11 @@ Only two kinds of claim are made here, and both are cheap:
   fitted ``beta``, ``eps_eff`` and the two fit diagnostics, so neither failure
   can come back unnoticed.  It costs a few seconds, which is the price of the
   only physical claim in the file.
+* *One refusal.*  ``n_strip`` sizes the strip on the mesh and ``w`` sizes the
+  cross-section the closed form is evaluated at, and nothing else ties them
+  together, so a pair that names two different widths is refused before the grid
+  is built.  Both halves are pinned -- the mismatch raises, the library default
+  still runs -- on a grid of a few hundred edges.
 """
 
 from __future__ import annotations
@@ -1131,3 +1136,97 @@ def test_a_loaded_run_quotes_a_ratio_against_a_load_free_twin():
     # tighter than the factor-of-1.88 gap between the referenced and
     # unreferenced readings that it separates.
     assert abs(s21 - unreferenced / free) < 0.02, (s21, unreferenced / free)
+
+
+# ---------------------------------------------------------------------------
+# the strip the mesh builds against the strip the closed form prices
+# ---------------------------------------------------------------------------
+def _cheap_strip_kwargs(**overrides):
+    """The cheapest grid that still carries a strip, for the width-pair checks.
+
+    ``h = MS_H`` over ``n_sub = 4`` is the historical 0.4 mm cell, which is what
+    makes the mismatch testable: a ``n_strip = 2`` pin left over from a coarser
+    grid is 0.8 mm against the default 3.2 mm ``w``.  Eight steps are enough
+    because the refusal comes before the grid exists -- nothing is stepped.
+    The test that the guard lets the *right* pair through cannot use this grid:
+    an eight-step record carries no wave for the station fit to read, so it runs
+    on the smoke test's own six-cell line instead (``n_sub = 1, n_strip = 2``,
+    the same 3.2 mm), which costs a solve and is known to come back.
+    """
+    kwargs = dict(
+        n_sub=4,
+        n_air=1,
+        n_strip=8,
+        n_clean=1,
+        n_pml=2,
+        n_top=0,          # plain PEC lid; n_top must equal n_pml otherwise
+        n_ref=1,
+        n_line=20,
+        x_first=2.0e-3,
+        x_last=3.2e-3,
+        n_stations=4,
+        nsteps=8,
+        sink=None,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_microstrip_wave_refuses_an_n_strip_that_disagrees_with_w():
+    """``n_strip`` sizes the mesh and ``w`` sizes the closed form; a pair that
+    disagrees is refused before the grid exists.
+
+    Nothing in the function ties the two together: the strip is ``n_strip``
+    cells wide, and ``w`` is only read back when the reference is built
+    (``Microstrip(w=w, ...)``).  So a caller can mesh 0.8 mm and quote the phase
+    constant of 3.2 mm, and no number on the record would say which width the
+    grid was.  That is the bug this test is here for -- ``n_strip=2`` beside the
+    default ``w`` is exactly the shape of it.
+
+    The refusal has to come before the solve, and the cheap knobs are the
+    evidence: a completed run on this grid is a second of work, the error is
+    none.  It also has to name both widths and the count that would have fitted,
+    or the caller cannot tell which of the two arguments to change.
+    """
+    t_start = time.perf_counter()
+    with pytest.raises(ValueError) as excinfo:
+        studies.microstrip_wave(**_cheap_strip_kwargs(n_strip=2))
+    elapsed = time.perf_counter() - t_start
+
+    message = str(excinfo.value)
+    # Both widths, in metres: 2 x 0.4 mm against the 3.2 mm ``w``.
+    assert "0.0008" in message, message
+    assert "0.0032" in message, message
+    # ... and the repair: eight cells is what 3.2 mm is at this cell size.
+    assert "n_strip=8" in message, message
+    # Refused, not run: the grid and the 8-step march are the seconds this
+    # comparison saves.
+    assert elapsed < 1.0, f"the refusal took {elapsed:.2f} s: it ran the solve"
+
+
+def test_microstrip_wave_accepts_the_strip_w_names():
+    """A pair that agrees still runs: two 1.6 mm cells are the 3.2 mm ``w``.
+
+    The refusal above is only worth having if a legitimate call goes through
+    untouched, and the interesting legitimate call is a *non-default* strip:
+    ``n_strip = 2`` on the cell ``h / n_sub = 1.6e-3 / 1`` -- the library
+    ``w``, reached by two cells instead of eight.  It is the smoke test's own
+    geometry and its forty steps, because the point is the comparison at the
+    top of the function and not anything the march computes; an eight-step
+    record carries no wave, the station fit refuses to form, and the run would
+    stop for a reason that has nothing to do with this guard.
+
+    The geometry the run reports is what closes the loop: the strip's own cell
+    count and the cell size multiply back to ``w``, so the mesh and the closed
+    form are talking about the same metal.
+    """
+    result = studies.microstrip_wave(**_cheap_strip_kwargs(
+        n_sub=1, n_strip=2, n_line=6,
+        x_first=6.4e-3, x_last=11.2e-3, nsteps=40))
+
+    geo = result.geometry
+    assert geo["n_strip"] == 2
+    assert geo["cell"] == pytest.approx(1.6e-3)
+    assert geo["n_strip"] * geo["cell"] == pytest.approx(geo["w"])
+    assert geo["w"] == pytest.approx(studies.MS_W)
+
