@@ -6,8 +6,10 @@ What this run is
 Source at port ``p1`` (the study's own soft source plane, ``ix_port``), a 50 ohm
 ``series_r`` :class:`emfit.board.Load` at port ``p2`` (the far end of the line),
 extraction on the load's own cut plane via ``s21_plane="cut"``.  One run.  There
-is deliberately **no reference run**: with ``reference=None`` the cut branch does
-not raise, it degrades to ``zc_split = zc`` + ``line_s21(...)`` and sets
+is deliberately **no reference run** -- unless ``--with-twin`` is passed, which
+supplies one from a load-free twin of the same mesh (off by default; see
+"Load-free twin" below).  With ``reference=None`` the cut branch does not raise,
+it degrades to ``zc_split = zc`` + ``line_s21(...)`` and sets
 ``loaded_without_reference=True`` on the result.  That degradation is recorded in
 the artefact rather than hidden, because it is the difference between a
 measured line constant and an assumed one.
@@ -33,6 +35,30 @@ Usage (the one command to type, from the repository root):
 Dry run (builds the arguments, writes nothing, starts no FDTD):
 
     python3 evidence/termination/run_build_A.py --dry-run
+
+Load-free twin, opt-in (``--with-twin``, off by default)
+-------------------------------------------------------
+``--with-twin`` adds ONE extra FDTD run of the same line with the load taken
+out -- the ``loads`` key dropped rather than passed empty, ``s21_plane`` left
+``None`` because a load-free record has no cut plane to name -- and hands that
+run's travelling-wave fit to the loaded run as an
+``emfit.studies.LineReference`` (``LineReference.from_wave(twin)``).  The loaded
+``s21`` is then the load's own transmission instead of this run's de-embedding
+residual, and ``loaded_without_reference`` comes back False from the library.
+Same script, same mesh, same source: only the load and the extraction plane
+differ, which is what lets the reference cancel a shared error instead of
+assuming one away.
+
+Two consequences, neither optional:
+
+* the wall cost roughly DOUBLES (two solves, not one).  The trip is armed once,
+  before the twin, and its ``--wall-limit-s`` budget is the whole PROCESS -- it
+  is not re-armed for the second solve, so a two-run wall time has to fit in
+  it, and the RSS high-water mark it watches is the process's;
+* the twin's own record is written beside the artefact as ``<stem>_twin.json``:
+  a first-class run record, not a debug dump.
+
+Without the flag no second solve runs and the artefact is exactly what it was.
 
 Three runs, one code shape
 --------------------------
@@ -325,12 +351,75 @@ def build_kwargs(args: argparse.Namespace) -> dict:
     return kwargs
 
 
+def twin_kwargs_from(kwargs: dict) -> dict:
+    """The load-free twin's arguments: the loaded call with the load taken out.
+
+    Exactly three keys move, each for a stated reason:
+
+    * ``loads`` is **dropped**, not set to ``()``.  The twin is a line with no
+      load in it, and ``emfit/studies.py:3229`` reads ``bool(loads_used)`` --
+      the absence is the measurement, so the key goes rather than being passed
+      as an empty list that still says "a record that carries loads".
+    * ``s21_plane`` is ``None``, because ``emfit/studies.py:2692-2697`` refuses
+      a named plane on a load-free record ("there is no cut for it to name").
+      ``None`` is the station span, the only plane a load-free line has, and it
+      is the reference's own span.
+    * ``reference`` is ``None``: the twin is where the reference comes from, and
+      a reference cannot be normalised against itself.
+
+    Nothing else changes.  ``h``, ``n_sub``, ``n_air``, ``n_top``, ``n_clean``,
+    ``n_line``, ``n_pml``, ``nsteps`` and ``excite`` are the loaded run's own
+    values, so the two runs are one mesh with one source and the only
+    difference between them is the load being measured.
+
+    Args:
+        kwargs: The loaded run's arguments, as :func:`build_kwargs` built them.
+
+    Returns:
+        A new dict; ``kwargs`` itself is not modified.
+    """
+    twin = dict(kwargs)
+    twin.pop("loads", None)
+    twin["s21_plane"] = None
+    twin["reference"] = None
+    return twin
+
+
+def describe_reference(reference) -> dict | None:
+    """JSON-safe view of the ``LineReference`` a loaded run was given.
+
+    ``None`` in, ``None`` out: the default path passes ``reference=None`` and
+    the artefact records that as it always has, so a flag-off artefact does not
+    change.  When a reference is there, this says which object it is, who built
+    it, and the numbers it carries -- enough to identify the twin a loaded
+    result was normalised against without re-reading that twin's file.
+    """
+    if reference is None:
+        return None
+    sx = reference.station_x
+    return {
+        "type": "emfit.studies.LineReference",
+        "built_by": "LineReference.from_wave(twin), the load-free twin run",
+        "gamma_re_per_m": float(reference.gamma.real),
+        "gamma_im_rad_per_m": float(reference.gamma.imag),
+        "gamma_im_basis": "the twin's own fitted beta [rad/m]",
+        "zc_re_ohm": float(reference.zc.real),
+        "zc_im_ohm": float(reference.zc.imag),
+        "n_stations": int(len(sx)),
+        "station_span_m": float(sx[-1]) - float(sx[0]),
+    }
+
+
 def describe_kwargs(kwargs: dict) -> dict:
     """JSON-safe view of the call, including the load specification (AC-6)."""
     from emfit.board import Load  # noqa: F401  (documented import site)
     from emfit.studies import MS_N_STRIP  # the library's own n_strip default
 
-    loads = kwargs["loads"]
+    # ``loads`` is absent on the twin's arguments (dropped, not emptied), and
+    # ``s21_plane``/``reference`` are read with ``.get`` because the twin sets
+    # them to None on purpose; on the loaded call all three are present and this
+    # view is what it was.
+    loads = kwargs.get("loads", ())
     return {
         "h_m": kwargs["h"],
         "cell": "h / n_sub",
@@ -343,8 +432,8 @@ def describe_kwargs(kwargs: dict) -> dict:
         "n_pml": kwargs["n_pml"],
         "nsteps": kwargs["nsteps"],
         "excite": kwargs["excite"],
-        "s21_plane": kwargs["s21_plane"],
-        "reference": None,
+        "s21_plane": kwargs.get("s21_plane"),
+        "reference": describe_reference(kwargs.get("reference")),
         "loads": [
             {"position_m": float(ld.position),
              "position_mm": float(ld.position) * 1e3,
@@ -355,6 +444,179 @@ def describe_kwargs(kwargs: dict) -> dict:
              "port": "p2 (far end of the line)"}
             for ld in loads
         ],
+    }
+
+
+def reference_block(twin, reference, *, artefact: Path, wall_s: float) -> dict:
+    """What the twin produced and what the loaded run consumed, in one place.
+
+    Emitted twice on purpose, from ONE code path: as ``run.twin`` in the loaded
+    artefact (a loaded result states what it was normalised against) and as
+    ``run.reference_produced`` in the twin's own artefact (the twin states what
+    it handed over).  Two copies written by two pieces of code would be two
+    chances to disagree about the numbers this whole flag exists to pin.
+
+    Units, named once and not left to the reader: ``gamma_im`` is the twin's
+    fitted BETA in rad/m, and ``alpha_np_per_m`` is nepers per metre of
+    AMPLITUDE decay, i.e. ``emfit/ports.py:1010`` ``LineFit.alpha`` whose unit
+    that docstring states as 1/m -- dB per metre is ``8.685889638 * alpha``.
+    """
+    sx = reference.station_x
+    alpha = (float(twin.loss_fit.alpha)
+             if twin.loss_fit is not None and twin.loss_fit.alpha is not None
+             else None)
+    g = dict(twin.geometry)
+    return {
+        "artefact": str(artefact),
+        "gamma_re": float(reference.gamma.real),
+        "gamma_im": float(reference.gamma.imag),
+        "gamma_im_basis": ("the twin's own fitted BETA [rad/m]: "
+                           "gamma = alpha + 1j*beta "
+                           "(emfit/studies.py:1743-1749, "
+                           "LineReference.from_wave)"),
+        "alpha_np_per_m": alpha,
+        "alpha_np_per_m_basis": (
+            "nepers per metre of AMPLITUDE decay, exp(-alpha x): "
+            "emfit/ports.py:1010 LineFit.alpha, whose unit is 1/m, or dB/m "
+            "as 8.685889638 * alpha.  None when the twin's stations could not "
+            "support a loss fit (loss_fit or loss_fit.alpha is None), and "
+            "LineReference.from_wave then uses exactly 0.0 -- a line with no "
+            "modelled loss, not a measured zero."),
+        "zc_re": float(reference.zc.real),
+        "zc_im": float(reference.zc.imag),
+        "zc_basis": ("the twin's station_fit.z0: the impedance its own station "
+                     "voltages and currents imply, not the closed-form z0"),
+        "station_span_m": float(sx[-1]) - float(sx[0]),
+        "station_span_basis": ("the twin's first to last station, "
+                               "station_x[-1] - station_x[0]; forward_ratio "
+                               "refuses any other pair, so this is the span the "
+                               "loaded s21 was normalised over"),
+        "grid": [int(g.get("nx", 0)), int(g.get("ny", 0)),
+                 int(g.get("nz", 0))],
+        "wall_seconds_twin": wall_s,
+    }
+
+
+def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
+                  loaded_path: Path, artefact_path: Path, wall_s: float,
+                  peak_mb: float) -> dict:
+    """The twin's own artefact: a run record, not a debug dump.
+
+    Same shape as the loaded artefact (``meta``, ``run``, ``geometry``, ``s21``,
+    ``s11``, ``line``, ``summary_line``) because it is the same kind of thing:
+    one FDTD run of one mesh, with its own status, its own wall time, and its
+    own geometry as ACHIEVED rather than as intended.  The one thing it does not
+    have is a load, and the record says that where a reader would look for it --
+    ``run.kwargs.loads`` is empty because the key was dropped, and
+    ``run.kwargs.s21_plane`` is None.
+
+    Written before the loaded solve starts, so a loaded run that dies does not
+    take the twin's record with it.
+    """
+    import numpy as np
+
+    g = dict(twin.geometry)
+    geom = {k: (float(v) if isinstance(v, (int, float, np.floating, np.integer))
+                else v)
+            for k, v in g.items()
+            if isinstance(v, (int, float, str, np.floating, np.integer))}
+    cells = int(g.get("nx", 0)) * int(g.get("ny", 0)) * int(g.get("nz", 0))
+    rb = reference_block(twin, reference, artefact=artefact_path, wall_s=wall_s)
+    s21 = complex(twin.s21)
+    s21_raw = complex(twin.s21_raw)
+    s11 = complex(twin.gamma_port)
+
+    return {
+        "meta": dict(meta, **{
+            "study": f"termination-build-{meta.get('label')}-twin",
+            "status": "ok",
+            "finished_utc": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"),
+            "wall_call_s": wall_s,
+            "wall_total_s": wall_s,
+            "peak_rss_mb": peak_mb,
+            "tripped": False,
+            "twin_of": str(loaded_path),
+            "trip_note": (
+                "ONE trip was armed before this run and it covers both solves: "
+                "--wall-limit-s is a PROCESS budget, so it is not re-armed for "
+                "the loaded run that follows, and the RSS high-water mark it "
+                "watches is the process's, not this run's.  A second Trip would "
+                "write the same .trip.json marker twice."),
+        }),
+        "run": {
+            "label": f"{meta.get('label')}-twin",
+            "role": (f"the load-free twin of the loaded run in "
+                     f"{loaded_path.name}: `loads` dropped (not emptied), "
+                     f"`s21_plane` None, everything else -- mesh, source, "
+                     f"steps -- the loaded run's own"),
+            "source_port": "p1",
+            "load_port": "none -- this record carries no load",
+            "function": "emfit.studies.microstrip_wave",
+            "kwargs": describe_kwargs(twin_kwargs),
+            "loaded_without_reference": bool(twin.loaded_without_reference),
+            "loaded_without_reference_note": (
+                "False on a load-free record by construction: there is no load "
+                "for a missing reference to have normalised "
+                "(emfit/studies.py:3229)."),
+            "reference_produced": rb,
+            "s21_plane_note": (
+                "s21_plane is None here because emfit/studies.py:2692-2697 "
+                "refuses a named plane on a load-free record; None is the "
+                "station span, which is the reference's own span."),
+        },
+        "geometry": dict(geom, **{
+            "cells": cells,
+            "grid": [int(g.get("nx", 0)), int(g.get("ny", 0)),
+                     int(g.get("nz", 0))],
+            "cell_m": geom.get("cell"),
+            "dt_s": geom.get("dt"),
+            "nsteps": geom.get("nsteps"),
+            "f_hz": geom.get("f"),
+            "s21_plane_index": g.get("s21_plane_index"),
+        }),
+        "s21": {
+            "magnitude": abs(s21),
+            "phase_rad": float(np.angle(s21)),
+            "phase_deg": float(np.degrees(np.angle(s21))),
+            "real": s21.real,
+            "imag": s21.imag,
+            "raw_magnitude": abs(s21_raw),
+            "raw_phase_rad": float(np.angle(s21_raw)),
+            "raw_phase_deg": float(np.degrees(np.angle(s21_raw))),
+            "planes_m": [float(twin.s21_planes[0]), float(twin.s21_planes[1])],
+            "s21_plane_index": twin.s21_plane_index,
+            "basis": (
+                "the station span, not a cut plane: s21_plane is None on this "
+                "record and a load-free line has no cut for a plane to name.  "
+                "De-embedded with this run's own beta (emfit/studies.py:3261, "
+                "line_s21 at :1242).  What the loaded run is normalised by is "
+                "`reference_produced` above, not this number."),
+        },
+        "s11": {
+            "magnitude": abs(s11),
+            "phase_deg": float(np.degrees(np.angle(s11))),
+            "deembed_distance_m": float(twin.deembed_distance),
+            "basis": (
+                "gamma_port, the reflection moved to the port plane.  "
+                "gamma_plane is nan on every record extracted over the station "
+                "span (emfit/studies.py MicrostripWave.gamma_plane), so it is "
+                "left out rather than written as nan."),
+        },
+        "line": {
+            "beta": float(twin.beta),
+            "beta_model": float(twin.beta_model),
+            "z0_re": float(complex(twin.z0).real),
+            "z0_im": float(complex(twin.z0).imag),
+            "eps_eff": float(twin.eps_eff),
+            "eps_eff_model": float(twin.eps_eff_model),
+            "gamma_re": float(complex(twin.gamma).real),
+            "gamma_im": float(complex(twin.gamma).imag),
+            "alpha_np_per_m": rb["alpha_np_per_m"],
+            "alpha_np_per_m_basis": rb["alpha_np_per_m_basis"],
+            "station_span_m": rb["station_span_m"],
+        },
+        "summary_line": twin.summary(),
     }
 
 
@@ -585,14 +847,31 @@ def main(argv: list[str] | None = None) -> int:
                     help="hard peak-RSS ceiling [MB] (default: %(default)s)")
     ap.add_argument("--wall-limit-s", type=float, default=WALL_LIMIT_S_DEFAULT,
                     help="hard wall ceiling [s] (default: %(default)s)")
+    ap.add_argument("--with-twin", action="store_true",
+                    help="also run the load-free twin (same mesh, `loads` "
+                         "dropped, s21_plane None) and normalise the loaded "
+                         "s21 against its LineReference.  Roughly DOUBLES the "
+                         "wall time -- two solves instead of one -- and the "
+                         "single --wall-limit-s budget is a PROCESS budget "
+                         "that has to cover both.  The twin's own record is "
+                         "written beside --out as <stem>_twin.json.  Off by "
+                         "default: without this flag the run and its artefact "
+                         "are what they were (loaded_without_reference True).")
     ap.add_argument("--dry-run", action="store_true",
-                    help="build and print the call, write nothing, run no FDTD")
+                    help="build and print the call, write nothing, run no FDTD; "
+                         "with --with-twin it prints the twin's arguments too "
+                         "(that is where `loads` leaves the dict and s21_plane "
+                         "becomes None)")
     args = ap.parse_args(argv)
     label = (args.label if args.label else
              (Path(args.out).stem.replace("build_", "").split("_")[0].upper()
               or LABEL))
 
     out_path = Path(args.out).resolve()
+    # The twin's record sits beside the loaded artefact: build_A_50ohm_v3.json ->
+    # build_A_50ohm_v3_twin.json.  Computed unconditionally so the dry run can
+    # name it; it is only written when --with-twin is passed.
+    twin_path = out_path.with_name(out_path.stem + "_twin" + out_path.suffix)
     started = time.monotonic()
     started_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
     kwargs = build_kwargs(args)
@@ -633,13 +912,28 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     if args.dry_run:
-        print(json.dumps({
+        dry = {
             "meta": meta,
             "call": {"function": "emfit.studies.microstrip_wave",
                      "kwargs": describe_kwargs(kwargs)},
             "artefact": str(out_path),
             "note": "dry run: no FDTD, nothing written",
-        }, indent=2, sort_keys=True))
+        }
+        if args.with_twin:
+            # The twin's ARGUMENTS only: no FDTD, no LineReference, no file.
+            # This is the one place the flag's whole difference is visible
+            # without paying for two solves, so it is printed and not summarised.
+            dry["twin_call"] = {
+                "function": "emfit.studies.microstrip_wave",
+                "kwargs": describe_kwargs(twin_kwargs_from(kwargs)),
+                "artefact": str(twin_path),
+                "note": ("dry run: the twin's arguments -- `loads` dropped, "
+                         "s21_plane None, reference None -- with no FDTD, no "
+                         "LineReference and nothing written.  The loaded call "
+                         "above is the twin's plus loads and s21_plane='cut', "
+                         "so the two meshes are one mesh."),
+            }
+        print(json.dumps(dry, indent=2, sort_keys=True))
         return 0
 
     cg = meta["cgroup_limit_mb"]
@@ -654,13 +948,53 @@ def main(argv: list[str] | None = None) -> int:
     import numpy as np
 
     meta["pid"] = os.getpid()
+    # ONE trip, armed BEFORE the twin and left armed across both solves.  Its
+    # clock starts in __init__, so --wall-limit-s is a process budget: arming a
+    # second Trip for the second solve would both under-count the first and
+    # write the same .trip.json marker twice.
     trip = Trip(out_path, mem_ceiling_mb=args.mem_ceiling_mb,
                 wall_limit_s=args.wall_limit_s,
                 argv=meta["argv"], started_utc=started_utc).start()
 
+    twin = None
+    reference = None
+    wall_twin = None
     try:
+        if args.with_twin:
+            twin_kwargs = twin_kwargs_from(kwargs)
+            t_twin = time.monotonic()
+            twin = studies.microstrip_wave(**twin_kwargs)
+            wall_twin = time.monotonic() - t_twin
+            # LOUDLY, and before the loaded solve is launched: without a station
+            # fit there is no zc for LineReference.from_wave to carry, so there
+            # is no reference -- and a loaded run launched anyway would quietly
+            # be the no-reference run this flag exists to replace.
+            if twin.station_fit is None:
+                raise ValueError(
+                    "the load-free twin produced no station impedance fit, so "
+                    "no LineReference was produced and the loaded run was NOT "
+                    "started: twin.station_fit is None (station_fit_ok="
+                    f"{twin.station_fit_ok!r}).  The twin is the load-free run "
+                    "of this same mesh (`loads` dropped, `s21_plane` None) and "
+                    "LineReference.from_wave(emfit/studies.py:1743-1749) takes "
+                    "its zc from that fit.  Re-run without --with-twin to get "
+                    "the no-reference artefact, or fix whatever refused the "
+                    "station impedance (see MicrostripWave.station_fit_ok, "
+                    "emfit/studies.py).")
+            reference = studies.LineReference.from_wave(twin)
+            # Written NOW, not after the loaded solve: the twin is a result in
+            # its own right and a loaded run that dies must not take it along.
+            write_json(twin_path, twin_artefact(
+                twin, reference, twin_kwargs=twin_kwargs, meta=meta,
+                loaded_path=out_path, artefact_path=twin_path,
+                wall_s=wall_twin, peak_mb=max(trip.peak_mb, rss_mb())))
+        # ``reference`` is threaded BY KEY: kwargs already carries
+        # "reference": None, so passing it positionally would be a duplicate
+        # keyword argument (TypeError) rather than an override.
+        loaded_kwargs = (dict(kwargs, reference=reference)
+                         if args.with_twin else kwargs)
         t_call = time.monotonic()
-        res = studies.microstrip_wave(**kwargs)
+        res = studies.microstrip_wave(**loaded_kwargs)
         wall_call = time.monotonic() - t_call
     finally:
         trip.stop()
@@ -684,6 +1018,22 @@ def main(argv: list[str] | None = None) -> int:
                   peak_mb=peak_mb, wall_s=wall_s)
     ac["AC-7"]["beta_modal_recorded"] = beta_modal
 
+    # Flag-off: both dicts are EMPTY, so the artefact keeps the keys and the
+    # values it had -- reference_used, twin and the two wall keys appear only
+    # when a reference was actually used.
+    twin_fields = {}
+    wall_fields = {}
+    if args.with_twin:
+        twin_fields = {
+            "reference_used": True,
+            "twin": dict(reference_block(twin, reference, artefact=twin_path,
+                                         wall_s=wall_twin),
+                          loaded_without_reference=bool(
+                              res.loaded_without_reference)),
+        }
+        wall_fields = {"wall_seconds_twin": wall_twin,
+                       "wall_seconds_loaded": wall_call}
+
     s21 = complex(res.s21)
     s21_raw = complex(res.s21_raw)
     gp = complex(res.gamma_plane)
@@ -698,13 +1048,14 @@ def main(argv: list[str] | None = None) -> int:
             "wall_total_s": wall_s,
             "peak_rss_mb": peak_mb,
             "tripped": False,
-        }),
+        }, **wall_fields),
         "run": {
             "label": label,
             "source_port": "p1",
             "load_port": "p2",
             "function": "emfit.studies.microstrip_wave",
-            "kwargs": describe_kwargs(kwargs),
+            "kwargs": describe_kwargs(loaded_kwargs),
+            **twin_fields,
             "loaded_without_reference": bool(res.loaded_without_reference),
             "loaded_without_reference_note": (
                 "True means no LineReference was supplied, so the cut branch "
