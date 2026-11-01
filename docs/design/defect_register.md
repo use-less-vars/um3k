@@ -210,10 +210,11 @@ would widen a set its §5 certifies as pre-registered. **AC-3b** is the phase co
 criteria lack: a residual measured directly on the run's own two planes (a second twin whose stations *are*
 those planes) must be reproduced by the one transported off (10.4, 20.0) mm to within **5 deg** in
 `arg s21` and **1 %** in `|s21|`; and no `s21` may be reported without the residual it was normalised by.
-The **5 deg** figure is **PROPOSED and NOT ratified**: the owner pre-registered only the magnitude
-criteria, and this phase companion is registered here because a magnitude cannot see a rotation. It must
-not be adopted until the second-twin run is shown able to meet it — a criterion that cannot pass on
-legitimate input is a prohibition, not a safety check, and that is the defect this entry documents.
+The **5 deg** figure is **PROPOSED at registration, RATIFIED 2026-11-02**: the owner pre-registered only
+the magnitude criteria, and this phase companion is registered here because a magnitude cannot see a
+rotation. At registration it was not to be adopted until the second-twin run is shown able to meet it — a
+criterion that cannot pass on legitimate input is a prohibition, not a safety check, and that is the defect
+this entry documents; the **Ratified 2026-11-02 by dispatcher** note below is what lifts that hold.
 Neither number is measured by anything yet; the second twin is what would measure them. **Ratified 2026-11-02 by dispatcher:** 5 deg phase / 1 % magnitude; AC-3b is a DR-16 criterion, not a scope criterion. The PROPOSED wording above is retained because the record is PROPOSED then RATIFIED, not always-ratified.
 
 (iv) **The graded arms re-checked with a reference in hand.** A / B / E were graded with `reference=None`
@@ -242,10 +243,18 @@ rests on `test_matching_endpoints_is_bit_identical` alone, and nothing in this t
 exercises the loaded path. The re-grade is necessary and not sufficient: DR-16 stays
 **OPEN**.
 
-**Gates:** **nothing currently moves.** No artefact carries a twin reference — `--with-twin` has produced
-exactly one file (`build_smoke_50ohm_twin.json`) and its loaded counterpart does not exist — so every graded
-number rests on the `reference=None` path with `zc_split = zc` and `loaded_without_reference = True`, and
-this entry **changes** no graded number: the re-grade in (v) is what shows that, its output coming back
+**Gates:** **nothing currently moves.** **Updated 2026-11-02 (commit `7addacf`).** The v3 run A pair now
+exists — `build_A_50ohm_v3.json` with `build_A_50ohm_v3_twin.json` — and `run/kwargs/reference` is
+populated: `zc_re_ohm` 47.50588686424766, `zc_im_ohm` 1.7863178861130007, `gamma_im_rad_per_m`
+232.73432451555712, `station_span_m` 0.0096, `n_stations` 9. Against that pair: (i) **PASSES** — the loaded
+run completed with `loaded_without_reference` False; (ii) **PARTIAL** — the residual's per-metre rate and the
+span are stored, neither the rescaled residual nor the exponent is, though **1.75** is exactly
+(0.02 - 0.0032)/0.0096; (iii) **PARTLY VIOLATED** — the 5 deg / 1 % half needs a second twin and none
+exists, but the clause that no `s21` may be reported without the residual it was normalised by is evaluable
+and is not met: a normalised `s21` is reported with no residual recorded; (iv) **PARTIAL** — only arm A
+carries a reference, B and E were deliberately not run and still stand on an assumed `zc`; (v) does not
+apply. None of that is a re-grade, so this entry **changes** no graded number: the re-grade in (v) is what
+shows that, its output coming back
 identical at every JSON leaf. AC-3b is registered in (iii) above and is graded by **AC-3b (5 deg phase, 1 % magnitude) against a second twin whose stations are the run's own planes**. What
 does bind is wording: a graded `s21` must name the assumption it stands on, and an untested transport
 must not be presented as a measured normalisation — the near miss is what happens when it is.
