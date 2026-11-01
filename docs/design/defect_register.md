@@ -214,7 +214,7 @@ The **5 deg** figure is **PROPOSED and NOT ratified**: the owner pre-registered 
 criteria, and this phase companion is registered here because a magnitude cannot see a rotation. It must
 not be adopted until the second-twin run is shown able to meet it — a criterion that cannot pass on
 legitimate input is a prohibition, not a safety check, and that is the defect this entry documents.
-Neither number is measured by anything yet; the second twin is what would measure them.
+Neither number is measured by anything yet; the second twin is what would measure them. **Ratified 2026-11-02 by dispatcher:** 5 deg phase / 1 % magnitude; AC-3b is a DR-16 criterion, not a scope criterion. The PROPOSED wording above is retained because the record is PROPOSED then RATIFIED, not always-ratified.
 
 (iv) **The graded arms re-checked with a reference in hand.** A / B / E were graded with `reference=None`
 and an assumed `zc`; when a twin-backed run exists, the difference in `|s21|` and `|Gamma|` from the
@@ -246,7 +246,7 @@ exercises the loaded path. The re-grade is necessary and not sufficient: DR-16 s
 exactly one file (`build_smoke_50ohm_twin.json`) and its loaded counterpart does not exist — so every graded
 number rests on the `reference=None` path with `zc_split = zc` and `loaded_without_reference = True`, and
 this entry **changes** no graded number: the re-grade in (v) is what shows that, its output coming back
-identical at every JSON leaf. AC-3b is registered in (iii) above and is graded by **nothing**. What
+identical at every JSON leaf. AC-3b is registered in (iii) above and is graded by **AC-3b (5 deg phase, 1 % magnitude) against a second twin whose stations are the run's own planes**. What
 does bind is wording: a graded `s21` must name the assumption it stands on, and an untested transport
 must not be presented as a measured normalisation — the near miss is what happens when it is.
 

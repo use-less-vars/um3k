@@ -248,3 +248,12 @@ Mur and near-field extraction exist), multi-port.
   absent" are one observation, not two. If v3 fixes the magnitude as well, the honest sentence is
   that the magnitude failure was a symptom; if it does not, the magnitude chain is a separate defect
   and the dispatch is §6 item 1's third row.
+
+## 8. Nédélec RAM roadmap
+
+This section was missing from the first commit of this document (§1–§7 only) and is appended here. It is a pointer, not a re-derivation; the numbers are carried from the cited artefacts, no new numbers are introduced.
+
+- **Production modal basis = quasistatic 2D Laplace** (`emfit/mode_profile.py`). This is what AC-7 is graded against (`docs/design/absorbing_termination_scope.md:266-268` names it), and it is what the production path uses. It does not call the Nédélec solver.
+- **The expensive Nédélec mixed pencil is validation-only**, capped at `_MIXED_DENSE_MAX = 3000` free edges (`emfit/mode2d.py:185` [M]). It is not on the production path; it exists to validate the modal basis, not to produce it.
+- **If the production basis ever needs full-wave, Route C is proven-in-probe but not landed.** Landing it is a **build dispatch, not a research problem** — see `docs/design/theory_round2_memo.md`. The probe result and its caveats live there.
+- **SLEPc / p=2 / matrix-free Schur become necessary at ~200k–300k dof** [R, quoted from `docs/design/theory_round2_memo.md`]. Below that, the dense/quasistatic path is sufficient; above it, the dense path's RAM becomes the binding constraint.
