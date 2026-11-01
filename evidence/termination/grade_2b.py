@@ -221,10 +221,14 @@ def beta_modal(artefact: dict) -> dict:
     import emfit.studies as studies
 
     kw = artefact["run"]["kwargs"]
-    cell = float(artefact["geometry"]["cell_m"])
+    # The AC-7 reference width is the geometry the artefact RECORDS, not a
+    # width re-derived from the mesh layout. ``n_strip * cell`` was circular:
+    # the mesh cannot define the physical strip it is supposed to resolve, and
+    # the reference moved every time the mesh was widened.
+    w_m = float(artefact["geometry"]["w"])
     prof = mode_profile.microstrip_mode_profile(
         float(kw["h_m"]),
-        w=float(kw["n_strip"]) * cell,
+        w=w_m,
         eps_r=float(studies.MS_EPS_R),
         n_sub=int(kw["n_sub"]),
         n_clean=int(kw["n_clean"]),
@@ -241,7 +245,7 @@ def beta_modal(artefact: dict) -> dict:
         "f_hz": f,
         "c0_m_per_s": float(materials.C0),
         "ms_eps_r": float(studies.MS_EPS_R),
-        "w_m": float(kw["n_strip"]) * cell,
+        "w_m": w_m,
         "h_m": float(kw["h_m"]),
         "beta_hammerstad_rad_per_m": (None if hj is None else float(hj)),
     }
@@ -353,7 +357,26 @@ def grade_a(a: dict) -> dict:
 
 
 def grade_ac7(a: dict, e: dict) -> dict:
-    """beta_FDTD from TWO artefacts' raw phases, against emfit.mode_profile."""
+    """beta_FDTD from TWO artefacts' raw phases, against emfit.mode_profile.
+
+    ``beta_fdtd`` is the CROSS-RUN raw-phase slope:
+    ``-wrap(raw_phase_rad[E] - raw_phase_rad[A]) / dL`` with
+    ``dL = planes_m[1] of E - planes_m[1] of A``.
+
+    ``deembedded_slope_rad_per_m`` is the same slope taken on
+    ``s21.phase_rad`` instead, which is de-embedded with each run's OWN
+    measured beta: ``arg(s21) = arg(t) + (beta_meas - beta_true) * d``, so it
+    is flat in L only when ``beta_meas == beta_true``. Its non-zero value is
+    therefore a real measured residual, not a construction artefact, and it is
+    NOT the AC-7 quantity. ``deembedded_slope_expected_rad_per_m: 0.0`` is the
+    conditional expectation under ``beta_meas == beta_true``, not a value the
+    runs are guaranteed to meet.
+
+    Not to be confused with an artefact's own
+    ``AC-7.phase_degeneracy.deembedded_slope_rad_per_m``: that one is a
+    WITHIN-RUN slope over that run's ``s21.planes_m[0..1]``, a different (also
+    degenerate) number.
+    """
     d_l = float(e["s21"]["planes_m"][1]) - float(a["s21"]["planes_m"][1])
     raw_a = float(a["s21"]["raw_phase_rad"])
     raw_e = float(e["s21"]["raw_phase_rad"])
@@ -400,9 +423,18 @@ def grade_ac7(a: dict, e: dict) -> dict:
                 f"lengths; compare against `beta_modal` from "
                 f"`emfit.mode_profile` on the same geometry; "
                 f"|beta_FDTD - beta_modal| / beta_modal <= {BETA_REL_BAR:g}"),
-        "which_phase": ("s21.raw_phase_rad from each artefact. NOT "
-                        "s21.phase_rad: that one is de-embedded with each run's "
-                        "own measured beta and is flat in L by construction."),
+        "which_phase": ("s21.raw_phase_rad from both artefacts: beta_FDTD = "
+                        "-wrap(raw_phase_rad of E minus that of A) / dL, with "
+                        "dL = s21.planes_m[1] of E minus that of A -- the "
+                        "CROSS-RUN slope. NOT s21.phase_rad: that phase is "
+                        "de-embedded with each run's own measured beta, so its "
+                        "cross-run slope (deembedded_slope_rad_per_m below) "
+                        "vanishes only if beta_meas == beta_true; a non-zero "
+                        "value there is a measured residual, not a "
+                        "construction artefact. The artefact's own "
+                        "phase_degeneracy.deembedded_slope_rad_per_m is a "
+                        "WITHIN-run slope over that run's s21.planes_m[0..1] "
+                        "and is a different number."),
         "achieved": {
             "dL_m": d_l,
             "dL_from": (f"s21.planes_m[1] of {label_of(e)} minus that of "
