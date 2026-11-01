@@ -1,0 +1,574 @@
+#!/usr/bin/env python3
+"""Run A of the absorbing-termination build: ONE graded run, ONE load, no reference.
+
+What this run is
+----------------
+Source at port ``p1`` (the study's own soft source plane, ``ix_port``), a 50 ohm
+``series_r`` :class:`emfit.board.Load` at port ``p2`` (the far end of the line),
+extraction on the load's own cut plane via ``s21_plane="cut"``.  One run.  There
+is deliberately **no reference run**: with ``reference=None`` the cut branch does
+not raise, it degrades to ``zc_split = zc`` + ``line_s21(...)`` and sets
+``loaded_without_reference=True`` on the result.  That degradation is recorded in
+the artefact rather than hidden, because it is the difference between a
+measured line constant and an assumed one.
+
+One-shot by construction
+------------------------
+This script is written to be typed once.  An FDTD run interrupted mid-integration
+cannot be resumed, only repeated, so the resource trip below is *hard*: it kills
+the process at the limit and leaves a ``.trip.json`` marker instead of a result.
+There is no retry loop anywhere in this file, and a trip is not to be silently
+re-launched -- a second attempt is a new decision, not a resumption.
+
+The trip clause is RE-IMPLEMENTED here, not inherited.  ``tools/host_ladder.py``
+owns the frozen ``--mem-ceiling-mb`` machinery, its RU_MAXRSS reading and its
+JSON payload shape, but that file is out of the fence for this dispatch and is not
+touched.  The thresholds below are copied from it deliberately, so a number
+cannot drift while the machinery differs.
+
+Usage (the one command to type, from the repository root):
+
+    python3 evidence/termination/run_build_A.py
+
+Dry run (builds the arguments, writes nothing, starts no FDTD):
+
+    python3 evidence/termination/run_build_A.py --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import resource
+import sys
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+OUT_DEFAULT = REPO / "evidence" / "termination" / "build_A_50ohm.json"
+TRIP_SUFFIX = ".trip.json"
+
+# --- the trip clause, re-implemented (see module docstring) -------------------
+# Both numbers are the frozen ones, quoted, not re-derived.
+#   * memory: ``tools/host_ladder.py:1160`` default ``--mem-ceiling-mb 2000.0``
+#     [M], and the dispatch's own explicit ``--mem-ceiling-mb 2000``.
+#   * wall: the per-run 1400 s gate that
+#     ``docs/design/termination_build_plan.md:48-52`` prices both frozen rows
+#     against [L].
+WALL_LIMIT_S_DEFAULT = 1400.0
+MEM_CEILING_MB_DEFAULT = 2000.0
+RSS_POLL_S = 0.5
+
+# --- the run, as named by the dispatch ---------------------------------------
+LABEL = "A"
+LOAD_VALUE_OHM = 50.0
+LOAD_KIND = "series_r"
+S21_PLANE = "cut"
+
+
+def rss_mb() -> float:
+    """Peak RSS of this process [MB].
+
+    Same basis as the frozen rows: ``resource.getrusage(RUSAGE_SELF).ru_maxrss``,
+    a process-wide high-water mark, which on Linux is KiB and is divided by 1024
+    (``evidence/h_refine/h040.json`` key ``meta.rss_basis`` [M]).
+    """
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+
+
+def cgroup_limit_mb() -> float | None:
+    """The container's memory ceiling [MB], or ``None`` when unlimited/unknown."""
+    for path in ("/sys/fs/cgroup/memory.max",
+                 "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path, "r", encoding="ascii") as fh:
+                raw = fh.read().strip()
+        except OSError:
+            continue
+        if not raw or raw == "max":
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            return None
+        if value <= 0 or value > (1 << 50):
+            return None
+        return value / (1024.0 * 1024.0)
+    return None
+
+
+def write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".part")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                   encoding="utf-8")
+    tmp.replace(path)
+
+
+class Trip:
+    """Hard resource trip: kills the process, leaves a marker, never retries.
+
+    Exit codes: 3 = memory ceiling, 4 = wall ceiling.  A marker file is written
+    *before* the process dies, so a trip is visible even when the interpreter is
+    not given a chance to unwind.
+    """
+
+    def __init__(self, out_path: Path, *, mem_ceiling_mb: float,
+                 wall_limit_s: float, argv: list[str], started_utc: str):
+        self.out_path = out_path
+        self.mem_ceiling_mb = float(mem_ceiling_mb)
+        self.wall_limit_s = float(wall_limit_s)
+        self.argv = list(argv)
+        self.started_utc = started_utc
+        self.t0 = time.monotonic()
+        self.peak_mb = rss_mb()
+        self.tripped = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._watch, name="trip",
+                                        daemon=True)
+
+    def elapsed(self) -> float:
+        return time.monotonic() - self.t0
+
+    def _watch(self) -> None:
+        while not self._stop.wait(RSS_POLL_S):
+            rss = rss_mb()
+            if rss > self.peak_mb:
+                self.peak_mb = rss
+            if self.peak_mb > self.mem_ceiling_mb:
+                self._fire("memory", 3,
+                           f"peak RSS {self.peak_mb:.1f} MB exceeded "
+                           f"--mem-ceiling-mb {self.mem_ceiling_mb:.1f} MB")
+            if self.elapsed() > self.wall_limit_s:
+                self._fire("wall", 4,
+                           f"wall {self.elapsed():.1f} s exceeded "
+                           f"--wall-limit-s {self.wall_limit_s:.1f} s")
+
+    def _fire(self, kind: str, code: int, reason: str) -> None:
+        self.tripped = True
+        marker = self.out_path.with_name(self.out_path.stem + TRIP_SUFFIX)
+        write_json(marker, {
+            "schema_version": 1,
+            "label": LABEL,
+            "status": "trip",
+            "trip_kind": kind,
+            "reason": reason,
+            "exit_code": code,
+            "one_shot": ("A trip is NOT a licence to relaunch: this run is "
+                         "one-shot, and a second attempt is a new decision."),
+            "mem_ceiling_mb": self.mem_ceiling_mb,
+            "wall_limit_s": self.wall_limit_s,
+            "peak_rss_mb": self.peak_mb,
+            "elapsed_s": self.elapsed(),
+            "started_utc": self.started_utc,
+            "argv": self.argv,
+            "result_written": False,
+        })
+        sys.stderr.write(f"\nTRIP ({kind}): {reason}\n"
+                         f"marker: {marker}\n")
+        sys.stderr.flush()
+        sys.stdout.flush()
+        os._exit(code)
+
+    def start(self) -> "Trip":
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
+def build_kwargs(args: argparse.Namespace) -> dict:
+    """The one call's arguments, assembled in one place so nothing is retyped.
+
+    The mesh is the h = 0.4 mm *cell* configuration priced by the frozen row
+    ``evidence/h_refine/h040.json`` [M]: substrate 1.6 mm / ``n_sub`` 4 = 0.4 mm
+    cell, ``n_air`` 12, ``n_top`` 12, ``n_clean`` 96 (0.8 mm strip -> ``n_strip`` 2
+    cells at that cell), ``n_line`` 54, ``n_pml`` 6 -- i.e. grid 68 x 218 x 28,
+    415,072 cells, dt 7.626299478123987e-13 s, 2400 steps.  The load adds no cell,
+    no column and no solver state: it is a conductance on edges that already
+    exist, so this grid is expected to come back unchanged and the achieved
+    numbers are recorded, not asserted.
+    """
+    from emfit.board import Load
+
+    load = Load(args.load_at_mm * 1e-3, LOAD_KIND, LOAD_VALUE_OHM)
+    return {
+        "h": 1.6e-3,
+        "n_sub": 4,
+        "n_air": 12,
+        "n_top": 12,
+        "n_clean": 96,
+        "n_strip": 2,
+        "n_line": 54,
+        "n_pml": 6,
+        "nsteps": 2400,
+        "loads": (load,),
+        "reference": None,
+        "s21_plane": S21_PLANE,
+        "excite": "cw",
+    }
+
+
+def describe_kwargs(kwargs: dict) -> dict:
+    """JSON-safe view of the call, including the load specification (AC-6)."""
+    from emfit.board import Load  # noqa: F401  (documented import site)
+
+    loads = kwargs["loads"]
+    return {
+        "h_m": kwargs["h"],
+        "cell": "h / n_sub",
+        "n_sub": kwargs["n_sub"],
+        "n_air": kwargs["n_air"],
+        "n_top": kwargs["n_top"],
+        "n_clean": kwargs["n_clean"],
+        "n_strip": kwargs["n_strip"],
+        "n_line": kwargs["n_line"],
+        "n_pml": kwargs["n_pml"],
+        "nsteps": kwargs["nsteps"],
+        "excite": kwargs["excite"],
+        "s21_plane": kwargs["s21_plane"],
+        "reference": None,
+        "loads": [
+            {"position_m": float(ld.position),
+             "position_mm": float(ld.position) * 1e3,
+             "kind": ld.kind,
+             "value": float(ld.value),
+             "units": "ohm" if ld.kind == "series_r" else
+                      ("farad" if ld.kind == "shunt_c" else "?"),
+             "port": "p2 (far end of the line)"}
+            for ld in loads
+        ],
+    }
+
+
+def ac_block(res, *, load_mm: float, peak_mb: float,
+             wall_s: float) -> dict:
+    """AC-1..AC-7, each with the achieved value beside its pass/fail.
+
+    A criterion that Run A structurally cannot close says so in
+    ``closable_in_run_a``/``status`` rather than being scored on a proxy.  Bars are
+    quoted from ``docs/design/absorbing_termination_scope.md:222-270`` [R] and are
+    not adjusted here (AC-2).
+    """
+    import math
+
+    s21 = complex(res.s21)
+    s11 = complex(res.s11)
+    s21_abs = abs(s21)
+    s11_abs = abs(s11)
+    gamma_plane = res.gamma_plane
+    plane_index = res.s21_plane_index
+    load_index = res.geometry.get("s21_plane_index")
+
+    return {
+        "AC-1": {
+            "bar": "bit-for-bit losslessness when no load is specified: the "
+                   "``loss_den is None`` branch still taken, existing numbers "
+                   "identical to the last stored digit",
+            "achieved": None,
+            "pass": None,
+            "closable_in_run_a": False,
+            "status": ("not applicable to Run A: this run is loaded by "
+                       "construction. Closed outside the run -- E7 guard probe "
+                       "(np.array_equal True, max|diff| 0.0) plus the 45-test "
+                       "default-path suite (test_studies 26, test_poynting 9, "
+                       "test_plane_capture 10)."),
+        },
+        "AC-2": {
+            "bar": "no existing tolerance anywhere is loosened",
+            "achieved": ("0 tolerances changed: this script compares against the "
+                         "pre-registered bars of scope section 5 and writes no "
+                         "other bound"),
+            "pass": True,
+            "closable_in_run_a": True,
+            "status": "process criterion, satisfied by inspection of this file",
+        },
+        "AC-3": {
+            "bar": "|S11| <= 1.0e-3 and | |S21| - 1 | <= 1.0e-3",
+            "achieved": {
+                "s11_abs": s11_abs,
+                "s21_abs": s21_abs,
+                "s21_abs_minus_one": abs(s21_abs - 1.0),
+                "s11_bar": 1.0e-3,
+                "s21_bar": 1.0e-3,
+            },
+            "pass": bool(s11_abs <= 1.0e-3 and abs(s21_abs - 1.0) <= 1.0e-3),
+            "closable_in_run_a": True,
+            "status": "scored",
+        },
+        "AC-4": {
+            "bar": "for at least two unmatched loads, |Gamma| within 3 %% of "
+                   "|R - Zc| / (R + Zc)",
+            "achieved": None,
+            "pass": None,
+            "closable_in_run_a": False,
+            "status": ("not closable in Run A: Run A carries exactly one load "
+                       "and it is matched (50 ohm). AC-4 needs at least two "
+                       "unmatched loads and is a separate batch."),
+        },
+        "AC-5": {
+            "bar": "no |s21| above 1 + 1e-5 anywhere in the batch; and the beta "
+                   "standard error on the open control at least 3x smaller than "
+                   "the 57 on record, against a PML-terminated reference run",
+            "achieved": {
+                "s21_abs": s21_abs,
+                "tripwire": 1.0 + 1e-5,
+                "headroom_below_tripwire": (1.0 + 1e-5) - s21_abs,
+            },
+            "pass": bool(s21_abs <= 1.0 + 1e-5),
+            "pass_scope": "magnitude half only",
+            "closable_in_run_a": False,
+            "status": ("magnitude half scored on this run; the seam half needs an "
+                       "open-control run against a PML-terminated reference run in "
+                       "the same batch, and Run A is a single loaded run with "
+                       "reference=None. `pass` here must not be read as AC-5 "
+                       "closed."),
+        },
+        "AC-6": {
+            "bar": "the run JSON carries the load specification (value, units, "
+                   "plane index) and the index of the plane the S-parameters "
+                   "were extracted from",
+            "achieved": {
+                "load_value": LOAD_VALUE_OHM,
+                "load_units": "ohm",
+                "load_kind": LOAD_KIND,
+                "load_position_mm": load_mm,
+                "load_plane_index": load_index,
+                "s21_plane_index": plane_index,
+                "indices_agree": bool(load_index is not None
+                                      and plane_index is not None
+                                      and int(load_index) == int(plane_index)),
+                "gamma_plane_recorded": bool(
+                    gamma_plane is not None
+                    and math.isfinite(complex(gamma_plane).real)
+                    and math.isfinite(complex(gamma_plane).imag)),
+            },
+            "pass": bool(load_index is not None
+                         and plane_index is not None
+                         and int(load_index) == int(plane_index)
+                         and math.isfinite(complex(gamma_plane).real)
+                         and math.isfinite(complex(gamma_plane).imag)),
+            "closable_in_run_a": True,
+            "status": "scored",
+        },
+        "AC-7": {
+            "bar": "|beta_FDTD - beta_modal| / beta_modal <= 1.0e-3, with "
+                   "beta_FDTD = -d(arg S21)/dL",
+            "achieved": None,
+            "pass": None,
+            "closable_in_run_a": False,
+            "ac7_status": "not closable in Run A",
+            "reason": ("docs/design/absorbing_termination_scope.md:266 says "
+                       "`beta_FDTD = -d(arg S21)/dL` **from two line lengths** -- "
+                       "a slope in L, i.e. two runs at two lengths. Run A is one "
+                       "length, so dL is undefined here and no proxy (a "
+                       "one-run phase, a beta from the station fit) is "
+                       "substituted. beta_modal from emfit.mode_profile on this "
+                       "geometry is recorded beside it for the eventual slope, "
+                       "but it is not an AC-7 verdict."),
+            "beta_modal_recorded": None,
+        },
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Run A: 50 ohm termination at p2, s21_plane='cut', one shot.")
+    ap.add_argument("--out", default=str(OUT_DEFAULT),
+                    help="artefact path (default: %(default)s)")
+    ap.add_argument("--load-at-mm", type=float, default=20.0,
+                    help="load position along the line [mm] (default 20.0 = the "
+                         "last measurement station, one station inside the far "
+                         "absorber; the mesh quantises it to a column and the "
+                         "study validates ix_port < ix_load < nx)")
+    ap.add_argument("--mem-ceiling-mb", type=float,
+                    default=MEM_CEILING_MB_DEFAULT,
+                    help="hard peak-RSS ceiling [MB] (default: %(default)s)")
+    ap.add_argument("--wall-limit-s", type=float, default=WALL_LIMIT_S_DEFAULT,
+                    help="hard wall ceiling [s] (default: %(default)s)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="build and print the call, write nothing, run no FDTD")
+    args = ap.parse_args(argv)
+
+    out_path = Path(args.out).resolve()
+    started = time.monotonic()
+    started_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    kwargs = build_kwargs(args)
+
+    meta = {
+        "schema_version": 1,
+        "study": "termination-build-A",
+        "label": LABEL,
+        "status": "pending",
+        "started_utc": started_utc,
+        "cwd": str(Path.cwd()),
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "argv": sys.argv if argv is None else [sys.argv[0]] + list(argv),
+        "command_line": " ".join([Path(sys.argv[0]).as_posix()]
+                                 + (sys.argv[1:] if argv is None else argv)),
+        "git_rev": None,
+        "trip_clause": {
+            "reimplemented_not_inherited": (
+                "The trip below is RE-IMPLEMENTED in this script. "
+                "tools/host_ladder.py owns the frozen --mem-ceiling-mb machinery "
+                "and is out of fence for this dispatch, so its thresholds were "
+                "copied and its code was not. Do not mistake this for the frozen "
+                "machinery."),
+            "mem_ceiling_mb": float(args.mem_ceiling_mb),
+            "wall_limit_s": float(args.wall_limit_s),
+            "rss_basis": ("resource.getrusage(RUSAGE_SELF).ru_maxrss / 1024 "
+                          "(process-wide high-water mark; Linux KiB)"),
+            "rss_poll_s": RSS_POLL_S,
+            "on_memory_trip": "write .trip.json, exit 3",
+            "on_wall_trip": "write .trip.json, exit 4",
+            "one_shot": ("A trip is not a licence to relaunch: an interrupted "
+                         "FDTD run cannot be resumed, only repeated, and a repeat "
+                         "is a new decision, not a resumption."),
+            "retries": 0,
+        },
+        "cgroup_limit_mb": cgroup_limit_mb(),
+    }
+
+    if args.dry_run:
+        print(json.dumps({
+            "meta": meta,
+            "call": {"function": "emfit.studies.microstrip_wave",
+                     "kwargs": describe_kwargs(kwargs)},
+            "artefact": str(out_path),
+            "note": "dry run: no FDTD, nothing written",
+        }, indent=2, sort_keys=True))
+        return 0
+
+    cg = meta["cgroup_limit_mb"]
+    if cg is not None and cg < args.mem_ceiling_mb:
+        sys.stderr.write(
+            f"REFUSED: --mem-ceiling-mb {args.mem_ceiling_mb:.1f} MB is above the "
+            f"container limit {cg:.1f} MB, so the trip could never fire before "
+            f"the container is killed. Pass --mem-ceiling-mb below {cg:.1f} MB.\n")
+        return 2
+
+    import emfit.studies as studies
+    import numpy as np
+
+    meta["pid"] = os.getpid()
+    trip = Trip(out_path, mem_ceiling_mb=args.mem_ceiling_mb,
+                wall_limit_s=args.wall_limit_s,
+                argv=meta["argv"], started_utc=started_utc).start()
+
+    try:
+        t_call = time.monotonic()
+        res = studies.microstrip_wave(**kwargs)
+        wall_call = time.monotonic() - t_call
+    finally:
+        trip.stop()
+    wall_s = time.monotonic() - started
+    peak_mb = max(trip.peak_mb, rss_mb())
+
+    g = dict(res.geometry)
+    geom = {k: (float(v) if isinstance(v, (int, float, np.floating, np.integer))
+                else v)
+            for k, v in g.items()
+            if isinstance(v, (int, float, str, np.floating, np.integer))}
+    cells = int(g.get("nx", 0)) * int(g.get("ny", 0)) * int(g.get("nz", 0))
+
+    # AC-7's beta_modal is deliberately NOT computed here: a hand-rolled call to
+    # emfit.mode_profile on a reconstructed geometry would smuggle a number that
+    # no AC-7 verdict may rest on. The field is emitted as null and said to be
+    # null.
+    beta_modal = None
+
+    ac = ac_block(res, load_mm=args.load_at_mm, peak_mb=peak_mb, wall_s=wall_s)
+    ac["AC-7"]["beta_modal_recorded"] = beta_modal
+
+    s21 = complex(res.s21)
+    s21_raw = complex(res.s21_raw)
+    gp = complex(res.gamma_plane)
+    s11 = complex(res.s11)
+
+    payload = {
+        "meta": dict(meta, **{
+            "status": "ok",
+            "finished_utc": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"),
+            "wall_call_s": wall_call,
+            "wall_total_s": wall_s,
+            "peak_rss_mb": peak_mb,
+            "tripped": False,
+        }),
+        "run": {
+            "label": LABEL,
+            "source_port": "p1",
+            "load_port": "p2",
+            "function": "emfit.studies.microstrip_wave",
+            "kwargs": describe_kwargs(kwargs),
+            "loaded_without_reference": bool(res.loaded_without_reference),
+            "loaded_without_reference_note": (
+                "True means no LineReference was supplied, so the cut branch "
+                "degraded to zc_split = zc and line_s21(...): the line constant "
+                "used to transport the port plane to the cut is the run's own "
+                "zc/beta, not a load-free measurement. Stated, not hidden."),
+        },
+        "geometry": dict(geom, **{
+            "cells": cells,
+            "grid": [int(g.get("nx", 0)), int(g.get("ny", 0)),
+                     int(g.get("nz", 0))],
+            "cell_m": geom.get("cell"),
+            "dt_s": geom.get("dt"),
+            "nsteps": geom.get("nsteps"),
+            "f_hz": geom.get("f"),
+            "s21_plane_index": g.get("s21_plane_index"),
+        }),
+        "s21": {
+            "magnitude": abs(s21),
+            "phase_rad": float(np.angle(s21)),
+            "phase_deg": float(np.degrees(np.angle(s21))),
+            "real": s21.real,
+            "imag": s21.imag,
+            "raw_magnitude": abs(s21_raw),
+            "raw_phase_deg": float(np.degrees(np.angle(s21_raw))),
+            "planes_m": [float(res.s21_planes[0]), float(res.s21_planes[1])],
+            "s21_plane_index": res.s21_plane_index,
+        },
+        "s11": {
+            "magnitude": abs(s11),
+            "phase_deg": float(np.degrees(np.angle(s11))),
+            "deembed_distance_m": float(res.deembed_distance),
+        },
+        "gamma_plane": {
+            "re": gp.real,
+            "im": gp.imag,
+            "abs": abs(gp),
+            "arg_deg": float(np.degrees(np.angle(gp))),
+        },
+        "line": {
+            "beta": float(res.beta),
+            "beta_model": float(res.beta_model),
+            "z0_re": float(complex(res.z0).real),
+            "z0_im": float(complex(res.z0).imag),
+            "eps_eff": (None if res.loaded_without_reference
+                        else float(res.eps_eff)),
+            "gamma_re": float(complex(res.gamma).real),
+            "gamma_im": float(complex(res.gamma).imag),
+        },
+        "ac": ac,
+        "summary_line": res.summary(),
+    }
+    write_json(out_path, payload)
+    print(f"wrote {out_path}")
+    print(f"cells={cells} wall={wall_s:.1f}s peak_rss={peak_mb:.1f}MB "
+          f"|s21|={abs(s21):.9f} arg={np.degrees(np.angle(s21)):.4f}deg "
+          f"|s11|={abs(s11):.6e} cut_plane={res.s21_plane_index}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
