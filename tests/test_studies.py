@@ -1621,3 +1621,44 @@ def test_s21_plane_may_sit_downstream_of_the_cut_never_upstream():
     with pytest.raises(ValueError, match="the only name it takes"):
         studies.microstrip_wave(s21_plane="end", **kwargs)
 
+
+def test_gamma_port_and_gamma_plane_are_different_quantities():
+    """``gamma_port`` and ``gamma_plane`` are two numbers, not one renamed.
+
+    An artefact that quotes a reflection as ``s11`` and also records the
+    extraction plane's own reflection has to keep the two apart: the port value
+    is what a user's S-parameters are referred to, and it does not move when the
+    extraction plane moves, while ``gamma_plane`` is ``b_cut / a_cut`` on that
+    plane and exists only when one was named.  A writer that put
+    ``gamma_plane`` in both fields would be quoting the element's own cut as an
+    input reflection, which is what makes this worth an assertion.
+
+    The nullable half is the span record: with ``s21_plane=None`` there is no
+    plane and ``gamma_plane`` stays nan (``MicrostripWave.gamma_plane``), which
+    is exactly the case a writer must emit as JSON ``null`` rather than nan.
+
+    Both records are the cheap six-cell line with a load at 8.0 mm, so the pair
+    costs about two seconds.
+    """
+    kwargs = _cheap_strip_kwargs(
+        n_sub=1, n_strip=2, n_line=6,
+        x_first=6.4e-3, x_last=11.2e-3, nsteps=40,
+        loads=(Load(8.0e-3, "series_r", 50.0),))
+
+    span = studies.microstrip_wave(**kwargs)
+    assert span.s21_plane_index is None
+    assert not np.isfinite(complex(span.gamma_plane).real)
+    assert np.isfinite(complex(span.gamma_port).real)
+    assert np.isfinite(complex(span.gamma_port).imag)
+    assert abs(span.gamma_port) == pytest.approx(0.118088, rel=1e-4)
+
+    at_cut = studies.microstrip_wave(s21_plane="cut", **kwargs)
+    assert at_cut.s21_plane_index == 5
+    assert np.isfinite(complex(at_cut.gamma_plane).real)
+    # The port value is the same number on both records: naming a plane moves
+    # where the transmission is measured, not where the reflection is quoted.
+    assert at_cut.gamma_port == pytest.approx(span.gamma_port)
+    assert abs(at_cut.gamma_plane) == pytest.approx(0.154492, rel=1e-4)
+    # Two quantities, a third of a magnitude apart -- not rounding.
+    assert abs(abs(at_cut.gamma_port) - abs(at_cut.gamma_plane)) > 1e-2
+

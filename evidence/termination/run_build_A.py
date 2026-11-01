@@ -175,6 +175,38 @@ def write_json(path: Path, payload: dict) -> None:
     tmp.replace(path)
 
 
+def finite_or_none(value):
+    """``float(value)``, or ``None`` for a non-finite number.
+
+    ``write_json`` dumps with ``json.dumps``'s default ``allow_nan=True``, so a
+    nan that reached it would be written as the bare literal ``NaN``, which no
+    strict parser accepts.  A field that is legitimately nan -- ``s11_at_plane``
+    on a record extracted over the station span -- is converted here instead.
+    """
+    import math
+
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def load_records(entries):
+    """``geometry["loads"]`` as plain JSON records, ``[]`` when there are none.
+
+    ``emfit.studies`` builds these as ``{kind, value, x, column, n_edges}``
+    (``emfit/studies.py:2744-2746``) and hangs them on the geometry whenever a
+    load was actually placed.  The scalar filter at each writer below drops a
+    tuple of dicts, so without this a loaded record would serialise exactly like
+    a load-free one.  ``[]`` and not a missing key: a reader can then say which
+    of the two it is holding without knowing the writer.
+    """
+    return [{"kind": str(entry["kind"]),
+             "value": float(entry["value"]),
+             "x": float(entry["x"]),
+             "column": int(entry["column"]),
+             "n_edges": int(entry["n_edges"])}
+            for entry in (entries or ())]
+
+
 class Trip:
     """Hard resource trip: kills the process, leaves a marker, never retries.
 
@@ -560,6 +592,7 @@ def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
                 else v)
             for k, v in g.items()
             if isinstance(v, (int, float, str, np.floating, np.integer))}
+    geom["loads"] = load_records(g.get("loads"))
     cells = int(g.get("nx", 0)) * int(g.get("ny", 0)) * int(g.get("nz", 0))
     rb = reference_block(twin, reference, artefact=artefact_path, wall_s=wall_s)
     s21 = complex(twin.s21)
@@ -678,7 +711,11 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
     import math
 
     s21 = complex(res.s21)
-    s11 = complex(res.gamma_plane)
+    # AC-3 grades the port-referenced reflection: ``s11`` here is ``gamma_port``,
+    # which is where a user's S-parameters are quoted.  ``gamma_plane`` -- the
+    # reflection on the extraction plane's own cut -- is a different quantity and
+    # is graded by AC-6 below, from that block's own local name.
+    s11 = complex(res.gamma_port)
     s21_abs = abs(s21)
     s11_abs = abs(s11)
     gamma_plane = res.gamma_plane
@@ -1069,6 +1106,7 @@ def main(argv: list[str] | None = None) -> int:
                 else v)
             for k, v in g.items()
             if isinstance(v, (int, float, str, np.floating, np.integer))}
+    geom["loads"] = load_records(g.get("loads"))
     cells = int(g.get("nx", 0)) * int(g.get("ny", 0)) * int(g.get("nz", 0))
 
     # AC-7's beta_modal is deliberately NOT computed here: a hand-rolled call to
@@ -1100,7 +1138,8 @@ def main(argv: list[str] | None = None) -> int:
     s21 = complex(res.s21)
     s21_raw = complex(res.s21_raw)
     gp = complex(res.gamma_plane)
-    s11 = complex(res.gamma_plane)
+    s11 = complex(res.gamma_port)
+    s11_at_plane = complex(res.gamma_plane)
 
     # The bookkeeping keys in ``run`` below say what the numbers above were
     # divided by, so a reader can recompute them from the file alone: the
@@ -1204,11 +1243,31 @@ def main(argv: list[str] | None = None) -> int:
             "raw_magnitude": abs(s21_raw),
             "raw_phase_rad": float(np.angle(s21_raw)),
             "raw_phase_deg": float(np.degrees(np.angle(s21_raw))),
+            # raw_s21 is NOT a reference-free measurement: the two travelling
+            # waves it is split into use the reference's own gamma/zc
+            # (emfit/studies.py:3334-3345), so it inherits that fit's error.
+            # Dividing by forward_ratio (emfit/studies.py:3352) is the only
+            # step that puts the reference's exp(-gamma d) back.  True here
+            # means "no reference was in play", which is the only case the raw
+            # ratio comes from this run's own zc/beta
+            # (emfit/studies.py:3353-3354).
+            "raw_reference_independent": reference is None,
+            "raw_basis": (
+                "operands use reference.gamma and reference.zc; raw_magnitude "
+                "differs from noref raw 0.762847 by 5.8% and is not a "
+                "reference-independent measurement"),
             "phase_deg_basis": (
-                "s21 de-embedded with this run's own measured beta: "
-                "line_s21 (emfit/studies.py:1242, called at :3261) "
-                "multiplies by exp(+1j*beta*distance) "
-                "(emfit/ports.py:1707-1731). Flat in L only to the extent "
+                "s21 de-embedded on the cut branch, and WHICH de-embedding "
+                "it is depends on the branch.  With a twin reference -- the "
+                "path these loaded runs take -- reference is not None, so "
+                "s21 = raw_s21 / reference.forward_ratio(x_port, x_cut) "
+                "(emfit/studies.py:3352) and line_s21 is NOT called; the "
+                "delay is taken out by the reference's own measured forward "
+                "amplitude ratio, rescaled to the run's span, not by this "
+                "run's beta.  Only on the no-reference branch does line_s21 "
+                "(emfit/studies.py:1242, called at :3354) multiply by "
+                "exp(+1j*beta*distance) (emfit/ports.py:1707-1731) with this "
+                "run's own measured beta. Flat in L only to the extent "
                 "that beta is exact -- what the de-embedding leaves is "
                 "arg t + (beta_meas - beta_true)*d, so the slope recorded "
                 "in phase_degeneracy.deembedded_slope_rad_per_m is this "
@@ -1227,9 +1286,29 @@ def main(argv: list[str] | None = None) -> int:
                 and not isinstance(g.get("s21_plane_requested"), str)),
         },
         "s11": {
-            "magnitude": abs(s11),
-            "phase_deg": float(np.degrees(np.angle(s11))),
+            "magnitude": finite_or_none(abs(s11)),
+            "phase_deg": finite_or_none(np.degrees(np.angle(s11))),
             "deembed_distance_m": float(res.deembed_distance),
+            "basis": (
+                "gamma_port, the reflection moved to the port plane "
+                "(emfit/studies.py:3266, declared at :1607; docstring "
+                ":1527-1531).  Plane-independent: it does not move when the "
+                "extraction plane moves."),
+            "validation_status": "UNVALIDATED",
+            "validation_reason": (
+                "station fit spans load (10.4-18.8 mm, load at 20.0 mm); "
+                "reference_residual 1.0519 (5.2% off unity); pending library "
+                "read of station_fit.gamma_v and reference construction"),
+        },
+        "s11_at_plane": {
+            "magnitude": finite_or_none(abs(s11_at_plane)),
+            "phase_deg": finite_or_none(np.degrees(np.angle(s11_at_plane))),
+            "plane_index": res.s21_plane_index,
+            "basis": (
+                "gamma_plane, the reflection at the extraction plane itself "
+                "(b_cut/a_cut).  A different quantity from s11, not "
+                "interchangeable; null when the record was extracted over "
+                "the station span."),
         },
         "gamma_plane": {
             "re": gp.real,
