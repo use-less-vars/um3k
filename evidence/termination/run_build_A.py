@@ -60,6 +60,27 @@ Two consequences, neither optional:
 
 Without the flag no second solve runs and the artefact is exactly what it was.
 
+**What the reference can normalise, and what it cannot.**  The twin's fit is a
+``LineReference`` over its own first and last probe station, and the loaded run
+extracts on ``s21_plane="cut"`` -- the load's own plane, which is not a probe
+station -- so the reference is asked to normalise a run measured on a different
+span than the one its ratio was measured on.  ``forward_ratio`` no longer
+refuses that: it treats the ratio as a *residual* (the ``a+`` fit has already
+divided out ``exp(gamma x)``, so a perfect reference gives 1) and returns it
+raised to ``run_span / station_span``, which is the only rescaling that
+composes -- two hops must equal one -- and which returns the measured ratio bit
+for bit on the station planes themselves, the exponent being 1.  Two things
+follow for anyone reading a twin artefact: the residual is an error *measured*
+over the station span (9.6 mm on the smoke), and the number applied at the
+load plane is that error raised to the span ratio, not an error measured
+there -- **1.75** on runs A and B, whose load sits 16.8 mm from the port, and
+about **2.79** on run E, whose load sits at 30 mm and so 26.8 mm from it; and
+a plane pair equal to the stations is the pass-through case, so it is worth
+recording which pair a run used.  ``build_smoke_50ohm_twin.json`` carries the
+twin half of exactly that (``line.station_span_m``, ``s21.planes_m``).  The
+transport's near miss, and why it is not ``exp(-gamma * dL)``, is DR-16 in
+``docs/design/defect_register.md``.
+
 Three runs, one code shape
 --------------------------
 Length and load value are flags, not code paths: ``--n-line`` sets the line
