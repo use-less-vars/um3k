@@ -1102,6 +1102,48 @@ def main(argv: list[str] | None = None) -> int:
     gp = complex(res.gamma_plane)
     s11 = complex(res.gamma_plane)
 
+    # The bookkeeping keys in ``run`` below say what the numbers above were
+    # divided by, so a reader can recompute them from the file alone: the
+    # impedance the station fit produced, the forward ratio the reference
+    # supplied at the two planes, and how much of the reference's own span the
+    # port-to-cut distance covered.  They are records, not inputs -- nothing
+    # downstream reads them, and no number above depends on them.
+    fit_span_m = res.geometry.get("station_fit_span_m")
+    x_port_book = float(g.get("ix_port", 0)) * float(g.get("cell", 0.0))
+    ix_cut_book = res.s21_plane_index
+    x_cut_book = (None if ix_cut_book is None
+                  else float(ix_cut_book) * float(g.get("cell", 0.0)))
+    station_span_m = float(res.station_x[-1]) - float(res.station_x[0])
+    reference_exponent = (
+        None if x_cut_book is None or not station_span_m
+        else (x_cut_book - x_port_book) / station_span_m)
+    # ``forward_ratio`` is the exact call s21 was divided by
+    # (emfit/studies.py:3352 on the cut path, :3367 otherwise), so the planes
+    # come from the wave itself rather than from a second guess at them.  A
+    # complex is not JSON: it is split into its two parts the way
+    # ``reference.zc`` already is.
+    if reference is None or x_cut_book is None:
+        reference_residual = None
+    else:
+        ref_ratio = complex(reference.forward_ratio(
+            *[float(v) for v in res.s21_planes]))
+        reference_residual = {"re": float(ref_ratio.real),
+                              "im": float(ref_ratio.imag)}
+    # The s11 fit's impedance, or None when there is no usable record -- two
+    # ways to have none, and only one of them is ``station_fit is None``: the
+    # refusal path leaves it None, but the no-current path fills a *blank*
+    # StationFit whose z0 is complex(nan, nan) (emfit/studies.py:3178-3179,
+    # _blank_station_fit at :1831).  A NaN would be written as a bare ``NaN``
+    # token, which strict JSON parsers reject, so a non-finite z0 counts as
+    # absent -- and ``span_m`` goes with it rather than being orphaned.
+    sf_z0 = (None if res.station_fit is None
+             else complex(res.station_fit.z0))
+    station_fit_book = (
+        None if sf_z0 is None or not (np.isfinite(sf_z0.real)
+                                      and np.isfinite(sf_z0.imag))
+        else {"z0_re": float(sf_z0.real), "z0_im": float(sf_z0.imag),
+              "span_m": fit_span_m})
+
     payload = {
         "meta": dict(meta, **{
             "status": "ok",
@@ -1125,6 +1167,23 @@ def main(argv: list[str] | None = None) -> int:
                 "degraded to zc_split = zc and line_s21(...): the line constant "
                 "used to transport the port plane to the cut is the run's own "
                 "zc/beta, not a load-free measurement. Stated, not hidden."),
+            # The s11 fit's impedance, not ``line.z0``: the two are different
+            # numbers (``line.z0`` is the port ratio) and the cut branch of
+            # emfit/studies.py:3305 divides by THIS one.  null means no usable
+            # impedance record -- the fit refused (station_fit is None,
+            # station_fit_ok False) OR the no-current path left a blank fit
+            # with z0 = NaN; either way span_m is null too. Stated, not hidden.
+            "station_fit": station_fit_book,
+            # The reference's forward ratio at ``s21_planes``: what s21 was
+            # divided by, so |s21| * |reference_residual| is the measured
+            # ratio.  null when no reference was supplied or no cut plane was
+            # set, which is exactly when nothing was divided out.
+            "reference_residual": reference_residual,
+            # (x_cut - x_port) / (station_x[-1] - station_x[0]): the exponent
+            # the reference's exp(-gamma d) carried between those planes.
+            # Written even with no reference, because it describes the geometry
+            # the numbers were taken on, not the reference.
+            "reference_exponent": reference_exponent,
         },
         "geometry": dict(geom, **{
             "cells": cells,
