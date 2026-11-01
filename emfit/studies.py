@@ -2311,6 +2311,31 @@ def _broadband_rows(bins, sink, *, span: float, nsteps: int) -> dict:
     return rows
 
 
+def _station_fit_selection(js, station_x, v_stations, i_stations, loads_used):
+    """Split the station list into the s11 fit's stations and the rest.
+
+    A lumped load is stamped as a conductance on the edges of the column it
+    sits on, so the field AT that column is the load's boundary condition and
+    not the line's travelling wave: a station there agrees with neither wave
+    and drags ``z0`` toward whatever impedance the stamp happened to make.  Any
+    station on a load column is therefore dropped from the *impedance* fit.
+    The decay fits (``fit_line``) and ``fit_beta`` keep every station -- a load
+    column is still a valid sample of |V(x)|.
+
+    Returns ``(x, v, i, excluded)``; ``excluded`` is ``False`` and the three
+    arrays are returned unchanged when there is nothing to drop, or when
+    dropping would leave fewer than the four stations
+    :func:`emfit.ports.fit_station_impedance` requires.
+    """
+    load_columns = {int(entry["column"]) for entry in loads_used}
+    if not load_columns:
+        return station_x, v_stations, i_stations, False
+    keep = np.array([int(col) not in load_columns for col in js], dtype=bool)
+    if bool(keep.all()) or int(keep.sum()) < 4:
+        return station_x, v_stations, i_stations, False
+    return station_x[keep], v_stations[keep], i_stations[keep], True
+
+
 def microstrip_wave(
     *,
     h: float = MS_H,
@@ -2529,9 +2554,12 @@ def microstrip_wave(
             column and the current through it), so the discontinuity is
             measured on the plane it happens on rather than averaged between
             the two stations that straddle it.  An ``int`` is read as a node
-            column and must equal the load's own column: the extraction plane
-            and the cut are one plane, and a retyped index is a ``ValueError``
-            rather than a measurement taken one cell beside the element.  Only
+            column and must sit at the load's own column or downstream of it:
+            past the element the ratio is a real transmission through it, and
+            such an index is what a plane sweep walks; an index UPSTREAM of
+            the cut is a ``ValueError``, because on that side the load is not
+            in the span the ratio is taken over.  The name is still only
+            ``"cut"``.  Only
             meaningful on a record with exactly one load, and only with
             ``excite="cw"`` -- the pulse sweep reads its band off the kept
             record, whose columns are the stations, and the cut plane is not
@@ -2724,9 +2752,19 @@ def microstrip_wave(
     # is defined on: the stations straddle that plane, so a ratio taken between
     # them carries the load smeared over the span between two probes.  The plane
     # is resolved from the load's own column rather than retyped at a call site,
-    # and the two are compared -- a plane that disagrees with the cut is refused
-    # rather than measured.  ``None``, the default, keeps the station span and
-    # every float this study has ever quoted.
+    # and the two are ordered -- the extraction plane may sit at the cut or
+    # downstream of it, and a plane UPSTREAM of the cut is refused rather than
+    # measured.  ``None``, the default, keeps the station span and every float
+    # this study has ever quoted.
+    #
+    # Why downstream is admissible and upstream is not: downstream of the cut the
+    # wave has already passed the element, so the ratio between the port plane and
+    # this one is a genuine transmission THROUGH it -- which is what a plateau
+    # search needs, one N at a time, to see where the transported normalisation
+    # stops moving.  Upstream of the cut the wave has not reached the element yet:
+    # the span between the two planes does not contain the load at all, so the
+    # ratio stops describing the load and describes the line instead.  A NAME
+    # (``"cut"``) is still only ever the cut itself.
     cut_index = int(loads_used[0]["column"]) if len(loads_used) == 1 else None
     ix_extract = None
     if s21_plane is not None:
@@ -2752,13 +2790,15 @@ def microstrip_wave(
             ix_extract = cut_index
         else:
             ix_extract = int(s21_plane)
-        if ix_extract != cut_index:
+        if cut_index is not None and ix_extract < cut_index:
             raise ValueError(
-                f"s21_plane resolves to node column {ix_extract}, but the "
-                f"load's cut is node column {cut_index} (x = "
-                f"{cut_index * cell!r} m).  The extraction plane and the cut "
-                "are one plane: an index typed beside the element would "
-                "measure the wrong side of it.")
+                f"s21_plane resolves to node column {ix_extract}, which is "
+                f"UPSTREAM of the load's cut at node column {cut_index} "
+                f"(x = {cut_index * cell!r} m).  The extraction plane is the "
+                "cut or a plane downstream of it, never one upstream: before "
+                "the cut the wave has not reached the element, so the span "
+                "between the two planes does not contain the load and the "
+                "ratio stops describing it.")
 
     # ``walls`` replaces ``axes``: name every face, and add zmax only when a
     # top layer was actually asked for.
@@ -3108,23 +3148,36 @@ def microstrip_wave(
             stacklevel=2,
         )
 
+    # --- a station on the load's own column is not a station ----------------
+    # A lumped load is stamped as a conductance on the edges of the column it
+    # sits on (the load loop above), so the field AT that column is the load's
+    # boundary condition, not the line's travelling wave.  A station there
+    # therefore agrees with neither wave, and letting it into the s11 fit drags
+    # ``z0`` toward whatever impedance the stamp happened to make -- a fit
+    # artefact wearing the name of a line property.  It is dropped from the
+    # impedance fits only; the ``fit_line`` decay fits below keep every
+    # station, because a load column is still a valid sample of |V(x)| and they
+    # want the span.
+    fit_x, fit_v, fit_i, load_station_excluded = _station_fit_selection(
+        js, station_x, v_stations, i_stations, loads_used)
+
     station_fit: StationFit | None = None
     station_fit_ok = True
     # The refusal, when there was one: the zc-without-a-reference path below
     # quotes it, so a caller who hits that refusal sees why this record had no
     # impedance long before it sees where the impedance was wanted.
     station_fit_error: BaseException | None = None
-    if np.any(v_stations) and np.any(i_stations):
+    if np.any(fit_v) and np.any(fit_i):
         try:
-            station_fit = fit_station_impedance(station_x, v_stations,
-                                               i_stations, beta, sigma_beta)
+            station_fit = fit_station_impedance(fit_x, fit_v,
+                                               fit_i, beta, sigma_beta)
         except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
             station_fit_error = exc
             station_fit_ok = False
             warn_station_fit_skipped(exc, "loss-free")
     else:
-        station_fit = _blank_station_fit(station_x[0], beta, sigma_beta,
-                                         station_x.size)
+        station_fit = _blank_station_fit(fit_x[0], beta, sigma_beta,
+                                         fit_x.size)
 
     # --- the same fits with the decay free: loss, and its covariance -------
     # ``fit_beta`` holds the amplitude fixed in modulus, which is what a solver
@@ -3151,20 +3204,20 @@ def microstrip_wave(
         :class:`StationFit` has no slot for a fourth term and an incomplete
         budget must not be reported as if it were the whole of one.
         """
-        if loss_fit is None or not np.any(i_stations):
+        if loss_fit is None or not np.any(fit_i):
             return station_fit          # nothing to fit: the lossless answer stays
         alpha_hat = 0.0 if loss_fit.alpha is None else float(loss_fit.alpha)
-        fitted = fit_station_impedance(station_x, v_stations, i_stations,
+        fitted = fit_station_impedance(fit_x, fit_v, fit_i,
                                        loss_fit.beta, loss_fit.beta_sigma,
                                        alpha=alpha_hat)
         sigma_alpha = loss_fit.alpha_sigma
         if loss_fit.alpha is None or sigma_alpha is None:
             return fitted
         step = float(sigma_alpha)
-        z_plus = fit_station_impedance(station_x, v_stations, i_stations,
+        z_plus = fit_station_impedance(fit_x, fit_v, fit_i,
                                        loss_fit.beta, loss_fit.beta_sigma,
                                        alpha=alpha_hat + step).z0
-        z_minus = fit_station_impedance(station_x, v_stations, i_stations,
+        z_minus = fit_station_impedance(fit_x, fit_v, fit_i,
                                         loss_fit.beta, loss_fit.beta_sigma,
                                         alpha=alpha_hat - step).z0
         sigma_alpha_z0 = 0.5 * abs(z_plus - z_minus)
@@ -3457,6 +3510,12 @@ def microstrip_wave(
         "k_slice": k_slice, "z_slice": k_slice * cell,
         "j_strip": (j0, j1), "j_centre": j_centre, "y_extent": y_half,
         "station_cells": [int(v) for v in js],
+        # The s11 fit's own stations and span, which a load column can
+        # shorten -- ``station_cells`` above is the full list either way.
+        "station_fit_cells": [int(round(float(v) / cell)) for v in fit_x],
+        "station_fit_n": int(fit_x.size),
+        "station_fit_span_m": float(fit_x[-1]) - float(fit_x[0]),
+        "load_station_excluded": bool(load_station_excluded),
         "f": f0, "f_target": float(f_target), "dt": dt,
         "nsteps": nsteps, "n_warm": n_warm, "n_acc": n_acc,
         "audit": bool(audit),
@@ -3547,6 +3606,11 @@ def microstrip_wave(
         # column, beside the load that put it there: a report can then say
         # where the number was taken without re-deriving it from the load.
         geometry["s21_plane_index"] = int(ix_extract)
+        # What the CALL asked for, beside where it landed: the name ``"cut"``,
+        # the int of a plane sweep, or -- for a run that asked for nothing --
+        # the key's absence, which is how this record says ``None`` and keeps a
+        # flag-off geometry exactly what it was.
+        geometry["s21_plane_requested"] = s21_plane
 
     power_balance = None
     if absorbed is not None and absorbed.steps:

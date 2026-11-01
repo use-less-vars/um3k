@@ -365,7 +365,12 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         "nsteps": 2400,
         "loads": (load,),
         "reference": None,
-        "s21_plane": S21_PLANE,
+        # Absent flag => S21_PLANE, i.e. the load's own cut, byte for byte what
+        # this dict has always carried.  --s21-plane-index N moves the far
+        # extraction probe onto node column N (downstream only; the library
+        # refuses an upstream index) for a plane-convergence sweep.
+        "s21_plane": (S21_PLANE if args.s21_plane_index is None
+                      else int(args.s21_plane_index)),
         "excite": "cw",
     }
     check_mesh(kwargs)
@@ -512,6 +517,20 @@ def reference_block(twin, reference, *, artefact: Path, wall_s: float) -> dict:
                                "station_x[-1] - station_x[0]; forward_ratio "
                                "refuses any other pair, so this is the span the "
                                "loaded s21 was normalised over"),
+        # The s11 fit's own stations and span, beside (not instead of) the
+        # full span above: a station sitting on the lumped load's column is
+        # dropped from the impedance fit -- emfit/studies.py
+        # _station_fit_selection -- and with the default x_last = 20 mm that is
+        # the last station.  ``.get`` so an older record without them reads as
+        # absent rather than raising.
+        "station_fit_span_m": g.get("station_fit_span_m"),
+        "station_fit_basis": ("station_x[-1] - station_x[0] over the stations "
+                              "the s11 fit actually used; shorter than "
+                              "station_span_m when the last station sat on the "
+                              "load column"),
+        "load_station_excluded": g.get("load_station_excluded"),
+        "station_fit_cells": g.get("station_fit_cells"),
+        "station_fit_n": g.get("station_fit_n"),
         "grid": [int(g.get("nx", 0)), int(g.get("ny", 0)),
                  int(g.get("nz", 0))],
         "wall_seconds_twin": wall_s,
@@ -607,6 +626,7 @@ def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
             "raw_phase_deg": float(np.degrees(np.angle(s21_raw))),
             "planes_m": [float(twin.s21_planes[0]), float(twin.s21_planes[1])],
             "s21_plane_index": twin.s21_plane_index,
+            "s21_plane_requested": g.get("s21_plane_requested"),
             "basis": (
                 "the station span, not a cut plane: s21_plane is None on this "
                 "record and a load-free line has no cut for a plane to name.  "
@@ -636,6 +656,11 @@ def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
             "alpha_np_per_m": rb["alpha_np_per_m"],
             "alpha_np_per_m_basis": rb["alpha_np_per_m_basis"],
             "station_span_m": rb["station_span_m"],
+            "station_fit_span_m": rb.get("station_fit_span_m"),
+            "station_fit_basis": rb.get("station_fit_basis"),
+            "load_station_excluded": rb.get("load_station_excluded"),
+            "station_fit_cells": rb.get("station_fit_cells"),
+            "station_fit_n": rb.get("station_fit_n"),
         },
         "summary_line": twin.summary(),
     }
@@ -769,6 +794,15 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
                 "load_position_mm": load_mm,
                 "load_plane_index": load_index,
                 "s21_plane_index": plane_index,
+                # AC-6 is NOT relaxed for a plane sweep: an acceptance gate
+                # must not be widened by the run that would benefit, and a
+                # plane picked from geometry could then pass unnoticed.  It
+                # therefore reads pass=false on any downstream-plane artefact,
+                # and this flag says so instead of hiding it.
+                "plane_sweep_diagnostic": bool(
+                    res.geometry.get("s21_plane_requested") is not None
+                    and not isinstance(
+                        res.geometry.get("s21_plane_requested"), str)),
                 "indices_agree": bool(load_index is not None
                                       and plane_index is not None
                                       and int(load_index) == int(plane_index)),
@@ -878,6 +912,14 @@ def main(argv: list[str] | None = None) -> int:
                          "written beside --out as <stem>_twin.json.  Off by "
                          "default: without this flag the run and its artefact "
                          "are what they were (loaded_without_reference True).")
+    ap.add_argument("--s21-plane-index", type=int, default=None,
+                    help="move the s21 extraction probe onto this node column "
+                         "[index] instead of the load's own cut, for a "
+                         "plane-convergence sweep (the first N at which the "
+                         "transported normalisation stops moving as N walks "
+                         "downstream).  The library refuses an index UPSTREAM "
+                         "of the cut.  Absent (the default): s21_plane='cut' "
+                         "-- the load cut, unchanged.")
     ap.add_argument("--dry-run", action="store_true",
                     help="build and print the call, write nothing, run no FDTD; "
                          "with --with-twin it prints the twin's arguments too "
@@ -1120,6 +1162,10 @@ def main(argv: list[str] | None = None) -> int:
                 "quantity, and it carries -beta*L."),
             "planes_m": [float(res.s21_planes[0]), float(res.s21_planes[1])],
             "s21_plane_index": res.s21_plane_index,
+            "s21_plane_requested": g.get("s21_plane_requested"),
+            "plane_sweep_diagnostic": bool(
+                g.get("s21_plane_requested") is not None
+                and not isinstance(g.get("s21_plane_requested"), str)),
         },
         "s11": {
             "magnitude": abs(s11),
@@ -1141,6 +1187,13 @@ def main(argv: list[str] | None = None) -> int:
                         else float(res.eps_eff)),
             "gamma_re": float(complex(res.gamma).real),
             "gamma_im": float(complex(res.gamma).imag),
+            # The s11 fit's own stations: a station on the lumped load's
+            # column is dropped from the impedance fit, never from
+            # ``station_cells`` (emfit/studies.py _station_fit_selection).
+            "station_fit_span_m": res.geometry.get("station_fit_span_m"),
+            "load_station_excluded": res.geometry.get("load_station_excluded"),
+            "station_fit_cells": res.geometry.get("station_fit_cells"),
+            "station_fit_n": res.geometry.get("station_fit_n"),
         },
         "ac": ac,
         "summary_line": res.summary(),

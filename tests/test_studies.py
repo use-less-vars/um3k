@@ -42,7 +42,10 @@ import pytest
 
 from emfit import studies
 from emfit.board import Load
+from emfit.grid import Grid
+from emfit.materials import M_sigma
 from emfit.microstrip import COPPER_T, Microstrip
+from emfit.operators import CellComplex
 
 
 # ---------------------------------------------------------------------------
@@ -1439,4 +1442,182 @@ class TestForwardRatioTransport:
             missing.forward_ratio(*RUN_A)
         with pytest.raises(TypeError):            # the station planes too
             missing.forward_ratio(XS[0], XS[-1])
+
+
+
+# ---------------------------------------------------------------------------
+# the discrete bridge: is the ``series_r`` load really the resistance it says?
+# ---------------------------------------------------------------------------
+def _load_bridge(n_strip, *, R=50.0, cell=2.5e-4, ix_load=3, j0=1, k_strip=1):
+    """The smallest grid that holds one ``series_r`` bridge, built as studies does.
+
+    Six cells along the line by ``n_strip + 3`` across by three in z, the strip a
+    PEC sheet on the ``k_strip`` node layer.  The load block is
+    ``emfit/studies.py:2699-2708`` verbatim: free the ``E_x`` edges of the node
+    column ``ix_load`` and give each of them ``1 / (len(edges) * R)``.
+    """
+    nx, nz = 6, 3
+    ny = n_strip + 3
+    grid = Grid.uniform(nx, ny, nz, nx * cell, ny * cell, nz * cell)
+    cc = CellComplex(grid)
+    pec = np.array(cc.pec_edge_mask(), dtype=bool)
+    j_points = np.arange(j0, j0 + n_strip + 1)
+    j_cells = np.arange(j0, j0 + n_strip)
+    strip = np.zeros(cc.n_edges, dtype=bool)
+    strip[cc.idx_ex(np.arange(1, nx)[:, None], j_points[None, :], k_strip)] = True
+    strip[cc.idx_ey(np.arange(1, nx + 1)[:, None], j_cells[None, :], k_strip)] = True
+    pec |= strip
+    sigma = np.zeros(cc.n_edges, dtype=float)
+    edges = cc.idx_ex(np.array([ix_load]), j_points, k_strip).ravel()
+    pec[edges] = False
+    sigma[edges] += 1.0 / (edges.size * float(R))
+    return grid, cc, edges, sigma, cell
+
+
+def test_series_load_bridge_presents_50_ohm():
+    """The bridge's total conductance is ``1/R``, not ``1/R`` times a Hodge factor.
+
+    ``m_sigma`` is the **diagonal of the conductance star, in siemens**
+    (``emfit/evolve.py``: "one non-negative entry per primal edge, in siemens";
+    it is consumed elementwise against ``m_eps/dt`` in ``FITStepper.__init__``),
+    so a value written straight into it is a conductance and the ``A~/L``
+    weighting is *already folded in*.  The canonical ``M_sigma`` builder shows
+    it: ``M_sigma(grid, cc, sigma=1.0).diag`` on these edges is ``A~/L = cell``,
+    not 1 -- a conductivity is multiplied by ``A~/L``; the load block, which
+    writes ``1/(len(edges) * R)`` directly, is not.
+
+    So the whole load is ``len(edges)`` conductances of ``1/(len(edges) * R)``
+    in parallel between the two equipotential halves of the strip (the ``E_y``
+    edges at both node layers bounding the cut stay PEC, which is what stops the
+    halves shorting), total ``1/R``.  Measured here on a 1 V step across the cut
+    using the code's own ``CellComplex.gradient`` for the edge voltages:
+    ``R_eff = 50.000`` ohm at 4 edges and at 8, on two cell sizes.
+
+    This pins the convention, not a taste: had ``1/(len(edges) * R)`` been read
+    as a conductivity, the delivered resistance would be ``R * L/A = R/cell`` --
+    200 000 ohm at ``cell = 0.25`` mm, i.e. no load at all -- and no choice of
+    ``s21`` plane could have rescued a run that made that mistake.
+    """
+    for n_strip, n_edges_expected in ((3, 4), (7, 8)):
+        for cell in (2.5e-4, 1.0e-3):
+            grid, cc, edges, sigma, cell = _load_bridge(n_strip, cell=cell)
+            assert edges.size == n_edges_expected
+
+            # 1 V across the cut: a step potential at the load's own node column,
+            # so the edge voltage is whatever the code's gradient says it is.
+            mesh = np.meshgrid(np.arange(cc.nxn), np.arange(cc.nyn),
+                               np.arange(cc.nzn), indexing="ij")
+            phi = np.zeros(cc.n_nodes)
+            phi[cc.idx_node(*(a.ravel() for a in mesh))] = np.where(
+                mesh[0].ravel() <= 3, 0.0, 1.0)
+            volts = np.abs((cc.gradient() @ phi)[edges])
+            assert np.allclose(volts, 1.0, rtol=0.0, atol=1.0e-12)
+
+            i_total = float(np.sum(sigma[edges] * volts))
+            r_eff = 1.0 / i_total
+            assert abs(r_eff - 50.0) <= 0.5, (
+                f"{n_edges_expected} edges on cell={cell}: R_eff = {r_eff!r} ohm")
+
+            # ... and the geometric factor is exactly what the load skips: A~/L
+            # equals the cell size here, and M_sigma applies it to a conductivity.
+            a_dual = np.asarray(grid.dual_face_area_x()).ravel()
+            l_edge = np.asarray(grid.edge_length("x")).ravel()
+            assert np.allclose(a_dual[edges] / l_edge[edges], cell)
+            assert np.allclose(M_sigma(grid, cc, sigma=1.0).diag[edges], cell)
+
+
+
+def test_load_station_is_excluded_from_the_fit():
+    """A station on the lumped load's own column is not a station for s11.
+
+    The load is a conductance stamped on the load column's edges, so the field
+    there is the load's boundary condition, not the line's travelling wave;
+    letting it into ``fit_station_impedance`` turns a stub artefact into a
+    quoted ``z0``.  The mask is exercised directly -- a board run would only
+    re-test the solver.
+    """
+    import numpy as np
+
+    cell = 0.0004
+    js = np.arange(26, 51, 3, dtype=int)          # 26, 29, ..., 50
+    x = js * cell
+    v = np.ones(js.size, dtype=complex)
+    i = np.ones(js.size, dtype=complex)
+    loads = [{"kind": "series_r", "value": 50.0, "column": 50}]
+
+    fit_x, fit_v, fit_i, excluded = studies._station_fit_selection(
+        js, x, v, i, loads)
+
+    assert excluded is True
+    assert fit_x.size == js.size - 1
+    assert [int(round(float(col) / cell)) for col in fit_x] == js[:-1].tolist()
+    assert fit_v.size == fit_i.size == fit_x.size
+    # The span is the remaining stations', not the full list's.
+    assert abs((fit_x[-1] - fit_x[0]) - (x[-2] - x[0])) < 1e-15
+    assert abs((fit_x[-1] - fit_x[0]) - (x[-1] - x[0])) > 1e-6
+
+    # No load: every station is kept and nothing is claimed excluded.
+    same_x, _, _, excluded_again = studies._station_fit_selection(
+        js, x, v, i, [])
+    assert excluded_again is False
+    assert same_x is x
+
+    # A station list that would drop below fit_station_impedance's four
+    # stations is left alone rather than emptied.
+    thin = js[-4:]
+    thin_x, _, _, thin_excluded = studies._station_fit_selection(
+        thin, thin * cell, np.ones(4, dtype=complex),
+        np.ones(4, dtype=complex), loads)
+    assert thin_excluded is False
+    assert thin_x.size == 4
+
+
+def test_s21_plane_may_sit_downstream_of_the_cut_never_upstream():
+    """The extraction plane is the cut or a plane past it -- never one before it.
+
+    Downstream of the cut the wave has already passed the element, so the ratio
+    between the port plane and that one is a transmission through the load: that
+    is the plane a convergence sweep walks, one N at a time.  Upstream the span
+    between the two planes does not contain the load at all, so the ratio stops
+    describing it and the index is refused.
+
+    The refusal is exercised on the cheap strip grid (``_cheap_strip_kwargs``)
+    with the load at 2.6 mm, which quantises to node column 6 -- both numbers
+    appear in the message, so a caller can see which side of the element the
+    index landed on.  The *downstream* half cannot be completed on this grid: an
+    eight-step record carries no wave, so the run stops for want of a
+    station-impedance fit.  That is the assertion -- the downstream index got
+    past the plane guard and stopped at the fit, while the upstream ones stopped
+    at the plane -- because a completed solve here would be a second of work for
+    a claim that is not about the march.
+    """
+    kwargs = _cheap_strip_kwargs(loads=(Load(2.6e-3, "series_r", 50.0),))
+
+    for upstream in (1, 5):
+        with pytest.raises(ValueError) as excinfo:
+            studies.microstrip_wave(s21_plane=upstream, **kwargs)
+        message = str(excinfo.value)
+        assert "UPSTREAM" in message, message
+        assert f"node column {upstream}" in message, message
+        assert "node column 6" in message, message
+
+    # The cut itself, by name and by its own index, is still accepted: neither
+    # stops at the plane guard.
+    for at_the_cut in ("cut", 6):
+        with pytest.raises(ValueError) as excinfo:
+            studies.microstrip_wave(s21_plane=at_the_cut, **kwargs)
+        assert "UPSTREAM" not in str(excinfo.value)
+
+    # Downstream: past the guard, and stopped by the record rather than by a plane.
+    for downstream in (7, 12):
+        with pytest.raises(ValueError) as excinfo:
+            studies.microstrip_wave(s21_plane=downstream, **kwargs)
+        message = str(excinfo.value)
+        assert "UPSTREAM" not in message, message
+        assert "node column" not in message, message
+        assert "station-impedance fit" in message, message
+
+    # A name other than "cut" is still refused, downstream relaxation or not.
+    with pytest.raises(ValueError, match="the only name it takes"):
+        studies.microstrip_wave(s21_plane="end", **kwargs)
 
