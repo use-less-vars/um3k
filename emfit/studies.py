@@ -1623,6 +1623,13 @@ class MicrostripWave:
     power_balance: dict | None = None
     station_fit_ok: bool = True
     loaded_without_reference: bool = False
+    # The reflection the element presents on its own cut plane (``s21_plane``);
+    # ``nan`` on every record extracted over the station span, which is what a
+    # reflection referred to the port is quoted as instead (``gamma_port``).
+    gamma_plane: complex = complex(np.nan, np.nan)
+    # The node column the transmission was measured on when ``s21_plane`` was
+    # given; ``None`` when the measurement is the station span.
+    s21_plane_index: int | None = None
     bins: tuple = ()
     sx_station: np.ndarray | None = None
     sx_station_sub: np.ndarray | None = None
@@ -2307,6 +2314,7 @@ def microstrip_wave(
     f_pulse: float = MS_F_PULSE_GHZ * 1e9,
     poynting: bool = False,
     plane_capture: bool | None = None,
+    s21_plane: str | int | None = None,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -2471,6 +2479,25 @@ def microstrip_wave(
             unless it says ``"1"``, ``"true"`` or ``"yes"``.  Whichever
             channel decided it -- ``"kwarg"``, ``"env"`` or ``"off"`` -- is
             written into the record as ``plane_capture``.
+        s21_plane: Where the transmission is measured.  ``None`` (the default)
+            keeps the station span -- the forward amplitude on the first
+            station against the last, ``s21_planes`` naming those two planes --
+            and every number, float for float, that this study produced before
+            the parameter existed.  ``"cut"`` moves the far plane onto the
+            load's own cut: the plane the element is defined on, probed with
+            its own two phasors (the gap voltage across the freed ``E_x``
+            column and the current through it), so the discontinuity is
+            measured on the plane it happens on rather than averaged between
+            the two stations that straddle it.  An ``int`` is read as a node
+            column and must equal the load's own column: the extraction plane
+            and the cut are one plane, and a retyped index is a ``ValueError``
+            rather than a measurement taken one cell beside the element.  Only
+            meaningful on a record with exactly one load, and only with
+            ``excite="cw"`` -- the pulse sweep reads its band off the kept
+            record, whose columns are the stations, and the cut plane is not
+            one of them.  The cut-plane phasors cost one two-signal
+            accumulator, allocated only when the flag is on; with it off no
+            probe is taken and the record is bit-identical.
 
     Returns:
         A :class:`MicrostripWave`.
@@ -2633,6 +2660,47 @@ def microstrip_wave(
         m_sigma = sigma if np.any(sigma) else None
         m_eps = eps
 
+    # --- where the transmission is measured ---------------------------------
+    # A loaded record's S-parameters belong on the cut, the one plane the element
+    # is defined on: the stations straddle that plane, so a ratio taken between
+    # them carries the load smeared over the span between two probes.  The plane
+    # is resolved from the load's own column rather than retyped at a call site,
+    # and the two are compared -- a plane that disagrees with the cut is refused
+    # rather than measured.  ``None``, the default, keeps the station span and
+    # every float this study has ever quoted.
+    cut_index = int(loads_used[0]["column"]) if len(loads_used) == 1 else None
+    ix_extract = None
+    if s21_plane is not None:
+        if not loads_used:
+            raise ValueError(
+                "s21_plane was asked for on a load-free record: there is no "
+                "cut for it to name.  Leave it None, which measures the "
+                "station span a load-free run wants.")
+        if len(loads_used) != 1:
+            raise ValueError(
+                f"s21_plane names one plane but this record carries "
+                f"{len(loads_used)} loads: one load, one cut, one plane.")
+        if excite == "pulse":
+            raise ValueError(
+                "s21_plane is a single-tone extraction, and excite=\"pulse\" "
+                "reads the band off the kept record, whose columns are the "
+                "stations: the cut plane is not one of them.")
+        if isinstance(s21_plane, str):
+            if s21_plane != "cut":
+                raise ValueError(
+                    f"s21_plane={s21_plane!r}: the only name it takes is "
+                    "\"cut\", the plane the load's own column sits on.")
+            ix_extract = cut_index
+        else:
+            ix_extract = int(s21_plane)
+        if ix_extract != cut_index:
+            raise ValueError(
+                f"s21_plane resolves to node column {ix_extract}, but the "
+                f"load's cut is node column {cut_index} (x = "
+                f"{cut_index * cell!r} m).  The extraction plane and the cut "
+                "are one plane: an index typed beside the element would "
+                "measure the wrong side of it.")
+
     # ``walls`` replaces ``axes``: name every face, and add zmax only when a
     # top layer was actually asked for.
     pml_walls = ("xmin", "xmax", "ymin", "ymax") + (("zmax",) if n_top else ())
@@ -2730,6 +2798,14 @@ def microstrip_wave(
     # the first: one extra accumulator, not a second run.
     n_split = n_warm + n_acc // 2
     half_acc = DftAccumulator([f0], dt)
+    # The cut plane's own two phasors: the gap voltage across the freed column
+    # and the current through the element.  ``None`` unless ``s21_plane`` asked
+    # for them, so a run without the flag allocates nothing, probes nothing and
+    # its record is bit-identical to the run before the flag existed.
+    cut_acc = DftAccumulator([f0], dt) if ix_extract is not None else None
+    cut_signals = np.zeros(2) if ix_extract is not None else None
+    cut_column = (column_path(cc, ix_extract, j_centre, 0, k_strip)
+                  if ix_extract is not None else None)
     current = np.zeros(cc.n_edges, dtype=float)
     n_currents = n_stations + 3        # station currents start here in signals
     signals = np.zeros(n_currents + n_stations, dtype=float)
@@ -2780,6 +2856,18 @@ def microstrip_wave(
                 plate_current(stepper.h, cc, int(ix) - 1, 0, y_extent=y_half)
                 + plate_current(stepper.h, cc, int(ix), 0, y_extent=y_half))
         acc.add(signals, n)
+        if cut_acc is not None:
+            # The cut's two phasors, on the plane the element is defined on.
+            # The current is interpolated onto the node exactly as the station
+            # currents are: the FY faces are the faces of an ``x`` cell, and the
+            # element sits on a node layer half a cell from each of the two.
+            cut_signals[0] = edge_path_voltage(stepper.e, cut_column)
+            cut_signals[1] = 0.5 * (
+                plate_current(stepper.h, cc, ix_extract - 1, 0,
+                              y_extent=y_half)
+                + plate_current(stepper.h, cc, ix_extract, 0,
+                                y_extent=y_half))
+            cut_acc.add(cut_signals, n)
         if plane_ey is not None:
             # The phase is the accumulator's own expression, on the step index:
             # not a re-derivation, the same line ``DftAccumulator.add`` runs.
@@ -2877,6 +2965,15 @@ def microstrip_wave(
     # summed in its own sense, antiparallel to the trace current, so negating
     # it refers the station impedance to the forward current.
     i_stations = -np.asarray(spec[n_currents:n_currents + n_stations], dtype=complex)
+    # The cut plane, when the extraction was sent there: the same record, its
+    # own probe.  ``i_cut`` takes the station currents' negation -- the ground
+    # return is summed antiparallel to the trace current.
+    if cut_acc is not None:
+        cut_spec = cut_acc.spectrum[0]
+        v_cut = complex(cut_spec[0])
+        i_cut = -complex(cut_spec[1])
+    else:
+        v_cut = i_cut = complex(np.nan, np.nan)
 
     # --- phase constant: multi-station fits, the old difference kept beside --
     # The two-station difference is what this study used to quote.  It only
@@ -3106,12 +3203,44 @@ def microstrip_wave(
             "constant carries a standard error as large as itself cannot "
             "supply one of its own.")
     s21_planes = (float(station_x[0]), float(station_x[-1]))
+    gamma_plane = complex(np.nan, np.nan)
     # A load with no reference: the metrics report the magnitude of ``s21`` and
     # derive no impedance from it, because the record's own station fit believes
     # in a continuity the cut breaks.  See the field of that name.
     loaded_without_reference = bool(loads_used) and reference is None
     s21 = raw_s21 = complex(np.nan, np.nan)
-    if reference is not None:
+    if ix_extract is not None:
+        # A3: the far plane is the cut, not the last station.  Same split, same
+        # two travelling waves, moved onto the plane the element is defined on,
+        # so the load is measured where it happens instead of being averaged
+        # between the probes that straddle it.  Both sub-branches are mirrored:
+        # a loaded record's station fit is distrusted across the cut, so in
+        # practice ``zc`` comes from ``reference`` and the reference branch is
+        # the one the loaded runs will use.
+        x_cut = float(ix_extract * cell)
+        s21_planes = (x_port, x_cut)
+        if reference is not None:
+            gamma_split = complex(reference.gamma)
+            zc_split = complex(reference.zc)
+        else:
+            gamma_split = 0j
+            zc_split = zc
+        a_port = forward_wave_amplitude(
+            [v_port], [-i_trunc], [x_port], gamma_split, zc_split)[0]
+        a_cut = forward_wave_amplitude(
+            [v_cut], [i_cut], [x_cut], gamma_split, zc_split)[0]
+        b_cut = backward_wave_amplitude(
+            [v_cut], [i_cut], [x_cut], gamma_split, zc_split)[0]
+        if a_cut != 0.0:
+            # The reflection the element itself presents, on its own plane.
+            gamma_plane = complex(b_cut) / complex(a_cut)
+        if reference is not None:
+            if a_port != 0.0:
+                raw_s21 = complex(a_cut) / complex(a_port)
+                s21 = raw_s21 / reference.forward_ratio(x_port, x_cut)
+        elif a_port != 0.0:
+            s21, raw_s21 = line_s21(a_port, x_port, a_cut, x_cut, beta)
+    elif reference is not None:
         # Ratio of ratios, and the only thing here that needs no trust in
         # ``gamma``: the load-free run's wave crosses the same two planes
         # through the same ``gamma`` and ``zc`` at the same station positions,
@@ -3354,6 +3483,11 @@ def microstrip_wave(
     # bound over exactly the distance ``s21`` was de-embedded across.
     if loads_used:
         geometry["loads"] = tuple(loads_used)
+    if ix_extract is not None:
+        # The plane the transmission was measured on, in metres' worth of node
+        # column, beside the load that put it there: a report can then say
+        # where the number was taken without re-deriving it from the load.
+        geometry["s21_plane_index"] = int(ix_extract)
 
     power_balance = None
     if absorbed is not None and absorbed.steps:
@@ -3408,6 +3542,8 @@ def microstrip_wave(
         power_balance=power_balance,
         station_fit_ok=station_fit_ok,
         loaded_without_reference=loaded_without_reference,
+        gamma_plane=gamma_plane,
+        s21_plane_index=ix_extract,
         bins=bins,
         sx_station=sx_station,
         sx_station_sub=sx_station_sub,
