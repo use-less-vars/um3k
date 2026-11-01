@@ -201,22 +201,81 @@ class Trip:
         self._stop.set()
 
 
+def check_mesh(kwargs: dict) -> None:
+    """Fail closed in a millisecond if the mesh cannot be built.
+
+    ``emfit/studies.py:2555-2562`` remains the authority: it raises on a negative
+    ``n_top`` and on a non-zero ``n_top`` that differs from ``n_pml``.  This guard
+    reproduces that one inequality and nothing else, for one reason -- the runs
+    this script launches died inside the first second of a 1400 s wall gate on
+    exactly it, and a ValueError raised after the process, the trip thread and
+    the artefact header are up is a worse way to learn it than a refusal to
+    start.  If the two ever disagree, the solver is right and this is wrong.
+    """
+    n_top, n_pml = int(kwargs["n_top"]), int(kwargs["n_pml"])
+    if n_top < 0:
+        raise SystemExit(
+            f"REFUSED: n_top={n_top} is negative. "
+            f"emfit/studies.py:2555 raises on this; nothing here can fix it.")
+    if n_top and n_top != n_pml:
+        raise SystemExit(
+            f"REFUSED: n_top={n_top} does not match n_pml={n_pml}: one PML "
+            f"object carries ONE thickness for every wall it opens "
+            f"(emfit/studies.py:2557).  Pass n_top={n_pml} for the matched lid "
+            f"the validated reference run used "
+            f"(evidence/board_poc/A_microstrip.json, values.npml 6, mesh "
+            f"62 x 44 x 22), or n_top=0 for a plain PEC lid -- which no "
+            f"artefact in this repo records.")
+
+
 def build_kwargs(args: argparse.Namespace) -> dict:
     """The one call's arguments, assembled in one place so nothing is retyped.
 
     The mesh is the h = 0.4 mm *cell* configuration: substrate 1.6 mm / ``n_sub``
-    4 = 0.4 mm cell, ``n_air`` 12, ``n_top`` 12, ``n_clean`` 96 (0.8 mm strip ->
+    4 = 0.4 mm cell, ``n_air`` 12, ``n_top`` 6, ``n_clean`` 96 (0.8 mm strip ->
     ``n_strip`` 2 cells at that cell), ``n_pml`` 6, ``n_ref`` 2, and ``n_line``
     taken from ``--n-line``.
 
-    PRICE, corrected 2026-11-01: at the default ``n_line`` 54 the grid is
-    **62 x 206 x 28 = 357,616 cells** (``nx = n_pml + n_ref + n_line = 6+2+54``;
-    ``ny = 2*n_pml + n_strip + 2*n_clean = 12+2+192``; ``nz = n_sub + n_air +
-    n_top = 4+12+12``; ``ix_port = n_pml + n_ref = 8``), dt
-    7.626299478123987e-13 s, 2400 steps.  An earlier revision of this file said
+    ``n_top`` is 6, and it is 6 *because* ``n_pml`` is 6: the zmax face is a
+    matched layer, not a lid, and one PML object carries one thickness for every
+    wall it opens (``emfit/studies.py:2555-2562``; ``MS_N_TOP`` and its comment
+    at ``emfit/studies.py:1190-1194``).  The 12 this file used to carry came from
+    ``evidence/h_refine/h040.json`` ``rungs[0].n_top``, i.e. from the same
+    borrowing as the 68 x 218 grid below: that row's ``npml`` is *also* 12,
+    because its PML is 4.8 mm at a 0.4 mm cell (``rungs[0].pml_mm`` 4.8).  Ours
+    is 6, so the lid has to be 6; the mismatch is not silently clipped, it is a
+    ValueError thrown when the grid is built, i.e. after the process has started.
+    Nothing about the reference changes: the validated microstrip run
+    (``evidence/board_poc/A_microstrip.json``, ``values.npml`` 6, mesh
+    "62 x 44 x 22 cells at 0.4000 mm" = ``n_sub`` 4 + ``n_air`` 12 + ``n_top`` 6
+    through z) has a 6-cell lid on 6-cell laterals, and every row of
+    ``evidence/box_sweep/`` records ``n_top`` 6 against ``npml`` 6.  ``n_top`` 0
+    (a plain PEC lid) is admissible but is not what was measured: no artefact in
+    this repo records it.
+
+    PRICE, corrected 2026-11-01 (``n_top`` 12 -> 6 shortened z from 28 to 22
+    cells, so the earlier 357,616 read 27.3 % high): at the default ``n_line``
+    54 the grid is **62 x 206 x 22 = 280,984 cells** (``nx = n_pml + n_ref +
+    n_line = 6+2+54``; ``ny = 2*n_pml + n_strip + 2*n_clean = 12+2+192``;
+    ``nz = n_sub + n_air + n_top = 4+12+6``; ``ix_port = n_pml + n_ref = 8``),
+    dt 7.626299478123987e-13 s (set by the 0.4 mm cell, so the z extent does not
+    move it), 2400 steps, 1.830 ns simulated.  Run E (``n_line`` 79) is
+    87 x 206 x 22 = 394,284 cells.  An earlier revision of this file said
     68 x 218 x 28 = 415,072 cells, borrowed from ``evidence/h_refine/h040.json``
     [M]: that grid belongs to the eigensolver ladder row and is WRONG here.  The
     corrected figure is the one in ``README.md`` and in the commit message.
+
+    Cost, and it is a FLOOR rather than a measurement: the six field components
+    alone are ``6 x 8 B x cells`` = 13.5 MB on Run A (6 x 8 x 280,984 =
+    13,487,232 B) and 18.9 MB on Run E (6 x 8 x 394,284 = 18,925,632 B).  That
+    arithmetic excludes the materials matrices, the edge lists and interpreter
+    overhead, so a peak RSS is strictly larger and is UNMEASURED -- as is the
+    wall time, since no run of this build has ever been recorded
+    (``evidence/termination/`` holds no ``build_A_50ohm.json`` and no
+    ``build_E_50ohm.json``) -- against the per-run 1400 s wall gate and the
+    ``--mem-ceiling-mb 2000`` trip that both runs are launched under; a trip
+    writes a ``.trip.json`` marker and exits 3 or 4, and a trip is not a
+    licence to relaunch.
 
     The load adds no cell, no column and no solver state: it is a conductance on
     edges that already exist.  The grid is therefore recorded as ACHIEVED in the
@@ -226,11 +285,11 @@ def build_kwargs(args: argparse.Namespace) -> dict:
     from emfit.board import Load
 
     load = Load(args.load_at_mm * 1e-3, LOAD_KIND, float(args.load_ohm))
-    return {
+    kwargs = {
         "h": 1.6e-3,
         "n_sub": 4,
         "n_air": 12,
-        "n_top": 12,
+        "n_top": 6,
         "n_clean": 96,
         "n_strip": 2,
         "n_line": int(args.n_line),
@@ -241,6 +300,8 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         "s21_plane": S21_PLANE,
         "excite": "cw",
     }
+    check_mesh(kwargs)
+    return kwargs
 
 
 def describe_kwargs(kwargs: dict) -> dict:
