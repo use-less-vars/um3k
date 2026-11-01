@@ -1,0 +1,200 @@
+{
+  "bars_quoted_not_adjusted": {
+    "beta_relative": 0.001,
+    "gamma_relative_AC4": 0.03,
+    "s11": 0.001,
+    "s21_match": 0.001,
+    "s21_tripwire": 1.00001
+  },
+  "criteria": {
+    "AC-3": {
+      "achieved": {
+        "s11_abs": 0.33273834094256227,
+        "s11_margin": -0.33173834094256227,
+        "s21_abs": 1.1137907453296516,
+        "s21_abs_minus_one": 0.11379074532965161,
+        "s21_margin": -0.11279074532965161
+      },
+      "bar": "scope:235 -- |S11| <= 0.001 and | |S21| - 1 | <= 0.001",
+      "pass": false,
+      "source_artefact": "A"
+    },
+    "AC-4": {
+      "achieved": null,
+      "bar": "**AC-4. The load value has to matter.** For at least two unmatched loads, `|Gamma|` within 3 % of `|R - Zc| / (R + Zc)`. The 3 % is the tolerance already recorded for the Fresnel case at `:337-339`; it is borrowed, not invented, and if it is the wrong tolerance for this quantity then that is a legitimate objection to it rather than a reason to pick another.",
+      "bar_source": "docs/design/absorbing_termination_scope.md:246-250",
+      "closable_in_run_a": false,
+      "pass": null,
+      "status": "not closable in this batch: AC-4 needs at least two UNMATCHED loads, and the batch carries one matched load (50 ohm) plus one exploratory 100 ohm arm. No proxy is substituted -- deferred to dispatch 2c."
+    },
+    "AC-5": {
+      "achieved": {
+        "headroom": -0.11378074532965154,
+        "s21_abs": 1.1137907453296516,
+        "tripwire": 1.00001
+      },
+      "bar": "scope:251 -- no |s21| above 1.00001 anywhere in the batch; and the beta standard error on the open control at least 3x smaller than the 57 on record, against a PML-terminated reference run",
+      "closable_in_run_a": false,
+      "pass": false,
+      "pass_scope": "magnitude half only",
+      "status": "magnitude half scored; `pass` must NOT be read as AC-5 closed"
+    },
+    "AC-5b": {
+      "achieved": null,
+      "bar": "And the `beta` standard error on the open control is reported against a PML-terminated reference run in the same batch: if it is not at least 3 times smaller than the `57` on record, the seam is not fixed, whatever `S11` says.",
+      "bar_source": "docs/design/absorbing_termination_scope.md:256-258",
+      "closable_in_run_a": false,
+      "pass": null,
+      "status": "not closable in this batch: needs an open control AND a PML-terminated reference run in the same batch; both runs here are loaded and carry reference=None. Deferred to 2c."
+    },
+    "AC-6": {
+      "achieved": {
+        "indices_agree": true,
+        "keys_present": {
+          "load_kind": true,
+          "load_plane_index": true,
+          "load_position_mm": true,
+          "load_units": true,
+          "load_value": true,
+          "s21_plane_index": true
+        },
+        "load_kind": "series_r",
+        "load_plane_index": 50,
+        "load_position_mm": 20.0,
+        "load_units": "ohm",
+        "load_value": 50.0,
+        "s11_magnitude_present": true,
+        "s21_plane_index": 50
+      },
+      "bar": "scope:260-261 -- the run JSON carries the load specification (value, units, plane index) and the index of the plane the S-parameters were extracted from",
+      "note": "re-derived here from the artefact, not copied from the artefact's own AC-6 verdict",
+      "pass": true,
+      "source_artefact": "A"
+    },
+    "AC-7": {
+      "achieved": {
+        "beta_fdtd_rad_per_m": 223.58131180256908,
+        "beta_modal": {
+          "beta_hammerstad_rad_per_m": 223.35306683909533,
+          "beta_modal_rad_per_m": 227.31018858464796,
+          "c0_m_per_s": 299792458.0,
+          "eps_eff": 3.4634763080674587,
+          "f_hz": 5827786408.327286,
+          "h_m": 0.0016,
+          "ms_eps_r": 4.4,
+          "source": "emfit.mode_profile.microstrip_mode_profile (scope:266-268)",
+          "w_m": 0.0032,
+          "z0_ohm": 47.119454769635006
+        },
+        "beta_modal_rad_per_m": 227.31018858464796,
+        "branch_note": "dL must be below lambda_g/2 for the raw phase difference to pick out one branch; lambda_g/2 = 13.8207 mm against dL = 10.0000 mm.",
+        "branch_unambiguous": true,
+        "dL_from": "s21.planes_m[1] of E minus that of A",
+        "dL_m": 0.010000000000000002,
+        "deembedded_slope_expected_rad_per_m": 0.0,
+        "deembedded_slope_rad_per_m": 240.77618158901416,
+        "delta_raw_phase_deg": -128.1026554428571,
+        "delta_raw_phase_rad": -2.2358131180256913,
+        "lambda_g_m": 0.027641459216157366,
+        "raw_phase_deg": [
+          136.45583189911733,
+          8.353176456260204
+        ],
+        "rel_error": 0.016404353915224042,
+        "rel_error_vs_hammerstad": 0.0010219020795365688
+      },
+      "bar": "scope:266-268 -- `beta_FDTD = -d(arg S21)/dL` from two line lengths; compare against `beta_modal` from `emfit.mode_profile` on the same geometry; |beta_FDTD - beta_modal| / beta_modal <= 0.001",
+      "error_budget": {
+        "phase_error_that_alone_consumes_the_bar_deg": 0.13023914446223156,
+        "quadrature_total_at_0p1_deg_as_fraction_of_bar": 0.0009162668604542765,
+        "sigma_beta_from_phase": {
+          "0.1_deg": {
+            "relative_to_bar": 0.7678183115599266,
+            "sigma_beta_rad_per_m": 0.17453292519943292
+          },
+          "1_deg": {
+            "relative_to_bar": 7.678183115599267,
+            "sigma_beta_rad_per_m": 1.7453292519943293
+          }
+        },
+        "standing_wave_systematic_L": 0.0005,
+        "statement": "sigma_beta = radians(sigma_phase)/dL, so the budget is comparable to the 1.0e-3 bar: at 0.1 deg the pure phase term is 0.76 of the bar and the quadrature total is 0.001 of it; at 1.0 deg it is 7.6x the bar, i.e. the run cannot pass on 1 deg phase noise. This is stated, not repaired: the bar is not moved."
+      },
+      "pass": false,
+      "reference_spread": {
+        "beta_hammerstad": 223.35306683909533,
+        "beta_mode_profile": 227.31018858464796,
+        "note": "The two closed forms do not agree at the bar's own scale. AC-7 names emfit.mode_profile (scope:266-268), so that is the graded reference; the Hammerstad-Jensen number is reported beside it because a verdict that moved by more than the bar between two admissible references is a property of the reference, not of the phase.",
+        "relative_difference": 0.017716890130742447
+      },
+      "status": "scored: outside the 0.001 bar",
+      "which_phase": "s21.raw_phase_rad from each artefact. NOT s21.phase_rad: that one is de-embedded with each run's own measured beta and is flat in L by construction."
+    }
+  },
+  "exploratory_100ohm": {
+    "acceptance_criterion": false,
+    "achieved": {
+      "band": [
+        0.3,
+        0.37
+      ],
+      "gamma_model": 0.3594395133748101,
+      "gamma_model_basis": "|R - Zc| / (R + Zc) with Zc = 47.119455 ohm",
+      "inside_band": false,
+      "s11_abs": 0.4741188722731575
+    },
+    "bar_source": "docs/design/absorbing_termination_scope.md:520",
+    "exploratory": true,
+    "note": "A band check, not a verdict: this arm may not be reported as an AC passed or failed.",
+    "pass": null,
+    "ruling": "**Ruling 3 - 25 and 50 Ohm are graded against AC-3; 100 Ohm is exploratory.**"
+  },
+  "inputs": {
+    "A": {
+      "cells": 289168,
+      "cut_mm": 20.0,
+      "grid": [
+        62,
+        212,
+        22
+      ],
+      "load_ohm": 50.0,
+      "n_line": 54,
+      "path": "evidence/termination/build_A_50ohm_v2.json"
+    },
+    "B": {
+      "cells": 289168,
+      "cut_mm": 20.0,
+      "grid": [
+        62,
+        212,
+        22
+      ],
+      "load_ohm": 100.0,
+      "n_line": 54,
+      "path": "evidence/termination/build_B_100ohm_v2.json"
+    },
+    "E": {
+      "cells": 405768,
+      "cut_mm": 30.000000000000004,
+      "grid": [
+        87,
+        212,
+        22
+      ],
+      "load_ohm": 50.0,
+      "n_line": 79,
+      "path": "evidence/termination/build_E_50ohm_v2.json"
+    }
+  },
+  "schema_version": 1,
+  "scope": "docs/design/absorbing_termination_scope.md",
+  "verdict": {
+    "AC-3": false,
+    "AC-4": null,
+    "AC-5": false,
+    "AC-5b": null,
+    "AC-6": true,
+    "AC-7": false
+  }
+}
