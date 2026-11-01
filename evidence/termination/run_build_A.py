@@ -33,6 +33,18 @@ Usage (the one command to type, from the repository root):
 Dry run (builds the arguments, writes nothing, starts no FDTD):
 
     python3 evidence/termination/run_build_A.py --dry-run
+
+Three runs, one code shape
+--------------------------
+Length and load value are flags, not code paths: ``--n-line`` sets the line
+(54 -> 62 columns, Run A; 79 -> 87 columns, Run E), ``--load-at-mm`` sets the
+load's position (and therefore ``dL`` between two runs), ``--load-ohm`` sets
+the termination (50 ohm graded; 100 ohm = the exploratory arm of scope L520
+Ruling 3, a band check and not an acceptance criterion).  Nothing else about
+the arithmetic changes, which is what makes the two lengths in AC-7
+a comparison of lengths rather than of scripts.  The paste-ready invocations
+are in ``evidence/termination/README.md``; the artefacts are graded by
+``evidence/termination/grade_2b.py``.
 """
 
 from __future__ import annotations
@@ -67,10 +79,14 @@ MEM_CEILING_MB_DEFAULT = 2000.0
 RSS_POLL_S = 0.5
 
 # --- the run, as named by the dispatch ---------------------------------------
+# The code shape is fixed: line length and load value are FLAGS (--n-line,
+# --load-ohm), never a second copy of this script.  The names below are what the
+# flags fall back to, so Run A is exactly what was graded.
 LABEL = "A"
 LOAD_VALUE_OHM = 50.0
 LOAD_KIND = "series_r"
 S21_PLANE = "cut"
+N_LINE_DEFAULT = 54
 
 
 def rss_mb() -> float:
@@ -188,18 +204,28 @@ class Trip:
 def build_kwargs(args: argparse.Namespace) -> dict:
     """The one call's arguments, assembled in one place so nothing is retyped.
 
-    The mesh is the h = 0.4 mm *cell* configuration priced by the frozen row
-    ``evidence/h_refine/h040.json`` [M]: substrate 1.6 mm / ``n_sub`` 4 = 0.4 mm
-    cell, ``n_air`` 12, ``n_top`` 12, ``n_clean`` 96 (0.8 mm strip -> ``n_strip`` 2
-    cells at that cell), ``n_line`` 54, ``n_pml`` 6 -- i.e. grid 68 x 218 x 28,
-    415,072 cells, dt 7.626299478123987e-13 s, 2400 steps.  The load adds no cell,
-    no column and no solver state: it is a conductance on edges that already
-    exist, so this grid is expected to come back unchanged and the achieved
-    numbers are recorded, not asserted.
+    The mesh is the h = 0.4 mm *cell* configuration: substrate 1.6 mm / ``n_sub``
+    4 = 0.4 mm cell, ``n_air`` 12, ``n_top`` 12, ``n_clean`` 96 (0.8 mm strip ->
+    ``n_strip`` 2 cells at that cell), ``n_pml`` 6, ``n_ref`` 2, and ``n_line``
+    taken from ``--n-line``.
+
+    PRICE, corrected 2026-11-01: at the default ``n_line`` 54 the grid is
+    **62 x 206 x 28 = 357,616 cells** (``nx = n_pml + n_ref + n_line = 6+2+54``;
+    ``ny = 2*n_pml + n_strip + 2*n_clean = 12+2+192``; ``nz = n_sub + n_air +
+    n_top = 4+12+12``; ``ix_port = n_pml + n_ref = 8``), dt
+    7.626299478123987e-13 s, 2400 steps.  An earlier revision of this file said
+    68 x 218 x 28 = 415,072 cells, borrowed from ``evidence/h_refine/h040.json``
+    [M]: that grid belongs to the eigensolver ladder row and is WRONG here.  The
+    corrected figure is the one in ``README.md`` and in the commit message.
+
+    The load adds no cell, no column and no solver state: it is a conductance on
+    edges that already exist.  The grid is therefore recorded as ACHIEVED in the
+    artefact (``geometry.grid`` / ``geometry.cells``) and not asserted here -- a
+    price that is only quoted is a price nobody checked.
     """
     from emfit.board import Load
 
-    load = Load(args.load_at_mm * 1e-3, LOAD_KIND, LOAD_VALUE_OHM)
+    load = Load(args.load_at_mm * 1e-3, LOAD_KIND, float(args.load_ohm))
     return {
         "h": 1.6e-3,
         "n_sub": 4,
@@ -207,7 +233,7 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         "n_top": 12,
         "n_clean": 96,
         "n_strip": 2,
-        "n_line": 54,
+        "n_line": int(args.n_line),
         "n_pml": 6,
         "nsteps": 2400,
         "loads": (load,),
@@ -249,7 +275,7 @@ def describe_kwargs(kwargs: dict) -> dict:
     }
 
 
-def ac_block(res, *, load_mm: float, peak_mb: float,
+def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
              wall_s: float) -> dict:
     """AC-1..AC-7, each with the achieved value beside its pass/fail.
 
@@ -267,6 +293,36 @@ def ac_block(res, *, load_mm: float, peak_mb: float,
     gamma_plane = res.gamma_plane
     plane_index = res.s21_plane_index
     load_index = res.geometry.get("s21_plane_index")
+
+    # --- AC-7's phase, and why it is the RAW one --------------------------
+    # `line_s21` de-embeds with the run's OWN measured beta: `emfit/ports.py:
+    # 1707-1731` returns `s21 * exp(+1j*beta*distance)`, and the cut branch
+    # calls it as `line_s21(a_port, x_port, a_cut, x_cut, beta)`
+    # (`emfit/studies.py:3242`).  So, with `t` the load's own transmission and
+    # `d` the extraction distance,
+    #
+    #     arg(s21)     = arg t + (beta_meas - beta_true) * d   -> flat in L
+    #     arg(s21_raw) = arg t - beta_true * d                -> slope -beta
+    #
+    # The de-embedded phase is degenerate by construction: whatever the line
+    # does, its slope in L is ~0 because the de-embedding has already removed
+    # beta*d using a beta measured from that same run.  AC-7 is therefore scored
+    # on `s21.raw_phase_deg`, never on `s21.phase_deg`.
+    #
+    # Between two runs the SAME load's arg t cancels exactly (d(arg t)/dL = 0),
+    # which is why AC-7 specifies two line lengths.  Within ONE run the
+    # port-to-cut pair is not an adequate substitute: it assumes arg t = 0 --
+    # true for this matched load and for nothing else -- and arg() returns the
+    # principal value, so one run pins beta only modulo 2*pi/dL.  Both numbers
+    # are recorded below, raw slope AND de-embedded slope, so that nobody has to
+    # guess which of them carried beta.
+    s21_raw = complex(res.s21_raw)
+    x_a, x_b = (float(res.s21_planes[0]), float(res.s21_planes[1]))
+    d_l = x_b - x_a
+    raw_phase_rad = math.atan2(s21_raw.imag, s21_raw.real)
+    deembedded_phase_rad = math.atan2(s21.imag, s21.real)
+    raw_slope = -raw_phase_rad / d_l
+    deembedded_slope = -deembedded_phase_rad / d_l
 
     return {
         "AC-1": {
@@ -337,7 +393,7 @@ def ac_block(res, *, load_mm: float, peak_mb: float,
                    "plane index) and the index of the plane the S-parameters "
                    "were extracted from",
             "achieved": {
-                "load_value": LOAD_VALUE_OHM,
+                "load_value": float(load_ohm),
                 "load_units": "ohm",
                 "load_kind": LOAD_KIND,
                 "load_position_mm": load_mm,
@@ -361,27 +417,49 @@ def ac_block(res, *, load_mm: float, peak_mb: float,
         },
         "AC-7": {
             "bar": "|beta_FDTD - beta_modal| / beta_modal <= 1.0e-3, with "
-                   "beta_FDTD = -d(arg S21)/dL",
+                   "beta_FDTD = -d(arg S21)/dL from TWO line lengths",
+            "which_phase": ("s21.raw_phase_deg -> s21.raw_phase_rad. NOT "
+                            "s21.phase_deg: that one is de-embedded with this "
+                            "run's own measured beta and is flat in L by "
+                            "construction (see phase_degeneracy below)."),
             "achieved": None,
             "pass": None,
             "closable_in_run_a": False,
-            "ac7_status": "not closable in Run A",
+            "ac7_status": ("not closable in one run: AC-7 is a slope across two "
+                           "line lengths, and this artefact is one length"),
             "reason": ("docs/design/absorbing_termination_scope.md:266 says "
                        "`beta_FDTD = -d(arg S21)/dL` **from two line lengths** -- "
-                       "a slope in L, i.e. two runs at two lengths. Run A is one "
-                       "length, so dL is undefined here and no proxy (a "
-                       "one-run phase, a beta from the station fit) is "
-                       "substituted. beta_modal from emfit.mode_profile on this "
-                       "geometry is recorded beside it for the eventual slope, "
-                       "but it is not an AC-7 verdict."),
+                       "a slope in L, i.e. two runs at two lengths. This run is "
+                       "one length, so dL is undefined here and no proxy is "
+                       "substituted. grade_2b.py takes the slope across the two "
+                       "artefacts' own `s21.planes_m`, not a typed-in 10 mm."),
             "beta_modal_recorded": None,
+            "phase_degeneracy": {
+                "dL_m": d_l,
+                "raw_phase_deg": math.degrees(raw_phase_rad),
+                "deembedded_phase_deg": math.degrees(deembedded_phase_rad),
+                "raw_slope_rad_per_m": raw_slope,
+                "deembedded_slope_rad_per_m": deembedded_slope,
+                "expected_deembedded_slope_rad_per_m": 0.0,
+                "single_run_branch_spacing_rad_per_m": 2.0 * math.pi / d_l,
+                "single_run_beta_resolved_only_modulo_branch": True,
+                "note": ("The de-embedded slope is the one that should read "
+                         "~0 -- it is degenerate by construction and must "
+                         "never be quoted as a beta. The raw slope is the "
+                         "AC-7 quantity, but from ONE run it equals "
+                         "beta - arg(t)/dL: that assumes arg t = 0, and it is "
+                         "only defined modulo the branch spacing above. "
+                         "Neither number is an AC-7 verdict."),
+            },
         },
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Run A: 50 ohm termination at p2, s21_plane='cut', one shot.")
+        description=(f"Termination build: one load at p2, s21_plane='cut', one "
+                     f"shot. Defaults are Run A ({LOAD_VALUE_OHM:g} ohm, "
+                     f"n_line {N_LINE_DEFAULT}, load at 20 mm)."))
     ap.add_argument("--out", default=str(OUT_DEFAULT),
                     help="artefact path (default: %(default)s)")
     ap.add_argument("--load-at-mm", type=float, default=20.0,
@@ -389,6 +467,23 @@ def main(argv: list[str] | None = None) -> int:
                          "last measurement station, one station inside the far "
                          "absorber; the mesh quantises it to a column and the "
                          "study validates ix_port < ix_load < nx)")
+    ap.add_argument("--n-line", type=int, default=N_LINE_DEFAULT,
+                    help="line cells between the reference plane and the top of "
+                         "the grid [cells]: nx = n_pml + n_ref + n_line, so 54 "
+                         "gives 62 columns (Run A) and 79 gives 87 (Run E, the "
+                         "second length AC-7 needs).")
+    ap.add_argument("--load-ohm", type=float, default=LOAD_VALUE_OHM,
+                    help="series_r load resistance [ohm] (default: %(default)s "
+                         "= the matched load AC-3/AC-6/AC-7 are written for). "
+                         "100.0 is the exploratory 100 ohm arm (scope L520 "
+                         "Ruling 3): graded against a band by grade_2b.py as "
+                         "EXPLORATORY, not as an AC.")
+    ap.add_argument("--label", default=None,
+                    help="run label written into the artefact (default: derived "
+                         "from the --out stem, build_E_50ohm.json -> E). Three "
+                         "runs share this script, so a hard-coded label would "
+                         "make one artefact claim to be another -- exactly the "
+                         "provenance defect AC-6 exists to prevent.")
     ap.add_argument("--mem-ceiling-mb", type=float,
                     default=MEM_CEILING_MB_DEFAULT,
                     help="hard peak-RSS ceiling [MB] (default: %(default)s)")
@@ -397,6 +492,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="build and print the call, write nothing, run no FDTD")
     args = ap.parse_args(argv)
+    label = (args.label if args.label else
+             (Path(args.out).stem.replace("build_", "").split("_")[0].upper()
+              or LABEL))
 
     out_path = Path(args.out).resolve()
     started = time.monotonic()
@@ -405,8 +503,8 @@ def main(argv: list[str] | None = None) -> int:
 
     meta = {
         "schema_version": 1,
-        "study": "termination-build-A",
-        "label": LABEL,
+        "study": f"termination-build-{label}",
+        "label": label,
         "status": "pending",
         "started_utc": started_utc,
         "cwd": str(Path.cwd()),
@@ -486,7 +584,8 @@ def main(argv: list[str] | None = None) -> int:
     # null.
     beta_modal = None
 
-    ac = ac_block(res, load_mm=args.load_at_mm, peak_mb=peak_mb, wall_s=wall_s)
+    ac = ac_block(res, load_mm=args.load_at_mm, load_ohm=args.load_ohm,
+                  peak_mb=peak_mb, wall_s=wall_s)
     ac["AC-7"]["beta_modal_recorded"] = beta_modal
 
     s21 = complex(res.s21)
@@ -505,7 +604,7 @@ def main(argv: list[str] | None = None) -> int:
             "tripped": False,
         }),
         "run": {
-            "label": LABEL,
+            "label": label,
             "source_port": "p1",
             "load_port": "p2",
             "function": "emfit.studies.microstrip_wave",
@@ -534,7 +633,15 @@ def main(argv: list[str] | None = None) -> int:
             "real": s21.real,
             "imag": s21.imag,
             "raw_magnitude": abs(s21_raw),
+            "raw_phase_rad": float(np.angle(s21_raw)),
             "raw_phase_deg": float(np.degrees(np.angle(s21_raw))),
+            "phase_deg_basis": (
+                "s21 de-embedded with this run's own measured beta "
+                "(line_s21, emfit/ports.py:1729): slope in L ~0 BY "
+                "CONSTRUCTION. Not the AC-7 quantity."),
+            "raw_phase_deg_basis": (
+                "s21_raw, no de-embedding applied: this is the AC-7 "
+                "quantity, and it carries -beta*L."),
             "planes_m": [float(res.s21_planes[0]), float(res.s21_planes[1])],
             "s21_plane_index": res.s21_plane_index,
         },
@@ -564,7 +671,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     write_json(out_path, payload)
     print(f"wrote {out_path}")
-    print(f"cells={cells} wall={wall_s:.1f}s peak_rss={peak_mb:.1f}MB "
+    print(f"label={label} cells={cells} wall={wall_s:.1f}s "
+          f"peak_rss={peak_mb:.1f}MB "
           f"|s21|={abs(s21):.9f} arg={np.degrees(np.angle(s21)):.4f}deg "
           f"|s11|={abs(s11):.6e} cut_plane={res.s21_plane_index}")
     return 0
