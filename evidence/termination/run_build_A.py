@@ -135,6 +135,10 @@ LOAD_KIND = "series_r"
 S21_PLANE = "cut"
 N_LINE_DEFAULT = 54
 
+# Series-R anchor for the s11 prose below: the twin reference's zc, prose only,
+# never passed to a solver, fit or verdict.
+Z0_SERIES_ANCHOR = 47.53661998575833
+
 
 def rss_mb() -> float:
     """Peak RSS of this process [MB].
@@ -1143,6 +1147,21 @@ def main(argv: list[str] | None = None) -> int:
     s11 = complex(res.gamma_port)
     s11_at_plane = complex(res.gamma_plane)
 
+    # The two-wave modulus and the series-R anchor it is quoted against: read
+    # once here, used both as the emitted number and as the prose that compares
+    # them, so the two cannot drift apart.
+    s11_two_wave_mag = finite_or_none(abs(complex(res.gamma)))
+    s11_two_wave_anchor = (args.load_ohm
+                           / (2.0 * Z0_SERIES_ANCHOR + args.load_ohm))
+    s11_reason_clause = (
+        f"On the R={args.load_ohm:g} record it reads "
+        f"{s11_two_wave_mag:.4f} against the series-R anchor "
+        f"{s11_two_wave_anchor:.5f}, i.e. "
+        f"{((s11_two_wave_anchor - s11_two_wave_mag)
+            / s11_two_wave_anchor * 100.0):.2f} percent low."
+        if s11_two_wave_mag is not None else
+        f"On the R={args.load_ohm:g} record the magnitude could not be read.")
+
     # The bookkeeping keys in ``run`` below say what the numbers above were
     # divided by, so a reader can recompute them from the file alone: the
     # impedance the station fit produced, the forward ratio the reference
@@ -1288,7 +1307,7 @@ def main(argv: list[str] | None = None) -> int:
                 and not isinstance(g.get("s21_plane_requested"), str)),
         },
         "s11": {
-            "magnitude": finite_or_none(abs(complex(res.gamma))),
+            "magnitude": s11_two_wave_mag,
             "magnitude_one_wave_station_fit": finite_or_none(abs(s11)),
             "phase_deg": finite_or_none(np.degrees(np.angle(s11))),
             "deembed_distance_m": float(res.deembed_distance),
@@ -1302,11 +1321,17 @@ def main(argv: list[str] | None = None) -> int:
             "validation_reason": (
                 "the magnitude above is the modulus of the two-wave B/A, not "
                 "the one-wave station-fit reflection (that is kept beside it "
-                "as magnitude_one_wave_station_fit).  On the R=50 record it "
-                "reads 0.3256 against the series-R anchor 0.34465, i.e. 5.54 "
-                "percent low.  The residual disagreement is unexplained: no "
+                "as magnitude_one_wave_station_fit).  "
+                + s11_reason_clause +
+                "  The residual disagreement is unexplained: no "
                 "read of station_fit.gamma_v or of the reference construction "
-                "has been done, so the status stays."),
+                "has been done, so the status stays. "
+                "Residual is configuration-dependent: 5.5% (n=64, load 20mm), "
+                "7.6% (n=54, 100 ohm), 13.8% (n=79, load 30mm). The two-wave "
+                "modulus is better than one-wave but not converged -- the load's "
+                "near-field extends to the last station and contaminates the fit. "
+                "Moving the extraction plane further from the load, or modal "
+                "projection, would reduce it."),
         },
         "s11_at_plane": {
             "magnitude": finite_or_none(abs(s11_at_plane)),

@@ -273,7 +273,7 @@
     "magnitude": 0.47388432093505184,
     "magnitude_one_wave_station_fit": 0.3558844270127778,
     "phase_deg": 158.12878101066025,
-    "validation_reason": "the magnitude above is the modulus of the two-wave B/A, not the one-wave station-fit reflection (that is kept beside it as magnitude_one_wave_station_fit).  On the R=50 record it reads 0.3256 against the series-R anchor 0.34465, i.e. 5.54 percent low.  The residual disagreement is unexplained: no read of station_fit.gamma_v or of the reference construction has been done, so the status stays.",
+    "validation_reason": "the magnitude above is the modulus of the two-wave B/A, not the one-wave station-fit reflection (that is kept beside it as magnitude_one_wave_station_fit).  On the R=100 record it reads 0.4739 against the series-R anchor 0.51263, i.e. 7.56 percent low.  The residual disagreement is unexplained: no read of station_fit.gamma_v or of the reference construction has been done, so the status stays. Residual is configuration-dependent: 5.5% (n=64, load 20mm), 7.6% (n=54, 100 ohm), 13.8% (n=79, load 30mm). The two-wave modulus is better than one-wave but not converged -- the load's near-field extends to the last station and contaminates the fit. Moving the extraction plane further from the load, or modal projection, would reduce it.",
     "validation_status": "UNVALIDATED"
   },
   "s11_at_plane": {
