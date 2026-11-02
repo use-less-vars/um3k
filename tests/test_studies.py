@@ -1662,3 +1662,141 @@ def test_gamma_port_and_gamma_plane_are_different_quantities():
     # Two quantities, a third of a magnitude apart -- not rounding.
     assert abs(abs(at_cut.gamma_port) - abs(at_cut.gamma_plane)) > 1e-2
 
+
+
+# ---------------------------------------------------------------------------
+# the two AC-4 writer fields
+# ---------------------------------------------------------------------------
+def _load_run_build_a():
+    """Import ``evidence/termination/run_build_A.py`` as a module.
+
+    The writer is a script rather than a package member, so it is reachable
+    only by path.  Its module body imports the standard library only and its
+    ``main`` sits behind ``if __name__ == "__main__"``, so importing it writes
+    nothing and runs no solve.
+    """
+    import sys
+
+    evidence = Path(__file__).resolve().parents[1] / "evidence" / "termination"
+    if str(evidence) not in sys.path:
+        sys.path.insert(0, str(evidence))
+    import run_build_A
+
+    return run_build_A
+
+
+def _stub_reference():
+    """A stand-in for a ``LineReference``: six attributes are all it reads."""
+
+    class Stub:
+        zc = 47.5 + 1.8j
+        gamma = 3.1 + 231.0j
+        station_x = np.array([2.0e-3, 6.8e-3, 11.6e-3])
+
+    return Stub()
+
+
+class TestAc4ReferenceAndDeembedWriterFields:
+    """The two artefact fields an AC-4 check has to read, and nothing else.
+
+    ``run.reference`` records the line the reflection was measured on, and
+    ``s21.deembed_distance_m`` records how far the reflection was moved to
+    reach the port plane.  A grader that compares a measured ``|Gamma|``
+    against ``|R - Zc|/(2Zc + R)`` needs the first or it has no ``Zc``, and it
+    needs the second only if it wants to know the gap is not zero.  Neither
+    was in any artefact before this writer change, so neither could be read
+    and the AC-4 block stayed ``achieved: None``.
+
+    All three claims here are cheap: two stub-level calls and one six-cell
+    line, about four seconds together.
+    """
+
+    def test_run_reference_publishes_the_line_it_was_given(self):
+        """``run_reference`` is the record, not a rearrangement of it.
+
+        Six keys, the line's own numbers in them, and ``None`` in, ``None``
+        out -- that last one is the reference-free case, which must stay a
+        JSON ``null`` rather than becoming a dict of ``nan``.
+
+        The key names are deliberately unsuffixed (``zc_re``, not
+        ``zc_re_ohm``), which is what makes this a separate helper from
+        :func:`describe_reference` and not a duplicate of it: the artefact's
+        ``run`` block already names its units in the key, and an AC-4 reader
+        that looked for ``zc_ohm`` would find nothing.
+        """
+        run_build_A = _load_run_build_a()
+        got = run_build_A.run_reference(_stub_reference())
+
+        assert set(got) == {
+            "zc_re",
+            "zc_im",
+            "gamma_re",
+            "gamma_im",
+            "station_span_m",
+            "n_stations",
+        }
+        assert got["zc_re"] == pytest.approx(47.5)
+        assert got["zc_im"] == pytest.approx(1.8)
+        assert got["gamma_re"] == pytest.approx(3.1)
+        assert got["gamma_im"] == pytest.approx(231.0)
+        assert got["station_span_m"] == pytest.approx(9.6e-3)
+        assert got["n_stations"] == 3
+
+        # No reference in play is an absent field, not a zeroed one.
+        assert run_build_A.run_reference(None) is None
+
+    def test_deembed_distance_is_the_port_to_first_station_gap(self):
+        """``deembed_distance`` is ``station_x[0] - ix_port * cell``, not a span.
+
+        ``MicrostripWave.deembed_distance`` is documented as the distance the
+        reflection was moved upstream, and that is the port plane to the
+        *first* station (``emfit/studies.py:3263``, docstring ``:1532-1533``).
+        It is emphatically not "the s21 plane span minus the port plane":
+        on this record the span is ``station_x[-1] - station_x[0]`` and the
+        two numbers differ by the probe span, here about 4.8 mm.
+
+        The identity is worth pinning because both writer fields that carry it
+        -- ``s11.deembed_distance_m`` and ``s21.deembed_distance_m`` -- are
+        the *same attribute* of the same object, so they are equal by
+        construction and an assertion that they agree would be tautological.
+        What is not tautological is that the attribute is this gap and not
+        some span, and a writer that recomputed either field from
+        ``s21_planes_m`` would get a number 2.4x too large and still look
+        plausible.
+        """
+        kwargs = _cheap_strip_kwargs(
+            n_sub=1, n_strip=2, n_line=6,
+            x_first=6.4e-3, x_last=11.2e-3, nsteps=40,
+            loads=(Load(8.0e-3, "series_r", 50.0),))
+        res = studies.microstrip_wave(**kwargs)
+
+        geometry = res.geometry
+        expected = float(res.station_x[0] - geometry["ix_port"] * geometry["cell"])
+        assert res.deembed_distance == pytest.approx(expected)
+        assert res.deembed_distance > 0.0
+        # ... and it is not the probe span, which is what a mis-wiring uses.
+        assert res.deembed_distance != pytest.approx(
+            float(res.station_x[-1] - res.station_x[0]))
+
+    def test_a_reference_free_run_keeps_the_gap_and_drops_the_reference(self):
+        """The two fields are independent: one absent does not null the other.
+
+        A run with no ``reference`` builds no ``LineReference``, so
+        ``run.reference`` is ``None`` -- and the reflection is still measured
+        on the stations and still moved to the port plane, so the gap is a
+        finite number.  A writer that emitted the distance only when a
+        reference was in play would silently drop the field from every
+        reference-free arm, which is all of them today.
+        """
+        run_build_A = _load_run_build_a()
+        kwargs = _cheap_strip_kwargs(
+            n_sub=1, n_strip=2, n_line=6,
+            x_first=6.4e-3, x_last=11.2e-3, nsteps=40,
+            loads=(Load(8.0e-3, "series_r", 50.0),))
+        assert kwargs.get("reference") is None
+
+        res = studies.microstrip_wave(**kwargs)
+
+        assert run_build_A.run_reference(kwargs.get("reference")) is None
+        assert np.isfinite(res.deembed_distance)
+

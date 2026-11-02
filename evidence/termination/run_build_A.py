@@ -494,6 +494,37 @@ def describe_reference(reference) -> dict | None:
     }
 
 
+def run_reference(reference) -> dict | None:
+    """The six numbers of the reference the run was given, or ``None``.
+
+    This is ``run.reference`` in the loaded artefact.  It is NOT the field the
+    ``reference_in_play`` comment calls replaced: that one was
+    ``kwargs.get("reference")``, read before any reference existed and so
+    structurally ``None`` on every record, twin runs included.  This one is
+    built from the ``LineReference`` object actually handed to the solver, and
+    is ``None`` only when there was none -- the same condition as
+    ``loaded_without_reference``.
+
+    Keys are the dispatch's names, not ``describe_reference``'s suffixed ones:
+    ``zc_re``/``zc_im``/``gamma_re``/``gamma_im``/``station_span_m``/
+    ``n_stations``.  ``describe_reference`` above still carries the full
+    description (type, built_by, gamma_im basis); this is the compact record
+    beside it, so a consumer wanting the two impedances and the two propagation
+    constants does not have to unpack that description.
+    """
+    if reference is None:
+        return None
+    sx = reference.station_x
+    return {
+        "zc_re": float(reference.zc.real),
+        "zc_im": float(reference.zc.imag),
+        "gamma_re": float(reference.gamma.real),
+        "gamma_im": float(reference.gamma.imag),
+        "station_span_m": float(sx[-1]) - float(sx[0]),
+        "n_stations": int(len(sx)),
+    }
+
+
 def describe_kwargs(kwargs: dict) -> dict:
     """JSON-safe view of the call, including the load specification (AC-6)."""
     from emfit.board import Load  # noqa: F401  (documented import site)
@@ -1313,6 +1344,13 @@ def main(argv: list[str] | None = None) -> int:
                 "when a twin was run, and under run.reference_produced in the "
                 "twin's own file.  This field is the spec of the object the "
                 "solver was called with, not a second copy of it."),
+            # The reference object's own six numbers, from the object the
+            # solver was called with (``run_reference`` above).  ``None`` when
+            # no reference was supplied, which is the only case in which the
+            # run was normalised against an assumed line constant.  Additive:
+            # no existing key changes, and ``reference_in_play`` beside it is
+            # still the full description of the same object.
+            "reference": run_reference(loaded_kwargs.get("reference")),
             **twin_fields,
             "loaded_without_reference": bool(res.loaded_without_reference),
             "loaded_without_reference_note": (
