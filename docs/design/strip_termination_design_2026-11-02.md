@@ -1,3 +1,5 @@
+**PREMISE REFUTED 2026-11-03.** See `strip_termination_refuted_2026-11-03.md`. The D1 fix was applied, broke two pinned design tests, and was reverted. **The PML-absorbed strip region is the far-end termination for the default study** — a wave threading into the CPML attenuates outbound, reflects weakly, attenuates on the way back. Shortening the strip to `nx_clean` removes the outbound damping and creates an open end. Do not implement this design without first reading the refutation.
+
 # The strip reaches the far wall: making the load terminate the line
 
 **Status:** proposal, not applied. No source edited, no solve run.
