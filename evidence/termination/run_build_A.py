@@ -409,6 +409,28 @@ def build_kwargs(args: argparse.Namespace) -> dict:
                       else int(args.s21_plane_index)),
         "excite": "cw",
     }
+    if args.s21_plane_index is None and kwargs["loads"]:
+        # DEFAULT PLANE POLICY.  With the flag absent the probe is S21_PLANE
+        # ("cut"), which the library reads as the LOAD's own node column -- a
+        # plane sitting on the lumped element and reading its near field: the
+        # recorded Run A artefacts give |s21| 1.106-1.134 on that column and
+        # 0.760-0.807 one column downstream, same mesh, ratio 1.45-1.49.  The
+        # default is therefore one column DOWNSTREAM of the load's own column:
+        # still fixed by the load's position alone, still the first plane the
+        # element is behind, and no longer on it.  The column is re-derived
+        # here exactly as emfit/studies.py:2727 places the load,
+        #     ix_load = int(floor(position / cell + 0.5)),   cell = h / n_sub,
+        # so the default follows a change of mesh or of load position instead
+        # of being a number typed twice.  The payload records
+        # plane_from_default_policy=True beside the requested plane, so a
+        # column chosen here is never read as one chosen by hand.  No load in
+        # the kwargs (the load-free twin) keeps "cut" and the station span.
+        import math
+
+        cell_m = float(kwargs["h"]) / float(kwargs["n_sub"])
+        ix_load = int(math.floor(float(kwargs["loads"][0].position)
+                                 / cell_m + 0.5))
+        kwargs["s21_plane"] = ix_load + 1
     check_mesh(kwargs)
     return kwargs
 
@@ -706,7 +728,7 @@ def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
 
 
 def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
-             wall_s: float) -> dict:
+             wall_s: float, plane_from_default_policy: bool = False) -> dict:
     """AC-1..AC-7, each with the achieved value beside its pass/fail.
 
     A criterion that Run A structurally cannot close says so in
@@ -726,7 +748,42 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
     s11_abs = abs(s11)
     gamma_plane = res.gamma_plane
     plane_index = res.s21_plane_index
-    load_index = res.geometry.get("s21_plane_index")
+    # --- where the load actually is, and where the far PML starts ---------
+    # ``load_index`` used to be read back as res.geometry["s21_plane_index"],
+    # which is the SAME int(ix_extract) the wave loop stores (emfit/studies.py
+    # :3608 writes it, :3669 returns it), so the old indices_agree compared a
+    # value with itself and could not fail.  The load's own node column is
+    # re-derived here from the load position and the cell size, with the very
+    # formula emfit/studies.py:2727 uses to place the element,
+    #     ix_load = int(floor(position / cell + 0.5)),   cell = h / n_sub,
+    # and it is None when this run placed no load at all (geometry["loads"] is
+    # written only when one was used, emfit/studies.py:3601).
+    _loads_used = res.geometry.get("loads") or ()
+    _cell_m = float(res.geometry.get("cell") or 0.0)
+    load_column = (int(math.floor(float(load_mm) * 1e-3 / _cell_m + 0.5))
+                   if _loads_used and _cell_m > 0.0 else None)
+    # The last node column that is NOT inside the xmax PML: ``nx`` counts
+    # nodes, the absorber owns the last ``n_pml`` cells, so ``nx - n_pml - 1``
+    # is the last clean column -- a plane beyond it reads the PML, not the line.
+    _nx = res.geometry.get("nx")
+    _npml = res.geometry.get("n_pml")
+    last_clean_plane = (int(_nx) - int(_npml) - 1
+                        if _nx is not None and _npml is not None else None)
+    inside_xmax_pml = (None if last_clean_plane is None or plane_index is None
+                       else bool(int(plane_index) > last_clean_plane))
+    # AC-6's agreement is with the REQUEST, not with a second copy of the
+    # answer: an int request has to be the column the record says it landed
+    # on, the name "cut" has to be the load's own column, and no request at
+    # all cannot agree with anything.
+    _s21_requested = res.geometry.get("s21_plane_requested")
+    if plane_index is None or _s21_requested is None:
+        indices_agree = False
+    elif isinstance(_s21_requested, str):
+        indices_agree = bool(load_column is not None
+                             and int(plane_index) == int(load_column))
+    else:
+        indices_agree = bool(int(plane_index)
+                             == int(round(float(_s21_requested))))
 
     # --- AC-7's phase, and why it is the RAW one --------------------------
     # `line_s21` de-embeds with the run's OWN measured beta: `emfit/ports.py:
@@ -835,28 +892,40 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
                 "load_units": "ohm",
                 "load_kind": LOAD_KIND,
                 "load_position_mm": load_mm,
-                "load_plane_index": load_index,
+                # The load's own node column, re-derived (studies.py:2727),
+                # NOT read back from the extraction plane.
+                "load_plane_index": load_column,
                 "s21_plane_index": plane_index,
+                "load_column": load_column,
+                "plane_offset_from_load": (
+                    None if load_column is None or plane_index is None
+                    else int(plane_index) - int(load_column)),
+                "last_clean_plane": last_clean_plane,
+                "inside_xmax_pml": inside_xmax_pml,
                 # AC-6 is NOT relaxed for a plane sweep: an acceptance gate
                 # must not be widened by the run that would benefit, and a
                 # plane picked from geometry could then pass unnoticed.  It
                 # therefore reads pass=false on any downstream-plane artefact,
-                # and this flag says so instead of hiding it.
+                # and this flag says so instead of hiding it.  A plane chosen by
+                # build_kwargs' default policy is not a sweep at all, so the flag
+                # is gated on ``not plane_from_default_policy``: otherwise every
+                # flag-off run would read as a sweep and AC-6 would look
+                # deliberately failed on the artefact it is meant to score.
                 "plane_sweep_diagnostic": bool(
-                    res.geometry.get("s21_plane_requested") is not None
+                    not plane_from_default_policy
+                    and res.geometry.get("s21_plane_requested") is not None
                     and not isinstance(
                         res.geometry.get("s21_plane_requested"), str)),
-                "indices_agree": bool(load_index is not None
-                                      and plane_index is not None
-                                      and int(load_index) == int(plane_index)),
+                "indices_agree": bool(indices_agree),
                 "gamma_plane_recorded": bool(
                     gamma_plane is not None
                     and math.isfinite(complex(gamma_plane).real)
                     and math.isfinite(complex(gamma_plane).imag)),
             },
-            "pass": bool(load_index is not None
-                         and plane_index is not None
-                         and int(load_index) == int(plane_index)
+            # pass = the plane is the one that was ASKED for, it is not
+            # inside the xmax PML, and gamma_plane was recorded finite.
+            "pass": bool(indices_agree
+                         and inside_xmax_pml is not True
                          and math.isfinite(complex(gamma_plane).real)
                          and math.isfinite(complex(gamma_plane).imag)),
             "closable_in_run_a": True,
@@ -1121,8 +1190,16 @@ def main(argv: list[str] | None = None) -> int:
     # null.
     beta_modal = None
 
+    # Whether the plane came from build_kwargs' default policy rather than from
+    # --s21-plane-index.  Read from the flag, which is what that policy itself
+    # reads, and threaded into ac_block because ``plane_sweep_diagnostic`` must
+    # keep meaning "the CALLER passed an int": after the default policy lands an
+    # int in geometry["s21_plane_requested"], geometry alone cannot tell the two
+    # apart, so a flag-off run would otherwise be scored as a plane sweep.
+    plane_from_default_policy = bool(args.s21_plane_index is None)
     ac = ac_block(res, load_mm=args.load_at_mm, load_ohm=args.load_ohm,
-                  peak_mb=peak_mb, wall_s=wall_s)
+                  peak_mb=peak_mb, wall_s=wall_s,
+                  plane_from_default_policy=plane_from_default_policy)
     ac["AC-7"]["beta_modal_recorded"] = beta_modal
 
     # Flag-off: both dicts are EMPTY, so the artefact keeps the keys and the
@@ -1220,6 +1297,22 @@ def main(argv: list[str] | None = None) -> int:
             "load_port": "p2",
             "function": "emfit.studies.microstrip_wave",
             "kwargs": describe_kwargs(loaded_kwargs),
+            # The reference spec ACTUALLY in play on this call: the same view
+            # ``describe_kwargs`` writes at run.kwargs.reference (:520), taken
+            # from ``loaded_kwargs`` -- the dict the solver was called with,
+            # where the twin's LineReference is threaded by key.  None only when
+            # no reference was supplied.  (Replaces a ``"reference":
+            # kwargs.get("reference")`` field, which was None by construction on
+            # EVERY record -- including ones normalised against a twin -- and so
+            # read as "no reference was applied" when one had been.)
+            "reference_in_play": describe_reference(
+                loaded_kwargs.get("reference")),
+            "reference_note": (
+                "the reference's own record -- gamma, zc, station span, the "
+                "twin's artefact path -- is under run.twin in this artefact "
+                "when a twin was run, and under run.reference_produced in the "
+                "twin's own file.  This field is the spec of the object the "
+                "solver was called with, not a second copy of it."),
             **twin_fields,
             "loaded_without_reference": bool(res.loaded_without_reference),
             "loaded_without_reference_note": (
@@ -1302,9 +1395,26 @@ def main(argv: list[str] | None = None) -> int:
             "planes_m": [float(res.s21_planes[0]), float(res.s21_planes[1])],
             "s21_plane_index": res.s21_plane_index,
             "s21_plane_requested": g.get("s21_plane_requested"),
+            # True when that plane came from the default policy in
+            # build_kwargs rather than from --s21-plane-index.
+            "plane_from_default_policy": plane_from_default_policy,
+            # Gated on the same condition as AC-6's copy: a plane the default
+            # policy chose is not a sweep, and the diagnostic must mean "the
+            # caller asked for an index".
             "plane_sweep_diagnostic": bool(
-                g.get("s21_plane_requested") is not None
+                not plane_from_default_policy
+                and g.get("s21_plane_requested") is not None
                 and not isinstance(g.get("s21_plane_requested"), str)),
+            # Which policy put the probe where it landed: the flag, or the
+            # default (build_kwargs).  Stated per artefact so a plane read off
+            # this file cannot be mistaken for one that was chosen.
+            "plane_policy": ("explicit" if args.s21_plane_index is not None
+                             else "default"),
+            # The distance the cut branch de-embeds across, the same attribute
+            # the s11 block quotes below (emfit/studies.py:3266).
+            "deembed_distance_m": (
+                None if res.deembed_distance is None
+                else float(res.deembed_distance)),
         },
         "s11": {
             "magnitude": s11_two_wave_mag,
@@ -1352,6 +1462,23 @@ def main(argv: list[str] | None = None) -> int:
         "line": {
             "beta": float(res.beta),
             "beta_model": float(res.beta_model),
+            # The two-wave fit's beta (computed emfit/studies.py:3640, field
+            # declared :1599): two independent numbers for the same line
+            # constant, so the artefact can show both.
+            "beta_two_wave": (
+                "ABSENT" if getattr(res, "beta_two_wave", None) is None
+                else finite_or_none(res.beta_two_wave)),
+            # ABSENT, deliberately and for a stated reason: sigma_beta_from_curvature
+            # is a function (emfit/ports.py, imported at emfit/studies.py:76
+            # and called at :2006, :2184, :3112) whose result is the local
+            # ``sigma_beta``; the returned record carries no field of that
+            # name, so this run cannot quote it without re-running the
+            # curvature estimate itself.  Not recomputed here and not guessed
+            # -- it is requested from emfit/studies.py (see REQUEST).
+            "sigma_beta_from_curvature": (
+                "ABSENT"
+                if getattr(res, "sigma_beta_from_curvature", None) is None
+                else finite_or_none(res.sigma_beta_from_curvature)),
             "z0_re": float(complex(res.z0).real),
             "z0_im": float(complex(res.z0).imag),
             "eps_eff": (None if res.loaded_without_reference
@@ -1371,10 +1498,22 @@ def main(argv: list[str] | None = None) -> int:
     }
     write_json(out_path, payload)
     print(f"wrote {out_path}")
+    # The ``|s11|`` printed here is the TWO-WAVE modulus: the same number the
+    # payload writes as s11.magnitude (``s11_two_wave_mag`` above = |B/A| of
+    # fit_beta(n_wave=2), referred to z=0).  It used to print ``abs(s11)``,
+    # which is the one-wave station-fit reflection -- a different quantity,
+    # kept in the payload as magnitude_one_wave_station_fit and quoted in
+    # parentheses here, labelled, so the two are never read for each other.
+    s11_two_wave_txt = (f"{s11_two_wave_mag:.6e}"
+                        if s11_two_wave_mag is not None
+                        else f"{abs(s11):.6e}(two-wave absent,"
+                             f" one-wave value)")
     print(f"label={label} cells={cells} wall={wall_s:.1f}s "
           f"peak_rss={peak_mb:.1f}MB "
           f"|s21|={abs(s21):.9f} arg={np.degrees(np.angle(s21)):.4f}deg "
-          f"|s11|={abs(s11):.6e} cut_plane={res.s21_plane_index}")
+          f"|s11|={s11_two_wave_txt} "
+          f"(one-wave_station_fit |s11|={abs(s11):.6e}) "
+          f"cut_plane={res.s21_plane_index}")
     return 0
 
 
