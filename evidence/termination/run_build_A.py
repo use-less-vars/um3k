@@ -675,7 +675,9 @@ def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
                 "gamma_port, the reflection moved to the port plane.  "
                 "gamma_plane is nan on every record extracted over the station "
                 "span (emfit/studies.py MicrostripWave.gamma_plane), so it is "
-                "left out rather than written as nan."),
+                "left out rather than written as nan.  "
+                "still the one-wave station-fit reflection at the port plane; "
+                "the two-wave path was repointed on the loaded record only."),
         },
         "line": {
             "beta": float(twin.beta),
@@ -1286,19 +1288,25 @@ def main(argv: list[str] | None = None) -> int:
                 and not isinstance(g.get("s21_plane_requested"), str)),
         },
         "s11": {
-            "magnitude": finite_or_none(abs(s11)),
+            "magnitude": finite_or_none(abs(complex(res.gamma))),
+            "magnitude_one_wave_station_fit": finite_or_none(abs(s11)),
             "phase_deg": finite_or_none(np.degrees(np.angle(s11))),
             "deembed_distance_m": float(res.deembed_distance),
             "basis": (
                 "gamma_port, the reflection moved to the port plane "
                 "(emfit/studies.py:3266, declared at :1607; docstring "
                 ":1527-1531).  Plane-independent: it does not move when the "
-                "extraction plane moves."),
+                "extraction plane moves.  "
+                "modulus of B/A from fit_beta(n_wave=2), referred to z=0, plane-invariant at alpha=0, not de-embedded. phase_deg is unchanged and belongs to the one-wave station fit at the port plane, NOT to the magnitude beside it; no two-wave phase is reported because no two-wave beta is stored."),
             "validation_status": "UNVALIDATED",
             "validation_reason": (
-                "station fit spans load (10.4-18.8 mm, load at 20.0 mm); "
-                "reference_residual 1.0519 (5.2% off unity); pending library "
-                "read of station_fit.gamma_v and reference construction"),
+                "the magnitude above is the modulus of the two-wave B/A, not "
+                "the one-wave station-fit reflection (that is kept beside it "
+                "as magnitude_one_wave_station_fit).  On the R=50 record it "
+                "reads 0.3256 against the series-R anchor 0.34465, i.e. 5.54 "
+                "percent low.  The residual disagreement is unexplained: no "
+                "read of station_fit.gamma_v or of the reference construction "
+                "has been done, so the status stays."),
         },
         "s11_at_plane": {
             "magnitude": finite_or_none(abs(s11_at_plane)),
