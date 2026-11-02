@@ -268,3 +268,19 @@ build: `line.beta` across runs A / E / B must agree to **< 1 %** on identical ge
 same cross-section, differing only in the load), and if it does not, the twin fix carries a defect
 of its own and that defect is DR-15. The check has not been run; this line only reserves the number
 and states what it is for. It must not be cited as an open defect.
+
+---
+
+## DR-18 - AC-6 compared a value with itself, so the check could not fail
+
+**Severity:** record integrity. **Status:** fixed in `dbb76f7`; void on every artefact written before it. **Found:** 2026-11-02 during the shorted-strip reconnaissance; confirmed against source in the s21-shorted-stub-verification pass.
+
+The writer's AC-6 `indices_agree` test read the extraction index back out of the record and compared it against the same integer the wave loop had just stored there. Both sides were `int(ix_extract)`, so the comparison was an identity: it reports `True` for every plane value, including planes placed inside the xmax PML, and no input could make it report `False`. As the writer's own in-code note records at `evidence/termination/run_build_A.py:752-756` [R], the old check compared `res.s21_plane_index` with `res.geometry["s21_plane_index"]`, which are the same quantity.
+
+Any recorded AC-6 pass on a pre-`dbb76f7` artefact is therefore void as evidence, not merely weak. Note also that the four arms used throughout this session's records - `build_A_50ohm_v3c.json`, `build_B_100ohm_v3d.json`, `build_E_50ohm_v3d.json`, `build_A_50ohm_v3b_c51.json` - carry no `criteria` block at all, so AC-6, AC-3 and AC-4 were never scored on them; the vacuous passes live in other runs.
+
+**Fix (`dbb76f7`):** `indices_agree` now compares the extraction index against the request (`run_build_A.py:774-788`), `load_plane_index` is re-semanticised to the load's own column, and `pass` additionally requires the plane to lie outside the xmax PML via `last_clean_plane = nx - n_pml - 1`.
+
+**Lesson:** a check whose two sides are produced by the same expression is not a check. A criterion must be able to fail, and should be demonstrated failing once before it is trusted.
+
+**Related:** dispatch row `s21-default-plane-writer-2026-11-02`. AC-3 is a separate and much larger defect: it is testable today and false on every arm (`s11_at_plane.magnitude` 0.0490 / 0.4266 / 0.3132 against a 1e-3 bar), and it is not merely failing but unmeetable while the strip runs PEC into the far wall. AC-4 is unscorable for want of a second unmatched arm, not for want of a load kind.
