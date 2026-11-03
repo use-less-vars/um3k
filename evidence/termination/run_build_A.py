@@ -433,6 +433,22 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         ix_load = int(math.floor(float(kwargs["loads"][0].position)
                                  / cell_m + 0.5))
         kwargs["s21_plane"] = ix_load + 1
+    if args.ms_x_window is not None:
+        # Probe-station window, millimetres on the command line and metres in
+        # the call.  n_stations is deliberately NOT passed beside it: the count
+        # stays the library's MS_N_STATIONS, so an override moves the stations
+        # and does not also change how many of them the fit sees.  The window
+        # used here is the default span 9.6 mm translated down by exactly
+        # 7.0 mm (10.4 -> 3.4, 20.0 -> 13.0), so the spacing stays 1.200 mm and
+        # only the positions move: one variable, WHERE the fit sampled.
+        x_first_mm, x_last_mm = (float(v) for v in args.ms_x_window)
+        if not 0.0 < x_first_mm < x_last_mm:
+            raise SystemExit(
+                f"REFUSED: --ms-x-window {x_first_mm:g} {x_last_mm:g}: two "
+                "ascending MILLIMETRE positions are required, first < last and "
+                "both above zero.")
+        kwargs["x_first"] = x_first_mm * 1e-3
+        kwargs["x_last"] = x_last_mm * 1e-3
     check_mesh(kwargs)
     return kwargs
 
@@ -537,7 +553,7 @@ def describe_kwargs(kwargs: dict) -> dict:
     # them to None on purpose; on the loaded call all three are present and this
     # view is what it was.
     loads = kwargs.get("loads", ())
-    return {
+    view = {
         "launch": kwargs.get("launch"),
         "flux_projection": kwargs.get("flux_projection", False),
         "h_m": kwargs["h"],
@@ -564,6 +580,24 @@ def describe_kwargs(kwargs: dict) -> dict:
             for ld in loads
         ],
     }
+    # The probe-station window, recorded ONLY when --ms-x-window named one.  A
+    # record without this key ran the library's own span (MS_X_FIRST..MS_X_LAST,
+    # emfit/studies.py:1177-1178) with MS_N_STATIONS stations, which is a
+    # default and not a choice someone made, so the key is ABSENT rather than
+    # zero: absent means "not asked for", never "0 mm".  Same convention as the
+    # s11_settling block, which emits nothing when its flag is off.
+    if "x_first" in kwargs:
+        view["ms_x_window_mm"] = [float(kwargs["x_first"]) * 1e3,
+                                 float(kwargs["x_last"]) * 1e3]
+        view["ms_x_window_note"] = (
+            "first and last probe station in MILLIMETRES, passed to "
+            "emfit.studies.microstrip_wave as x_first/x_last; the station "
+            "COUNT is the library default MS_N_STATIONS, so only the positions "
+            "moved.  One station on the lumped load's column is dropped from "
+            "the impedance fit, never from station_cells (emfit/studies.py "
+            "_station_fit_selection), so the fitted span is shorter than this "
+            "window when x_last lands on the load.")
+    return view
 
 
 def reference_block(twin, reference, *, artefact: Path, wall_s: float) -> dict:
@@ -1079,6 +1113,25 @@ def main(argv: list[str] | None = None) -> int:
                          "one of the two s11 readings can be falsified (defect "
                          "DR-19).  Off by default; no number changes when it "
                          "is off and the key is then absent.")
+    ap.add_argument("--ms-x-window", nargs=2, type=float, default=None,
+                    metavar=("FIRST_MM", "LAST_MM"),
+                    help="probe-station window: the FIRST and LAST station, in "
+                         "MILLIMETRES, e.g. --ms-x-window 3.4 13.0.  It is the "
+                         "library's own x_first/x_last (emfit/studies.py:1177-"
+                         "1178, :2455-2456, np.linspace at :2942) and nothing "
+                         "else: n_stations stays at MS_N_STATIONS, so the "
+                         "station COUNT does not move and only the positions "
+                         "do -- which is what makes a before/after pair a test "
+                         "of WHERE the fit sampled and not of how densely.  A "
+                         "station on the lumped load's column is dropped from "
+                         "the impedance fit (emfit/studies.py "
+                         "_station_fit_selection), so a window whose x_last "
+                         "lands on the load fits one station fewer than a "
+                         "window that stops short of it; the default does "
+                         "exactly that.  Absent (the default): x_first and "
+                         "x_last are not passed at all and the call is what it "
+                         "was, byte for byte.  Recorded in run.kwargs as "
+                         "ms_x_window_mm only when set.")
     ap.add_argument("--launch", default="lumped",
                     choices=("lumped", "modal"),
                     help="port excitation shape: \"lumped\" (default) puts one "

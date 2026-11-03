@@ -2192,3 +2192,104 @@ def test_s11_settling_block_is_arithmetic_only():
     assert block["beta_used"] == 286.0
     assert json.dumps(block)
 
+
+# ---------------------------------------------------------------------------
+# the probe-station window (--ms-x-window)
+# ---------------------------------------------------------------------------
+# The station grid is ``np.linspace(x_first, x_last, n_stations)`` snapped to
+# node layers (emfit/studies.py:2942-2949), and the two window ends are the
+# library's own MS_X_FIRST / MS_X_LAST (emfit/studies.py:1177-1178).  Before
+# --ms-x-window existed those two numbers were reachable only by editing this
+# tree, so the default window is pinned here: a change to either constant moves
+# every station of every run and must not happen by accident.
+def test_station_window_default_is_the_historical_span():
+    """The default window and the grid it produces, pinned.
+
+    ``MS_X_LAST`` is 20.0 mm, i.e. the load's own plane by default, so the 9th
+    station sits ON the lumped load's column and
+    :func:`emfit.studies._station_fit_selection` drops it from the impedance
+    fit -- which is why the fitted span everyone quotes is 10.4..18.8 mm
+    (8 stations, 1.2 mm apart) while the recorded ``station_span_m`` is 9.6 mm.
+    Both are pinned, because they are two different spans and only one of them
+    is the window.
+    """
+    assert studies.MS_X_FIRST == 10.4e-3
+    assert studies.MS_X_LAST == 20.0e-3
+    assert studies.MS_N_STATIONS == 9
+
+    x = np.linspace(studies.MS_X_FIRST, studies.MS_X_LAST, studies.MS_N_STATIONS)
+    assert x.size == 9
+    assert np.allclose(np.diff(x), 1.2e-3, rtol=0.0, atol=1e-15)
+    assert abs(float(x[0]) - 10.4e-3) <= 1e-15
+    assert abs(float(x[-1]) - 20.0e-3) <= 1e-15
+    # the last station the FIT sees, one 1.2 mm interval short of the load
+    assert abs(float(x[-2]) - 18.8e-3) <= 1e-15
+
+
+def test_ms_x_window_override_moves_the_stations_inside_the_window(monkeypatch):
+    """``--ms-x-window FIRST_MM LAST_MM`` moves the stations and nothing else.
+
+    End to end through the dry run -- argparse -> ``build_kwargs`` ->
+    ``describe_kwargs`` -- because that is the only path on which the arguments
+    are visible without paying for a solve.  Two claims: with the flag absent
+    the call does not mention a window at all (so the library defaults are what
+    it gets, and a record cannot claim a window nobody typed); with the flag
+    present the window is in the call in metres, the station COUNT is still the
+    library's, and every station falls inside the requested span.
+    """
+    run_build_A = _load_run_build_a()
+    seen = {}
+    real = run_build_A.build_kwargs
+
+    def spy(args):
+        kwargs = real(args)
+        seen["kwargs"] = kwargs
+        return kwargs
+
+    monkeypatch.setattr(run_build_A, "build_kwargs", spy)
+
+    # Absent flag: no window in the call, none in the record.
+    assert run_build_A.main(["--dry-run"]) == 0
+    assert "x_first" not in seen["kwargs"]
+    assert "x_last" not in seen["kwargs"]
+    assert "n_stations" not in seen["kwargs"]
+    view_default = run_build_A.describe_kwargs(seen["kwargs"])
+    assert "ms_x_window_mm" not in view_default
+    assert "ms_x_window_note" not in view_default
+
+    # Flag present: 3.4..13.0 mm, the count untouched.
+    assert run_build_A.main(
+        ["--dry-run", "--ms-x-window", "3.4", "13.0"]) == 0
+    kwargs = seen["kwargs"]
+    assert abs(kwargs["x_first"] - 3.4e-3) <= 1e-15
+    assert abs(kwargs["x_last"] - 13.0e-3) <= 1e-15
+    # one variable: the count is NOT passed beside the window, so the fit sees
+    # MS_N_STATIONS stations and only their positions moved
+    assert "n_stations" not in kwargs
+
+    x = np.linspace(kwargs["x_first"], kwargs["x_last"], studies.MS_N_STATIONS)
+    assert float(x.min()) >= 3.4e-3 - 1e-15
+    assert float(x.max()) <= 13.0e-3 + 1e-15
+    assert abs(float(x[0]) - 3.4e-3) <= 1e-15
+    assert abs(float(x[-1]) - 13.0e-3) <= 1e-15
+    # the point of the window: the last station is 7.0 mm off the load, not
+    # 1.2 mm, so it is outside the evanescent decay the default window samples.
+    # 3.4..13.0 mm is the default window TRANSLATED down by 7.0 mm (10.4->3.4,
+    # 20.0->13.0), so the 9.6 mm span -- and therefore the 1.2 mm spacing -- is
+    # identical and the ONE variable is where the fit sampled.
+    assert abs((20.0e-3 - float(x[-1])) - 7.0e-3) <= 1e-15
+    assert abs(abs(x[1] - x[0]) - 1.2e-3) <= 1e-15
+    # ... and no station lands on the load's column any more, so the fit sees
+    # 9 stations rather than 8
+    assert float(x[-1]) < 20.0e-3
+
+    view = run_build_A.describe_kwargs(kwargs)
+    assert abs(view["ms_x_window_mm"][0] - 3.4) <= 1e-12
+    assert abs(view["ms_x_window_mm"][1] - 13.0) <= 1e-12
+    assert "MILLIMETRES" in view["ms_x_window_note"]
+
+    # A window that is not ascending is refused before the grid is built.
+    # build_kwargs raises SystemExit, so it escapes main rather than returning
+    # a non-zero code: the flag is a refusal, not an exit status.
+    with pytest.raises(SystemExit):
+        run_build_A.main(["--dry-run", "--ms-x-window", "13.0", "3.4"])

@@ -383,6 +383,8 @@ Correction to record (framing errors caught within one dispatch): (i) an earlier
 
 **What is wrong.** The loaded branch of the `line` block carries `beta` and no attenuation at all; the twin branch is the only writer of `alpha_np_per_m`. The absence is by omission, not by a null: a consumer cannot tell "no alpha was measured" from "alpha was not asked for".
 
+**What closes it.** Emit `alpha_np_per_m` on the loaded branch (or emit an explicit null with a reason string) so a consumer can distinguish "no alpha was measured" from "alpha was not asked for".
+
 **Gates:** this is the still-open section 10 gap.
 
 ## DR-23 — the artefact's `s11.basis` cites a line that no longer holds the cited code
