@@ -298,3 +298,39 @@ Any recorded AC-6 pass on a pre-`dbb76f7` artefact is therefore void as evidence
 **Lesson:** a check whose two sides are produced by the same expression is not a check. A criterion must be able to fail, and should be demonstrated failing once before it is trusted.
 
 **Related:** dispatch row `s21-default-plane-writer-2026-11-02`. AC-3 is a separate and much larger defect: it is testable today and false on every arm (`s11_at_plane.magnitude` 0.0490 / 0.4266 / 0.3132 against a 1e-3 bar), and it is not merely failing but unmeetable while the strip runs PEC into the far wall. AC-4 is unscorable for want of a second unmatched arm, not for want of a load kind.
+
+## DR-19 — the graded `s11` and the load-plane `s11_at_plane` describe incompatible reflections in the same artefact
+
+**id:** DR-19
+**title:** `s11.magnitude` = 0.326 (gamma_port, station-fit two-wave B/A) and `s11_at_plane.magnitude` ≈ 0.049 (gamma_plane, b_cut/a_cut at load column) cannot both describe the same 50 Ω series load. The artefact carries both; `s11.validation_status` is `UNVALIDATED`; which is the real reflection is unrecorded.
+**status:** OPEN
+**severity:** HIGH (record integrity; gates AC-3)
+**opened:** 2026-11-03
+
+**What is wrong.** In `evidence/termination/build_A_50ohm_v3_twin_check.json`:
+- `s11.magnitude = 0.325565` — gamma_port, from `station_fit` over the two-wave fit
+- `s11_at_plane.magnitude ≈ 0.049` — gamma_plane, from `b_cut/a_cut` at the load column
+- `magnitude_one_wave_station_fit = 0.23217` — the pre-`5dda96d` one-wave value, preserved
+
+For a 50 Ω series load in a 47.54 Ω line, the anchor is |Γ| = 0.3446. **`s11` is within 5.5% of the anchor; `s11_at_plane` is 86% below it.** Neither extraction produces the third number (`s11_at_plane = 0.049` is 7× lower than anchor, `s11 = 0.326` is 5% lower). If `s11_at_plane` is right, `s11` is 6.6× too large. If `s11` is right, `s11_at_plane` is 7× too small. **At most one is correct, and the artefact doesn't say which.**
+
+Note on the loss budget: for a lossy line the de-embedding relation is `Γ_port = Γ_load · e^(+2γd)` with `γ = α + jβ`, i.e. de-embedding REMOVES loss, so the port-plane magnitude must be LARGER than the load-plane magnitude. With `α = 1.5 Np/m` and `d = 0.0168 m`, `e^(+2·1.5·0.0168) = 1.052`. So the load-plane 0.049 should become port-plane 0.051, and the port-plane 0.326 should become load-plane 0.310. Loss therefore cannot bridge a 6.6× gap: the discrepancy is not the de-embedding attenuation.
+
+**Evidence.** `build_A_50ohm_v3_twin_check.json` and `build_A_50ohm_v3_beta2wave.json` (same record structure, `s11 = 0.3256`, `s11_at_plane = 0.0490` in the twin artefact). The z_eff analysis (`docs/design/z_eff_analysis_2026-11-03.md`) verified the σ stamp is 50.000 Ω and that the load-plane inversion to |Z| ≈ 49.94 is consistent with the stamp; the 0.326 measurement is inconsistent with the stamp's own local reading.
+
+**Candidate causes (none picked):**
+1. **Station fit straddles the load.** `MS_X_FIRST/MS_X_LAST = 10.4/20.0 mm` and `load_at = 20.0 mm` — the last fitted station is on the load column. The `_station_fit_selection` mask (`s11-fit-and-s21-plateau-2026-11-02`) excludes the load station from the fit, but the *load's near field* still contaminates the remaining stations. The port-plane de-embedding from those stations carries that contamination.
+2. **`b_cut/a_cut` at the load plane is degenerate.** At the load column, the split `(V ± Z_0·I)/2` may be ill-conditioned because `V` and `Z_0·I` are approximately equal (Γ ≈ 0.05 means one is nearly cancelled by the other). `s11_at_plane = 0.049` would be dominated by numerical noise, not signal.
+3. **The port-plane de-embedding exponent is wrong for the load distance.** `deembed_distance_m = 0.0072` m (port 3.2 mm to station 10.4 mm), applied with `station_fit.beta`. If `beta_two_wave` (231.55) is closer to correct than `station_fit.beta` (286.36), the de-embedding phase is off by `(286.36−231.55)·0.0072 = 0.395` rad — which would rotate the port reflection significantly.
+
+**What closes it.** A settling artefact that carries, in one record:
+- `v_cut, i_cut` (raw, at column 50)
+- `a_cut, b_cut` (from `b_cut/a_cut`)
+- `a_port, b_port` (from the station fit's `V', I'`)
+- `gamma_plane`, `gamma_port` (both as recorded)
+- `deembed_distance_m`, `deembed_gamma_used`, `beta_used`
+- The load's inverted impedance from each path
+
+With all intermediate quantities, one of the two extractions is falsifiable by direct arithmetic. **Do not pick a winner until the settling artefact lands.**
+
+**Gates:** AC-3 is not gradable while DR-19 is open — the reflection that AC-3 compares against `|R − Z_c|/(R + Z_c)` must be the load's physical reflection, and we don't know which number that is. **DR-16 is not gated** (twin normalisation is orthogonal). **No AC bar re-priced.**
