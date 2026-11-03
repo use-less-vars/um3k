@@ -259,6 +259,20 @@ identical at every JSON leaf. AC-3b is registered in (iii) above and is graded b
 does bind is wording: a graded `s21` must name the assumption it stands on, and an untested transport
 must not be presented as a measured normalisation — the near miss is what happens when it is.
 
+### DR-16 update — 2026-11-03: the twin-backed A arm exists; (i)-(iii) pass, (iv) still partial
+
+**Status: OPEN, narrowed.** One thing this entry no longer has to take on faith is that a loaded run *can* complete with a twin-produced reference in play. It now has an artefact behind that sentence. Nothing else in the entry is discharged.
+
+- **(i) A loaded run that completes with the reference — PASS.** `evidence/termination/build_A_50ohm_v3_twin_check.json`: `reference_used: true`, `loaded_without_reference: false`, `wall_seconds_twin 42.696844035061076` + `wall_seconds_loaded 44.25408294098452` = `wall_total_s 87.40410260902718`. Its reference comes from `build_A_50ohm_v3_twin_check_twin.json`, which is a **producer**, not an arm: `run.reference_produced` present, `run.reference` absent, no `line` section (so no `beta`), `plane: null`.
+- **(ii) The transported residual quoted, not inferred — PASS.** `run.reference_residual = 1.0516081798504253 + 0.02671534706460333j` with `reference_exponent = 1.7916666666666667`, both read from the artefact rather than reconstructed.
+- **(iii) AC-3b registered here and deliberately absent from `absorbing_termination_scope.md` — PASS, as registration only.** Unchanged by this pass; recorded so that silence is not read later as a decision.
+- **(iv) The graded arms re-checked with a reference in hand — STILL PARTIAL.** A is discharged on the `|s21|` half — `0.7628473102840976` → `0.7675574763802439`, relative `+6.17e-3` — and **not** on the `|Gamma|` half, which is satisfied only trivially: `|s11|` is `0.32556486641109117` in both the reference-free and the twin-backed artefact and *could not* have moved, because s11 is built from `station_fit` + `deembed_reflection` and never consumes the reference (`emfit/studies.py:3434-3436`); the reference is applied to s-parameters only, at `emfit/studies.py:3519-3522`. B and E still stand on `reference=None`. **AC-3 / AC-4 are not re-graded**, because a re-check that can move only one of the two quantities this item names is not the re-check the item asks for.
+- **(v) The graded arms re-graded after the transport change — already done** at `75c7a0e`; not re-opened.
+
+**H5, ruled out in one direction only.** If the absent twin reference were what separated the graded `|s21|` from the anchor, supplying it would have moved the number by the size of the gap. It moves it by `6.17e-3` against a gap of about `1.6e-1` — a factor of roughly `26` short. What is *not* established is the converse: that no other consequence of flying blind (`reference=None` plus an assumed `zc`) sits inside that `6e-3`. The entry's wording gate therefore binds every other graded `s21` in the thread unchanged — the four `fluxcur` arms, B and E, each carrying `loaded_without_reference = True` — and is relaxed **for A's plane-51 value alone**, which may now be described as reference-normalised because it now is.
+
+**Carried, not repaired:** the v3 series' `meta.git_rev: null` and `line.eps_eff: null` provenance gap is untouched by this pass.
+
 ---
 
 ## DR-15 — RESERVED, not opened
