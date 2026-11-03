@@ -31,6 +31,8 @@ gap_analysis_2026-11-03.md. The re-fit of record is A ~= 0.7332, B ~= 0.0296,
 C ~= 0.211, RMS ~ 5.2e-4. The derived mag(12)/mag(14) values above are
 unaffected at the 2e-4 level either way, so no conclusion in this document
 depends on which set is used.)
+(Separately, the section 6 mechanism description was corrected on 2026-11-03 - see
+section 6-A. Sections 4 and 8 are unaffected.)
 
 - prediction at plane 63: 0.735585; measured 0.729132484
 - prediction at plane 65: 0.734505; measured 0.724568753
@@ -123,6 +125,29 @@ plane-independence part of the prediction survives cleanly.
 
 The projection replaces the average at that site. Nothing else in the pipeline needs to move
 for the study to be decisive; the solve, the probe planes and the anchors all stay as they are.
+
+### 6-A. Errata, 2026-11-03 (commit-10c)
+Sites quoted from emfit/studies.py at HEAD d3a96b9; sections 4 and 8 stand unchanged.
+(a) Site. 2964-2968 is the modal-launch sampling block (mode_plane.e_z over the strip rows,
+size-checked against port_edges), not the cut probe. The probe is 3025-3036 (blame 5dca4a3b,
+2026-11-01); the column is built at 2912-2913, column_path(cc, ix_extract, j_centre, 0,
+k_strip): 4 E_z edges, k = 0..3, one y row. (b) Mechanism. No (E[ix-1]+E[ix])/2 exists in the
+probe, and the channels are not the same quantity. 3030 cut_signals[0] =
+edge_path_voltage(stepper.e, cut_column): one scalar path sum over those 4 edges, no averaging.
+3031-3035 cut_signals[1] = 0.5*(plate_current at ix_extract-1 + plate_current at ix_extract):
+the real two-column average, acting on an H-derived current, not on E. The station currents at
+3021-3023 repeat it. An E-profile projection cannot reproduce an H-derived average. (c) s21
+chain. 3139-3140 v_cut = cut_spec[0], i_cut = -cut_spec[1]; 3409-3412 a_cut, b_cut = 0.5*(v_cut
++/- Zc*i_cut)*exp(+/-gamma*x_cut); 3418-3419 s21 = a_cut/a_port divided by
+reference.forward_ratio; 3415 gamma_plane = b_cut/a_cut also reaches the result. No V-only,
+I-only or V/I expression exists on the path, so a one-channel projection returns a hybrid
+amplitude filtered in an uncontrolled proportion. Both channels take the same filter, or the
+study does not measure what it claims. (d) Narrative. "Under-measures by a constant factor
+alpha" is withdrawn as a mechanism description. The average is a top-hat reporting a value
+between the mode's peak and its mean, in a proportion set by the field's shape at the plane; the
+direction of that bias is what the projection measures, not something asserted in advance here.
+Removing residual moves |s21| down, toward the 0.6553 anchor, so bracket 1 stays reachable. The
+section 4 brackets are behavioural and survive this correction unchanged.
 
 ## 7. Cost and limits
 
