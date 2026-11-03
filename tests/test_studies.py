@@ -2145,3 +2145,50 @@ class TestFluxProjectionCurrentReference:
               f"  on {s21_on:.17g}")
         assert abs(s21_on) == abs(s21_off), (s21_on, s21_off)
 
+
+def test_s11_settling_block_is_arithmetic_only():
+    """The DR-19 settling block, pinned on synthetic numbers, not on a grid.
+
+    ``_s11_settling_block`` is a pure formatter: it takes the phasors each of
+    the two extraction paths was built from and returns the JSON-safe dict the
+    artefact carries under ``s11_settling``.  Because it is arithmetic only,
+    the honest test is arithmetic -- every key present, the magnitudes the
+    ``abs()`` of what went in, and the impedance each path's own ``gamma``
+    implies.  ``microstrip_wave`` is deliberately NOT called: a cheap solve
+    would pin a grid, not this function.
+    """
+    import json
+
+    v_cut, i_cut = 1.5 - 0.25j, 0.02 + 0.004j
+    a_cut, b_cut = 1.2 - 0.1j, 0.03 + 0.04j
+    v_port, i_port = 2.0 + 0.5j, -0.03 + 0.001j
+    a_port, b_port = 2.1 + 0.2j, -0.05 + 0.07j
+    gamma_plane = 0.3 + 0.4j
+    gamma_port = -0.2 + 0.1j
+    zc = 47.5 + 1.9j
+    block = studies._s11_settling_block(
+        v_cut=v_cut, i_cut=i_cut, a_cut=a_cut, b_cut=b_cut,
+        v_port=v_port, i_port=i_port, a_port=a_port, b_port=b_port,
+        gamma_plane=gamma_plane, gamma_port=gamma_port,
+        deembed_distance_m=7.2e-3, deembed_gamma_used=complex(gamma_plane),
+        deembed_exponent=cmath.exp(-2j * 286.0 * 7.2e-3),
+        beta_used=286.0, reference_zc=zc, cut_column=51, port_column=41)
+
+    required = {
+        "v_cut", "i_cut", "a_cut", "b_cut", "v_port", "i_port", "a_port",
+        "b_port", "gamma_plane", "gamma_port", "gamma_plane_magnitude",
+        "gamma_port_magnitude", "deembed_distance_m", "deembed_gamma_used",
+        "deembed_exponent", "beta_used", "z_plane_ohm", "z_port_ohm",
+        "reference_zc_ohm", "cut_column", "port_column"}
+    assert required <= set(block), sorted(required - set(block))
+    assert block["gamma_plane_magnitude"] == abs(gamma_plane)
+    assert block["gamma_port_magnitude"] == abs(gamma_port)
+    for gamma, key in ((gamma_plane, "z_plane_ohm"), (gamma_port, "z_port_ohm")):
+        want = zc * (1 + gamma) / (1 - gamma)
+        got = complex(block[key]["re"], block[key]["im"])
+        assert abs(got - want) <= 1e-12 * abs(want), (key, got, want)
+    assert block["cut_column"] == 51 and block["port_column"] == 41
+    assert block["deembed_distance_m"] == 7.2e-3
+    assert block["beta_used"] == 286.0
+    assert json.dumps(block)
+

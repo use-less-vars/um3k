@@ -1638,6 +1638,10 @@ class MicrostripWave:
     sx_station_second_half: np.ndarray | None = None
     sx_station_sub_first_half: np.ndarray | None = None
     sx_station_sub_second_half: np.ndarray | None = None
+    # Diagnostic-only settling block (defect DR-19), filled only when
+    # ``microstrip_wave(s11_settling=True)``; ``None`` leaves every artefact
+    # key of a run without the flag byte-identical.
+    s11_settling: dict | None = None
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -2380,8 +2384,54 @@ def _project_mode(field_edges, mode_edges):
     return np.sum(field_edges * mode_edges) / np.sum(mode_edges * mode_edges)
 
 
+def _s11_settling_block(
+    *, v_cut, i_cut, a_cut, b_cut, v_port, i_port, a_port, b_port,
+    gamma_plane, gamma_port, deembed_distance_m, deembed_gamma_used,
+    deembed_exponent, beta_used, reference_zc, cut_column, port_column,
+) -> dict:
+    """The settling block: both extraction paths' phasors, side by side.
+
+    DIAGNOSTIC ONLY.  Nothing here feeds back into ``s11``: the block exists
+    to falsify one of the two extractions -- the de-embedded ``gamma_port`` or
+    the cut plane's ``b_cut / a_cut`` -- by putting the phasors each was built
+    from next to the number it produced (defect DR-19).  Complexes are written
+    as the artefact's ``{"re", "im"}`` pair, so the dict is JSON-safe as it
+    stands.
+    """
+    zc = complex(reference_zc)
+
+    def pair(value) -> dict:
+        z = complex(value)
+        return {"re": float(z.real), "im": float(z.imag)}
+
+    def z_ohm(gamma) -> dict:
+        g = complex(gamma)
+        den = 1.0 - g
+        return pair(zc * (1.0 + g) / den if den != 0
+                    else complex(np.nan, np.nan))
+
+    return {
+        "v_cut": pair(v_cut), "i_cut": pair(i_cut), "a_cut": pair(a_cut),
+        "b_cut": pair(b_cut), "v_port": pair(v_port), "i_port": pair(i_port),
+        "a_port": pair(a_port), "b_port": pair(b_port),
+        "gamma_plane": pair(gamma_plane), "gamma_port": pair(gamma_port),
+        "gamma_plane_magnitude": float(abs(complex(gamma_plane))),
+        "gamma_port_magnitude": float(abs(complex(gamma_port))),
+        "deembed_distance_m": float(deembed_distance_m),
+        "deembed_gamma_used": pair(deembed_gamma_used),
+        "deembed_exponent": pair(deembed_exponent),
+        "beta_used": float(beta_used),
+        "z_plane_ohm": z_ohm(gamma_plane), "z_port_ohm": z_ohm(gamma_port),
+        "reference_zc_ohm": pair(zc),
+        "cut_column": int(cut_column), "port_column": int(port_column),
+    }
+
+
 def microstrip_wave(
     *,
+    # Diagnostic-only settling block (see _s11_settling_block, defect DR-19):
+    # off by default, and no number in this function moves when it is off.
+    s11_settling: bool = False,
     h: float = MS_H,
     w: float = MS_W,
     eps_r: float = MS_EPS_R,
@@ -3491,6 +3541,10 @@ def microstrip_wave(
     # in a continuity the cut breaks.  See the field of that name.
     loaded_without_reference = bool(loads_used) and reference is None
     s21 = raw_s21 = complex(np.nan, np.nan)
+    if s11_settling:  # diagnostic-only (defect DR-19): the same split, hoisted
+        a_port = b_port = a_cut = b_cut = complex(np.nan, np.nan)
+        gamma_split = (complex(reference.gamma) if reference is not None else 0j)
+        zc_split = (complex(reference.zc) if reference is not None else complex(zc))
     if ix_extract is not None:
         # A3: the far plane is the cut, not the last station.  Same split, same
         # two travelling waves, moved onto the plane the element is defined on,
@@ -3513,6 +3567,8 @@ def microstrip_wave(
             [v_cut], [i_cut], [x_cut], gamma_split, zc_split)[0]
         b_cut = backward_wave_amplitude(
             [v_cut], [i_cut], [x_cut], gamma_split, zc_split)[0]
+        b_port = backward_wave_amplitude(
+            [v_port], [-i_trunc], [x_port], gamma_split, zc_split)[0]
         if a_cut != 0.0:
             # The reflection the element itself presents, on its own plane.
             gamma_plane = complex(b_cut) / complex(a_cut)
@@ -3844,6 +3900,19 @@ def microstrip_wave(
         sx_station_second_half=sx_station_second_half,
         sx_station_sub_first_half=sx_station_sub_first_half,
         sx_station_sub_second_half=sx_station_sub_second_half,
+        s11_settling=(
+            _s11_settling_block(
+                v_cut=v_cut, i_cut=i_cut, a_cut=a_cut, b_cut=b_cut,
+                v_port=v_port, i_port=-i_trunc, a_port=a_port, b_port=b_port,
+                gamma_plane=gamma_plane, gamma_port=gamma_port,
+                deembed_distance_m=deembed_distance,
+                deembed_gamma_used=gamma_measured,
+                deembed_exponent=complex(np.exp(
+                    -2j * complex(beta) * float(deembed_distance))),
+                beta_used=float(beta), reference_zc=zc_split,
+                cut_column=int(ix_extract) if ix_extract is not None else -1,
+                port_column=int(ix_port))
+            if s11_settling else None),
     )
 
 

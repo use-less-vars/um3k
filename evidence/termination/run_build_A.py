@@ -1072,6 +1072,13 @@ def main(argv: list[str] | None = None) -> int:
                          "with --with-twin it prints the twin's arguments too "
                          "(that is where `loads` leaves the dict and s21_plane "
                          "becomes None)")
+    ap.add_argument("--s11-settling", action="store_true",
+                    help="attach the diagnostic settling block to the artefact "
+                         "top level: both extraction paths' phasors, the "
+                         "de-embed factor and the impedance each implies, so "
+                         "one of the two s11 readings can be falsified (defect "
+                         "DR-19).  Off by default; no number changes when it "
+                         "is off and the key is then absent.")
     ap.add_argument("--launch", default="lumped",
                     choices=("lumped", "modal"),
                     help="port excitation shape: \"lumped\" (default) puts one "
@@ -1222,7 +1229,8 @@ def main(argv: list[str] | None = None) -> int:
         loaded_kwargs = (dict(kwargs, reference=reference)
                          if args.with_twin else kwargs)
         t_call = time.monotonic()
-        res = studies.microstrip_wave(**loaded_kwargs)
+        res = studies.microstrip_wave(**loaded_kwargs,
+                                     s11_settling=args.s11_settling)
         wall_call = time.monotonic() - t_call
     finally:
         trip.stop()
@@ -1556,6 +1564,8 @@ def main(argv: list[str] | None = None) -> int:
         "ac": ac,
         "summary_line": res.summary(),
     }
+    if res.s11_settling is not None:
+        payload["s11_settling"] = res.s11_settling
     write_json(out_path, payload)
     print(f"wrote {out_path}")
     # The ``|s11|`` printed here is the TWO-WAVE modulus: the same number the
