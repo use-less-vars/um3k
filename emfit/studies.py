@@ -3037,9 +3037,10 @@ def microstrip_wave(
     # Design A-prime: the cut's extraction weights, built ONCE, here, before
     # the time loop.  A per-step rebuild is forbidden: the same plane solved
     # twice differs in the last bits, so the weights would drift under the
-    # record they are projecting.  ``check`` is left False because this plane
-    # weights an extraction and launches nothing -- the mode_profile
-    # identities the launch above asks for are not this path's claim.
+    # record they are projecting.  ``check`` is True here as on the launch:
+    # these weights underwrite every projected sample, so a plane off a
+    # broken solve would corrupt the record in silence.  The modal arm
+    # already gets a checked plane; a cut must not depend on the launch.
     if flux_projection:
         if launch == "modal":
             # The plane the launch already built and paid for.
@@ -3049,12 +3050,12 @@ def microstrip_wave(
                 cc, h=float(h), w=float(w), eps_r=float(eps_r),
                 n_sub=int(n_sub), k_strip=int(k_strip),
                 iy_strip_centre=int(j_centre), n_clean=int(n_clean),
-                n_air=int(n_air), check=False)
+                n_air=int(n_air), check=True)
         # The cut column's own index set -- row ``j_centre``, cells
-        # 0..k_strip-1 -- and the same one for both channels: ``e_z`` and
-        # ``h_y`` are indexed [j, k], the pair ``column_path`` walks.
+        # 0..k_strip-1 -- and the one the voltage channel is projected on:
+        # ``e_z`` is indexed [j, k], the pair ``column_path`` walks.  Only the
+        # voltage channel is projected; see the current channel below.
         mode_edges_e = flux_plane.e_z[j_centre, :int(k_strip)]
-        mode_edges_h = flux_plane.h_y[j_centre, :int(k_strip)]
     for n in range(nsteps):
         if absorbed is not None and n == n_warm:
             # Warm-up work is not part of the settled record: bin only the
@@ -3107,22 +3108,34 @@ def microstrip_wave(
                     + plate_current(stepper.h, cc, ix_extract, 0,
                                     y_extent=y_half))
             else:
-                # One shared index set for both channels: ``e_values`` is the
-                # array ``edge_path_voltage`` sums, and ``h_values`` is its
-                # collocated dual.  operators.py:90-101 gives idx_ez and
-                # idx_fy the SAME inner strides, so the FY face on the same
-                # (i, j, k) is the partner of the cut's E_z edge and differs
-                # from it by the two block offsets alone (operators.py:54-72)
-                # -- indexing ``stepper.h`` at ``cut_column`` would instead
-                # read the faces a whole block away, which are not there.
+                # VOLTAGE: projected.  ``e_values`` is the array
+                # ``edge_path_voltage`` sums, and the mode's own scale goes
+                # back on, so a uniform field still reads as the plain sum it
+                # read as on the path above.
+                #
+                # CURRENT: not projected, and deliberately the same ampere
+                # loop integral the unflagged path uses.  The mode's own
+                # ``h_y`` is ``-e_z / eta_eff`` (mode_profile.py:716-717), so
+                # projecting H onto it returns V / eta_eff -- the amplitude a
+                # travelling wave would carry if the line's impedance were
+                # eta_eff.  The line's impedance is zc, and the current it
+                # carries is V / zc: a projected channel measures a different
+                # physical quantity, and pairing it with the true voltage puts
+                # a (1 + zc/eta_eff)/2 factor in front of the amplitude
+                # (0.609 at the default case) that has nothing to do with the
+                # field at the cut.  ``plate_current`` sums FY magnetic
+                # voltages into a loop integral, hence an actual current in
+                # amperes, with no cell width applied (ports.py:395-405), and
+                # truncated like the port's so it is the same physical current
+                # the port measures.
                 e_values = stepper.e[cut_column]
-                h_values = stepper.h[cut_column - cc.off_ez + cc.off_fy]
-                # The mode's own scale goes back on, so a uniform field still
-                # reads as the plain sum it read as on the path above.
                 cut_signals[0] = (_project_mode(e_values, mode_edges_e)
                                   * np.sum(mode_edges_e))
-                cut_signals[1] = (_project_mode(h_values, mode_edges_h)
-                                  * np.sum(mode_edges_h))
+                cut_signals[1] = 0.5 * (
+                    plate_current(stepper.h, cc, ix_extract - 1, 0,
+                                  y_extent=y_half)
+                    + plate_current(stepper.h, cc, ix_extract, 0,
+                                    y_extent=y_half))
             cut_acc.add(cut_signals, n)
         if plane_ey is not None:
             # The phase is the accumulator's own expression, on the step index:

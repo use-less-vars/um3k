@@ -2057,7 +2057,6 @@ class TestFluxProjectionExtraction:
         a_proj = self._amplitude(*projected)
         assert np.isclose(a_proj, 1.0, rtol=0.02), a_proj
 
-
     def test_the_flag_on_a_record_runs_and_keeps_the_s21_scale(self):
         """The ``flux_projection=True`` branch itself, on a real record.
 
@@ -2091,4 +2090,58 @@ class TestFluxProjectionExtraction:
         assert s21_off == s21_off_again, (s21_off, s21_off_again)
         ratio = s21_on / s21_off
         assert 0.2 <= ratio <= 5.0, (ratio, s21_off, s21_on)
+
+
+class TestFluxProjectionCurrentReference:
+    """Regression cover for the commit-13 current-reference correction.
+
+    The pre-existing TestFluxProjectionExtraction suite uses n_sub=1 /
+    k_strip=2, where every projection is an exact identity, so the
+    --flux-projection flag cannot be distinguished from flag-off there by
+    construction. These two tests use the only cheap grid on which the
+    projection is *not* an identity, and pin the flag's effect on it.
+    """
+
+    def test_the_flag_matches_the_plain_path_when_the_projection_is_not_trivial(self):
+        """On a grid where the projection is not an identity, flag-on must
+        agree with flag-off to within a few 1e-4.
+
+        This is the only cheap grid where the two paths differ at all.
+        The old (pre-commit-13) projected-H code gave a ratio of 0.5775
+        here; the current-reference code gives ~0.9995. The band is not a
+        bit-pin because the legitimate residual is ~5e-4, so a bit-pin
+        would be brittle for no gain.
+        """
+        kwargs = _cheap_strip_kwargs(
+            h=1.6e-3, n_sub=2, n_strip=4, n_line=6,
+            x_first=3.2e-3, x_last=5.6e-3, nsteps=40, n_stations=4,
+            excite="cw", launch="lumped",
+            loads=(Load(4.0e-3, "series_r", 50.0),), s21_plane=6)
+        s21_off = abs(studies.microstrip_wave(**kwargs).s21)
+        s21_on = abs(studies.microstrip_wave(**kwargs,
+                                             flux_projection=True).s21)
+        ratio = s21_on / s21_off
+        print(f"[flux-current] |s21| off {s21_off:.9e}  on {s21_on:.9e}"
+              f"  ratio {ratio:.7f}")
+        assert 0.9 <= ratio <= 1.1, (ratio, s21_off, s21_on)
+
+    def test_the_flag_is_inert_unless_a_cut_is_named(self):
+        """With s21_plane left at its default there is no cut, so the flag
+        is inert and s21 is bit-for-bit identical.
+
+        This documents a trap for verification, NOT a property to rely on:
+        a cheap run that forgets to name a cut will report flag-on ==
+        flag-off and look like the projection does nothing.
+        """
+        kwargs = _cheap_strip_kwargs(
+            h=1.6e-3, n_sub=2, n_strip=4, n_line=6,
+            x_first=3.2e-3, x_last=5.6e-3, nsteps=40, n_stations=4,
+            excite="cw", launch="lumped",
+            loads=(Load(4.0e-3, "series_r", 50.0),))
+        s21_off = abs(studies.microstrip_wave(**kwargs).s21)
+        s21_on = abs(studies.microstrip_wave(**kwargs,
+                                             flux_projection=True).s21)
+        print(f"[flux-current] default plane  off {s21_off:.17g}"
+              f"  on {s21_on:.17g}")
+        assert abs(s21_on) == abs(s21_off), (s21_on, s21_off)
 

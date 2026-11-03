@@ -5,7 +5,7 @@ no gate re-priced. ASCII only by construction.
 
 ## 1. The question, and why it is now load-bearing
 
-The current extraction takes a two-column average of the field at each probe plane and
+The current extraction takes a two-column average of the CURRENT at each probe plane and
 calls the result the forward-wave amplitude. For a uniform loaded line, |s21| must be
 exactly plane-independent downstream of the evanescent region. It is not: 0.7628473102840976
 at plane 51 falls to 0.724568753 at plane 65, and it is still falling between the last two
@@ -131,23 +131,52 @@ Sites quoted from emfit/studies.py at HEAD d3a96b9; sections 4 and 8 stand uncha
 (a) Site. 2964-2968 is the modal-launch sampling block (mode_plane.e_z over the strip rows,
 size-checked against port_edges), not the cut probe. The probe is 3025-3036 (blame 5dca4a3b,
 2026-11-01); the column is built at 2912-2913, column_path(cc, ix_extract, j_centre, 0,
-k_strip): 4 E_z edges, k = 0..3, one y row. (b) Mechanism. No (E[ix-1]+E[ix])/2 exists in the
+k_strip): 4 E_z edges, k = 0..3, one y row.
+
+(b) Mechanism. No (E[ix-1]+E[ix])/2 exists in the
 probe, and the channels are not the same quantity. 3030 cut_signals[0] =
 edge_path_voltage(stepper.e, cut_column): one scalar path sum over those 4 edges, no averaging.
 3031-3035 cut_signals[1] = 0.5*(plate_current at ix_extract-1 + plate_current at ix_extract):
 the real two-column average, acting on an H-derived current, not on E. The station currents at
-3021-3023 repeat it. An E-profile projection cannot reproduce an H-derived average. (c) s21
+3021-3023 repeat it. An E-profile projection cannot reproduce an H-derived average.
+
+(c) s21
 chain. 3139-3140 v_cut = cut_spec[0], i_cut = -cut_spec[1]; 3409-3412 a_cut, b_cut = 0.5*(v_cut
 +/- Zc*i_cut)*exp(+/-gamma*x_cut); 3418-3419 s21 = a_cut/a_port divided by
 reference.forward_ratio; 3415 gamma_plane = b_cut/a_cut also reaches the result. No V-only,
 I-only or V/I expression exists on the path, so a one-channel projection returns a hybrid
 amplitude filtered in an uncontrolled proportion. Both channels take the same filter, or the
-study does not measure what it claims. (d) Narrative. "Under-measures by a constant factor
+study does not measure what it claims.
+
+(d) Narrative. "Under-measures by a constant factor
 alpha" is withdrawn as a mechanism description. The average is a top-hat reporting a value
 between the mode's peak and its mean, in a proportion set by the field's shape at the plane; the
 direction of that bias is what the projection measures, not something asserted in advance here.
 Removing residual moves |s21| down, toward the 0.6553 anchor, so bracket 1 stays reachable. The
 section 4 brackets are behavioural and survive this correction unchanged.
+
+### 6-B. Correction, 2026-11-03 (commit-13): the current channel is not projected
+The H-projected current channel is deleted. The cut current is now `plate_current`, the same
+convention the port's current uses. Mechanism: `h_y = -e_z/eta_eff` (mode_profile.py:716-717), so
+projecting the H sample onto the mode's `h_y` returns V/eta_eff -- the amplitude a travelling wave
+would carry if the line's impedance were the wave impedance eta_eff. The line's impedance is zc and
+the current it carries is V/zc, so a V/eta_eff current paired with the true voltage puts
+(1 + zc/eta_eff)/2 in front of the forward amplitude; at the default geometry that is 0.609193,
+which is where the recorded 0.468 level came from. Neither a scalar nor a corrected reference
+repairs it. Multiplying the current-channel output by eta_eff/zc would work arithmetically, but it
+reintroduces a dependence on eta_eff, which is recorded in no artefact; and a corrected REFERENCE
+does nothing at all, because `_project_mode(f, m)` is `sum(f*m)/sum(m*m)`, the caller restores the
+mode's scale with `* sum(m)`, and the composed probe is invariant under `m -> lambda*m` to the last
+bit -- so `mode_i_ref = -e_z/zc` returns exactly what `-e_z` returns. The minus matters (it selects
+the constructive branch); the `/zc` cancels. Deleting the channel is the honest repair: port and cut
+then measure the current by the same convention, the property that makes the lumped arm's ratio
+correct in the first place, and nothing in the flux path depends on eta_eff any more. Measured, as
+an A/B in one process, old against new: the flag-on/off ratio moves 0.57750 -> 0.99950 (n_sub=2,
+k_strip=4) and 0.62353 -> 0.99986 (n_sub=4, k_strip=8). The exact (1 + zc/eta_eff)/2 identity is
+NOT closed by measurement, because those toy grids give an unconverged station fit (z0 = 37.6+66.2j
+at n_sub=2); only the ~0.6 -> 1.0 effect is measured. Anyone re-running cheaply must name a cut
+(`s21_plane = ix_load + 1`): with s21_plane at its default `cut_acc` is None (studies.py:2961) and
+the flag is inert, bit-identical s21.
 
 ## 7. Cost and limits
 
