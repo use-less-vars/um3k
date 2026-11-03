@@ -2946,15 +2946,15 @@ def microstrip_wave(
             "scalar scaled by the placed microstrip E_z profile).")
     launch_profile: float | np.ndarray = 1.0
     if launch == "modal":
-        # check=False skips mode_profile's five 1e-12 self-consistency
-        # identities (energy two ways, c_prime vs C, eps_eff/Z0, strip-column
-        # drop, 0.5*Re(vi*) vs 1 W); check=True passes on the build_A box in
-        # 0.03 s, so this is a cost choice, not a bypass.
+        # check=True runs microstrip_mode_profile's rtol=1e-12 identities
+        # (mode_profile.py:680: energy, C', Z0/eps_eff, strip drop, 1 W).
+        # build_mode_plane's own default is check=False (modal_harness.py:68),
+        # so True is opt-in here: 0.034 s vs 0.014 s on build_A, 7 warm reps.
         mode_plane = build_mode_plane(
             cc, h=float(h), w=float(w), eps_r=float(eps_r),
             n_sub=int(n_sub), k_strip=int(k_strip),
             iy_strip_centre=int(j_centre), n_clean=int(n_clean),
-            n_air=int(n_air), check=False)
+            n_air=int(n_air), check=True)
         # port_edges is the same walk in the same order: the strip column
         # j0..j1, cells 0..k_strip-1, walked with idx_ez's own strides -- j
         # steps by nz cells and k by one, so k is fastest and j next, which
