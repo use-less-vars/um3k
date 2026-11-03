@@ -1,4 +1,4 @@
-# Flux-projection extraction: design and three-bracket prediction
+# Flux-projection extraction: design and five-bracket prediction
 
 Date: 2026-11-03. Status: design/specification only. No run performed, nothing graded,
 no gate re-priced. ASCII only by construction.
@@ -24,6 +24,13 @@ mag(infinity)", B = 0.037084500417724 +/- 0.00216249 is "3.71 % of the plane-51 
 C = 0.203186317916544 +/- 0.03890627 is "per plane; poorly constrained". The two continuation
 values in the bullets below, mag(12) = 0.735585 and mag(14) = 0.734505, are that same analysis's
 H1 continuation of this fit at planes 63 and 65, not a new fit.
+
+(Note: the printed coefficient set in this paragraph does not reproduce its own
+quoted residual vector - see the section H1 erratum in
+gap_analysis_2026-11-03.md. The re-fit of record is A ~= 0.7332, B ~= 0.0296,
+C ~= 0.211, RMS ~ 5.2e-4. The derived mag(12)/mag(14) values above are
+unaffected at the 2e-4 level either way, so no conclusion in this document
+depends on which set is used.)
 
 - prediction at plane 63: 0.735585; measured 0.729132484
 - prediction at plane 65: 0.734505; measured 0.724568753
@@ -68,20 +75,28 @@ complex modal amplitude. By orthogonality that number is blind to residual conte
 should be plane-independent downstream of the launch - which is exactly the property the
 two-column average fails.
 
-## 4. The revised three-bracket prediction
+## 4. The revised five-bracket prediction
 
-This replaces the earlier "3-10 pp / sub-1 pp" pair, which depended on the single-exponential
-model now refuted.
+This replaces the earlier "3-10 pp / sub-1 pp" pair and the three-bracket table that stood
+here; both depended on the single-exponential model now refuted.
 
-| projected \|s21\| at planes 51/55/63/65 | reading |
-| --- | --- |
-| ~0.6553, within +/-1 %, plane-independent | Extraction was the issue. The two-column average under-measures the true mode by ~10 pp at every plane. The anchor is correct. Flux projection closes AC-3's structure question. Highest-value outcome. |
-| ~0.73, still plane-dependent | Extraction is fine; the physics has extra modes. The 0.73 is a real over-anchor reading that neither the lumped anchor nor the two-column average explains. The next study is mode decomposition, not projection. |
-| plane-independent at a value != 0.6553 | Both extraction and anchor are wrong in correlated ways. The value tells us what the true T is; the anchor was being compared against the wrong target. |
+Why the shape matters as well as the level. If the two-column average under-measures the true
+mode by a multiplicative factor alpha that is constant across planes, projection removes alpha
+but preserves the curve shape: the slope stays. If alpha is plane-dependent - more
+under-measurement at plane 51 than at plane 65, because the field is more purely modal at 65 -
+projection removes both the bias and some of the slope. The slope is therefore a second
+observable, and it separates a constant extraction bias from one that varies with the plane.
 
-These brackets are cleaner than the originals because the primary prediction is
-plane-independence, which tests extraction correctness without depending on a model we now
-know is wrong.
+| projected `\|s21\|` | reading |
+|---|---|
+| **Flat (within +/-0.5% across planes) at 0.6553 +/-1%** | extraction was the issue; anchor correct; AC-3 testable |
+| **Flat at a value != 0.6553** | extraction was the issue; anchor needs correction |
+| **Preserves the slope** | extraction bias is multiplicative-constant; slope is real physics (mode evolution, not reflection) |
+| **Preserves the slope at a different level** | both effects; constant shift = extraction, residual slope = physics |
+| **Projection raises a runtime error** | projection design bug - stop |
+
+Flatness is the primary prediction because it tests extraction correctness without depending on
+a model we now know is wrong; the slope is what says whether the residual is physics.
 
 ## 5. Hypothesis 4 - load-cut fringing (named, not tested)
 
@@ -98,7 +113,13 @@ plane-independence part of the prediction survives cleanly.
 
 - emfit/studies.py lines 2964-2968 - the cut probe's two-column average. Column 50 is the
   load's own column, 51 is its neighbour.
-- emfit/ports.py - the mode/eigenprofile machinery the projection would use.
+- emfit/studies.py - `build_mode_plane`, already imported there, supplies the mode's
+  transverse profile. The projection is a bare dot product, sum(E*mode)/sum(mode*mode),
+  over the same column the average already reads.
+- emfit/ports.py is NOT used. Its travelling_waves / reflection / transmission helpers
+  decompose *plane* fields; the projection decomposes a *column* field. Different
+  operation, different object.
+- If implementation finds ports.py necessary, the design is wrong and the work stops.
 
 The projection replaces the average at that site. Nothing else in the pipeline needs to move
 for the study to be decisive; the solve, the probe planes and the anchors all stay as they are.
@@ -106,8 +127,10 @@ for the study to be decisive; the solve, the probe planes and the anchors all st
 ## 7. Cost and limits
 
 The solves already exist (nx72 mesh, 335808 cells, planes 51-65 all outside the PML which
-starts at 66), so the first pass is a post-processing of banked fields plus one code change at
-the site in section 6. No new FDTD run is strictly required for the first pass.
+starts at 66), and the mesh and probe planes do not change. Whether the first pass can
+post-process banked artefacts depends on whether they retain the plane field, which this
+document does not establish; if they do not, the projection is computed in-solve and the first
+pass costs one run per plane, measured elsewhere at 41.9 s wall and 340.8 MB peak RSS.
 
 What it would NOT settle: it does not settle which of the three readings in section 2 is
 right (a longer domain or a beat-aware fit would be needed for that), and it does not test
@@ -119,5 +142,12 @@ hypothesis 4.
 - Nothing was graded.
 - No gate, threshold, tolerance or AC bar was re-priced.
 - Hypothesis 4 is named and untested; no number is attached to it.
-- The three brackets in section 4 are predictions, not pre-registered gates.
+- The brackets in section 4 are pre-registered and frozen as of commit-10b (2026-11-03), binding on the interpretation of any authorised run.
 - Nothing here authorises a run.
+
+**The brackets in section 4 are pre-registered and frozen as of commit-10b
+(2026-11-03). They are binding on the interpretation of any flux-projection
+run that the dispatch authorises: whichever bracket fires, the analysis must
+be written in terms of that bracket, not a new one. The design does not
+itself authorise the run - the dispatch row in dispatch_log.md does, and it
+cites these brackets.**
