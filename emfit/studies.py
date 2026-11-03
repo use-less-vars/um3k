@@ -2337,6 +2337,49 @@ def _station_fit_selection(js, station_x, v_stations, i_stations, loads_used):
     return station_x[keep], v_stations[keep], i_stations[keep], True
 
 
+def _project_mode(field_edges, mode_edges):
+    """The amplitude of one placed mode in one field sample.
+
+    ``sum(f * m) / sum(m * m)`` is the amplitude that minimises the squared
+    error of ``f ~ a * m``, so a sample that IS the mode comes back as
+    exactly 1 and the extraction's unit gain is that identity rather than a
+    convention.  It is a plain average only when ``sum(m) == sum(m * m)`` --
+    true of a 0/1 window, not of a peak-normalised profile -- so nothing
+    here normalises to peak, and neither does the caller: the caller puts the
+    sample's own scale back by multiplying the amplitude by ``sum(m)``, which
+    is why the two channels can use modes of different normalisation.
+
+    Args:
+        field_edges: The sampled field on the mode's own edges [any unit].
+        mode_edges: The placed mode on the same edges, same order.
+
+    Returns:
+        The amplitude ``a`` [field unit / mode unit], as whatever numpy
+        scalar the division produces: ``np.float64`` when both inputs are
+        real, ``np.complex128`` when either is complex.  The dtype is not
+        forced here on purpose.  At the call site ``e`` and ``h`` are real on
+        every step, so the result is real and goes into ``cut_signals``
+        exactly as ``edge_path_voltage``'s and ``plate_current``'s do; and if
+        a complex result ever did reach that real accumulator it is refused
+        there loudly rather than truncated to its real part, which is the
+        behaviour wanted -- a mode with an imaginary part is a bug, not a
+        rounding detail.
+
+    Raises:
+        ValueError: If the two arrays are not the same length: one weight per
+            sample is the whole definition of the projection.
+    """
+    field_edges = np.asarray(field_edges)
+    mode_edges = np.asarray(mode_edges)
+    if field_edges.size != mode_edges.size:
+        raise ValueError(
+            f"the field sample has {field_edges.size} edges and the mode has "
+            f"{mode_edges.size}: a modal amplitude needs one weight per "
+            "sample, and a shorter mode would silently drop the tail of the "
+            "field it is meant to describe.")
+    return np.sum(field_edges * mode_edges) / np.sum(mode_edges * mode_edges)
+
+
 def microstrip_wave(
     *,
     h: float = MS_H,
@@ -2386,6 +2429,14 @@ def microstrip_wave(
     # repository was recorded with; "modal" scales that same scalar by the
     # placed microstrip mode's own E_z on that column (design 2026-11-03).
     launch: str = "lumped",
+    # Design A-prime (2026-11-03): read the s21 cut's two phasors as ONE
+    # modal amplitude per channel on the cut column, instead of a plain sum
+    # over every edge of that column.  Off by default: every artefact in this
+    # repository was recorded on the summed path, and False leaves that path
+    # byte for byte what it was (the flag only chooses which of two
+    # expressions fills ``cut_signals``).  Design: the flux-projection
+    # extraction note, 2026-11-03.
+    flux_projection: bool = False,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -2983,6 +3034,27 @@ def microstrip_wave(
                 "a launch that is zero everywhere drives nothing, and |s21| "
                 "would then be a ratio of two runs that never started.")
         launch_profile = weights / peak
+    # Design A-prime: the cut's extraction weights, built ONCE, here, before
+    # the time loop.  A per-step rebuild is forbidden: the same plane solved
+    # twice differs in the last bits, so the weights would drift under the
+    # record they are projecting.  ``check`` is left False because this plane
+    # weights an extraction and launches nothing -- the mode_profile
+    # identities the launch above asks for are not this path's claim.
+    if flux_projection:
+        if launch == "modal":
+            # The plane the launch already built and paid for.
+            flux_plane = mode_plane
+        else:
+            flux_plane = build_mode_plane(
+                cc, h=float(h), w=float(w), eps_r=float(eps_r),
+                n_sub=int(n_sub), k_strip=int(k_strip),
+                iy_strip_centre=int(j_centre), n_clean=int(n_clean),
+                n_air=int(n_air), check=False)
+        # The cut column's own index set -- row ``j_centre``, cells
+        # 0..k_strip-1 -- and the same one for both channels: ``e_z`` and
+        # ``h_y`` are indexed [j, k], the pair ``column_path`` walks.
+        mode_edges_e = flux_plane.e_z[j_centre, :int(k_strip)]
+        mode_edges_h = flux_plane.h_y[j_centre, :int(k_strip)]
     for n in range(nsteps):
         if absorbed is not None and n == n_warm:
             # Warm-up work is not part of the settled record: bin only the
@@ -3027,12 +3099,30 @@ def microstrip_wave(
             # The current is interpolated onto the node exactly as the station
             # currents are: the FY faces are the faces of an ``x`` cell, and the
             # element sits on a node layer half a cell from each of the two.
-            cut_signals[0] = edge_path_voltage(stepper.e, cut_column)
-            cut_signals[1] = 0.5 * (
-                plate_current(stepper.h, cc, ix_extract - 1, 0,
-                              y_extent=y_half)
-                + plate_current(stepper.h, cc, ix_extract, 0,
-                                y_extent=y_half))
+            if not flux_projection:
+                cut_signals[0] = edge_path_voltage(stepper.e, cut_column)
+                cut_signals[1] = 0.5 * (
+                    plate_current(stepper.h, cc, ix_extract - 1, 0,
+                                  y_extent=y_half)
+                    + plate_current(stepper.h, cc, ix_extract, 0,
+                                    y_extent=y_half))
+            else:
+                # One shared index set for both channels: ``e_values`` is the
+                # array ``edge_path_voltage`` sums, and ``h_values`` is its
+                # collocated dual.  operators.py:90-101 gives idx_ez and
+                # idx_fy the SAME inner strides, so the FY face on the same
+                # (i, j, k) is the partner of the cut's E_z edge and differs
+                # from it by the two block offsets alone (operators.py:54-72)
+                # -- indexing ``stepper.h`` at ``cut_column`` would instead
+                # read the faces a whole block away, which are not there.
+                e_values = stepper.e[cut_column]
+                h_values = stepper.h[cut_column - cc.off_ez + cc.off_fy]
+                # The mode's own scale goes back on, so a uniform field still
+                # reads as the plain sum it read as on the path above.
+                cut_signals[0] = (_project_mode(e_values, mode_edges_e)
+                                  * np.sum(mode_edges_e))
+                cut_signals[1] = (_project_mode(h_values, mode_edges_h)
+                                  * np.sum(mode_edges_h))
             cut_acc.add(cut_signals, n)
         if plane_ey is not None:
             # The phase is the accumulator's own expression, on the step index:

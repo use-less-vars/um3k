@@ -409,6 +409,7 @@ def build_kwargs(args: argparse.Namespace) -> dict:
                       else int(args.s21_plane_index)),
         "excite": "cw",
         "launch": args.launch,
+        "flux_projection": bool(args.flux_projection),
     }
     if args.s21_plane_index is None and kwargs["loads"]:
         # DEFAULT PLANE POLICY.  With the flag absent the probe is S21_PLANE
@@ -538,6 +539,7 @@ def describe_kwargs(kwargs: dict) -> dict:
     loads = kwargs.get("loads", ())
     return {
         "launch": kwargs.get("launch"),
+        "flux_projection": kwargs.get("flux_projection", False),
         "h_m": kwargs["h"],
         "cell": "h / n_sub",
         "n_sub": kwargs["n_sub"],
@@ -1079,6 +1081,14 @@ def main(argv: list[str] | None = None) -> int:
                          "placed microstrip E_z profile, normalised to unit "
                          "peak.  The twin takes the same value.  Design: "
                          "docs/design/modal_port_wiring_design_2026-11-03.md.")
+
+    ap.add_argument("--flux-projection", action="store_true",
+                    help="read the s21 cut's two phasors as one modal "
+                         "amplitude per channel on the cut column (design "
+                         "A-prime, 2026-11-03) instead of the plain sum over "
+                         "that column.  Off by default: every artefact this "
+                         "script has written was recorded on the summed "
+                         "path, and without the flag the run is what it was.")
 
     args = ap.parse_args(argv)
     label = (args.label if args.label else

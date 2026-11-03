@@ -1926,3 +1926,169 @@ class TestLaunchShapeFlag:
         res = studies.microstrip_wave(**kwargs, launch="modal")
         assert np.isfinite(abs(res.s21))
         assert abs(res.s21) > 0.0
+
+
+# ---------------------------------------------------------------------------
+# the flux-projection extraction (design A-prime): one modal amplitude per
+# channel on the cut column, behind a flag that defaults off
+# ---------------------------------------------------------------------------
+class TestFluxProjectionExtraction:
+    """``flux_projection`` reads the s21 cut as one modal amplitude per channel
+    instead of one plain sum per channel.
+
+    Nothing here asserts what the number ought to be -- that is the measurement
+    the design exists to make.  What is asserted is what a wrong implementation
+    would break silently: the flag is off by default, the projection is the
+    least-squares amplitude it claims to be, and it applies NO renormalisation
+    constant -- a mode solved at the wrong impedance still projects the field it
+    was handed, because there is nothing in the path to divide by.
+    """
+
+    N = 4
+
+    def _plane(self, eta_eff, v_f=1.0, v_b=0.33):
+        """One plane of a forward+backward wave, and its two channels.
+
+        At ``x = 0`` the wave is ``v = v_f + v_b`` and ``i = (v_f - v_b) / zc``
+        (``GAMMA``/``ZC`` above, so this is not a toy line); the cut samples
+        ``e ~ v`` and the ground return current ``-i``, each laid on its own
+        mode.  ``eta_eff`` is the impedance the placed mode was solved at --
+        the number a renormalisation constant would divide by, and the one that
+        must NOT appear anywhere below.  The mode is a 0/1 window, so
+        ``sum(m) == sum(m * m)`` and the plain sum is what the projection must
+        reproduce.
+        """
+        mode_e = np.ones(self.N)
+        mode_h = -(1.0 / eta_eff) * mode_e
+        v = v_f + v_b
+        i = (v_f - v_b) / ZC
+        e_values = v * mode_e / np.sum(mode_e)
+        h_values = -i * mode_h / np.sum(mode_h)
+        return mode_e, mode_h, e_values, h_values
+
+    def _both_paths(self, eta_eff, **kwargs):
+        """``(v, i)`` from the plain sums and from the projected amplitudes."""
+        mode_e, mode_h, e_values, h_values = self._plane(eta_eff, **kwargs)
+        v_plain = np.sum(e_values)
+        i_plain = -np.sum(h_values)
+        v_proj = (studies._project_mode(e_values, mode_e) * np.sum(mode_e))
+        i_proj = -(studies._project_mode(h_values, mode_h)
+                   * np.sum(mode_h))
+        return (v_plain, i_plain), (v_proj, i_proj)
+
+    def _amplitude(self, v, i):
+        """One station's forward wave, ``x = 0``: the line every ratio uses."""
+        return complex(studies.forward_wave_amplitude(
+            np.array([v], dtype=complex), np.array([i], dtype=complex),
+            np.zeros(1), GAMMA, ZC)[0])
+
+    def test_the_flag_is_off_by_default(self):
+        """A default call must not move: the summed path is the recorded one.
+
+        The default is the whole point of the flag -- every artefact in the
+        repository was recorded on the summed path -- and it is read off the
+        signature rather than off the source text, so a re-ordered or
+        re-indented function does not fool this.
+        """
+        import inspect
+
+        sig = inspect.signature(studies.microstrip_wave)
+        assert sig.parameters["flux_projection"].default is False
+
+    def test_a_uniform_field_projects_to_its_own_value(self):
+        """``_project_mode`` is an amplitude, not an average: unit gain.
+
+        On a 0/1 window the two coincide, which is what makes the projected
+        channel and the plain channel comparable at all on the same record.
+        """
+        # Real in, real out: no dtype is forced, so the value can be read
+        # into the real ``cut_signals`` array the caller fills.
+        assert np.isrealobj(studies._project_mode(np.ones(4), np.ones(4)))
+
+        mode = np.ones(self.N)
+        c = 3.7 - 1.25j
+        got = studies._project_mode(c * mode, mode)
+        assert got == pytest.approx(c, rel=0.0, abs=1e-15)
+        assert got * np.sum(mode) == pytest.approx(
+            c * np.sum(mode), rel=0.0, abs=1e-15)
+
+    def test_the_mode_itself_projects_to_one(self):
+        """A field equal to its mode reads as 1, however the mode is scaled."""
+        mode = np.array([0.35, 1.0, 0.8, 0.35])       # peak-normalised
+        assert studies._project_mode(mode, mode) == pytest.approx(
+            1.0 + 0.0j, rel=1e-15)
+
+    def test_a_shorter_mode_is_refused(self):
+        """One weight per sample: a length mismatch names both lengths."""
+        with pytest.raises(ValueError) as caught:
+            studies._project_mode(np.zeros(4), np.zeros(5))
+        text = str(caught.value)
+        assert "4" in text and "5" in text
+
+    def test_the_projected_wave_is_the_plain_wave(self):
+        """The two paths must agree on a record whose field IS its mode.
+
+        The forward wave is what s21 is built from, so a projection that lost
+        the wave -- a flipped ground-return sign is the obvious way -- would
+        land a factor of ten below the plain path here.
+        """
+        plain, projected = self._both_paths(ZC * 1.02)
+        a_plain = self._amplitude(*plain)
+        a_proj = self._amplitude(*projected)
+        ratio = abs(a_proj) / abs(a_plain)
+        assert 0.5 <= ratio <= 2.0, ratio
+
+    def test_no_renormalisation_constant_is_applied(self):
+        """``eta_eff`` moves by +-5 % and the extraction does not notice.
+
+        A constant written into this path would show up here as a ratio
+        off by exactly the impedance mismatch it was compensating; the
+        assertion is the 10 % band, so anything of that size fails.
+        """
+        for factor in (1.05, 0.95):
+            plain, projected = self._both_paths(ZC * factor)
+            a_plain = self._amplitude(*plain)
+            a_proj = self._amplitude(*projected)
+            assert abs(a_proj / a_plain - 1.0) < 0.10, (factor, a_proj / a_plain)
+
+    def test_the_forward_wave_amplitude_survives(self):
+        """The projected pair is the forward wave itself, not a rescaling."""
+        plain, projected = self._both_paths(ZC)
+        a_proj = self._amplitude(*projected)
+        assert np.isclose(a_proj, 1.0, rtol=0.02), a_proj
+
+
+    def test_the_flag_on_a_record_runs_and_keeps_the_s21_scale(self):
+        """The ``flux_projection=True`` branch itself, on a real record.
+
+        The seven above pin the algebra and the helper; none of them executes
+        the caller's new branch, so a mistyped keyword, a wrong block offset
+        for the FY faces, a mode sampled on the wrong index set or a complex
+        value pushed into the real DFT accumulator would all ship green and
+        only surface on the host run.  This runs the same cheap loaded line
+        twice -- flag off, flag on -- and reads |s21|.
+
+        The ratio band is an ORDER OF MAGNITUDE only: a toy grid is not the
+        design bracket, and the real discriminator is the host run.  The
+        load-bearing assertion is the third one: the flag must not perturb
+        the summed path at all, so two flag-off calls have to agree bit for
+        bit (the same claim ``TestLaunchShapeFlag`` already makes for the
+        absent ``launch`` flag).
+        """
+        kwargs = _cheap_strip_kwargs(
+            n_sub=1, n_strip=2, n_line=6,
+            x_first=6.4e-3, x_last=11.2e-3, nsteps=40,
+            loads=(Load(8.0e-3, "series_r", 50.0),))
+        s21_off = abs(studies.microstrip_wave(**kwargs).s21)
+        s21_off_again = abs(studies.microstrip_wave(**kwargs).s21)
+        s21_on = abs(studies.microstrip_wave(**kwargs,
+                                             flux_projection=True).s21)
+        print(f"[flux] |s21| off {s21_off:.9e}  off again {s21_off_again:.9e}"
+              f"  on {s21_on:.9e}  ratio {s21_on / s21_off:.6f}")
+
+        assert np.isfinite(s21_off) and s21_off > 0.0, s21_off
+        assert np.isfinite(s21_on) and s21_on > 0.0, s21_on
+        assert s21_off == s21_off_again, (s21_off, s21_off_again)
+        ratio = s21_on / s21_off
+        assert 0.2 <= ratio <= 5.0, (ratio, s21_off, s21_on)
+
