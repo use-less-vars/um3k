@@ -334,3 +334,67 @@ Note on the loss budget: for a lossy line the de-embedding relation is `Γ_port 
 With all intermediate quantities, one of the two extractions is falsifiable by direct arithmetic. **Do not pick a winner until the settling artefact lands.**
 
 **Gates:** AC-3 is not gradable while DR-19 is open — the reflection that AC-3 compares against `|R − Z_c|/(R + Z_c)` must be the load's physical reflection, and we don't know which number that is. **DR-16 is not gated** (twin normalisation is orthogonal). **No AC bar re-priced.**
+
+### DR-19 update — 2026-11-03: cause 2 fires; the load-plane split is quarantined and the two-wave value is carried forward
+
+Cause 2 fires. `s11_at_plane` is QUARANTINED at plane 51 and any plane within ~3 cells of the load: the split at the load column is ill-conditioned (|b|/|a| ~ 3.4%, so the difference of two large numbers dominates), and a 7% zc change produces a 134 deg phase swing. The measured 0.034 (reference-free) / 0.049 (twin) is a real measurement of a real ill-conditioned quantity - NOT the load's reflection. QUARANTINED IS NOT RETRACTED: the number stands as recorded; it simply cannot be used to describe the load at the cut plane. Any future use requires extraction at a downstream plane plus de-embedding, not extraction at the cut.
+
+The two-wave `s11.magnitude = 0.325565` is the reflection carried forward: plane-invariant by construction, stable across arms, within 5.5% of the physical anchor 0.34465 = 50/(50 + 2*47.54). Case C on the attenuation question: `fit_beta(n_wave=2)` carries no alpha term, so no attenuation was ever applied and there is no e^(+2*alpha*d) to restore. The 5.5% residual is fit bias, already quantified as configuration-dependent in the artefact's own `s11.validation_reason`: 5.5% (n=64, 20 mm load), 7.6% (n=54, 100 ohm), 13.8% (n=79, 30 mm load), attributed to the load's near field reaching the last station.
+
+DR-19 REMAINS OPEN: the 5.5% fit bias is a separate, now-quantified problem. AC-3 remains ungradable.
+
+Correction to record (framing errors caught within one dispatch): (i) an earlier "13x inconsistency" reading compared three different estimators by design - that was not a bug; (ii) the expectation that a station-internals block would reveal whether alpha explains the 5.5% was void because no alpha term exists in `fit_beta(n_wave=2)`.
+
+## DR-20 — `line.gamma_re` / `line.gamma_im` are a reflection coefficient stored under a propagation-constant name
+
+**id:** DR-20
+**title:** `line.gamma_re` / `line.gamma_im` are a REFLECTION coefficient (B/A of the two-wave fit) stored inside the `line` block. The naming invites the exact misreading that `line.gamma` is a propagation constant.
+**status:** OPEN
+**severity:** LOW
+**opened:** 2026-11-03
+
+**What is wrong.** The field sits on the `line` block beside `alpha_np_per_m` and `beta`, where every other `gamma`-named quantity is a propagation constant, but it holds the two-wave fit's reflection B/A. Contract site: `emfit/studies.py:1447-1449`.
+
+**What closes it.** Rename to `reflection_two_wave_re` / `reflection_two_wave_im`, or add an explicit basis string.
+
+**Gates:** none — the numbers are unaffected; only the name is wrong.
+
+## DR-21 — `|line.gamma| == s11.magnitude` is a tautology, not a cross-check
+
+**id:** DR-21
+**title:** `|line.gamma| == s11.magnitude` is a TAUTOLOGY, not a cross-check: both are derived from the single attribute `res.gamma`.
+**status:** OPEN
+**severity:** LOW — but a METHODOLOGICAL HAZARD, flagged loudly. It is the one defect in this register that can make a *review* wrong rather than a run wrong.
+**opened:** 2026-11-03
+
+**What is wrong.** Both sides come from the single attribute `res.gamma`: split into re/im at `evidence/termination/run_build_A.py:1554-1555` and modulus'd at `evidence/termination/run_build_A.py:1291`. It can never falsify anything.
+
+**What closes it.** A basis string must name the identity explicitly, and it must NEVER be cited as independent confirmation in any report or review. Anyone citing it is confirming a variable against itself.
+
+**Gates:** any report or review that quotes the two numbers as agreeing with each other.
+
+## DR-22 — `line.alpha` is absent on the loaded branch by omission
+
+**id:** DR-22
+**title:** `line.alpha` is ABSENT on the loaded branch by omission: only the twin branch emits `alpha_np_per_m` (`evidence/termination/run_build_A.py:752`).
+**status:** OPEN
+**severity:** MEDIUM
+**opened:** 2026-11-03
+
+**What is wrong.** The loaded branch of the `line` block carries `beta` and no attenuation at all; the twin branch is the only writer of `alpha_np_per_m`. The absence is by omission, not by a null: a consumer cannot tell "no alpha was measured" from "alpha was not asked for".
+
+**Gates:** this is the still-open section 10 gap.
+
+## DR-23 — the artefact's `s11.basis` cites a line that no longer holds the cited code
+
+**id:** DR-23
+**title:** `s11.basis` cites `emfit/studies.py:3266`, but HEAD has unrelated bookkeeping at that line. Real sites: `emfit/studies.py:3486`, `:1608`, `:1528-1532`.
+**status:** OPEN
+**severity:** LOW
+**opened:** 2026-11-03
+
+**What is wrong.** Citation drift in the artefact. The cited line holds unrelated bookkeeping; the code the basis names lives at `emfit/studies.py:3486` (`gamma_port = deembed_reflection(...)`), `:1608` (the `gamma_port` field) and `:1528-1532` (its docstring). Same class as tonight's other stale-citation corrections.
+
+**What closes it.** Correct `s11.basis` in the writer to the real sites.
+
+**Gates:** none — the number is unaffected; the citation is not.
