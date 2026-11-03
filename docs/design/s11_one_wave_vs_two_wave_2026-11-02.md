@@ -182,6 +182,8 @@ numbers were being compared to it:
 is what the one-wave estimator returns on lossless synthetic data with this `|B/A|` and no physics in
 it. No dispersive, slowing or "degenerate medium" explanation is needed or supported.
 
+**Falsification, 2026-11-03.** The gap analysis shows `line.beta` implies `eps_eff = 5.497 > eps_r = 4.4` on this geometry - physically impossible for a passive microstrip. Combined with the +24 % beta error and the 19 % Z0 slide across loads, the one-wave estimator is proven unusable, not merely biased. Cite `gap_analysis_2026-11-03.md` section H3.
+
 ---
 
 ## 8. `s11_at_plane` sits on a floor, and the floor is not the load
