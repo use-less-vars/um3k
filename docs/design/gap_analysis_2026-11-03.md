@@ -53,6 +53,37 @@ Successive differences are `[−0.01105813, −0.00563444, −0.0042791, −0.00
 
 The asymptote `mag(∞) = 0.732349452526682` is 11.7500 pp above the anchor against 16.4037 pp at plane 51, so the evanescent term removes **4.6537 pp (±0.44 pp from the uncertainty on A)** of the lumped gap. `A/M(51) = 0.960021019480219`.
 
+**§H1 erratum, 2026-11-03 — the printed A/B/C do not reproduce the printed residuals.**
+
+Audited against the committed fit parameters, the quoted set does not generate
+the quoted residual vector. Evaluating A=0.732349452526682, B=0.037084500417724,
+C=0.203186317916544 on the five published points (Δ = 0, 2, 4, 6, 8) gives
+residuals [−0.006587, −0.005260, −0.002643, −0.001433, −0.001814], all one sign,
+summing to −0.0177, RMS 0.004084 — eight times the quoted 0.00050577. A hand
+re-fit of the same five points gives A ≈ 0.7332, B ≈ 0.0296, C ≈ 0.211,
+RMS ≈ 5.2e-4, reproducing the quoted A and RMS but not B/C. The most likely
+reading is a typographical transposition in A/B/C at transcription time; the
+residual vector is from a genuine fit (it sums to exactly zero, so it is a real
+free-offset LSQ residual), but not from the parameters printed beside it.
+
+**Blast radius:** nil for the refutation. The 63/65 measurements (0.729132,
+0.724569) land 6–8e-3 below every candidate asymptote, including both parameter
+sets. **The refutation stands against every candidate anchor.** It stands also
+against the anchor itself (0.6553) — the series is far above it at every plane.
+
+**Action:** future readers must cite the *re-fit* (A≈0.7332, B≈0.0296, C≈0.211)
+as the working parameters, not the originally printed set. **Tagged:**
+[MEASURED, worker audit 2026-11-03] for the residual discrepancy;
+[ESTIMATE] for the re-fit.
+
+**Companion note: the sweepN series spans the `5dda96d` schema boundary.**
+Planes 51/53/55/57/59 were run 2026-11-01 (pre-`5dda96d`, `s11.magnitude` =
+gamma_plane, 0.0338 at plane 51); planes 63/65 were run 2026-11-03
+(post-`5dda96d`, `s11.magnitude` = two-wave modulus, 0.3256). **`|s21|` is
+unaffected** — `5dda96d` did not touch the `s21` writer — so the H1 fit is
+legitimate. **`s11.magnitude` must not be compared across the boundary**;
+it is two quantities under one key. [MEASURED, worker + this session]
+
 ## 4. H2 — PML residual reflection: bounded out
 
 A standing wave off a reflecting absorber would appear as a periodic residual in phase and magnitude against plane. On the same five planes the de-embedded phase is linear to well inside the fit's own noise:
