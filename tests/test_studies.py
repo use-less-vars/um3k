@@ -1913,3 +1913,16 @@ class TestLaunchShapeFlag:
         assert seen["args"].launch == "lumped"
         assert seen["kwargs"]["launch"] == "lumped"
 
+    def test_modal_launch_runs_end_to_end_on_a_cheap_box(self):
+        """The whole launch path -- build_mode_plane, validation, np.real,
+        the per-edge multiply -- runs once and produces a finite |s21|.
+
+        No physics assertion: the point is that the wiring is live, not that
+        the number is right.  n_sub=1 makes the mode uniform, so this test
+        proves the path runs, not that a non-uniform mode lands correctly;
+        that is ``test_the_launch_weights_are_not_a_uniform_top_hat``'s job.
+        """
+        kwargs = self._cheap_loaded_kwargs()
+        res = studies.microstrip_wave(**kwargs, launch="modal")
+        assert np.isfinite(abs(res.s21))
+        assert abs(res.s21) > 0.0
