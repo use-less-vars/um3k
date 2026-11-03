@@ -1800,3 +1800,116 @@ class TestAc4ReferenceAndDeembedWriterFields:
         assert run_build_A.run_reference(kwargs.get("reference")) is None
         assert np.isfinite(res.deembed_distance)
 
+
+
+# ---------------------------------------------------------------------------
+# the launch shape flag: which port edges carry current, and the default that
+# must not move
+# ---------------------------------------------------------------------------
+class TestLaunchShapeFlag:
+    """``launch`` picks the port excitation; the size of the ``|s21|`` move it
+    causes is the open measurement this design exists to make, so no test here
+    asserts the move -- asserting it would be inventing the answer.
+    """
+
+    def _cheap_loaded_kwargs(self):
+        """The six-cell loaded line the last test in this file already runs."""
+        return _cheap_strip_kwargs(
+            n_sub=1, n_strip=2, n_line=6,
+            x_first=6.4e-3, x_last=11.2e-3, nsteps=40,
+            loads=(Load(8.0e-3, "series_r", 50.0),))
+
+    def test_the_absent_flag_is_the_uniform_top_hat_bit_for_bit(self):
+        """``launch`` defaults to the scalar broadcast, and the factor is 1.0.
+
+        The lumped arm multiplies the drive by the Python float 1.0, which is
+        exact in IEEE-754 and cannot promote dtype, and there is one code path
+        rather than two, so this is an equality and not a tolerance -- if it
+        ever needs ``approx``, the exactness claim in the design has been lost.
+        """
+        kwargs = self._cheap_loaded_kwargs()
+        absent = studies.microstrip_wave(**kwargs)
+        named = studies.microstrip_wave(**kwargs, launch="lumped")
+
+        for name in ("v_stations", "v_port", "i_ground_full",
+                     "i_ground_truncated"):
+            assert np.array_equal(np.asarray(getattr(absent, name)),
+                                  np.asarray(getattr(named, name))), name
+        assert abs(absent.s21) == abs(named.s21)
+
+    def test_the_launch_weights_are_not_a_uniform_top_hat(self):
+        """The launch shape is a mode on the build_A cross-section -- no run.
+
+        ``build_mode_plane`` is public and the profile solve is a small 2-D
+        quasistatic problem, so this costs no time stepping: build the build_A
+        cross-section with a 4-node x span and sample the column ``port_edges``
+        names.  Measured this session (design 2026-11-03): 36 weights, spread
+        ``(max - min) / max|w|`` = 44.4068 %, deviation ``max|w/mean - 1|`` =
+        41.1089 %, all one sign, no zeros.  The floor below is a tenth of that:
+        a regression guard, not a bracket on the physics.
+        """
+        from emfit.modal_harness import build_mode_plane
+
+        cell = 0.4e-3
+        grid = Grid.uniform(4, 213, 23, 4 * cell, 213 * cell, 23 * cell)
+        cc = CellComplex(grid)
+        j0, j1, k_strip = 102, 110, 4
+        mode_plane = build_mode_plane(
+            cc, h=1.6e-3, w=3.2e-3, eps_r=4.4, n_sub=4, k_strip=k_strip,
+            iy_strip_centre=106, n_clean=96, n_air=12)
+
+        weights = mode_plane.e_z[np.arange(j0, j1 + 1), :k_strip].ravel()
+        assert weights.size == 36, weights.size
+        assert np.all(np.isfinite(weights))
+        assert not np.any(weights == 0.0)
+        assert np.all(weights >= 0.0) or np.all(weights <= 0.0)  # one sign
+
+        deviation = float(np.max(np.abs(weights / weights.mean() - 1.0)))
+        assert deviation > 0.10, deviation
+
+        # The sampled block is symmetric about the strip centre it was solved
+        # on, so reversing the nine rows must move nothing but rounding (this
+        # box measures 1.6e-15): a profile that came back sheared would mean
+        # the sample and the mode window disagree about which row is centre.
+        weights_2d = mode_plane.e_z[np.arange(j0, j1 + 1), :k_strip]
+        mirrored = float(np.max(np.abs(weights_2d / weights_2d[::-1, :] - 1.0)))
+        assert np.allclose(weights_2d, weights_2d[::-1, :], rtol=1e-10,
+                           atol=0.0), mirrored
+
+    def test_an_unknown_launch_is_refused_by_name(self):
+        """A typo must not silently fall through to the scalar broadcast."""
+        with pytest.raises(ValueError) as caught:
+            studies.microstrip_wave(**self._cheap_loaded_kwargs(),
+                                    launch="tem")
+        text = str(caught.value)
+        assert "lumped" in text and "modal" in text
+
+    def test_the_build_a_cli_carries_the_flag_from_argv_to_the_record(
+            self, monkeypatch):
+        """``--launch`` reaches the record through ``build_kwargs``.
+
+        The dry run is the only place the arguments are visible without paying
+        for a solve, so this checks the flag end to end: argparse ->
+        ``build_kwargs`` -> ``describe_kwargs``, for the loaded call and for
+        the twin.
+        """
+        run_build_A = _load_run_build_a()
+        seen = {}
+        real = run_build_A.build_kwargs
+
+        def spy(args):
+            kwargs = real(args)
+            seen["args"] = args
+            seen["kwargs"] = kwargs
+            return kwargs
+
+        monkeypatch.setattr(run_build_A, "build_kwargs", spy)
+        assert run_build_A.main(["--dry-run", "--launch", "modal"]) == 0
+        assert seen["args"].launch == "modal"
+        assert seen["kwargs"]["launch"] == "modal"
+        assert run_build_A.describe_kwargs(seen["kwargs"])["launch"] == "modal"
+
+        assert run_build_A.main(["--dry-run"]) == 0
+        assert seen["args"].launch == "lumped"
+        assert seen["kwargs"]["launch"] == "lumped"
+

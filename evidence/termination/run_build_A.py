@@ -408,6 +408,7 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         "s21_plane": (S21_PLANE if args.s21_plane_index is None
                       else int(args.s21_plane_index)),
         "excite": "cw",
+        "launch": args.launch,
     }
     if args.s21_plane_index is None and kwargs["loads"]:
         # DEFAULT PLANE POLICY.  With the flag absent the probe is S21_PLANE
@@ -536,6 +537,7 @@ def describe_kwargs(kwargs: dict) -> dict:
     # view is what it was.
     loads = kwargs.get("loads", ())
     return {
+        "launch": kwargs.get("launch"),
         "h_m": kwargs["h"],
         "cell": "h / n_sub",
         "n_sub": kwargs["n_sub"],
@@ -1068,6 +1070,16 @@ def main(argv: list[str] | None = None) -> int:
                          "with --with-twin it prints the twin's arguments too "
                          "(that is where `loads` leaves the dict and s21_plane "
                          "becomes None)")
+    ap.add_argument("--launch", default="lumped",
+                    choices=("lumped", "modal"),
+                    help="port excitation shape: \"lumped\" (default) puts one "
+                         "scalar on every edge of the strip column and is what "
+                         "every record this script has written so far was "
+                         "driven with; \"modal\" scales those edges by the "
+                         "placed microstrip E_z profile, normalised to unit "
+                         "peak.  The twin takes the same value.  Design: "
+                         "docs/design/modal_port_wiring_design_2026-11-03.md.")
+
     args = ap.parse_args(argv)
     label = (args.label if args.label else
              (Path(args.out).stem.replace("build_", "").split("_")[0].upper()

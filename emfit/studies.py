@@ -56,6 +56,7 @@ from .grid import Grid
 from .kicad import load_board
 from .materials import C0, material_matrices
 from .microstrip import COPPER_T, Microstrip
+from .modal_harness import build_mode_plane
 from .operators import CellComplex
 from .plane_phasor import PLANE_CONVENTION
 from .pml import PML, AbsorbedWork, cells_for_wavelength
@@ -2380,6 +2381,11 @@ def microstrip_wave(
     poynting: bool = False,
     plane_capture: bool | None = None,
     s21_plane: str | int | None = None,
+    # The launch SHAPE, not a knob on the source: "lumped" broadcasts one
+    # scalar over the whole strip column and is what every artefact in this
+    # repository was recorded with; "modal" scales that same scalar by the
+    # placed microstrip mode's own E_z on that column (design 2026-11-03).
+    launch: str = "lumped",
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -2916,6 +2922,67 @@ def microstrip_wave(
     history = (np.zeros((nsteps, signals.size), dtype=float)
                if excite == "pulse" else None)
     drive_trace = np.zeros(nsteps) if excite == "pulse" else None
+
+    # --- the launch shape (design 2026-11-03) ---------------------------
+    # "lumped" is one scalar over every port edge: this function has always
+    # driven the strip column that way, and the value is the Python float 1.0
+    # so the multiplies below are exact (IEEE-754 x * 1.0 == x, no dtype
+    # promotion) and a lumped run returns the same bits it returns today.
+    # There is ONE code path, not two: the factor is always applied, so the
+    # lumped arm cannot drift away from the modal arm, and the bit-identity
+    # test pins it with == rather than approx.
+    # "modal" scales those edges by the placed microstrip E_z on the same
+    # column, from the house placement path -- build_mode_plane()
+    # (emfit/modal_harness.py:67) over plane_mode() (emfit/modal.py:267) -- so
+    # this function holds no mode arithmetic and no offsets of its own.  Only
+    # build_mode_plane is imported at module scope, and the design records the
+    # cycle check that makes that safe.
+    launch_shapes = ("lumped", "modal")
+    if launch not in launch_shapes:
+        raise ValueError(
+            f"launch={launch!r} is not a port-excitation shape this run can "
+            f"drive: the two are {list(launch_shapes)} -- 'lumped' (one scalar "
+            "over the whole strip column, the default) and 'modal' (that "
+            "scalar scaled by the placed microstrip E_z profile).")
+    launch_profile: float | np.ndarray = 1.0
+    if launch == "modal":
+        # check=False skips mode_profile's five 1e-12 self-consistency
+        # identities (energy two ways, c_prime vs C, eps_eff/Z0, strip-column
+        # drop, 0.5*Re(vi*) vs 1 W); check=True passes on the build_A box in
+        # 0.03 s, so this is a cost choice, not a bypass.
+        mode_plane = build_mode_plane(
+            cc, h=float(h), w=float(w), eps_r=float(eps_r),
+            n_sub=int(n_sub), k_strip=int(k_strip),
+            iy_strip_centre=int(j_centre), n_clean=int(n_clean),
+            n_air=int(n_air), check=False)
+        # port_edges is the same walk in the same order: the strip column
+        # j0..j1, cells 0..k_strip-1, walked with idx_ez's own strides -- j
+        # steps by nz cells and k by one, so k is fastest and j next, which
+        # is exactly what this .ravel() gives.  np.unique sorts by flat index,
+        # so port_edges comes back in this order, not the concatenation order.
+        # plane_mode zeroes every edge outside the mode window (the y PML
+        # columns, the air cap), so the sample carries no outside launch.
+        weights = mode_plane.e_z[np.arange(j0, j1 + 1), :int(k_strip)].ravel()
+        if weights.size != port_edges.size:
+            raise ValueError(
+                f"the modal launch sampled {weights.size} edges for a port "
+                f"that drives {port_edges.size}: the placed mode and the port "
+                "column disagree, and a launch cannot be part of one and not "
+                "the other.")
+        if np.iscomplexobj(weights):
+            raise ValueError(
+                "the placed mode's E_z is complex and the launch profile is a "
+                "real scaling of the port column: a complex launch would lose "
+                "its imaginary part downstream, so it is refused here instead "
+                "of being silently made real.")
+        peak = float(np.max(np.abs(weights)))
+        if not np.all(np.isfinite(weights)) or peak <= 0.0:
+            raise ValueError(
+                "the placed mode has no launchable E_z on the port column "
+                f"(finite={bool(np.all(np.isfinite(weights)))}, peak={peak!r}): "
+                "a launch that is zero everywhere drives nothing, and |s21| "
+                "would then be a ratio of two runs that never started.")
+        launch_profile = weights / peak
     for n in range(nsteps):
         if absorbed is not None and n == n_warm:
             # Warm-up work is not part of the settled record: bin only the
@@ -2929,10 +2996,10 @@ def microstrip_wave(
             # at step 0 and the record is the whole of a clean pulse.
             drive_now = float(drive) * float(
                 ricker(n * dt, 2.0 / f_pulse, f_pulse))
-            current[port_edges] = drive_now
+            current[port_edges] = drive_now * launch_profile
         else:
             ramp = min(1.0, (n + 1) / max(n_warm, 1))
-            current[port_edges] = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt)
+            current[port_edges] = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt) * launch_profile
         stepper.step(current)
         if n < n_warm:
             continue
