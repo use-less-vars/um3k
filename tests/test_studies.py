@@ -2293,3 +2293,106 @@ def test_ms_x_window_override_moves_the_stations_inside_the_window(monkeypatch):
     # a non-zero code: the flag is a refusal, not an exit status.
     with pytest.raises(SystemExit):
         run_build_A.main(["--dry-run", "--ms-x-window", "13.0", "3.4"])
+
+
+
+# ---------------------------------------------------------------------------
+# the load column's own impedance (z-eff-direct-2026-11-04)
+# ---------------------------------------------------------------------------
+def test_z_eff_load_column_is_v_load_over_i_load(monkeypatch):
+    """Z_eff on the load's column: the two phasors and the ratio, pinned cheap.
+
+    The measurement is two probes on the load's own column and one
+    ``DftAccumulator.add`` per settled step, so a stub for each probe plus a
+    REAL accumulator fed ONE sample at ``n = 0`` -- where the DFT phase is 1 and
+    the spectrum IS the sample -- pins the arithmetic without a solve.  The two
+    claims are the ones the flag rests on: with it off the fields are ``None``
+    and the artefact gains no key, and with it on ``z_eff`` is exactly
+    ``V_load / I_load`` of the numbers the probes returned.
+    """
+    # --- (a) flag off: no field, no key, no number moved --------------------
+    fields = {f.name: f for f in dataclasses.fields(studies.MicrostripWave)}
+    assert fields["v_load"].default is None
+    assert fields["i_load"].default is None
+    assert fields["z_eff"].default is None
+    assert studies.microstrip_wave.__kwdefaults__["z_eff_requested"] is False
+
+    run_build_A = _load_run_build_a()
+
+    class Off:
+        """A record from a run that did not ask: every Z_eff field is None."""
+
+        v_load = None
+        i_load = None
+        z_eff = None
+        geometry = {"f": 5.0e9}
+
+    assert run_build_A._z_eff_block(Off()) is None
+    # ... and the flag exists on the command line, and the dry run -- argparse
+    # -> build_kwargs -> describe_kwargs -- still builds and writes nothing.
+    assert run_build_A.main(["--dry-run", "--measure-z-eff"]) == 0
+
+    # --- (b) the two probes, and the ratio they make -----------------------
+    v_edges = 1.5e-3                  # volts across the element
+    i_faces = (-1.0e-5, -3.0e-5)      # amperes through the two FY faces
+    seen = {"i_columns": []}
+
+    def fake_edge_path_voltage(e, column):
+        seen["v_column"] = column
+        return v_edges
+
+    def fake_plate_current(h, cc, ix, j0, y_extent=None):
+        seen["i_columns"].append(int(ix))
+        seen["y_extent"] = y_extent
+        return i_faces[len(seen["i_columns"]) - 1]
+
+    # ``column_path`` is a property of the mesh; here it only has to hand the
+    # probe the column the load's own record named.
+    monkeypatch.setattr(studies, "edge_path_voltage", fake_edge_path_voltage)
+    monkeypatch.setattr(studies, "plate_current", fake_plate_current)
+    monkeypatch.setattr(studies, "column_path",
+                        lambda cc, ix, j0, j1, k: ("column", int(ix)))
+
+    z_acc = studies.DftAccumulator([1.0e9], 1.0e-12)
+    z_signals = np.zeros(2)
+    stepper = type("StubStepper", (), {"e": np.zeros(1), "h": np.zeros(1)})()
+    studies._load_z_eff(z_acc, stepper, object(), 17, 5, 4, 1e-3, 0, z_signals)
+
+    # on the load's own column, and on the two FY faces that straddle it
+    assert seen["v_column"] == ("column", 17)
+    assert seen["i_columns"] == [16, 17]
+    assert seen["y_extent"] == 1e-3
+    # ONE sample, taken at n = 0
+    assert z_acc.n_samples == 1
+    v_load = complex(z_acc.spectrum[0][0])
+    i_load = -complex(z_acc.spectrum[0][1])
+    assert v_load == pytest.approx(v_edges)
+    assert i_load == pytest.approx(-0.5 * sum(i_faces))
+    z_eff = v_load / i_load
+    assert z_eff == pytest.approx(1.5e-3 / 2.0e-5, rel=1e-12)
+    assert z_eff.imag == 0.0
+
+    # --- (c) the writer block carries the same two numbers ------------------
+    class Measured:
+        """What a run with the flag on puts on the record."""
+
+        v_load = complex(1.5e-3, 2.0e-4)
+        i_load = complex(2.0e-5, 1.0e-6)
+        z_eff = v_load / i_load
+        geometry = {"f": 5.0e9}
+
+    block = run_build_A._z_eff_block(Measured())
+    assert block is not None
+    assert block["f_hz"] == 5.0e9
+    for key in ("v_load", "i_load", "z_eff"):
+        assert set(block[key]) == {"re", "im"}
+        assert cmath.isfinite(block[key]["re"])
+        assert cmath.isfinite(block[key]["im"])
+    assert block["v_load"] == {"re": 1.5e-3, "im": 2.0e-4}
+    assert block["i_load"] == {"re": 2.0e-5, "im": 1.0e-6}
+    # the file alone recomputes the number: z_eff is V_load / I_load
+    assert complex(block["z_eff"]["re"],
+                   block["z_eff"]["im"]) == pytest.approx(Measured.z_eff)
+    assert "plate_current" in block["z_eff_basis"]
+    assert "edge_path_voltage" in block["z_eff_basis"]
+

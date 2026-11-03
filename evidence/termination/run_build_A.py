@@ -600,6 +600,44 @@ def describe_kwargs(kwargs: dict) -> dict:
     return view
 
 
+def _z_eff_block(res) -> dict | None:
+    """The load column's own impedance, or ``None`` when it was not measured.
+
+    ``None`` in, ``None`` out: a run without ``--measure-z-eff`` leaves
+    ``res.z_eff`` None and this emits nothing, so the artefact keeps exactly the
+    keys it had.  When it was measured, both phasors are written beside the
+    ratio they make, in the artefact's ``{"re", "im"}`` pairs, so ``z_eff`` can
+    be recomputed from the file alone and a wrong one is falsifiable from it.
+    """
+    if getattr(res, "z_eff", None) is None:
+        return None
+
+    def pair(value) -> dict:
+        z = complex(value)
+        return {"re": float(z.real), "im": float(z.imag)}
+
+    return {
+        "f_hz": float(res.geometry["f"]),
+        "v_load": pair(res.v_load),
+        "i_load": pair(res.i_load),
+        "z_eff": pair(res.z_eff),
+        "z_eff_basis": (
+            "V_load is edge_path_voltage over the E_z edges of the load's own "
+            "node column -- the same helper the station voltages use -- so it "
+            "is the potential difference across the element in volts.  "
+            "I_load is plate_current summed as a loop integral in amperes over "
+            "the two FY cell faces that straddle that node layer and "
+            "averaged, exactly the expression s11_settling.i_cut uses: no mode "
+            "projection and no cell width applied, so it is the physical "
+            "current the element carries.  The average is there because the FY "
+            "faces are cell faces and the element sits on a node layer half a "
+            "cell from each.  I_load is negated to refer it to the forward "
+            "trace current, as i_cut and the station currents are.  "
+            "z_eff = V_load / I_load, both phasors accumulated at the record's "
+            "own DFT bin over the settled window."),
+    }
+
+
 def reference_block(twin, reference, *, artefact: Path, wall_s: float) -> dict:
     """What the twin produced and what the loaded run consumed, in one place.
 
@@ -1113,6 +1151,15 @@ def main(argv: list[str] | None = None) -> int:
                          "one of the two s11 readings can be falsified (defect "
                          "DR-19).  Off by default; no number changes when it "
                          "is off and the key is then absent.")
+    ap.add_argument("--measure-z-eff", action="store_true",
+                    help="measure the complex impedance of the element on the "
+                         "load's own column and attach it to the artefact top "
+                         "level as z_eff_measurement: V_load from "
+                         "edge_path_voltage over that column's E_z edges, "
+                         "I_load from plate_current on the two FY faces that "
+                         "straddle it, and z_eff = V_load / I_load at the "
+                         "record's own DFT bin.  Off by default; no number "
+                         "changes when it is off and the key is then absent.")
     ap.add_argument("--ms-x-window", nargs=2, type=float, default=None,
                     metavar=("FIRST_MM", "LAST_MM"),
                     help="probe-station window: the FIRST and LAST station, in "
@@ -1283,7 +1330,8 @@ def main(argv: list[str] | None = None) -> int:
                          if args.with_twin else kwargs)
         t_call = time.monotonic()
         res = studies.microstrip_wave(**loaded_kwargs,
-                                     s11_settling=args.s11_settling)
+                                     s11_settling=args.s11_settling,
+                                     z_eff_requested=args.measure_z_eff)
         wall_call = time.monotonic() - t_call
     finally:
         trip.stop()
@@ -1619,6 +1667,11 @@ def main(argv: list[str] | None = None) -> int:
     }
     if res.s11_settling is not None:
         payload["s11_settling"] = res.s11_settling
+    # Flag-off: the field is None and the key is ABSENT, so the artefact is the
+    # one it was.  Same convention as the s11_settling block above.
+    z_eff_block = _z_eff_block(res)
+    if z_eff_block is not None:
+        payload["z_eff_measurement"] = z_eff_block
     write_json(out_path, payload)
     print(f"wrote {out_path}")
     # The ``|s11|`` printed here is the TWO-WAVE modulus: the same number the

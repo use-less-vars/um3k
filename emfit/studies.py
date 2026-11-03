@@ -1642,6 +1642,13 @@ class MicrostripWave:
     # ``microstrip_wave(s11_settling=True)``; ``None`` leaves every artefact
     # key of a run without the flag byte-identical.
     s11_settling: dict | None = None
+    # The load column's own impedance (z-eff-direct-2026-11-04): the element's
+    # voltage and the current through it, and the ratio between them.  Filled
+    # only when ``microstrip_wave(z_eff_requested=True)``; ``None`` leaves every
+    # artefact key of a run without the flag byte-identical.
+    v_load: complex | None = None
+    i_load: complex | None = None
+    z_eff: complex | None = None
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -2384,6 +2391,36 @@ def _project_mode(field_edges, mode_edges):
     return np.sum(field_edges * mode_edges) / np.sum(mode_edges * mode_edges)
 
 
+def _load_z_eff(
+    z_acc, stepper, cc, ix_load, j_centre, k_strip, y_half, n, signals,
+) -> None:
+    """Accumulate the load column's own V and I phasors into ``z_acc``.
+
+    Two probes, on the plane the ELEMENT is defined on, and nothing else:
+
+    * VOLTAGE: ``edge_path_voltage`` over the ``n_strip`` ``E_z`` edges of the
+      load's own node column -- the same helper, and the same column, the
+      station voltages are read on, so it is the potential difference across
+      the cut in volts.
+    * CURRENT: ``plate_current`` summed as a loop integral, in amperes, with no
+      mode projection and no cell width applied.  The two FY cells that
+      straddle the node layer are averaged, exactly as the station currents and
+      the s21 cut plane's current are: the FY faces are the faces of an ``x``
+      cell and the element sits on a node layer half a cell from each, so
+      without the average the ratio would carry ``beta * cell / 2`` of spurious
+      phase.
+
+    ``signals`` is the caller's scratch pair; one ``add`` per settled step, so
+    the two phasors come out of the record's own DFT bin.
+    """
+    signals[0] = edge_path_voltage(
+        stepper.e, column_path(cc, int(ix_load), int(j_centre), 0, int(k_strip)))
+    signals[1] = 0.5 * (
+        plate_current(stepper.h, cc, int(ix_load) - 1, 0, y_extent=y_half)
+        + plate_current(stepper.h, cc, int(ix_load), 0, y_extent=y_half))
+    z_acc.add(signals, n)
+
+
 def _s11_settling_block(
     *, v_cut, i_cut, a_cut, b_cut, v_port, i_port, a_port, b_port,
     gamma_plane, gamma_port, deembed_distance_m, deembed_gamma_used,
@@ -2487,6 +2524,12 @@ def microstrip_wave(
     # expressions fills ``cut_signals``).  Design: the flux-projection
     # extraction note, 2026-11-03.
     flux_projection: bool = False,
+    # Diagnostic-only load-column impedance (z-eff-direct-2026-11-04): the
+    # element's own voltage and current on the load's column, accumulated
+    # exactly as the s21 cut plane's two phasors are, and divided.  Off by
+    # default: no accumulator, no probe, and no number in this function moves
+    # when it is off.
+    z_eff_requested: bool = False,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -3012,6 +3055,21 @@ def microstrip_wave(
     cut_signals = np.zeros(2) if ix_extract is not None else None
     cut_column = (column_path(cc, ix_extract, j_centre, 0, k_strip)
                   if ix_extract is not None else None)
+    # The load column's own two phasors, when the element's impedance was asked
+    # for: the same shape as the cut plane's, on the column the load's element
+    # sits on.  ``None`` unless ``z_eff_requested``, so a run without the flag
+    # allocates nothing, probes nothing and its record is bit-identical to the
+    # run before the flag existed.  The column comes from ``loads_used`` rather
+    # than being retyped here: the load's own record is the one place it was
+    # resolved.  On this build there is one load, so the last is the only one.
+    if z_eff_requested and not loads_used:
+        raise ValueError(
+            "z_eff_requested was asked for on a load-free record: there is no "
+            "load column for an element to be measured across.  A Z_eff needs "
+            "a cut to sit on.")
+    ix_load_z = int(loads_used[-1]["column"]) if z_eff_requested else None
+    z_acc = DftAccumulator([f0], dt) if z_eff_requested else None
+    z_signals = np.zeros(2) if z_eff_requested else None
     current = np.zeros(cc.n_edges, dtype=float)
     n_currents = n_stations + 3        # station currents start here in signals
     signals = np.zeros(n_currents + n_stations, dtype=float)
@@ -3187,6 +3245,10 @@ def microstrip_wave(
                     + plate_current(stepper.h, cc, ix_extract, 0,
                                     y_extent=y_half))
             cut_acc.add(cut_signals, n)
+        if z_acc is not None:
+            # The element's own two probes, on its own column.
+            _load_z_eff(z_acc, stepper, cc, ix_load_z, j_centre, k_strip,
+                        y_half, n, z_signals)
         if plane_ey is not None:
             # The phase is the accumulator's own expression, on the step index:
             # not a re-derivation, the same line ``DftAccumulator.add`` runs.
@@ -3293,6 +3355,23 @@ def microstrip_wave(
         i_cut = -complex(cut_spec[1])
     else:
         v_cut = i_cut = complex(np.nan, np.nan)
+    # The load column, when the element's own impedance was asked for: its two
+    # phasors and the ratio between them.  ``i_load`` takes the same negation
+    # ``i_cut`` and the station currents take -- the ground return is summed
+    # antiparallel to the trace current.
+    if z_acc is not None:
+        z_spec = z_acc.spectrum[0]
+        v_load = complex(z_spec[0])
+        i_load = -complex(z_spec[1])
+        if i_load == 0:
+            raise ValueError(
+                "z_eff_requested: the load column's current phasor is exactly "
+                "zero, so V_load / I_load has no value.  An element that draws "
+                "no current has no impedance to read; the voltage phasor is "
+                f"{v_load!r} V.")
+        z_eff = v_load / i_load
+    else:
+        v_load = i_load = z_eff = None
 
     # --- phase constant: multi-station fits, the old difference kept beside --
     # The two-station difference is what this study used to quote.  It only
@@ -3913,6 +3992,9 @@ def microstrip_wave(
                 cut_column=int(ix_extract) if ix_extract is not None else -1,
                 port_column=int(ix_port))
             if s11_settling else None),
+        v_load=v_load,
+        i_load=i_load,
+        z_eff=z_eff,
     )
 
 
