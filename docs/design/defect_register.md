@@ -400,3 +400,103 @@ Correction to record (framing errors caught within one dispatch): (i) an earlier
 **What closes it.** Correct `s11.basis` in the writer to the real sites.
 
 **Gates:** none — the number is unaffected; the citation is not.
+
+---
+
+## DR-24 — `s11.magnitude` (two-wave) and `s11.phase_deg` (one-wave) are mis-paired under one key
+
+**id:** DR-24
+**title:** `s11.magnitude` (two-wave) and `s11.phase_deg` (one-wave) are MIS-PAIRED under one key: the block reports a modulus from one estimator beside a phase from another, as if they were one complex reflection.
+**status:** OPEN
+**severity:** HIGH
+**opened:** 2026-11-04
+
+**What is wrong.** A reader who pairs `/s11/magnitude` with `/s11/phase_deg` gets a quantity that exists in no model. The modulus comes from the two-wave fit; the phase comes from the one-wave station fit. The pairing site is `evidence/termination/run_build_A.py:1589-1591`, and the block's own `/s11/basis` leaf describes the mismatch rather than preventing it.
+
+**Evidence.** `evidence/termination/run_build_A.py:1589-1591`; leaf `/s11/basis` on `evidence/termination/build_A_50ohm_p51_phasors.json`. Numbers, quoted from `docs/design/s11_phase_investigation_2026-11-04.md` §4: the AC-3 grade `/ac/AC-3/achieved/s11_abs` = **0.23216690987276836** is the ONE-wave magnitude, while `/s11/magnitude` = **0.32556486641109117** — so the gate grades a number the `s11` block does not report.
+
+**What closes it.** [PROPOSED here, not stated by the source] Split the pair: emit the two-wave modulus and the one-wave phase under separate keys (or one key plus a basis string naming both estimators), so no reader can pair them.
+
+**Gates:** AC-3 — the source states this defect gates it.
+
+## DR-25 — the de-embed uses beta_one while the magnitude uses beta_two
+
+**id:** DR-25
+**title:** The de-embed is performed at `beta_one` = 286.3593 rad/m while the magnitude it sits beside is computed at `beta_two` = 231.5533 rad/m: one `s11` is assembled from two phase constants.
+**status:** OPEN
+**severity:** HIGH
+**opened:** 2026-11-04
+
+**What is wrong.** Metadata that describes a de-embed cannot be trusted while the beta it used is a different fit from the beta that produced the magnitude. The substitution site is `emfit/studies.py:3387` (beta repointed at the two-wave fit); the leaves that expose the two constants side by side are `/line/beta` and `/line/beta_two_wave`.
+
+**Evidence.** `emfit/studies.py:3387`; leaves `/line/beta`, `/line/beta_two_wave` on `evidence/termination/build_A_50ohm_p51_phasors.json`. Measured consequence, from `docs/design/s11_phase_investigation_2026-11-04.md` §4: the gap between the two betas is the gap the investigation was opened on.
+
+**What closes it.** [PROPOSED here, not stated by the source] One beta per `s11`, named in the basis string; a record must not mix the two fits.
+
+**Gates:** none assigned by the source (§4 gives none).
+
+## DR-26 — `s21.deembed_distance_m` records 0.0072 but the operation used the 0.0172 span
+
+**id:** DR-26
+**title:** `s21.deembed_distance_m` records **0.0072** m but the s21 de-embed operated over the **0.0172** m plane span (x_cut 0.0204 − x_port 0.0032). The field is either the wrong distance or the wrong operation's name.
+**status:** OPEN
+**severity:** MEDIUM
+**opened:** 2026-11-04
+
+**What is wrong.** A reader cannot tell from the record whether 0.0072 is the distance used or a copy of the s11 distance. From the source's own arithmetic: `x_cut = 51 * 0.0004 = 0.0204` m and `x_port = 8 * 0.0004 = 0.0032` m give **0.0172** m (derived), against a recorded 0.0072.
+
+**Evidence.** Leaves `/s21/deembed_distance_m`, `/geometry/s21_plane_index` on `evidence/termination/build_A_50ohm_p51_phasors.json`. This defect is **s21-ONLY**: `docs/design/s11_distance_and_magnitude_2026-11-04.md` §3 corroborates 0.0172 as the transmission geometry and shows the 7.2 mm s11 figure is a different distance, not a conflict — there is **no s11 case** for DR-26.
+
+**What closes it.** [PROPOSED here, not stated by the source] Record the distance actually used by each operation, with the field named for the operation.
+
+**Gates:** none assigned by the source (§4 gives none).
+
+## DR-27 — the s21 basis strings describe the twin-reference branch the run did not use
+
+**id:** DR-27
+**title:** `s21.phase_deg_basis` and `s21.raw_basis` describe the TWIN-reference branch, but the run was reference-free: the strings are not justifications of the numbers beside them.
+**status:** OPEN
+**severity:** MEDIUM
+**opened:** 2026-11-04
+
+**What is wrong.** `raw_basis` claims a 5.8 % difference against a value the same block records identically, and `phase_deg_basis` describes a twin-reference construction while `/run/reference` is null and `/run/loaded_without_reference` is true. The prose outlived the branch it was written for.
+
+**Evidence.** Leaves `/s21/phase_deg_basis`, `/s21/raw_basis`, `/run/reference`, `/run/loaded_without_reference` on `evidence/termination/build_A_50ohm_p51_phasors.json`. Artefact-leaf evidence only — §4 gives no code `path:line` for the basis writer, and none is invented here.
+
+**What closes it.** [PROPOSED here, not stated by the source] Emit the basis string from the branch that actually ran, so a reference-free run cannot carry twin-branch prose.
+
+**Gates:** none assigned by the source (§4 gives none).
+
+## DR-28 — `meta.git_rev` is null, so no artefact is tieable to a commit
+
+**id:** DR-28
+**title:** `meta.git_rev` is **null** on the termination artefacts, so no v3 artefact can be tied to the tree state that produced it and no defect above can be reproduced at that state.
+**status:** OPEN
+**severity:** MEDIUM
+**opened:** 2026-11-04
+
+**What is wrong.** Provenance is unrecoverable after the fact: the record names no revision.
+
+**Evidence.** Leaf `/meta/git_rev` on `evidence/termination/build_A_50ohm_p51_phasors.json` (null). Artefact-leaf evidence only — there is no code `path:line` for this in §4, and none is invented here; the writer site was not identified by the source.
+
+**What closes it.** [PROPOSED here, not stated by the source] Stamp `meta.git_rev` from the working tree at write time, or accept the artefact as unattributable on the page rather than in principle.
+
+**Gates:** every reproduction claim made from a v3 artefact, including the ones in this register.
+
+## DR-29 — four z0 values in one artefact, and `summary_line` prints n/a for each it labels
+
+**id:** DR-29
+**title:** Four different z0 values live in one artefact — `line.z0`, `run.station_fit.z0`, `z0_model` and the TE 47.54 ohm figure — with no arbitration between them, and `summary_line` prints **n/a** for each it labels.
+**status:** OPEN
+**severity:** MEDIUM
+**opened:** 2026-11-04
+
+**What is wrong.** Nothing in the record says which impedance is the line's, so any reader may pick the one that suits. `line.z0` = **42.43786214405251 − j15.727993189312496**, `run.station_fit.z0` = **44.207500737130495 + j0.3794459968505162**, `z0_model` = **48.0987**, TE **47.54**.
+
+**Evidence.** Leaves `/line/z0_re`, `/line/z0_im`, `/run/station_fit`, `z0_model`, TE 47.54 on `evidence/termination/build_A_50ohm_p51_phasors.json`. Artefact-leaf evidence only — §4 gives no code `path:line`, and none is invented here.
+
+**Correction (2026-11-04, housekeeping).** The `station_fit` figure quoted above, **44.207500737130495 + j0.3794459968505162**, is the **beta_one** fit and is **STALE**: the current record's own `run.station_fit` is **47.364066848187235 + j1.6449807931078728** (the beta_two fit, z0_re `47.364066848187235`, z0_im `1.6449807931078728`, span 0.0084 m). The quote is kept unaltered as the record of what was written; the live value and the reproduction are in `docs/design/s11_refit_from_phasors_2026-11-04b.md` §6.
+
+**What closes it.** [PROPOSED here, not stated by the source] One arbitrated z0 per artefact, with each of the four named as to which quantity it is, and `summary_line` printing the values it labels.
+
+**Gates:** none assigned by the source (§4 gives none).
