@@ -500,3 +500,36 @@ Correction to record (framing errors caught within one dispatch): (i) an earlier
 **What closes it.** [PROPOSED here, not stated by the source] One arbitrated z0 per artefact, with each of the four named as to which quantity it is, and `summary_line` printing the values it labels.
 
 **Gates:** none assigned by the source (§4 gives none).
+
+## DR-31 — a record asserts an anchor and retracts it in the same string
+
+**id:** DR-31
+**title:** Six records compute a percent-low residual against the series-R anchor and, in the same `s11.validation_reason` string, withdraw that anchor — with no superseded marker, and with the retraction last.
+**status:** OPEN
+**severity:** LOW
+**opened:** 2026-11-04
+
+**What is wrong.** The number and its refutation share one string, and the number comes first. A reader who stops at the percent-low keeps a figure that the same sentence says does not describe the structure, and nothing in the record marks it superseded. The arithmetic is reproducible, so this is a record-integrity defect rather than a numerics one: two incompatible claims stand side by side with no marker between them.
+
+**Evidence.** The 6 records, the note's exact 331 characters and the counts are in `docs/design/anchor_note_extraction_2026-11-04.md` (X1 fires; X2 and X4 do not; X3 fires on 6 of 6 — every note-carrying record computes the residual first and appends the retraction after it). Leaf `s11.validation_reason` on those records under `evidence/termination/`. Artefact-leaf evidence only — the source gives no code `path:line` for the `validation_reason` writer, and none is invented here.
+
+**What closes it.** [PROPOSED here, not stated by the source] Working rule: when an anchor is retracted, any residual computed against it is marked superseded or omitted — a retraction may not trail a number it withdraws.
+
+**Gates:** none assigned by the source. The rule above would gate any residual quoted against a retracted anchor.
+
+## DR-32 — the anchor note's stated reason is refuted
+
+**id:** DR-32
+**title:** The note under which 6 records decline to apply the series-R anchor justifies that decision by a "shorted stub" termination that the tree refutes; the conclusion may survive, but not for the reason given.
+**status:** OPEN
+**severity:** MEDIUM
+**opened:** 2026-11-04
+
+**What is wrong.** The note dated 2026-11-02 states that the strip mask is PEC-continuous from the port plane to the far `xmax` PEC wall, so the load sits in series with a shorted stub instead of terminating a matched line, and on that ground declines the series-R anchor. The premise is right and the inference is not. The mask is PEC-continuous in the code — `emfit/studies.py:2854-2861` marks the `ex` and `ey` edges from `ix_port` to `nx` as strip and or's them into the PEC mask — but the strip runs through the PML absorber, so the wave is absorbed rather than reflected off the wall, and the unloaded run reflects almost nothing. The note's citation was accurate when it was written: that block sat at `emfit/studies.py:2704-2712` on the note's dates and has since drifted +150 lines (the same shift moves the load-sigma stamp from `2732-2736` to `2882-2886`). This is therefore not a citation defect but a physical inference that the measurement contradicts. It does **not** show the note's conclusion to be wrong — it may hold for a different reason (the load is 50 ohm in parallel with 0.35 pF, not a pure series R) — but the stated justification cannot be what carries it.
+
+**Evidence.** `docs/design/strip_termination_refuted_2026-11-03.md` is the refutation. The measurement that supports it: the load-free (unloaded) run measures `abs(result.gamma) < 0.02` (`tests/test_studies.py:507`), where a shorted stub would give `|Gamma|` of order 1 — a 2 % reflection is not a short. Membership of the note in the records, and its character-identical text, are in `docs/design/anchor_note_extraction_2026-11-04.md`. DR-31 is independent of this defect: it is about how a record presents a retracted anchor, not about whether the retraction's reason is sound. The note's own line reference is frozen inside six artefact strings and cannot be corrected in place; read it as pointing at `emfit/studies.py:2854-2861` in the current tree.
+
+**What closes it.** [PROPOSED here, not stated by the source] Re-state the reason the anchor is not applied, on grounds the tree supports, or apply the anchor. Which of the two is correct is a decision this register does not make; the task is only to stop the records from resting on a refuted justification.
+
+**Gates:** none assigned by the source. It bears directly on any anchor decision taken from these 6 records.
+
