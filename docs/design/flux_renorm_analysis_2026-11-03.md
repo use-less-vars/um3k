@@ -40,8 +40,8 @@ VERDICT Q2. Constructive (`+`); no double-negation collapse. `(1 + zc/η_eff)/2 
 
 FACT. `run.kwargs.launch = "lumped"` in all four, so the `weights/peak` branch (studies.py:2999-3036) never
 runs; `flux_plane` is a fresh `build_mode_plane(..., check=False)` (3046-3052).
-FACT. The probe is exactly scale-invariant: `_project_mode` (2380) is `sum(f·m)/sum(m·m)` and the call site
-multiplies `sum(m)` back, so `f → λf` leaves `Σ(f·m)Σ(m)/Σ(m²)` unchanged. The unit-power scale cancels
+FACT. The probe is exactly scale-invariant in the mode: `_project_mode` (2380) is `sum(f·m)/sum(m·m)` and the call site
+multiplies `sum(m)` back, so `m → λm` leaves `Σ(f·m)Σ(m)/Σ(m²)` unchanged. The unit-power scale cancels
 identically — the 3120-3121 comment claims this and the algebra confirms it rather than refuting it.
 FACT, measured on the rebuilt plane: cut column `m̄²/⟨m²⟩ = 0.9994961`; launch set (36 values) peak 3.378714,
 mean −2.394402, `m̄²/⟨m²⟩ = 0.983126`, peak/mean 1.4111.

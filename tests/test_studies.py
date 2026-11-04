@@ -1933,15 +1933,17 @@ class TestLaunchShapeFlag:
 # channel on the cut column, behind a flag that defaults off
 # ---------------------------------------------------------------------------
 class TestFluxProjectionExtraction:
-    """``flux_projection`` reads the s21 cut as one modal amplitude per channel
-    instead of one plain sum per channel.
+    """``flux_projection`` reads the s21 cut's voltage channel as one modal
+    amplitude instead of one plain sum.
 
-    Nothing here asserts what the number ought to be -- that is the measurement
-    the design exists to make.  What is asserted is what a wrong implementation
-    would break silently: the flag is off by default, the projection is the
-    least-squares amplitude it claims to be, and it applies NO renormalisation
-    constant -- a mode solved at the wrong impedance still projects the field it
-    was handed, because there is nothing in the path to divide by.
+    Only the voltage channel is projected: the current channel stays the plain
+    sum of its cut samples.  Nothing here asserts what the number ought to be --
+    that is the measurement the design exists to make.  What is asserted is what
+    a wrong implementation would break silently: the flag is off by default, the
+    projection is the least-squares amplitude it claims to be, and it applies NO
+    renormalisation constant -- a mode solved at the wrong impedance still
+    projects the field it was handed, because there is nothing in the path to
+    divide by.
     """
 
     N = 4
@@ -1951,8 +1953,11 @@ class TestFluxProjectionExtraction:
 
         At ``x = 0`` the wave is ``v = v_f + v_b`` and ``i = (v_f - v_b) / zc``
         (``GAMMA``/``ZC`` above, so this is not a toy line); the cut samples
-        ``e ~ v`` and the ground return current ``-i``, each laid on its own
-        mode.  ``eta_eff`` is the impedance the placed mode was solved at --
+        ``e ~ v`` on the placed E mode and the ground return current ``-i``,
+        which the production path leaves unprojected.  Both are built here
+        anyway, because ``_project_mode`` is exercised on each of them and the
+        ground-return sign is what the forward-wave tests turn on.  ``eta_eff``
+        is the impedance the placed mode was solved at --
         the number a renormalisation constant would divide by, and the one that
         must NOT appear anywhere below.  The mode is a 0/1 window, so
         ``sum(m) == sum(m * m)`` and the plain sum is what the projection must
@@ -2107,10 +2112,10 @@ class TestFluxProjectionCurrentReference:
         agree with flag-off to within a few 1e-4.
 
         This is the only cheap grid where the two paths differ at all.
-        The old (pre-commit-13) projected-H code gave a ratio of 0.5775
-        here; the current-reference code gives ~0.9995. The band is not a
-        bit-pin because the legitimate residual is ~5e-4, so a bit-pin
-        would be brittle for no gain.
+        The pre-commit-13 two-channel projection gave a ratio of 0.5775
+        here; the current single projected voltage channel gives ~0.9995. The
+        band is not a bit-pin because the legitimate residual is ~5e-4, so a
+        bit-pin would be brittle for no gain.
         """
         kwargs = _cheap_strip_kwargs(
             h=1.6e-3, n_sub=2, n_strip=4, n_line=6,
