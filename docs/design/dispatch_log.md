@@ -21,6 +21,7 @@ conflict was caught only at commit time. A dispatch that is not on this list is 
 ## Deferred
 
 - `_bin_metrics` (`emfit/studies.py:1947`) still de-embeds with `fit_one.beta` (`:2005`-`:2006`, used at `:2038` and `:2055`) after the beta fix at `emfit/studies.py:3387`; the only callers are under `.scratch/`, so no committed artefact is affected.
+- DR-19 is still **OPEN**: its two dispatch rows dated 2026-11-03 were archived, not resolved (trail: `docs/design/dispatch_log_archive_2026-Q4.md`:75-76); the defect itself is intact at `docs/design/defect_register.md`:302.
 
 ## Standing rules
 
