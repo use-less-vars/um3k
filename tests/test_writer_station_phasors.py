@@ -43,7 +43,7 @@ Z0 = 47.5 + 1.8j
 
 
 def _synthetic_record(*, n_stations: int = X_M.size, beta_used: float = BETA,
-                      fit_beta=None) -> SimpleNamespace:
+                      fit_beta=None, geometry=None) -> SimpleNamespace:
     """A ``MicrostripWave``-shaped stand-in: only the fields the block reads."""
     u = X_M[:n_stations] - X_M[0]
     fwd = A * np.exp(-1j * BETA * u)
@@ -57,6 +57,7 @@ def _synthetic_record(*, n_stations: int = X_M.size, beta_used: float = BETA,
         station_fit=SimpleNamespace(
             beta=beta_used if fit_beta is None else fit_beta),
         deembed_distance=1.0e-3,
+        geometry=geometry,
     )
 
 
@@ -114,7 +115,8 @@ def test_beta_used_is_the_beta_the_fit_was_given_and_beta_one_is_null():
     assert block["beta_one"] is None
     assert block["deembed_distance_m"] == pytest.approx(1.0e-3)
     assert set(block) == {
-        "status", "n", "x_m", "v_re", "v_im", "i_re", "i_im",
+        "status", "n", "x_m", "js", "fit_x", "fit_selected",
+        "v_re", "v_im", "i_re", "i_im",
         "beta_used", "beta_one", "beta_two", "deembed_distance_m", "note",
     }
 
@@ -127,8 +129,65 @@ def test_a_mismatched_length_is_unavailable_not_partial():
     block = run_build_A._station_phasor_block(res)
 
     assert block["status"] == "unavailable"
-    for key in ("n", "x_m", "v_re", "v_im", "i_re", "i_im",
+    for key in ("n", "x_m", "js", "fit_x", "fit_selected",
+                "v_re", "v_im", "i_re", "i_im",
                 "beta_used", "beta_one", "beta_two", "deembed_distance_m"):
         assert block[key] is None
     assert "station_x" in block["note"]
     _through_the_file(block)
+    # Both branches emit the same key set, as the note promises.
+    ok = _load_run_build_a()._station_phasor_block(_synthetic_record())
+    assert set(block) == set(ok)
+
+
+# The station columns the study publishes for the reference geometry: eight
+# stations, the last one sitting on the lumped load's column (50), so the
+# impedance fit saw the first seven -- the shape emfit/studies.py:3817-3821
+# writes and the artefact quotes as station_fit_cells/station_fit_n.
+CELLS = [3, 8, 13, 18, 23, 28, 33, 50]
+GEOMETRY = {
+    "cell": 0.4e-3,
+    "station_cells": CELLS,
+    "station_fit_cells": CELLS[:-1],
+    "station_fit_n": len(CELLS) - 1,
+    "load_station_excluded": True,
+}
+
+
+def test_the_selection_keys_name_the_stations_the_fit_was_handed():
+    run_build_A = _load_run_build_a()
+    record = _synthetic_record(geometry=dict(GEOMETRY))
+    block = run_build_A._station_phasor_block(record)
+
+    assert block["status"] == "ok"
+    assert block["js"] == CELLS
+    assert block["fit_selected"] == [True] * 7 + [False]
+    assert len(block["fit_selected"]) == block["n"]
+    # The full station list is still written; only the selection is a subset.
+    assert block["x_m"] == [float(v) for v in X_M]
+    assert block["fit_x"] == [float(v) for v in X_M[:7]]
+
+    # And the selection is usable: refitting the rows it names reproduces B/A,
+    # so fit_x and fit_selected line up with v_re/v_im/i_re/i_im row for row.
+    reloaded, x, v, i = _through_the_file(block)
+    mask = np.array(reloaded["fit_selected"], dtype=bool)
+    fit = fit_station_impedance(x[mask], v[mask], i[mask],
+                               reloaded["beta_used"])
+    assert np.array_equal(x[mask], np.array(reloaded["fit_x"], dtype=float))
+    assert abs(fit.gamma_v - B / A) < 1e-10
+
+
+def test_a_record_without_the_cells_leaves_the_selection_null_not_guessed():
+    run_build_A = _load_run_build_a()
+    # No geometry at all, and a geometry whose fit cells are inconsistent with
+    # the station rows: both write null rather than a selection the writer
+    # cannot know (the rule is emfit's, not the writer's).
+    inconsistent = dict(GEOMETRY, station_fit_n=len(CELLS))
+    for record in (_synthetic_record(),
+                   _synthetic_record(geometry=inconsistent)):
+        block = run_build_A._station_phasor_block(record)
+        assert block["status"] == "ok"
+        assert block["js"] is None
+        assert block["fit_x"] is None
+        assert block["fit_selected"] is None
+        _through_the_file(block)

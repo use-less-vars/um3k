@@ -692,7 +692,20 @@ def _station_phasor_block(res) -> dict:
         "shift to the port plane.  beta_one is null: the n_wave=1 phase "
         "constant is not stored on the record.  beta_used equals beta_two "
         "on this HEAD because beta is repointed to the two-wave fit "
-        "(emfit/studies.py:3387) before the station fit is called.")
+        "(emfit/studies.py:3387) before the station fit is called.  "
+        "js, fit_x and fit_selected state which of the n rows the "
+        "impedance fit used: js is geometry.station_cells, one station "
+        "column per row of x_m; fit_selected is the mask "
+        "_station_fit_selection applied (emfit/studies.py:2326, all true "
+        "when no load column was dropped); fit_x is the x_m of the "
+        "selected stations in order, i.e. the x fit_station_impedance was "
+        "handed.  They are read off geometry.station_fit_cells "
+        "(emfit/studies.py:3820), not recomputed, so that rule keeps one "
+        "home; a record without those cells writes all three as null.")
+
+    def _geometry() -> dict:
+        geometry = getattr(res, "geometry", None)
+        return geometry if isinstance(geometry, dict) else {}
 
     n = int(x.size)
     complete = (n > 0 and v.size == n and i.size == n
@@ -700,11 +713,35 @@ def _station_phasor_block(res) -> dict:
                 and bool(np.all(np.isfinite(v)))
                 and bool(np.all(np.isfinite(i)))
                 and bool(np.isfinite(beta_used)))
+    # Which of the n stations the impedance fit actually saw, read off the
+    # geometry record the study already publishes rather than re-derived here:
+    # ``station_cells`` is the full column list (js), ``station_fit_cells`` the
+    # subset ``_station_fit_selection`` kept (emfit/studies.py:2326, written at
+    # emfit/studies.py:3820).  The drop rule lives in ONE place, so a change to
+    # it cannot leave this block silently disagreeing; a record that does not
+    # carry the cells writes the three keys null rather than a guess.
+    js = fit_x = fit_selected = None
+    geometry = _geometry()
+    cells = geometry.get("station_cells")
+    fit_cells = geometry.get("station_fit_cells")
+    if (cells and fit_cells and n > 0 and len(cells) == n
+            and len(fit_cells) == int(geometry.get("station_fit_n") or 0)):
+        kept = {int(value) for value in fit_cells}
+        mask = [int(value) in kept for value in cells]
+        if sum(mask) == len(kept):
+            js = [int(value) for value in cells]
+            fit_selected = mask
+            fit_x = [float(x[k]) for k, selected in enumerate(mask)
+                     if selected]
+
     if not complete:
         return {
             "status": "unavailable",
             "n": None,
             "x_m": None,
+            "js": None,
+            "fit_x": None,
+            "fit_selected": None,
             "v_re": None,
             "v_im": None,
             "i_re": None,
@@ -720,6 +757,9 @@ def _station_phasor_block(res) -> dict:
         "status": "ok",
         "n": n,
         "x_m": [float(value) for value in x],
+        "js": js,
+        "fit_x": fit_x,
+        "fit_selected": fit_selected,
         "v_re": [float(complex(value).real) for value in v],
         "v_im": [float(complex(value).imag) for value in v],
         "i_re": [float(complex(value).real) for value in i],
