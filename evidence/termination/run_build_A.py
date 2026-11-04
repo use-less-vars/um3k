@@ -638,6 +638,101 @@ def _z_eff_block(res) -> dict | None:
     }
 
 
+def _station_phasor_block(res) -> dict:
+    """The station phasors the impedance fit saw, so ``s11`` can be re-run.
+
+    The ``s11`` block quotes two estimators and neither is checkable from the
+    artefact alone: ``magnitude_one_wave_station_fit`` and ``phase_deg`` come
+    from ``station_fit.gamma_v``, which is ``amp_v[1] / amp_v[0]``
+    (``emfit/ports.py:1517``) -- a ratio over the complex V and I at the
+    stations, and those two arrays are written nowhere.  This block writes them,
+    in full float64, beside the phase constant the fit was handed, so
+    ``emfit.ports.fit_station_impedance(x_m, v, i, beta_used)`` reproduces
+    ``gamma_v`` and hence ``gamma_port`` exactly: the one-wave reflection is
+    falsifiable from the file, not from a second run.
+
+    ``beta_one`` is null on every record, deliberately.  ``fit_beta(n_wave=1)``
+    runs (``emfit/studies.py:3386``) but only its residual reaches the record
+    (``fit_residual``, ``emfit/studies.py:3948``); its phase constant is not a
+    ``MicrostripWave`` field, so there is nothing to quote and a zero would be
+    a wrong number rather than a missing one.  ``beta_used`` is the beta the
+    station fit was actually given -- ``StationFit.beta``
+    (``emfit/ports.py:1567``), falling back to ``res.beta`` when the fit was
+    skipped -- and on this HEAD that is ``fit_two.beta``
+    (``emfit/studies.py:3387``), i.e. equal to ``beta_two``.
+
+    Unavailable is an explicit state, not a partial block: if the arrays are
+    missing, of unequal length, non-finite, or no beta can be found, every
+    number is null and ``status`` says why, matching the ``finite_or_none``
+    rule that keeps nan out of the JSON.
+    """
+    import numpy as np
+
+    x = np.asarray(getattr(res, "station_x", ()), dtype=float).ravel()
+    v = np.asarray(getattr(res, "v_stations", ()), dtype=complex).ravel()
+    i = np.asarray(getattr(res, "i_stations", ()), dtype=complex).ravel()
+    station_fit = getattr(res, "station_fit", None)
+    beta_used = (float(getattr(station_fit, "beta", np.nan))
+                 if station_fit is not None else np.nan)
+    if not np.isfinite(beta_used):
+        beta_used = float(getattr(res, "beta", np.nan))
+    deembed = getattr(res, "deembed_distance", None)
+    beta_two = getattr(res, "beta_two_wave", None)
+
+    note = (
+        "x_m, v and i are MicrostripWave.station_x and the complex "
+        "v_stations/i_stations -- metres, volts, amperes -- split into "
+        "re/im so the JSON stays real.  They are the fit's inputs with one "
+        "exception: the impedance fit drops any station sitting on a load "
+        "column (emfit/studies.py:2326 _station_fit_selection), so when "
+        "line.station_fit_n is smaller than n the same selection has to be "
+        "applied before the refit.  gamma_v = amp_v[1]/amp_v[0] from "
+        "fit_station_impedance(x_m, v, i, beta_used) is s11's one-wave "
+        "reflection at the first station, before the deembed_distance_m "
+        "shift to the port plane.  beta_one is null: the n_wave=1 phase "
+        "constant is not stored on the record.  beta_used equals beta_two "
+        "on this HEAD because beta is repointed to the two-wave fit "
+        "(emfit/studies.py:3387) before the station fit is called.")
+
+    n = int(x.size)
+    complete = (n > 0 and v.size == n and i.size == n
+                and bool(np.all(np.isfinite(x)))
+                and bool(np.all(np.isfinite(v)))
+                and bool(np.all(np.isfinite(i)))
+                and bool(np.isfinite(beta_used)))
+    if not complete:
+        return {
+            "status": "unavailable",
+            "n": None,
+            "x_m": None,
+            "v_re": None,
+            "v_im": None,
+            "i_re": None,
+            "i_im": None,
+            "beta_used": None,
+            "beta_one": None,
+            "beta_two": None,
+            "deembed_distance_m": None,
+            "note": note,
+        }
+
+    return {
+        "status": "ok",
+        "n": n,
+        "x_m": [float(value) for value in x],
+        "v_re": [float(complex(value).real) for value in v],
+        "v_im": [float(complex(value).imag) for value in v],
+        "i_re": [float(complex(value).real) for value in i],
+        "i_im": [float(complex(value).imag) for value in i],
+        "beta_used": beta_used,
+        "beta_one": None,
+        "beta_two": (None if beta_two is None else finite_or_none(beta_two)),
+        "deembed_distance_m": (None if deembed is None
+                               else float(deembed)),
+        "note": note,
+    }
+
+
 def reference_block(twin, reference, *, artefact: Path, wall_s: float) -> dict:
     """What the twin produced and what the loaded run consumed, in one place.
 
@@ -1589,6 +1684,9 @@ def main(argv: list[str] | None = None) -> int:
             "magnitude": s11_two_wave_mag,
             "magnitude_one_wave_station_fit": finite_or_none(abs(s11)),
             "phase_deg": finite_or_none(np.degrees(np.angle(s11))),
+            # The fit's own inputs and its beta, so the one-wave reflection
+            # can be re-run from this file: _station_phasor_block.
+            "station_phasors": _station_phasor_block(res),
             "deembed_distance_m": float(res.deembed_distance),
             "basis": (
                 "gamma_port, the reflection moved to the port plane "
