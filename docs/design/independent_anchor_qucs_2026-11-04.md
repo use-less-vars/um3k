@@ -50,8 +50,9 @@ failure this cross-check exists to avoid.
 Deciding keys, quoted with values:
 
 - `/geometry/loads[0]` = `{"column": 50, "kind": "series_r", "n_edges": 9, "value": 50.0, "x": 0.02}` -
-  **one** load record, one column, one resistor, at `x = 20.0 mm`. Its span is the port gap on that
-  single column, `n_edges = 9` vertical edges.
+  **one** load record, one column, one resistor, at `x = 20.0 mm`. Its span is one node column of `n_edges = 9` **longitudinal (`E_x`)** edges running across the strip
+  width. *Corrected 2026-11-05: this line originally read "9 vertical edges", which the construction
+  probe in the addendum refutes; the wording is shown rather than silently replaced.*
 - `/ac/AC-6/achieved` = `{"load_column": 50, "load_kind": "series_r", "load_plane_index": 50,
   "load_position_mm": 20.0, "load_value": 50.0, "load_units": "ohm", "plane_offset_from_load": 1,
   "s21_plane_index": 51, "last_clean_plane": 65}`.
@@ -139,3 +140,17 @@ naming the components would pin `CS`/`CP1`/`CP2` without any transcription at al
 - `docs/design/dispatch_log.md` (one row, inserted after line 28, before `## Deferred`).
 
 No other write. No artefact, source file, test or register touched; nothing re-graded; nothing re-run.
+
+## Addendum, 2026-11-05 — two probes, run to test whether this dispatch's premise survives
+
+Two probes were run after the text above was written, to test the suspicion that this block rests on a mis-read load rather than on the missing section 2. Both are read-only (no host run, no artefact edit). Neither supplies a prediction, so **nothing above is re-graded or renumbered**.
+
+**A.1 The load-topology suspicion is refuted.** `series_r` stamps `cc.idx_ex(np.array([ix_load]), j_points, k_strip).ravel()`, clears `pec[edges] = False` and adds `sigma[edges] += 1/(edges.size*R)` (`emfit/studies.py`:2883-2886). Re-run at the artefact's own grid (72, 212, 22; `cell` 4e-4 m; `n_strip` 8; `n_sub` 4; R 50; x = 0.02 m) this is **9 edges**, indices 247300, 247323, ... 247484, `i` = 50, `j` = 102-110, `k` = 4, midpoints x = 20.2 mm, y = 41.0 ... 44.2 mm, z = 1.8 mm, each branch 0.400 mm long: one parallel bank across the full 3.2 mm strip on one column, and **R_eff = 50.000 ohm exactly**, the identity `tests/test_studies.py`:1490 asserts. It is not a point, not smeared over a gap, and not on the wrong edge family - the family follows `load.kind` alone, x (longitudinal) and not z, so section 3.1's "vertical edges" was corrected in place above, disclosed where it stood.
+
+**A.2 Three facts that change how the comparison must be made.** (i) The break occupies `x` in [20.0, 20.4] mm, so the element's terminals are the node planes at 20.0 and 20.4 mm and it sits half a cell downstream of the nominal 20.000 mm; `s21_plane = "cut"` measures on the **upstream** face (`emfit/studies.py`:2918, `cut_index = column`), so a model that places `R` at exactly 20.000 mm with its reference plane after the element is off by that half cell. (ii) The load is a per-edge **siemens** value, not a conductivity (`emfit/evolve.py`:8-10, `:42`), so `R` stays 50.000 ohm under mesh refinement while the break length and its fringing capacitance both change. (iii) The two halves' end faces are **equipotential plates** at x = 20.0 and 20.4 mm - and that is exactly what makes the break **capacitive**: `emfit/board.py`:86-91 warns the cut's own capacitance is "a few hundred ohms of reactance at a few gigahertz, which is not small". `CS` is therefore a real term in this structure, not a modelling artefact; what the pinned `E_y` edges (`emfit/studies.py`:2859-2861) exclude is the halves shorting to each other along the rails, not the gap capacitance. This is DR-32's surviving conclusion - 50 ohm in parallel with a few tenths of a picofarad, not a pure series R - now sourced from the code rather than from the refuted design note.
+
+**A.3 There is no gap-length parameter.** `/geometry/` carries 57 keys and not one is a `gap`; the smallest expressible length is `cell` = 0.4 mm. A gap sweep would be a geometry rebuild, not a keyword.
+
+**A.4 Electrostatic capability: no 3-D solver installed, but a tested 2-D one is already in the tree.** Of 25 named candidates (scikit-fem, sfepy, gmsh, pygmsh, meshio, dolfin, dolfinx, firedrake, bempp, devito, meep, openems, palace, pyamg, pypardiso, scikit-umfpack, pyvista, scikit-rf, qucs, ngspice, spicelib, ahkab, lcapy, numba, numexpr) **every one is absent**; the environment is numpy 2.5.4 / scipy 1.18.1 / sympy 1.14.0, with `spsolve` and `splu` importable, and PyPI egress does work (`pip download --no-deps sympy` exited 0 and installed nothing). The tree already contains a finished, tested **2-D** Laplace capacitance solver: `emfit/quasistatic.py`, `capacitance_per_length` at `:276`, `K = G @ diags(m) @ G.T` at `:265`, `spsolve` at `:270`, with ten tests in `tests/test_quasistatic.py` passing. It is strictly two-dimensional - exactly one periodic axis, one cell thick - so it returns C per metre for a cross-section and cannot produce the cut capacitance itself. **`CS` is therefore unmeasured.** Two routes, neither taken here: a 3-D Laplace solve on the existing structured grid (a few hundred lines; `spsolve` or `cg` is sufficient at 72x212x22), validated against `emfit/quasistatic.py` on an **unbroken** section where a 2-D answer already exists; or installing a mesh-based FEM package, which buys little, because a structured grid, a per-edge index map and a PEC mask all already exist. The one primitive genuinely missing is a per-conductor **node** labelling for the Dirichlet set, which for a single two-plate capacitance is the two node planes named in A.2(i) and is therefore trivial here.
+
+**A.5 Brackets unchanged.** Q1-Q4 remain **NOT GRADEABLE**, on section 4's reasons: no |S11|, no |S21|, no capacitance, nothing tested.
