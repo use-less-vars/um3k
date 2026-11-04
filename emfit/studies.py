@@ -3384,7 +3384,7 @@ def microstrip_wave(
     beta_two_station = -d_phase / d_probe
     fit_one = fit_beta(station_x, v_stations, n_wave=1)
     fit_two = fit_beta(station_x, v_stations, n_wave=2)
-    beta = float(fit_one.beta)
+    beta = float(fit_two.beta)
 
     # --- has the record settled? -------------------------------------------
     # Nothing in a single phase constant says whether the waveform it was read
