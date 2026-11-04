@@ -14,6 +14,40 @@ The absorbing-termination build is where Generation 7 left it: the phase mechani
 
 Generation 8 produced no new gate verdict; it produced an `s11` trustworthy enough to grade later. Post-fix artefacts de-embed `s11.phase_deg` with the same beta as the magnitude beside it, from one line at `emfit/studies.py:3387` (`fit_one.beta` → `fit_two.beta`) [L] — main-record-only, see the `_bin_metrics` exception in §3. The station phasors behind the one-wave fit are banked (`build_A_50ohm_p51_phasors.json:/s11/station_phasors`, n 9, `fit_selected` 8 [L]). And the +40.367460 % one-wave modulus jump the fix caused (`magnitude_one_wave_station_fit` 0.23216690987276836 → 0.32588679434738205, `s11.magnitude` bit-identical at 0.32556486641109117) is **derived** from those phasors at both betas, not argued [L, `s11_refit_from_phasors_2026-11-04b.md`; `dispatch_log.md`:19]. Six reserved defects are now registered (DR-24..DR-29); the older DR-19 stays OPEN with an explicit trail.
 
+## The residual that blocks AC-3
+
+**AC-3's bar is a matching bar, not an anchor comparison.** `absorbing_termination_scope.md`:235-238: "On the matched load, `|S11| <= 1.0e-3` and `| |S21| - 1 | <= 1.0e-3`" [L]. The s11 key it grades is the **one-wave** station fit, `s11.magnitude_one_wave_station_fit`, not the two-wave `s11.magnitude` published beside it [`defect_register.md`:406-422, DR-24] [L]. The three numbers that recur beside this gate in the analysis docs (0.34465, 0.307, 0.724) are not AC-3's bar. They are **references**, and they are three different objects.
+
+**Reference 1 — series-R, s11 only: 0.34465.** The closed-form reflection of a series 50 ohm resistor in a 47.54 ohm line, `R/(2*Z0 + R) = 50/(50 + 2*47.54)` [`defect_register.md`:342]; the same quantity appears as `r = 0.344653501` at `Z0 = 47.53662`, where the docstring says plainly "**Z0 = 47.53662 ohm is stated, not fitted**" [`closed_form_with_two_wave_beta_2026-11-02.md`:14] [L]. Every artefact's `s11.validation_reason` carries it, e.g. "it reads 0.3256 against the series-R anchor 0.34465, i.e. 5.54 percent low" [`evidence/termination/build_A_50ohm_p51_phasors.json`:385] [L]. It is a model prediction for a pure resistance, not a measurement and not a gate bar.
+
+**Reference 2 — complex-load TE, s11: 0.307.** `S11 = (Z - Z0)/(Z + Z0)` evaluated on the **measured** plane impedance `82.11518049761072 - j20.78227124428749` ohm at `Z0 = 47.54` real, giving `|S11| = 0.307214` [`complex_load_analysis_2026-11-04.md`:151; inputs at `:16-18`] [L]. That doc labels the row "TE reference, not in any artefact" (`:18`).
+
+**Reference 3 — the same complex-load model, s21: 0.724.** `S21 = 2*Z0/(Z + Z0)` on the same `Z` and `Z0`: `|S21| = 0.724087`, carried everywhere as 0.724 [`complex_load_analysis_2026-11-04.md`:18, `:151`; `s11_refit_from_phasors_2026-11-04b.md`:59] [L]. References 2 and 3 are one model read at two ports. Reference 1 is a different model and has no s21 partner.
+
+**Every measured value with its own signed deviation** (4 s.f.; measured values bit-exact from the artefacts):
+
+| measured quantity | value | reference | signed deviation |
+|---|---|---|---|
+| `s11.magnitude`, two-wave, both records | 0.32556486641109117 | 0.34465 (series-R) | **-5.537 %** |
+| `magnitude_one_wave_station_fit`, POST | 0.32588679434738205 | 0.34465 (series-R) | **-5.444 %** |
+| `magnitude_one_wave_station_fit`, PRE | 0.23216690987276836 | 0.34465 (series-R) | **-32.64 %** |
+| `s11.magnitude`, two-wave | 0.32556486641109117 | 0.307 (complex-load) | **+6.047 %** |
+| `magnitude_one_wave_station_fit`, POST | 0.32588679434738205 | 0.307 (complex-load) | **+6.152 %** |
+| `s21.magnitude`, POST | 0.7644184907560716 | 0.724 (complex-load) | **+5.583 %** |
+| `s21.magnitude`, PRE | 0.7628473102840976 | 0.724 (complex-load) | **+5.366 %** |
+
+PRE = `build_A_50ohm_v3_flux_off_pin.json`:286-288 and `:301`; POST = `build_A_50ohm_p51_phasors.json`:286-288 and `:397` [L]. The two-wave s11 value is bit-identical across the two records; the graded one-wave value is not (+40.367460 %).
+
+**The references are not interchangeable, and one cross-port comparison in circulation is mismatched.** The two s11 references differ from each other by **12.26 %** (0.34465 against 0.307) — more than any deviation in the table — so "s11 is 5 % off" is not a statement until the reference is named. Comparing `s11` to 0.307 and `s21` to 0.724 is like-for-like: one model, one `Z0`, one port each. Comparing `s11` to 0.34465 is not like-for-like and cannot be paired with `s21`/0.724 at all, because reference 1 has no s21 partner: it is a series-R closed form for the reflection only.
+
+**Settled: the beta route is dead as an explanation of this residual.** The prediction that `|gamma_v|` does not move with beta is refuted on the record — it **moves +40.37 %** — and what is beta-free is the two-wave fitted modulus `s11.magnitude`, a different quantity [`s11_refit_from_phasors_2026-11-04b.md`:58; `dispatch_log.md`:19] [L]. The beta fix moves `s21.magnitude` by 0.2059 % (0.7628473102840976 -> 0.7644184907560716), far short of the ~5.5 % excess, so beta is not the source of the residual.
+
+**Not settled: one common scale error, or two distinct biases.** The mismatched pair cannot decide it. The like-for-like pair agrees to **0.46 %** (`|s11|/0.307` = 1.06047 against `|s21|/0.724` = 1.05583 [`s11_refit_from_phasors_2026-11-04b.md`:59]), which is the shape a common scale factor would leave — but only at `Z0 = 47.54`, the TE value that "is stored in no artefact", and the same pair splits to `f_s11 = 0.959571` against `f_s21 = 1.104000` (13.08 %) at the run's own station-fit `Z0` [`complex_load_analysis_2026-11-04.md` section 5, items 1 and 3] [L]. An agreement that exists only at a `Z0` no artefact holds is a property of the reference pair, not of the measurement. Meanwhile the deviation AC-3's own key carries, -5.444 %, is negative where both like-for-like deviations are positive and similar in size. And the 12.26 % gap between the two s11 references is itself unexplained: two references that disagree by 12 % cannot adjudicate a 5.5 % residual.
+
+**Which arm AC-3 grades, and why it matters.** AC-3 grades the one-wave station fit [`defect_register.md`:406-422], i.e. the estimator that moved from -32.64 % to -5.444 % of the series-R anchor under a one-line beta repoint, while the two-wave modulus did not move in its last digit. The graded arm is the beta-sensitive one, and DR-24 exists because the two were published under one key. A verdict written before the reference question above is answered is a verdict on a reference, not on the build.
+
+**How much of this is independently recomputed.** The banked `station_phasors` reproduce both records' graded scalars to delta 0.0 on POST [`s11_refit_from_phasors_2026-11-04b.md` section 2, C2] [L]; the PRE record carries **no** `station_phasors` block [`s11_refit_from_phasors_2026-11-04b.md`:56], so its figures are a consistency check against the stored artefact, not an independent recomputation. Every deviation above is arithmetic on stored floats; none of it is a new run.
+
 ## 2. What landed this session
 
 1. **`bf4c0b6` — writer: bank station phasors (x, v, i) in build_A artefacts.** New `s11.station_phasors` block (station x, v and i phasors, `beta_used`, `beta_one`, `beta_two`, `deembed_distance_m`, `status`), float64, round-trip tested bit-for-bit, explicit null/`"unavailable"` path. Additive, numerics untouched; cost flagged: n = 9 → 2131 B = +14.4 % of a 14,865 B artefact, over the 5 % budget [L, `dispatch_log.md`:18].
