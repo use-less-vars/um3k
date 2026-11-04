@@ -73,6 +73,8 @@ session actually grades, agree to 0.38 % only at a `Z0` no artefact stores, and 
 station fit the record does not hold. Report the number as measured, do not tidy it into either a scale factor
 or a pair of biases, and do not quote 13.08 % as the current record's disagreement.
 
+**Namespace caution.** The bracket labels `B1`-`B5` in this section are local to this document. An unrelated registered set of the same names exists at `deflation_v2_preregistration.md`:188-193, where **B5** means *Unpaired* - a mispairing rule, not a percentage band - and the same labels are used again at `preservation_gate_preregistration.md`:17, `:76`, `:92`. A reader who carries `B5` from that register into this one is reading a different criterion; the split bands above share a name with it and nothing else.
+
 ## 7. What would settle it
 
 A second artefact carrying both `z_eff_measurement` and a **named record beside every stored Z0** - the
