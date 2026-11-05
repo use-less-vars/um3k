@@ -56,6 +56,13 @@ Geometry: production microstrip, `h = 1.6e-3` m, `w = 3.0e-3` m, `n_sub = 16` (c
 board's own cell), `eps_r = 4.4`, `n_clean` = `n_air` = `n`, `eps_r(x,y,z) = eps_r if z < h else 1`
 substrate callable as at `emfit/mode_profile.py:627`.
 
+*Correction added 2026-11-05 (Dispatch 11), originals retained: the width in the sentence above is wrong
+for the board it names. The production board is `w = 3.2e-3` m — `MS_W` at `emfit/studies.py:1159` with
+`MS_N_STRIP = 8` at `:1197`, cell `h / n_sub` with `n_sub = 4` (`:1188`), and `/geometry/` in the artefact
+agrees (`w` 0.0032, `n_strip` 8, `cell_m` 0.0004, `grid` 62x212x22). `3.0e-3` is
+`W_CONVERGED` from `tests/test_mode_profile.py:64` (used at `:83`), a test fixture, not this board.
+The ladder below is therefore a 3.0 mm solve; the board-width re-run is §9.*
+
 Ladder rungs: `n` = 100, 200, 400, 800 cells of clean space laterally and above — 10, 20, 40, 80 mm of
 box per side at 0.1 mm cells (`ny = 2*n + 30` for the 3 mm strip, `nz = n + 16` for the substrate), the
 `n` = 200 rung being the production 20 mm box. *Correction added 2026-11-05, after the run; the frozen
@@ -253,6 +260,10 @@ evaluation at `Z0 = 50.088` is `50 / (2*50.088 + 50) = 0.332942`. The residual Z
    That, not another decimal on `Z0`, is what the next dispatch should chase: the ladder has just made
    the extraction family the only remaining suspect with a magnitude big enough to matter.
 
+   *Forward pointer added 2026-11-05 (Dispatch 11): this item is **withdrawn**, not qualified — the ladder
+   was run at `w = 3.0e-3` m while the board is `3.2e-3` m wide, and the extraction cluster it calls a
+   systematic is the board-width closed form. See §9, and §2's dated correction.*
+
 4. **`50.088` is a 20 mm-box number and must never be quoted as an infinite-box result.** It is `0.91 %`
    high at `n` = 100, `0.37 %` high at `n` = 200, and still drifting `0.073 %` per doubling at `n` = 800 —
    it is a *rung*, not a converged value, yet `emfit/mode_profile.py:586-596` and the documents that cite
@@ -264,3 +275,195 @@ What would close the residual is not another `Z0`: it is an independent measurem
 reference-plane / calibration check) that can move the measured `|Gamma_port|` itself. Until then the
 honest statement of the anchor question is: reference `0.3338`, measured `0.3256`, `-2.46 %` / `-0.22 dB`,
 with `Z0` no longer available as the explanation.
+
+## 9. Addendum 2026-11-05 — the ladder was run at the wrong width (Dispatch 11)
+
+*Appended 2026-11-05. Nothing above this heading is edited: §1–§7 stand as written, including the
+geometry line in §2. This section is the correction and the re-run it forces.*
+
+### 9.1 Why — the width in §2 is not the board's width
+
+The ladder above was run at `w = 3.0e-3` m. The board named in that same sentence ("the FDTD board's own
+cell") is `3.2e-3` m wide. The two numbers are in the tree, and they are not the same number:
+
+- `MS_W = 3.2e-3` (`emfit/studies.py:1159`) with `MS_N_STRIP = 8` (`:1197`); the board cell is
+  `h / n_sub` with `n_sub = 4` (`:1188`, `:2801`), i.e. `0.4e-3` m, and `8 * 0.4e-3 = 3.2e-3`.
+- The artefact agrees: `/geometry/` carries `w = 0.0032`, `n_strip = 8`, `cell_m = 0.0004`,
+  `n_sub = 4`, grid `62x212x22`.
+- The `3.0e-3` came from a **test fixture**, not from the board: `W_CONVERGED = 3.0e-3`
+  (`tests/test_mode_profile.py:64`, used at `:83`) is the width the mode-profile convergence test is
+  pinned to. `microstrip_mode_profile` itself takes `w` from its caller
+  (`emfit/mode_profile.py:535-543`) and derives `n_strip = round(w / cell)` (`:458`), so `3.0e-3` is a
+  legitimate argument — it is just not this board's.
+
+The width is not cosmetic at this geometry. At `h = 1.6` mm, `eps_r = 4.4`, `t = 35` µm, the closed form
+the tree already uses (`emfit/microstrip.py:141`) gives `Z0` = **49.9797** ohm at `3.0` mm and **48.0987**
+ohm at `3.2` mm — **3.91 % apart** for a 6.25 % width change. And the ladder limit of §3, `49.9015` ohm,
+sits **0.16 %** from the `3.0` mm closed form — i.e. the Dispatch 10 ladder reproduced the *wrong width's*
+closed form to a sixth of a percent, which is exactly what a correct solve at the wrong width would do.
+Meanwhile `z0_model = 48.0987`, the value §4 charges with a `+3.748 %` residual, **is** the board-width
+closed form. §4 therefore compared a `3.0` mm solve against a `3.2` mm estimator and read the width
+difference as an extraction bias.
+
+### 9.2 Brackets, frozen before the run
+
+Re-run: identical method (`emfit/quasistatic.py:334`, grid and conductors from `emfit/mode_profile.py`'s
+own constructor), identical rungs (`n_clean = n_air = 100 / 200 / 400 / 800`), identical substrate
+callable — only `w` changes, `3.0e-3 → 3.2e-3`, so `n_strip = round(3.2e-3 / 0.1e-3) = 32`.
+
+- **W1** `Z0_inf(3.2 mm)` within 2 % of `48.0987` (i.e. `[47.13, 49.06]`) ⇒ the 6.25 % width difference is
+  the whole story; the extraction cluster is right; the modal pair of record is a width artefact;
+  **Dispatch 10 §7.3 is withdrawn**; the anchor is ~`0.3420` and the residual is back in the −5 % region —
+  "the 5.5 %" stands and `Z0` is no longer excluded.
+- **W2** within 1 % of `49.90` ⇒ width makes no difference in the solver, which contradicts the closed
+  form's 3.91 %; the width story is wrong and §7.3 stands. Report it as a contradiction between two of our
+  own tools; do not pick a winner.
+- **W3** in between (`49.06 – 49.40`) ⇒ partial: width moves `Z0` by roughly half the closed-form amount;
+  document honestly, no bucket.
+- **W4 (falsifier)** outside `[46.5, 50.0]` ⇒ the solver or the closed form is wrong at board geometry;
+  escalate, and write nothing exculpatory.
+
+### 9.3 Task A′ — the ladder at the board width
+
+| `n` | cells (`ny x nz`) | `Z0` (ohm) | `eps_eff` | wall (s) |
+|---|---|---|---|---|
+| 100 | 232 x 116 | 48.658870 | 3.412440 | 0.29 |
+| 200 | 432 x 216 | 48.209081 | 3.369119 | 0.88 |
+| 400 | 832 x 416 | 48.076346 | 3.356179 | 4.43 |
+| 800 | 1632 x 816 | 48.040141 | 3.352632 | 27.82 |
+
+Fit `Z0(n) = Z0_inf + a / n^p`: `Z0_inf` = **48.023741**, `a` = 2315.8844, `p` = 1.780906, residuals
+−6.335e-5 / +4.988e-4 / −1.184e-3 / +7.482e-4. The covariance the fit prints (sd 1.769e-3) is an
+over-fitting number, not an error bar, and is not quoted as one. `eps_eff` under the same form: limit
+**3.350989**, `a` = 208.6959, `p` = 1.765468, residuals −6.9e-6 / +5.4e-5 / −1.3e-4 / +8.0e-5.
+Per-doubling drift, `Z0`: −0.9244 % / −0.2753 % / −0.0753 %; `eps_eff`: −1.2695 % / −0.3841 % /
+−0.1057 %.
+
+Cross-checks: 3-point fit on `100/200/400` predicting the `800` rung; successive triples; Richardson on
+the finest pair at `p = 1` and `p = 2`: 3-point fit on `100/200/400` (`a` 2119.7583, `p` 1.760701)
+predicts `Z0(800)` = 48.037175 against 48.040141 measured (**+0.00617 %**); successive triples
+48.020776 (`100/200/400`) vs 48.026562 (`200/400/800`), spread **0.005786**; Richardson 48.003937
+(`p` = 1) / 48.028073 (`p` = 2). `eps_eff` the same way: 3-point prediction 3.352314 vs 3.352632 measured
+(+0.00949 %), triples 3.350989 vs 3.351292, spread 0.000625. All of these agree inside 0.03 %, so the
+ladder converged in exactly the way the 3.0 mm one did — it is the *value* that moved, not the method.
+
+**Quoted `Z0_infinity` at board width: 48.02 ohm (window 48.004–48.028)**, **−0.156 %** from the board-width
+closed form 48.0987 — the same 0.16 % agreement that made the 3.0 mm limit look correct against the 3.0 mm
+closed form. The board's own box is the `n` = 200 rung (20 mm per side), **48.209081 ohm**; the limit is the
+extrapolation beyond it, not a measured box.
+
+**Bracket, graded against §9.2 as frozen: W1 FIRED.** 48.0237 lies inside [47.136726, 49.060674] and 0.156 %
+from 48.0987, i.e. inside the 2 % band. **W2 NOT FIRED** (48.0237 is 3.7 % from 49.90, far outside
+[49.40, 50.40]); **W3 NOT FIRED** (not in 49.06–49.40); **W4 NOT FIRED** (inside [46.5, 50.0], so the falsifier
+did not fire either). Unlike Dispatch 10 §6.1, these four bands are **disjoint** — W1 and W3 touch only at the
+single point 49.06 — so that frozen-set defect does not recur here and no overlap needs an operative reading.
+
+### 9.4 Task B′ — residuals at board width
+
+| candidate | `Z0` | residual vs board-width limit |
+|---|---|---|
+| modal (rung of record, `n` = 200, 20 mm box) | 50.088 | **+4.298 %** |
+| twin `zc` | 47.5366 | −1.014 % |
+| `beta_base` station fit | 47.3641 | **−1.374 %** |
+| `beta_rawphase` station fit | 47.9250 | −0.206 % |
+| `beta_hammerstad` station fit | 47.9415 | −0.171 % |
+| TE | 47.54 | −1.007 % |
+| `z0_model` (closed form, board width) | 48.0987 | **+0.156 %** |
+| Dispatch 10 limit (**3.0 mm fixture**, not this board) | 49.9015 | +3.910 % |
+
+The extraction cluster (twin, `beta_*`, TE) is within **1.4 %** of the board-width limit and on the low side;
+the modal rung is the outlier at +4.30 %; the 9.90 figure that the previous reading was built on is only
++3.91 % high because it was measured at the wrong width.
+
+### 9.5 Task C′ — anchors at board width
+
+| `Z0` | anchor `50/(2*Z0+50)` | residual vs `0.3255649` | dB |
+|---|---|---|---|
+| board-width limit, 48.023741 | **0.342354** | **−4.904 %** | **−0.437** |
+| Dispatch 10 limit 49.9015 | 0.333772 | −2.459 % | −0.216 |
+| board 20 mm box (`n` = 200), 48.209081 | 0.341488 | −4.663 % | −0.415 |
+| twin `zc`, 47.5366 | 0.344654 | −5.539 % | −0.495 |
+| `beta_base`, 47.3641 | 0.345475 | −5.763 % | −0.516 |
+| `beta_rawphase`, 47.9250 | 0.342818 | −5.033 % | −0.449 |
+| `beta_hammerstad`, 47.9415 | 0.342740 | −5.011 % | −0.447 |
+| TE, 47.54 | 0.344637 | −5.534 % | −0.494 |
+| `z0_model` (closed form, board width), 48.0987 | 0.342003 | −4.807 % | −0.428 |
+| modal rung of record, 50.088 | 0.332943 | −2.216 % | −0.195 |
+
+The residual is **not** an artefact of the twin's fitted `zc`: at board width the twin-`zc` anchor gives
+−5.539 % and the board-width limit gives −4.904 %, so the −5 % order of magnitude is reproduced *without* the
+twin. Across all ten anchors the residual spans **−5.763 % … −2.216 %** — still `Z0`-dependent in size, but
+the whole extraction cluster plus the board-width limit sit at ≈ −5 %, and only the modal 50.088 and the
+withdrawn 49.9015 pull it towards −2 %.
+
+### 9.6 Task D′ — does `eps_eff` discriminate the width?
+
+`eps_eff(3.2 mm, infinity)` vs the mode-profile value at `3.0` mm (`3.35001`) and vs the FDTD
+raw-phase value (`3.350776`, taken on a **loaded** run and therefore carrying the `2*arcsin(0.32556)` =
+38 deg contamination envelope — it is not an independent static measurement): **3.350989 against 3.35001
+(+0.0292 %) and against 3.350776 (+0.0064 %)** — but both of those comparisons pair a 3.2 mm *limit* with a
+3.0 mm *rung* and are not like-for-like. At matched box (`n` = 200) the 3.0 mm rung is 3.350009 and the
+3.2 mm rung 3.369119, a **+0.5704 %** width gap; against the FDTD raw-phase 3.350776 the matched-box 3.2 mm
+rung sits **+0.5474 %** and the 3.0 mm rung **−0.0229 %**. Closed form discrimination: `3.0` mm → `3.3255`,
+`3.2` mm → `3.3439`, a +0.55 % width gap, matched by the solver's +0.5704 % at fixed box and by the
+limit-to-limit difference (3.350989 vs 3.332468, +0.018520 absolute, +0.556 %).
+
+**So `eps_eff` does not discriminate the width.** The 0.56 % width gap in `eps_eff` is smaller than the 38 deg
+contamination envelope carried by the only field-measured `eps_eff`, and that number leans weakly — therefore
+unreliably — towards the 3.0 mm rung (−0.023 % against +0.547 %). What the two methods do agree on is the
+*sensitivity*: they reproduce the same width difference to 0.2 %. `eps_eff` is a consistency check on the
+geometry, not an arbiter between the two widths. Only `Z0` can arbitrate — its width effect is −3.76 % and its
+methods agree to 0.16 % at either width — and it does so unambiguously in §9.3.
+
+### 9.7 Verdict
+
+(a) **`Z0_infinity` at the board's width is 48.02 ohm, window 48.004–48.028.** Four independent routes to the
+limit (4-point fit, 3-point fit plus predicted rung, successive triples, Richardson at `p` = 1 and `p` = 2)
+all land inside that window, and it is 0.156 % from the board-width closed form 48.0987. The board's own box
+(20 mm per side, the `n` = 200 rung) is **48.209081 ohm**; the limit is the extrapolation beyond it. This is
+**3.76 % below the 49.90** this doc previously quoted as production, and that 3.76 % is the whole of the
+discrepancy the ladder was built to find.
+
+(b) **What survives and what is withdrawn.**
+
+- **§3, the ladder:** correct arithmetic at the wrong width. Kept as the record of a 3.0 mm fixture study and
+  superseded, for the board, by §9.3 — not deleted, not renumbered.
+- **§7.1:** the **value** 49.90 is **withdrawn as a board statement**. It is the 3.0 mm fixture's limit.
+- **§7.2:** **withdrawn.** An accurate board-width `Z0` does not leave the anchor residual small — it makes
+  it **larger** (−4.904 % / −0.437 dB against the 3.0 mm limit's −2.459 % / −0.216 dB), because a smaller
+  `Z0` implies a larger anchor `50/(2*Z0+50)` and the measured `|Gamma_port|` does not move with it. `Z0`
+  stays **excluded** as the explanation of the residual, but for a stronger reason than §7.2's, and §7.2's
+  stated basis (a limit measured on this board) is void.
+- **§7.3:** **withdrawn**, as already stated in the dated forward pointer in §7 and the dated correction in
+  §2. The six-estimator extraction family sits within **1.4 %** of an independent quasi-static solve at the
+  board's own width (modal +4.30 % is the outlier; the rest span −1.37 % … +0.16 %), not 4–5 % below it.
+- **§7.4 (DR-36):** **survives and extends to `eps_eff`.** The modal `Z0` is box-limited (0.37 % high at
+  `n` = 200) and so is `eps_eff`: at either width the 20 mm-box rung sits **≈ 0.53 %** above that width's
+  limit (3.350009 vs 3.332468 at 3.0 mm; 3.369119 vs 3.350989 at 3.2 mm). Nothing in this re-run weakens
+  DR-36; it strengthens it by exhibiting the same defect in a second quantity.
+- **§6:** bracket **Z1 is void** — it fired against 49.90, which is not this board's limit. **Z2 and Z4** are
+  literally still true (48.02 is absent from the station-fit cluster's band and inside [44, 52]) but are moot,
+  because they graded a limit measured on the wrong geometry. **§6.1's Z1/Z3 overlap** is moot for this
+  question: the W bands are disjoint, so no overlap reading is needed.
+
+(c) **The anchor at board width: 0.342354, residual −4.904 % (−0.437 dB)** against the measured
+`|Gamma_port|` = 0.3255649. The reading that "the 5.5 % is an artefact of the twin's `zc`" **does not
+survive**: at board width the twin-`zc` anchor gives 0.344654 / −5.539 % and the board-width limit gives
+0.342354 / −4.904 %, so the −5 % order of magnitude is reproduced *without* the twin. Across all candidates
+the residual spans **−5.763 % … −2.216 %**, i.e. it remains `Z0`-dependent in size, but the whole extraction
+cluster and the board-width limit sit at ≈ −5 % and only the modal 50.088 (and the withdrawn 49.9015) pull it
+towards −2 %. The anchor is **not closed** here, and it is now a different question: the residual is neither a
+`Z0` error nor a modal-extraction error, so it has to be sought on the measurement side (`|Gamma_port|`
+itself, or the port normalisation) or accepted.
+
+(d) **The defect is not the test.** `emfit/mode_profile.py` has **no `w` default** — `w` is a required
+parameter (`:535-543`); `3.0e-3` is `W_CONVERGED` in `tests/test_mode_profile.py` (`:64`, used at `:83`) and
+is a **legitimate fixture**: at `cell = h / n_sub = 0.1 mm` it is a whole number of cells, which the
+constructor documents as a requirement (`:550-551`). `emfit/mode_profile.py:557-559` *does* carry
+`n_sub = 16` as a default and calls `0.1 mm` "the FDTD board's `0.1 mm` cell" — and the board's cell is
+0.4 mm (`n_sub = 4`, `emfit/studies.py:1188`). The defect, **DR-37**, is (i) no production-geometry binding at
+the call site, (ii) the document of record describing a test constant as production, and (iii) the same
+conflation of default for board written into the library's own docstring. Nothing here is a defect in the
+quasi-static solver, in the ladder method or in the test suite, and no number above required a solver change
+to produce.
+
