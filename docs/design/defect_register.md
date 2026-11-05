@@ -612,3 +612,30 @@ The floor is as hard as the ceiling: the Laplace/static solve of the same cross-
 
 **Gates:** every β-dependent number in the termination work — AC-7, the de-embeds, and every phase residual reported against a TE prediction.
 
+## DR-36 — a box-limited rung (`Z0` = 50.088 Ω at a 20 mm box) is recorded and cited as a converged value
+
+**id:** DR-36
+**title:** The modal quasi-static `Z0` = **50.088 Ω** carried by `emfit/mode_profile.py:586-596` is quoted as converged; a same-solver ladder puts that figure on the `n_clean = n_air = 200` rung of a sequence still drifting **0.073 %** per doubling at `n` = 800, with a limit of **49.90 Ω** — **0.37 %** below the quoted value, and **0.91 %** between the two coarsest rungs.
+**status:** OPEN
+**severity:** MEDIUM — it moves no verdict by itself (see *gates*), and it is **not** a numerical error: 50.088 is a correctly computed number, the word "converged" attached to it is not.
+**opened:** 2026-11-05
+
+**What is wrong.** `emfit/mode_profile.py:586-596` solves the cross-section on a finite box built by `_section` (`:447`, grid filled at `:467-469`), and the box is not a fixed property of the geometry: the wall stands `n * cell` from the strip, so the production setting `n_clean = n_air = 200` is a **20 mm box per side**, and any other `n` is a different box. The `Z0` = 50.088 Ω that falls out of that one rung is recorded there and cited downstream as *the* quasi-static impedance, with the box unstated. It is a rung, not a converged value. The same solver on the same section — `h` = 1.6 mm, `w` = 3.0 mm, `n_sub` = 16, ε_r = 4.4 — at `n_clean = n_air` = 100 / 200 / 400 / 800 gives:
+
+| `n_clean = n_air` | box per side | `Z0` (Ω) | ε_eff | drift per doubling |
+|---|---|---|---|---|
+| 100 | 10 mm | 50.546918 | 3.392371 | — |
+| 200 | 20 mm | **50.088467** | 3.350009 | **−0.91 %** |
+| 400 | 40 mm | 49.954238 | 3.337458 | −0.27 % |
+| 800 | 80 mm | 49.917788 | 3.334033 | −0.073 % |
+| → ∞ | — | **49.90** (window 49.899–49.904) | — | — |
+
+The trend fit `Z0(n) = Z0_inf + a/n^p` over the four rungs gives `Z0_inf` = **49.901498**, `a` = 2468.4, `p` = 1.79126 (fit residuals −6.0e-5 / +4.8e-4 / −1.1e-3 / +7.2e-4; the ±0.001695 the fit prints is a covariance and is **not** quoted as an error bar), and the limit is confirmed independently of the fit: a 3-point fit on 100/200/400 (`p` 1.772071, `Z0_inf` 49.898667) predicts `Z0(800)` = **49.914938** against **49.917788** measured (+0.0057 %); two successive triples give 49.8987 / 49.9042; Richardson on the finest pair gives 49.8371 (`p` = 1) / 49.9062 (`p` = 2). Quoted limit **49.90 Ω**, window 49.899–49.904 — **0.372 %** below the rung the record quotes, and still creeping at the finest rung, which is what "not converged" means here.
+
+**Evidence.** Same grid, same code path — this is not a second implementation disagreeing with the first: at `n` = 200 the ladder reproduces the recorded static ε_eff **3.35001** to **1.5e-6** (`eps_eff(200×200)` = 3.350008519 against 3.35001, the figure `emfit/mode_profile.py:588-596` itself carries and the same figure as `evidence/t4/rung4_routeC_report.json` → `/eps_eff` 3.3500085193372136). ε_eff converges long before `Z0` does, and that is the whole mechanism: an ε_eff-based convergence claim, transferred to `Z0`, is false at the same skill. Full ladder, fit, cross-checks and the downstream arithmetic: `docs/design/z0_quasistatic_ladder_2026-11-05.md` §3 (ladder and fit), §4 (where 50.088 sits among the seven other `Z0` candidates — **−0.372 %**, the closest of the set), §7 (verdict). Row: `z0-quasistatic-ladder-2026-11-05` in `docs/design/dispatch_log.md`. The figure is quoted bare in more than one place — the `mode_profile` docstring, the `Z0` tables in `docs/design/anchor_audit_2026-11-05.md`, and this register's own DR-35 reference row (`mode_profile` docstring, ε_eff **3.35001**, `Z0` 50.088 Ω) — so it reads as geometry-intrinsic when it is rung-intrinsic.
+
+**Candidate causes** — none picked here, and none needs to be: (i) the docstring figure was never a convergence claim and the word "converged" was supplied by a later citation, so only the citing sentence is wrong; (ii) the 20 mm box is genuinely too small — the fringing field is truncated by the air wall / ground boundary — so the number is a finite-box effect at every `n` production can afford; (iii) `Z0` is a ratio of two integrals that converge at different rates and simply converges more slowly than ε_eff, so a convergence claim measured on ε_eff was transferred to it unchecked. The three differ only in *why* the rung is box-limited; all three are closed by the same rule below.
+
+**What closes it.** [PROPOSED here, not stated by the source] A citation rule, not a code change. No document or artefact may quote `Z0` = 50.088 bare: it is quoted either as the rung **with its box** — `50.088 Ω @ n_clean = n_air = 200, 20 mm box` — or as the limit, **49.90 Ω** (window 49.899–49.904). The docstring line carrying 50.088 gains the same parenthetical, and the word "converged" is not applied to `Z0` at a fixed box. No existing number changes: the ladder adds rungs, it does not correct 50.088, and nothing in the solver or the extraction needs to move.
+
+**Gates:** any anchor computed at `Z0` = 50.088 — `50/(2*Z0+50)` = **0.332942**, which reads **−2.216 %** (−0.195 dB) against the measured `|Gamma_port|` 0.3255649, and both the anchor and the residual are rung-dependent; any statement that the modal `Z0` is converged, or that "the quasi-static `Z0`" *is* 50.088; and any DR-14-style "`Z0` to ~1 %" phrasing, which the 0.91 % coarse-pair swing already meets by itself and which must therefore name the rung it quotes. The direction matters and is not a rescue: at the limit the same anchor is **0.333772** and the residual **−2.459 %** (−0.216 dB), i.e. refining `Z0` *downwards* makes a **larger** anchor and a slightly **worse** residual, so this defect sharpens the anchor disagreement rather than softening it.
