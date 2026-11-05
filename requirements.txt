@@ -4,3 +4,10 @@ numpy>=2.5.0
 scipy>=1.18.0
 matplotlib>=3.11.0
 pytest>=9.1.0
+
+# Visualisation and field interchange, added 2026-11-05 (toolchain pivot).
+# pyvista pulls `vtk` itself and constrains it (vtk>=9.3.1,<9.8.0,!=9.4.0,!=9.4.1):
+# do NOT pin vtk here or the two constraint sets will fight.
+# h5py is the interchange format for the openEMS cross-check (openEMS dumps HDF5).
+pyvista>=0.49.0
+h5py>=3.10.0

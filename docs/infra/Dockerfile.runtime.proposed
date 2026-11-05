@@ -1,0 +1,64 @@
+# PROPOSED workspace runtime image - 2026-11-05 toolchain pivot.
+#
+# NOT the live file. The live file is the vault copy:
+#   ~/.thoughtmachine/workspaces/gentle-wolf-72/Dockerfile
+# which the agent must never write. Copy this over it to activate. The evidence
+# behind every line is in docs/infra/2026-11-05_toolchain_install.md.
+#
+# Base pinned to bookworm deliberately: `python:3.12-slim` now resolves to
+# Debian 13 (trixie), and openEMS is absent from trixie (0 hits for
+# `Package: openems`, `libcsxcad0`, `python3-openems` when grepping trixie's real
+# Sources.xz / Packages.xz; the only surviving mention is a Recommends: inside
+# `electronics-radio-dev`). bookworm ships all three at
+# 0.0.35+git20190103.6a75e98+dfsg.1-3.2, so the independent FDTD reference is an
+# apt install rather than a source build.
+#
+# Two interpreters result, deliberately:
+#   /usr/local/bin/python3 = 3.12, runs emfit
+#   /usr/bin/python3       = 3.11, pulled in by python3-openems, runs openEMS
+# They meet at HDF5 files, not in-process objects.
+FROM python:3.12-slim-bookworm
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# nodejs/npm: pre-existing dependency, unchanged.
+# xvfb: VTK offscreen needs an X server; the container has no display.
+# libgl1/libosmesa6/libglu1-mesa: GL plus software-GL fallback for VTK.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        nodejs \
+        npm \
+        xvfb \
+        libgl1 \
+        libosmesa6 \
+        libglu1-mesa \
+    && rm -rf /var/lib/apt/lists/*
+
+# Independent FDTD reference. Omit with --build-arg WITH_OPENEMS=0.
+# python3-h5py / python3-numpy are the 3.11 side of the HDF5 interface.
+ARG WITH_OPENEMS=1
+RUN if [ "$WITH_OPENEMS" = "1" ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends \
+            openems \
+            libcsxcad0 \
+            python3-openems \
+            python3-h5py \
+            python3-numpy \
+        && rm -rf /var/lib/apt/lists/* \
+        && /usr/bin/python3 -c "import CSXCAD, openEMS; print('openEMS reference OK')"; \
+    else \
+        echo "WITH_OPENEMS=0: openEMS reference not installed"; \
+    fi
+
+RUN groupadd -g 1000 agent \
+    && useradd -m -u 1000 -g 1000 -s /bin/bash agent \
+    && mkdir -p /home/agent/.local \
+    && chown 1000:1000 /home/agent/.local
+ENV HOME=/home/agent
+RUN mkdir -p /workspace
+USER agent
+WORKDIR /workspace
+RUN python -c "import importlib.metadata as m, re; reqs=[re.sub(r'[<>=!~;\[].*','',l.strip()) for l in open('/requirements.txt') if l.strip() and not l.startswith('#')]; missing=[n for n in reqs if not m.version(n)]; assert not missing, f'missing deps: {missing}'; print('all resource requirements OK')"
+CMD ["python", "main.py"]
