@@ -92,6 +92,26 @@ FDTD.AddLumpedPort(port_nr=2, R=50., start=[15e-3, 5e-3, 4e-3],
                    stop=[15e-3, 5e-3, 5e-3], p_dir="z", excite=0)
 print("PORTS-ADDED")
 
+# Bound the run explicitly. openEMS defaults to endCriteria = 1e-6 (-60 dB) and
+# SetNumberOfTimeSteps default 1e9. This case uses a BASEBAND Gaussian
+# (fc == f0 == 1 GHz) with MUR boundaries, which leaves a static near-field
+# residual: measured energy floor is -18.58 dB and it never crosses -60 dB, so
+# with the defaults Run() never returns (observed: 2.07 M timesteps, 7m12s,
+# flat -18.58 dB on openEMS 5fecbb5). This is a SMOKE test -- its real pass
+# criterion is a non-empty port_ut_1, not field decay.
+# Expect the iteration cap below to be the bound that actually fires: at
+# ~2e-4 s per timestep, 5e4 steps is ~10 s, reached well before the energy
+# criterion. A 5e4-step run is a smoke pass, NOT a converged solve.
+# NOTE: SetEndCriteria() takes a LINEAR ratio; the solver renders it as
+# 10*log10(ratio) (its default 1e-6 is reported as -60 dB). -15 dB is therefore
+# 10 ** (-15/10) == 3.162e-02, which is above the measured -18.58 dB floor, so
+# the criterion must trip.
+FDTD.SetEndCriteria(10 ** (-15 / 10))
+# Belt and braces: a hard iteration cap independent of the energy criterion.
+# There is no max_timesteps Run() kwarg (openEMS 5fecbb5 has no such CLI
+# option); the cap is the SetNumberOfTimeSteps() setter (1e9 by default).
+FDTD.SetNumberOfTimeSteps(5e4)
+
 # There is no SetSolverType(); thread count is a Run() keyword.
 FDTD.Run(OUTDIR, cleanup=True, verbose=1, numThreads=2)
 print("SOLVER-RAN")
