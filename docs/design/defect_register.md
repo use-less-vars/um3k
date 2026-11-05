@@ -533,3 +533,74 @@ Correction to record (framing errors caught within one dispatch): (i) an earlier
 
 **Gates:** none assigned by the source. It bears directly on any anchor decision taken from these 6 records.
 
+
+
+## DR-33 — a record named *through* is a 50 Ω loaded run
+
+**id:** DR-33
+**title:** `build_A_50ohm_through_p51.json` carries the 50 Ω loaded physics of `build_A_50ohm_p51_noref.json` to the last digit; the name asserts a through-line the run did not use.
+**status:** OPEN
+**severity:** MEDIUM
+**opened:** 2026-11-05
+
+**What is wrong.** A record labelled `through` is a loaded run. Flattening both artefacts to leaves (203 each) leaves **8 differing leaves, every one of them under `/meta/`** — `argv`, `command_line`, `started_utc`, `finished_utc`, `pid`, `peak_rss_mb`, `wall_call_s`, `wall_total_s`. Every physics leaf is identical, including `/s11/magnitude` = **0.03379343163562476** (= `/ac/AC-3/achieved/s11_abs`) and `/s21/magnitude` = **0.7628473102840976**. Both records carry `/run/load_port` = **`p2`**. The `through` record's own `/meta/argv` is `--n-line 64 --mem-ceiling-mb 500 --s21-plane-index 51 --out evidence/termination/build_A_50ohm_through_p51.json` — the `--load-at-mm` and `--load-ohm` flags are **absent**, so the defaults applied, and `--load-ohm` defaults to `LOAD_VALUE_OHM = 50.0` (`evidence/termination/run_build_A.py:133`, argument declared at `:1242`). The loaded sibling spells the same two flags out explicitly in its `/meta/argv` (`--load-at-mm 20 --load-ohm 50`), which is why the two runs land on identical physics with different names.
+
+**Correction to the dispatch's phrasing (file wins).** The pair is **not** byte-identical: different `sha256`, 11,547 B against 11,629 B. It is the **physics leaves** that are identical; the `/meta/` block differs because they are two separate runs. The defect is unchanged — a name asserting a topology the flags contradict — but the claim should be stated as "identical in every physics leaf, differing in `/meta/` only", not "bit-identical".
+
+**Evidence.** Leaves `/meta/argv`, `/meta/command_line`, `/run/load_port`, `/s11/magnitude`, `/s21/magnitude`, `/ac/AC-3/achieved/s11_abs`, `/ac/AC-3/achieved/s21_abs` on `evidence/termination/build_A_50ohm_through_p51.json` and `evidence/termination/build_A_50ohm_p51_noref.json`; the default at `evidence/termination/run_build_A.py:133` and `:1242`.
+
+**What closes it.** [PROPOSED here, not stated by the source] Retire the `through` label, and let the artefact's own load block state whether a load flag was defaulted — a run must not be identifiable as loaded only from a filename or from a diff against a sibling.
+
+**Gates:** any table, figure or claim that treats `build_A_50ohm_through_p51.json` as a matched through-line (it is the record most easily mistaken for the reference-free run, and it is not one).
+
+## DR-34 — two AC-7 records, 3.1 % apart in β and opposite in verdict, both labelled AC-7
+
+**id:** DR-34
+**title:** `graded.json` scores AC-7 **pass** at β = 216.7622 rad/m on the `w = 0.8 mm` mesh; `graded_v2_refix.json` scores AC-7 **fail** at β = 223.5813 rad/m on the `w = 3.2 mm` mesh — same bar string, opposite verdict, no supersession marker.
+**status:** OPEN
+**severity:** MEDIUM
+**opened:** 2026-11-05
+
+**What is wrong.** The criterion is graded twice, on two different strip widths, and the two graders disagree about whether it closes. The `pass: true` record is the one the same directory disowns: `evidence/termination/README.md:3` describes the artefacts on disk as recorded by the revision that passed `n_strip` 2 — "a strip 4x narrower than the `w` its own phase reference is computed for" — while the refix, at `w_m` 0.0032, fails. A criterion recorded as closed therefore rests on a mesh the directory itself refuses, and nothing in either file marks which is live.
+
+**Evidence.** `evidence/termination/graded.json` → `/criteria/AC-7`: `pass` **true**, `/achieved/beta_fdtd_rad_per_m` **216.7621604119496**, `/achieved/beta_modal_rad_per_m` **216.86115860414054**, `/achieved/beta_modal/eps_eff` **3.152375648868031**, `/achieved/beta_modal/w_m` **0.0008**, `/achieved/rel_error` **0.0004565049491949793**, `/achieved/deembedded_slope_rad_per_m` **182.5103483472008**. `evidence/termination/graded_v2_refix.json` → `/criteria/AC-7`: `pass` **false**, `status` "scored: outside the 0.001 bar", `/achieved/beta_fdtd_rad_per_m` **223.58131180256908**, `/achieved/beta_modal_rad_per_m` **227.31018858464796**, `/achieved/beta_modal/eps_eff` **3.4634763080674587**, `/achieved/beta_modal/w_m` **0.0032**, `/achieved/rel_error` **0.016404353915224042**, `/achieved/rel_error_vs_hammerstad` **0.0010219020795365688**, `/achieved/deembedded_slope_rad_per_m` **240.77618158901416**. The bar string is character-identical in both blocks.
+
+**Correction to the dispatch's phrasing (file wins).** The dispatch states "README AC-7 beta = +182.51 rad/m". The file does not support that reading: `evidence/termination/README.md:3` attributes **+182.51 rad/m** to `graded.json`'s `deembedded_slope_rad_per_m` and explicitly calls it "a different quantity" from β. Quoting it as the README's β would be a misquote, and the defect below does not need it: the contradiction is between the two `/criteria/AC-7` blocks, which is a reporting-chain fact on the artefact leaves themselves. `rel_error` **0.0164** is the refix's, and it is the refix that records `pass: false`.
+
+**Scope note (β refit test, 2026-11-05).** Re-read against the files: the entry's numbers and its title stand unchanged (216.7622 vs 223.5813 is 3.15 % apart, titled "3.1 %"), and the correction above is confirmed — the **+182.51 rad/m** figure is `graded.json`'s `deembedded_slope_rad_per_m`, which `evidence/termination/README.md:3` calls "a different quantity" taken across two runs over the 10.0 mm between them, so it is neither a β nor part of this comparison. DR-34's scope is therefore exactly **a 3.15 % β disagreement between two identically-labelled AC-7 records with no supersession marker**; see `docs/design/beta_refit_test_2026-11-05.md` §12.
+
+**What closes it.** [PROPOSED here, not stated by the source] One live AC-7 per graded state, with the mesh it was scored on (`w_m`, `n_strip`) carried in the same block and a supersession field on the older one.
+
+**Gates:** any statement that AC-7 closes. On the corrected-width mesh it does not.
+
+## DR-35 — the loaded siblings of one cross-section carry physically impossible ε_eff at both bounds
+
+**id:** DR-35
+**title:** Three loaded records of the same cross-section carry β = 286.87 / 286.36 / 173.41 rad/m, i.e. ε_eff **5.5162 / 5.4966 / 2.0157** — one bound above `ε_r`, the other below anything the geometry can support, a **24.3 %** spread inside one batch.
+**status:** OPEN
+**severity:** HIGH — **top of the board.** It invalidates the phrase "the β for this geometry" wherever it appears without a named extraction state, and it is the reason every β in this document is quoted with its source leaf.
+**opened:** 2026-11-05
+
+**What is wrong.** β and ε_eff are linked exactly by `eps_eff = (beta*c0/(2*pi*f))**2` (`emfit/studies.py:3543`), so a β is a claim about the effective permittivity, and the claim can be checked against physics. On a quasi-TEM line printed on `ε_r` = **4.4** (`/geometry/eps_r` on every run artefact) ε_eff cannot exceed 4.4 — that is a bound, not an estimate. Two of the three siblings exceed it; the third is below every static estimate the tree carries.
+
+| record | `line.beta` (rad/m) | ε_eff from it | physical? |
+|---|---|---|---|
+| `build_A_50ohm_v3.json` | 286.8686891628 | 5.5162090250313955 | **impossible** — ε_eff > ε_r 4.4 |
+| `build_A_50ohm_twin_p51.json`, `build_A_50ohm_v3c.json`, `build_A_50ohm_v3_twin_check.json` | 286.35930483082825 | 5.49663647596545 | **impossible** — same bound |
+| `build_E_50ohm_v3d.json` | 173.4121373161 | 2.0157348231222967 | **impossible** — below anything the geometry supports |
+| *(reference)* Hammerstad `line.beta_model` 223.35306683909533 | — | 3.343938 | plausible upper |
+| *(reference)* `mode_profile` at `w` = 3.2 mm, 227.31018858464796 | — | 3.4634763080674587 | plausible upper |
+| *(reference)* static/Laplace solve, `mode_profile` docstring | — | 3.35001 (`Z0` 50.088 Ω) | plausible lower |
+
+The floor is as hard as the ceiling: the Laplace/static solve of the same cross-section gives ε_eff **3.35001** (`emfit/mode_profile.py` module docstring, the same figure as `evidence/t4/rung4_routeC_report.json` → `/eps_eff` 3.3500085193372136), and Hammerstad gives **3.343938**; **2.0157** is 40 % below the lower of the two, which no meshing or port artefact can produce for this geometry. The range 173.41 → 286.87 is a factor **1.654** in β and **2.74** in ε_eff, **24.3 %** in β, **within records that differ only by `n_line` and load.** β is not a property being measured here; it is an extraction state being mislabelled as one.
+
+**Note, in the other direction.** `beta_baseline` (the station fit) 231.55331672912826 corresponds to ε_eff **3.593986** — high against both closed forms (+7.5 % on Hammerstad, +3.8 % on `mode_profile` at `w` = 3.2 mm) but **physical**, and the least implausible of the four. The pathological values are the per-record `line.beta` ones, not the station fit's. That ordering is the reason the refit test in `docs/design/beta_refit_test_2026-11-05.md` is worth running at all.
+
+**Correction to the dispatch's numbers (file wins).** The dispatch quotes Hammerstad ε_eff **3.3425**; computing it from `line.beta_model` = 223.35306683909533 at `/geometry/f_hz` = 5827786408.327286 gives **3.343938**, a 0.043 % difference. The table above quotes the computed value; the 3.3425 figure does not reproduce and is not used.
+
+**Evidence.** `evidence/termination/build_A_50ohm_v3.json`, `build_A_50ohm_twin_p51.json`, `build_A_50ohm_v3c.json`, `build_A_50ohm_v3_twin_check.json`, `build_A_50ohm_v3b_c51.json`, `build_E_50ohm_v3d.json` → `/line/beta`, `/line/eps_eff`; `/geometry/eps_r`, `/geometry/f_hz`; `emfit/studies.py:3543` for the conversion; `emfit/mode_profile.py` docstring for ε_eff 3.35001. Twin-mapping corrections carried forward from `docs/design/beta_drift_analysis_2026-11-05.md` are not re-derived here.
+
+**What closes it.** [PROPOSED here, not stated by the source] One arbitrated β per record from a **load-free** extraction, with an admissibility test on ε_eff against `[eps_eff_static, eps_r]` before the value is allowed into any artefact field named `beta`. Until then, no document may quote "the β for this geometry" without naming which extraction produced it.
+
+**Gates:** every β-dependent number in the termination work — AC-7, the de-embeds, and every phase residual reported against a TE prediction.
+
