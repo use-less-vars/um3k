@@ -296,6 +296,10 @@ Fixed before any openEMS number exists. Reproduced as registered.
 | Comparison | ε_eff implied by **openEMS's** β (`(β·c0/2πf)²`, the identity at `emfit/studies.py:3543`) vs the static solve's ε_eff |
 | PASS | within **3 %** |
 
+**Operator ruling on bracket C (2026-11-05): C stays at 3 %, it is not widened to 5 %.** The tempting move — relax C so that it matches A's 5 % tolerance — is refused because the openEMS leg exists only as an **independent** check of our own numbers. A 3 % disagreement between openEMS's implied ε_eff and our static solve is a real disagreement that needs an explanation; calling it a PASS by moving the line to 5 % does not explain it, it only stops us from having to. Bracket A's 5 % is a different gate on a different quantity (a static `Z0` comparison, §5.4), and matching two tolerances to each other is not a physics argument.
+
+That said, C is deliberately **not** the load-bearing gate today, and the reason should be stated where the gate is defined: the disagreement currently worth worrying about is between **our own** anchors, not between openEMS and emfit. `docs/design/anchor_audit_2026-11-05.md` §4/§7 bounds the `Z0` span across live sources at **≥ 5.37 %** on the most defensible subset (11.22 % over the full live set), and that span is already larger than the 3 % C would test. Until our own two or three candidate `Z0`s agree to better than a few percent, sharpening or loosening a cross-check against a third source cannot discriminate. C is therefore left exactly as written — strict, and subordinate. No openEMS run exists at this date, so nothing has been graded through C and no threshold has been moved in either direction.
+
 ### D. Load-free sanity
 
 | | |

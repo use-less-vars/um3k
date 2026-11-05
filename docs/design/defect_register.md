@@ -467,6 +467,14 @@ Correction to record (framing errors caught within one dispatch): (i) an earlier
 
 **Gates:** none assigned by the source (§4 gives none).
 
+**CLASS NOTE (2026-11-05, from `docs/design/anchor_audit_2026-11-05.md` §5).** DR-27 is not a one-off wording slip in one leaf: it is the first member of a class, **"a recorded basis/provenance string does not describe the operation that was performed"**. Two further instances were found in the same artefact while auditing every phase quantity, so the class now has three members, and they are what §5 of the audit sizes (3 of ~10 leaves swept).
+
+- *Instance 1 (DR-27 itself, restated).* `/s21/phase_deg_basis` describes the twin `forward_ratio` construction (`emfit/studies.py:3352`) while the run was reference-free; `/run/reference` is null and `/run/loaded_without_reference` is true.
+- *Instance 2 (new).* `/s21/phase_deg` was produced by the **no-reference** `line_s21` path (`emfit/studies.py:3686`, `emfit/ports.py:1702-1703`) over **0.0172 m**, but the artefact records `deembed_distance_m = 0.0072` and its basis string claims the twin branch. The branch is wrong **and** the distance is wrong, so the same defect class that mislabels the branch also hides a 2.4× plane error. The 0.0172 m is independently confirmed in the artefact by `/ac/AC-7/phase_degeneracy/dL_m`. The line references are also stale after the edit that introduced the reference-free branch (`emfit/ports.py:1707-1731`), so the prose cannot even be followed back to the code it describes.
+- *Instance 3 (new, and the class is not confined to strings).* `/s21/raw_reference_independent` is `true` while `/s21/raw_basis` describes a reference-dependent (twin) construction — a boolean and a prose string in the same block are directly contradictory.
+
+**Why this matters for grading.** Each instance is cheap to fix and each is expensive to live with: a reader who trusts the basis string is told which branch, which de-embedding distance and which quantity a number came from, and in all three cases the answer given is not the answer that holds. Nothing here is a calculation error — every number checked out against its actual producing branch; what fails is the provenance layer, which is precisely the layer this project relies on instead of re-running host jobs (DR-28 makes the tree state unrecoverable, so provenance is the only handle left). **What closes the class:** emit the basis string from the branch that actually ran (the DR-27 proposal, unchanged, now applied to three sites), and derive the recorded de-embedding distance from the plane the value was taken at rather than carrying a constant.
+
 ## DR-28 — `meta.git_rev` is null, so no artefact is tieable to a commit
 
 **id:** DR-28

@@ -281,6 +281,21 @@ here, so the pairing cannot be completed.
    on the record before the data. It is not counted as support for `beta_rawphase`; nor is the
    baseline's 3.593986 — the least plausible of the three against eps_r = 4.4 — counted against it.
 
+   *Clarification added 2026-11-05 by the `anchor-audit-2026-11-05` pass; the numbered text above is
+   left untouched so the record of what was believed, and when, survives.* The paragraph is correct
+   as written but its scope is narrower than a reader coming from §9.2 will take it to be: **the
+   0.023 % belongs to `beta_rawphase` alone.** 3.350776 is (223.58131180256908 / 122.14137132890411)²
+   and 3.35001 is the Laplace static value, so the coincidence is a property of the *transplanted
+   extraction* beta, not of the beta this document's own residual minimises. At the fit's own minimum,
+   β = **231.046199503169** (§9.2), the same formula gives (231.046199503169 / 122.14137132890411)² =
+   **3.578261**, i.e. **+6.81 %** above 3.35001 — no match at all, and on the same high side as the
+   baseline's 3.593986 (+7.28 %) that item 7 calls "the least plausible of the three". Read as a whole,
+   the station fit is therefore **internally self-consistent on `resid_v` while disagreeing with the
+   static physics on eps_eff**, which is the tension §9.2 documents and not a validation of anything.
+   Nothing in §7 or §9 moves: 3.350776 remains an exact re-expression of `beta_rawphase` with no
+   independent content, and the strategic conclusion (a beta scan cannot reconcile the anchors) is
+   untouched.
+
 
 ## 9. Late addendum — a beta scan, appended after §8 and not part of the frozen test
 
