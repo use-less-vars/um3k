@@ -1,0 +1,205 @@
+{
+  "schema": "emfit.quasistatic.z0_ladder/1",
+  "created_utc": "2026-11-05T23:58:33.660104Z",
+  "git_rev": "unavailable (git not installed in workspace container)",
+  "git_dirty": "unavailable (git not installed in workspace container)",
+  "git_dirty_files": "unavailable (git not installed in workspace container)",
+  "solver": {
+    "entry_point": "emfit.quasistatic.z0_eps_eff(grid, substrate, fixed)",
+    "geometry_built_by": "emfit.mode_profile._section / _conductors (the production call site's own helpers)",
+    "method": "finite-difference potential solve on the transverse plane; eps_eff = C'/C'_air, Z0 = sqrt(eps_eff)/(C0*C')",
+    "note": "solver-only artefact: no measurement, no port residual, no comparison against any FDTD run is recorded here"
+  },
+  "role": "Run B: production board width, MS_W in emfit/studies.py:1159 \u2014 this is the board",
+  "geometry": {
+    "w_m": 0.0032,
+    "h_m": 0.0016,
+    "cell_m": 0.0001,
+    "n_sub": 16,
+    "n_strip": 32,
+    "n_strip_rule": "derived by emfit.mode_profile._section as round(w / cell); not a parameter of the solve",
+    "eps_r": 4.4,
+    "n_clean_rule": "n_clean = n_air = n (both homogeneous media meshed at the same resolution)",
+    "n_air_rule": "n_clean = n_air = n (both homogeneous media meshed at the same resolution)",
+    "transverse_box_m": {
+      "y_width_at_finest_rung_m": 0.1632,
+      "z_height_at_finest_rung_m": 0.0816,
+      "note": "the lateral Neumann walls sit n_clean cells each side of the strip, the top wall n_air cells above it; the thin direction is one periodic cell"
+    }
+  },
+  "medium": {
+    "n_clean_by_rung": {
+      "100": 100,
+      "200": 200,
+      "400": 400,
+      "800": 800
+    },
+    "n_air_by_rung": {
+      "100": 100,
+      "200": 200,
+      "400": 400,
+      "800": 800
+    },
+    "substrate": "eps_r = 4.4 below z = h, vacuum above",
+    "reference_solve": "C'_air is solved with eps_r = 1 everywhere by emfit.quasistatic.z0_eps_eff"
+  },
+  "rungs": [
+    {
+      "n": 100,
+      "n_clean": 100,
+      "n_air": 100,
+      "cells_ny": 232,
+      "cells_nz": 116,
+      "z0_ohm": 48.658870035784155,
+      "eps_eff": 3.412439651144762,
+      "wall_seconds": 0.4381
+    },
+    {
+      "n": 200,
+      "n_clean": 200,
+      "n_air": 200,
+      "cells_ny": 432,
+      "cells_nz": 216,
+      "z0_ohm": 48.2090808728406,
+      "eps_eff": 3.3691189529598735,
+      "wall_seconds": 1.3351
+    },
+    {
+      "n": 400,
+      "n_clean": 400,
+      "n_air": 400,
+      "cells_ny": 832,
+      "cells_nz": 416,
+      "z0_ohm": 48.07634595576834,
+      "eps_eff": 3.356179102170849,
+      "wall_seconds": 5.7204
+    },
+    {
+      "n": 800,
+      "n_clean": 800,
+      "n_air": 800,
+      "cells_ny": 1632,
+      "cells_nz": 816,
+      "z0_ohm": 48.04014135742647,
+      "eps_eff": 3.3526319844775165,
+      "wall_seconds": 40.3185
+    }
+  ],
+  "refit": {
+    "model": "Z0(n) = Z0_inf + a / n**p",
+    "method": "scipy.optimize.curve_fit, p0 = [Z0(finest), 1.0, 2.0], maxfev = 200000",
+    "z0_inf_ohm": 48.02374054929774,
+    "z0_a": 2315.884641246202,
+    "z0_p": 1.7809056638641136,
+    "z0_residuals_ohm": [
+      -6.335468352602902e-05,
+      0.0004987867918231359,
+      -0.0011836029356686595,
+      0.0007481708278120891
+    ],
+    "z0_covariance": [
+      [
+        3.1299003552273335e-06,
+        0.2696489898254575,
+        2.6289712588515493e-05
+      ],
+      [
+        0.2696489898254575,
+        35448.56990840774,
+        3.392313786671493
+      ],
+      [
+        2.6289712588515493e-05,
+        3.392313786671493,
+        0.00032508153624290567
+      ]
+    ],
+    "eps_eff_inf": 3.3509885424303816,
+    "eps_eff_a": 208.6956580189273,
+    "eps_eff_p": 1.7654675235524695,
+    "eps_eff_residuals": [
+      -6.8832641106908454e-06,
+      5.368826511586988e-05,
+      -0.00012637101668699913,
+      7.956601568848143e-05
+    ],
+    "eps_eff_covariance": [
+      [
+        3.630142697858319e-08,
+        0.002873435879731418,
+        3.110326529264103e-06
+      ],
+      [
+        0.002873435879731418,
+        345.12503998790396,
+        0.3666522667410118
+      ],
+      [
+        3.110326529264103e-06,
+        0.3666522667410118,
+        0.000390069948354718
+      ]
+    ],
+    "covariance_is_an_error_bar": false,
+    "covariance_note": "the covariance curve_fit returns on a 4-point 3-parameter fit is an over-fitting number, not an uncertainty; it is recorded for completeness and MUST NOT be quoted as an error bar on the limit"
+  },
+  "cross_checks": {
+    "method": "all computed from the rungs measured above, in this same process",
+    "three_point_predicts_finest": {
+      "method": "fit the three coarsest rungs, evaluate the model at the finest n",
+      "fit_z0_inf_ohm": 48.02077641699191,
+      "fit_a": 2119.7582630436555,
+      "fit_p": 1.7607009676759604,
+      "predicted_z0_ohm": 48.03717525166583,
+      "actual_z0_ohm": 48.04014135742647,
+      "relative_difference": -6.174223632219386e-05,
+      "predicted_eps_eff": 3.3523139812134812,
+      "actual_eps_eff": 3.3526319844775165,
+      "relative_difference_eps": -9.485182552324283e-05
+    },
+    "pairwise_triples": {
+      "method": "fit rungs (100,200,400) and (200,400,800) separately",
+      "lower_triple_z0_inf_ohm": 48.02077641699191,
+      "upper_triple_z0_inf_ohm": 48.02656248440154,
+      "spread_ohm": 0.005786067409630391
+    },
+    "richardson": {
+      "method": "R_p = (2**p * y(finest) - y(second finest)) / (2**p - 1) on the single doubling 400 -> 800",
+      "p1_z0_ohm": 48.0039367590846,
+      "p2_z0_ohm": 48.02807315797918
+    },
+    "per_doubling_drift": {
+      "z0_relative": [
+        -0.00924372396261512,
+        -0.0027533177291301806,
+        -0.0007530646853897233
+      ],
+      "eps_eff_relative": [
+        -0.012694934596237011,
+        -0.0038407224469341823,
+        -0.0010568916572534074
+      ]
+    }
+  },
+  "closed_form": {
+    "model": "emfit.microstrip.z0_eps_eff (Hammerstad-Jensen) at this run's w/h",
+    "w_over_h": 2.0,
+    "t_over_h": 0.021875,
+    "t_m": 3.5e-05,
+    "z0_ohm": 48.09865506799058,
+    "eps_eff": 3.3439383100189377,
+    "fitted_z0_inf_ohm": 48.02374054929774,
+    "relative_difference_fit_minus_closed_form": -0.001557517951114005,
+    "eps_eff_fit_minus_closed_form": 0.002108361984525947
+  },
+  "wall_seconds": {
+    "per_rung": [
+      0.4381,
+      1.3351,
+      5.7204,
+      40.3185
+    ],
+    "total_solver": 47.813
+  },
+  "notes": "Run B: production board width, MS_W in emfit/studies.py:1159 \u2014 this is the board"
+}

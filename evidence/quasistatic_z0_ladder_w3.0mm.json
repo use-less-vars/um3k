@@ -1,0 +1,205 @@
+{
+  "schema": "emfit.quasistatic.z0_ladder/1",
+  "created_utc": "2026-11-05T23:57:30.557710Z",
+  "git_rev": "unavailable (git not installed in workspace container)",
+  "git_dirty": "unavailable (git not installed in workspace container)",
+  "git_dirty_files": "unavailable (git not installed in workspace container)",
+  "solver": {
+    "entry_point": "emfit.quasistatic.z0_eps_eff(grid, substrate, fixed)",
+    "geometry_built_by": "emfit.mode_profile._section / _conductors (the production call site's own helpers)",
+    "method": "finite-difference potential solve on the transverse plane; eps_eff = C'/C'_air, Z0 = sqrt(eps_eff)/(C0*C')",
+    "note": "solver-only artefact: no measurement, no port residual, no comparison against any FDTD run is recorded here"
+  },
+  "role": "Run A: test-fixture width, W_CONVERGED in tests/test_mode_profile.py:64 \u2014 NOT a board statement",
+  "geometry": {
+    "w_m": 0.003,
+    "h_m": 0.0016,
+    "cell_m": 0.0001,
+    "n_sub": 16,
+    "n_strip": 30,
+    "n_strip_rule": "derived by emfit.mode_profile._section as round(w / cell); not a parameter of the solve",
+    "eps_r": 4.4,
+    "n_clean_rule": "n_clean = n_air = n (both homogeneous media meshed at the same resolution)",
+    "n_air_rule": "n_clean = n_air = n (both homogeneous media meshed at the same resolution)",
+    "transverse_box_m": {
+      "y_width_at_finest_rung_m": 0.163,
+      "z_height_at_finest_rung_m": 0.0816,
+      "note": "the lateral Neumann walls sit n_clean cells each side of the strip, the top wall n_air cells above it; the thin direction is one periodic cell"
+    }
+  },
+  "medium": {
+    "n_clean_by_rung": {
+      "100": 100,
+      "200": 200,
+      "400": 400,
+      "800": 800
+    },
+    "n_air_by_rung": {
+      "100": 100,
+      "200": 200,
+      "400": 400,
+      "800": 800
+    },
+    "substrate": "eps_r = 4.4 below z = h, vacuum above",
+    "reference_solve": "C'_air is solved with eps_r = 1 everywhere by emfit.quasistatic.z0_eps_eff"
+  },
+  "rungs": [
+    {
+      "n": 100,
+      "n_clean": 100,
+      "n_air": 100,
+      "cells_ny": 230,
+      "cells_nz": 116,
+      "z0_ohm": 50.54691799481795,
+      "eps_eff": 3.392371003176326,
+      "wall_seconds": 0.262
+    },
+    {
+      "n": 200,
+      "n_clean": 200,
+      "n_air": 200,
+      "cells_ny": 430,
+      "cells_nz": 216,
+      "z0_ohm": 50.08846719244843,
+      "eps_eff": 3.3500085193372118,
+      "wall_seconds": 1.122
+    },
+    {
+      "n": 400,
+      "n_clean": 400,
+      "n_air": 400,
+      "cells_ny": 830,
+      "cells_nz": 416,
+      "z0_ohm": 49.954238269959276,
+      "eps_eff": 3.337457853781188,
+      "wall_seconds": 6.1567
+    },
+    {
+      "n": 800,
+      "n_clean": 800,
+      "n_air": 800,
+      "cells_ny": 1630,
+      "cells_nz": 816,
+      "z0_ohm": 49.91778760249566,
+      "eps_eff": 3.3340330266184983,
+      "wall_seconds": 36.5464
+    }
+  ],
+  "refit": {
+    "model": "Z0(n) = Z0_inf + a / n**p",
+    "method": "scipy.optimize.curve_fit, p0 = [Z0(finest), 1.0, 2.0], maxfev = 200000",
+    "z0_inf_ohm": 49.901497655207805,
+    "z0_a": 2468.3678194090317,
+    "z0_p": 1.7912633176706632,
+    "z0_residuals_ohm": [
+      -6.032940148514854e-05,
+      0.00047794723848681997,
+      -0.001140337554623727,
+      0.000722719718076803
+    ],
+    "z0_covariance": [
+      [
+        2.8723863542916987e-06,
+        0.26191894626470275,
+        2.395079650860153e-05
+      ],
+      [
+        0.26191894626470275,
+        36580.55163927782,
+        3.2835126838425794
+      ],
+      [
+        2.395079650860153e-05,
+        3.2835126838425794,
+        0.0002951336299765271
+      ]
+    ],
+    "eps_eff_inf": 3.3324682790783355,
+    "eps_eff_a": 213.71887397904771,
+    "eps_eff_p": 1.7761753329829681,
+    "eps_eff_residuals": [
+      -6.29534794382991e-06,
+      4.9420735658056714e-05,
+      -0.00011698137873850101,
+      7.385599103804097e-05
+    ],
+    "eps_eff_covariance": [
+      [
+        3.073529438698973e-08,
+        0.0025800863332289814,
+        2.726216569344785e-06
+      ],
+      [
+        0.0025800863332289814,
+        329.925951550607,
+        0.3421696271496022
+      ],
+      [
+        2.726216569344785e-06,
+        0.3421696271496022,
+        0.0003553602557874629
+      ]
+    ],
+    "covariance_is_an_error_bar": false,
+    "covariance_note": "the covariance curve_fit returns on a 4-point 3-parameter fit is an over-fitting number, not an uncertainty; it is recorded for completeness and MUST NOT be quoted as an error bar on the limit"
+  },
+  "cross_checks": {
+    "method": "all computed from the rungs measured above, in this same process",
+    "three_point_predicts_finest": {
+      "method": "fit the three coarsest rungs, evaluate the model at the finest n",
+      "fit_z0_inf_ohm": 49.898667055458745,
+      "fit_a": 2269.268427370983,
+      "fit_p": 1.7720713580068068,
+      "predicted_z0_ohm": 49.914937643720926,
+      "actual_z0_ohm": 49.91778760249566,
+      "relative_difference": -5.7093050626094785e-05,
+      "predicted_eps_eff": 3.3337394881042046,
+      "actual_eps_eff": 3.3340330266184983,
+      "relative_difference_eps": -8.804307334394303e-05
+    },
+    "pairwise_triples": {
+      "method": "fit rungs (100,200,400) and (200,400,800) separately",
+      "lower_triple_z0_inf_ohm": 49.898667055458745,
+      "upper_triple_z0_inf_ohm": 49.90419919106209,
+      "spread_ohm": 0.005532135603345978
+    },
+    "richardson": {
+      "method": "R_p = (2**p * y(finest) - y(second finest)) / (2**p - 1) on the single doubling 400 -> 800",
+      "p1_z0_ohm": 49.88133693503204,
+      "p2_z0_ohm": 49.90563738000778
+    },
+    "per_doubling_drift": {
+      "z0_relative": [
+        -0.009069807231699598,
+        -0.0026798368968533174,
+        -0.0007296811787347193
+      ],
+      "eps_eff_relative": [
+        -0.012487573970963003,
+        -0.003746457802592931,
+        -0.0010261784006679205
+      ]
+    }
+  },
+  "closed_form": {
+    "model": "emfit.microstrip.z0_eps_eff (Hammerstad-Jensen) at this run's w/h",
+    "w_over_h": 1.875,
+    "t_over_h": 0.021875,
+    "t_m": 3.5e-05,
+    "z0_ohm": 49.97968517996939,
+    "eps_eff": 3.3254548131553996,
+    "fitted_z0_inf_ohm": 49.901497655207805,
+    "relative_difference_fit_minus_closed_form": -0.0015643860996730956,
+    "eps_eff_fit_minus_closed_form": 0.0021090245746809987
+  },
+  "wall_seconds": {
+    "per_rung": [
+      0.262,
+      1.122,
+      6.1567,
+      36.5464
+    ],
+    "total_solver": 44.087
+  },
+  "notes": "Run A: test-fixture width, W_CONVERGED in tests/test_mode_profile.py:64 \u2014 NOT a board statement"
+}

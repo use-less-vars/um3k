@@ -467,3 +467,49 @@ conflation of default for board written into the library's own docstring. Nothin
 quasi-static solver, in the ladder method or in the test suite, and no number above required a solver change
 to produce.
 
+### 9.8 Artefact bank for both ladders
+
+*Appended 2026-11-05. Nothing above this heading is edited: §1–§7 and §9.1–§9.7 stand as written, and nothing
+below adds a number to any of them. This subsection records only that both ladders now exist as
+machine-readable artefacts, and what a from-scratch re-run established.*
+
+**(a) What was banked.** Three new files, all new, nothing else changed:
+`evidence/quasistatic_z0_ladder_w3.0mm.json` (Run A, the `3.0` mm test-fixture width of §2/§3),
+`evidence/quasistatic_z0_ladder_w3.2mm.json` (Run B, the `3.2` mm production board width of §9.3), and the
+generator `evidence/bank_quasistatic_z0_ladder.py` that produced both. The generator takes
+`--w/--tag/--role/--out-dir` and writes one JSON per width. The artefacts carry the per-rung `Z0`, `eps_eff`
+and wall seconds, the geometry and medium actually passed, the fit parameters, an explicit field stating that
+the covariance is not an error bar, the four cross-checks described in §3/§9.3, the closed-form `Z0` at that
+run's `w` with the relative difference to the fitted limit, and a `notes` field recording that Run A is a
+test-fixture width and is **not** a board statement. The purpose is that the numbers of record no longer exist
+only as prose in this document.
+
+**(b) Reproduction.** Re-running from scratch on this machine reproduced both ladders rung-for-rung: all eight
+`Z0` values and all eight `eps_eff` values agree to the six decimals printed in §3 and §9.3, and the fits agree
+to the last quoted digit — `Z0_inf` 49.9014977 against 49.901498 with `p` 1.7912633 against 1.79126 for the
+3.0 mm run, and 48.0237405 against 48.023741 with `p` 1.78090566 against 1.780906 for the 3.2 mm run. The
+`eps_eff` limits are 3.3324683 at 3.0 mm (the value §7.4 already quotes as 3.332468) and 3.35098854 at 3.2 mm
+(§9.3's 3.350989) — so the banked artefact reproduces this document's own `eps_eff` limit for the 3.0 mm
+fixture to seven digits, a cross-check §7.4 did not previously have. Total job wall 94 s.
+
+**(c) Finding — the two recorded wall-clock columns are not mutually comparable.** The re-run measured 36.5 s
+and 40.3 s for the `n` = 800 rung at 3.0 mm and 3.2 mm respectively, on grids of 1630x816 and 1632x816 — i.e.
+essentially equal cost, as the grid sizes require. The columns recorded in §3 (120.7 s) and §9.3 (27.82 s)
+differ by a factor of 4.3 on those same near-identical grids, so they cannot both have been taken on one
+machine under one load. The two timing columns therefore come from different machines and **must not be
+compared with each other**; no number in either ladder depends on a timing and no conclusion in this document
+was drawn from one. The banked JSONs carry this machine's timings, not the recorded ones.
+
+**(d) Finding — `n_strip` is an output, not an input.** `emfit/mode_profile.py:458` derives
+`n_strip = round(w / cell)` inside `_section(h, w, n_sub, n_clean, n_air)` and raises if `w` is not a whole
+number of cells; it is not a parameter of the call. §9.2 and §9.3 describe the re-run as `n_strip = 32`; that
+is the correct consequence of `w = 3.2e-3` at `cell = 0.1e-3`, but it is a reported outcome, not something
+passed. The JSONs record it as `geometry.n_strip` alongside `geometry.n_strip_rule`.
+
+**(e) Provenance limitation, stated honestly.** `git` is not installed in the execution container, so the
+generator's graceful degradation fired and both JSONs carry `git_rev` =
+`unavailable (git not installed in workspace container)` rather than a sha. Provenance of the artefacts is
+therefore the commit that contains them (the run was made against tree `ce0d9e7`, HEAD at run time) rather than
+a sha embedded in the file. Fixing this properly means adding `git` to the runtime image, not editing the
+artefacts.
+
