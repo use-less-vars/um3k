@@ -221,6 +221,27 @@ def filter_kwargs(kwargs, func):
     return kept, dropped
 
 
+def unloaded_kwargs(kwargs):
+    """Turn ``kwargs`` into the load-free arm: no element, no cut plane.
+
+    The two are one decision, because the library ties them: a record with no
+    load has no cut plane to name, so ``s21_plane`` must be ``None`` there.
+    ``emfit/studies.py:2920``-``:2925`` is the guard that says so -- asked for
+    a plane on a load-free record it raises ``ValueError`` ("s21_plane was
+    asked for on a load-free record: there is no cut for it to name.  Leave it
+    None, which measures the station span a load-free run wants.") -- and
+    ``None`` is also the value a load-free run wants: the station span, not
+    the loaded arm's column 51.
+
+    Returns:
+        ``kwargs`` itself, modified: ``loads`` dropped if present,
+        ``s21_plane`` set to ``None``.
+    """
+    kwargs.pop("loads", None)
+    kwargs["s21_plane"] = None
+    return kwargs
+
+
 def cross_check(kwargs, reference=None):
     """Assert this script's mesh is the reference artefact's mesh.
 
@@ -525,11 +546,18 @@ def main(argv=None):
     bin_hz = 1.0 / span
     start_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    # The plan is built from the same kwargs the loop will pass below, so a
+    # flag that changes the call cannot leave the printed plan saying
+    # something else.  With no flag this is AARM_KWARGS by value, unchanged.
+    plan_kwargs = dict(AARM_KWARGS)
+    if args.unloaded:
+        plan_kwargs = unloaded_kwargs(plan_kwargs)
+
     if args.dry_run:
         print(_json.dumps({
             "cross_check": cross,
             "bin_spacing_hz": bin_hz,
-            "calls": [{"k": k, "f_hz": k / span, "kwargs_hint": AARM_KWARGS}
+            "calls": [{"k": k, "f_hz": k / span, "kwargs_hint": plan_kwargs}
                       for k in args.k], }, indent=2, sort_keys=True))
         return 0
 
@@ -542,11 +570,17 @@ def main(argv=None):
         # a keyword: run_build_A.py:392 builds Load(load_at_mm*1e-3,
         # "series_r", load_ohm) and passes it under this name
         # (studies.py:2503).  A list of tuples is not a Load and would not run.
-        # --unloaded drops exactly this entry and nothing else: the same driver,
-        # a bare line.  It is meant to be mutually exclusive with a FUTURE
-        # --load-ohm knob, which would change the value here rather than remove
-        # the entry; that knob does not exist in this script.
-        if not args.unloaded:
+        # --unloaded drops the element AND the cut plane the loaded arm measures
+        # across: one decision, not two (unloaded_kwargs(); and
+        # emfit/studies.py:2920-:2925 for the library's own reason -- a
+        # load-free record has no cut to name, and ``None`` measures the
+        # station span a load-free run wants).  The same driver, a bare line.
+        # It is meant to be mutually exclusive with a FUTURE --load-ohm knob,
+        # which would change the value here rather than remove the entry; that
+        # knob does not exist in this script.
+        if args.unloaded:
+            kwargs = unloaded_kwargs(kwargs)
+        else:
             kwargs["loads"] = [Load(LOAD_AT_MM * 1e-3, LOAD_KIND, LOAD_OHM)]
         row = {"k": k, "f_hz_asked": f_target,
                "f_ghz_asked": f_target / 1e9}
