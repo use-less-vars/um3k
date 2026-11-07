@@ -193,6 +193,115 @@ def finite_or_none(value):
     return value if math.isfinite(value) else None
 
 
+def _re_im(value) -> dict | None:
+    """A complex as the artefact's ``{"re", "im"}`` pair, ``None`` in and out.
+
+    Same two-part split ``_z_eff_block`` and ``reference_residual`` already use,
+    and the same ``finite_or_none`` guard: a non-finite part is written as null
+    rather than as the bare ``NaN`` token ``json.dumps`` would emit.
+    """
+    if value is None:
+        return None
+    z = complex(value)
+    return {"re": finite_or_none(z.real), "im": finite_or_none(z.imag)}
+
+
+def _load_edge_block(res) -> dict | None:
+    """The phasor on every E_z edge of the load's own column, or ``None``.
+
+    ``None`` in, ``None`` out: a run without ``--dump-load-edges`` leaves
+    ``res.load_edges``/``res.load_edge_v`` None and this emits nothing, so the
+    artefact keeps exactly the keys it had.  The edge indices are the linear
+    global edge numbers ``cc.idx_ex`` produced for that one node column, so a
+    reader can put each phasor back on the mesh without re-deriving the column.
+    """
+    edges = getattr(res, "load_edges", None)
+    phasors = getattr(res, "load_edge_v", None)
+    if edges is None or phasors is None:
+        return None
+    import numpy as np
+
+    idx = np.asarray(edges).ravel()
+    v = np.asarray(phasors, dtype=complex).ravel()
+    if idx.size == 0 or idx.size != v.size:
+        return None
+    loads = res.geometry.get("loads") or ()
+    block = {
+        "n_edges": int(idx.size),
+        "edge_indices": [int(e) for e in idx],
+        "x_load_m": (float(loads[0]["x"]) if loads else None),
+        "v_re": [finite_or_none(z.real) for z in v],
+        "v_im": [finite_or_none(z.imag) for z in v],
+        "v_magnitude": [finite_or_none(abs(z)) for z in v],
+        "v_phase_deg": [finite_or_none(np.degrees(np.angle(z))) for z in v],
+    }
+    # Only when it happened: a key saying "nothing was nulled" on every record
+    # would be noise, and an absent key is the frozen shape.
+    if any(block[key].count(None)
+           for key in ("v_re", "v_im", "v_magnitude", "v_phase_deg")):
+        block["nonfinite_replaced"] = True
+    return block
+
+
+def _s21_plane_block(res) -> dict | None:
+    """The cut plane's own two travelling waves, or ``None`` when it was not cut.
+
+    ``None`` in, ``None`` out: ``res.s21_plane_x`` is set only inside the cut
+    branch, so a station-span record emits nothing and the artefact keeps the
+    keys it had.  These are the phasors ``gamma_plane = b/a`` was formed from,
+    stored rather than recomputed, so that reflection can be re-derived from the
+    file alone.
+    """
+    x = getattr(res, "s21_plane_x", None)
+    if x is None:
+        return None
+    return {
+        "x_m": finite_or_none(x),
+        "v": _re_im(res.s21_plane_v),
+        "i": _re_im(res.s21_plane_i),
+        "a": _re_im(res.s21_plane_a),
+        "b": _re_im(res.s21_plane_b),
+    }
+
+
+def write_field_snapshot(res, out_path: Path) -> Path | None:
+    """Write the field snapshot beside the artefact as ``<stem>_fields.npz``.
+
+    ``None`` in, ``None`` out: a run without ``--dump-fields`` leaves
+    ``res.field_e_final``/``field_h_final`` None and nothing is written, so the
+    artefact's directory is what it was.  Everything stored is a plain numeric
+    array or scalar -- no object dtype, no pickle -- so the file reads back with
+    ``np.load(..., allow_pickle=False)``; that is why nothing may put a Python
+    object in ``arrays``.  The plane blocks are omitted when plane capture was
+    off rather than written as a placeholder.
+    """
+    e = getattr(res, "field_e_final", None)
+    h = getattr(res, "field_h_final", None)
+    if e is None and h is None:
+        return None
+    import numpy as np
+
+    geo = dict(res.geometry or {})
+    arrays = {}
+    if e is not None:
+        arrays["e"] = np.asarray(e)
+    if h is not None:
+        arrays["h"] = np.asarray(h)
+    for key in ("plane_ez", "plane_hy", "plane_ey", "plane_hz"):
+        block = getattr(res, key, None)
+        if block is not None:
+            arrays[key] = np.asarray(block)
+    arrays["nstep"] = np.int64(res.field_snapshot_nstep)
+    arrays["nx"] = np.int64(geo.get("nx", 0))
+    arrays["ny"] = np.int64(geo.get("ny", 0))
+    arrays["nz"] = np.int64(geo.get("nz", 0))
+    arrays["cell_m"] = np.float64(geo.get("cell", 0.0))
+    path = out_path.with_name(out_path.stem + "_fields.npz")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, **arrays)
+    return path
+
+
 def load_records(entries):
     """``geometry["loads"]`` as plain JSON records, ``[]`` when there are none.
 
@@ -1332,6 +1441,27 @@ def main(argv: list[str] | None = None) -> int:
                          "script has written was recorded on the summed "
                          "path, and without the flag the run is what it was.")
 
+    ap.add_argument("--dump-load-edges", action="store_true",
+                    help="record the phasor on EVERY E_z edge of the load's own "
+                         "column -- edge_path_voltage over the same edges the "
+                         "load is spread on, accumulated at the record's own "
+                         "DFT bin on the same steps as the station voltages -- "
+                         "and attach it to the artefact top level as "
+                         "load_edge_dump: the edge indices, each phasor as re/im "
+                         "plus magnitude and phase, and the load's x.  Off by "
+                         "default; no number changes when it is off and the key "
+                         "is then absent.")
+    ap.add_argument("--dump-fields", action="store_true",
+                    help="keep the last time step's E and H fields and the "
+                         "plane-capture phasor blocks off the solver and write "
+                         "them to <stem>_fields.npz beside the artefact.  The "
+                         "four plane blocks need plane capture on; the library "
+                         "reads that from EMFIT_PLANE_CAPTURE (an explicit "
+                         "plane_capture kwarg would also do), and with capture "
+                         "off those four keys are simply absent from the .npz.  "
+                         "Off by default; no number changes when it is off and "
+                         "no file is written.")
+
     args = ap.parse_args(argv)
     label = (args.label if args.label else
              (Path(args.out).stem.replace("build_", "").split("_")[0].upper()
@@ -1464,9 +1594,16 @@ def main(argv: list[str] | None = None) -> int:
         loaded_kwargs = (dict(kwargs, reference=reference)
                          if args.with_twin else kwargs)
         t_call = time.monotonic()
+        # The two dump flags go on the LOADED call only: the twin is load-free
+        # by construction, and ``load_edge_dump`` refuses a record with no
+        # series_r load (emfit/studies.py, the ValueError before the time loop),
+        # so putting them on ``twin_kwargs`` would turn --with-twin into a
+        # guaranteed failure.
         res = studies.microstrip_wave(**loaded_kwargs,
                                      s11_settling=args.s11_settling,
-                                     z_eff_requested=args.measure_z_eff)
+                                     z_eff_requested=args.measure_z_eff,
+                                     load_edge_dump=args.dump_load_edges,
+                                     field_snapshot=args.dump_fields)
         wall_call = time.monotonic() - t_call
     finally:
         trip.stop()
@@ -1810,8 +1947,25 @@ def main(argv: list[str] | None = None) -> int:
     z_eff_block = _z_eff_block(res)
     if z_eff_block is not None:
         payload["z_eff_measurement"] = z_eff_block
+    # Flag-off: ``_load_edge_block`` is None and the key is ABSENT, so the
+    # artefact is the one it was.  Same convention as the two blocks above.
+    load_edge_block = _load_edge_block(res) if args.dump_load_edges else None
+    if load_edge_block is not None:
+        payload["load_edge_dump"] = load_edge_block
+    # Not flag-gated: the cut plane's own phasors are already computed and
+    # stored on the record, so they cost nothing to write and the key is absent
+    # only when the run did not take the cut branch at all.
+    s21_plane_block = _s21_plane_block(res)
+    if s21_plane_block is not None:
+        payload["s21_plane"] = s21_plane_block
+    # Before the JSON, so a snapshot that cannot be written fails the run rather
+    # than leaving an artefact that claims a file which is not there.
+    fields_path = (write_field_snapshot(res, out_path)
+                   if args.dump_fields else None)
     write_json(out_path, payload)
     print(f"wrote {out_path}")
+    if fields_path is not None:
+        print(f"wrote {fields_path}")
     # The ``|s11|`` printed here is the TWO-WAVE modulus: the same number the
     # payload writes as s11.magnitude (``s11_two_wave_mag`` above = |B/A| of
     # fit_beta(n_wave=2), referred to z=0).  It used to print ``abs(s11)``,

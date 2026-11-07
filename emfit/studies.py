@@ -1649,6 +1649,22 @@ class MicrostripWave:
     v_load: complex | None = None
     i_load: complex | None = None
     z_eff: complex | None = None
+    # Data-dump block (default off).  Appended after every existing field so the
+    # dataclass ordering the class already had is untouched.
+    load_edges: np.ndarray | None = None
+    load_edge_v: np.ndarray | None = None
+    field_e_final: np.ndarray | None = None
+    field_h_final: np.ndarray | None = None
+    field_snapshot_nstep: int | None = None
+    s21_plane_x: float | None = None
+    s21_plane_v: complex | None = None
+    s21_plane_i: complex | None = None
+    s21_plane_a: complex | None = None
+    s21_plane_b: complex | None = None
+    plane_ez: np.ndarray | None = None
+    plane_hy: np.ndarray | None = None
+    plane_ey: np.ndarray | None = None
+    plane_hz: np.ndarray | None = None
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -2530,6 +2546,18 @@ def microstrip_wave(
     # default: no accumulator, no probe, and no number in this function moves
     # when it is off.
     z_eff_requested: bool = False,
+    # Data-dump (default off, purely additive): the series-R load column's edge
+    # indices and the phasor of the voltage across every one of them.  The
+    # current is NOT recorded: on this stamp every load edge carries a fixed
+    # fraction of the element current (G = 1/(N*R) per edge), so a per-edge
+    # current channel would be V times a known constant and carry nothing the
+    # per-edge voltage does not.  Off by default: no accumulator, no probe, no
+    # array and no number in this function moves when it is off.
+    load_edge_dump: bool = False,
+    # Data-dump (default off, purely additive): a copy of the final-timestep
+    # E and H field vectors, exactly as the stepper holds them.  Allocated only
+    # when asked for, so a run without the flag pays nothing and returns None.
+    field_snapshot: bool = False,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -2870,6 +2898,12 @@ def microstrip_wave(
     # to each other along the rails.
     m_sigma = None
     loads_used = []
+    # The series-R column's edge indices, copied out of the ``for load in
+    # loads:`` scope below so they survive the loop (``edges`` is loop-local and
+    # unbound when there are no loads).  ``None`` unless ``load_edge_dump``.
+    # With several loads the LAST series-R one wins; that is the one a
+    # single-element record can describe.
+    load_edges_used = None
     if loads:
         sigma = np.zeros(cc.n_edges, dtype=float)
         eps = np.array(m_eps, dtype=float)
@@ -2881,6 +2915,8 @@ def microstrip_wave(
                     f"{ix_load}, outside the strip ({ix_port} < ix < {nx})")
             if load.kind == "series_r":
                 edges = cc.idx_ex(np.array([ix_load]), j_points, k_strip).ravel()
+                if load_edge_dump:
+                    load_edges_used = np.array(edges, copy=True)
                 pec[edges] = False
                 # One element spread over the ``len(edges)`` parallel paths.
                 sigma[edges] += 1.0 / (edges.size * float(load.value))
@@ -3070,6 +3106,18 @@ def microstrip_wave(
     ix_load_z = int(loads_used[-1]["column"]) if z_eff_requested else None
     z_acc = DftAccumulator([f0], dt) if z_eff_requested else None
     z_signals = np.zeros(2) if z_eff_requested else None
+    # The per-edge load voltage record, on its OWN accumulator and its own
+    # signal array: the ``signals`` vector above starts at 3075 and its indexing
+    # is load-bearing through 3348, so it does not gain a channel.  Mirrors
+    # ``z_acc`` exactly, and nothing is allocated unless the flag is set.
+    if load_edge_dump and load_edges_used is None:
+        raise ValueError(
+            "load_edge_dump was asked for on a record with no series_r load: "
+            "there is no load column whose edges could be recorded.  Give "
+            "loads=(...Load(kind='series_r'),) or leave the flag off.")
+    load_edge_acc = DftAccumulator([f0], dt) if load_edge_dump else None
+    load_edge_signals = (np.zeros(int(load_edges_used.size), dtype=np.float64)
+                         if load_edge_dump else None)
     current = np.zeros(cc.n_edges, dtype=float)
     n_currents = n_stations + 3        # station currents start here in signals
     signals = np.zeros(n_currents + n_stations, dtype=float)
@@ -3203,6 +3251,10 @@ def microstrip_wave(
                 plate_current(stepper.h, cc, int(ix) - 1, 0, y_extent=y_half)
                 + plate_current(stepper.h, cc, int(ix), 0, y_extent=y_half))
         acc.add(signals, n)
+        if load_edge_dump:
+            # One voltage per load edge, read on the same step as the stations.
+            load_edge_signals[:] = edge_path_voltage(stepper.e, load_edges_used)
+            load_edge_acc.add(load_edge_signals, n)
         if cut_acc is not None:
             # The cut's two phasors, on the plane the element is defined on.
             # The current is interpolated onto the node exactly as the station
@@ -3335,6 +3387,7 @@ def microstrip_wave(
         sx_station_sub_second_half = None
 
     spec = acc.spectrum[0]
+    load_edge_v = load_edge_acc.spectrum[0] if load_edge_dump else None
     spec_early = half_acc.spectrum[0]
     spec_late = (spec - spec_early if half_acc.n_samples
                  else np.zeros_like(spec))
@@ -3372,6 +3425,13 @@ def microstrip_wave(
         z_eff = v_load / i_load
     else:
         v_load = i_load = z_eff = None
+    # The final-timestep field vectors, exactly as the stepper holds them: flat,
+    # float64, e on the edges and h on the faces.  Copied, not reshaped, and
+    # only when the flag is set.  The index recorded beside them is the last
+    # step the loop actually ran (``nsteps - 1``).
+    field_e_final = np.array(stepper.e, copy=True) if field_snapshot else None
+    field_h_final = np.array(stepper.h, copy=True) if field_snapshot else None
+    field_snapshot_nstep = int(nsteps - 1) if field_snapshot else None
 
     # --- phase constant: multi-station fits, the old difference kept beside --
     # The two-station difference is what this study used to quote.  It only
@@ -3624,6 +3684,11 @@ def microstrip_wave(
         a_port = b_port = a_cut = b_cut = complex(np.nan, np.nan)
         gamma_split = (complex(reference.gamma) if reference is not None else 0j)
         zc_split = (complex(reference.zc) if reference is not None else complex(zc))
+    # The S21-plane phasors, surfaced for the data dump: stored copies of what
+    # the cut branch already computed, never a recomputation.  ``None`` on every
+    # branch that does not take the cut, including the station-span fallbacks.
+    s21_plane_x = s21_plane_v = s21_plane_i = None
+    s21_plane_a = s21_plane_b = None
     if ix_extract is not None:
         # A3: the far plane is the cut, not the last station.  Same split, same
         # two travelling waves, moved onto the plane the element is defined on,
@@ -3651,6 +3716,11 @@ def microstrip_wave(
         if a_cut != 0.0:
             # The reflection the element itself presents, on its own plane.
             gamma_plane = complex(b_cut) / complex(a_cut)
+        s21_plane_x = float(x_cut)
+        s21_plane_v = complex(v_cut)
+        s21_plane_i = complex(i_cut)
+        s21_plane_a = complex(a_cut)
+        s21_plane_b = complex(b_cut)
         if reference is not None:
             if a_port != 0.0:
                 raw_s21 = complex(a_cut) / complex(a_port)
@@ -3995,6 +4065,20 @@ def microstrip_wave(
         v_load=v_load,
         i_load=i_load,
         z_eff=z_eff,
+        load_edges=load_edges_used,
+        load_edge_v=load_edge_v,
+        field_e_final=field_e_final,
+        field_h_final=field_h_final,
+        field_snapshot_nstep=field_snapshot_nstep,
+        s21_plane_x=s21_plane_x,
+        s21_plane_v=s21_plane_v,
+        s21_plane_i=s21_plane_i,
+        s21_plane_a=s21_plane_a,
+        s21_plane_b=s21_plane_b,
+        plane_ez=plane_ez,
+        plane_hy=plane_hy,
+        plane_ey=plane_ey,
+        plane_hz=plane_hz,
     )
 
 
