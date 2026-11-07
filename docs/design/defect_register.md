@@ -670,3 +670,25 @@ Fit `Z0_inf + a/n^p`: `Z0_inf` = 48.023741, `a` = 2315.9, `p` = 1.78091 (residua
 
 **Gates:** any `Z0` quoted from a quasi-static cross-section without its `w`; any statement that the extraction family sits 4–5 % below the quasi-static limit (Dispatch 10 §7.3, **withdrawn** — the family is within **1.4 %** of the board-width limit: twin `zc` −1.01 %, `beta_base` −1.37 %, TE −1.01 %, `beta_rawphase` −0.21 %, `beta_hammerstad` −0.17 %, `z0_model` +0.16 %); any anchor residual quoted at 49.90 Ω (−2.459 %), which is a 3.0 mm number and not this board's; and any "the 5.5 % is an artefact of the twin's `zc`" phrasing (Dispatch 10 §6.1 / bracket Z1) — at board width the limit gives **−4.90 %** and the board's own box **−4.66 %**, so the −5.5 % order of magnitude stands and `Z0` is **not** excluded as its explanation.
 
+## DR-38 — narrative drifts from labels in fluent prose
+
+**id:** DR-38
+**title:** Narrative drifts from labels in fluent prose.
+**status:** OPEN
+**severity:** MEDIUM — class-level: no single instance moves a grade, but the class is what produced the KeyError recorded in `multifreq_beta_test_2026-11-07.md` §8, where a worker read two field names out of fluent prose and both were wrong. Prose is the interface workers actually read.
+**opened:** 2026-11-07
+
+**What is wrong.** The record is checked where it is code and unchecked where it is English: a citation, a constant, a boolean, a label or a bracket limb written into a sentence is trusted by the next reader exactly as an artefact key is, and nothing re-reads it against its source leaf. Six instances, one class.
+
+1. **Citation drift** — the three source lines for the fitted split sit at `emfit/ports.py:1516`–`1518`; both the split and the docstring condition were first cited 14 lines low.
+2. **A number never computed** — "48.0269" appears in prose as an implied `Z0`; inverting the same closed form gives 51.7896 Ω. The printed figure is the anchor quoted back to itself, and reported as agreement with it.
+3. **A stale constant** — 0.65535 is `1 − 0.344654`, carried forward from a superseded leaf; re-derived for this leaf the factor is 0.657646.
+4. **A boolean contradicting its own prose** — `raw_reference_independent: true` on leaves whose accompanying prose describes a reference that is not independent of what it references.
+5. **Labels on the wrong quantity** — the dispatch-log row added in `a6ba7f6` used `Re(Z_sim)` / `Re(Z_analytic)` as column labels over β values; corrected to `beta_fit rad/m` / `beta_model rad/m` / `delta_beta_frac` in `fc9fc0e`. The numbers were right; the labels would have carried β into anchor arithmetic.
+6. **Bracket verdicts citing unregistered limbs** — verdicts scored against limbs that were not in the frozen bracket text. A limb invoked at scoring time was not pre-registered.
+
+**What closes it.** [PROPOSED here, not stated by the source] **Standing fix rule: any number written into a table cell or a bracket verdict must be re-read against its source leaf before commit, not against the dispatch text.** Workers already do this for code — five audit defects were caught that way — and it is not yet done for prose. A citation is opened before it is typed; a derived figure is recomputed before it is printed; a constant is re-derived for this leaf rather than carried; a label is checked against the type of the column under it; a bracket limb is quoted verbatim from the frozen text.
+
+**Gates:** any citation typed without opening the cited range; any derived figure in prose without a stated recomputation; any constant recited from an earlier leaf; any `Re(Z)` / `Z0` label over a β column; any bracket verdict whose limb cannot be found verbatim in that bracket's frozen text.
+
+**Subordinate sub-item, NOT fixed here.** Unescaped pipes inside table cells in `docs/design/dispatch_log.md` break GFM rendering only: no number is affected and no cell content is lost in the source. Deferred to housekeeping, and recorded here so it is neither rediscovered as a new defect nor repaired as a side effect of an unrelated edit. The count is unadjudicated and fixing it starts by adjudicating it: one pass recorded 15 across 6 rows (lines 20, 21, 30, 79, 142, 197), a re-count on the 2026-11-07 tree found 44 extra pipes across 4 rows (lines 19, 21, 22, 31), with lines 79, 142 and 197 carrying no pipe characters at all.

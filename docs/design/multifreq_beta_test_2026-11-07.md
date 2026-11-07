@@ -394,3 +394,15 @@ First, the exact command line that produced these artefacts is **not recoverable
 invocation is `meta.kwargs` and the artefacts' own `summary_line`, not the argv. Second, wall-clock per bin
 was 43.7–70.46 s, which is cheap enough that a second width or an unloaded twin should be run **before**
 any change to an extraction model is made on the strength of F1.
+
+---
+
+## 8. Correction — 2026-11-07: the artefact field names given in §4
+
+*Appended 2026-11-07. Appended rather than edited in place, for the same reason §7 was appended after the Files
+table: nothing in §1–§6 is renumbered, re-titled or re-worded, so the pre-registered text keeps its line numbers.*
+
+2026-11-07: section 4 describes artefact fields as `station_fit.beta_used` and `run.station_fit.z0_re`; on-disk
+schema is flat dotted keys `station_fit.beta`, `line.beta_model`, `beta_ambiguous`. Earlier worker hit a KeyError
+trusting that prose. Correction appended; sections 1–6 unchanged.
+

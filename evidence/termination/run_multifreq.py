@@ -179,6 +179,24 @@ def _deg(value):
     return math.degrees(math.atan2(value.imag, value.real))
 
 
+def resolve_reference(path):
+    """The path ``--reference`` should actually be read from.
+
+    A bare filename is what an operator types from the repo root, but the
+    artefact lives beside this script, so a bare name that is not in the
+    working directory resolves to ``HERE / name``.  Anything that already
+    resolves -- including a CWD-relative path with a directory component -- is
+    returned untouched; anything else is returned as given, so the caller's
+    own absent-file handling decides what to do with it.
+    """
+    path = Path(path)
+    if path.exists():
+        return path
+    if path.parent == Path(".") and (HERE / path.name).exists():
+        return HERE / path.name
+    return path
+
+
 def filter_kwargs(kwargs, func):
     """Split ``kwargs`` into what ``func`` accepts and what it does not.
 
@@ -203,19 +221,22 @@ def filter_kwargs(kwargs, func):
     return kept, dropped
 
 
-def cross_check(kwargs):
+def cross_check(kwargs, reference=None):
     """Assert this script's mesh is the reference artefact's mesh.
 
     Cheap, and it is the only thing standing between "a sweep of the A arm"
     and "a sweep of some other microstrip".  Missing reference file is a
     warning, not a failure: the operator may run this on a machine where the
-    artefact was not copied over.
+    artefact was not copied over.  ``reference`` is ``--reference``: left
+    empty it is the module constant above, so a run without the flag reads
+    exactly the file it always read.
     """
-    if not REFERENCE.exists():
-        print(f"WARNING: {REFERENCE.name} absent, mesh cross-check skipped",
+    ref_path = REFERENCE if reference is None else resolve_reference(reference)
+    if not ref_path.exists():
+        print(f"WARNING: {ref_path.name} absent, mesh cross-check skipped",
               file=sys.stderr)
         return {"checked": False, "reason": "reference artefact absent"}
-    ref = json.loads(REFERENCE.read_text())
+    ref = json.loads(ref_path.read_text())
     geom = ref.get("geometry", {})
     dt = float(geom.get("dt", 0.0))
     diffs = {}
@@ -243,20 +264,20 @@ def cross_check(kwargs):
         basis = "geometry.station_fit_n + 1 (the load-column station)"
     else:
         raise SystemExit(
-            f"REFUSED: {REFERENCE.name} records no station count under "
+            f"REFUSED: {ref_path.name} records no station count under "
             "s11.station_phasors.n or geometry.station_fit_n; the station "
             "count cannot be confirmed and is not skipped in silence")
     if got_n is None:
         raise SystemExit(
             f"REFUSED: this script passes no n_stations, so its station count "
-            f"cannot be compared against {REFERENCE.name}'s {want_n} ({basis})")
+            f"cannot be compared against {ref_path.name}'s {want_n} ({basis})")
     if want_n != int(got_n):
         diffs["n_stations"] = {"reference": want_n, "this_script": int(got_n),
                                "basis": basis}
     if diffs:
-        raise SystemExit(f"REFUSED: mesh does not match {REFERENCE.name}: {diffs}")
+        raise SystemExit(f"REFUSED: mesh does not match {ref_path.name}: {diffs}")
     n_acc = int(geom.get("n_acc", 0)) or None
-    return {"checked": True, "reference": REFERENCE.name, "dt_s": dt,
+    return {"checked": True, "reference": ref_path.name, "dt_s": dt,
             "n_acc": n_acc, "n_warm": geom.get("n_warm"),
             "nsteps": geom.get("nsteps"), "cell_m": geom.get("cell"),
             "n_stations": want_n, "n_stations_basis": basis}
@@ -447,10 +468,46 @@ def main(argv=None):
                          "itself lives in run_build_A.py, not here)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the five planned calls and exit: no FDTD")
+    ap.add_argument("--reference", type=Path, default=REFERENCE,
+                    help="artefact the mesh cross-check compares against "
+                         "(default: build_A_50ohm_p51_phasors.json beside "
+                         "this script; not microstrip_wave's ``reference`` "
+                         "kwarg)")
+    ap.add_argument("--no-cross-check", action="store_true",
+                    help="skip the mesh cross-check: for a twin arm whose "
+                         "reference geometry is not the loaded arm's, which "
+                         "is the condition the guard exists to refuse.  dt "
+                         "and n_acc still come from --reference, so the bin "
+                         "grid does not move")
+    ap.add_argument("--unloaded", action="store_true",
+                    help="omit the ``loads`` entry, i.e. run the arm with no "
+                         "series-R load (intended to be mutually exclusive "
+                         "with a future --load-ohm)")
     args = ap.parse_args(argv)
 
     import json as _json
-    cross = cross_check(AARM_KWARGS)
+    if args.no_cross_check:
+        # The guard is skipped, not the numbers: the bin grid is defined by the
+        # artefact's own dt and n_acc, and skipping a guard must not move a bin.
+        # With the guard off there is nothing left to raise: a --reference that
+        # does not exist falls back to the module constant for dt and n_acc
+        # (and, if that is absent too, leaves dt unset so the ``if not dt``
+        # refusal below still decides, rather than a traceback here).
+        grid_path = resolve_reference(args.reference)
+        if not grid_path.exists():
+            print(f"WARNING: {grid_path.name} absent, bin grid falling back "
+                  f"to {REFERENCE.name}", file=sys.stderr)
+            grid_path = REFERENCE
+        geom = (_json.loads(grid_path.read_text()).get("geometry", {})
+                if grid_path.exists() else {})
+        cross = {"checked": False,
+                 "reason": "cross-check skipped by --no-cross-check",
+                 "reference": args.reference.name,
+                 "dt_nacc_source": grid_path.name,
+                 "dt_s": float(geom.get("dt", 0.0)),
+                 "n_acc": int(geom.get("n_acc", 0)) or None}
+    else:
+        cross = cross_check(AARM_KWARGS, args.reference)
     dt = cross.get("dt_s")
     if not dt:
         raise SystemExit("REFUSED: no dt available to define the bin grid; "
@@ -485,7 +542,12 @@ def main(argv=None):
         # a keyword: run_build_A.py:392 builds Load(load_at_mm*1e-3,
         # "series_r", load_ohm) and passes it under this name
         # (studies.py:2503).  A list of tuples is not a Load and would not run.
-        kwargs["loads"] = [Load(LOAD_AT_MM * 1e-3, LOAD_KIND, LOAD_OHM)]
+        # --unloaded drops exactly this entry and nothing else: the same driver,
+        # a bare line.  It is meant to be mutually exclusive with a FUTURE
+        # --load-ohm knob, which would change the value here rather than remove
+        # the entry; that knob does not exist in this script.
+        if not args.unloaded:
+            kwargs["loads"] = [Load(LOAD_AT_MM * 1e-3, LOAD_KIND, LOAD_OHM)]
         row = {"k": k, "f_hz_asked": f_target,
                "f_ghz_asked": f_target / 1e9}
         started = time.monotonic()
