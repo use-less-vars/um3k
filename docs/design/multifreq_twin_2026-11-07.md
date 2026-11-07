@@ -38,6 +38,8 @@ At n=4 the arms differ by 0.53 pp. By the letter of the brackets that is **T3**,
 
 The substantive result is unambiguous. A build with no load, reflecting below 1 %, reproduces essentially the whole bias: +3.33 % against the loaded arm's +3.86 %. The bias is **fit-inherent, not load-specific**; the termination contributes at most about half a percentage point. k12 is ambiguous in *both* arms, so excluding it is symmetric and costs nothing in fairness.
 
+The scatter reproduces too. At n=5 the twin spans 1.2064 pp against the loaded arm's 1.1900 pp, 0.016 pp apart, so the bin-to-bin variation is not load-driven either. Offset and scatter alike belong to the fit.
+
 ## 5. What we did not predict
 
 F1 expected the loaded arm to be *more* frequency-dependent, on the argument that load evanescent content grows with frequency. The data say the opposite. The twin's bias climbs monotonically 3.08 -> 3.14 -> 3.36 -> 3.73 % across 3.64--7.28 GHz (n=4, Spearman 1.0, Pearson 0.948). The loaded arm does not: Pearson 0.421 at n=4.
