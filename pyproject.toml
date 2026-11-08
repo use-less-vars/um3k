@@ -1,6 +1,12 @@
 [build-system]
-requires = ["setuptools>=64"]
-build-backend = "setuptools.build_meta"
+# scikit-build-core drives src/CMakeLists.txt.  pybind11 is deliberately NOT a
+# build requirement: the compiled kernel is optional.  When pybind11 is absent
+# the CMake configure warns and returns, and the install is a working
+# pure-Python wheel with no `emfit_core` in it.  Opt in with
+# `python3 -m pip install pybind11` before `pip install -e .` (see the note under
+# [tool.scikit-build] below).
+requires = ["scikit-build-core>=0.8"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "emfit"
@@ -26,8 +32,29 @@ classifiers = [
 viz = ["matplotlib>=3.7", "pyvista>=0.49", "h5py>=3.10"]
 dev = ["pytest>=7", "matplotlib>=3.7"]
 
-[tool.setuptools]
-packages = ["emfit"]
+[tool.scikit-build]
+# The CMake project is src/CMakeLists.txt; the Python package is emfit/ at the
+# repository root, so the wheel package list is stated explicitly.
+cmake.source-dir = "src"
+wheel.packages = ["emfit"]
+
+# Deliberate: editable.rebuild = false, so `import emfit_core` under an editable
+# install is a plain redirect to whatever .so is there and never shells out to
+# ninja.  The trade-off runs opposite to the obvious one:
+#   * with rebuild = true, importing emfit_core triggers a build; on any host
+#     where the extension cannot be built (no compiler, no cmake, no pybind11,
+#     no scikit-build-core -- i.e. this container) that import raises a BUILD
+#     ERROR instead of a clean ImportError, which turns
+#     tests/test_cpp_parity.py's skip into an error.  A parity test that cannot
+#     skip is a parity test that reports noise.
+#   * the stale-.so risk rebuild = true would close is closed instead by the
+#     rule below, which is cheap and visible to whoever edits the kernel.
+#
+# RULE: after editing anything under src/ (or src/CMakeLists.txt), re-run
+#   python3 -m pip install -e .
+# (or rebuild by hand) before trusting any parity result.  `emfit/` never
+# imports emfit_core, so the pure-Python package is unaffected either way.
+editable.rebuild = false
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

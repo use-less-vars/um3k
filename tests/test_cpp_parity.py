@@ -33,10 +33,17 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOLDEN = os.path.join(HERE, "data", "cpp_golden_step.npz")
 
+# Built from source, not by the packaging backend: the documented alternative is
+# `pip install -e .` (scikit-build-core), which cannot be exercised in this
+# container -- scikit-build-core is not installed.  The output must live INSIDE
+# the workspace: /tmp is mounted noexec, so a .so left there will not import.
 BUILD_COMMANDS = (
-    "cmake -S src -B build -DCMAKE_BUILD_TYPE=Release && "
-    "cmake --build build -j && "
-    "PYTHONPATH=build python3 -m pytest tests/test_cpp_parity.py -q"
+    "/usr/bin/g++ -O3 -fopenmp -std=c++17 -shared -fPIC -Wall -Wextra "
+    "-I/workspace/.venv/lib/python3.12/site-packages/pybind11/include "
+    "-I/usr/local/include/python3.12 -Isrc src/bindings.cpp src/emfit_core.cpp "
+    '-o "build/cpp/emfit_core$(python3 -c "import sysconfig;'
+    'print(sysconfig.get_config_var(\'EXT_SUFFIX\'))")" && '
+    "PYTHONPATH=build/cpp python3 -m pytest tests/test_cpp_parity.py -v"
 )
 
 _IMPORT_ERROR = None
@@ -67,19 +74,51 @@ def _require_golden():
         )
 
 
+# The binding declares its CSR index arrays as ``array_t<long>``
+# (``src/bindings.cpp``) and ``long`` in ``emfit_core.h``'s ``Csr``.  On LP64
+# Linux that is 8 bytes and numpy spells the same type both ``np.int64`` and
+# ``np.int_``, so ``np.int64`` below IS the declared type rather than a tolerant
+# choice.  On a platform where C ``long`` is 32-bit it would not be, and the
+# binding would reject these arrays by name -- which is the intended outcome.
+INDEX_DTYPE = np.int64
+
+
 def _kernel_step(z, e, h):
     """One compiled step, in place on ``e``/``h``.
 
     Fed the CSR copy of the dual curl (``C_tilde_csr_*``): the kernel's row loop
     needs CSR, while Python holds ``C.T`` as CSC.
+
+    Every argument is made exactly what the binding declares -- a tuple of
+    Python ints for each shape, C-contiguous float64 / int64 arrays for the
+    golden data -- so this test never leans on pybind11's implicit casting.  The
+    binding is strict on purpose (no forcecast): if it were lenient, the parity
+    claim would be about a converted copy rather than about these bytes.
     """
+    e_ptr = e.__array_interface__["data"][0]
+    h_ptr = h.__array_interface__["data"][0]
+    e = np.ascontiguousarray(e, dtype=np.float64)
+    h = np.ascontiguousarray(h, dtype=np.float64)
+    assert (e.__array_interface__["data"][0] == e_ptr
+            and h.__array_interface__["data"][0] == h_ptr), (
+        "ascontiguousarray copied e or h: the kernel updates them in place, so "
+        "a copy would leave the caller's arrays untouched and this test would "
+        "compare stale data against the golden file")
+
     return emfit_core.step_explicit(
         e,
         h,
-        z["C_data"], z["C_indices"], z["C_indptr"], z["C_shape"],
-        z["C_tilde_csr_data"], z["C_tilde_csr_indices"],
-        z["C_tilde_csr_indptr"], z["C_tilde_shape"],
-        z["inv_m_mu"], z["inv_m_eps"], float(z["dt"]),
+        np.ascontiguousarray(z["C_data"], dtype=np.float64),
+        np.ascontiguousarray(z["C_indices"], dtype=INDEX_DTYPE),
+        np.ascontiguousarray(z["C_indptr"], dtype=INDEX_DTYPE),
+        tuple(int(v) for v in z["C_shape"]),
+        np.ascontiguousarray(z["C_tilde_csr_data"], dtype=np.float64),
+        np.ascontiguousarray(z["C_tilde_csr_indices"], dtype=INDEX_DTYPE),
+        np.ascontiguousarray(z["C_tilde_csr_indptr"], dtype=INDEX_DTYPE),
+        tuple(int(v) for v in z["C_tilde_shape"]),
+        np.ascontiguousarray(z["inv_m_mu"], dtype=np.float64),
+        np.ascontiguousarray(z["inv_m_eps"], dtype=np.float64),
+        float(z["dt"]),
     )
 
 
