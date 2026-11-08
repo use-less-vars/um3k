@@ -49,7 +49,8 @@ import numpy as np
 
 from .materials import C0
 
-__all__ = ["ricker", "cfl_dt", "FITStepper", "RickerSource", "Leapfrog"]
+__all__ = ["ricker", "cfl_dt", "step_explicit", "FITStepper", "RickerSource",
+           "Leapfrog"]
 
 
 # ----------------------------------------------------------------------
@@ -77,6 +78,58 @@ def cfl_dt(grid, *, c: float = C0, safety: float = 0.99) -> float:
         d = float(np.min(np.asarray(grid.widths(axis), dtype=float)))
         inv_sq += 1.0 / d ** 2
     return float(safety) / (c * np.sqrt(inv_sq))
+
+
+# ----------------------------------------------------------------------
+def step_explicit(e, h, C, C_tilde, inv_m_mu, inv_m_eps, dt, loss_num=None,
+                  loss_den=None, pml=None, pec_idx=None, j=None):
+    """One leapfrog update on bare arrays; mutates ``e`` and ``h`` in place.
+
+    This is the whole time-stepping kernel of :class:`FITStepper.step` written
+    as a free function over plain arrays, so that it can be ported to a
+    compiled kernel without dragging the stepper object along.  It is the
+    *only* implementation: ``FITStepper.step`` calls straight through to it.
+
+    The update, in this exact order::
+
+        h -= dt * inv_m_mu * (C e)                 Faraday
+        [pml.damp_h(h, dt)]
+        ce = C_tilde h [- j]
+        e += dt * inv_m_eps * ce                   lossless Ampere
+          or  e = (e loss_num + ce) loss_den       lossy Ampere
+        [pml.damp_e(e, dt)]
+        e[pec_idx] = 0
+
+    ``C`` and ``C_tilde`` are ``scipy.sparse`` matrices of shape
+    ``(n_faces, n_edges)`` and ``(n_edges, n_faces)`` respectively; the
+    remaining vectors are 1-D ``float64`` arrays.  ``loss_num`` /
+    ``loss_den`` are ``None`` for the lossless scheme, ``pml`` and ``pec_idx``
+    are ``None`` when absent.
+
+    Returns
+    -------
+    (e, h) : tuple of ndarray
+        The same objects that were passed in (they are mutated, not copied).
+    """
+    h -= dt * (inv_m_mu * (C @ e))
+    if pml is not None:
+        pml.damp_h(h, dt)
+    ce = C_tilde @ h
+    if j is not None:
+        ce = ce - j
+    if loss_den is None:
+        e += dt * (inv_m_eps * ce)
+    else:
+        # e = (e*loss_num + ce) * loss_den, done in place.  Elementwise
+        # bit-identical to the single expression and keeps array identity.
+        e *= loss_num
+        e += ce
+        e *= loss_den
+    if pml is not None:
+        pml.damp_e(e, dt)
+    if pec_idx is not None:
+        e[pec_idx] = 0.0
+    return e, h
 
 
 # ----------------------------------------------------------------------
@@ -187,21 +240,17 @@ class FITStepper:
         """One leapfrog step; advances ``self.time`` by ``dt``.
 
         ``j`` is an optional current vector [A] on the primal edges.
+
+        The numerical work is delegated to the module-level kernel
+        :func:`step_explicit`, which is the function a compiled (C++) update
+        is expected to reproduce bit for bit.
         """
-        self.h -= self.dt * (self.inv_m_mu * (self.C @ self.e))
-        if self.pml is not None:
-            self.pml.damp_h(self.h, self.dt)
-        ce = self.C_tilde @ self.h
-        if j is not None:
-            ce = ce - j
-        if self.loss_den is None:
-            self.e += self.dt * (self.inv_m_eps * ce)
-        else:
-            self.e = (self.e * self.loss_num + ce) * self.loss_den
-        if self.pml is not None:
-            self.pml.damp_e(self.e, self.dt)
-        if self.pec_idx is not None:
-            self.e[self.pec_idx] = 0.0
+        e, h = step_explicit(self.e, self.h, self.C, self.C_tilde,
+                            self.inv_m_mu, self.inv_m_eps, self.dt,
+                            self.loss_num, self.loss_den, self.pml,
+                            self.pec_idx, j)
+        self.e = e
+        self.h = h
         self.time += self.dt
         self.n += 1
         return self
