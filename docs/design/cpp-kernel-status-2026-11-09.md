@@ -388,3 +388,102 @@ single test that did both at once, and it was lost because the physics says so.
    order, in the same order as scipy's CSR mat-vec. No speed figure exists for the
    parallel variant, and none is claimed -- the only measured parallel number is
    that the OpenMP pragmas are about 50x *slower* at this grid size (section 5).
+
+## 7. Full physics stack and environment verification
+
+Section 6 stated the order; this section states what that order now covers, what
+still is not covered, and what the build actually was. No table from section 6 or
+6.1 is repeated here.
+
+### 7.1 Four branches, one trajectory, all bit-identical
+
+`tests/data/cpp_golden_step_v2.npz` (md5 `ab6061dc6253189562760155b5d9be91`,
+19,981 bytes, 45 arrays, `case='v2-full-physics'`) drives the PML multiplier
+vectors, the lossy Ampere pair, a 34-entry PEC index array and a non-zero source
+`j` in the same three steps, on the same 4x3x2 grid (133 edges, 98 faces). The
+kernel and the frozen file agree at tolerance zero on all three stored steps:
+`max |e_cpp - e_golden|` = 0.0 with 0 of 133 entries differing, and
+`max |h_cpp - h_golden|` = 0.0 with 0 of 98. The same holds against a live
+`step_explicit`. The v1 golden is untouched (md5
+`eac28b6dec9e1b2c2be035f260916fdc`), so there are now two independent witnesses,
+one per physics level.
+
+### 7.2 The ablation proves each branch is exercised, not merely passed in
+
+Dropping one branch on **both** sides and comparing the shared answer against the
+frozen golden, three steps:
+
+| branch dropped | change in `e3` (entries) | change in `h3` (entries) |
+|---|---|---|
+| PML | 1.2947920462999032e+03 (99/133) | 3.4010702140490938 (98/98) |
+| lossy | 3.5726196920463076e+02 (99/133) | 0.39619102087747837 (84/98) |
+| PEC | 9.6861258517163694e-04 (133/133) | 2.3844375086380654e-08 (92/98) |
+| source | 1.6661651686870448e+03 (99/133) | 3.0505545991327114 (86/98) |
+
+Every arm differs on **both** `e` and `h`, so no branch is passed in and ignored.
+Agreement alone could not have shown this — a branch that is supplied and never
+read still lets the two implementations agree — which is why the test asserts both
+agreement (with the branch gone, on both sides) and difference (from the golden).
+The 99/133 rather than 133/133 is explained: the 34 PEC entries are zeroed each
+step and carry nothing forward.
+
+### 7.3 One ULP is absorbed by the full-physics system
+
+The v1 non-vacuity control was a single-ULP bump of `h0[0]`
+(1.1102230246251565e-16), which reached the output as 8.6153306710912148e-14 after
+one step. It does **not** generalise. On the v2 golden `|e|` is about 1e3, so the
+absolute rounding floor is about 1e-13, and: `h0[0] + 1 ULP` leaves the three-step
+output bit-identical to the golden; `+2 ULP` moves `h3` by 7.2e-35; `+1024 ULP`
+still leaves `e3` unchanged (`e0[0]` needs `+1024 ULP` for a 2.8e-17 change).
+
+The controls were rebuilt, not weakened. The ULP control moved to the **output**
+side — bump `e3[0]` by one ULP and assert the comparator raises and localises it
+(1/133) — and the input-side liveness control is a coarse 1e-3 relative
+perturbation on the largest `e0` entry, which does reach the output. The test says
+in its own comment why each control is the size it is, because a control that
+silently stops controlling is worse than none: the run still looks probed.
+
+### 7.4 Bit-parity is a property of the build line
+
+Bit-identity holds because no FMA contraction and no reassociation are emitted:
+GCC's default `-ffp-contract=fast` would fuse multiply-adds, and it did not only
+because the default `-march=x86-64` target has FMA disabled. `-march=native`,
+`-mfma` or `-ffast-math` would forfeit the claim **silently**, with every test
+still green at 1e-12. The compiler and flags therefore belong next to any parity
+claim: `/usr/bin/g++` 14.2.0, `-O3 -fopenmp -std=c++17 -shared -fPIC -Wall
+-Wextra`, pybind11 3.1.0 headers, `Python.h` at `/usr/local/include/python3.12`,
+producing `build/cpp/emfit_core.cpython-312-x86_64-linux-gnu.so` with zero
+warnings.
+
+### 7.5 What is still open, stated as open
+
+- **The GIL is already released.** `src/bindings.cpp` wraps the kernel call in
+  `py::gil_scoped_release`, so "release the GIL" is not a pending step; anyone
+  quoting it as one is quoting a stale list.
+- **Parallel reduction is a trade, not free work.** Splitting one row's dot
+  product across threads changes the order of `row_dot` and forfeits bit-parity.
+  That is a legitimate thing to want, and it must be decided explicitly; there is
+  no speed figure for it either way.
+- **The OpenMP path is untested.** The 4x3x2 golden grid is far too small for the
+  loop to split across threads, so a green run here says nothing about parallel
+  execution. The only measured parallel number remains that the pragmas are about
+  50x *slower* at this grid size (section 5), on a cgroup limited to `cpu.max`
+  50000/100000 = 0.5 CPU.
+- **Parity is not physics.** It is measured against a Python reference which is
+  itself not validated against an external solver for these arrays.
+
+### 7.6 Host result — operator reported, not reproduced here
+
+The operator reports that `pip install -e .` on his host prints
+`Successfully installed emfit-0.1.0.dev0`, and that the parity run there reports
+`3 passed`.
+
+What this establishes: the build backend, the wheel and the extension build,
+install and import on that host, and three parity tests passed there. What it does
+**not** establish: anything about this container, where `pip install -e .` cannot
+run at all (`scikit-build-core` and `ninja` are absent, no network); anything about
+the v2 full-physics golden, which did not exist when those three tests were the
+whole suite (the suite is now 20 tests); or anything about physics — parity is
+order, not accuracy. The exact command line and the full pip log are still not on
+record, and that omission is the reason this block is labelled rather than quoted
+as a result.
