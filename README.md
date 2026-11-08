@@ -94,9 +94,14 @@ broken at least once.
 
 - **No claim of physical correctness without an independent anchor.** The port
   extraction still marks itself as not yet checked against its anchor in its own
-  output record (`evidence/termination/build_A_50ohm.json`), against a series-R
-  anchor of 0.34465, because a 5.45 percent residual is unexplained. Nothing in
-  this repository overrides that mark.
+  output record (`evidence/termination/build_A_50ohm.json`). The anchor it was
+  first measured against, `0.34465 = 50/(2*47.53662+50)`, turned out to be the
+  twin run's own fitted impedance rather than an independent one, so that
+  comparison is retracted. Against the independent quasistatic value for the
+  same strip width (`Z0 = 48.0237405` ohm at `w = 3.2` mm) the residual is
+  `-3.10` to `-4.90` percent, not sub-percent. See E1 and E10 in
+  [`docs/design/EM_SOLVER_LEDGER.md`](docs/design/EM_SOLVER_LEDGER.md) and
+  `evidence/termination/build_A_50ohm.superseded.json`.
 - **No speed claim without a measurement.** The OpenMP pragmas measured about 50x
   *slower* at the golden grid size, so no speed figure appears anywhere here, and
   none should be quoted from the code.

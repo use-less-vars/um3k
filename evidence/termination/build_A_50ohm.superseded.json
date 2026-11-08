@@ -1,0 +1,103 @@
+{
+  "schema": "emfit.superseded-record/1",
+  "id": "build_A_50ohm.s11-validation-status.superseded",
+  "generated": "2026-11-08",
+  "generated_note": "date from the container clock; no provenance is fabricated",
+  "status": "SUPERSEDED",
+  "supersedes": {
+    "file": "evidence/termination/build_A_50ohm.json",
+    "field": "s11.validation_status",
+    "recorded_value": "UNVALIDATED",
+    "line": 378,
+    "why_it_still_reads_UNVALIDATED": "the field is a literal emitted by the generator at evidence/termination/run_build_A.py:1942, not a computed value, and no test reads it"
+  },
+  "superseding_audit": {
+    "document": "docs/design/anchor_audit_2026-11-05.md",
+    "lines": "90-95, 166-168",
+    "commit": "f4ca819"
+  },
+  "retracted_claim": {
+    "text": "the two-wave reflection at R=50 reads 0.3259 against the series-R anchor 0.34465, i.e. 5.45 percent low",
+    "where_written": "docs/design/EM_SOLVER_LEDGER.md row E1 before this record, and this file's own s11.validation_reason at :377",
+    "defect_anchor_provenance": "47.53662 ohm is the twin run's fitted zc (build_A_50ohm_twin_p51.json:312, hard-coded at run_build_A.py:138-140); anchor_audit_2026-11-05.md:90-95 records it as never produced by the run it grades",
+    "defect_run_conflation": "5.45 percent reproduces only from this file's own two-wave magnitude 0.32586326; 5.54 percent reproduces only from build_A_50ohm_p51_phasors.json:286 (0.32556487). Both 0.3258633 and 0.3258868 round to 0.3259."
+  },
+  "anchor": {
+    "geometry": {
+      "h_m": 0.0016,
+      "w_m": 0.0032,
+      "eps_r": 4.4
+    },
+    "z0_ohm": 48.0237405,
+    "source": "DR-37, the w=3.2 mm rerun of the quasistatic ladder",
+    "formula": "A = 50/(2*Z0+50)",
+    "derived_anchor_s11": 0.3423544
+  },
+  "residuals_vs_correct_width_anchor": [
+    {
+      "run": "build_A_50ohm_p51_phasors.json",
+      "citation": ":286",
+      "estimator": "two-wave",
+      "value": 0.32556487,
+      "residual_pct": -4.9
+    },
+    {
+      "run": "build_A_50ohm_p51_phasors.json",
+      "citation": ":287",
+      "estimator": "one-wave",
+      "value": 0.32588679,
+      "residual_pct": -4.81
+    },
+    {
+      "run": "build_A_50ohm.json",
+      "citation": ":278",
+      "estimator": "two-wave",
+      "value": 0.32586326,
+      "residual_pct": -4.82
+    },
+    {
+      "run": "build_A_50ohm.json",
+      "citation": ":279",
+      "estimator": "one-wave",
+      "value": 0.32613492,
+      "residual_pct": -4.74
+    },
+    {
+      "run": "build_A_50ohm_p51_phasors.json",
+      "citation": "docs/design/s11_port_forensics_2026-11-07.md:99",
+      "estimator": "one-wave gamma_port at dispersive beta 228.6288",
+      "value": 0.33174966,
+      "residual_pct": -3.1
+    },
+    {
+      "run": "build_A_50ohm_p51_phasors.json",
+      "estimator": "two-wave at dispersive beta 228.6288",
+      "value": null,
+      "residual_pct": null,
+      "reason": "not on record"
+    }
+  ],
+  "invalid_figure_do_not_quote": {
+    "value_pct": -0.36,
+    "why": "mixes the w=3.2 mm measured reflection 0.33174966 with the w=3.0 mm production Z0 50.088 from docs/design/z0_quasistatic_ladder_2026-11-05.md:85 (anchor 0.3329427); two geometries in one ratio"
+  },
+  "open_questions": [
+    "(a) explain the -3.10 to -4.90 percent residual at the correct width",
+    "(b) re-fit the two-wave estimator at the dispersive beta 228.6288 - not on record",
+    "(c) modal-projection port extraction instead of the station fit",
+    "(d) an independent reflection cross-check (openEMS or analytic) - none exists",
+    "(e) establish which build_A run is canonical (28.8 mm vs 24.8 mm line)"
+  ],
+  "run_untouched": {
+    "path": "evidence/termination/build_A_50ohm.json",
+    "bytes": 18628,
+    "sha256": "a39d086018d16dcdbf2ccb322e876fa38b89936f6d066027e182e256255f557c",
+    "edited": false,
+    "why_not_edited": "the record cannot be regenerated from the tree (meta.git_rev is null, DR-28), so editing it would make the file disagree with its generator; this sidecar is additive instead"
+  },
+  "pointer": {
+    "ledger": "docs/design/EM_SOLVER_LEDGER.md",
+    "row": "E1",
+    "related_row": "E10"
+  }
+}
