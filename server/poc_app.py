@@ -27,6 +27,7 @@ STATUS: the web path (trame server, layout, slider callback) is UNTESTED. Only
 from __future__ import annotations
 
 import argparse
+import errno
 import sys
 from pathlib import Path
 
@@ -38,6 +39,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = "evidence/termination/build_A_50ohm_p51_ghostwave_fields.npz"
 PLANE_KEY = "plane_ez"
 DEFAULT_HOST = "127.0.0.1"
+# Deliberately 8080, NOT 8000: 8000 is reserved for the agent's own service on
+# the operator's machine.
 DEFAULT_PORT = 8080
 
 
@@ -191,19 +194,96 @@ def create_plotter(info: dict):
 
 
 def run_web(info: dict, host: str, port: int, station: int) -> int:
+    import importlib
+
     from trame.app import get_server
 
-    # vuetify3 ships with newer trame; fall back to vuetify2 for older installs.
     try:
-        from trame.ui.vuetify3 import SinglePageLayout
-        from trame.widgets import vuetify3 as vuetify
+        import trame
 
-        ui_major = 3
-    except ImportError:
-        from trame.ui.vuetify2 import SinglePageLayout
-        from trame.widgets import vuetify2 as vuetify
+        trame_version = getattr(trame, "__version__", "UNKNOWN")
+    except Exception:
+        trame_version = "UNKNOWN"
 
-        ui_major = 2
+    # Probe chain, newest first. Every candidate is guarded in its own
+    # try/except: the old code guarded only the FIRST import, so a missing or
+    # broken vuetify2 fallback raised straight out of this function. No
+    # candidate may escape the loop here.
+    ui_module = None
+    widgets_module = None
+    SinglePageLayout = None
+    vuetify_variant = None
+    vuetify_ui_path = None
+    for label, ui_path, widgets_path in (
+        ("vuetify3", "trame.ui.vuetify3", "trame.widgets.vuetify3"),
+        ("vuetify2", "trame.ui.vuetify2", "trame.widgets.vuetify2"),
+        ("vuetify", "trame.ui.vuetify", "trame.widgets.vuetify"),
+    ):
+        try:
+            candidate_ui = importlib.import_module(ui_path)
+            candidate_widgets = importlib.import_module(widgets_path)
+            candidate_layout = getattr(candidate_ui, "SinglePageLayout")
+        except Exception as exc:  # noqa: BLE001 - deliberate, see comment above
+            print(f"[poc_app] probe {label} unusable: {exc}", file=sys.stderr)
+            continue
+        ui_module = candidate_ui
+        widgets_module = candidate_widgets
+        SinglePageLayout = candidate_layout
+        vuetify_variant = label
+        vuetify_ui_path = ui_path
+        break
+
+    if SinglePageLayout is None:
+        print(
+            "[poc_app] trame is installed but no Vuetify UI module was found.",
+            file=sys.stderr,
+        )
+        print(f"[poc_app] trame version: {trame_version}", file=sys.stderr)
+        print(
+            "[poc_app] modules tried: trame.ui.vuetify3, trame.ui.vuetify2, "
+            "trame.ui.vuetify",
+            file=sys.stderr,
+        )
+        print(
+            "[poc_app] fix: python3 -m pip install trame-vuetify", file=sys.stderr
+        )
+        print(
+            "[poc_app] then re-run: python3 server/poc_app.py --station 4",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"[poc_app] trame {trame_version} - ui modules: {vuetify_ui_path}")
+
+    # Resolve the widget classes this layout needs instead of hardcoding them,
+    # so a variant that lacks one degrades to a placeholder instead of a
+    # traceback. The slider is a convenience, not a requirement.
+    widgets = {}
+    missing_widgets = []
+    for name in ("VSpacer", "VSlider", "VLabel", "VContainer"):
+        try:
+            widgets[name] = getattr(widgets_module, name)
+        except Exception:
+            missing_widgets.append(name)
+
+    placeholder = None
+    if missing_widgets:
+        for name in missing_widgets:
+            print(
+                f"[poc_app] widget {name} missing from {vuetify_variant}",
+                file=sys.stderr,
+            )
+        try:
+            from trame.widgets.html import Div
+
+            placeholder = Div
+        except Exception:
+            placeholder = None
+            print(
+                "[poc_app] trame.widgets.html unavailable - no toolbar, "
+                "plotter view only",
+                file=sys.stderr,
+            )
 
     from pyvista.trame.ui import plotter_ui
 
@@ -213,7 +293,9 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
     plotter = create_plotter(info)
 
     try:
-        server = get_server(client_type="vue3" if ui_major == 3 else "vue2")
+        server = get_server(
+            client_type="vue3" if vuetify_variant == "vuetify3" else "vue2"
+        )
     except TypeError:
         # Older trame builds do not accept client_type.
         server = get_server()
@@ -254,21 +336,34 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
 
     with SinglePageLayout(server) as layout:
         layout.title.set_text("Build A - |Ez| (9 captured x-planes)")
-        with layout.toolbar:
-            vuetify.VSpacer()
-            vuetify.VSlider(
-                v_model=("station", station),
-                min=0,
-                max=n_st - 1,
-                step=1,
-                thumb_label=True,
-                hide_details=True,
-                style="max-width: 420px; margin-right: 16px;",
-            )
-            vuetify.VLabel("{{ station_label }}")
+        if not missing_widgets:
+            with layout.toolbar:
+                widgets["VSpacer"]()
+                widgets["VSlider"](
+                    v_model=("station", station),
+                    min=0,
+                    max=n_st - 1,
+                    step=1,
+                    thumb_label=True,
+                    hide_details=True,
+                    style="max-width: 420px; margin-right: 16px;",
+                )
+                widgets["VLabel"]("{{ station_label }}")
+        elif placeholder is not None:
+            # No usable slider: keep a plain toolbar that still shows the label.
+            with layout.toolbar:
+                placeholder("{{ station_label }}")
         with layout.content:
-            with vuetify.VContainer(fluid=True, classes="pa-0 fill-height"):
-                view = plotter_ui(plotter)
+            container = widgets.get("VContainer")
+            if container is None:
+                if placeholder is not None:
+                    with placeholder():
+                        view = plotter_ui(plotter)
+                else:
+                    view = plotter_ui(plotter)
+            else:
+                with container(fluid=True, classes="pa-0 fill-height"):
+                    view = plotter_ui(plotter)
 
     @ctrl.set("station")
     def _on_station_change(*args, **_kwargs):
@@ -286,8 +381,26 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
         except Exception as exc:
             print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
-    print(f"[poc_app] serving on http://{host}:{port} (vuetify{ui_major})")
-    server.start(host=host, port=port, open_browser=False)
+    print(f"[poc_app] serving on http://{host}:{port}")
+    print("[poc_app] open that URL in a browser; Ctrl-C to stop")
+    try:
+        server.start(host=host, port=port, open_browser=False)
+    except OSError as exc:
+        in_use = getattr(exc, "errno", None) == errno.EADDRINUSE or (
+            "Address already in use" in str(exc)
+        )
+        if not in_use:
+            raise
+        print(f"[poc_app] port {port} is already in use.", file=sys.stderr)
+        print(
+            f"[poc_app] something else is listening on {host}:{port}.",
+            file=sys.stderr,
+        )
+        print(
+            f"[poc_app] fix: python3 server/poc_app.py --port {port + 1}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
