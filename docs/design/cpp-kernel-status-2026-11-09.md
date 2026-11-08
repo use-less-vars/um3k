@@ -189,6 +189,14 @@ wrong and ordinary debugging applies.
 
 ## 4. What is in the kernel today, and the order of the next steps
 
+**Superseded in part by section 6.** The paragraph below describes the kernel as
+it stood when this section was written. As of the full-physics dispatch of
+2026-11-09 the kernel implements every branch of `step_explicit` -- PML
+(as its two multiplier vectors), the lossy Ampere pair, PEC and the source
+term -- and the queue of next steps listed at the end of this section has
+been overtaken by events. Read section 6 for the current statement order and
+for what is actually covered by a test.
+
 `src/emfit_core.cpp` implements the **lossless core only**: the Faraday
 mat-vec (`h -= dt * inv_m_mu * (C e)`) and the Ampere mat-vec
 (`e += dt * inv_m_eps * (C_tilde h)`), each as a per-row sequential
@@ -240,11 +248,15 @@ Next steps, in this order and for these reasons:
 * **A green run that nobody can reproduce on a second host**, or one quoted from
   a machine where `emfit_core` came from an older checkout. Record the commit
   and the `.so`'s mtime with the result.
-* **A claim that the parity test covers the kernel.** The golden file stores no
-  source array `j` at all, so `step_explicit`'s source-term branch has **zero**
-  parity coverage; the PML, lossy/load and PEC branches likewise. What passed
-  bit-identically is the source-free, lossless, non-PML step — one branch of
-  several — and nothing in the numbers above says anything about the others.
+* **A claim that the parity test covers the kernel.** Narrowed, not lifted. A
+  second golden, `tests/data/cpp_golden_step_v2.npz`, now drives every branch
+  at once -- PML multiplier vectors, the lossy Ampere pair, a PEC index array
+  and a non-zero source `j` -- and `tests/test_cpp_parity.py` asserts
+  bit-identity against it at three steps, against a live Python reference, and
+  under four single-branch ablations. What is still *not* covered: the OpenMP
+  path (the 4x3x2 golden grid, 133 edges and 98 faces, is far too small for the
+  loop to split across threads, so parity on it says nothing about
+  parallelism), and any grid other than this one.
 * **Bit-parity read as evidence of accuracy.** The golden trajectory is
   oscillatory and large: `max|e|` runs 3.0801234367594699 -> 2218.6970420430825 ->
   1182.5905231289953 -> 1887.1900574751446 while `max|h|` stays near 2.4.
@@ -264,3 +276,115 @@ Next steps, in this order and for these reasons:
   which is itself not validated against an external solver for these arrays. It
   establishes that the kernel performs identical operations in identical order;
   it does not establish that those operations give the right answer.
+
+## 6. Full-physics parity: the second golden (2026-11-09)
+
+Dispatch `cpp-full-physics-and-golden-v2-2026-11-09`. The kernel implements the whole
+of `emfit.evolve.step_explicit`, and there is now a golden file that exercises all of
+it. This section states the operation order the kernel has to reproduce, then the
+measurement that shows each branch is covered, then one finding about perturbation
+that came out of writing those tests.
+
+### 6.1 The statement order the kernel reproduces
+
+`emfit/evolve.py`, `step_explicit`, in this exact order -- the kernel's single call
+site must match it statement for statement, because bit-parity is a claim about
+operation order and nothing else:
+
+| # | evolve.py | statement |
+|---|-----------|-----------|
+| 1 | :114 | `h -= dt * (inv_m_mu * (C @ e))` -- Faraday, over faces |
+| 2 | :115-116 | `pml.damp_h(h, dt)`, i.e. `h *= damp_h` |
+| 3 | :117 | `ce = C_tilde @ h` |
+| 4 | :118-119 | `ce = ce - j` when a source is present |
+| 5 | :120-121 | lossless: `e += dt * (inv_m_eps * ce)` |
+| 6 | :125-127 | lossy: `e *= loss_num`; `e += ce`; `e *= loss_den` (in place, three statements, not one fused expression) |
+| 7 | :128-129 | `pml.damp_e(e, dt)`, i.e. `e *= damp_e` |
+| 8 | :130-131 | `e[pec_idx] = 0.0` |
+| 9 | :132 | `return e, h` |
+
+Steps 5 and 6 are alternatives selected by `loss_den is None`; the rest are
+independent. The PML enters the kernel as its two multiplier vectors (`damp_e`,
+`damp_h`) rather than as a layer object, which is arithmetic-identical because
+`PML.damp_e` and `PML.damp_h` are exactly one in-place multiply each
+(`emfit/pml.py:716-735`).
+
+### 6.2 The golden and the proof that each branch is covered
+
+`tests/data/cpp_golden_step_v2.npz` (19,981 bytes, 45 arrays, `case='v2-full-physics'`)
+is a three-step run on the same 4x3x2 grid (133 edges, 98 faces), `dt =
+1.715917382577905e-10`, with a one-cell PML on the x axis, a conductance
+distribution (`sigma_value = 1e-3` on 16 edges, so `loss_num` / `loss_den` are
+genuinely not 1), a PEC set of 34 edges, and a non-zero source `j` (133 non-zeros,
+`max|j| = 3.234434104275188`). It is produced by
+`evidence/termination/make_cpp_golden.py --v2` from the Python reference; the script
+defaults to v1-only so `--v2` cannot silently rewrite the v1 witness, whose md5 is
+still `eac28b6dec9e1b2c2be035f260916fdc`.
+
+Coverage is not asserted by inspection. Each branch was dropped on both sides at
+once, three steps were re-run, and the resulting state was compared with the
+full-physics golden. A non-zero difference is what proves the branch is load-bearing:
+
+| branch dropped | max abs. diff in `e3` | edges differing | max abs. diff in `h3` | faces differing |
+|---|---|---|---|---|
+| PML (`damp_e`, `damp_h` -> None) | 1.2947920462999032e+03 | 99/133 | 3.4010702140490938 | 98/98 |
+| lossy (`loss_num`, `loss_den` -> None) | 3.5726196920463076e+02 | 99/133 | 0.39619102087747837 | 84/98 |
+| PEC (`pec_idx` -> None) | 9.6861258517163694e-04 | 133/133 | 2.3844375086380654e-08 | 92/98 |
+| source (`j` -> None) | 1.6661651686870448e+03 | 99/133 | 3.0505545991327114 | 86/98 |
+
+Every arm is non-zero on both `e` and `h`, so no branch is passed in and ignored.
+The 99/133 rather than 133/133 is itself explained: the 34 PEC entries are reset to
+zero at the end of every step, so they carry no information forward.
+
+The full-physics trajectory grows as the lossy scheme predicts --
+`max|e|`: 3.0801234367594699, 1.6056005863383207e+03, 1.6507126810249117e+03,
+1.9288326149087627e+03 over steps 0..3; `max|h|`: 2.3850086837869382,
+2.3839387119470978, 3.6125923885160729, 4.0167676459807176. Consecutive stored steps
+are distinct vectors (133/133 and 98/98 entries change between the first two), so
+agreement at tolerance zero is a measurement and not a comparison of an array with
+itself.
+
+### 6.3 A one-ULP input perturbation is absorbed here (it was not in v1)
+
+The v1 control -- bump `h0[0]` by one ULP and watch the difference grow -- does
+**not** work on the full-physics system. Measured: `h0[0] + 1 ULP` (1.1102230246251565e-16)
+leaves the three-step output **bit-identical** to the golden; `+2 ULP` moves `h3` by
+7.2e-35; `+1024 ULP` still leaves `e3` unchanged. `e0[0] + 1..256 ULP` likewise.
+
+The reason is the rounding floor, not insensitivity: after one lossy step `|e|` is
+about `1e3`, so the absolute resolution of the arithmetic is around `1e-13`, and a
+1-ULP change to an input of order 1 is three orders of magnitude below it. The v1
+finding therefore does not generalise, and quoting it as if it did would be a false
+statement about this regime.
+
+The controls in `tests/test_cpp_parity.py` are adjusted rather than dropped:
+
+* the ULP control moved to the **output** side -- bump `e3[0]` by one ULP and assert
+  that the comparator raises and localises it as 1/133;
+* the input-side liveness control uses a **coarse** perturbation instead (1e-3
+  relative on the largest `e0` entry), which does reach the output.
+
+Neither is weaker than the v1 control: one proves the comparator sees a one-bit
+change, the other proves the output depends on the input. What is lost is the
+single test that did both at once, and it was lost because the physics says so.
+
+### 6.4 Three findings worth carrying forward
+
+1. **Bit-parity is a property of the build line, not of the algorithm.** It holds
+   because the compiler emits no FMA contraction and no reassociation for this
+   translation unit. The default target `-march=x86-64` has FMA disabled, which is
+   why it holds here. `-march=native` or `-mfma` on an FMA-capable host, or
+   `-ffast-math` / `-fassociative-math`, would forfeit it -- and would do so
+   silently, as a "9 of 98 entries differ" failure that looks like a kernel bug.
+   Anyone who changes the build flags and sees the parity test go red should look
+   at the flags first.
+2. **The GIL is already released around the kernel call.** `src/bindings.cpp` wraps
+   the call in `py::gil_scoped_release`, with the argument arrays kept alive for the
+   duration. That was on the earlier "next steps" list; it is done, and the list is
+   stale on that point.
+3. **Any parallel reduction that splits one row's dot product changes the addition
+   order, and therefore forfeits bit-parity.** That is a deliberate trade, not an
+   oversight: the current kernel reduces each row sequentially in ascending column
+   order, in the same order as scipy's CSR mat-vec. No speed figure exists for the
+   parallel variant, and none is claimed -- the only measured parallel number is
+   that the OpenMP pragmas are about 50x *slower* at this grid size (section 5).
