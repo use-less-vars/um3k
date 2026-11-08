@@ -520,6 +520,14 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         "launch": args.launch,
         "flux_projection": bool(args.flux_projection),
     }
+    if args.s21_plane_col is not None and args.s21_plane_index is not None:
+        # One int reaches the library either way, so two flags naming it would
+        # only hide which of the two the artefact was built from.
+        raise SystemExit(
+            "--s21-plane-col %d and --s21-plane-index %d were both given: "
+            "they name the same geometry[\"s21_plane\"], so only one of them "
+            "can be honoured.  Pass --s21-plane-col alone."
+            % (int(args.s21_plane_col), int(args.s21_plane_index)))
     if args.s21_plane_index is None and kwargs["loads"]:
         # DEFAULT PLANE POLICY.  With the flag absent the probe is S21_PLANE
         # ("cut"), which the library reads as the LOAD's own node column -- a
@@ -541,7 +549,42 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         cell_m = float(kwargs["h"]) / float(kwargs["n_sub"])
         ix_load = int(math.floor(float(kwargs["loads"][0].position)
                                  / cell_m + 0.5))
-        kwargs["s21_plane"] = ix_load + 1
+        # --s21-plane-col names that same column by hand; the default
+        # expression is untouched, so a flag-off call still lands on
+        # ix_load + 1 and its kwargs are what they were.
+        col = (int(args.s21_plane_col) if args.s21_plane_col is not None
+               else ix_load + 1)
+        if col < ix_load:
+            raise SystemExit(
+                "--s21-plane-col %d is UPSTREAM of the load's own column %d "
+                "(load at %g mm, cell = %g m): before the cut the wave has "
+                "not reached the element, so the span between the two planes "
+                "does not contain it and the ratio stops describing the "
+                "load.  Ask for column %d or one downstream of it "
+                "(emfit/studies.py:2979)."
+                % (col, ix_load, float(args.load_at_mm), cell_m, ix_load))
+        # Upper bound without the geometry object: nx = n_pml + n_ref + n_line
+        # (emfit/studies.py:2848) with n_ref = MS_N_REF = 2
+        # (emfit/studies.py:1201), and n_ref is not a kwarg this script sets.
+        nx_cols = int(kwargs["n_pml"]) + 2 + int(kwargs["n_line"])
+        if col >= nx_cols:
+            raise SystemExit(
+                "--s21-plane-col %d is past the last node column: this call "
+                "has nx = %d (n_pml %d + n_ref 2 + n_line %d, "
+                "emfit/studies.py:2848), so column %d does not exist."
+                % (col, nx_cols, int(kwargs["n_pml"]),
+                   int(kwargs["n_line"]), nx_cols))
+        kwargs["s21_plane"] = col
+    elif args.s21_plane_col is not None:
+        # No load in the kwargs: there is no cut for a column to be
+        # downstream OF.  Mirrors the library's own load-free refusal
+        # (emfit/studies.py:2957-2961); unreachable from the CLI today, since
+        # build_kwargs always carries the one load it was given.
+        raise SystemExit(
+            "--s21-plane-col was asked for on a load-free call: there is no "
+            "load column for it to sit downstream of.  Leave it off, which "
+            "keeps s21_plane None and measures the station span a load-free "
+            "record wants.")
     if args.ms_x_window is not None:
         # Probe-station window, millimetres on the command line and metres in
         # the call.  n_stations is deliberately NOT passed beside it: the count
@@ -1383,6 +1426,18 @@ def main(argv: list[str] | None = None) -> int:
                          "downstream).  The library refuses an index UPSTREAM "
                          "of the cut.  Absent (the default): s21_plane='cut' "
                          "-- the load cut, unchanged.")
+    ap.add_argument("--s21-plane-col", type=int, default=None,
+                    help="the same hand-picked extraction COLUMN [index] as "
+                         "--s21-plane-index, but named by the node column "
+                         "the probe must land on rather than by a shift of "
+                         "it -- so a sweep can step the column one at a "
+                         "time (50, 51, 52, ...) and read each artefact "
+                         "as the column it was asked for.  Must be the "
+                         "load's own column or downstream of it (upstream "
+                         "planes read the element's near field) and lower "
+                         "than nx.  It cannot be combined with "
+                         "--s21-plane-index.  Absent (the default): the "
+                         "default policy, load column + 1.")
     ap.add_argument("--dry-run", action="store_true",
                     help="build and print the call, write nothing, run no FDTD; "
                          "with --with-twin it prints the twin's arguments too "
@@ -1630,7 +1685,8 @@ def main(argv: list[str] | None = None) -> int:
     # keep meaning "the CALLER passed an int": after the default policy lands an
     # int in geometry["s21_plane_requested"], geometry alone cannot tell the two
     # apart, so a flag-off run would otherwise be scored as a plane sweep.
-    plane_from_default_policy = bool(args.s21_plane_index is None)
+    plane_from_default_policy = bool(args.s21_plane_index is None
+                                     and args.s21_plane_col is None)
     ac = ac_block(res, load_mm=args.load_at_mm, load_ohm=args.load_ohm,
                   peak_mb=peak_mb, wall_s=wall_s,
                   plane_from_default_policy=plane_from_default_policy)
@@ -1837,7 +1893,8 @@ def main(argv: list[str] | None = None) -> int:
             "s21_plane_index": res.s21_plane_index,
             "s21_plane_requested": g.get("s21_plane_requested"),
             # True when that plane came from the default policy in
-            # build_kwargs rather than from --s21-plane-index.
+            # build_kwargs rather than from --s21-plane-index or
+            # --s21-plane-col -- either flag is a hand-picked column.
             "plane_from_default_policy": plane_from_default_policy,
             # Gated on the same condition as AC-6's copy: a plane the default
             # policy chose is not a sweep, and the diagnostic must mean "the
@@ -1849,7 +1906,8 @@ def main(argv: list[str] | None = None) -> int:
             # Which policy put the probe where it landed: the flag, or the
             # default (build_kwargs).  Stated per artefact so a plane read off
             # this file cannot be mistaken for one that was chosen.
-            "plane_policy": ("explicit" if args.s21_plane_index is not None
+            "plane_policy": ("explicit" if (args.s21_plane_index is not None
+                                            or args.s21_plane_col is not None)
                              else "default"),
             # The distance the cut branch de-embeds across, the same attribute
             # the s11 block quotes below (emfit/studies.py:3266).
