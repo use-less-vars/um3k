@@ -87,6 +87,130 @@ def spread(values):
     return hi / lo
 
 
+CHECK_ZC = (39.5, 39.0, 40.0, 50.0)
+FINE_SWEEP = tuple(30.0 + 0.05 * k for k in range(401))
+LOW_SWEEP = tuple(5.0 + 0.5 * k for k in range(31))
+LOW_BAR = 1.004422
+
+
+def gamma_polar(v, i, zc):
+    """|Gamma| and arg(Gamma) in degrees for one plane at one zc."""
+    forward, backward = split(v, i, zc)
+    gamma = backward / forward
+    return abs(gamma), float(np.degrees(np.angle(gamma)))
+
+
+def corrected_ratio(rec, half, zc):
+    """|b|/|f| on one plane with the A_plus half-step current correction."""
+    return ratio(rec["v"], rec["i"] * complex(np.exp(1j * half)), zc)
+
+
+def run_checks(recs, half):
+    """CHECK 1 (phase), CHECK 2 (fine zc sweep), CHECK 3 (low-zc family)."""
+    out = {"means": {}}
+    f_hz = (float(recs[0]["f_hz"]) if recs[0]["f_hz"] is not None
+            else F_HZ_FALLBACK)
+    dx = (float(recs[0]["cell_m"]) if recs[0]["cell_m"] is not None
+          else CELL_M_FALLBACK)
+    engine_zc = recs[0]["zc"]
+
+    print("=" * 72)
+    print("(d) CHECK 1 - PHASE PROGRESSION OF GAMMA (stored v, i; uncorrected)")
+    print("=" * 72)
+    print("dx = %.6e m (one column = one cell), f_hz = %.6f Hz"
+          % (dx, f_hz))
+    cases = [("39.5", 39.5 + 0j), ("39.0", 39.0 + 0j),
+             ("40.0", 40.0 + 0j), ("50.0", 50.0 + 0j),
+             ("engine %.6f%+.6fj" % (engine_zc.real, engine_zc.imag),
+              engine_zc)]
+    for name, zc_value in cases:
+        print("")
+        print("zc = %s ohm" % name)
+        print("  col        x_m      |Gamma|    arg_deg   d_phase_deg")
+        phases = []
+        previous = None
+        for rec in recs:
+            mag, arg = gamma_polar(rec["v"], rec["i"], zc_value)
+            step = "       ----" if previous is None else "%11.6f" % (arg - previous)
+            print("  %3d   %.6f   %.6f   %10.6f   %s"
+                  % (rec["col"], rec["x_m"], mag, arg, step))
+            phases.append(arg)
+            previous = arg
+        mean_incr = (phases[-1] - phases[0]) / float(len(phases) - 1)
+        out["means"][zc_value] = mean_incr
+        print("  observed mean phase increment per cell: %.6f deg" % mean_incr)
+    print("")
+    print("observed mean phase increment per cell, by zc:")
+    for name, zc_value in cases:
+        print("  zc = %s : %.6f deg" % (name, out["means"][zc_value]))
+
+    beta_eps1 = 2.0 * np.pi * f_hz / C_LIGHT * np.sqrt(1.0)
+    beta_eps3 = 2.0 * np.pi * f_hz / C_LIGHT * np.sqrt(3.0)
+    two_eps1 = float(np.degrees(2.0 * beta_eps1 * dx))
+    two_eps3 = float(np.degrees(2.0 * beta_eps3 * dx))
+    print("2*beta*dx in degrees, eps_eff = 1.0 : %.6f" % two_eps1)
+    print("2*beta*dx in degrees, eps_eff = 3.0 : %.6f" % two_eps3)
+    out["two_eps1"] = two_eps1
+    out["two_eps3"] = two_eps3
+
+    print("")
+    print("=" * 72)
+    print("(e) CHECK 2 - FINE ZC SWEEP 30.0 .. 50.0 ohm, step 0.05 (401 points)")
+    print("=" * 72)
+    print("A_plus half-step correction on the current")
+    fine = []
+    for zc_value in FINE_SWEEP:
+        fine.append((spread([corrected_ratio(rec, half, zc_value)
+                             for rec in recs]), zc_value))
+    fine_ranked = sorted(fine, key=lambda item: item[0])
+    print("ten best:")
+    for sp, zc_value in fine_ranked[:10]:
+        print("  zc = %6.2f ohm  spread = %.6f" % (zc_value, sp))
+    best_fine_spread, best_fine_zc = fine_ranked[0]
+    print("best at 0.05 resolution: zc = %.2f ohm, spread = %.6f"
+          % (best_fine_zc, best_fine_spread))
+    interior = min(FINE_SWEEP) < best_fine_zc < max(FINE_SWEEP)
+    print("that zc lies %s 30.0-50.0 ohm range"
+          % ("INSIDE the" if interior else "ON THE EDGE OF the"))
+    out["best_fine_zc"] = best_fine_zc
+    out["best_fine_spread"] = best_fine_spread
+
+    print("")
+    print("=" * 72)
+    print("(f) CHECK 3 - LOW-ZC FAMILY 5.0 .. 20.0 ohm, step 0.5 (31 points)")
+    print("=" * 72)
+    low = []
+    for zc_value in LOW_SWEEP:
+        low.append((spread([corrected_ratio(rec, half, zc_value)
+                            for rec in recs]), zc_value))
+    low_ranked = sorted(low, key=lambda item: item[0])
+    print("ten best:")
+    for sp, zc_value in low_ranked[:10]:
+        print("  zc = %6.1f ohm  spread = %.6f" % (zc_value, sp))
+    best_low_spread, best_low_zc = low_ranked[0]
+    print("best in 5.0-20.0 ohm: zc = %.1f ohm, spread = %.6f"
+          % (best_low_zc, best_low_spread))
+    beats = best_low_spread < LOW_BAR
+    print("that spread %s the 20-80 ohm best of %.6f"
+          % ("BEATS" if beats else "does NOT beat", LOW_BAR))
+    edge = LOW_SWEEP[:4] + LOW_SWEEP[-3:]
+    edge_text = ", ".join("%.1f:%.6f" % (zc_value, sp) for sp, zc_value in low
+                          if zc_value in edge)
+    print("edge values (zc:spread) %s" % edge_text)
+    at_edge = abs(best_low_zc - min(LOW_SWEEP)) < 1e-9
+    if at_edge:
+        print("the low family descends monotonically toward the zc = 5.0 ohm")
+        print("boundary and never bottoms out: a boundary runaway, not a")
+        print("physical interior zc")
+    else:
+        print("the low family has an interior minimum at zc = %.1f ohm"
+              % best_low_zc)
+    out["best_low_zc"] = best_low_zc
+    out["best_low_spread"] = best_low_spread
+    out["runaway"] = "YES" if at_edge else "NO"
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Read-only split tests on the stored cut-plane records.")
@@ -216,6 +340,8 @@ def main():
     print("spread at zc = 50.0 ohm: %.6f" % at_50)
     print("")
 
+    extra = run_checks(recs, half)
+
     print("=" * 72)
     print("SUMMARY")
     print("=" * 72)
@@ -224,6 +350,19 @@ def main():
     print("SPREAD_A_PLUS: %.6f" % spread_plus)
     print("SPREAD_A_MINUS: %.6f" % spread_minus)
     print("SPREAD_BEST_ZC: %.6f at ZC_BEST: %s" % (best_spread, _fmt(best_zc)))
+    print("")
+    print("=" * 72)
+    print("SUMMARY 2 (CHECK 1..3)")
+    print("=" * 72)
+    print("PHASE_INCR_DEG_ZC395: %.6f" % extra["means"][39.5 + 0j])
+    print("PHASE_INCR_DEG_ZC50: %.6f" % extra["means"][50.0 + 0j])
+    print("PHASE_2BETADX_DEG_EPS1: %.6f" % extra["two_eps1"])
+    print("PHASE_2BETADX_DEG_EPS3: %.6f" % extra["two_eps3"])
+    print("BEST_ZC_FINE: %.2f" % extra["best_fine_zc"])
+    print("BEST_SPREAD_FINE: %.6f" % extra["best_fine_spread"])
+    print("BEST_ZC_LOW: %.2f" % extra["best_low_zc"])
+    print("BEST_SPREAD_LOW: %.6f" % extra["best_low_spread"])
+    print("LOW_FAMILY_RUNAWAY: %s" % extra["runaway"])
     return 0
 
 
