@@ -72,8 +72,8 @@ that no reflection was present - was measuring on the wrong side of the componen
 
 (1) The port |S11| of 0.326 is CORRECT. The field-derived |Gamma| is 0.324, a 0.5 percent
 agreement. The port is not the broken ruler.
-(2) The station two-wave fit's |Gamma| of 0.245 is TOO LOW (biased), while the Z0 = 47.3 it
-produced is validated.
+(2) The station two-wave fit's |Gamma| of 0.245 is TOO LOW (biased) (superseded by
+section 11), while the Z0 = 47.3 it produced is validated.
 (3) The actual reflection magnitude of this component is about 0.32, with phase rotating
 consistently at about 10.5 degrees per cell, epsilon_eff about 3.5.
 
@@ -83,3 +83,16 @@ The remaining defect is in the ruler, not the engine: S11 must be extracted upst
 de-embedded to the load plane rather than read downstream, and the station two-wave fit should be
 re-run constrained to Z0 = 47.305815 ohm. Neither has been attempted yet; no prediction is offered
 for either.
+
+## 11. Correction: the 0.245 was never a biased fit
+
+Section 9(2) called the 0.245 too low and biased; it is neither. 0.245108 is a complex
+least-squares fit of the nine station phasors with gamma = 11.255 + 232.79891853803187j
+IMPOSED (`voltage_integration_and_reflection_2026-11-08.md`:80-82), and the 11.255 Np/m
+was itself inverted from |s11| and |s21| (`ghost_wave_analysis_2026-11-08.md`:158). It
+is the reflection referred to x = 0 with that attenuation applied over 10.4 mm:
+0.309762 * exp(-2 * 11.255 * 0.0104) = 0.2451. At alpha = 0 the same fit returns
+0.325863, equal to /s11/magnitude to fifteen digits. What 0.245 measures is the
+imposed attenuation, not a deficient estimator: the phasors prefer about 0.43 Np/m,
+where the residual is twelve times better and |Gamma| = 0.322297. Section 9(2)'s
+remedy - refit constrained to Z0 - is still the next step; its diagnosis was not.

@@ -2904,6 +2904,10 @@ def microstrip_wave(
     # With several loads the LAST series-R one wins; that is the one a
     # single-element record can describe.
     load_edges_used = None
+    # The last load's node column, out of the same loop scope and for the same
+    # reason: ``None`` when the record carries no load at all.  Read below to
+    # decide whether a named extraction plane is still in front of the element.
+    ix_load = None
     if loads:
         sigma = np.zeros(cc.n_edges, dtype=float)
         eps = np.array(m_eps, dtype=float)
@@ -3689,6 +3693,34 @@ def microstrip_wave(
     # branch that does not take the cut, including the station-span fallbacks.
     s21_plane_x = s21_plane_v = s21_plane_i = None
     s21_plane_a = s21_plane_b = None
+    # A reflection coefficient belongs to a plane the wave still has something
+    # to reflect FROM.  On the load's own column the pair ``v_cut``/``i_cut`` is
+    # the element's boundary condition and ``b_cut/a_cut`` is the element's
+    # reflection -- so that plane stays valid.  One column past it the load is
+    # BEHIND the probe, and the same ratio describes the transmitted wave and
+    # what the far end sends back, not the element.  That is a category error
+    # rather than a tolerance -- it is what put ``s11_at_plane`` = 0.049 into a
+    # record beside ``s11`` = 0.326 (DR-19) -- so a plane strictly beyond the
+    # load's column is reported as unavailable instead of as a number, and
+    # ``gamma_plane`` keeps its ``nan``.
+    s11_at_plane_valid = True
+    s11_at_plane_invalid_reason = None
+    if (ix_load is not None and ix_extract is not None
+            and int(ix_extract) > int(ix_load)):
+        s11_at_plane_valid = False
+        s11_at_plane_invalid_reason = "plane_beyond_load"
+        warnings.warn(
+            "s11_at_plane is unavailable (valid = False): the extraction "
+            f"plane is node column {int(ix_extract)} (x = "
+            f"{float(ix_extract * cell)!r} m), strictly beyond the load's "
+            f"column {int(ix_load)} (x = {float(ix_load * cell)!r} m).  One "
+            "column past the load the element is behind the probe, so the two "
+            "travelling waves are the transmitted wave and what the far end "
+            "returns -- neither is the element's reflection, and b_cut/a_cut "
+            "there is not a reflection coefficient, so gamma_plane is left "
+            "nan.  The S21 measured on this plane, and every s11 quantity "
+            "referred to the port, are unaffected.",
+            RuntimeWarning, stacklevel=2)
     if ix_extract is not None:
         # A3: the far plane is the cut, not the last station.  Same split, same
         # two travelling waves, moved onto the plane the element is defined on,
@@ -3713,7 +3745,7 @@ def microstrip_wave(
             [v_cut], [i_cut], [x_cut], gamma_split, zc_split)[0]
         b_port = backward_wave_amplitude(
             [v_port], [-i_trunc], [x_port], gamma_split, zc_split)[0]
-        if a_cut != 0.0:
+        if a_cut != 0.0 and s11_at_plane_valid:
             # The reflection the element itself presents, on its own plane.
             gamma_plane = complex(b_cut) / complex(a_cut)
         s21_plane_x = float(x_cut)
@@ -3986,6 +4018,15 @@ def microstrip_wave(
         # the key's absence, which is how this record says ``None`` and keeps a
         # flag-off geometry exactly what it was.
         geometry["s21_plane_requested"] = s21_plane
+        # Whether that plane's own reflection (``gamma_plane``, the artefact's
+        # ``s11_at_plane``) is quoted at all, and why not when it is not: on a
+        # plane strictly beyond the load's column there is no reflection of the
+        # element to quote, so the magnitude beside a ``False`` here is ``nan``
+        # and the reason says which plane did it.  Written on every named plane,
+        # true or false, so a reader can tell "asked and valid" from "never
+        # asked" (the keys are absent then, as every flag-off record wants).
+        geometry["s11_at_plane_valid"] = bool(s11_at_plane_valid)
+        geometry["s11_at_plane_invalid_reason"] = s11_at_plane_invalid_reason
 
     power_balance = None
     if absorbed is not None and absorbed.steps:

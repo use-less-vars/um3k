@@ -1953,7 +1953,21 @@ def main(argv: list[str] | None = None) -> int:
                 "gamma_plane, the reflection at the extraction plane itself "
                 "(b_cut/a_cut).  A different quantity from s11, not "
                 "interchangeable; null when the record was extracted over "
-                "the station span."),
+                "the station span.  A plane strictly beyond the load column "
+                "reports no reflection coefficient, because past the load "
+                "there is nothing left to reflect from: the element is "
+                "behind the probe, so magnitude stays null and valid says "
+                "so, with the reason beside it.  At the load's own column "
+                "the ratio is still the element's reflection and the plane "
+                "stays valid."),
+            # Whether that plane carries a reflection of the element at all,
+            # and why not when it does not.  Copied from the geometry the
+            # library wrote beside the plane index, never re-derived here, so
+            # the artefact and the code cannot disagree.  Both are null on a
+            # record extracted over the station span, where no plane was
+            # named and no such key exists.
+            "valid": res.geometry.get("s11_at_plane_valid"),
+            "invalid_reason": res.geometry.get("s11_at_plane_invalid_reason"),
         },
         "gamma_plane": {
             "re": gp.real,
