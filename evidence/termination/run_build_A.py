@@ -507,7 +507,10 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         "n_clean": 96,
         "n_line": int(args.n_line),
         "n_pml": 6,
-        "nsteps": 2400,
+        # Step count.  Absent --nsteps => 2400, the number this dict has
+        # always carried (every banked Run A artefact was built on it);
+        # --nsteps N drives the same grid for N steps, nothing else.
+        "nsteps": int(args.nsteps),
         "loads": (load,),
         "reference": None,
         # Absent flag => S21_PLANE, i.e. the load's own cut, byte for byte what
@@ -1495,6 +1498,13 @@ def main(argv: list[str] | None = None) -> int:
                          "that column.  Off by default: every artefact this "
                          "script has written was recorded on the summed "
                          "path, and without the flag the run is what it was.")
+
+    ap.add_argument("--nsteps", type=int, default=2400, metavar="N",
+                    help="steps to march (default 2400, what every banked Run A "
+                         "artefact was built on).  The excitation is a single "
+                         "frequency CW, so only the march length changes: the "
+                         "flag exists for a step-count convergence sweep and it "
+                         "is the sole knob it moves.")
 
     ap.add_argument("--dump-load-edges", action="store_true",
                     help="record the phasor on EVERY E_z edge of the load's own "

@@ -1,0 +1,75 @@
+# Where the failing triple 1.344803 = 0.251886 + 1.092917 could have come from
+# Written by a measurement-only worker; no repository file was modified.
+# Generated: see 'scanned_utc' below.
+
+scanned_utc: 2026-11-08T14:07:50Z
+
+## 1. Literal search for the triple and its addends (whole tree, hidden dirs included)
+command: grep -rn --binary-files=without-match -e '1\.092917' -e '0\.251886' -e '1\.344803' \
+           -e '1\.34480' -e '1045426' -e '501883' . \
+           --exclude-dir=.git --exclude-dir=.venv --exclude-dir=.ruff_cache --exclude-dir=.pytest_cache
+result: ZERO matches.  The triple is not stored anywhere in the tree (evidence/, docs/, .scratch/,
+        .thoughtmachine/ all included), so it was never written to a banked artefact: it was printed
+        to a terminal by the assertion below and lost.
+
+## 2. Numeric scan of every *.json under the tree for the addends, their square roots, and for any
+##    record whose |S11|,|S21| magnitudes square to the failing sum
+  addend hits (|x| within 1e-6 of 0.251886 or 1.092917, or of sqrt of either): 0
+  records with an s11/s21 magnitude pair: 73
+
+## 3. The emitter (exact format match)
+emfit/studies.py:4595-4606, inside def _run_microstrip(values, sink)  [head at :4336]
+    gamma_sq = float(abs(result.gamma)) ** 2
+    s21_sq = float(abs(result.s21)) ** 2
+    if np.isfinite(gamma_sq) and np.isfinite(s21_sq):
+        bound_sum = gamma_sq + s21_sq
+        assert bound_sum <= 1.0 + 1e-9, (
+            "passivity bound violated between the station planes: "
+            f"|S11|^2 + |S21|^2 = {gamma_sq:.6f} + {s21_sq:.6f} = "
+            f"{bound_sum:.6f} is above 1, with |S11| = "
+            f"{abs(result.gamma):.6f} and |S21| = {abs(result.s21):.6f}; ...")
+  -> the three six-decimal fields are exactly 0.251886, 1.092917, 1.344803; implied
+     |S11| = sqrt(0.251886) = 0.501884, |S21| = sqrt(1.092917) = 1.045427.
+
+## 4. Reachability: who can reach _run_microstrip
+  emfit/studies.py:5707   run=_run_microstrip       (registry entry of the "microstrip" study)
+  emfit/studies.py:5899   metrics = study.run(values, sink)   (studies.execute helper)
+  emfit/cli.py:243        metrics = study.run(values, sink)   (CLI study runner)
+  emfit/webapp.py:425     metrics = study.run(values, sink)   (web UI study runner)
+  evidence/termination/run_build_A.py: NO reference to _run_microstrip.  It calls
+  emfit.studies.microstrip_wave directly (recorded as run.function in its own JSON), so the
+  literal command of item 1 CANNOT emit this message.
+
+## 5. The "microstrip" study's parameter surface (emfit/studies.py:5610-5660)
+  nsteps      int, default MS_NSTEPS = 2400 (studies.py:1179), lo=64, hi=20000   [:5621]
+  f0          float, default MS_F_TARGET/1e9                                     [:5626]
+  npml        int, default MS_N_PML                                              [:5630]
+  load_kind   choice, default "none"                                             [:5634]
+  load_at_mm  float, default 15.2 mm                                             [:5640]
+  load_value  float, default 100.0 ohm                                           [:5646]
+  s21_plane   str, default ""  -- blank means the station span (the default)      [:5655]
+
+## 6. Banked records whose |S11|^2 + |S21|^2 exceeds 1 (the same failure mode, already persisted)
+  |S11|^2+|S21|^2      |S11|      |S21|   artefact
+     1.612203         0.473884   1.177980  evidence/termination/build_B_100ohm_v3c.json
+     1.587879         0.474119   1.167515  evidence/termination/build_B_100ohm_v2.json
+     1.581855         0.473884   1.165027  evidence/termination/build_B_100ohm_v3d.json
+     1.434874         0.351786   1.145042  evidence/termination/build_B_100ohm.json
+     1.373574         0.339282   1.121812  evidence/termination/build_A_50ohm_cal.json
+     1.366211         0.299069   1.129942  evidence/termination/build_A_50ohm_v3.json
+     1.363411         0.341397   1.116628  evidence/termination/build_A_50ohm_v3b_s11fix.json
+     1.351245         0.332738   1.113791  evidence/termination/build_A_50ohm_v2.json
+     1.329518         0.325863   1.106043  evidence/termination/build_A_50ohm_p50_plane.json
+     1.329518         0.325863   1.106043  evidence/termination/gate_gate_build_A_p50.json
+     1.146537         0.354909   1.010236  evidence/termination/build_E_50ohm_v2.json
+     1.118872         0.296951   1.015230  evidence/termination/build_E_50ohm_v3d.json
+     1.108757         0.296951   1.010236  evidence/termination/build_E_50ohm_v3c.json
+     1.082300         0.236123   1.013186  evidence/termination/build_E_50ohm.json
+  (14 records; a |S21| above 1 is itself impossible for a passive network, so these records show the
+   plane-ratio normalisation already running above unity before the assert ever sees it.  None of
+   them is the failing pair: no record carries |S11| = 0.501884 or |S21| = 1.045427.)
+
+## 7. Reference run of the literal command (numbers actually observed this session)
+  evidence/termination/build_A_n_default_p51.json (and .txt beside it)
+  |S11| = 0.32586326001662264, |S21| = 0.7617054231929281
+  sum    = 0.106186852 + 0.580195164 = 0.6863820159501787   -> far below 1, no assertion

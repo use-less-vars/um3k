@@ -1271,6 +1271,15 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
     state.view_label = _view_label(
         state.view_mode, planes, toggle_available, cut_layout
     )
+    # The dump's own single frequency, printed beside the view toggle so the
+    # number can only be read as belonging to the 3-D field on screen - never to
+    # the sweep panel below, which is a different artefact.
+    dump_f_ghz = _own_frequency_ghz(record)
+    state.dump_freq_label = (
+        f"Current 3D dump frequency: {dump_f_ghz:.4f} GHz"
+        if dump_f_ghz is not None
+        else "Current 3D dump frequency: not recorded beside the dump"
+    )
 
     # The multi-frequency sweep, if one was written beside the dump. Optional
     # at every step: no file, no matplotlib, an unusable row - the 3-D view
@@ -1511,6 +1520,7 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
                     try:
                         widgets["VBtn"]("Switch view", click=ctrl.toggle_view)
                         widgets["VLabel"]("{{ view_label }}")
+                        widgets["VLabel"]("{{ dump_freq_label }}")
                     except Exception as exc:  # noqa: BLE001
                         print(
                             f"[poc_app] view toggle unavailable: {exc}",

@@ -1,0 +1,48 @@
+BUILD A STEP-COUNT CONVERGENCE AT THE PLANE-51 EXTRACTION COLUMN
+recorded 2026-11-09; container run, python3 3.12.15 / numpy 2.5.4, cgroup limit 512 MB,
+--mem-ceiling-mb 480 passed on every run (the script's default 2000 is refused here, exit 2).
+
+WHY THIS FILE EXISTS
+--nsteps did not exist on evidence/termination/run_build_A.py before today (added today,
+type=int, default 2400, the value the script hard-coded before). This file records what the
+step count does to the two magnitudes the passivity sum is built from, at the extraction
+plane the requested command names. Only the step count changes between rows.
+
+THE COMMAND (one flag changed per row):
+  python3 evidence/termination/run_build_A.py --s21-plane-col 51 --nsteps <N> \
+      --mem-ceiling-mb 480 --out evidence/termination/build_A_p51_n<N>.json
+
+TABLE   nsteps | |S11|                | |S21|                | |S11|^2+|S21|^2      | wall s | peak MB | artefact
+        2400   | 0.32586326001662264  | 0.7617054231929281   | 0.6863820159501787   | 80.0   | 309.6   | build_A_n_default_p51.json (measured earlier, identical configuration)
+        4800   | 0.3269916220080929   | 0.7633934713495123   | 0.6896931129625421   | 151.4  | 308.9   | build_A_p51_n4800.json
+        9600   | 0.32700073686627196  | 0.7626004925210631   | 0.6884889931044529   | 296.5  | 308.6   | build_A_p51_n9600.json
+
+The two sums are |S11|^2 + |S21|^2 evaluated from the 16-digit magnitudes stored in each
+artefact (s11.magnitude, s21.magnitude); the 2400 row reproduces the previously banked
+0.6863820159501787 exactly, which is the check that the arithmetic matches the pipeline.
+
+RAW OUTPUT, VERBATIM
+  n4800 exit=0 elapsed=151 s
+  wrote /workspace/evidence/termination/build_A_p51_n4800.json
+  label=A cells=289168 wall=151.4s peak_rss=308.9MB |s21|=0.763393471 arg=5.9314deg |s11|=3.269916e-01 (one-wave_station_fit |s11|=3.272626e-01) cut_plane=51
+
+  n9600 exit=0 elapsed=297 s
+  wrote /workspace/evidence/termination/build_A_p51_n9600.json
+  label=A cells=289168 wall=296.5s peak_rss=308.6MB |s21|=0.762600493 arg=5.5490deg |s11|=3.270007e-01 (one-wave_station_fit |s11|=3.273084e-01) cut_plane=51
+
+The 9600 row was run only because the 4800 row finished in 151 s, under the 380 s gate that
+was set before starting. Neither run tripped the wall or memory clause; both exited 0 and
+both artefacts carry status ok.
+
+READING, HONESTLY
+- |S11| settles: 2400 -> 4800 moves it by 1.1e-3, 4800 -> 9600 by 9.1e-6. On this evidence
+  |S11| is converged to about six figures by 4800 steps.
+- |S21| does not settle: 0.7617054 -> 0.7633935 -> 0.7626005. It is non-monotonic, so no
+  limit is established and no Richardson-style extrapolation is available from three points.
+  The 4800 -> 9600 change is 7.9e-4, roughly 0.1 percent, which is above the level at which
+  one would call the transmitted magnitude converged.
+- Cost is linear in steps at about 0.031 s per step and peak RSS is flat at 308-310 MB, so a
+  longer march is affordable; nothing here suggests more steps would fix the sum, because
+  all three sums sit well below 1 (0.6864, 0.6897, 0.6885). This configuration is nowhere
+  near the passivity bound, and no recorded >1 sum has ever been shown to move with nsteps.
+  The step count is therefore not the mechanism behind the passivity warning.

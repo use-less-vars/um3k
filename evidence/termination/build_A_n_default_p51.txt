@@ -1,0 +1,19 @@
+# argv: python3 evidence/termination/run_build_A.py --s21-plane-col 51 --out evidence/termination/build_A_n_default_p51.json
+# (literal command used .venv/bin/python and the default --out; deviations documented in report)
+# interpreter: /usr/local/bin/python3 Python 3.12.15
+# started_utc: 2026-11-08T14:03:43Z
+REFUSED: --mem-ceiling-mb 2000.0 MB is above the container limit 512.0 MB, so the trip could never fire before the container is killed. Pass --mem-ceiling-mb below 512.0 MB.
+# exit_code: 2
+# wall_seconds: 0
+# finished_utc: 2026-11-08T14:03:43Z
+
+########## ATTEMPT 2 (re-run inside this session's container; only change: --mem-ceiling-mb 480 because the cgroup limit here is 512 MB and the 2000 MB default is REFUSED) ##########
+# argv: python3 -u evidence/termination/run_build_A.py --s21-plane-col 51 --out evidence/termination/build_A_n_default_p51.json --mem-ceiling-mb 480
+# interpreter: /usr/local/bin/python3 Python 3.12.15
+/workspace/evidence/termination/run_build_A.py:1657: RuntimeWarning: s11_at_plane is unavailable (valid = False): the extraction plane is node column 51 (x = 0.0204 m), strictly beyond the load's column 50 (x = 0.02 m).  One column past the load the element is behind the probe, so the two travelling waves are the transmitted wave and what the far end returns -- neither is the element's reflection, and b_cut/a_cut there is not a reflection coefficient, so gamma_plane is left nan.  The S21 measured on this plane, and every s11 quantity referred to the port, are unaffected.
+  res = studies.microstrip_wave(**loaded_kwargs,
+wrote /workspace/evidence/termination/build_A_n_default_p51.json
+label=A cells=289168 wall=80.0s peak_rss=309.6MB |s21|=0.761705423 arg=5.7752deg |s11|=3.258633e-01 (one-wave_station_fit |s11|=3.261349e-01) cut_plane=51
+# exit_code: 0
+# wall_seconds: 80
+# finished_utc: 2026-11-08T14:05:45Z
