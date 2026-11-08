@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import cmath
 import dataclasses
+import math
 import time
 from pathlib import Path
 
@@ -1584,12 +1585,12 @@ def test_s21_plane_may_sit_downstream_of_the_cut_never_upstream():
     The refusal is exercised on the cheap strip grid (``_cheap_strip_kwargs``)
     with the load at 2.6 mm, which quantises to node column 6 -- both numbers
     appear in the message, so a caller can see which side of the element the
-    index landed on.  The *downstream* half cannot be completed on this grid: an
-    eight-step record carries no wave, so the run stops for want of a
-    station-impedance fit.  That is the assertion -- the downstream index got
-    past the plane guard and stopped at the fit, while the upstream ones stopped
-    at the plane -- because a completed solve here would be a second of work for
-    a claim that is not about the march.
+    index landed on.  Downstream is not a refusal: the run returns a record that
+    says the plane's reflection is unavailable -- a flag, a reason, a ``nan``
+    magnitude and a warning naming both node columns -- because one column past
+    the load the element is behind the probe, so the ratio there is the
+    transmitted wave and what the far end sends back rather than a reflection
+    coefficient.  Not a number, and not an exception.
     """
     kwargs = _cheap_strip_kwargs(loads=(Load(2.6e-3, "series_r", 50.0),))
 
@@ -1601,29 +1602,38 @@ def test_s21_plane_may_sit_downstream_of_the_cut_never_upstream():
         assert f"node column {upstream}" in message, message
         assert "node column 6" in message, message
 
-    # The cut itself, by name and by its own index, is still accepted: neither
-    # stops at the plane guard.
+    # The cut itself, by name and by its own index, is accepted: neither stops
+    # at the plane guard.  The name and the index are the same plane, so both
+    # records report the same node column -- the cut the load quantised to.
     for at_the_cut in ("cut", 6):
-        with pytest.raises(ValueError) as excinfo:
-            studies.microstrip_wave(s21_plane=at_the_cut, **kwargs)
-        assert "UPSTREAM" not in str(excinfo.value)
+        at_cut = studies.microstrip_wave(s21_plane=at_the_cut, **kwargs)
+        assert at_cut.s21_plane_index == 6, at_cut.s21_plane_index
 
-    # Downstream: past the guard, and stopped by the record rather than by a plane.
+    # Downstream: past the guard, and the record says so rather than raising.
+    # The plane sits behind the load's column, where ``b_cut / a_cut`` is the
+    # transmitted wave and what the far end returns, so ``gamma_plane`` is left
+    # ``nan`` and the flag beside it says why -- while the S21 measured on that
+    # plane and every port-referred s11 quantity are untouched by the refusal.
     for downstream in (7, 12):
-        with pytest.raises(ValueError) as excinfo:
-            studies.microstrip_wave(s21_plane=downstream, **kwargs)
-        message = str(excinfo.value)
-        assert "UPSTREAM" not in message, message
-        assert "node column" not in message, message
-        assert "station-impedance fit" in message, message
+        with pytest.warns(RuntimeWarning) as warned:
+            past_load = studies.microstrip_wave(s21_plane=downstream, **kwargs)
+        assert past_load.geometry["s11_at_plane_valid"] is False
+        assert (past_load.geometry["s11_at_plane_invalid_reason"]
+                == "plane_beyond_load")
+        assert math.isnan(complex(past_load.gamma_plane).real)
+        message = str(warned[0].message)
+        assert "s11_at_plane is unavailable" in message, message
+        assert f"node column {downstream}" in message, message
+        assert "the load's column 6" in message, message
+        assert "gamma_plane is left nan" in message, message
 
     # A name other than "cut" is still refused, downstream relaxation or not.
     with pytest.raises(ValueError, match="the only name it takes"):
         studies.microstrip_wave(s21_plane="end", **kwargs)
 
 
-def test_gamma_port_and_gamma_plane_are_different_quantities():
-    """``gamma_port`` and ``gamma_plane`` are two numbers, not one renamed.
+def test_gamma_port_and_gamma_plane_are_two_views_of_one_reflection():
+    """``gamma_port`` and ``gamma_plane`` are two routes to one reflection.
 
     An artefact that quotes a reflection as ``s11`` and also records the
     extraction plane's own reflection has to keep the two apart: the port value
@@ -1650,7 +1660,11 @@ def test_gamma_port_and_gamma_plane_are_different_quantities():
     assert not np.isfinite(complex(span.gamma_plane).real)
     assert np.isfinite(complex(span.gamma_port).real)
     assert np.isfinite(complex(span.gamma_port).imag)
-    assert abs(span.gamma_port) == pytest.approx(0.118088, rel=1e-4)
+    # 0.152092 replaces the 0.118088 this line carried until now.  That earlier
+    # figure was a snapshot taken at 0545834 and flagged UNVALIDATED in place: a
+    # regression pin -- it says "this number has not moved", not "this number is
+    # right".  Re-measured at HEAD; the window is the drift guard either way.
+    assert abs(span.gamma_port) == pytest.approx(0.1520918610341127, rel=1e-4)
 
     at_cut = studies.microstrip_wave(s21_plane="cut", **kwargs)
     assert at_cut.s21_plane_index == 5
@@ -1658,9 +1672,25 @@ def test_gamma_port_and_gamma_plane_are_different_quantities():
     # The port value is the same number on both records: naming a plane moves
     # where the transmission is measured, not where the reflection is quoted.
     assert at_cut.gamma_port == pytest.approx(span.gamma_port)
-    assert abs(at_cut.gamma_plane) == pytest.approx(0.154492, rel=1e-4)
-    # Two quantities, a third of a magnitude apart -- not rounding.
-    assert abs(abs(at_cut.gamma_port) - abs(at_cut.gamma_plane)) > 1e-2
+    # 0.151067 replaces the 0.154492 pinned before the ruling; same provenance
+    # as the port pin above -- a re-measured regression pin, not a validation.
+    assert abs(at_cut.gamma_plane) == pytest.approx(0.15106718635959604, rel=1e-4)
+    # Two independent routes to the same reflection on two nearby planes, so
+    # they have to agree: ``gamma_port`` is the port's view of it and
+    # ``gamma_plane`` the element's, a fraction of a millimetre away.  The
+    # assertion here used to demand they differ by more than 1e-2 on the
+    # strength of a "third of a magnitude apart" reading; that reading is
+    # withdrawn, because the gap was a symptom of the port-current bug and not
+    # physics.  What is left is agreement, and the failure message prints both
+    # numbers and how far apart they are.
+    port_mag = abs(at_cut.gamma_port)
+    plane_mag = abs(at_cut.gamma_plane)
+    gap = abs(port_mag - plane_mag)
+    assert plane_mag == pytest.approx(port_mag, rel=0.05), (
+        f"|gamma_port| = {port_mag:.9f} and |gamma_plane| = {plane_mag:.9f} "
+        f"disagree by {gap:.3e} ({100.0 * gap / port_mag:.2f} per cent), more "
+        "than the 5 per cent two planes a fraction of a millimetre apart may "
+        "differ by: these are the same reflection, measured twice")
 
 
 

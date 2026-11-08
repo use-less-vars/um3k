@@ -20,14 +20,18 @@ Exit codes, because scripts want to tell the cases apart:
   stderr so the failure is reproducible.
 
 ``--json`` prints exactly one JSON object (``study``, ``values``, ``metrics``,
-``figures``, ``attachments``) and nothing else on stdout, so it can be piped
-straight into ``json.load``.  ``figures`` holds the still PNG images and
-``attachments`` everything a run wrote beside them -- the ``rcs`` study's GIF
-animation -- because a file is a figure only when it is a ``.png``;
+``figures``, ``attachments``, ``geometry``) and nothing else on stdout, so it
+can be piped straight into ``json.load``.  ``figures`` holds the still PNG
+images and ``attachments`` everything a run wrote beside them -- the ``rcs``
+study's GIF animation -- because a file is a figure only when it is a ``.png``;
 :meth:`emfit.studies.FigureSink.save_to` returns both in one flat list, so the
 splitting happens here.  Files are only written when ``--out`` is given: a run
 with no ``--out`` still renders them (the studies always do) but leaves your
 disk alone.
+
+``geometry`` is the mesh the run was built on, when the study publishes one
+(the microstrip studies do): ``{}`` when it does not, never absent, so a script
+can read it without asking which study it ran.
 
 A record deeper than :data:`SLOW_STEPS` steps prints one line on stderr saying
 what runs like it have cost, before the study starts.  It is a warning and not
@@ -50,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import traceback
 
@@ -114,6 +119,55 @@ def _table(rows, header=None, indent: str = "  ") -> str:
     lines = [f"{indent}{str(header[0]):<{width}}  {header[1]}"] if header else []
     lines += [f"{indent}{str(left):<{width}}  {right}" for left, right in rows]
     return "\n".join(lines)
+
+
+def _json_safe(value):
+    """One value as something :func:`json.dumps` writes without a fuss.
+
+    A study's geometry is numbers, flags, names and the odd list of columns, but
+    a number can be a numpy scalar (which the encoder does not recognise as a
+    number at all) and a float can be inf or nan (which JSON has no value for).
+    So numpy is turned back into Python, a non-finite float becomes ``None`` --
+    the ``null`` a nan leaves through every other field of the record -- and a
+    container is walked.
+    """
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    for accessor in ("tolist", "item"):      # numpy array, numpy scalar
+        convert = getattr(value, accessor, None)
+        if callable(convert):
+            try:
+                return _json_safe(convert())
+            except (TypeError, ValueError):
+                continue
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, int):
+        return value
+    return str(value)
+
+
+def _geometry_json(geometry):
+    """The mesh a run was built on, as the JSON field ``geometry``.
+
+    ``None`` -- the sink carries no geometry, or the study has none to publish --
+    becomes ``{}`` rather than the key being left out: a script reading
+    ``record["geometry"]["cell"]`` should get a KeyError about the mesh, not a
+    missing top-level field, and the key is then the same shape on every run.
+    The plane guard's verdict is pinned to a real ``bool`` with its reason beside
+    it defaulted to ``None``, so a named plane and no plane give one shape.
+    """
+    if not geometry:
+        return {}
+    safe = _json_safe(dict(geometry))
+    if "s11_at_plane_valid" in safe:
+        safe["s11_at_plane_valid"] = bool(safe["s11_at_plane_valid"])
+        safe.setdefault("s11_at_plane_invalid_reason", None)
+    return safe
 
 
 def _split_written(paths):
@@ -197,7 +251,11 @@ def _cmd_run(args) -> int:
     if args.json:
         print(json.dumps({"study": study.name, "values": values,
                           "metrics": metrics,
-                          "figures": figures, "attachments": attachments}))
+                          "figures": figures, "attachments": attachments,
+                          # Last, so the five keys that were here keep their
+                          # order in a diff of two records.
+                          "geometry": _geometry_json(
+                              getattr(sink, "geometry", None))}))
         return 0
 
     print(f"{study.name}: {study.title}")

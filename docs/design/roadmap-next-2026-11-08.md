@@ -272,10 +272,9 @@ since it pins the contract the ladder reports through, not the solver.
 ### The real risk
 
 Two implementations drifting. Same class of bug as plane-past-the-load: everything runs, every
-number looks like a number, and one is wrong because a boundary or an indexing convention
-differs by one column. In Python there is one code path and drift is impossible. With two there
-must be a differential test that runs on every change, not a one-off comparison at porting
-time.
+number looks like a number, and one is wrong because a boundary or an indexing convention differs by
+one column. In Python there is one code path and drift is impossible. With two there must be a
+differential test that runs on every change, not a one-off comparison at porting time.
 
 ### Verdict
 
@@ -316,3 +315,204 @@ very long.
 
 Ultra Maxwell 3000 earned the name tonight: the field collapsed in the right place, the number
 held, and for once the code said so instead of inventing a fit.
+---
+
+The three sections below were written after §1-§3 and are appended rather than folded in, because
+they argue about a different layer. §1-§3 ask what the solver hands to other tools; these ask what
+the solver has to be before those answers are worth anything. None of them is implemented, none of
+them revises a number, and none of them re-opens a decision already made in
+`docs/design/cpp_solver_arch.md`.
+
+## 4. A native solver core, not just a port
+
+### What it is
+
+§3 argues for moving the update loop behind a flat-array boundary and leaving `emfit/` as the thing
+you talk to. This section is the question underneath it: once the arithmetic is not Python, what is
+it, and what is it allowed to assume?
+
+There is a real difference between a *port* and a *core*. A port is the loop in `emfit/evolve.py`
+transcribed, wrong in the same places it is wrong now, agreeing with the Python only because nobody
+has touched either. A core is a solver with a stated contract, its own tests, and a Python fallback
+that keeps `import emfit` working on a machine with no compiler. Only the second is worth building,
+and the first is what a porting effort produces if nobody says otherwise.
+
+### The language question is not the first question
+
+C++ or Rust is what the argument opens with and what it changes least. What decides whether a kernel
+can be swapped in at all is the ABI and the array layout; what decides whether it can be maintained
+is the toolchain story; what decides whether anyone believes it is the reference implementation
+still being in the tree. Language is the pleasant part. Fix the other three first and the language
+choice becomes reversible, which is the only property that matters for a decision of this size.
+
+### The boundary, written as a contract
+
+- One contiguous C-order array per field component, `float64` and `complex128`, adopted at `init`
+  and not reallocated. No strides, no per-cell objects, no callbacks.
+- The four entry points named in §3 (`kernel_init`, `kernel_step`, `kernel_probe_dft`,
+  `kernel_fields`) as `extern "C"` symbols, with a version integer passed at `init` so a stale
+  binding fails loudly instead of reading garbage.
+- No exception crosses the boundary. Error codes plus a message buffer, because a C++ exception
+  unwinding into a Python frame is undefined behaviour and a Rust panic doing the same is worse.
+- The kernel does not own threads. It is told how many it may use, on every call, and spawns
+  nothing the caller cannot join.
+- The kernel can advance one step at a time, because the DFT accumulators, the ladder sweep and the
+  viewer all need to interleave with it. A monolithic `solve()` would be faster and unusable.
+- Geometry validation stays on the Python side but the kernel re-checks its own preconditions. A
+  kernel that trusts its caller is a kernel that reads out of bounds once, quietly.
+
+### Proving it is the same solver
+
+The oracle is already in the tree: the records under `evidence/termination/` and the ladder payloads
+from `tools/host_ladder.py --json`, compared bin-by-bin on DFT spectra and number-by-number on the
+`meta` block at a tolerance derived from the discretisation and stated in the test. §3 says this;
+the part worth adding is that **the reference must be the Python fallback, not the C++ kernel**. If
+the fallback is deleted once the kernel works, the harness has nothing to compare against and the
+port has bought a faster number with no way to tell whether it is the same number.
+
+### The real risk
+
+Two implementations drifting. The tree has a specimen already. The field snapshot writes `ny` into
+its npz as 212 *cells* while axis 1 of the stored plane is 213 *y-nodes*, and the mesh is 84.8 mm
+across while the record's own `y_extent` is a 40.0 mm *half*-width naming an 80.0 mm span inside
+it. No arithmetic in that chain is wrong — two frames share the name `y` — and in a single
+implementation it is a comment away from being fine. In two implementations, one of them will index
+with the other's count, and the disagreement will be one
+column wide, pass every plausibility check, and be found years later.
+
+### Cost
+
+Weeks for a kernel plus binding. The differential harness is the deliverable, not the kernel, and it
+is not small: it has to run the fallback on every change, grade against stored artefacts at a
+tolerance it can justify, and refuse to grade when the artefact set has drifted from the code.
+
+**What would have to be true first:** the export and the manifest from §1 must exist, because the
+manifest is what tells a stranger which artefact a fast kernel is being compared to and which frame
+it is in.
+
+## 5. Subgridding, as a KiCad board problem
+
+### What it is
+
+Paying 0.4 mm everywhere. That is what this tree does now: `nx, ny, nz = 62, 212, 22` at
+`cell_m = 0.0004`, which is 289168 cells and 2400 steps to resolve a board whose copper is 8 cells
+wide and whose interesting gap is thinner than one. Subgridding is refining where the physics is
+fast — the strip edge, the load, the feed — and coarsening where it is not, instead of buying the
+whole domain at the price of the worst feature in it. That is a mesh question. It is also, and more
+awkwardly, a board-ingestion question.
+
+### The board half is the hard half
+
+A KiCad board arrives as layers, pads and copper polygons in millimetres. A Yee cell wants one
+material per edge. Between those two statements sit three decisions nobody has made here yet:
+
+- **What a 35 µm foil is inside a 0.4 mm cell.** Nine percent of a cell is not a volume, it is a
+  surface. Whether the copper becomes a volume fraction, a surface impedance or a thin-sheet
+  boundary condition changes the answer, and the file format does not choose for you.
+- **What happens to a feature that is half a cell.** It gets snapped (which moves the physics to
+  where the grid is) or smeared (which averages the physics to something neither). Both are
+  legitimate. Neither is currently written down anywhere, so neither can be argued about.
+- **What the load is.** The record says `column 50`, `series_r`, `value 50.0`, `x 0.02` — a lumped
+  element stamped into columns. On a refined mesh the stamp has a size, and the size is part of the
+  model.
+
+### Two frames named `y`
+
+The specimen from §4 is small and belongs here too. The mesh is 84.8 mm across (212 cells at 0.4 mm,
+213 nodes) while the same record's `y_extent` is a 40.0 mm *half*-width — an 80.0 mm coupon span
+inside that 84.8 mm mesh, the 4.8 mm remainder being six PML cells a side — and the copper strip is
+8 cells, 3.2 mm. Mesh, coupon, half-width and strip are all millimetres and all `y` quantities.
+Subgridding turns two frames into four: coarse, fine, the interface between them, and the board's
+own coordinates. Before any of that, one frame — named once, carried in every artefact, with the
+node-versus-cell count written next to it — is worth more than a shared refinement level.
+
+### The interface is where naive subgridding dies
+
+Interpolating fields across a coarse/fine boundary does not conserve what the update conserves,
+because the coarse side and the fine side do not agree about which quantity is per-cell and which is
+per-face. Get it wrong and the interface becomes a slow leak or a slow source: every number stays
+plausible, energy drifts, and the drift grows with run length. Whatever scheme is chosen has to
+state which quantity is conserved across the interface and test that conservation per step, not per
+run.
+
+### What could make it a dead end
+
+If the existing ladder already shows the graded numbers moving less than the board's own tolerance
+between the cell sizes in reach, refinement buys nothing that matters and the honest answer is a
+bigger box, not a cleverer mesh. The strip-width arm set exists (`W08`, `W12`, `W16`, `W20` plus the
+`W08n` box-lever arm, five files) and can answer that cheaply. It should be asked before anything is
+refined.
+
+**What would have to be true first:** one named frame per artefact, a written material-map contract
+for copper thinner than a cell, and the differential harness from §4 — because refinement changes
+answers slowly, and a one-percent tilt from a bad interface is indistinguishable from a mesh
+artefact without a test that already holds the uniform-grid answer.
+
+### Cost
+
+Months, and most of the months are the ingestion side: geometry in, material map out, degenerate
+cells refused rather than silently averaged. Not a first move, and not a second one either.
+
+## 6. Volume Parts and SPICE co-simulation
+
+### What it is
+
+A Volume Part is a region of a board solved in 3D and handed to a circuit simulator as a block, with
+ports on named reference planes, while the rest of the design — sources, terminations, lumped
+elements, the rest of the netlist — stays in whatever SPICE the designer already uses. §2 argues the
+SPICE-facing direction. What §2 does not settle is where the boundary goes, and that is the whole
+difficulty: the partition is a physics decision wearing a file-format costume.
+
+### What makes a block safe to insert into a circuit
+
+- **Passivity.** `|S11| + |S21| = 1.082` was measured on this geometry. Above one means either the
+  extraction is wrong or the block is active. A block that is not passive makes a stable transient
+  integrator either blow up or ring quietly, and the second failure is the expensive one. There is
+  exactly one passivity assertion in this tree and it aborts a run that names a plane; it is
+  deliberately left un-gated, which means a record that is not passive can still be banked. That is
+  the right call for now and the wrong state to ship a co-simulation on.
+- **Causality.** A non-causal block delivers energy before it arrives. It is easy to produce from a
+  frequency-domain extraction with too few points and invisible in the frequency domain.
+- **Reference planes.** The de-embedded port S11 is 0.325863, the plane at the load reads 0.318356,
+  and one column past the load the field collapses to 0.043908. Three numbers, one geometry: a block
+  has to say which plane its ports are on, in the file, or the netlist author will pick one.
+- **Provenance.** A geometry block in the result file, so the block's frame and cell size are not
+  reconstructed from prose.
+
+### The cut is not neutral
+
+The plane sweep above is the argument. Cutting a loaded line means cutting where a standing wave has
+a load's worth of structure in it, and a block whose edge is not transparent makes the answer a
+function of where the cut was placed. Once that is true, the Volume Part is a tuning knob with a
+plausible name, and every downstream result inherits the setting.
+
+**What would have to be true first:** a Touchstone writer, the plane gate in every record, and
+passivity as a gate that can fail a run rather than an assertion that aborts one. Two of the three
+are closer than they were — `s21_plane` is a registered parameter now and `emfit run --json` emits a
+`geometry` block, so a result file can finally carry the frame it was computed in. Passivity is the
+open one.
+
+### Cost
+
+The writer is days. Turning passivity into a gate is days plus an argument about what to do with the
+records already on disk that would fail it. The months are in partitioning: deciding per geometry
+which region is 3D and which is a netlist, then showing the answer does not depend on that choice.
+
+## Not on this roadmap
+
+Recorded so that a later reader does not infer it from silence.
+
+- **No distributed solve.** Nothing here is MPI or multi-node. Every number in the tree came from
+  one process on one host, and the ladder is a resolution ladder, not a scaling study.
+- **No GPU port.** Not before the CPU kernel exists and the differential harness can grade it.
+  Writing a CUDA or WGPU backend first would remove the only reference the port has.
+- **No automatic KiCad ingestion.** §5 names it as a precondition. A file-format reader that has
+  never been run against a real board is a demo, not a component.
+- **No speedup numbers.** Not one, not even as a target. This document already retracts the 0.245
+  and the two-wave fit with `alpha = 11.255 Np/m` imposed that produced it; a speedup figure quoted
+  in a design document has the same evidentiary status as that fit until the harness measures one.
+- **No reordering of §1-§3.** Export, then the manifest, then the kernel. The sections above do not
+  change that order; they extend what the later stages have to satisfy.
+- **No item that depends on trusting a number the tree cannot yet produce.** That is a wish with a
+  heading, and this file already has a closing section listing the debts that make such trusting
+  premature.

@@ -203,6 +203,11 @@ class FigureSink:
     def __init__(self) -> None:
         self._figures: list[dict] = []
         self._attachments: list[dict] = []
+        # The mesh the study actually built, when it has one to publish.  It is
+        # not a figure and not a metric line, so it rides here beside them and
+        # starts empty: a caller can read ``sink.geometry`` on any study and
+        # never has to ask whether this one filled it.
+        self.geometry: dict = {}
 
     # -- filling ------------------------------------------------------------
     def add(self, slug: str, title: str, png: bytes, caption: str = "") -> None:
@@ -4338,6 +4343,26 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
             value *= 1e-12
         loads = (Load(float(values.get("load_at_mm", 15.2)) * 1e-3,
                       load_kind, value),)
+    # The extraction plane, which only a loaded line has: the knob travels as a
+    # string because it has to spell both answers -- the name ``cut`` and a node
+    # column.  Blank is ``None``, the station span every earlier record quoted,
+    # so a run that says nothing about this is the run it always was.  A number
+    # is handed on as a number and the plane guard underneath decides whether it
+    # is at or past the cut; anything else is refused here, where the name that
+    # was typed is still in hand for the message.
+    plane = str(values.get("s21_plane", "") or "").strip()
+    if not plane:
+        s21_plane = None
+    elif plane == "cut":
+        s21_plane = "cut"
+    else:
+        try:
+            s21_plane = int(plane)
+        except ValueError:
+            raise ValueError(
+                f"s21_plane={plane!r}: expected \"cut\", a node column "
+                "number at or past the load's cut, or blank for the station "
+                "span.") from None
     # The board this run will actually mesh.  ``w`` on its own does not move the
     # strip -- the strip is ``n_strip`` cells wide -- so the width handed to the
     # closed form below is the width the mesh contains, not a separate wish.
@@ -4395,8 +4420,13 @@ def _run_microstrip(values: Mapping[str, Any], sink: FigureSink) -> dict:
         audit=True,
         loads=loads,
         reference=reference,
+        # Only the record the run reports on carries the plane: the twin above
+        # is load-free and has no cut to name one against.
+        s21_plane=s21_plane,
         sink=sink)
     g = result.geometry
+    if sink is not None:
+        sink.geometry = dict(g)
     gain = abs(result.i_ground_full) / max(abs(result.i_ground_truncated), 1e-300)
     # A record whose station fit was refused still has a report to write, and
     # every row below reads its numbers off ``sf``: a blank fit says ``n/a`` on
@@ -5618,6 +5648,18 @@ MICROSTRIP = Study(
               help="In ohm for series_r, in picofarad for shunt_c "
                    "(converted to farad internally). Ignored when "
                    "load_kind is none."),
+        # The extraction plane, on a loaded line only: blank is the station span
+        # every earlier record quoted, and the two ways of naming the cut are
+        # the load's own.  A string rather than an int because "cut" and a
+        # column are both valid answers and a CLI has to be able to say both.
+        Param("s21_plane", "S21 extraction plane", "str", "",
+              help="Where the transmission is measured on a loaded line. "
+                   "Blank keeps the station span, which is the default "
+                   "record; 'cut' is the plane the load's own column sits "
+                   "on; a node column number at or past that cut is that "
+                   "plane. A column upstream of the cut is refused -- before "
+                   "it the wave has not reached the element. Ignored on a "
+                   "load-free run, which has no cut to name."),
         Param("eps_r", "Substrate permittivity", "float", MS_EPS_R,
               lo=1.0, hi=16.0, unit="",
               help="Relative permittivity of the board. Used directly as "

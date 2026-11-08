@@ -31,11 +31,28 @@ are built the way they are:
       because a plane past the load reads a collapsed field and that has to be
       visible rather than inferred.
 
-STATUS: the web path (trame server, layout, slider callback) is UNTESTED. Only
-    the numpy / CLI path (--help, --list-keys) has been exercised. Treat any
-    browser-side behaviour as unverified. The two layers above were added in
-    the same environment: pyvista, trame and VTK are not installed here, so
-    they have never been rendered either.
+Two more layers were added after those, and the comments beside each say the
+same thing they said above: nothing between recorded samples is invented.
+
+    * two cut sliders pick ONE y sample and ONE z sample and draw the sheet
+      through them, one sample thick - a slice through the captured array, not a
+      resample of it. The S11 / load / S21 markers are then related to those
+      sheets in the corner legend: which marker lies ON a drawn cut, and which
+      is off both because its x is outside the captured slab (the load sits at
+      20.0 mm, the slab ends at 3.2 mm). No marker is moved or clipped to fit.
+    * a |S11| / |S21| vs frequency panel. The record beside the dump is a SINGLE
+      frequency, so a curve cannot come from it: the panel reads a separate
+      multi-frequency sweep artefact beside the dump, plots the recorded rows as
+      markers only (no line, nothing between the bins), and says in words when
+      no such sweep is on disk.
+
+STATUS: the web path (trame server, layout, slider callbacks, panel placement)
+    is UNTESTED. Only the numpy / CLI path (--help, --list-keys) has been
+    exercised. Treat any browser-side behaviour as unverified. All four layers
+    above were added in the same environment: pyvista, trame and VTK are not
+    installed here, so they have never been rendered either. The halves that do
+    not need those packages - the sweep loader and the matplotlib panel image -
+    were run against the real artefacts on disk.
 """
 
 from __future__ import annotations
@@ -53,6 +70,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_INPUT = "evidence/termination/build_A_50ohm_p51_ghostwave_fields.npz"
 PLANE_KEY = "plane_ez"
+# The |S11|/|S21| vs frequency sweep the panel reads, when a dump ships one.
+# The record written beside the dump carries ONE frequency (geometry.f_hz), so a
+# curve cannot come from it; this is a different artefact of the same study. It
+# is looked for beside the dump first, then at this repo-relative path.
+DEFAULT_MULTIFREQ = "evidence/termination/build_A_50ohm_multifreq_summary.json"
 DEFAULT_HOST = "127.0.0.1"
 # Deliberately 8080, NOT 8000: 8000 is reserved for the agent's own service on
 # the operator's machine.
@@ -182,6 +204,244 @@ def load_record(npz_path: Path):
     return record
 
 
+# --- the |S11| / |S21| vs frequency sweep ------------------------------------
+#
+# WHY a second file: the record beside the dump is a SINGLE-frequency run - it
+# stores one geometry.f_hz, one s11.magnitude, one s21.magnitude. A curve drawn
+# from it would be one point dressed up as a trend. The study that sweeps f
+# writes a summary JSON with one row per frequency instead, and that file is an
+# artefact of its own: it is looked for beside the dump first, then at
+# DEFAULT_MULTIFREQ. Both are optional in exactly the way load_record is -
+# every failure path is a stderr note plus None, never an exception.
+
+
+def _multifreq_candidates(npz_path: Path) -> list[Path]:
+    """Candidate multi-frequency summary paths for a dump, best first."""
+    candidates: list[Path] = []
+    try:
+        candidates.extend(sorted(npz_path.parent.glob("*multifreq*summary*.json")))
+    except Exception as exc:  # noqa: BLE001 - a bad parent dir is not fatal
+        print(f"[poc_app] sweep scan skipped: {exc}", file=sys.stderr)
+    fallback = _resolve(DEFAULT_MULTIFREQ)
+    if fallback not in candidates:
+        candidates.append(fallback)
+    return candidates
+
+
+def load_multifreq(npz_path: Path):
+    """Read the multi-frequency |S11| / |S21| sweep beside the dump.
+
+    Returns ``{"path", "points", "skipped", ...}`` or None; ``points`` are
+    ``(f_ghz, |S11|, |S21|, artefact)`` tuples, sorted by frequency and otherwise
+    as recorded. Nothing here interpolates, smooths or re-orders into a curve: a
+    row whose ``errors`` list is not empty, or which is missing a frequency or
+    either magnitude, is DROPPED and counted, because drawing it as zero would
+    invent a measurement.
+    """
+    candidates = _multifreq_candidates(npz_path)
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        print(
+            "[poc_app] no multi-frequency sweep beside the dump (tried "
+            + ", ".join(str(p) for p in candidates)
+            + "); the |S11|/|S21| panel will say so",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        with path.open(encoding="utf-8") as fh:
+            summary = json.load(fh)
+    except Exception as exc:  # noqa: BLE001 - optional input, never fatal
+        print(f"[poc_app] sweep {path} unreadable: {exc}", file=sys.stderr)
+        return None
+    if not isinstance(summary, dict):
+        print(
+            f"[poc_app] sweep {path} is not a JSON object; ignoring it",
+            file=sys.stderr,
+        )
+        return None
+    rows = summary.get("rows")
+    if not isinstance(rows, list):
+        print(
+            f"[poc_app] sweep {path} has no rows list; ignoring it",
+            file=sys.stderr,
+        )
+        return None
+
+    points = []
+    skipped: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            skipped.append("a row that is not an object")
+            continue
+        label = row.get("artefact") or "a row with no artefact name"
+        f_ghz = _as_float(row.get("f_ghz_used"))
+        if f_ghz is None:
+            f_hz = _as_float(row.get("f_hz_used"))
+            f_ghz = None if f_hz is None else f_hz / 1e9
+        s11 = _as_float(row.get("s11.magnitude"))
+        s21 = _as_float(row.get("s21.magnitude"))
+        if f_ghz is None or s11 is None or s21 is None:
+            skipped.append(f"{label} (no frequency or no magnitude)")
+            continue
+        errors = row.get("errors") or []
+        if errors:
+            skipped.append(f"{label} (errors: {errors})")
+            continue
+        points.append((f_ghz, s11, s21, str(label)))
+
+    if not points:
+        print(
+            f"[poc_app] sweep {path}: no usable rows "
+            f"({len(skipped)} skipped)",
+            file=sys.stderr,
+        )
+        return None
+    points.sort(key=lambda point: point[0])
+    # Provenance in the log too, not only in the panel: whoever reads this has to
+    # be able to tell which file the plotted rows came from.
+    print(
+        f"[poc_app] multi-frequency sweep: {path} "
+        f"({len(points)} rows kept, {len(skipped)} skipped)"
+    )
+    for note in skipped:
+        print(f"[poc_app]   skipped {note}", file=sys.stderr)
+    return {
+        "path": path,
+        "points": points,
+        "skipped": skipped,
+        "dossier": summary.get("dossier"),
+        "generated_utc": summary.get("generated_utc"),
+        "bin_spacing_mhz": _as_float(summary.get("bin_spacing_mhz")),
+    }
+
+
+def _own_frequency_ghz(record):
+    """The dump's own recorded frequency in GHz, or None.
+
+    Reported next to the sweep so the two are never confused: the dump is one
+    run at one frequency, the sweep is a different set of runs.
+    """
+    if not isinstance(record, dict):
+        return None
+    geom = record.get("geometry")
+    if not isinstance(geom, dict):
+        return None
+    f_hz = _as_float(geom.get("f_hz"))
+    if f_hz is None:
+        f_hz = _as_float(geom.get("f"))
+    return None if f_hz is None else f_hz / 1e9
+
+
+def _frequency_rows(mf: dict) -> list[str]:
+    """The recorded rows as plain text: the fallback when no chart is drawn."""
+    rows = [f"{'f [GHz]':>9}  {'|S11|':>7}  {'|S21|':>7}  artefact"]
+    for f_ghz, s11, s21, artefact in mf["points"]:
+        rows.append(f"{f_ghz:9.4f}  {s11:7.4f}  {s21:7.4f}  {artefact}")
+    return rows
+
+
+def _frequency_caption(mf: dict, record) -> str:
+    """One line naming the source file, the row count, and what was NOT done."""
+    caption = (
+        f"{len(mf['points'])} recorded frequencies from {mf['path'].name} - "
+        "markers only, no line and no interpolation: nothing was solved "
+        "between these bins"
+    )
+    if mf.get("bin_spacing_mhz"):
+        caption += f" (bin spacing {mf['bin_spacing_mhz']:.1f} MHz)"
+    own_f = _own_frequency_ghz(record)
+    if own_f is not None:
+        caption += (
+            f"; the dump beside this panel is a single-frequency run at "
+            f"{own_f:.4f} GHz (record.geometry.f_hz) and its own numbers are "
+            "not among these rows"
+        )
+    return caption
+
+
+def build_frequency_chart(mf: dict) -> dict:
+    """Render |S11| and |S21| vs frequency to a PNG data URI.
+
+    Returns ``{"image": data_uri | None, "rows": [...], "reason": str | None}``.
+    matplotlib is a project dependency, but it is imported HERE, lazily and
+    guarded: the numpy-only paths (--help, --list-keys) must never need it, and
+    a missing or broken matplotlib has to cost the picture, not the page - the
+    caller falls back to the text rows.
+
+    Markers only, no connecting line: a line between two recorded bins is a
+    claim about the frequencies between them, and no run covers those.
+    """
+    rows = _frequency_rows(mf)
+    try:
+        import base64
+        import io
+
+        import matplotlib
+
+        try:
+            matplotlib.use("Agg")
+        except Exception:  # noqa: BLE001 - an existing backend is acceptable
+            pass
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001 - text rows instead of a picture
+        print(f"[poc_app] no chart (matplotlib unusable: {exc})", file=sys.stderr)
+        return {
+            "image": None,
+            "rows": rows,
+            "reason": f"matplotlib unusable: {exc}",
+        }
+
+    freqs = [point[0] for point in mf["points"]]
+    s11s = [point[1] for point in mf["points"]]
+    s21s = [point[2] for point in mf["points"]]
+    try:
+        fig, ax = plt.subplots(figsize=(5.4, 1.9), dpi=110)
+        ax.plot(
+            freqs,
+            s11s,
+            "o",
+            color="#1f77b4",
+            markersize=5,
+            linestyle="none",
+            label="|S11|",
+        )
+        ax.plot(
+            freqs,
+            s21s,
+            "s",
+            color="#d62728",
+            markersize=5,
+            linestyle="none",
+            label="|S21|",
+        )
+        ax.set_xlabel("frequency [GHz]", fontsize=7)
+        ax.set_ylabel("magnitude", fontsize=7)
+        ax.tick_params(labelsize=6)
+        ax.grid(True, color="#dddddd", linewidth=0.5)
+        ax.legend(fontsize=6, frameon=False, loc="best")
+        ax.set_title(
+            "Build A, 50 ohm load: |S11| and |S21| per recorded frequency",
+            fontsize=7,
+        )
+        fig.tight_layout()
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format="png", bbox_inches="tight")
+        plt.close(fig)
+        png = buffer.getvalue()
+    except Exception as exc:  # noqa: BLE001 - never take the server down
+        print(f"[poc_app] chart render skipped: {exc}", file=sys.stderr)
+        return {
+            "image": None,
+            "rows": rows,
+            "reason": f"chart render failed: {exc}",
+        }
+
+    uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    print(f"[poc_app] frequency chart: {len(png)} PNG bytes, {len(uri)} URI chars")
+    return {"image": uri, "rows": rows, "reason": None, "png_bytes": len(png)}
+
+
 def _plane_layout(info: dict, record) -> dict:
     """Resolve the x of the load, S11 port and S21 planes, in mm.
 
@@ -287,8 +547,14 @@ def _s21_label(planes: dict) -> str:
     return head + f"\nvalid ({planes['s21_valid_src']})"
 
 
-def _marker_text(planes: dict) -> str:
-    """Corner legend: what each marker is, where its x came from, and its state."""
+def _marker_text(planes: dict, extra_lines=None) -> str:
+    """Corner legend: what each marker is, where its x came from, and its state.
+
+    ``extra_lines`` carries the cut-sheet sentences from ``_marker_cut_lines``:
+    which marker lies ON a drawn cut and which is off every cut, with the reason.
+    They belong here, in the legend, because a marker that is drawn but not
+    explained is exactly what this layer must not do.
+    """
     lines = [
         f"S11 port  x = {planes['x_s11_mm']:9.4f} mm  [{planes['src_s11']}]",
         f"load      x = {planes['x_load_mm']:9.4f} mm  [{planes['src_load']}]",
@@ -309,11 +575,20 @@ def _marker_text(planes: dict) -> str:
         f"captured slab spans x = {planes['stations_mm'][0]:.4f} .. "
         f"{planes['stations_mm'][-1]:.4f} mm ({planes['n_st']} planes)"
     )
+    for extra in extra_lines or ():
+        lines.append(extra)
     return "\n".join(lines)
 
 
-def _view_label(view_mode: str, planes: dict, toggle_available: bool) -> str:
-    """Browser-side label naming the view that is currently drawn."""
+def _view_label(
+    view_mode: str, planes: dict, toggle_available: bool, cuts=None
+) -> str:
+    """Browser-side label naming the view that is currently drawn.
+
+    ``cuts`` is the dict from ``_cut_layout``: when it is given the label also
+    says which two samples the cut sheets sit on, because a one-sample-thick
+    sheet cannot be counted off a screen.
+    """
     if view_mode == "port":
         idx = planes["slice_index"]
         label = (
@@ -326,11 +601,186 @@ def _view_label(view_mode: str, planes: dict, toggle_available: bool) -> str:
             f"x = {planes['stations_mm'][0]:.4f} .. "
             f"{planes['stations_mm'][-1]:.4f} mm"
         )
+    if cuts is not None:
+        label += (
+            f"  cuts: y = {cuts['y_mm']:.4f} mm "
+            f"(j {cuts['j'] + 1}/{cuts['n_j']}), "
+            f"z = {cuts['z_mm']:.4f} mm (k {cuts['k'] + 1}/{cuts['n_k']})"
+        )
+        if view_mode == "port":
+            label += " - not drawn in this view"
     if not toggle_available:
         # Say why the other view cannot be reached: the widget is missing, not
         # the data. Without VBtn there is nothing to click.
         label += "  (no VBtn widget in this install: view toggle unavailable)"
     return label
+
+
+# --- the two Y / Z cut sheets ------------------------------------------------
+#
+# The volume view stacks 9 captured x-planes over a 213 x 22 (y, z) cross
+# section. Two sliders pick ONE y sample and ONE z sample and draw the sheet
+# through them, so the field can be read on a slice instead of through a volume.
+#
+# WHY one sample thick and not a resample: the dump holds exactly these samples,
+# so a cut through them is recorded data. A resampled cut would be a picture of a
+# number nobody computed - the same reason the module docstring refuses to
+# invent x between the 9 stations.
+#
+# The trap this layer has to avoid is a marker that LOOKS like it belongs to a
+# cut. The S11 / load / S21 markers sit at mid-height of the y-z section and at
+# x = 0.0, 20.0 and 20.4 mm, while the cut sheets span only the captured slab
+# (x = 0.0 .. 3.2 mm): the load and the S21 plane are off every sheet by
+# construction. Nothing is moved, clipped or projected to make them fit - each
+# marker's relation to the drawn cuts is stated in the corner legend instead,
+# because a marker drawn at the edge of a sheet would be a lie about where the
+# plane is.
+
+
+def _cut_layout(info: dict, j_cut=None, k_cut=None) -> dict:
+    """Resolve which y and z sample the cut sheets sit on. Numbers only.
+
+    Split out from build_cut_sheets so the labels, the legend and the slider
+    handlers can describe the cuts without importing pyvista.
+    """
+    plane = info[PLANE_KEY]
+    n_st, n_j, n_k = plane.shape
+    cell_mm = _cell_mm(info)
+    j = n_j // 2 if j_cut is None else j_cut
+    k = n_k // 2 if k_cut is None else k_cut
+    try:
+        j = max(0, min(n_j - 1, int(j)))
+    except (TypeError, ValueError):
+        j = n_j // 2
+    try:
+        k = max(0, min(n_k - 1, int(k)))
+    except (TypeError, ValueError):
+        k = n_k // 2
+    return {
+        "cell_mm": cell_mm,
+        "n_st": n_st,
+        "n_j": n_j,
+        "n_k": n_k,
+        "j": j,
+        "k": k,
+        "y_mm": j * cell_mm,
+        "z_mm": k * cell_mm,
+        "x_lo_mm": 0.0,
+        "x_hi_mm": (n_st - 1) * cell_mm,
+    }
+
+
+def _cut_text(layout: dict) -> str:
+    """The slider label: which sample, and where that sample is in mm."""
+    return (
+        f"cut y = {layout['j'] + 1}/{layout['n_j']} "
+        f"(y = {layout['y_mm']:.4f} mm)   "
+        f"cut z = {layout['k'] + 1}/{layout['n_k']} "
+        f"(z = {layout['z_mm']:.4f} mm)   one sample each, no interpolation"
+    )
+
+
+def build_cut_sheets(info: dict, layout: dict) -> list:
+    """Build the two cut sheets as one-sample-thick pyvista images.
+
+    The same construction as the port-plane view in _draw_scene (one sample
+    drawn one thick), so no new primitive is introduced:
+
+        y = j * cell : plane[:, j:j+1, :] -> dims (n_st, 1, n_k), origin y = j*cell
+        z = k * cell : plane[:, :, k:k+1] -> dims (n_st, n_j, 1), origin z = k*cell
+
+    Axis 0 is the station axis and stays the x axis of the sheet in both cases;
+    VTK wants x to vary fastest, hence the Fortran ravel, as in build_grid.
+    """
+    import pyvista as pv
+
+    plane = info[PLANE_KEY]
+    n_st, n_j, n_k = plane.shape
+    cell_mm = layout["cell_mm"]
+    j = int(layout["j"])
+    k = int(layout["k"])
+
+    y_sheet = pv.ImageData()
+    y_sheet.dimensions = (n_st, 1, n_k)
+    y_sheet.spacing = (cell_mm, cell_mm, cell_mm)
+    y_sheet.origin = (0.0, j * cell_mm, 0.0)
+    y_sheet.point_data["ez_abs"] = np.ascontiguousarray(
+        np.abs(plane[:, j : j + 1, :]).ravel(order="F"), dtype=float
+    )
+
+    z_sheet = pv.ImageData()
+    z_sheet.dimensions = (n_st, n_j, 1)
+    z_sheet.spacing = (cell_mm, cell_mm, cell_mm)
+    z_sheet.origin = (0.0, 0.0, k * cell_mm)
+    z_sheet.point_data["ez_abs"] = np.ascontiguousarray(
+        np.abs(plane[:, :, k : k + 1]).ravel(order="F"), dtype=float
+    )
+    return [("y", y_sheet), ("z", z_sheet)]
+
+
+def _marker_cut_relation(planes: dict, layout: dict) -> list[str]:
+    """State, per marker, whether it lies ON a drawn cut sheet or off them.
+
+    The three markers sit at mid-height of the y-z section, so their y and z are
+    fixed while the cuts move with the sliders. A marker counts as ON a sheet
+    only when its transverse coordinate is within half a cell of the cut AND its
+    x is inside that sheet's own x extent; anything else is off, and the reason
+    is spelled out. No marker is moved to make it fit.
+    """
+    cell_mm = layout["cell_mm"]
+    tol = 0.5 * cell_mm
+    y_mid = 0.5 * layout["n_j"] * cell_mm
+    z_mid = 0.5 * layout["n_k"] * cell_mm
+    x_lo, x_hi = layout["x_lo_mm"], layout["x_hi_mm"]
+
+    def in_slab(x_mm: float) -> bool:
+        return (x_lo - tol) <= x_mm <= (x_hi + tol)
+
+    lines = []
+    for name, x_mm in (
+        ("S11 port", planes["x_s11_mm"]),
+        ("load", planes["x_load_mm"]),
+        ("S21 plane", planes["x_s21_mm"]),
+    ):
+        on = []
+        if in_slab(x_mm) and abs(y_mid - layout["y_mm"]) <= tol:
+            on.append(f"the y cut (y = {layout['y_mm']:.4f} mm)")
+        if in_slab(x_mm) and abs(z_mid - layout["z_mm"]) <= tol:
+            on.append(f"the z cut (z = {layout['z_mm']:.4f} mm)")
+        if on:
+            lines.append(f"{name} marker is on " + " and ".join(on))
+            continue
+        why = []
+        if not in_slab(x_mm):
+            why.append(
+                f"its x = {x_mm:.4f} mm is outside the captured slab "
+                f"{x_lo:.4f}..{x_hi:.4f} mm, so no cut sheet reaches it"
+            )
+        if abs(y_mid - layout["y_mm"]) > tol:
+            why.append(
+                f"its y = {y_mid:.4f} mm is not the y cut "
+                f"({layout['y_mm']:.4f} mm)"
+            )
+        if abs(z_mid - layout["z_mm"]) > tol:
+            why.append(
+                f"its z = {z_mid:.4f} mm is not the z cut "
+                f"({layout['z_mm']:.4f} mm)"
+            )
+        lines.append(f"{name} marker is off both cuts: " + "; ".join(why))
+    return lines
+
+
+def _marker_cut_lines(
+    planes, layout, cuts_drawn: bool, view_mode: str
+) -> list[str]:
+    """The cut sentences appended to the corner legend by _marker_text."""
+    if not cuts_drawn:
+        if view_mode == "port":
+            return [
+                "cut sheets: not drawn in the port view (one station only)"
+            ]
+        return ["cut sheets: not drawn - pyvista refused the sheets (see log)"]
+    return _marker_cut_relation(planes, layout)
 
 
 def print_keys(info: dict) -> None:
@@ -494,7 +944,15 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
         print(f"[poc_app] marker labels not drawn: {exc}", file=sys.stderr)
 
 
-def _draw_scene(plotter, info: dict, planes: dict, view_mode: str, station: int) -> None:
+def _draw_scene(
+    plotter,
+    info: dict,
+    planes: dict,
+    view_mode: str,
+    station: int,
+    j_cut=None,
+    k_cut=None,
+) -> None:
     """Draw one view into the single existing plotter.
 
     WHY one plotter rebuilt rather than a second linked view: nothing in this
@@ -503,6 +961,13 @@ def _draw_scene(plotter, info: dict, planes: dict, view_mode: str, station: int)
     disagree with itself about the camera or the marker layer. Two linked
     render windows could disagree silently, which is the failure mode nobody
     can debug from the operator's side.
+
+    ``j_cut`` / ``k_cut`` choose the y and z sample of the two cut sheets, and
+    they are honoured in the volume view only: the port-plane view already IS a
+    single cross-section, so two more sheets there would only occlude it. The
+    corner legend always says which cuts are on screen and how each marker
+    stands relative to them, which is what stops a marker from being read as
+    something the sliders moved.
     """
     import pyvista as pv
 
@@ -510,6 +975,10 @@ def _draw_scene(plotter, info: dict, planes: dict, view_mode: str, station: int)
     cell_mm = planes["cell_mm"]
     # One build, used for both the volume view and the outline.
     grid = build_grid(info)
+    # Which y / z sample the cut sheets sit on, and whether they were actually
+    # drawn: the legend must not claim sheets that pyvista refused.
+    cut_layout = _cut_layout(info, j_cut, k_cut)
+    cuts_drawn = False
 
     try:
         plotter.clear()
@@ -543,6 +1012,22 @@ def _draw_scene(plotter, info: dict, planes: dict, view_mode: str, station: int)
             cmap="turbo",
             scalar_bar_args={"title": "|Ez| [V/m]"},
         )
+        # The two cut sheets: one sample each, drawn opaque enough to read the
+        # field on, sharing the volume's colour scale (so only one bar is
+        # shown). Guarded - losing the cuts must cost the cuts, not the view.
+        try:
+            for _axis, sheet in build_cut_sheets(info, cut_layout):
+                plotter.add_mesh(
+                    sheet,
+                    scalars="ez_abs",
+                    cmap="turbo",
+                    opacity=0.75,
+                    show_scalar_bar=False,
+                )
+        except Exception as exc:  # noqa: BLE001 - see comment above
+            print(f"[poc_app] cut sheets not drawn: {exc}", file=sys.stderr)
+        else:
+            cuts_drawn = True
 
     plotter.add_mesh(grid.outline(), color="black", line_width=1)
     plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")
@@ -555,7 +1040,9 @@ def _draw_scene(plotter, info: dict, planes: dict, view_mode: str, station: int)
         color="black",
     )
     plotter.add_text(
-        _marker_text(planes),
+        _marker_text(
+            planes, _marker_cut_lines(planes, cut_layout, cuts_drawn, view_mode)
+        ),
         name="marker_legend",
         position="lower_left",
         font_size=8,
@@ -747,6 +1234,8 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
 
     plane = info[PLANE_KEY]
     n_st = plane.shape[0]
+    n_j = plane.shape[1]
+    n_k = plane.shape[2]
     cell_mm = _cell_mm(info)
     plotter = create_plotter(info)
 
@@ -771,8 +1260,34 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
     # any probed widget is missing the layout falls back to a label-only bar, so
     # the label then says the toggle is unavailable rather than lying.
     toggle_available = (not missing_widgets) and ("VBtn" in widgets)
+    # Default cuts: the middle sample of each transverse axis, which is where
+    # the markers already sit, so the first frame is the picture the previous
+    # version drew. The sliders move these two numbers and nothing else.
+    cut_layout = _cut_layout(info, n_j // 2, n_k // 2)
+    state.cut_y = cut_layout["j"]
+    state.cut_z = cut_layout["k"]
+    state.cut_label = _cut_text(cut_layout)
     state.view_mode = "volume"
-    state.view_label = _view_label(state.view_mode, planes, toggle_available)
+    state.view_label = _view_label(
+        state.view_mode, planes, toggle_available, cut_layout
+    )
+
+    # The multi-frequency sweep, if one was written beside the dump. Optional
+    # at every step: no file, no matplotlib, an unusable row - the 3-D view
+    # still comes up, and the caption says what is missing rather than going
+    # quiet.
+    multifreq = load_multifreq(info["path"])
+    frequency_panel = (
+        None if multifreq is None else build_frequency_chart(multifreq)
+    )
+    if multifreq is None:
+        frequency_caption = (
+            "no multi-frequency |S11|/|S21| sweep on disk yet: looked for "
+            "*multifreq*summary*.json beside "
+            f"{info['path']} and at {DEFAULT_MULTIFREQ}"
+        )
+    else:
+        frequency_caption = _frequency_caption(multifreq, record)
     # The plotter_ui handle only exists once the layout has been built, so the
     # handlers below reach it through this dict instead of closing over it.
     handles: dict = {}
@@ -780,7 +1295,15 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
     def _redraw() -> None:
         """Rebuild the scene in the one plotter. Failure leaves the old picture."""
         try:
-            _draw_scene(plotter, info, planes, state.view_mode, int(state.station))
+            _draw_scene(
+                plotter,
+                info,
+                planes,
+                state.view_mode,
+                int(state.station),
+                int(state.cut_y),
+                int(state.cut_z),
+            )
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - never take the server down
             print(f"[poc_app] redraw skipped: {exc}", file=sys.stderr)
@@ -790,7 +1313,12 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
     @ctrl.set("toggle_view")
     def _on_toggle_view(**_kwargs) -> None:
         state.view_mode = "port" if state.view_mode == "volume" else "volume"
-        state.view_label = _view_label(state.view_mode, planes, toggle_available)
+        state.view_label = _view_label(
+            state.view_mode,
+            planes,
+            toggle_available,
+            _cut_layout(info, int(state.cut_y), int(state.cut_z)),
+        )
         _redraw()
         view_handle = handles.get("view")
         if view_handle is not None:
@@ -798,6 +1326,42 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
                 view_handle.update()
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+
+    def _on_cut_change(axis: str, value) -> None:
+        """Clamp one cut index, store it, and rebuild the scene."""
+        current = state.cut_y if axis == "y" else state.cut_z
+        limit = (n_j if axis == "y" else n_k) - 1
+        try:
+            idx = int(round(float(value)))
+        except (TypeError, ValueError):
+            idx = int(current)
+        idx = max(0, min(limit, idx))
+        if axis == "y":
+            state.cut_y = idx
+        else:
+            state.cut_z = idx
+        layout = _cut_layout(info, int(state.cut_y), int(state.cut_z))
+        state.cut_label = _cut_text(layout)
+        state.view_label = _view_label(
+            state.view_mode, planes, toggle_available, layout
+        )
+        _redraw()
+        view_handle = handles.get("view")
+        if view_handle is not None:
+            try:
+                view_handle.update()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+
+    @ctrl.set("cut_y")
+    def _on_cut_y(*args, **_kwargs) -> None:
+        value = args[0] if args else _kwargs.get("cut_y", state.cut_y)
+        _on_cut_change("y", value)
+
+    @ctrl.set("cut_z")
+    def _on_cut_z(*args, **_kwargs) -> None:
+        value = args[0] if args else _kwargs.get("cut_z", state.cut_z)
+        _on_cut_change("z", value)
 
     # First draw goes through the same function the toggle uses, so the marker
     # layer is on screen before the first click and both views share one camera
@@ -832,6 +1396,96 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
             plotter.render()
         except Exception as exc:
             print(f"[poc_app] station focus skipped: {exc}", file=sys.stderr)
+
+    # trame's html widgets carry the cut-slider row and the frequency panel.
+    # Probed exactly like the Vuetify classes: html widgets that will not import
+    # cost the extra row and the panel, never the 3-D view.
+    html_widgets = None
+    html_div = None
+    try:
+        from trame.widgets import html as html_widgets
+
+        html_div = getattr(html_widgets, "Div", None)
+    except Exception as exc:  # noqa: BLE001 - optional layer
+        print(
+            f"[poc_app] trame.widgets.html unavailable ({exc}): "
+            "no cut sliders and no frequency panel",
+            file=sys.stderr,
+        )
+
+    def _emit_cut_sliders() -> None:
+        """Emit the two cut sliders, or the label alone when they cannot be.
+
+        The rows say which sample is drawn and where it is in mm, because a
+        one-sample-thick sheet cannot be counted off the screen.
+        """
+        if missing_widgets:
+            if placeholder is not None:
+                placeholder("{{ cut_label }}")
+            elif html_div is not None:
+                html_div("{{ cut_label }}")
+            return
+        try:
+            widgets["VLabel"]("y cut")
+            widgets["VSlider"](
+                v_model=("cut_y", int(state.cut_y)),
+                min=0,
+                max=n_j - 1,
+                step=1,
+                thumb_label=True,
+                hide_details=True,
+                style="max-width: 200px; margin: 0 10px;",
+            )
+            widgets["VLabel"]("z cut")
+            widgets["VSlider"](
+                v_model=("cut_z", int(state.cut_z)),
+                min=0,
+                max=n_k - 1,
+                step=1,
+                thumb_label=True,
+                hide_details=True,
+                style="max-width: 160px; margin: 0 10px;",
+            )
+            widgets["VLabel"]("{{ cut_label }}")
+        except Exception as exc:  # noqa: BLE001 - label only, see above
+            print(f"[poc_app] cut sliders unavailable: {exc}", file=sys.stderr)
+            if placeholder is not None:
+                placeholder("{{ cut_label }}")
+
+    def _emit_frequency_panel() -> None:
+        """Emit the |S11| / |S21| panel under the 3-D view, caption first.
+
+        The caption always comes out, even when nothing could be plotted: a
+        blank strip would look like a zero, and the whole point of this layer is
+        that the sweep is a separate artefact from the dump beside it.
+        """
+        if html_div is None:
+            return
+        with html_div(
+            style="border-top: 1px solid #d0d0d0; padding: 2px 0 4px 0;"
+        ):
+            html_div(
+                frequency_caption,
+                style="font-size: 11px; color: #333; padding: 2px 12px;",
+            )
+            if frequency_panel is None:
+                return
+            image = frequency_panel.get("image")
+            img_cls = getattr(html_widgets, "Img", None)
+            if image and img_cls is not None:
+                img_cls(
+                    src=image,
+                    style=(
+                        "height: 170px; display: block; margin: 0 12px;"
+                    ),
+                )
+                return
+            pre_cls = getattr(html_widgets, "Pre", None)
+            if pre_cls is not None:
+                pre_cls(
+                    "\n".join(frequency_panel["rows"]),
+                    style="font-size: 11px; margin: 0 12px;",
+                )
 
     with SinglePageLayout(server) as layout:
         layout.title.set_text("Build A - |Ez| (9 captured x-planes)")
@@ -877,9 +1531,33 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
                         view = plotter_ui(plotter)
                 else:
                     view = plotter_ui(plotter)
-            else:
+            elif html_div is None:
+                # No html widgets: the plotter keeps the whole content area.
                 with container(fluid=True, classes="pa-0 fill-height"):
                     view = plotter_ui(plotter)
+            else:
+                # Fixed slider + panel rows around a flexed plotter, so the
+                # sliders are always reachable and the panel never floats over
+                # the 3-D view.
+                with container(fluid=True, classes="pa-0 fill-height"):
+                    with html_div(
+                        style=(
+                            "display: flex; flex-direction: column; "
+                            "height: 100%; width: 100%; overflow: hidden;"
+                        )
+                    ):
+                        with html_div(
+                            style=(
+                                "display: flex; flex-wrap: wrap; "
+                                "align-items: center; padding: 2px 12px;"
+                            )
+                        ):
+                            _emit_cut_sliders()
+                        with html_div(
+                            style="flex: 1 1 auto; min-height: 320px;"
+                        ):
+                            view = plotter_ui(plotter)
+                        _emit_frequency_panel()
 
     # Now that the plotter_ui handle exists, hand it to the toggle handler.
     handles["view"] = view
