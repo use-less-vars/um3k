@@ -43,6 +43,7 @@ def _row(h_mm, beta_fdtd=389.0):
     so a fake rung can stand in for a measured one without a solver.
     """
     beta_eig = beta_fdtd - 0.04
+    k0 = 209.7857
     return {
         "h_mm": float(h_mm),
         "cell_m": 1.0e-4,
@@ -58,7 +59,10 @@ def _row(h_mm, beta_fdtd=389.0):
         "nsteps": 100,
         "f_hz": 10.0096e9,
         "f_target_hz": 10.0096e9,
-        "k0": 209.7857,
+        "k0": k0,
+        # 88e7498 made meta() read r["sigma"] (tools/host_ladder.py:1324), so the
+        # fake owes that key; derived exactly as :1318-1319 derive it.
+        "sigma": k0 ** 2 * host_ladder.ER * host_ladder.SIGMA_MULT,
         "dt_s": 1.0e-15,
         "n_acc": 100000,
         "beta_fdtd": beta_fdtd,

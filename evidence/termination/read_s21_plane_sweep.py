@@ -10,8 +10,14 @@ Two reference numbers make the columns comparable to what was already
 recorded, and both are quoted, never recomputed here:
 
   * 0.245108            -- the two-wave fit's |Gamma| at alpha = 11.255 Np/m
-                          (docs/design/voltage_integration_and_reflection_
-                          2026-11-08.md:82,:90).  |s11| is compared to it.
+                          IMPOSED (docs/design/voltage_integration_and_
+                          reflection_2026-11-08.md:82,:90).  |s11| is divided
+                          by it.  It is NOT the port -- the record's port
+                          value is s11.magnitude = 0.32586326001662264, which
+                          is the SAME fit at alpha = 0 (docs/design/upstream-
+                          extraction-2026-11-08.md:96-117) -- so a column near
+                          1.33x is the port sitting above the attenuation-
+                          imposed fit, not a disagreement about |s11|.
   * 0.04390825210124855 -- gamma_plane.abs of the p51 ghost-wave artefact,
                           the same file this sweep writes for col 51.  That
                           documented fit is 5.58x larger, so a rung whose
@@ -31,6 +37,10 @@ REPO = Path(__file__).resolve().parents[2]
 ARTEFACT = "evidence/termination/build_A_50ohm_p{col}_plane.json"
 COLS = (50, 51, 52, 53, 54)
 
+# The denominator of the |s11|/ref column.  It is the two-wave fit with alpha
+# imposed, not the port reflection: the two differ by 1.33x on this record and
+# the difference is the imposed attenuation, not a defect in either number
+# (see the docstring).
 REF_S11 = 0.245108                     # two-wave fit |Gamma| (see docstring)
 REF_GAMMA_PLANE = 0.04390825210124855  # p51 ghost-wave gamma_plane.abs
 MISSING = "MISSING"

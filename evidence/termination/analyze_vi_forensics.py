@@ -32,6 +32,13 @@ F_HZ = 5827786408.327286
 C_M_S = 299792458.0
 DX_M = 4.0e-4
 
+# Candidate |Gamma| for the |Z| ripple prediction of section (d).  0.245 is
+# the two-wave station fit with alpha = 11.255 Np/m IMPOSED (0.245108 exact);
+# 0.326 is the port s11.magnitude (0.325863 exact), the same fit at alpha = 0.
+# Neither is a reference for the other and neither is a bias: the 1.33x between
+# them is the imposed attenuation over the station span
+# (docs/design/upstream-extraction-2026-11-08.md:96-117).  Both are carried to
+# three decimals because the predictions below are compared at that resolution.
 EPS_EFF_LIST = (1.0, 2.0, 3.0)
 GAMMA_LIST = (0.245, 0.326)
 Z0_LIST = (39.5, 47.305815, 50.0, 55.0)
@@ -413,6 +420,8 @@ def main(argv=None) -> int:
             print("      |Gamma| = %.3f -> predicted |Z| max/min = %9.6f ;"
                   " measured %9.6f ; ripple large enough to host it: %s"
                   % (g, pred, ripple, verdict))
+        # GAMMA_LIST's two entries named in words: 0.245 = alpha-imposed fit,
+        # 0.326 = port (see the constants at the top of the module).
         print("    measured ripple vs predicted: %s"
               % ("measured ripple EXCEEDS the |Gamma| = 0.245 requirement and is"
                  " just below the |Gamma| = 0.326 requirement"

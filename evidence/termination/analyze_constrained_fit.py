@@ -66,7 +66,16 @@ Z0_COMPLEX = complex(47.305815, 1.5582)
 # Reported for comparison, not used by any fit: the port |S11| of the record
 # (s11.magnitude_one_wave_station_fit and s11.magnitude of the artefact).
 S11_PORT_TARGET = 0.326
-# |Gamma| the earlier FREE fit is said to return; the F3 control.
+# What earlier evidence called the FREE fit's |Gamma|; the F3 comparison.
+# It is not a free-fit value: 0.245108 is the two-wave fit with
+# alpha = 11.255 Np/m IMPOSED, and the record's free readings are 0.309762
+# (gamma free) and 0.325863 (alpha = 0, identical to s11.magnitude) -- see
+# docs/design/upstream-extraction-2026-11-08.md:96-117 and
+# docs/design/direct_vi_forensics_2026-11-08.md:87-98.  The number is left as
+# the F3 run used it, because changing it moves the FREE-FIT DEGENERACY
+# verdict: F3 returns 0.324563, which is within CLOSE_TOL of both 0.309762
+# and 0.325863 but 0.08 away from 0.245.  Relabelling is a comment fix;
+# re-deciding the verdict is not.
 GAMMA_FREE_REFERENCE = 0.245
 # "close to" for the closing YES/NO lines: 0.02 on |Gamma|.
 CLOSE_TOL = 0.02
