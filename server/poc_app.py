@@ -193,17 +193,87 @@ def create_plotter(info: dict):
     return plotter
 
 
+# Everything the browser view needs beyond numpy, kept in one place so the
+# preflight below can report EVERY missing package in one run instead of
+# failing on one package per run.
+WEB_MODULES = (
+    ("trame", "trame"),
+    ("trame_pyvista", "trame-pyvista"),
+    ("trame_vtk", "trame-vtk"),
+    ("vtk", "vtk"),
+    ("pyvista", "pyvista"),
+)
+WEB_VUETIFY_MODULES = ("trame.ui.vuetify3", "trame.ui.vuetify2")
+
+
+def check_web_requirements() -> list[str]:
+    """Return pip names of web UI packages that are missing or unusable.
+
+    Nothing here raises: a package that will not import is recorded and the
+    next one is probed, so the caller can print a single install line for all
+    of them.
+    """
+    import importlib
+
+    missing: list[str] = []
+    for module, pip_name in WEB_MODULES:
+        try:
+            importlib.import_module(module)
+        except Exception:  # noqa: BLE001 - any failure means "not usable"
+            print(
+                f"[poc_app] cannot import {module} (provides: {pip_name})",
+                file=sys.stderr,
+            )
+            missing.append(pip_name)
+
+    for ui_path in WEB_VUETIFY_MODULES:
+        try:
+            importlib.import_module(ui_path)
+        except Exception:  # noqa: BLE001 - try the next variant
+            continue
+        break
+    else:
+        print(
+            "[poc_app] cannot import trame.ui.vuetify3 or trame.ui.vuetify2 "
+            "(provides: trame-vuetify)",
+            file=sys.stderr,
+        )
+        missing.append("trame-vuetify")
+
+    return missing
+
+
 def run_web(info: dict, host: str, port: int, station: int) -> int:
+    missing = check_web_requirements()
+    if missing:
+        print(
+            "[poc_app] the web UI cannot start: packages are missing.",
+            file=sys.stderr,
+        )
+        print(
+            "[poc_app] fix: python3 -m pip install " + " ".join(missing),
+            file=sys.stderr,
+        )
+        print(
+            "[poc_app] or:  python3 -m pip install -r requirements-web.txt",
+            file=sys.stderr,
+        )
+        print("[poc_app] then re-run the same command.", file=sys.stderr)
+        return 1
+    print("[poc_app] web dependencies present")
+
     import importlib
 
     from trame.app import get_server
 
     try:
+        from importlib.metadata import version as _pkg_version
+
+        trame_version = _pkg_version("trame")
+    except Exception:
         import trame
 
-        trame_version = getattr(trame, "__version__", "UNKNOWN")
-    except Exception:
-        trame_version = "UNKNOWN"
+        trame_version = getattr(trame, "__version__", "unknown")
 
     # Probe chain, newest first. Every candidate is guarded in its own
     # try/except: the old code guarded only the FIRST import, so a missing or
@@ -285,7 +355,15 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
                 file=sys.stderr,
             )
 
-    from pyvista.trame.ui import plotter_ui
+    try:
+        from pyvista.trame.ui import plotter_ui
+    except Exception as exc:  # noqa: BLE001 - diagnose instead of traceback
+        print(f"[poc_app] pyvista.trame.ui is unusable: {exc}", file=sys.stderr)
+        print(
+            "[poc_app] fix: python3 -m pip install -r requirements-web.txt",
+            file=sys.stderr,
+        )
+        return 1
 
     plane = info[PLANE_KEY]
     n_st = plane.shape[0]
@@ -404,24 +482,6 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
     return 0
 
 
-def _import_guard() -> int:
-    try:
-        import pyvista  # noqa: F401
-        import trame  # noqa: F401
-    except ImportError as exc:
-        print(f"[poc_app] missing dependency: {exc}", file=sys.stderr)
-        print(
-            "           install with: python3 -m pip install pyvista trame",
-            file=sys.stderr,
-        )
-        print(
-            "           full diagnosis: sh evidence/termination/check_pyvista.sh",
-            file=sys.stderr,
-        )
-        return 1
-    return 0
-
-
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="poc_app.py",
@@ -477,9 +537,6 @@ def main(argv=None) -> int:
         print_keys(info)
         return 0
 
-    rc = _import_guard()
-    if rc:
-        return rc
     return run_web(info, args.host, args.port, station)
 
 

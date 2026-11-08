@@ -1,0 +1,10 @@
+# Web UI extras for server/poc_app.py.
+# The launcher itself only needs numpy, which is already a project dependency;
+# everything here is the trame/pyvista/VTK stack that the browser view needs.
+# Install with: python3 -m pip install -r requirements-web.txt
+trame
+trame-vuetify
+trame-pyvista
+trame-vtk
+pyvista
+vtk
