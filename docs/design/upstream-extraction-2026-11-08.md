@@ -4,8 +4,8 @@
 
 Why must the s11 extraction plane sit at or upstream of the load, what does the code now
 report when it does not, and what reflection magnitude does the upstream data support?
-Every number below is already in the tree. This dispatch ran nothing, regenerated no
-artefact and committed nothing.
+Every number below is already in the tree. This dispatch ran no FDTD, regenerated no
+artefact and changed no numerics.
 
 ## 2. What the code now reports
 
@@ -142,15 +142,45 @@ in the tree has yet been run through.
   `evidence/termination/`, 59 carry a `gamma_plane` key, 32 carry an `s11_at_plane` block,
   and none carries `s11_at_plane_valid`. All 32 blocks still have exactly the four keys
   `basis`, `magnitude`, `phase_deg`, `plane_index`, so the keys are live but unbanked.
-- No test covers it. `grep -rn s11_at_plane tests/` returns nothing.
+- No test asserts on the gate. `grep -rn s11_at_plane tests/` returns nothing, and no test
+  names `s11_at_plane_valid`. One test does walk the branch without looking at it:
+  `tests/test_studies.py`:2126
+  (`TestFluxProjectionCurrentReference::test_the_flag_matches_the_plain_path_when_the_projection_is_not_trivial`)
+  names a plane on node column 6 while its load sits on column 5, so the gate fires there and
+  the suite now carries the `RuntimeWarning`. The code path is executed; nothing is checked.
 - The 0.245 correction rests on one record and one load; no second load carries a measured
   `z_eff` with which to check the attenuation chain.
 - The two-wave fit prefers beta = 228.25 rad/m while the record's own `line.beta` is
   232.7989 and the de-embedding uses the latter; about 2 percent apart, unresolved here.
 - Z0 is not identified: 47.648466 (free fit) and 47.305815 (TE anchor) differ by 0.7
   percent, and the ambient 47.54 quoted elsewhere lies between them.
-- The suite last ran at 392 passed, 2 failed, 1 skipped, both failures reproducing on a
-  reverted baseline (`tests/test_studies.py`:1607 and `:1653`).
+- The suite is not green, and the figure carried in the earlier rows is not this tree's
+  figure. The full suite was re-run after the `>` relaxation on python3 3.12.15 / pytest
+  9.2.0, and it reports **four** failures, not two.
+  - `tests/test_studies.py::test_s21_plane_may_sit_downstream_of_the_cut_never_upstream`,
+    `:1607`, `Failed: DID NOT RAISE ValueError`. The case that stops is `s21_plane="cut"`
+    (`:1607-1609`), which is a guard about the CUT, not about the load column; this dispatch
+    did not touch it.
+  - `tests/test_studies.py::test_gamma_port_and_gamma_plane_are_different_quantities`,
+    `:1653`, `assert 0.1520918610341127 == 0.118088 +/- 1.2e-05`.
+  - `tests/test_host_ladder_partial.py::test_ladder_error_on_rung_two_keeps_the_rungs_that_finished`
+    and `::test_memory_ceiling_abort_keeps_its_partial_payload`, both `KeyError: 'sigma'` at
+    `tools/host_ladder.py`:1324. Neither is new and neither is related: `git blame` puts
+    `sigma_used_per_rung=[float(r["sigma"]) for r in rows]` in commit `88e7498`
+    (2026-10-31), while `tests/test_host_ladder_partial.py` was last touched at `911b38f`,
+    older, and its monkeypatched fake row carries no `sigma` key. That test imports
+    `tools.host_ladder` only and never `emfit`, so no edit to `emfit/studies.py` can cause or
+    cure it.
+  - The suite has therefore been red in those two places since 2026-10-31, and the 392 / 2 / 1
+    figure in the earlier rows and in the message of `069a4f1` predates that break; it is
+    withdrawn here as a statement about this tree.
+  - No passed total is quoted for the new run either: pytest wrote no count line (the log ends
+    on the four `FAILED` lines), 553 tests collect today, and the 584 progress characters in
+    the finished log do not reconcile with 553. Four failures, one skip and one xfail are
+    what the run states; its own tally is missing. That is a defect of the reporting, and it
+    is recorded rather than papered over.
+  - The `>` relaxation changed no outcome: both `test_studies.py` failures carry the same text
+    before and after it.
 
 ## 11. Consequences and next steps
 
@@ -160,5 +190,7 @@ in the tree has yet been run through.
    exactly that and returns 0.323916.
 3. Regenerate one artefact so that `s11_at_plane_valid` is banked, and add a test that a
    plane one column past the load yields `valid = False` with reason `plane_beyond_load`.
+   `tests/test_studies.py`:2126 already drives exactly that case, so the test is an
+   assertion away rather than a fixture away.
 4. Replace the three hard-coded 0.245 references with the alpha-explicit fit or delete
    them; as written they invite the same diagnosis error back in.
