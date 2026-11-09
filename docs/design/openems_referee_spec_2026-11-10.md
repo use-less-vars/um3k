@@ -221,7 +221,9 @@ single-purpose magnitude referee.
 
 **DATED CORRECTION -- 2026-11-09 18:59 local (17:59 UTC). The environment
 blocker below still stands for THIS workspace, but the referee itself has
-now run ONCE, on the operator's host, by hand.**
+now run TWICE, on the operator's host, by hand -- and BOTH runs solved
+EMPTY GEOMETRY, which is the finding recorded below under
+`referee-geometry-attach-2026-11-11` (dated correction of 2026-11-11).**
 
 - Provenance: `docker/openems/build_A_referee.py` as committed here is the
   invocation source; the run stopped on the -60 dB end criterion
@@ -269,6 +271,81 @@ now run ONCE, on the operator's host, by hand.**
   samples over 106.6 ns (621 periods) rather than 820 over 8.20 ns (47.8) --
   a data-density improvement, not a fix for |S11| ~ 1, which is not a
   truncation effect.
+
+**DATED CORRECTION -- 2026-11-11 (`referee-geometry-attach-2026-11-11`).
+The two host runs of 2026-11-09 did not solve the intended model: BOTH solved
+EMPTY GEOMETRY, so |S11| = 1.0003 was a correct measurement of a model with no
+substrate and no strip, not an artefact of the reader.** This is a
+model/setup defect finding, not a residual and not an E12. It changes what the
+number above means; it does not retract it.
+
+The solver said so itself, verbatim, in the output of the 18:59 local run:
+
+```text
+Warning: Unused primitive (type: Box) detected in property: substrate!
+Warning: Unused primitive (type: Box) detected in property: strip!  x2
+--- Series/Parallel Lumped RLC load --- / Active cells: 0
+```
+
+- Four numbers, and what each one means. Port-1 U/I read 317 ohm where a 50
+  ohm line is expected -- a port attached to nothing, which is why the reader
+  was entitled to call it "open". The 50 ohm series load itself read 49.9
+  ohm, so the lumped-load machinery was working and the fault is geometry,
+  not the RLC element. Port 1 to port 2 read -94 dB, i.e. no coupling at
+  all: free space over the ground plane, with the strip it should have been
+  coupling through absent. |S11| = 1.0003 at EVERY bin from 2 to 10 GHz --
+  flat, with no resonance to show, which is what an empty model produces.
+- The FDTD core was healthy: it met the -60 dB end criterion in 10647
+  timesteps, ~73 s wall. Nothing here is a solver or a convergence problem;
+  the geometry handed to the solver was not the model.
+- Provenance of the finding: `docker/openems/build_A_referee.py` at `2b51cde`,
+  openEMS `5fecbb5`, CSXCAD `626b99f`, 2026-11-09 18:59 local, operator's
+  host only. The docker image available here ships openEMS 0.0.35 and no
+  Python bindings, which is why this is a host finding and cannot be
+  reproduced in this workspace.
+- Reader cross-check, so the extraction path is not blamed by default: the
+  offline extraction over the SAME port records gave port-1 U/I =
+  `-0.41 - 339.56j ohm` and |S11| = 1.0003 -- within ~7 % of the solver's 317
+  ohm and identical in conclusion. The extraction path is therefore not
+  implicated; |S11| ~ 1 is a correct measurement of a model with no substrate
+  and no strip.
+- The fix names code, not intentions: a single `geometry_boxes()` table that
+  both the echo and the builder consume, so a geometry edit cannot reach one
+  and miss the other; NO `epsilon=1.0` air box (the background is already
+  vacuum, and a full-domain air box is what is suspected of eating the
+  primitives); `check_boxes()` as an arithmetic pre-flight that refuses to
+  build a box occupying zero cells, or a substrate occupying any mesh index
+  other than the intended one; fd 1/2 captured and scanned BEFORE the port
+  records are read; and `guard_solver_output()`, which refuses to report
+  success when openEMS says it did not apply the geometry -- exit 4.
+  `--dry-run --with-bindings` is the seconds-long probe (`setup_only=True`):
+  it builds the model, lets CSXCAD apply the primitives and stops before the
+  first timestep, so the three warnings above surface in seconds rather than
+  after a 73 s solve.
+- Exit codes, written down here because they are the contract this finding
+  added: exit 0 = whatever was asked for completed (a plain `--dry-run` still
+  exits 0 when no bindings are importable); exit 3 = the solve ran but
+  produced no port records; exit 4 = openEMS reported geometry it did not
+  apply (`Unused primitive`, or a lumped load with `Active cells: 0`), which
+  makes nothing downstream of that run readable; exit 5 = `--with-bindings`
+  was requested and openEMS is not importable, so the model was never
+  exercised at all.
+- The mechanism is INFERENCE, and is recorded as inference. The hypothesis is
+  that CSXCAD puts properties at equal priority and lets the first-added one
+  win a cell, so the full-domain air box, added first, claimed every cell
+  inside it: the substrate and both strip sheets -- every one of them
+  strictly inside the air box -- were dropped as "Unused", while the air box
+  itself, coincident with the domain boundary, survived. That is exactly the
+  partition the warnings show (which primitives were dropped, and which one
+  was not). It is not verified: no CSXCAD source is vendored in this
+  workspace, so the rule cannot be reproduced in-process.
+- Three acceptance criteria are NOT VERIFIED and must not be read as met: no
+  `Unused primitive` line in the solver's output; `Active cells` greater than
+  zero in the lumped-load report; and strip PEC edges of ~400 rather than the
+  32 an absent strip leaves. All three are authored criteria, closable only
+  by a host run. Until such a run the solve path of `build_A_referee.py`
+  remains AUTHORED-UNEXERCISED, exactly as stated below.
+
 - SUPERSEDED below, as of 2026-11-09: "solver path never ran",
   "AUTHORED-UNEXERCISED", "nothing executed", "no result of this referee
   exists". These were true when written and are kept for the record; read
