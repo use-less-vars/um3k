@@ -25,3 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
+
+# The build context is docker/openems (see README.md), so this COPY source is
+# context-relative. Building from the repo root instead would require the
+# source path docker/openems/build_A_referee.py.
+COPY build_A_referee.py /work/

@@ -255,6 +255,29 @@ docker run --rm -v "$PWD/evidence/referee:/work/out" openems:bookworm \
     python3 /work/build_A_referee.py --out /work/out
 ```
 
+With the `COPY build_A_referee.py /work/` line now in `docker/openems/Dockerfile`,
+that is the primary path: the script is baked into the image at
+`/work/build_A_referee.py`, so
+`docker run --rm openems:bookworm python3 /work/build_A_referee.py --out /work/out`
+finds it with no mount at all — the `-v` above mounts only the output directory.
+The build context is `docker/openems`, which is why the `COPY` source is
+`build_A_referee.py` and not `docker/openems/build_A_referee.py`.
+
+If the `openems:bookworm` tag predates that line, or the image cannot be rebuilt
+here, the script can instead be supplied at run time. This works with the
+already-built image and needs no rebuild:
+
+```sh
+docker run --rm \
+    -v "$PWD/evidence/referee:/work/out" \
+    -v "$PWD/docker/openems/build_A_referee.py:/work/build_A_referee.py:ro" \
+    openems:bookworm python3 /work/build_A_referee.py --out /work/out
+```
+
+The `:ro` is deliberate: the referee is a read-only entry point, nothing in it
+writes next to itself, and a read-only bind cannot mutate the host working tree
+by accident.
+
 And, before either of those, the harmless check that needs no bindings at all:
 
 ```sh
