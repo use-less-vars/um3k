@@ -313,6 +313,81 @@ attributed, per meta-rule 2.
    rules for β_KJ — residual against anchor 0.3423544 moving from −4.90 % to
    −3.10 % — is conditional and is not established here.
 
+### 7.3 E11 bracket correction — H4
+
+Per the rule stated in §7 above: (i) bracket, (ii) what the resolution found,
+(iii) why the original bracket was set on an incomplete read, (iv) the revised
+bracket, frozen before reading. Dated 2026-11-09, attributed to this session.
+
+1. **Which bracket. Bracket H4** (§2, `:145-148`): "the box-limit correction at
+   w=3.2 moves Z0 by ≥ 0.10 Ω (≥ 0.2 %, equivalently ≥ 0.13 pp residual shift,
+   derived). **Fires:** H4 is real but small. **Does not fire:** < 0.10 Ω
+   (< 0.13 pp)." Its premise (`:141-144`) is that DR-36's 0.91 % / 0.37 % box
+   limits apply to the w=3.2 rerun "if the w=3.2 rerun has the same convergence
+   rate", so that Z0∞ differs from 48.0237 by up to 0.37 %, worth 0.24 pp.
+
+2. **What the resolution found.** Three things, from
+   `evidence/quasistatic_z0_ladder_w3.2mm.json` and
+   `evidence/e11_h4_box_limit_2026-11-09.json`:
+
+   **(a) DR-36 is a w = 3.0 mm ladder.** `docs/design/defect_register.md:615`
+   (heading) and `:623` ("`h` = 1.6 mm, `w` = 3.0 mm") — its 0.91 % and 0.37 %
+   are the per-doubling drift and the n=200-to-limit gap **at that width**.
+   Neither figure is a w = 3.2 mm measurement and neither is a correction owed
+   to the w = 3.2 mm limit. What ports across is the convergence *rate*, and it
+   does: the w=3.2 ladder's own per-doubling relative drifts are −0.924 %,
+   −0.275 %, −0.075 % against DR-36's −0.91 %, −0.27 %, −0.073 %. A rate that
+   transfers is not an offset that transfers.
+
+   **(b) The bracket runs two different quantities under one label** (`:142`).
+   "the box-limit correction" conflates (1) a *modelling offset* between the
+   finite-box model and the true half-space, and (2) the *estimator/convergence
+   uncertainty* in reading a limit off a four-rung sequence. A box-limit
+   correction is the first; what the ladder actually bounds is the second. H4 as
+   written cannot be answered without separating them.
+
+   **(c) The offset is zero by construction, so the bracket's quantity is a
+   category error** (`:143`). The w=3.2 ladder widens the transverse box at
+   every rung (0.1632 m × 0.0816 m at n=800,
+   `geometry.transverse_box_m`), so **48.02374054929774 already is the wide-box
+   limit** of that sequence. There is no second box-limit correction to apply to
+   it: correcting a limit for the thing it is the limit of. **Correction =
+   0.000 Ω.** The only live number is the estimator span — the five cross-check
+   estimators in that file (3-point fit 48.020776417, lower triple
+   48.020776417, upper triple 48.026562484, Richardson p=1 48.003936759, p=2
+   48.028073158) span **0.024136399 Ω = 0.0503 %**, with the 4-point refit
+   (48.023740549) inside the interval. The `curve_fit` covariance on 4 points
+   and 3 parameters is **not** an uncertainty and is not used
+   (`refit.covariance_is_an_error_bar: false`).
+
+3. **Why the original bracket was set on an incomplete read.** At placement the
+   only box-limit evidence to hand was DR-36, one width over, and it was read as
+   an unapplied offset on the w=3.2 limit rather than as a n=200-to-limit gap at
+   w=3.0. The w=3.2 ladder's `cross_checks` block — the only thing that turns
+   "the same convergence rate" into an answer — was not read. The 0.13 pp
+   companion itself was arithmetically right (0.657 × 0.2 % = 0.13 pp, §7.1
+   row 5); it was applied to a quantity whose definition had not been fixed.
+
+4. **Revised bracket — threshold unchanged, definition fixed.** The ≥ 0.10 Ω
+   (≥ 0.2 %, ≥ 0.13 pp) threshold **stands exactly as frozen**; nothing here
+   lowers a bar after the fact. What is fixed is the quantity it is applied to:
+   the box-limit correction is 0 by construction, and the live quantity is the
+   0.024136399 Ω (0.0503 %) five-estimator span of the w=3.2 ladder, which is
+   **24.1 %** of 0.10 Ω (0.0503 % against the 0.208 % that 0.10 Ω corresponds
+   to). **Verdict: H4 DOES NOT FIRE.** In residual currency the whole question
+   is worth 0.657 × 0.0503 % = **0.0331 pp out of the 4.904 pp residual, i.e.
+   0.67 % of it** (residual −4.904 %, `docs/design/EM_SOLVER_LEDGER.md:36`).
+
+   **The alternative reading, stated so it cannot be called cherry-picked.** Had
+   the n=200 rung (48.209080873) been taken as "the" value awaiting correction,
+   the correction would be 0.185340 Ω = 0.3859 %, which **does** exceed 0.10 Ω
+   and H4 would fire as "real but small". It would be worth 0.2538 pp = **5.2 %**
+   of the residual. That reading is not taken because 0.185340 Ω is the
+   *truncation gap of a coarse rung*, not a box-limit effect — the ladder
+   extrapolates through it — but even if it were taken, 4.65 pp of residual
+   would remain unaccounted for. **Under either reading H4 does not explain the
+   residual.**
+
 ## 8. What this does NOT claim
 
 E11 does not claim the extraction is broken, the anchor is wrong, or the

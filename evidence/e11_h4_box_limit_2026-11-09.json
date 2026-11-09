@@ -1,0 +1,140 @@
+{
+ "schema": "emfit.e11.h4_box_limit/1",
+ "role": "evidence for the E11 H4 (transverse box-limit correction) bracket; not a confirmatory result and not an error bar on the limit",
+ "status": "DOES_NOT_FIRE",
+ "generated_at": "2026-11-09T04:07:23Z",
+ "generated_at_source": "container clock: `date -u +%Y-%m-%dT%H:%M:%SZ`",
+ "question": "At w = 3.2 mm, does the transverse box-limit correction move Z0 by >= 0.10 ohm (>= 0.2 percent, >= 0.13 pp of the residual) as frozen in docs/design/E11_residual_preregistration.md section 2, Bracket H4 (lines 145-148)?",
+ "input_ladder": {
+  "file": "evidence/quasistatic_z0_ladder_w3.2mm.json",
+  "created_utc": "2026-11-05T23:58:33.660104Z",
+  "git_rev_recorded_in_ladder": "unavailable (git not installed in workspace container)",
+  "geometry_w_m": 0.0032,
+  "geometry_h_m": 0.0016,
+  "box_y_width_at_finest_rung_m": 0.1632,
+  "box_z_height_at_finest_rung_m": 0.0816,
+  "box_rule": "the lateral Neumann walls sit n_clean cells each side of the strip, the top wall n_air cells above it; the thin direction is one periodic cell",
+  "rungs": [
+   {
+    "n": 100,
+    "cells_ny": 232,
+    "cells_nz": 116,
+    "z0_ohm": 48.658870035784155,
+    "eps_eff": 3.412439651144762,
+    "wall_seconds": 0.4381
+   },
+   {
+    "n": 200,
+    "cells_ny": 432,
+    "cells_nz": 216,
+    "z0_ohm": 48.2090808728406,
+    "eps_eff": 3.3691189529598735,
+    "wall_seconds": 1.3351
+   },
+   {
+    "n": 400,
+    "cells_ny": 832,
+    "cells_nz": 416,
+    "z0_ohm": 48.07634595576834,
+    "eps_eff": 3.356179102170849,
+    "wall_seconds": 5.7204
+   },
+   {
+    "n": 800,
+    "cells_ny": 1632,
+    "cells_nz": 816,
+    "z0_ohm": 48.04014135742647,
+    "eps_eff": 3.3526319844775165,
+    "wall_seconds": 40.3185
+   }
+  ]
+ },
+ "not_an_error_bar": {
+  "covariance_is_an_error_bar": false,
+  "covariance_note": "the covariance curve_fit returns on a 4-point 3-parameter fit is an over-fitting number, not an uncertainty; it is recorded for completeness and MUST NOT be quoted as an error bar on the limit",
+  "why": "the 4-point 3-parameter curve_fit covariance is an over-fitting artefact; the uncertainty reported here is the spread of independent estimators, not the covariance"
+ },
+ "four_point_refit_reference_ohm": 48.02374054929774,
+ "estimators_of_the_limit": {
+  "three_point_coarsest_fit_z0_inf_ohm": 48.02077641699191,
+  "pairwise_triples_lower_z0_inf_ohm": 48.02077641699191,
+  "pairwise_triples_upper_z0_inf_ohm": 48.02656248440154,
+  "richardson_p1_z0_ohm": 48.0039367590846,
+  "richardson_p2_z0_ohm": 48.02807315797918
+ },
+ "estimator_spread": {
+  "min_ohm": 48.0039367590846,
+  "max_ohm": 48.02807315797918,
+  "spread_ohm": 0.024136398894576416,
+  "spread_pct_of_anchor": 0.05025930637327118,
+  "min_estimator": "richardson_p1_z0_ohm",
+  "max_estimator": "richardson_p2_z0_ohm",
+  "interpretation": "the span of the five cross-check estimators computed from the same four rungs (the 4-point refit itself, 48.02374054929774, lies inside the interval) is the only defensible uncertainty on the limit that this ladder supports. It is not a rigorous error bar and it is not the covariance."
+ },
+ "box_limit_correction": {
+  "correction_ohm": 0.0,
+  "why_zero": "the ladder measures Z0(n) with the transverse box widened at every rung so that the box is a fixed multiple of the structure, and z0_inf_ohm is the n -> infinity limit of THAT sequence: 48.02374054929774 already IS the wide-box limit. There is no second box-limit correction left to apply, so the correction is identically zero by construction, not by measurement.",
+  "live_uncertainty_ohm": 0.024136398894576416,
+  "live_uncertainty_pct": 0.05025930637327118
+ },
+ "threshold": {
+  "bracket_ohm": 0.1,
+  "bracket_pct_of_anchor": 0.20823034369292234,
+  "bracket_pp_of_residual": 0.1369418526082756,
+  "derivation": "0.10 / 48.02374054929774 = 0.2082 percent; times |dlnGamma/dlnZ0| = 0.657646 = 0.1369 pp of the residual",
+  "sensitivity_dGamma_dZ0": 0.004688262,
+  "sensitivity_dlnGamma_dlnZ0": -0.657646
+ },
+ "comparison_to_threshold": {
+  "measured_quantity_ohm": 0.024136398894576416,
+  "measured_over_threshold": 0.24136398894576416,
+  "fires": false,
+  "verdict": "DOES NOT FIRE",
+  "verdict_basis": "the only live quantity is the 0.024136399 ohm estimator span, which is 24 percent of the 0.10 ohm threshold; the crisp box-limit correction is zero"
+ },
+ "worth_in_residual_currency": {
+  "residual_pct_measured": -4.904142652976361,
+  "residual_derivation": "100 * (0.32556486641109117 - 0.342354415317) / 0.342354415317",
+  "pp_if_spread_removed": 0.0330528317991563,
+  "pct_of_residual_if_spread_removed": 0.6739777803791308,
+  "reading": "the whole box-limit question is worth 0.0331 pp out of a 4.904 pp residual, i.e. 0.67 percent of the discrepancy. It cannot explain the residual and it cannot rescue it."
+ },
+ "alternative_reading_if_n200_is_the_limit": {
+  "assumed_correction_ohm": 0.18534032354286012,
+  "assumed_correction_pct": 0.3859347927148719,
+  "fires_under_this_reading": true,
+  "pp": 0.25380847268976464,
+  "pct_of_residual": 5.1753892708591245,
+  "why_this_reading_is_not_taken": "if the finest rung were taken as the limit instead of the n -> infinity fit, the \"box-limit correction\" would become the n=200 truncation gap, which is an extrapolation error and not a box-limit effect at all. Even then it is worth only 0.2538 pp = 5.2 percent of the residual, so H4 would fire as \"real but small\" and still not matter. Recorded so the paperwork cannot be accused of taking only the weak reading."
+ },
+ "premise_corrections": {
+  "dr36_is_w3.0mm_not_w3.2mm": {
+   "claim": "DR-36 reports a 0.91 percent drift and a 0.37 percent extrapolation gap.",
+   "resolution": "DR-36 is the w = 3.0 mm ladder (docs/design/EM_SOLVER_LEDGER.md:623). Neither figure is a w = 3.2 mm measurement and neither transfers to this bracket.",
+   "numbers": {
+    "dr36_drift_pct": -0.907,
+    "dr36_extrapolation_gap_pct": -0.372
+   }
+  },
+  "two_quantities_under_one_label": {
+   "where": "docs/design/E11_residual_preregistration.md:142",
+   "resolution": "the bracket text runs the box-limit correction and the estimator uncertainty together under a single \"correction\" label. They are different quantities: a modelling offset and a convergence error. H4 as written cannot distinguish them, which is why this artefact reports both, separately."
+  },
+  "category_error_at_line_143": {
+   "where": "docs/design/E11_residual_preregistration.md:143",
+   "resolution": "the bracket presumes a box-limited value exists that differs from 48.02374054929774 and is waiting to be corrected. It does not: 48.02374054929774 is already the wide-box limit of this ladder. Asking for its box-limit correction is a category error, so the correction is 0 and the only live number is the 0.024136399 ohm estimator span."
+  }
+ },
+ "provenance": {
+  "head_commit": "9e2e6a3",
+  "head_commit_subject": "E11 H5: beta_KJ reproduces bit-identically, and that is not evidence",
+  "head_commit_source": "host-side git_read tool; git is not installed in the execution container",
+  "dates": "2026-11-09 (session date; the container clock is not the authority for the record date)"
+ },
+ "what_this_does_NOT_claim": [
+  "that the residual is explained - H4 accounts for 0.67 percent of it",
+  "that 0.024136399 ohm is a rigorous error bar - it is a five-estimator span on four rungs",
+  "that the transverse box is irrelevant at any width other than 3.2 mm",
+  "anything about H1, H2, H3 or H5"
+ ]
+}
