@@ -33,6 +33,12 @@ USAGE
     #    is the cheap pre-flight and it needs the bindings.
     python3 build_A_referee.py --dry-run --with-bindings
 
+    # 0. --strip selects how the strip is represented (default: auto).
+    #    auto setup-probes priority -> slab -> sheet and keeps the first that
+    #    passes; metal is the 2026-11-09 control and is EXPECTED to fail;
+    #    slab is a physics deviation (a 0.4 mm PEC slab).  Cannot be resolved
+    #    without the bindings -- see "STRIP REPRESENTATION" below.
+
     # 3. real solve -- NOT runnable from the authoring environment.
     docker build -t openems:bookworm docker/openems
     mkdir -p evidence/referee
@@ -42,8 +48,11 @@ USAGE
     Exit 0  = whatever was asked for completed.
     Exit 3  = solve ran but produced no port records (model is wrong).
     Exit 4  = openEMS reported geometry it did not apply (a primitive it
-              called "Unused", or a lumped load with "Active cells: 0").
-              Nothing downstream of that is readable; see trap (11).
+              called "Unused", or a lumped load with "Active cells: 0"), or
+              the strip did not attach (the "Number of PEC edges:" line is
+              absent or below its floor), or no --strip candidate passed its
+              setup probe.  Nothing downstream of that is readable; see trap
+              (11).
     Exit 5  = --with-bindings was requested but openEMS is not importable, so
               the model was never exercised at all.  A plain --dry-run (no
               --with-bindings) still exits 0 in that situation.
@@ -251,36 +260,194 @@ def _self_check(p: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# STRIP REPRESENTATION.  The strip is a 3.2 mm wide PEC sheet on the top face
+# of the substrate, CUT into two sheets by the one-cell load gap.  It has always
+# been built as zero-thickness metal boxes, and the 2026-11-09 host runs show
+# CSXCAD dropping exactly those two primitives ("Unused primitive ... strip!
+# x2") while keeping the substrate.  WHICH rule drops a zero-extent box is not
+# verified; WHAT to do about it is a choice, so the choice is an explicit CLI
+# option and each representation is built by its own small function below.
+#
+# Nothing else varies between representations: same grid, same boundaries,
+# same port geometry, same frequencies, same geometry table.  Only the strip
+# property, the strip z extent and the strip priority change.
+# ---------------------------------------------------------------------------
+
+
+class StripUnavailable(Exception):
+    """A representation could not be constructed at all (e.g. no such CSX type)."""
+
+
+STRIP_PRIORITY = 10      # any value above the CSX default 0 wins; 10 is
+                         # arbitrary-but-fixed and deliberately NOT tuned.
+
+
+def _strip_metal(csx, p):
+    """CONTROL -- today's code, unchanged: plain metal, flat, no priority.
+
+    This is the representation the 2026-11-09 host runs used when CSXCAD
+    dropped both sheets, so --strip metal must keep reproducing that failure.
+    """
+    return csx.AddMetal("strip"), None, 0.0
+
+
+def _strip_priority(csx, p):
+    """H2 test -- identical zero-thickness boxes, priority=10 on each AddBox.
+
+    Tests "first-added-wins ownership at equal priority" with ZERO physics
+    deviation: the geometry is the control's to the bit, only the priority
+    changes.
+    """
+    return csx.AddMetal("strip"), STRIP_PRIORITY, 0.0
+
+
+def _strip_slab(csx, p):
+    """H1 test -- if zero thickness is the problem, give the strip one cell.
+
+    PHYSICS DEVIATION, and every report of this representation says so: a
+    0.4 mm PEC slab is 25% of the 1.6 mm substrate height, so it is not the
+    reference's zero-thickness sheet.
+    """
+    return csx.AddMetal("strip"), STRIP_PRIORITY, CELL
+
+
+def _strip_sheet(csx, p):
+    """CSXCAD ConductingSheet, plus the same flat boxes at priority 10.
+
+    ONE attempt only: no guessed-kwarg retries and no probing of conductivity
+    or thickness names.  CSXCAD.pyx:402 AddConductingSheet(name, **kw) forwards
+    straight into CSProperties.fromTypeName(), and the Python-side kwarg names
+    are not vendored here, so a retry loop would be guessing.  If the call
+    refuses, its exception text is reported VERBATIM.
+    """
+    try:
+        return csx.AddConductingSheet("strip"), STRIP_PRIORITY, 0.0
+    except Exception as exc:          # verbatim evidence, not a control flow
+        raise StripUnavailable(
+            'csx.AddConductingSheet("strip") raised %s: %s'
+            % (type(exc).__name__, exc))
+
+
+STRIP_REPS = {
+    "metal": {
+        "builder": _strip_metal, "exact": True, "dz": 0.0,
+        "what": 'csx.AddMetal("strip") + 2 flat boxes, NO priority (control)',
+    },
+    "priority": {
+        "builder": _strip_priority, "exact": True, "dz": 0.0,
+        "what": 'csx.AddMetal("strip") + 2 flat boxes, AddBox(priority=10)',
+    },
+    "slab": {
+        "builder": _strip_slab, "exact": False, "dz": CELL,
+        "what": 'csx.AddMetal("strip") + 2 boxes 1 cell thick in z, '
+                'AddBox(priority=10) -- PHYSICS DEVIATION',
+    },
+    "sheet": {
+        "builder": _strip_sheet, "exact": True, "dz": 0.0,
+        "what": 'csx.AddConductingSheet("strip") + 2 flat boxes, '
+                'AddBox(priority=10)',
+    },
+}
+
+# --strip accepts all five; auto is the default.  metal is deliberately NOT
+# first in the probe order: it is the representation known to fail.
+STRIP_CHOICES = ("auto", "metal", "priority", "slab", "sheet")
+STRIP_CANDIDATES = ("priority", "slab", "sheet")
+
+
+def strip_dz(rep: str) -> float:
+    """The strip's z extent for `rep`; 'auto' has none of its own.
+
+    'auto' is resolved BEFORE any model is built, so any table or check asked
+    for it is the zero-thickness one and strip_report_lines() labels it as
+    unresolved.  Never invent a thickness for an unprobed representation.
+    """
+    return 0.0 if rep == "auto" else STRIP_REPS[rep]["dz"]
+
+
+def strip_build(csx, p: dict, rep: str) -> tuple:
+    """Build ONE strip property for `rep`.  Returns (property, priority, dz).
+
+    `priority` is None when the representation passes none (the control) and
+    is otherwise the value handed to AddBox() and to port 2's AddLumpedPort().
+    `dz` is the strip's z extent in metres: 0.0 for a zero-thickness sheet.
+    Raises StripUnavailable if the CSX type itself does not exist.
+    """
+    return STRIP_REPS[rep]["builder"](csx, p)
+
+
+def strip_report_lines(p: dict, rep: str) -> list:
+    """The representation-in-force lines.  Shared by echo() and the resolver."""
+    if rep == "auto":
+        return ["strip representation   : auto (UNRESOLVED -- candidates are "
+                "setup-probed in the order %s, never by a solve)"
+                % " -> ".join(STRIP_CANDIDATES)]
+    dz = STRIP_REPS[rep]["dz"]
+    z0 = p["z_strip"]
+    k1 = K_STRIP + int(round(dz / CELL))
+    priority = "none (CSX default 0)" if rep == "metal" else str(STRIP_PRIORITY)
+    return [
+        "strip representation   : %s  [%s]" % (rep, STRIP_REPS[rep]["what"]),
+        "  AddBox priority     : %s" % priority,
+        "  port 2 priority     : %s (same value on AddLumpedPort)" % priority,
+        "  z span              : %s .. %s (z nodes %d..%d, %s)"
+        % (_mm(z0).strip(), _mm(z0 + dz).strip(), K_STRIP, k1,
+           "zero thickness" if not dz
+           else "%.4f mm thick -- PHYSICS DEVIATION" % (dz * 1e3)),
+    ]
+
+
+def strip_exactness_line(rep: str) -> str:
+    """One sentence: is `rep` the reference geometry, or a physics deviation?"""
+    if STRIP_REPS[rep]["exact"]:
+        return ("YES -- %s; no physics deviation, so any number this run "
+                "produces is comparable to the reference"
+                % STRIP_REPS[rep]["what"])
+    dz = STRIP_REPS[rep]["dz"]
+    return ("NO -- PHYSICS DEVIATION: a %g mm PEC slab is %.1f%% of the %g mm "
+            "substrate height.  Evidence from this run must say so."
+            % (dz * 1e3, 100.0 * dz / H_SUB, H_SUB * 1e3))
+
+
+# ---------------------------------------------------------------------------
 # GEOMETRY TABLE.  ONE list of boxes, consumed by both the primitive pre-flight
 # (check_boxes) and build_model().  Two code paths that build the same geometry
 # will eventually disagree; one table cannot disagree with itself.  Trap (11)
 # records what that disagreement cost on 2026-11-09.
 # ---------------------------------------------------------------------------
 
-def geometry_boxes(p: dict) -> list:
+def geometry_boxes(p: dict, rep: str = "metal") -> list:
     """Every geometric box the model needs, as (property, label, start, stop).
 
     The coordinates mirror the arithmetic build_model() has always used; no
     value here is new.  The strip is genuinely CUT: sheet A stops at the load
     cell, sheet B resumes one cell later, and the empty cell carries the
     termination.
+
+    `rep` moves exactly ONE face: the strip's UPPER z face, by
+    STRIP_REPS[rep]["dz"].  A zero-thickness representation leaves it on the
+    strip plane as before; the slab representation lifts it by one cell, and
+    that lift is the whole of its physics deviation.
     """
     x_max = p["x_max"]
     y_lo, y_hi = p["y_lo"], p["y_hi"]
     z_strip = p["z_strip"]
+    dz = strip_dz(rep)
+    z_upper = z_strip + dz
+    thickness = ", 1 cell thick (slab)" if dz else ", zero-thickness"
     return [
         ("substrate",
          "substrate, eps_r = %g" % EPS_R,
          [0.0, 0.0, 0.0],
          [x_max, p["y_max"], p["h_sub"]]),
         ("strip",
-         "strip sheet A (feed), zero-thickness",
+         "strip sheet A (feed)" + thickness,
          [p["x_port"], y_lo, z_strip],
-         [p["x_load"], y_hi, z_strip]),
+         [p["x_load"], y_hi, z_upper]),
         ("strip",
-         "strip sheet B (stub), zero-thickness",
+         "strip sheet B (stub)" + thickness,
          [p["x_gap_hi"], y_lo, z_strip],
-         [x_max, y_hi, z_strip]),
+         [x_max, y_hi, z_upper]),
     ]
 
 
@@ -323,14 +490,19 @@ def mesh_indices(start, stop) -> tuple:
     return tuple(out)
 
 
-def check_boxes(p: dict) -> list:
+def check_boxes(p: dict, rep: str = "metal") -> list:
     """Arithmetic pre-flight: prove every box occupies at least one cell.
 
     Returns [(label, mesh_index, note)]; raises SystemExit naming the box that
     failed.  Every condition here is one whose violation makes CSXCAD discard
     the primitive -- the failure the 2026-11-09 runs paid for twice.
+
+    `rep` is needed here because the z rule is the one thing that depends on
+    it: a zero-thickness representation (metal, priority, sheet) must be FLAT
+    in z, the slab must be EXACTLY ONE cell thick in z.
     """
-    boxes = geometry_boxes(p)
+    boxes = geometry_boxes(p, rep)
+    slab = strip_dz(rep) != 0.0
     rows = []
 
     # --- the substrate ----------------------------------------------------
@@ -355,7 +527,13 @@ def check_boxes(p: dict) -> list:
         flat = [ax for ax, a, b in (("x", idx[0], idx[1]),
                                     ("y", idx[2], idx[3]),
                                     ("z", idx[4], idx[5])) if a == b]
-        if flat != ["z"]:
+        if slab:
+            if idx[5] - idx[4] != 1:
+                raise SystemExit(
+                    "PRE-FLIGHT FAILED: %s is %d cells thick in z (k %d..%d); "
+                    "representation %r requires EXACTLY one cell"
+                    % (label, idx[5] - idx[4], idx[4], idx[5], rep))
+        elif flat != ["z"]:
             raise SystemExit(
                 "PRE-FLIGHT FAILED: %s has zero extent on %r; a "
                 "zero-thickness strip sheet must be flat in z ONLY"
@@ -368,8 +546,12 @@ def check_boxes(p: dict) -> list:
             raise SystemExit(
                 "PRE-FLIGHT FAILED: %s spans less than one cell (x %d..%d, "
                 "y %d..%d)" % (label, idx[0], idx[1], idx[2], idx[3]))
-        rows.append((label, idx, "on z node %d, %d x %d cells"
-                     % (idx[4], idx[1] - idx[0], idx[3] - idx[2])))
+        note = ("on z node %d, %d x %d cells"
+                % (idx[4], idx[1] - idx[0], idx[3] - idx[2]))
+        if slab:
+            note += (", %d cell thick (z nodes %d..%d)"
+                     % (idx[5] - idx[4], idx[4], idx[5]))
+        rows.append((label, idx, note))
 
     # --- the two ports -----------------------------------------------------
     # A port is a PLANE element: exactly one axis has zero extent, that axis
@@ -471,9 +653,11 @@ target                : |S11| at f = 5.827786408327286 GHz
 """
 
 
-def echo(p: dict, stream=sys.stdout) -> None:
+def echo(p: dict, rep: str = "metal", stream=sys.stdout) -> None:
     """Print the geometry echo.  Pure arithmetic -- needs no openEMS."""
     stream.write(ECHO)
+    for _line in strip_report_lines(p, rep):
+        stream.write(_line + "\n")
     stream.write("derived: port->load span = %s, sigma per E_x edge = %s S\n"
                  % (_mm(p["span_port_load"]), p["sigma_edge"]))
     stream.write("derived: load cell = [%s, %s] x [%s, %s] x z=%s\n"
@@ -494,7 +678,7 @@ def echo(p: dict, stream=sys.stdout) -> None:
     # trap (11): prove on paper, before the solver is imported at all, that
     # every primitive occupies cells.  A box that occupies none is a box
     # CSXCAD drops, and it drops it without raising anything.
-    _rows = check_boxes(p)
+    _rows = check_boxes(p, rep)
     stream.write("--- primitive pre-flight (mesh node index, checked before "
                  "build) ---\n")
     for _label, _idx, _note in _rows:
@@ -528,8 +712,12 @@ def _shim():
     return np
 
 
-def build_model(p: dict):
-    """Build the CSX model and the solver.  Does NOT call Run()."""
+def build_model(p: dict, rep: str = "metal"):
+    """Build the CSX model and the solver.  Does NOT call Run().
+
+    `rep` selects how the strip is represented; see STRIP REPRESENTATION
+    above.  Nothing else in the model depends on it.
+    """
     _shim()
 
     from openEMS import openEMS as OEMS      # trap (1): this is the CLASS
@@ -567,11 +755,18 @@ def build_model(p: dict):
     # miss the other.  No `epsilon=1.0` air box: the background is already
     # vacuum, such a box perturbs nothing, and it is what the 2026-11-09 runs
     # paid a full solve for twice.
-    check_boxes(p)
-    props = {"substrate": csx.AddMaterial("substrate", epsilon=EPS_R),
-             "strip": csx.AddMetal("strip")}
-    for _prop, _label, _start, _stop in geometry_boxes(p):
-        props[_prop].AddBox(start=_start, stop=_stop)
+    check_boxes(p, rep)
+    substrate = csx.AddMaterial("substrate", epsilon=EPS_R)
+    strip, strip_priority, _dz = strip_build(csx, p, rep)
+    for _prop, _label, _start, _stop in geometry_boxes(p, rep):
+        if _prop == "strip":
+            if strip_priority is None:
+                strip.AddBox(start=_start, stop=_stop)
+            else:
+                strip.AddBox(start=_start, stop=_stop,
+                             priority=strip_priority)
+        else:
+            substrate.AddBox(start=_start, stop=_stop)
 
     # trap (6): ports are SOLVER methods (FDTD.*), not csx.*.  A port is a
     # PLANE element: exactly one axis has zero extent, that axis is never
@@ -591,11 +786,25 @@ def build_model(p: dict):
     # edge-to-edge (E_y rails) and give a shunt, |Gamma| = 0.027 instead of
     # 0.345.  The reference builds 9 parallel E_x edges for exactly this
     # reason -- see doc section 2 for the arithmetic.
+    #
+    # Port 2 carries the SAME priority as the strip property, because the load
+    # has to win the very cell the strip boxes are fighting over.  PART 4
+    # provenance for the kwarg (the bindings are not vendored here, so these
+    # are the lines the forwarded kwarg lands in):
+    #   infra/openems/reference/ports.py:96-119, Port.__init__ sets
+    #       self.priority = 0
+    #       if 'priority' in kw: self.priority = kw['priority']
+    #     and that value is consumed by
+    #       lumped_R.AddBox(self.start, self.stop, priority=self.priority)
+    #   infra/openems/reference/openEMS.pyx:339 forwards **kw into it:
+    #       def AddLumpedPort(self, port_nr, R, start, stop, p_dir,
+    #                         excite=0, **kw)
+    port2_kw = {} if strip_priority is None else {"priority": strip_priority}
     FDTD.AddLumpedPort(
         2, R_TERM,
         start=[p["x_load"], p["y_lo"], p["z_strip"]],
         stop=[p["x_gap_hi"], p["y_hi"], p["z_strip"]],
-        p_dir="x", excite=0.0)
+        p_dir="x", excite=0.0, **port2_kw)
 
     # Convergence: linear ratio, rendered by the solver as 10*log10 = -60 dB.
     FDTD.SetEndCriteria(END_CRIT)            # explicit, do not rely on default
@@ -678,9 +887,28 @@ def extract_s11(outdir: str, f: float = F_REF, zref: float = Z_REF) -> dict:
 
 _UNUSED_PAT = re.compile(r"Unused primitive")
 _ZERO_LOAD_PAT = re.compile(r"Active cells:\s*0(?:\D|\Z)")
+_PEC_EDGES_PAT = re.compile(r"Number of PEC edges:\s*(\d+)")
+_ACTIVE_PAT = re.compile(r"Active cells:\s*(\d+)")
 _VERSION_PAT = re.compile(
     r"openEMS 64bit -- version \S+|CSXCAD -- Version: \S+"
     r"|hdf5\s+-- Version: \S+")
+
+# --- the attachment floor ---------------------------------------------
+# The two strip sheets lie ON the K_STRIP plane, so each contributes one PEC
+# face per (x, y) cell on that plane -- but ONLY if the strip attaches at all.
+# When CSXCAD drops both sheets (trap 11) the only PEC left is the port-1
+# plane, and the 2026-11-09 broken runs reported 32 PEC edges.
+#
+#     sheet A  x nodes  8..50  ->  50 -  8 = 42 cells x 110 - 102 = 8 = 336
+#     sheet B  x nodes 51..72  ->  72 - 51 = 21 cells x 110 - 102 = 8 = 168
+#                                     (50-8)*8 + (72-51)*8 = 336 + 168 = 504
+#
+# PEC_EDGES_FLOOR is 504 rounded DOWN, for slack: the solver counts edges, not
+# faces, so its number need not equal 504 exactly.  It is a CONSTANT and is
+# deliberately not recomputed here -- _expected_pec_faces() recomputes 504
+# from the box table, so a geometry edit moves the expected value while the
+# floor stays put and the comparison stays honest.
+PEC_EDGES_FLOOR = 500
 
 
 @contextlib.contextmanager
@@ -729,21 +957,104 @@ def report_solver_provenance(text: str) -> None:
         print("  %s" % line)
 
 
-def guard_solver_output(text: str, where: str) -> None:
-    """Exit 4 if openEMS reported geometry it did not apply.  Trap (11)."""
-    bad = []
+def _expected_pec_faces(p: dict, rep: str = "metal") -> int:
+    """PEC faces the strip sheets should contribute if they attach (504).
+
+    Recomputed from the same box table the model is built from, so it tracks
+    the geometry; PEC_EDGES_FLOOR deliberately does not.
+    """
+    total = 0
+    for _prop, _label, start, stop in geometry_boxes(p, rep):
+        if _prop != "strip":
+            continue
+        i0, i1, j0, j1, k0, k1 = mesh_indices(start, stop)
+        total += (i1 - i0) * (j1 - j0) * (2 if k1 > k0 else 1)
+    return total
+
+
+def _expected_active_cells(p: dict) -> list:
+    """[(port label, cells it should activate)] -- 8 cells each here.
+
+    A port is a plane element: the cells it activates are the product of its
+    spans on the axes that are neither its p_dir nor the one axis it is flat
+    on.  Both ports span the 8-cell strip width in y.
+    """
+    out = []
+    for label, start, stop, p_dir in port_boxes(p):
+        i0, i1, j0, j1, k0, k1 = mesh_indices(start, stop)
+        axes = {"x": (i0, i1), "y": (j0, j1), "z": (k0, k1)}
+        flat = [ax for ax in ("x", "y", "z") if axes[ax][0] == axes[ax][1]]
+        cells = 1
+        for ax in ("x", "y", "z"):
+            if ax == p_dir or ax in flat:
+                continue
+            cells *= axes[ax][1] - axes[ax][0]
+        out.append((label, cells))
+    return out
+
+
+def audit_solver_output(text: str, where: str, p: dict,
+                        rep: str = "metal") -> tuple:
+    """(problems, notes) for one captured solver log.  Never raises.
+
+    PROBLEMS are the things that mean the log describes a geometry other than
+    the one that was asked for.  NOTES are the numbers a reader needs in order
+    to check that for themselves.  guard_solver_output() turns the former into
+    exit 4 and prints the latter.
+    """
+    problems = []
+    notes = []
     for pat, what in ((_UNUSED_PAT, "a primitive CSXCAD did not apply"),
                       (_ZERO_LOAD_PAT, "a lumped load with no active cells")):
         for line in text.splitlines():
             if pat.search(line):
-                bad.append((what, line.strip()))
-    if not bad:
+                problems.append("%s -> %r" % (what, line.strip()))
+
+    expect_faces = _expected_pec_faces(p, rep)
+    hits = _PEC_EDGES_PAT.findall(text)
+    if not hits:
+        problems.append(
+            "expected line not found: no 'Number of PEC edges: <N>' in the "
+            "captured %s log, so the strip cannot be shown to have attached"
+            % where)
+    else:
+        seen = max(int(h) for h in hits)
+        if seen < PEC_EDGES_FLOOR:
+            problems.append(
+                "the strip did not attach: %d PEC edges, below the floor of "
+                "%d (representation %r; the sheets should contribute %d "
+                "faces, and a dropped strip leaves only the port-1 plane)"
+                % (seen, PEC_EDGES_FLOOR, rep, expect_faces))
+        else:
+            notes.append("%d PEC edges (floor %d; the sheets should "
+                         "contribute %d faces)"
+                         % (seen, PEC_EDGES_FLOOR, expect_faces))
+
+    actives = _ACTIVE_PAT.findall(text)
+    expects = _expected_active_cells(p)
+    for i, count in enumerate(actives):
+        if i < len(expects):
+            label, expect = expects[i]
+        else:
+            label, expect = "an unidentified element", None
+        notes.append("%s: Active cells: %s (expected %s)"
+                     % (label, count, "?" if expect is None else expect))
+    return problems, notes
+
+
+def guard_solver_output(text: str, where: str, p: dict,
+                        rep: str = "metal") -> None:
+    """Exit 4 if openEMS reported geometry it did not apply.  Trap (11)."""
+    problems, notes = audit_solver_output(text, where, p, rep)
+    for note in notes:
+        print("guard: %s" % note)
+    if not problems:
         return
     print("MODEL NOT APPLIED (%s)" % where, file=sys.stderr)
     print("  openEMS said the geometry it was given is not the geometry it "
-          "will solve (%d line(s)):" % len(bad), file=sys.stderr)
-    for what, line in bad:
-        print("    %s -> %r" % (what, line), file=sys.stderr)
+          "will solve (%d line(s)):" % len(problems), file=sys.stderr)
+    for problem in problems:
+        print("    %s" % problem, file=sys.stderr)
     print("  A dropped primitive means the solve runs on EMPTY AIR: "
           "|S11| ~ 1, Z ~ 300 ohm, port1->port2 ~ -94 dB.", file=sys.stderr)
     print("  Nothing downstream of this run is readable; refusing to report "
@@ -751,29 +1062,127 @@ def guard_solver_output(text: str, where: str) -> None:
     raise SystemExit(4)
 
 
-def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2) -> int:
+def _setup_probe(p: dict, rep: str, threads: int = 2) -> str:
+    """Build `rep` and run openEMS's SETUP-ONLY path; return the captured log.
+
+    No timestep is taken, so this is the cheap way to ask the only question
+    that matters about a representation: does the solver KEEP the primitives
+    it was given?  The probe directory is a throwaway; `outdir` is never
+    touched on any path that calls this.
+    """
+    FDTD, _csx = build_model(p, rep)
+    probe_dir = tempfile.mkdtemp(prefix="oems-strip-probe-%s-" % rep)
+    with _captured_output() as tmp:
+        try:
+            FDTD.Run(probe_dir, cleanup=True, setup_only=True, verbose=1,
+                     numThreads=threads)
+        finally:
+            text = read_captured(tmp)
+    return text
+
+
+_RESOLVED_ANNOUNCED = False
+
+
+def announce_resolution(line: str, stream=sys.stdout) -> None:
+    """Print a 'STRIP REPRESENTATION RESOLVED:' line exactly ONCE.
+
+    Two layers want to say this -- run_solve() when it resolves the
+    representation, and main() when the bindings turn out to be missing -- and
+    on the no-bindings path BOTH run, so the same sentence would otherwise
+    appear twice in one report.  The first caller wins, later ones are silent.
+    """
+    global _RESOLVED_ANNOUNCED
+    if _RESOLVED_ANNOUNCED:
+        return
+    _RESOLVED_ANNOUNCED = True
+    print(line, file=stream)
+
+
+def resolve_strip(p: dict, threads: int = 2) -> tuple:
+    """Try each candidate in STRIP_CANDIDATES; return (rep, its captured log).
+
+    Every probe is SETUP-ONLY and is never a solve.  The first candidate whose
+    log survives audit_solver_output() wins, and nothing after it is probed.
+    If every candidate is rejected there is no fallback that reports numbers --
+    the numbers would describe empty air -- so that is exit 4.
+    """
+    winner = None
+    winner_text = ""
+    for rep in STRIP_CANDIDATES:
+        if winner is not None:
+            print("candidate %s: NOT TRIED (%s accepted)" % (rep, winner))
+            continue
+        try:
+            text = _setup_probe(p, rep, threads)
+        except ImportError:
+            # Missing bindings are NOT a candidate failure: they are an
+            # environment fault that main() must see so it can exit 5.
+            raise
+        except StripUnavailable as exc:
+            print("candidate %s: REJECTED -- %s" % (rep, exc))
+            continue
+        except Exception as exc:
+            # Ditto for `except Exception` on purpose, NOT BaseException: a
+            # binding that rejects AddBox(priority=) or AddLumpedPort(
+            # priority=) raises TypeError, not StripUnavailable.  Dying there
+            # costs the operator a manual host round trip -- the exact cost
+            # this multi-candidate loop exists to avoid -- so record it and
+            # move to the next candidate.  SystemExit is a BaseException, so a
+            # guard failure inside the probe still propagates.
+            print("candidate %s: REJECTED -- %s: %s"
+                  % (rep, type(exc).__name__, exc))
+            continue
+        problems, _notes = audit_solver_output(
+            text, "setup-only strip candidate %r" % rep, p, rep)
+        if problems:
+            print("candidate %s: REJECTED -- %s" % (rep, problems[0]))
+            for extra in problems[1:]:
+                print("    also: %s" % extra)
+            continue
+        print("candidate %s: ACCEPTED" % rep)
+        winner, winner_text = rep, text
+    if winner is None:
+        announce_resolution("STRIP REPRESENTATION RESOLVED: none -- every "
+                            "candidate was rejected by the setup probe",
+                            stream=sys.stderr)
+        raise SystemExit(4)
+    announce_resolution("STRIP REPRESENTATION RESOLVED: %s" % winner)
+    print("  exact geometry?      : %s" % strip_exactness_line(winner))
+    return winner, winner_text
+
+
+def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
+              strip: str = "auto") -> int:
     """Build the model and (unless dry_run) run it.  Returns an exit code."""
-    FDTD, _csx = build_model(p)
+    resolved_text = ""
+    if strip == "auto":
+        rep, resolved_text = resolve_strip(p, threads)
+    else:
+        rep = strip
+        announce_resolution("STRIP REPRESENTATION RESOLVED: %s (explicit "
+                            "--strip, not probed)" % rep)
+        print("  exact geometry?      : %s" % strip_exactness_line(rep))
 
     if dry_run:
         # Setup-only probe: CSXCAD builds the mesh and the operators and then
         # stops before the first timestep.  Seconds, not ~49 s, and it prints
         # the warnings that say whether the geometry was applied.  It writes
         # to a throwaway directory: `outdir` is never touched on this path.
-        probe_dir = tempfile.mkdtemp(prefix="oems-setup-probe-")
-        with _captured_output() as tmp:
-            try:
-                FDTD.Run(probe_dir, cleanup=True, setup_only=True, verbose=1,
-                         numThreads=threads)
-            finally:
-                text = read_captured(tmp)
+        # In --strip auto mode the winner's probe already produced this text.
+        text = resolved_text or _setup_probe(p, rep, threads)
         sys.stdout.write(text)
+        if text and not text.endswith("\n"):
+            sys.stdout.write("\n")
         report_solver_provenance(text)
-        guard_solver_output(text, "setup-only")
+        guard_solver_output(text, "setup-only", p, rep)
         print("SETUP-ONLY PROBE OK: openEMS accepted every primitive; no "
               "timestep was taken and %r was not touched." % outdir)
         return 0
 
+    # The model is built exactly ONCE on the solve path, for the resolved
+    # representation.
+    FDTD, _csx = build_model(p, rep)
     os.makedirs(outdir, exist_ok=True)
     # trap (7): thread count is a Run() kwarg; there is no SetMaxThreads().
     # trap (11): fd 1/2 is captured and scanned BEFORE the port records are
@@ -786,7 +1195,7 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2) -> int:
             text = read_captured(tmp)
     sys.stdout.write(text)
     report_solver_provenance(text)
-    guard_solver_output(text, "solve")
+    guard_solver_output(text, "solve", p, rep)
 
     missing = [n for n in ("port_ut_1", "port_it_1", "port_ut_2", "port_it_2")
                if not os.path.exists(os.path.join(outdir, n))]
@@ -816,23 +1225,46 @@ def main(argv=None) -> int:
                          "openEMS reports geometry it did not apply.")
     ap.add_argument("--threads", type=int, default=2,
                     help="Run(numThreads=...) (default: 2)")
+    ap.add_argument("--strip", choices=STRIP_CHOICES, default="auto",
+                    help="how the strip is represented (default: auto = "
+                         "setup-probe %s in that order and keep the first "
+                         "that passes; 'metal' is the 2026-11-09 control and "
+                         "is EXPECTED to fail; 'slab' is a physics "
+                         "deviation)" % " -> ".join(STRIP_CANDIDATES))
     args = ap.parse_args(argv)
 
     p = plan()
 
     # The echo is always printed first: it is the audit trail, and it is the
     # one thing that must be reviewable without the solver installed.
-    echo(p)
+    echo(p, args.strip)
 
     if args.dry_run and not args.with_bindings:
+        if args.strip == "auto":
+            announce_resolution(
+                "STRIP REPRESENTATION RESOLVED: (unresolved) -- --strip auto "
+                "probes candidates with the bindings; none was probed here.")
+        else:
+            announce_resolution(
+                "STRIP REPRESENTATION RESOLVED: %s (explicit --strip, not "
+                "probed)" % args.strip)
         print("RESULT: DRY-RUN -- geometry echo only, openEMS never imported,")
         print("        FDTD.Run() not called. This script is AUTHORED-")
         print("        UNEXERCISED; nothing here is a validated model result.")
         return 0
 
     try:
-        return run_solve(p, args.out, args.dry_run, args.threads)
+        return run_solve(p, args.out, args.dry_run, args.threads,
+                         strip=args.strip)
     except ImportError as exc:
+        if args.strip == "auto":
+            announce_resolution(
+                "STRIP REPRESENTATION RESOLVED: (unresolved) -- --strip auto "
+                "probes candidates with the bindings; none was probed here.")
+        else:
+            announce_resolution(
+                "STRIP REPRESENTATION RESOLVED: %s (explicit --strip, not "
+                "probed)" % args.strip)
         print("\nRESULT: NO-BINDINGS -- openEMS is not importable here (%s)." % exc)
         print("        Geometry echo above is pure arithmetic and stands.")
         print("        The model itself is AUTHORED-UNEXERCISED.")
