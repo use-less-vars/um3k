@@ -388,6 +388,216 @@ bracket, frozen before reading. Dated 2026-11-09, attributed to this session.
    would remain unaccounted for. **Under either reading H4 does not explain the
    residual.**
 
+### 7.4 E11 bracket correction — H5
+
+Per the rule stated in §7 above: (i) bracket, (ii) what the resolution found,
+(iii) why the original bracket was set on an incomplete read, (iv) the revised
+bracket, frozen before reading. Dated 2026-11-09, attributed to this session.
+
+1. **The bracket as written (:150-167).** H5 asked whether the residual is a
+   dispersion-model artefact rather than a solver artefact: replace the fitted
+   β by the Kirschning-Jansen closed form (β_KJ = 228.6288 rad/m,
+   `docs/design/beta_dispersion_comparison_2026-11-07.md:25`; |S11| =
+   0.33174966 at `docs/design/s11_port_forensics_2026-11-07.md:99`; slope
+   d|Γ|/dβ = -1.991630e-03 per rad/m at the same file `:103-104`) and see
+   whether the residual collapses toward zero. The bracket was frozen in
+   execution-time wording and is quoted verbatim from this artefact's
+   `bracket.text`:
+
+   > whether the computed beta_KJ matches 228.6288 to >= 1 percent; if yes
+   > record H5 FIRES and the residual becomes -3.10 percent; if no record H5
+   > DOES NOT FIRE and the residual is stated as beta-dependent
+
+2. **What the resolution found.** The reproduction check computed
+   β_KJ = 228.6374412810108 rad/m, i.e. 228.6288 to 0.0038 %, comfortably
+   inside the bracket's 1 % gate — so the first clause passes. The consequence
+   clause does not. The number the bracket printed, -3.10 %, is the
+   *one-wave-station* estimator of |Γ_port| evaluated at β_KJ (0.33174966
+   against A = 50/(50 + 2·48.02374054929774) = 0.3423544153167928, i.e.
+   -3.097596 %), not the estimator of record. The estimator of record is the
+   two-wave fit, whose |S11| at the β of record (231.55331672912826 rad/m) is
+   0.32556486641109117 -> -4.904142 %
+   (`evidence/e11_h4_box_limit_2026-11-09.json` records
+   residual_pct_measured = -4.904142652976361 from the same bytes). Applying
+   the same in-tree slope to the *two-wave* curve at β_KJ gives ≈ -3.21 %, not
+   -3.10 %. So "swap β" is not by itself worth the 1.8 pp the bracket implied:
+   part of that move is the estimator swap, which the bracket silently bundled
+   into the β swap.
+
+3. **Why the bracket was set on an incomplete read.** It treated one printed
+   scalar (-3.10 %) as the unique consequence of adopting β_KJ. It is not
+   unique. |Γ_port| is not a stored key in the artefact — there is no
+   `gamma_port` field — it is a reflection recomputed from the fit at a stated
+   β by the `docs/design/s11_port_forensics_2026-11-07.md` §8 recipe, so the
+   same phase bundle yields -3.10 % (one-wave at β_KJ), ≈ -3.21 % (two-wave at
+   β_KJ), -4.81 % (one-wave at β_fit, 0.32588679434738205), -4.90 % (two-wave
+   at β_fit) and -5.25 % (one-wave extrapolated to the modal β; item 4(a)
+   below). The bracket also assumed that the choice between β_KJ and β_fit is a
+   fact the reproduction check can settle. It is a model choice.
+
+4. **The ruling and the revised bracket.** Ruled 2026-11-09: **H5 DOES NOT
+   FIRE**, and the residual is stated as β-dependent. Reproducing the closed
+   form to 0.004 % shows only that β_KJ is internally reproducible; it does not
+   adjudicate which dispersion model this geometry actually has. The residual
+   is therefore carried as an interval over β, not as the single -3.10 % the
+   bracket hoped for. Frozen before reading any further artefact:
+
+   **(a)** On the one-wave curve the interval runs from -3.10 % at β_KJ
+   (228.6374412810108 rad/m) up to **-5.25 %** at the modal β of
+   232.30694631182445 rad/m, obtained by the
+   `s11_port_forensics_2026-11-07.md:103-104` slope:
+   0.32588679434738205 + (-1.991630e-03)(232.30694631182445 -
+   231.55331672912826) = 0.3243858387142148 -> -5.2485 %. Cross-check by
+   linearising the residual between the two one-wave anchors (-4.81 % at
+   β_fit, -3.10 % at β_KJ; slope -0.58731 pp per rad/m) gives -5.2527 %. Both
+   routes round to -5.25 %, so the figure does not depend on which is taken.
+
+   **(b)** That extrapolation is 1.5x the support the slope was fitted over.
+   Δβ = 232.30694631182445 - 231.55331672912826 = 0.753630 rad/m against a
+   ±0.5 rad/m window, and the target β itself is not stored in any artefact —
+   it comes from the ruling, not from a measurement of this geometry. -5.25 %
+   is therefore quoted as the *top of the β interval*, not as the residual, and
+   not as a measured value.
+
+   **(c)** The naive -5.37 % that appears if one interpolates the two *quoted*
+   endpoints (-4.90 % two-wave at β_fit, -3.10 % one-wave at β_KJ; slope
+   -0.61731 pp per rad/m) is a mixed-estimator artefact: those two numbers are
+   not two points on one curve. On the one-wave curve β_fit reads -4.81 %; on
+   the two-wave curve β_KJ reads ≈ -3.21 %. Interpolating across the β axis and
+   the estimator axis at once double-counts the estimator change, which is why
+   it lands about 0.12 pp past -5.25 %. -5.37 % is not used anywhere.
+
+   **(d)** Scale, for §7.5: the β interval is 2.15 pp wide (-3.10 -> -5.25).
+   H4's entire box-limit contribution was 0.0331 pp (0.67 % of the residual,
+   §7.3); the estimator spread is 0.1675 % (`s11_port_forensics_2026-11-07.md`
+   F2, 5.458137e-04 of 0.325854) and the run-to-run spread ~0.30 pp. The β
+   choice dominates this budget by roughly an order of magnitude over every
+   other term except run noise. That is the finding: the residual is
+   β-dependent, and E11's status stays UNVERIFIED rather than becoming
+   confirmed-by-explanation.
+
+### 7.5 E11 bracket correction — H2
+
+Per the same rule, and frozen before the fine rung exists: at the time of
+writing no fine-mesh result has been produced, so this bracket cannot have been
+set on a read of one. Dated 2026-11-09, attributed to this session.
+
+1. **The bracket as written (:76-79).** H2 asks whether the residual is
+   discretization. The bracket text, verbatim from §2, is: h-refinement
+   (0.4 mm -> ≤ 0.27 mm) moves S11 by ≥ 1.0 pp **and** monotonically toward the
+   anchor. **Fires:** discretization is a contributor. **Does not fire:**
+   < 1.0 pp, and the measured pp still enters the partition table (e.g.
+   0.7 pp = 14.6 % of 4.8 pp).
+
+2. **The rule, restated operationally.** Fires iff the coarse -> fine move is
+   (a) at least 1.0 pp in magnitude and (b) monotone toward the anchor, i.e.
+   |Γ| must move *up* toward A = 0.3423544153167928 as the cell shrinks. A
+   move smaller than 1.0 pp does not fire the hypothesis, but it is not
+   discarded: the measured pp is written into the partition table and stated as
+   a fraction of the 4.8 pp residual, exactly as the bracket says. No
+   post-hoc widening of the 1.0 pp gate after the run.
+
+3. **What will be run — one rung, one code path.** The fine rung is
+   `evidence/termination/run_build_A_nsub6.py --n-line 96 --load-at-mm 20
+   --load-ohm 50 --mem-ceiling-mb 2000 --s21-plane-index 76 --nsteps 3600`.
+   The wrapper exists because `evidence/termination/run_build_A.py` has no flag
+   for the seven mesh keys: its `build_kwargs` literal (`:502-525`) hard-codes
+   n_sub 4 / n_air 12 / n_top 6 / n_clean 96 / n_pml 6 and does not pass
+   n_strip or n_ref at all, so those fall through to the emfit/studies.py
+   defaults (`MS_N_STRIP` 8 at `:1202`, `MS_N_REF` 2 at `:1206`). The wrapper
+   imports the base module by file path, patches
+   n_sub 6 / n_strip 12 / n_air 18 / n_top 9 / n_pml 9 / n_clean 144 / n_ref 3
+   onto the returned kwargs, re-runs `check_mesh` (`:396`, which enforces
+   n_top == n_pml per `emfit/studies.py:2555-2557`), and delegates to the same
+   `main`. Nothing in run_build_A.py or under emfit/ is edited. The coarse
+   anchor is the same script unpatched
+   (`--n-line 64 ... --s21-plane-index 51`, as recorded in
+   `build_A_50ohm_p51_phasors.json` meta.argv), so the rung-to-rung delta is
+   attributable to the mesh and not to a second code path.
+
+4. **The fine mesh, stated before the run.** Grid 108 x 318 x 33 = 1,133,352
+   cells (coarse: 72 x 212 x 22 = 335,808; ratio 3.375x), cell h/n_sub =
+   1.6e-3/6 = 2.6667e-4 m (coarse 4.0e-4 m). Box unchanged at 84.8 x 8.8 x
+   28.8 mm: nx = n_pml + n_ref + n_line = 9 + 3 + 96 = 108, ny =
+   2(n_pml + n_clean) + n_strip = 2(9 + 144) + 12 = 318, nz = n_top + n_air +
+   n_sub = 9 + 18 + 6 = 33. Strip 12 cells = 3.2 mm, so the
+   `emfit/studies.py:2582` strip-must-equal-width guard still holds; PML 2.4 mm;
+   side clearance 38.4 mm. nsteps 3600, not 2400, because dt scales with the
+   cell: 3600 x 2.6667e-4 holds the coarse run's 1.830 ns of physical time
+   (n_warm = nsteps//4 = 900, `emfit/studies.py:3020-3022`).
+
+5. **The three baseline scalars and nothing else.** The fine rung will be
+   differenced against (i) `s11.magnitude` = 0.32556486641109117, the two-wave
+   |B/A| at z = 0 (not de-embedded); (ii) `s11.magnitude_one_wave_station_fit`
+   = 0.32588679434738205; and (iii) Γ_port at the β of record
+   231.55331672912826 rad/m, which has no native key in the artefact and is
+   therefore named as the fit's reflection recomputed at a stated β by the
+   `docs/design/s11_port_forensics_2026-11-07.md` §8 recipe — 0.32588679434738205
+   at β_fit, 0.33174966 at β_KJ = 228.62882383816375. Context carried with them:
+   `line.beta = line.beta_two_wave` = 231.55331672912826, `s11.phase_deg` =
+   -100.49921155605985, `s11.validation_status` = "UNVALIDATED". No other
+   scalar is available to be quoted after the fact.
+
+6. **Stop rule, fixed now.** Each run is gated at 1400 s wall and 2000 MB
+   (`run_build_A.py:124-125`). A rung that trips either gate is refused, not
+   truncated, and is not re-run with a raised ceiling. One rung only; a third
+   rung requires a new preregistration. Projected cost for the fine rung is
+   ~5.06x the coarse run (~221 s, RSS 0.9-1.2 GB) against the measured coarse
+   43.68 s / 339.5625 MB, so both gates should clear with margin — but the
+   projection is stated here in advance so that a gate trip is evidence, not a
+   surprise.
+
+7. **The plane caveat, inherited — and its arithmetic corrected.** The earlier
+   text of this item read column 76 at 2.6667e-4 m as sitting at 20.4 mm and
+   coarse column 51 as sitting at 20.0 mm. Both figures are wrong, and the
+   correction is made here, before the fine rung exists. `--s21-plane-index` is
+   forwarded unchanged and honoured downstream only (`run_build_A.py:520-521`
+   sets the column directly; the default-policy branch at `:534-580` runs only
+   when the flag is absent). The column-to-x map is node-layer arithmetic,
+   `x = ix * cell`, with no half-cell offset and no n_pml term:
+   `emfit/studies.py:2863` names `ix_port = n_pml + n_ref` "node layer of the
+   port plane"; `:2940` records a load as `"x": ix_load * cell, "column":
+   ix_load`; `:3037` places the probe stations at `station_x = js * cell`; and
+   `:3630` fixes the port at `x_port = float(ix_port * cell)`, "the same plane
+   the lumped port drives". At the coarse cell 4.0e-4 m, column 51 is
+   **20.4000 mm**, not 20.0 mm — 20.0 mm is column 50, the column
+   `--load-at-mm 20` lands on (`ix_load = floor(0.020/4.0e-4 + 0.5) = 50`,
+   `:2920`). At the fine cell 2.6667e-4 m the same load argument lands on
+   column 75 = 20.0000 mm and the requested plane is column 76 =
+   **20.2667 mm**; the fine neighbours read 75 = 20.0000, 76 = 20.2667,
+   77 = 20.5333 mm, and 20.4 mm is not a node there at all
+   (20.4/2.6667e-4 = 76.5, a half-cell tie between columns 76 and 77).
+
+   What the two rungs share is the *rule*, and it is exact: both planes sit one
+   column downstream of their own load's cut, coarse 50 → 51 and fine 75 → 76.
+   That is not a coincidence of two typed flags — it is the documented default
+   plane policy, `col = ... else ix_load + 1` (`run_build_A.py:559`, policy
+   stated at `:535-559`), so both explicit flags reproduce the column the
+   default would have chosen on their own mesh; `plane_from_default_policy` is
+   False for both only because the column was passed (`:1698-1699`). The
+   correspondence is therefore same-rule-same-ordinal, which is a stronger
+   claim than the "same coordinate to the micron" the earlier text had to
+   disown: the ordinal offset is identical, and only the physical size of that
+   one cell differs — 0.4000 mm coarse against 0.2667 mm fine, so the fine
+   extraction plane sits 1.5x closer to the load, a 133.3 µm difference in
+   de-embed distance. That difference is pure phase at real beta, and
+   de-embedding is unit-modulus
+   (`docs/design/s11_port_forensics_2026-11-07.md` GATE 1): it rotates the
+   reflection and cannot move its magnitude, so no part of a coarse-vs-fine move
+   in |S11| can come from this plane offset. DR-19 quarantines plane 51 and any
+   plane within ~3 cells of the load
+   (`docs/design/defect_register.md:302,338,340`), so the H2 comparison is
+   same-rule-same-plane and inherits that quarantine rather than escaping it.
+
+8. **What each outcome will mean.** If H2 fires, discretization is a
+   contributor and §7.3's 0.0331 pp box-limit figure is read as a lower bound on
+   the mesh term, with the measured pp joining the partition table beside the
+   2.15 pp β interval from §7.4. If it does not fire, the mesh term is bounded
+   above by 1.0 pp and the residual remains β-dominated. Either way the
+   residual is not declared explained: H4 was worth 0.67 %, H5 was ruled a model
+   choice rather than a measurement, and what remains is an interval, not a
+   number.
+
 ## 8. What this does NOT claim
 
 E11 does not claim the extraction is broken, the anchor is wrong, or the

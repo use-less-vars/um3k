@@ -63,6 +63,19 @@
     "cost_note": "0.715 s wall for interpreter start plus numpy/scipy import plus evaluation. No eigensolve was run, so no 1-3 minute timeout budget is implicated.",
     "wall_seconds_measured": 0.715
   },
+  "operator_ruling": {
+    "ruled_by": "operator",
+    "dated": "2026-11-09",
+    "verdict": "NOT_FIRED",
+    "verdict_literal": "DOES_NOT_FIRE",
+    "text": "**H5 does not fire.** The reproduction of beta_KJ = 228.6288 from the same closed-form at the same bin is guaranteed by construction and is not evidence about beta_KJ's defensibility. The only independent evidence - modal beta = 232.3069 rad/m at 5.828 GHz (a 1.605 % disagreement with beta_KJ, and closer to beta_fit 231.5533 than to beta_KJ) - points against beta_KJ being the record's beta. beta_KJ is a model value contradicted at the 1.6 % level by the only independent instrument available. Both beta values stay in the ledger; **the residual is beta-dependent in the range -3.10 % (beta_KJ) to approximately -5.25 % (beta_modal, extrapolated)**; -4.90 % is the beta_fit case and remains the number of record.",
+    "text_basis": "This is the operator's verbatim ruling text, supplied by the main agent on 2026-11-09. It supersedes the substance-only paraphrase recorded earlier in this field, which was written while the exact wording was unavailable.",
+    "residual_at_beta_of_record_pct": -5.2485,
+    "computation": "0.32588679434738205 + (-1.991630e-03) * (232.30694631182445 - 231.55331672912826) = 0.3243858387142148; residual = (|gamma|/A - 1) * 100 with A = 50/(50 + 2*48.02374054929774) = 0.3423544153167928",
+    "slope_citation": "docs/design/s11_port_forensics_2026-11-07.md:103-104 (d|Gamma|/dbeta = -1.991630e-03 per rad/m)",
+    "extrapolation_caveat": "The target beta 232.30694631182445 rad/m is taken from the ruling, not from a stored artefact; delta_beta = 0.753630 rad/m is 1.5x the +/-0.5 rad/m window the slope was fitted over. -5.2485 percent is the top of the beta interval, not a measured residual.",
+    "supersedes_top_level_status": true
+  },
   "premise_correction": {
     "brief_claim": "H5 required a mode_profile cross-section eigensolve costing 1-3 min, extrapolated from test_mode2d timings",
     "correction": "beta_KJ is a closed-form evaluation: the Kirschning-Jansen exponent at tools/d585_modal.py:86 via hammerstad_beta at tools/d585_modal.py:103, about 0.7 s including interpreter start and the numpy/scipy import",
