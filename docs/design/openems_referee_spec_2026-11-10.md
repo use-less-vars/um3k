@@ -253,6 +253,22 @@ now run ONCE, on the operator's host, by hand.**
   820 / 8.2018 ns / 47.80 periods, and the extracted S11 reproduces from it to
   8-9 significant digits. So the length verdict holds on either snapshot, while
   the exact row count above is a property of the snapshot that was measured.
+- Reconciliation, because the two spans look contradictory and are not: the
+  port records are written every 13th timestep, so their 10.014 ps spacing is
+  13 x 7.70333e-13 s -- the CFL step for the 0.4 mm uniform cell -- and 819
+  intervals x 13 = 10647 exactly, with 819 x 10.014 ps = 8.201738195 ns
+  against the recorded 8.201738196 ns (1.6e-10 relative). All 639 `et`
+  timestamps are integer multiples of that solver step to within 3.8e-16 s,
+  i.e. print rounding, and `ht` sits on half-integer multiples (Yee stagger).
+  An earlier reading that the stored records contradict the stated run is
+  therefore retracted, in favour of the records. Not explained, and not needed
+  for the S11 number: `et`/`ht` cover only the first 0.4915 ns (5.99 % of the
+  run) and carry no header lines at all, so the files alone cannot say whether
+  that window was configured or truncated. For a re-run, note that the port
+  record is a 13:1 decimated series: `SetPortDataCounter(1)` would store 10647
+  samples over 106.6 ns (621 periods) rather than 820 over 8.20 ns (47.8) --
+  a data-density improvement, not a fix for |S11| ~ 1, which is not a
+  truncation effect.
 - SUPERSEDED below, as of 2026-11-09: "solver path never ran",
   "AUTHORED-UNEXERCISED", "nothing executed", "no result of this referee
   exists". These were true when written and are kept for the record; read

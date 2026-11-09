@@ -49,6 +49,28 @@
     "tail_over_peak": 1.197e-08,
     "snapshot_note": "820 rows / 8.201738196e-09 s describe the record snapshot actually read (port files 30060 B, mtime 2026-11-09 ~18:00 UTC). The record files in evidence/referee/ were subsequently rewritten by a later host-side write whose headers are stamped 'Mon Nov  9 19:21:08 2026' local; they settled at 813 rows / 8.131638e-09 s / 47.39 periods. The port_1 values below reproduce to 8-9 significant digits from that later snapshot (U=-1.1225952338e-13-3.0942255092e-14j, I=9.1523936999e-17-3.3049120887e-16j, S11=0.9578897496-0.2883480888j, |S11|=1.0003486356, arg=-16.753071 deg); the difference is a partial run's worth of tail samples and does not affect the |S11|~1 finding."
   },
+  "provenance_check": {
+    "claim_checked": "that the 820-row / 8.2017 ns port record is consistent with the stated 10647-timestep run (it is; an earlier reading said it was not)",
+    "resolution": "the port write interval is NOT the solver step: the records are written every 13th timestep",
+    "port_write_interval_s": 1.0014332349999962e-11,
+    "solver_dt_s": 7.703332576923048e-13,
+    "decimation": 13,
+    "timesteps_closed_exactly": "819 intervals * 13 = 10647, and 10647 % 13 == 0",
+    "span_predicted_s": 8.201738194650e-09,
+    "span_recorded_s": 8.201738196e-09,
+    "span_relative_difference": 1.6e-10,
+    "et_ht_grid_check": "all 639 et timestamps are integer multiples of solver_dt_s to within 3.8e-16 s, which is the 6-significant-figure print rounding of the ASCII t column; ht sits on half-integer multiples (the Yee stagger)",
+    "cfl_check_c": 7.703332806185882e-13,
+    "cfl_check_note": "0.4 mm uniform cell, dx/(c*sqrt(3)) with c = 299792458 m/s reproduces solver_dt_s",
+    "nyquist_port_record_ghz": 49.928440811134,
+    "f_ref_over_nyquist": 0.116722780,
+    "samples_per_period_at_f_ref": 17.134616,
+    "et_ht_span_ns": 0.491473,
+    "et_ht_fraction_of_run": 0.05992303,
+    "et_ht_no_metadata": "et and ht carry zero '%' header lines -- no openEMS version, no timestamp, no window declaration -- so from the files alone it cannot be determined whether their 0.4915 ns window (5.99 % of the run) was configured or truncated. Not needed for the S11 number: the extraction reads only port_ut_1 and port_it_1.",
+    "effect_on_s11": "none: decimation changes data density, not per-sample values, and 5.8278 GHz is 11.7 % of the record's 49.93 GHz Nyquist. This is NOT a fix for |S11| ~ 1.",
+    "rerun_note": "SetPortDataCounter(1) would store 10647 samples over 106.6 ns (621 periods at F_REF) instead of 820 over 8.20 ns (47.8 periods) -- a data-density improvement that removes the bin-alignment caveat, not a fix for the physics."
+  },
   "port_1": {
     "excite": 1.0,
     "U": {
