@@ -69,10 +69,13 @@ API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
     of it.  Default 1e-6 == -60 dB.  SetNumberOfTimeSteps() default is 1e9.
 
 --------------------------------------------------------------------------
-EXTRACTION PLAN (documented only -- deliberately NOT executed here)
+EXTRACTION PLAN (reader + DFT helpers implemented in this file; still never
+run against a live solve from the authoring environment)
 --------------------------------------------------------------------------
 The solver writes port_ut_1 / port_it_1 / port_ut_2 / port_it_2 into the
-output directory (h5, openEMS format).  To compare against the artefact:
+output directory as ASCII -- '%'-prefixed header lines, then
+"time<TAB>value", and with NO file extension.  To compare against the
+artefact:
 
     f  = 5.827786408327286e9                      # the artefact's own bin
     U1 = DFT(port_ut_1, f) ; I1 = DFT(port_it_1, f)
@@ -394,6 +397,71 @@ def build_model(p: dict):
     FDTD.SetNumberOfTimeSteps(NSTEPS_CAP)    # hard cap; no Run() kwarg exists
 
     return FDTD, csx
+
+
+# --------------------------------------------------------------------------
+# PORT RECORDS.  openEMS writes them as ASCII with '%'-prefixed header lines
+# and NO file extension (port_ut_1, ...); some workflows keep h5-suffixed
+# copies instead.  The extension-less file is tried first.
+# --------------------------------------------------------------------------
+
+Z_REF = 50.0                    # ohm -- the artefact's reference impedance
+
+
+def _port_paths(outdir: str, name: str):
+    """The two candidate paths for a port basename; the plain one comes first."""
+    plain = os.path.join(outdir, name)
+    return plain, plain + ".h5"
+
+
+def read_port_ascii(path: str):
+    """(t, x) from an openEMS ASCII port record ('%'-prefixed headers)."""
+    import numpy as np
+    data = np.loadtxt(path, comments="%", ndmin=2)
+    return data[:, 0], data[:, 1]
+
+
+def read_port_h5(path: str):
+    """(t, x) from an h5-suffixed port record (legacy layout, first dataset)."""
+    import h5py
+    import numpy as np
+    with h5py.File(path, "r") as f:
+        data = np.array(f[sorted(f.keys())[0]], dtype=float)
+    return data[:, 0], data[:, 1]
+
+
+def read_port(outdir: str, name: str):
+    """(t, x) for port `name`: extension-less ASCII first, then `<name>.h5`.
+
+    Raises FileNotFoundError naming BOTH candidates if neither can be read.
+    """
+    plain, h5 = _port_paths(outdir, name)
+    if os.path.exists(plain):
+        return read_port_ascii(plain)
+    if os.path.exists(h5):
+        return read_port_h5(h5)
+    raise FileNotFoundError(
+        "port record %r not found: tried %r and %r" % (name, plain, h5))
+
+
+def dft_at(t, x, f: float) -> complex:
+    """One bin of the DFT of a stored time series, at frequency `f` [Hz]."""
+    import numpy as np
+    t = np.asarray(t, dtype=float)
+    x = np.asarray(x, dtype=float)
+    dt = float(np.median(np.diff(t)))
+    return complex(np.sum(x * np.exp(-2j * math.pi * f * t)) * dt)
+
+
+def extract_s11(outdir: str, f: float = F_REF, zref: float = Z_REF) -> dict:
+    """S11 at bin `f` from port_ut_1 / port_it_1 (the magnitude is the point)."""
+    t_u, u = read_port(outdir, "port_ut_1")
+    t_i, i = read_port(outdir, "port_it_1")
+    U = dft_at(t_u, u, f)
+    I = dft_at(t_i, i, f)
+    a = U / zref
+    return {"f_hz": f, "zref_ohm": zref, "U": U, "I": I,
+            "s11": (a - I) / (a + I)}
 
 
 def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2) -> int:

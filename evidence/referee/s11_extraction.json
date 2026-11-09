@@ -1,0 +1,104 @@
+{
+  "what": "Offline S11 extraction from the openEMS referee's stored port records.",
+  "date_local": "2026-11-09",
+  "inputs_dir": "evidence/referee/",
+  "inputs": {
+    "port_ut_1": {
+      "file_plain": true,
+      "file_h5": false,
+      "rows": 820,
+      "t_first_s": 0.0,
+      "t_last_s": 8.201738196e-09
+    },
+    "port_it_1": {
+      "file_plain": true,
+      "file_h5": false,
+      "rows": 820,
+      "t_first_s": 3.85166628909e-13,
+      "t_last_s": 8.20212336263e-09
+    },
+    "port_ut_2": {
+      "file_plain": true,
+      "file_h5": false,
+      "rows": 820,
+      "t_first_s": 0.0,
+      "t_last_s": 8.201738196e-09
+    },
+    "port_it_2": {
+      "file_plain": true,
+      "file_h5": false,
+      "rows": 820,
+      "t_first_s": 3.85166628909e-13,
+      "t_last_s": 8.20212336263e-09
+    }
+  },
+  "method": {
+    "reader": "docker/openems/build_A_referee.py:read_port (extension-less ASCII first, then .h5)",
+    "dft": "sum_k x_k exp(-2j*pi*f*t_k) * median(dt)  -- rectangular window, full record",
+    "s11": "S11 = (U/Zref - I) / (U/Zref + I)",
+    "f_hz": 5827786408.327286,
+    "zref_ohm": 50.0,
+    "note_phase": "phase not comparable to the artefact without de-embedding to x=20.4 mm"
+  },
+  "capture": {
+    "dt_s": 1.0014332349999962e-11,
+    "n_samples": 820,
+    "span_s": 8.201738196e-09,
+    "periods_at_f": 47.79797838330755,
+    "bin_aligned": false,
+    "tail_over_peak": 1.197e-08,
+    "snapshot_note": "820 rows / 8.201738196e-09 s describe the record snapshot actually read (port files 30060 B, mtime 2026-11-09 ~18:00 UTC). The record files in evidence/referee/ were subsequently rewritten by a later host-side write whose headers are stamped 'Mon Nov  9 19:21:08 2026' local; they settled at 813 rows / 8.131638e-09 s / 47.39 periods. The port_1 values below reproduce to 8-9 significant digits from that later snapshot (U=-1.1225952338e-13-3.0942255092e-14j, I=9.1523936999e-17-3.3049120887e-16j, S11=0.9578897496-0.2883480888j, |S11|=1.0003486356, arg=-16.753071 deg); the difference is a partial run's worth of tail samples and does not affect the |S11|~1 finding."
+  },
+  "port_1": {
+    "excite": 1.0,
+    "U": {
+      "re": -1.1225952267489939e-13,
+      "im": -3.094225577610002e-14
+    },
+    "I": {
+      "re": 9.152392148958743e-17,
+      "im": -3.304911934083721e-16
+    },
+    "Z_eq_ohm": {
+      "re": -0.4106145195123553,
+      "im": -339.56106505139394,
+      "abs": 339.5613133192894
+    },
+    "s11": {
+      "re": 0.9578897431467193,
+      "im": -0.28834807142980595,
+      "abs": 1.0003486243920048,
+      "arg_deg": -16.75307032061918
+    }
+  },
+  "port_2": {
+    "excite": 0.0,
+    "note": "port 2 is the 50 ohm series load (excite=0); (U/50-I)/(U/50+I) is NOT a reflection coefficient there. Its U/I is reported as a load check.",
+    "Z_eq_ohm": {
+      "re": -49.77065610450244,
+      "im": 2.98833030927615,
+      "abs": 49.86028807688524
+    },
+    "ratio_pointless": {
+      "abs": 33.30379295540473
+    }
+  },
+  "sweep_2_to_10_GHz": {
+    "abs_s11_min": 0.9821604665474378,
+    "abs_s11_max": 1.0012201324808654,
+    "current_over_U_by_z_at_f": 0.14724881203703266
+  },
+  "adequacy": {
+    "length": "ADEQUATE for a single bin: 47.8 periods at 5.8278 GHz, tail decayed to ~1.2e-8 of peak, full-record and first-half results agree to 6e-7.",
+    "bin_alignment": "NOT bin-aligned: the capture spans 47.8 periods, so F_REF is not an integer bin of this record; rectangular-window leakage is present.",
+    "result_validity": "NOT VALID as a referee S11. |S11| = 1.0003 at every frequency from 2 to 10 GHz, i.e. the port looks OPEN, not matched to ~0.33.",
+    "localisation": "The 50 ohm series load is present in the model: port 2 U/I = -49.8 + 3.0j ohm (|Z| = 49.9 ohm). The anomaly sits in port 1's U/I = -0.4 - 339.6j ohm, i.e. nearly purely reactive at the launch; |I|*50/|U| = 0.145 where ~0.5 is needed for |S11| = 0.33.",
+    "hypothesis_unverified": "Port-1 current is ~3.4x too small to yield a 0.33 reflection. Candidate causes (unverified here, no openEMS available): port-1 current normalisation/ground-return in the model, or port-data sampling/truncation. Needs a solver-side check."
+  },
+  "not_done": [
+    "no comparison against evidence/termination/build_A_50ohm_p51_phasors.json",
+    "no residual, no verdict on build A",
+    "no de-embedding (phase)",
+    "no S21"
+  ]
+}

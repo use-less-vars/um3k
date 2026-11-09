@@ -219,6 +219,45 @@ single-purpose magnitude referee.
 
 ## 5. BLOCKER
 
+**DATED CORRECTION -- 2026-11-09 18:59 local (17:59 UTC). The environment
+blocker below still stands for THIS workspace, but the referee itself has
+now run ONCE, on the operator's host, by hand.**
+
+- Provenance: `docker/openems/build_A_referee.py` as committed here is the
+  invocation source; the run stopped on the -60 dB end criterion
+  (10647 timesteps) after ~73 s wall. Its output is the six files in
+  `evidence/referee/` (`et`, `ht`, `port_ut_1`, `port_it_1`, `port_ut_2`,
+  `port_it_2`). Those files are that run's output. They are NOT anomalous
+  and NOT unexplained.
+- What actually failed was the EXTRACTION, not the solve. The port records
+  are extension-less ASCII (`%`-prefixed header lines), and the extraction
+  plan assumed h5-suffixed files, so nothing could be read back.
+- Reader fixed the same day: `read_port()` now tries the extension-less
+  file first (ASCII, `np.loadtxt(..., comments="%")`), falls back to
+  `<name>.h5`, and raises `FileNotFoundError` naming BOTH paths if neither
+  exists. `dft_at()` and `extract_s11()` were added next to it so the
+  extraction plan is executable rather than prose.
+- First extraction result, and the caveat that goes with it: LENGTH is
+  adequate (820 samples, 8.2018 ns = 47.8 periods at 5.8278 GHz, tail at
+  1.2e-8 of peak, full-record and first-half results agreeing to 6e-7) but
+  the record is NOT bin-aligned (47.8 periods is not an integer), and the
+  number it yields is |S11| = 1.0003 -- i.e. an OPEN port, not ~0.33. So
+  the referee has still NOT produced a usable S11. Details and the
+  diagnostic that localises the anomaly to port 1 are in
+  `evidence/referee/s11_extraction.json`. One run is not a convergence
+  study either way.
+- Provenance drift, recorded so the numbers above cannot be misread: the port
+  records under `evidence/referee/` were REWRITTEN after this extraction, by a
+  later host-side write whose headers are stamped `Mon Nov  9 19:21:08 2026`
+  local. That snapshot is 813 samples / 8.1316 ns / 47.39 periods rather than
+  820 / 8.2018 ns / 47.80 periods, and the extracted S11 reproduces from it to
+  8-9 significant digits. So the length verdict holds on either snapshot, while
+  the exact row count above is a property of the snapshot that was measured.
+- SUPERSEDED below, as of 2026-11-09: "solver path never ran",
+  "AUTHORED-UNEXERCISED", "nothing executed", "no result of this referee
+  exists". These were true when written and are kept for the record; read
+  them as "no EXTRACTION had succeeded and no validated S11 existed then".
+
 **openEMS cannot be executed in this environment. This is a hard, verified
 environment limitation, not a modelling difficulty.**
 
