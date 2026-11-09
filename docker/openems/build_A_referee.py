@@ -39,6 +39,12 @@ USAGE
     #    slab is a physics deviation (a 0.4 mm PEC slab).  Cannot be resolved
     #    without the bindings -- see "STRIP REPRESENTATION" below.
 
+    # 2b. ONE representation, ONE setup probe, in a process that has run
+    #     nothing else -- the fallback when `auto`'s in-process probes
+    #     disagree with each other (openEMS keeps process-global state).
+    #     Requires an EXPLICIT --strip X (exit 2 otherwise).
+    python3 build_A_referee.py --probe-only --strip slab
+
     # 3. real solve -- NOT runnable from the authoring environment.
     docker build -t openems:bookworm docker/openems
     mkdir -p evidence/referee
@@ -46,13 +52,17 @@ USAGE
         python3 /work/build_A_referee.py --out /work/out
 
     Exit 0  = whatever was asked for completed.
+    Exit 2  = usage error -- today: --probe-only without an explicit
+              --strip X.
     Exit 3  = solve ran but produced no port records (model is wrong).
     Exit 4  = openEMS reported geometry it did not apply (a primitive it
               called "Unused", or a lumped load with "Active cells: 0"), or
-              the strip did not attach (the "Number of PEC edges:" line is
-              absent or below its floor), or no --strip candidate passed its
-              setup probe.  Nothing downstream of that is readable; see trap
-              (11).
+              the strip did not attach ON THE SOLVE PATH (there the "Number
+              of PEC edges:" line is REQUIRED and must clear its floor; a
+              SETUP-ONLY probe does not require it -- see
+              audit_solver_output(phase=...)), or no --strip candidate passed
+              its setup probe.  Nothing downstream of that is readable; see
+              trap (11).
     Exit 5  = --with-bindings was requested but openEMS is not importable, so
               the model was never exercised at all.  A plain --dry-run (no
               --with-bindings) still exits 0 in that situation.
@@ -994,14 +1004,28 @@ def _expected_active_cells(p: dict) -> list:
 
 
 def audit_solver_output(text: str, where: str, p: dict,
-                        rep: str = "metal") -> tuple:
+                        rep: str = "metal", phase: str = "solve") -> tuple:
     """(problems, notes) for one captured solver log.  Never raises.
 
     PROBLEMS are the things that mean the log describes a geometry other than
     the one that was asked for.  NOTES are the numbers a reader needs in order
     to check that for themselves.  guard_solver_output() turns the former into
     exit 4 and prints the latter.
+
+    `phase` is "setup-probe" or "solve", and it governs EXACTLY one question:
+    is the ABSENCE of the "Number of PEC edges:" line evidence against the
+    model?  On the solve it is -- the numbers come from that run, and a run
+    that never counted PEC edges cannot show the strip attached.  On a
+    SETUP-ONLY probe it is NOT: openEMS may print that line only during a full
+    run, so demanding it in a setup log made `--strip auto` unable to resolve
+    on a host where it was absent -- a permanent exit 4 that said nothing
+    about the model and rejected candidates that had no warning against them.
+    Everything else (Unused primitive, Active cells, and the floor when the
+    line IS present) is identical in both phases.
     """
+    if phase not in ("setup-probe", "solve"):
+        raise ValueError("phase must be 'setup-probe' or 'solve', not %r"
+                         % (phase,))
     problems = []
     notes = []
     for pat, what in ((_UNUSED_PAT, "a primitive CSXCAD did not apply"),
@@ -1013,10 +1037,17 @@ def audit_solver_output(text: str, where: str, p: dict,
     expect_faces = _expected_pec_faces(p, rep)
     hits = _PEC_EDGES_PAT.findall(text)
     if not hits:
-        problems.append(
-            "expected line not found: no 'Number of PEC edges: <N>' in the "
-            "captured %s log, so the strip cannot be shown to have attached"
-            % where)
+        if phase == "solve":
+            problems.append(
+                "expected line not found: no 'Number of PEC edges: <N>' in "
+                "the captured %s log, so the strip cannot be shown to have "
+                "attached" % where)
+        else:
+            notes.append(
+                "note: no 'Number of PEC edges:' line in this setup-only log "
+                "-- openEMS may print it only during a full run, so this "
+                "probe judges attachment from the Unused-primitive and "
+                "Active-cells signals only")
     else:
         seen = max(int(h) for h in hits)
         if seen < PEC_EDGES_FLOOR:
@@ -1043,9 +1074,13 @@ def audit_solver_output(text: str, where: str, p: dict,
 
 
 def guard_solver_output(text: str, where: str, p: dict,
-                        rep: str = "metal") -> None:
-    """Exit 4 if openEMS reported geometry it did not apply.  Trap (11)."""
-    problems, notes = audit_solver_output(text, where, p, rep)
+                        rep: str = "metal", phase: str = "solve") -> None:
+    """Exit 4 if openEMS reported geometry it did not apply.  Trap (11).
+
+    `phase` is forwarded to audit_solver_output(); the dry-run call site is a
+    setup-only probe, the solve call site is a solve.
+    """
+    problems, notes = audit_solver_output(text, where, p, rep, phase=phase)
     for note in notes:
         print("guard: %s" % note)
     if not problems:
@@ -1062,13 +1097,17 @@ def guard_solver_output(text: str, where: str, p: dict,
     raise SystemExit(4)
 
 
-def _setup_probe(p: dict, rep: str, threads: int = 2) -> str:
-    """Build `rep` and run openEMS's SETUP-ONLY path; return the captured log.
+def _setup_probe(p: dict, rep: str, threads: int = 2) -> tuple:
+    """Build `rep` and run openEMS's SETUP-ONLY path; return (log, probe dir).
 
     No timestep is taken, so this is the cheap way to ask the only question
     that matters about a representation: does the solver KEEP the primitives
     it was given?  The probe directory is a throwaway; `outdir` is never
     touched on any path that calls this.
+
+    The directory is RETURNED, not swallowed: every caller dumps it alongside
+    the log, so the operator can go and inspect what the engine actually left
+    on disk instead of trusting a verdict line.
     """
     FDTD, _csx = build_model(p, rep)
     probe_dir = tempfile.mkdtemp(prefix="oems-strip-probe-%s-" % rep)
@@ -1078,7 +1117,7 @@ def _setup_probe(p: dict, rep: str, threads: int = 2) -> str:
                      numThreads=threads)
         finally:
             text = read_captured(tmp)
-    return text
+    return text, probe_dir
 
 
 _RESOLVED_ANNOUNCED = False
@@ -1099,22 +1138,102 @@ def announce_resolution(line: str, stream=sys.stdout) -> None:
     print(line, file=stream)
 
 
+# ---------------------------------------------------------------------------
+# WHAT A PROBE TELLS US, AND WHAT IT MUST SHOW US.
+# A captured setup log of ZERO bytes is not a statement about the model: it
+# means the fd-level capture returned nothing at all, and must never be
+# reported as "line missing" -- that is a verdict on the solver when the fault
+# is in the harness.  And a probe that IS judged must be dumped IN FULL: a host
+# run rejected all three candidates while printing only problems[0], so the
+# operator could not see that no candidate had a warning against it, and the
+# run told us nothing at all about what the engine had said.  Both rules are
+# enforced here.
+# ---------------------------------------------------------------------------
+
+EMPTY_CAPTURE = (
+    "captured setup log was EMPTY (0 bytes): the harness captured no solver "
+    "output at all; this is a capture failure, not a solver verdict")
+
+
+def _empty_capture(text: str) -> bool:
+    """True when the capture holds nothing but whitespace -- a HARNESS fault.
+
+    Checked BEFORE any regex, per candidate: a missing line in an empty log is
+    not evidence about the solver, and reporting it as one buries the fact
+    that there was nothing to read.
+    """
+    return len(text.strip()) == 0
+
+
+def dump_captured_log(tag: str, text: str, probe_dir: str = None) -> None:
+    """Print one captured log IN FULL, delimited, BEFORE any verdict on it.
+
+    Nothing about a probe may be hidden behind a summarised problem line: the
+    operator has to be able to read the engine's own words and judge the
+    verdict being drawn from them.  `probe_dir` is printed too, so the
+    directory can be inspected directly.
+    """
+    n_lines = len(text.splitlines())
+    print("--- %s: captured setup log (%d lines, %d bytes) ---"
+          % (tag, n_lines, len(text.encode("utf-8"))))
+    if probe_dir:
+        print("    probe directory: %s" % probe_dir)
+    sys.stdout.write(text)
+    if text and not text.endswith("\n"):
+        sys.stdout.write("\n")
+    print("--- end %s log ---" % tag)
+
+
+def _accept_note(text: str) -> str:
+    """Which signals an ACCEPTED setup probe actually used.  Names them."""
+    if _PEC_EDGES_PAT.search(text):
+        return ("no 'Unused primitive' warning, no zero-active-cells load, "
+                "PEC edges above the floor (signals used: Unused-primitive "
+                "+ Active-cells + PEC-edges)")
+    return ("no 'Unused primitive' warning, no zero-active-cells load "
+            "(signals used: Unused-primitive + Active-cells; this setup-only "
+            "log carries no 'Number of PEC edges:' line, which openEMS may "
+            "print only during a full run)")
+
+
+def _fresh_process_hint(empty_rep: str, good_rep: str) -> str:
+    """The command that re-checks ONE candidate with nothing before it.
+
+    openEMS keeps process-global state, so an EMPTY capture for one candidate
+    while another candidate in the same process captured a log is evidence
+    about the PROCESS, not about the model.  Name the way out of it.
+    """
+    return ("  HINT: candidate %r captured EMPTY in the SAME process where %r "
+            "captured a non-empty log.  openEMS keeps process-global state, "
+            "so a repeated Run() is not guaranteed to behave like the first; "
+            "check %r alone, in a fresh process:\n"
+            "      python3 %s --probe-only --strip %s"
+            % (empty_rep, good_rep, empty_rep, sys.argv[0], empty_rep))
+
+
 def resolve_strip(p: dict, threads: int = 2) -> tuple:
     """Try each candidate in STRIP_CANDIDATES; return (rep, its captured log).
 
     Every probe is SETUP-ONLY and is never a solve.  The first candidate whose
-    log survives audit_solver_output() wins, and nothing after it is probed.
-    If every candidate is rejected there is no fallback that reports numbers --
-    the numbers would describe empty air -- so that is exit 4.
+    log survives audit_solver_output(phase="setup-probe") wins, and nothing
+    after it is probed.  If every candidate is rejected there is no fallback
+    that reports numbers -- the numbers would describe empty air -- so that is
+    exit 4.
+
+    EVERY probed log is dumped in full before the verdict on it, accepted or
+    not: see the block comment above.
     """
     winner = None
     winner_text = ""
+    probed_empty = []
+    probed_nonempty = []
+    hinted = False
     for rep in STRIP_CANDIDATES:
         if winner is not None:
             print("candidate %s: NOT TRIED (%s accepted)" % (rep, winner))
             continue
         try:
-            text = _setup_probe(p, rep, threads)
+            text, probe_dir = _setup_probe(p, rep, threads)
         except ImportError:
             # Missing bindings are NOT a candidate failure: they are an
             # environment fault that main() must see so it can exit 5.
@@ -1133,14 +1252,29 @@ def resolve_strip(p: dict, threads: int = 2) -> tuple:
             print("candidate %s: REJECTED -- %s: %s"
                   % (rep, type(exc).__name__, exc))
             continue
+        dump_captured_log("candidate %s" % rep, text, probe_dir)
+        if _empty_capture(text):
+            probed_empty.append(rep)
+            print("candidate %s: REJECTED -- %s" % (rep, EMPTY_CAPTURE))
+            if probed_nonempty and not hinted:
+                print(_fresh_process_hint(rep, probed_nonempty[0]))
+                hinted = True
+            continue
+        if probed_empty and not hinted:
+            # The EMPTY arrived first; say so now that a good log exists to
+            # compare it against, so the hint is never lost to the loop order.
+            print(_fresh_process_hint(probed_empty[0], rep))
+            hinted = True
+        probed_nonempty.append(rep)
         problems, _notes = audit_solver_output(
-            text, "setup-only strip candidate %r" % rep, p, rep)
+            text, "setup-only strip candidate %r" % rep, p, rep,
+            phase="setup-probe")
         if problems:
             print("candidate %s: REJECTED -- %s" % (rep, problems[0]))
             for extra in problems[1:]:
                 print("    also: %s" % extra)
             continue
-        print("candidate %s: ACCEPTED" % rep)
+        print("candidate %s: ACCEPTED -- %s" % (rep, _accept_note(text)))
         winner, winner_text = rep, text
     if winner is None:
         announce_resolution("STRIP REPRESENTATION RESOLVED: none -- every "
@@ -1150,6 +1284,55 @@ def resolve_strip(p: dict, threads: int = 2) -> tuple:
     announce_resolution("STRIP REPRESENTATION RESOLVED: %s" % winner)
     print("  exact geometry?      : %s" % strip_exactness_line(winner))
     return winner, winner_text
+
+
+def probe_only(p: dict, rep: str, threads: int = 2) -> int:
+    """--probe-only: ONE representation, ONE setup probe, one FRESH process.
+
+    openEMS keeps process-global state, so a second FDTD.Run() in the same
+    process is NOT guaranteed to behave like the first.  `--strip auto`
+    probes up to three candidates in ONE process; `--probe-only --strip X`
+    reproduces the known-good single-Run path exactly, in a process that has
+    built nothing before it.  It is the fallback whenever `auto`'s in-process
+    probes disagree with each other or return an empty capture.
+
+    No resolution, no solve, and `outdir` is never created.  Returns
+    0 accepted / 4 rejected / 5 no bindings.
+    """
+    tag = "probe-only %s" % rep
+    try:
+        text, probe_dir = _setup_probe(p, rep, threads)
+    except ImportError as exc:
+        print("\nRESULT: NO-BINDINGS -- openEMS is not importable here (%s)."
+              % exc)
+        print("        --probe-only could not probe %r at all; nothing was "
+              "built and outdir was not touched." % rep)
+        return 5
+    except StripUnavailable as exc:
+        print("%s: REJECTED -- %s" % (tag, exc))
+        return 4
+    except Exception as exc:
+        # Same rule as the candidate loop: a binding that rejects a kwarg is
+        # a candidate failure, not a reason to die with a traceback.
+        print("%s: REJECTED -- %s: %s" % (tag, type(exc).__name__, exc))
+        return 4
+    dump_captured_log("candidate %s" % rep, text, probe_dir)
+    if _empty_capture(text):
+        print("%s: REJECTED -- %s" % (tag, EMPTY_CAPTURE))
+        return 4
+    problems, notes = audit_solver_output(
+        text, "setup-only strip candidate %r" % rep, p, rep,
+        phase="setup-probe")
+    for note in notes:
+        print("%s: %s" % (tag, note))
+    if problems:
+        print("%s: REJECTED -- %s" % (tag, problems[0]))
+        for extra in problems[1:]:
+            print("    also: %s" % extra)
+        return 4
+    print("%s: ACCEPTED -- %s" % (tag, _accept_note(text)))
+    print("  outdir was NOT created; this was a setup probe, not a solve.")
+    return 0
 
 
 def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
@@ -1169,13 +1352,20 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
         # stops before the first timestep.  Seconds, not ~49 s, and it prints
         # the warnings that say whether the geometry was applied.  It writes
         # to a throwaway directory: `outdir` is never touched on this path.
-        # In --strip auto mode the winner's probe already produced this text.
-        text = resolved_text or _setup_probe(p, rep, threads)
-        sys.stdout.write(text)
-        if text and not text.endswith("\n"):
-            sys.stdout.write("\n")
+        # In --strip auto mode the winner's probe already produced (and
+        # dumped) this text; only a probe taken HERE still needs dumping.
+        if resolved_text:
+            text = resolved_text
+            sys.stdout.write(text)
+            if text and not text.endswith("\n"):
+                sys.stdout.write("\n")
+        else:
+            text, probe_dir = _setup_probe(p, rep, threads)
+            dump_captured_log("dry-run probe %s" % rep, text, probe_dir)
+            if _empty_capture(text):
+                print("EMPTY CAPTURE -- %s" % EMPTY_CAPTURE)
         report_solver_provenance(text)
-        guard_solver_output(text, "setup-only", p, rep)
+        guard_solver_output(text, "setup-only", p, rep, phase="setup-probe")
         print("SETUP-ONLY PROBE OK: openEMS accepted every primitive; no "
               "timestep was taken and %r was not touched." % outdir)
         return 0
@@ -1231,6 +1421,14 @@ def main(argv=None) -> int:
                          "that passes; 'metal' is the 2026-11-09 control and "
                          "is EXPECTED to fail; 'slab' is a physics "
                          "deviation)" % " -> ".join(STRIP_CANDIDATES))
+    ap.add_argument("--probe-only", action="store_true",
+                    help="probe ONE representation and stop: requires an "
+                         "explicit --strip X (exit 2 without one), build the "
+                         "model, run ONE setup probe, dump the FULL captured "
+                         "log and the audit verdict, then exit 0 accepted / "
+                         "4 rejected / 5 no bindings.  Never resolves, never "
+                         "solves, never creates --out.  Use it when `auto`'s "
+                         "in-process probes disagree.")
     args = ap.parse_args(argv)
 
     p = plan()
@@ -1238,6 +1436,18 @@ def main(argv=None) -> int:
     # The echo is always printed first: it is the audit trail, and it is the
     # one thing that must be reviewable without the solver installed.
     echo(p, args.strip)
+
+    if args.probe_only:
+        # One representation, one Run(), one process.  `auto` is the
+        # multi-candidate resolver and cannot be probed once, so demand the
+        # explicit choice rather than guessing which candidate was meant.
+        if args.strip == "auto":
+            print("USAGE ERROR: --probe-only probes ONE representation, so it "
+                  "requires an explicit --strip X (%s); --strip auto is the "
+                  "multi-candidate resolver."
+                  % " | ".join(STRIP_CANDIDATES), file=sys.stderr)
+            return 2
+        return probe_only(p, args.strip, args.threads)
 
     if args.dry_run and not args.with_bindings:
         if args.strip == "auto":
