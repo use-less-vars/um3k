@@ -272,6 +272,47 @@ the same frozen-before-reading discipline. Dated and attributed.
 | 11 | DR register headings as `###` | `##` | Register convention is `## DR-NN`. |
 | 12 | H5: "from −5.54 % to −3.68 % against the forensics baseline ≈0.344414 (1.86 pp)" | "**from −5.47 % to −3.68 %** against ≈0.344414 (**1.80 pp**)" | −5.54 % reproduces only against the retracted circular anchor 0.3446515 (0.32556487/0.3446515 = 0.94462); against ≈0.344414 the two-wave residual is −5.473 % (0.32556487/0.344414 = 0.94527), and the β_KJ value at that baseline is −3.677 %, so the span is 1.80 pp, not 1.86 pp. |
 
+### 7.2 Bracket records added during execution
+
+§7.1 records corrections made to the sent version *before* placement. This
+subsection records the other direction: brackets and premises that were not in
+the placed file and were fixed only at execution time. Both are dated and
+attributed, per meta-rule 2.
+
+1. **H5's bracket was not in the placed document.** The placed file carries
+   `**Bracket H1:**` through `**Bracket H4:**` lines and no `**Bracket H5:**`
+   line, so H5 (§2) had no numeric pass/fail at placement. The operator
+   supplied one at execution time, before the solve ran, and it reads: whether
+   the computed β_KJ matches 228.6288 to ≥ 1 %; if yes record H5 FIRES and the
+   residual becomes −3.10 %; if no record H5 DOES NOT FIRE and the residual is
+   stated as β-dependent. **This bracket is recorded after placement and must
+   be read as an execution-time bracket, not as a pre-placement one.** Dated
+   2026-11-09, attributed to the operator.
+
+2. **Premise correction: H5 is a closed-form evaluation, not an eigensolve.**
+   The execution brief stated that H5 needed a `mode_profile` cross-section
+   solve costing 1–3 min, extrapolated from `test_mode2d` timings. That is
+   wrong. β_KJ is the closed-form Kirschning–Jansen exponent at
+   `tools/d585_modal.py:86`, exposed as `hammerstad_beta` at
+   `tools/d585_modal.py:103`; measured cost was 0.715 s wall including
+   interpreter start and the numpy/scipy import. The 2D eigensolve is a
+   different quantity (β_eig). No timeout budget is implicated.
+
+3. **The reproduction result, with its non-independence stated in the same
+   breath.** β_KJ at the artefact's own bin 5827786408.327286 Hz is
+   228.62882383816375 rad/m, bit-identical to the published figure — because it
+   is the same function at the same bin, so bit-identity there is guaranteed by
+   construction and is not corroboration. At the rounded tone 5.828 GHz it is
+   228.6374412810108 rad/m, +0.003769 % from the published value; that is the
+   3.66e-5 relative offset between the rounded tone and the real bin, not model
+   disagreement. The ≥ 1 % check therefore passes, and it cannot carry H5:
+   H5's preregistered question (§2) is whether β_KJ is *more defensible* than
+   β_fit at this cross-section, which a reproduction check does not answer.
+   **Status: UNRESOLVED pending operator ruling. H5 is recorded neither as
+   fired nor as not fired.** The arithmetic that follows *if* the operator
+   rules for β_KJ — residual against anchor 0.3423544 moving from −4.90 % to
+   −3.10 % — is conditional and is not established here.
+
 ## 8. What this does NOT claim
 
 E11 does not claim the extraction is broken, the anchor is wrong, or the

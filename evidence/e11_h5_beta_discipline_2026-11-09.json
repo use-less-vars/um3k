@@ -1,0 +1,102 @@
+{
+  "bracket": {
+    "attribution": "operator",
+    "dated": "2026-11-09",
+    "in_placed_document": false,
+    "note": "The placed E11 document carries '**Bracket H1:**' through '**Bracket H4:**' lines but no '**Bracket H5:**' line, so H5 had no numeric pass/fail when the document was placed. This bracket was supplied by the operator at execution time, before the solve ran, and is recorded here after the fact; see docs/design/E11_residual_preregistration.md section 7.2.",
+    "text": "whether the computed beta_KJ matches 228.6288 to >= 1 percent; if yes record H5 FIRES and the residual becomes -3.10 percent; if no record H5 DOES NOT FIRE and the residual is stated as beta-dependent"
+  },
+  "callable": {
+    "dispersion_exponent": {
+      "file_line": "tools/d585_modal.py:86",
+      "function": "kirschning_jansen_peff",
+      "note": "closed-form Kirschning-Jansen effective-permittivity exponent; no eigensolve, no iteration"
+    },
+    "file_line": "tools/d585_modal.py:103",
+    "function": "hammerstad_beta",
+    "note": "returns dict with keys beta, beta_qs, f_hz, eps_eff_qs, eps_eff_f, P_f; 'beta' is the graded dispersive basis",
+    "quasistatic_core": {
+      "file_line": "emfit/microstrip.py:372",
+      "function": "Microstrip.beta"
+    },
+    "signature": "hammerstad_beta(f, *, W=W_DEF, H=H_DEF, eps_r=ER_DEF, t=0.0, verbose=True)",
+    "units": "f in Hz; W, H, t in metres"
+  },
+  "command": {
+    "argv_string": "python3 -c \"from tools.d585_modal import hammerstad_beta; print(hammerstad_beta(5.828e9, W=3.2e-3, H=1.6e-3, eps_r=4.4, verbose=False)['beta'])\"",
+    "cwd": "/workspace (repository root inside the execution container)",
+    "note": "The module CLI (tools/d585_modal.py:664) always evaluates at FREQ_DEF=10.0096e9 and exposes no frequency flag, so the CLI cannot produce the 5.828 GHz value; the python3 -c form is the route."
+  },
+  "consequence_if_beta_kj_adopted": {
+    "anchor_derivation": "50/(50 + 2*48.02374054929774)",
+    "anchor_gamma": 0.3423544,
+    "anchor_source": "evidence/quasistatic_z0_ladder_w3.2mm.json (E10); DR-37",
+    "conditional": true,
+    "current_residual_pct": -4.9,
+    "residual_if_adopted_pct": -3.1,
+    "status": "NOT ESTABLISHED - this is arithmetic that follows only if the operator rules beta_KJ more defensible than beta_fit. This artefact makes no such ruling."
+  },
+  "environment": {
+    "container_round_trip_seconds_approx": 6.0,
+    "numpy": "2.5.4",
+    "python": "3.12.15",
+    "runner": "DockerCodeRunner (bash + python3); repository bind-mounted at /workspace",
+    "scipy": "1.18.1"
+  },
+  "generated_at": "2026-11-09T03:53:28Z",
+  "generated_at_source": "container clock: `date -u +%Y-%m-%dT%H:%M:%SZ`",
+  "inputs": {
+    "eps_r": 4.4,
+    "f_hz_artefact_bin": 5827786408.327286,
+    "f_hz_rounded_tone": 5828000000.0,
+    "h_m": 0.0016,
+    "published_beta_rad_m": 228.62882383816375,
+    "t_m": 0.0,
+    "w_m": 0.0032
+  },
+  "interpretation": {
+    "h5_status": "NOT MARKED FIRED; NOT MARKED NOT-FIRED",
+    "why_not": "H5 (section 2 of docs/design/E11_residual_preregistration.md:150-167) asks whether beta_KJ is more defensible than beta_fit for this cross-section. A reproduction check of a value produced by the same function cannot answer a question about model choice; it is evidence about reproducibility, not about which basis is right.",
+    "what_this_does_support": "the operator's >= 1 percent bracket passes at both tones, so the beta_KJ value is reproducible at the input precision the operator specified"
+  },
+  "measurements": {
+    "cost_note": "0.715 s wall for interpreter start plus numpy/scipy import plus evaluation. No eigensolve was run, so no 1-3 minute timeout budget is implicated.",
+    "wall_seconds_measured": 0.715
+  },
+  "premise_correction": {
+    "brief_claim": "H5 required a mode_profile cross-section eigensolve costing 1-3 min, extrapolated from test_mode2d timings",
+    "correction": "beta_KJ is a closed-form evaluation: the Kirschning-Jansen exponent at tools/d585_modal.py:86 via hammerstad_beta at tools/d585_modal.py:103, about 0.7 s including interpreter start and the numpy/scipy import",
+    "different_quantity": "the 2D eigensolve yields beta_eig, which is not beta_KJ",
+    "timeout_budget_implicated": false
+  },
+  "provenance": {
+    "git_dirty": "no modified tracked paths; untracked working files present (artifact/output directories), none touched by this run",
+    "head_commit": "2f87dfc21ddc1cdfc86d4de65cb40a42bfeabfbd",
+    "head_commit_source": "host-side `git rev-parse HEAD` (git_read tool). git is not installed in the DockerCodeRunner container, so the commit id could not be read from inside the execution environment.",
+    "head_commit_subject": "docs(design): place E11 residual preregistration, ledger row E11, dispatch row"
+  },
+  "reproduction": {
+    "beta_kj_at_artefact_bin_rad_m": 228.62882383816375,
+    "beta_kj_at_rounded_tone_rad_m": 228.6374412810108,
+    "bit_identical_to_published": true,
+    "delta_abs_rad_m": 0.008617442847054235,
+    "delta_rel_pct": 0.0037691847871089705,
+    "delta_definition": "beta_kj_at_rounded_tone_rad_m - 228.62882383816375",
+    "explained_by_frequency_offset": true,
+    "frequency_offset_frac": 3.6649223183636476e-05,
+    "independence": "NONE - non-independent. The published figure is this same function evaluated at this same bin, so bit-identity at that bin is guaranteed by construction and is not corroboration.",
+    "within_1pct": true,
+    "within_1pct_basis": "|228.6374412810108 - 228.62882383816375| / 228.62882383816375 = 3.769e-5, against the operator's >= 1 percent threshold"
+  },
+  "results": {
+    "beta_kj_rad_m": 228.6374412810108,
+    "beta_qs_rad_m": 223.36125285550185,
+    "eps_eff_f": 3.5037836795290396,
+    "eps_eff_qs": 3.3439383100189377,
+    "f_hz_evaluated": 5828000000.0,
+    "p_f": 0.17835578962242418
+  },
+  "role": "evidence for the E11 H5 (beta_KJ discipline) execution-time bracket; not a confirmatory result, and not a firing of H5",
+  "schema": "emfit.e11.h5_beta_discipline/1",
+  "status": "UNRESOLVED_PENDING_OPERATOR_RULING"
+}
