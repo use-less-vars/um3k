@@ -515,6 +515,20 @@ set on a read of one. Dated 2026-11-09, attributed to this session.
    `build_A_50ohm_p51_phasors.json` meta.argv), so the rung-to-rung delta is
    attributable to the mesh and not to a second code path.
 
+   *[Post-hoc annotation, added after the run. The command above is preserved
+   exactly as frozen, including the absence of any `--out`, so the divergence
+   stays auditable. The command actually executed added one flag:
+   `--out evidence/termination/build_A_50ohm_nsub6_p76.json`. The reason is
+   that `OUT_DEFAULT` at `evidence/termination/run_build_A.py:114` is
+   `evidence/termination/build_A_50ohm.json`, which is tracked and committed:
+   the frozen command as written would have overwritten committed evidence
+   with a different mesh's numbers. The artefact's own `meta.command_line`
+   records the command as it was actually executed, so the file and the record
+   agree. Result in §7.6. This is a post-hoc annotation of a sealed
+   pre-registration and the original wording is kept deliberately: a
+   pre-registration that misquotes the command that ran is a defect, and
+   hiding the defect would be a worse one.]*
+
 4. **The fine mesh, stated before the run.** Grid 108 x 318 x 33 = 1,133,352
    cells (coarse: 72 x 212 x 22 = 335,808; ratio 3.375x), cell h/n_sub =
    1.6e-3/6 = 2.6667e-4 m (coarse 4.0e-4 m). Box unchanged at 84.8 x 8.8 x
@@ -597,6 +611,115 @@ set on a read of one. Dated 2026-11-09, attributed to this session.
    residual is not declared explained: H4 was worth 0.67 %, H5 was ruled a model
    choice rather than a measurement, and what remains is an interval, not a
    number.
+
+### 7.6 H2 resolution - the fine rung runs, and does not fire
+
+1. **The bracket, quoted (:76-79).** H2 fires iff "h-refinement (0.4 mm →
+   ≤ 0.27 mm) moves S11 by ≥ 1.0 pp **and** monotonically toward the anchor".
+   Unit convention,
+   as used throughout §2 and not restated anywhere below: **pp are percentage points**, an absolute
+   difference of two percentages (0.5523 pp = 0.005523 in |Γ|), never a
+   relative percentage change. Both appear in this section and they are
+   different numbers.
+
+2. **What was run.** The command, verbatim as executed:
+   `evidence/termination/run_build_A_nsub6.py --n-line 96 --load-at-mm 20
+   --load-ohm 50 --mem-ceiling-mb 2000 --s21-plane-index 76 --nsteps 3600
+   --out evidence/termination/build_A_50ohm_nsub6_p76.json`. The one-flag
+   divergence from item 3 of §7.5 is annotated there and is not re-argued here.
+   Both gates cleared: wall 198.74779609497637 s against the 1400 s limit, peak
+   RSS 927.625 MB against the 2000 MB ceiling; `meta.status` = ok,
+   `meta.tripped` = false, no trip file written. Against §7.5's projection of
+   ~221 s and 0.9-1.2 GB the run came in slightly under on wall and inside the
+   memory band. Artefact: `evidence/termination/build_A_50ohm_nsub6_p76.json`.
+
+3. **Geometry proof, from the artefact and not from a log.** 108 x 318 x 33 =
+   1,133,352 cells at cell 2.666666666666667e-4 m, n_sub 6, n_line 96, 3600
+   steps; load at column 75 (x 0.02 m, series_r 50.0 ohm, 13 edges); extraction
+   plane column 76 at `x_m` 0.02026666666666667. There is no startup echo in
+   this harness - every print is post-solve - so the proof is the `geometry`
+   block itself, not a launch-time log line. The run **confirms** §7.5 item 7:
+   the plane is load column + 1, which is the default policy, so
+   `--s21-plane-index 76` reproduces the default rather than departing from it.
+   The mesh is genuinely finer than the coarse rung (72 x 212 x 22 = 335,808
+   cells, cell 4e-4 m, n_sub 4, 2400 steps), about 3.4 times the cell count.
+
+4. **The numbers.** Two |S11| estimators at both rungs. Two-wave: coarse
+   0.32556486641109117 -> fine 0.3200422153280212. One-wave station fit:
+   coarse 0.32588679434738205 -> fine 0.3203898880823538. In pp, coarse -> fine
+   moves |S11| by **-0.005522651083069985** two-wave and
+   **-0.005496906265028245** one-wave, i.e. **-0.5523 pp** and **-0.5497 pp**,
+   a relative change of -1.6963289509552073 per cent and -1.6867533021816057
+   per cent. Supporting detail, subordinate to the magnitudes above and
+   port-referred: |S21| = 0.7730201981988544 at 5.449605938169487 deg,
+   `s11.phase_deg` = -98.88711363245368 deg, `s11.deembed_distance_m` =
+   0.0072000000000000015 m.
+
+5. **The verdict: DOES NOT FIRE.** Both limbs are unsatisfied, and the magnitude
+   limb is the one that decides.
+   - *Magnitude limb fails on its own terms*: 0.5523 pp two-wave and 0.5497 pp
+     one-wave, both below the 1.0 pp threshold. This limb decides the verdict.
+   - *Direction limb is unsatisfied too, but is not claimed as tested*: |S11| moved DOWN,
+     i.e. AWAY from the anchor, so the gaps to A = 0.3423544153167928 widened
+     on both estimators - 0.016789548905701612 -> 0.022312199988771597
+     two-wave, 0.016467620969410734 -> 0.02196452723443898 one-wave.
+     Monotonicity toward an anchor is not decidable from two rungs, so this is
+     a direction observation, not a passed or failed monotonicity test.
+   - *The consequence, not softened*: the residual per rung, r = (|γ|/A - 1)*100,
+     went -4.904143 -> -6.517281 per cent two-wave and -4.810109 -> -6.415728
+     per cent one-wave. Refinement made the agreement WORSE, not better. The
+     mesh term is therefore 0.5523 pp out of a 4.904143 pp residual -
+     0.5523 / 4.904143 = 11.3 per cent of it - and it is signed the wrong way:
+     the coarse mesh was flattering the agreement, and refinement cannot be
+     concealing the remaining gap. That is the finding: the residual is not a
+     discretisation artefact that further refinement would erase.
+
+6. **Honest limits.**
+   - One fine rung. Nothing here measures a convergence rate; it is a single
+     two-point comparison against the coarse rung.
+   - Monotonicity is untestable at two rungs, so no monotonicity claim is made
+     here or anywhere else in this document.
+   - The plane-local S11 is NULL in this artefact: `s11_at_plane.valid` is
+     false with `invalid_reason` `plane_beyond_load`, magnitude and phase null,
+     and the four `gamma_plane` fields are NaN. The extraction plane is
+     strictly beyond the load column, so there is nothing past it to reflect
+     from; the runtime warning states all port-referred `s11` quantities are
+     unaffected. No plane-local reflection claim may be made from this run, and
+     the NaN is a null-by-design, not a crash.
+   - The artefact contains four literal NaN tokens and is therefore not
+     RFC-8259-strict JSON: it parses only under a permissive reader. This is a
+     property of the writer when `gamma_plane` is invalid - a defect to fix,
+     not a defect fixed.
+   - `s11.validation_status` is UNVALIDATED, and its `validation_reason` prose
+     was NOT refreshed for this rung: it still enumerates residues of 5.5 per
+     cent (n=64), 7.6 per cent (n=54) and 13.8 per cent (n=79), and omits this
+     run's own 6.52 per cent. That string must not be quoted as this run's
+     residual.
+   - β is mesh-dependent at the -0.22071743754995543 per cent level
+     (231.55331672912826 -> 231.0422381818818 rad/m, a change of
+     -0.5110785472464556 rad/m). Arithmetic, not measurement: at the recorded
+     sensitivity of about -1.991630e-03 per rad/m, that β drop would imply
+     |S11| moving UP by roughly 0.10 pp, whereas the measured move is DOWN
+     0.5523 pp - so the β drift does not account for the |S11| move and the two
+     are anti-correlated. `line.beta_model` is unchanged at 223.35306683909548,
+     as a closed form must be.
+   - `meta.git_rev` is null because git is absent from the execution container,
+     so the artefact cannot be tied to a commit from its own contents; that
+     linkage comes from the commit that files it. `meta.nsteps` does not exist -
+     the step count lives in `geometry.nsteps` - so nothing should be read from
+     the former.
+
+7. **What this does and does not settle for the partition.** H2's mesh term is
+   bounded and small but wrongly signed: it does not move the residual toward
+   the anchor and does not account for the shortfall. The measured 0.5523 pp
+   falls between the two limbs of the operator's H2-to-H1 routing rule (below
+   0.5 pp, discretisation is not dominant and H1 is worth building; at or above
+   1.0 pp, H1 is confounded), so that routing decision is the operator's and is
+   not made in this document. The argument that bears on it: an 11.3 per cent
+   term carrying the wrong sign cannot be hiding the gap, which weighs against
+   treating the residual as a discretisation artefact regardless of which side
+   of the 0.5 pp line it lands. H1 is not decided and not started here, and H4
+   and H5 are not re-opened.
 
 ## 8. What this does NOT claim
 

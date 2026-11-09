@@ -51,11 +51,35 @@ PLANE INDEX IS PASSED THROUGH UNCHANGED
 ---------------------------------------
 `--s21-plane-index N` is forwarded verbatim: run_build_A.py:520-521 assigns it
 directly to the plane COLUMN, and its default-policy / upstream-guard branch
-(:534-580) runs only when the flag is absent. Note the physical consequence:
-the coarse rung's column 51 sits at 20.0 mm, while column 76 at 2.6667e-4 m
-sits at 20.4 mm — 20.4 mm is not a mesh node at the fine cell, so the two
-rungs sample the same *rule* on the nearest available node, not the same
-coordinate to the micron. That asymmetry is stated in the preregistration.
+(:534-580) runs only when the flag is absent.
+
+The column-to-x map is node-layer arithmetic, x = ix * cell, with no
+half-cell offset and no n_pml term (emfit/studies.py:2863, :2940, :3037,
+:3630). At the fine cell 2.666666666666667e-4 m: load column 75 = 20.0000 mm,
+plane column 76 = 20.2667 mm (column 77 = 20.5333 mm). At the coarse cell
+4.0e-4 m: load column 50 = 20.0000 mm, plane column 51 = 20.4000 mm. 20.4 mm
+is NOT a node on the fine mesh -- 20.4 / 0.266667 = 76.5, a half-cell tie
+between columns 76 and 77 -- so the earlier version of this paragraph, which
+put column 76 at 20.4 mm and coarse column 51 at 20.0 mm, was wrong on both
+figures.
+
+The two rungs are nonetheless comparable, and exactly so: both extraction
+planes sit one column downstream of their OWN load (coarse 50 -> 51, fine
+75 -> 76), which is the harness's documented default plane policy
+(`col = ... else ix_load + 1`, run_build_A.py:559, policy stated at :535-559).
+`--s21-plane-index 76` therefore reproduces the default the policy would have
+chosen on this mesh rather than departing from it; the flag sets
+`plane_from_default_policy` False (:1698-1699) without changing the column.
+What the rungs share is same-rule-same-ordinal, not the same coordinate: only
+the physical size of that one cell differs, 0.4000 mm coarse against 0.2667 mm
+fine. That is stated in the preregistration (§7.5).
+
+GEOMETRY IS PROVEN FROM THE ARTEFACT, NOT THE LOG
+-------------------------------------------------
+There is no startup echo to read: every print this harness makes is
+post-solve. Geometry is therefore proven either by `--dry-run` beforehand or
+by the post-run `geometry` block of the artefact (grid, cells, cell, n_sub,
+n_line, loads, s21_plane_index) -- never from a launch-time log line.
 
 Usage:
     python3 evidence/termination/run_build_A_nsub6.py \
