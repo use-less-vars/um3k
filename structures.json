@@ -1,0 +1,60 @@
+{
+  "schema": "emfit.structures/1",
+  "generated_utc": "2026-11-09T00:17:45Z",
+  "note": "Entries exist only where artefacts exist. There is exactly one published field dump in the tree; the S-parameter record beside it is from a different run, and that mismatch is recorded per entry rather than hidden.",
+  "structures": [
+    {
+      "id": "build_A_50ohm",
+      "label": "Build A - 50 ohm load",
+      "status": "field+sparams (mismatched runs)",
+      "field_dump": {
+        "path": "evidence/termination/build_A_50ohm_p51_ghostwave_fields.npz",
+        "cells": "62x212x22",
+        "run": "A (n_line 54, 24.8 mm)"
+      },
+      "sparams": {
+        "path": "evidence/termination/build_A_50ohm_p51_phasors.json",
+        "cells": "72x212x22",
+        "run": "B (n_line 64, 28.8 mm)"
+      },
+      "multifreq": {
+        "path": "evidence/termination/build_A_50ohm_multifreq_summary.json"
+      },
+      "mismatch": true,
+      "mismatch_note": "The only combined field+sparams view in the tree, and it is a composite of two runs. No 72-cell field dump exists for the p51_phasors record yet.",
+      "anchors": {
+        "independent": {
+          "z0_ohm": 48.0237405,
+          "note": "independent anchor, ledger E1/E11"
+        },
+        "circular": {
+          "z0_ohm": 47.53662,
+          "note": "circular anchor used by DR-19 and by the artefacts' own validation_reason"
+        }
+      },
+      "notes": ""
+    },
+    {
+      "id": "build_A_50ohm_100ohm",
+      "label": "Build A - 100 ohm load",
+      "status": "record only",
+      "field_dump": null,
+      "sparams": null,
+      "multifreq": null,
+      "mismatch": false,
+      "anchors": {},
+      "notes": "No artefact in the tree as of this commit. Referenced only in prose (DR-19 cites n=54, 100 ohm, 7.6%). Register a dump here when one is published."
+    },
+    {
+      "id": "build_A_series_R",
+      "label": "Build A - series R",
+      "status": "record only",
+      "field_dump": null,
+      "sparams": null,
+      "multifreq": null,
+      "mismatch": false,
+      "anchors": {},
+      "notes": "No artefact in the tree as of this commit."
+    }
+  ]
+}

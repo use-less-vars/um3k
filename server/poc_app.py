@@ -58,8 +58,10 @@ STATUS: the web path (trame server, layout, slider callbacks, panel placement)
 from __future__ import annotations
 
 import argparse
+import datetime
 import errno
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -75,6 +77,11 @@ PLANE_KEY = "plane_ez"
 # curve cannot come from it; this is a different artefact of the same study. It
 # is looked for beside the dump first, then at this repo-relative path.
 DEFAULT_MULTIFREQ = "evidence/termination/build_A_50ohm_multifreq_summary.json"
+# The structure registry: which artefacts belong to which physical case, and
+# which cell counts each of them is on. Read from the repo root. Every entry
+# point below defaults to the entry named here.
+DEFAULT_STRUCTURE = "build_A_50ohm"
+STRUCTURES_FILE = "structures.json"
 DEFAULT_HOST = "127.0.0.1"
 # Deliberately 8080, NOT 8000: 8000 is reserved for the agent's own service on
 # the operator's machine.
@@ -228,12 +235,361 @@ def _multifreq_candidates(npz_path: Path) -> list[Path]:
     return candidates
 
 
+# --- the structure registry ------------------------------------------------
+#
+# WHY a registry file: the viewer used to know ONE artefact path, typed in as a
+# constant, and every number on the page inherited that assumption. The page now
+# names the CASE it is showing, and reads which artefacts belong to that case
+# from structures.json at the repo root. An entry exists there only where an
+# artefact exists on disk; a case with no dump is listed as "record only" and
+# cannot be opened, rather than being opened onto a different case's numbers.
+#
+# Every read in this section is stdlib + numpy: --dump-state and --list-keys
+# must never need trame, pyvista or matplotlib.
+
+
+def _read_json(path):
+    """Read a JSON object from ``path``; None (plus a stderr note) on failure."""
+    try:
+        with Path(path).open(encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as exc:  # noqa: BLE001 - optional input, never fatal
+        print(f"[poc_app] {path} unreadable: {exc}", file=sys.stderr)
+        return None
+    if not isinstance(data, dict):
+        print(f"[poc_app] {path} is not a JSON object; ignoring it", file=sys.stderr)
+        return None
+    return data
+
+
+def _as_int(value):
+    """int() or None, never raising. Used on optional integer record keys."""
+    number = _as_float(value)
+    return None if number is None else int(number)
+
+
+def _cells_string(nx, ny, nz) -> str:
+    return f"{nx}x{ny}x{nz}"
+
+
+def _parse_cells(text):
+    """'62x212x22' -> {'nx': 62, 'ny': 212, 'nz': 22}; None when unparseable.
+
+    None, never a guess: a cell count that cannot be read is REPORTED as
+    missing, because a default here would silently relabel one grid as another -
+    which is exactly the confusion the mismatch check exists to catch.
+    """
+    if not isinstance(text, str):
+        return None
+    parts = text.strip().lower().split("x")
+    if len(parts) != 3:
+        return None
+    try:
+        nx, ny, nz = (int(part) for part in parts)
+    except ValueError:
+        return None
+    return {"nx": nx, "ny": ny, "nz": nz}
+
+
+def _cells_as_text(cells):
+    """{'nx': 62, 'ny': 212, 'nz': 22} -> '62x212x22'; None when incomplete."""
+    if not isinstance(cells, dict):
+        return None
+    nx, ny, nz = cells.get("nx"), cells.get("ny"), cells.get("nz")
+    if nx is None or ny is None or nz is None:
+        return None
+    return _cells_string(nx, ny, nz)
+
+
+_CELLS_IN_LINE = re.compile(r"cells\s*=\s*(\d+)\s*[xX]\s*(\d+)\s*[xX]\s*(\d+)")
+
+
+def _cells_from_summary(summary_line):
+    """Cell counts out of a record's summary_line, e.g. 'cells=72x212x22'.
+
+    This is the ONLY source of the S-parameter cell count: the number is read
+    from the record that produced it and never inferred from the field dump
+    beside it - those two are exactly what the mismatch check compares.
+    """
+    if not isinstance(summary_line, str):
+        return None
+    match = _CELLS_IN_LINE.search(summary_line)
+    if match is None:
+        return None
+    return _parse_cells("x".join(match.groups()))
+
+
+def _n_line(record):
+    """The run's n_line as recorded (run.kwargs.n_line, then geometry.n_line)."""
+    if not isinstance(record, dict):
+        return None
+    run = record.get("run")
+    if isinstance(run, dict):
+        kwargs = run.get("kwargs")
+        if isinstance(kwargs, dict):
+            value = _as_int(kwargs.get("n_line"))
+            if value is not None:
+                return value
+    geom = record.get("geometry")
+    if isinstance(geom, dict):
+        value = _as_int(geom.get("n_line"))
+        if value is not None:
+            return value
+    return None
+
+
+def _run_letter(structure, key):
+    """The run label ('A', 'B') out of an entry's '<field_dump|sparams>.run'."""
+    block = structure.get(key) if isinstance(structure, dict) else None
+    if not isinstance(block, dict):
+        return None
+    text = block.get("run")
+    if not isinstance(text, str):
+        return None
+    words = text.split()
+    head = words[0].rstrip(",") if words else ""
+    return head or None
+
+
+def load_structures() -> list:
+    """Every usable entry of structures.json, in file order. [] when unreadable."""
+    data = _read_json(REPO_ROOT / STRUCTURES_FILE)
+    if not isinstance(data, dict):
+        return []
+    entries = data.get("structures")
+    if not isinstance(entries, list):
+        print(f"[poc_app] {STRUCTURES_FILE} has no structures list", file=sys.stderr)
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _structure_by_id(structure_id, structures=None):
+    """The entry with this id, or None. Never invents one."""
+    for entry in load_structures() if structures is None else structures:
+        if entry.get("id") == structure_id:
+            return entry
+    return None
+
+
+def _structure_label(structure) -> str:
+    """The entry's human label, with the id (then the default) as fallbacks."""
+    if not isinstance(structure, dict):
+        return DEFAULT_STRUCTURE
+    label = structure.get("label")
+    if isinstance(label, str) and label:
+        return label
+    sid = structure.get("id")
+    return sid if isinstance(sid, str) and sid else DEFAULT_STRUCTURE
+
+
+def _structure_dump_path(structure):
+    """The entry's npz path as written in the registry, or None."""
+    block = structure.get("field_dump") if isinstance(structure, dict) else None
+    path = block.get("path") if isinstance(block, dict) else None
+    return path if isinstance(path, str) and path else None
+
+
+def _structure_is_record_only(structure) -> bool:
+    """True when this entry's field dump is not on disk, so the case cannot open.
+
+    Decided by looking for the FILE this entry names, never by a hand-maintained
+    boolean in the registry: an entry is renderable exactly while its npz is
+    there, so a moved or deleted dump demotes it to record-only instead of
+    quietly serving another case's field data under this one's name.
+    """
+    return _structure_artifact_path(structure, "field_dump") is None
+
+
+def _renderable_structure_ids(structures) -> list:
+    """The ids that can actually be opened: those with a field dump on disk."""
+    return [
+        str(entry.get("id"))
+        for entry in structures
+        if entry.get("id") and not _structure_is_record_only(entry)
+    ]
+
+
+def _record_only_refusal(requested_id, structures) -> str:
+    """The refusal for an entry with no dump: name it, say why, name what works."""
+    renderable = ", ".join(_renderable_structure_ids(structures))
+    return (
+        f"--structure {requested_id} is record only: this registry entry has "
+        f"S-parameters recorded but no field dump on disk, so there is no field "
+        f"data to show for it, and this viewer will not substitute a different "
+        f"structure's; renderable structures: {renderable or 'none'}"
+    )
+
+
+def _structure_input_path(explicit, structure) -> Path:
+    """Resolve the npz: --input when given, else the entry's dump, else default.
+
+    An explicit --input wins over the registry, so a dump outside every entry (a
+    new run, not yet registered) can still be opened and inspected.
+    """
+    if explicit:
+        return _resolve(explicit)
+    path = _structure_dump_path(structure)
+    if path:
+        return _resolve(path)
+    return _resolve(DEFAULT_INPUT)
+
+
+def _structure_option_label(structure) -> str:
+    """Picker text for one entry: cells and run letters BEFORE it is opened.
+
+    The label is the only place the mismatch can be shown before a case is
+    opened, so it carries both cell counts and both run letters.
+    """
+    label = _structure_label(structure)
+    # Decided by whether the npz is ON DISK, not by the registry string: an entry
+    # whose dump was moved or deleted is record-only here, exactly as the CLI's
+    # own refusal decides it - one rule for the picker and the command line.
+    if _structure_is_record_only(structure):
+        return f"{label} - record only, no field dump"
+    parts = []
+    field_block = structure.get("field_dump")
+    field_cells = field_block.get("cells")
+    field_run = _run_letter(structure, "field_dump")
+    if field_cells:
+        parts.append(
+            f"field {field_cells}" + (f" (run {field_run})" if field_run else "")
+        )
+    sparams = structure.get("sparams")
+    if isinstance(sparams, dict) and sparams.get("cells"):
+        sparams_run = _run_letter(structure, "sparams")
+        parts.append(
+            f"S-params {sparams['cells']}"
+            + (f" (run {sparams_run})" if sparams_run else "")
+        )
+    if not parts:
+        return label
+    return f"{label} [" + " | ".join(parts) + "]"
+
+
+def _structure_options(structures=None) -> list:
+    """Picker items: disabled EXACTLY where the entry has no field dump."""
+    items = []
+    for entry in load_structures() if structures is None else structures:
+        sid = entry.get("id")
+        if not isinstance(sid, str):
+            continue
+        item = {"title": _structure_option_label(entry), "value": sid}
+        if _structure_is_record_only(entry):
+            item["props"] = {"disabled": True}
+        items.append(item)
+    return items
+
+
+def _git_head_short():
+    """The commit HEAD points at, read with pathlib only - no subprocess.
+
+    A branch ref is followed into .git/<ref>; when that file is absent the ref is
+    looked up in .git/packed-refs, where a cloned or gc'd repo keeps it. Anything
+    unreadable - no .git, an odd ref name, a corrupt file - is null: the state
+    dump says "not knowable here" instead of guessing a commit.
+    """
+    git_dir = REPO_ROOT / ".git"
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001 - no repo, no commit
+        return None
+    if not head:
+        return None
+    if not head.startswith("ref:"):
+        # Detached HEAD: the file holds the commit itself.
+        return head[:7]
+    ref = head[4:].strip()
+    if not ref:
+        return None
+    value = None
+    try:
+        value = (git_dir / ref).read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001 - packed refs are the other place
+        value = None
+    if not value:
+        try:
+            packed = (git_dir / "packed-refs").read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001 - nothing else to try
+            return None
+        for line in packed.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("^"):
+                continue
+            fields = line.split(None, 1)
+            if len(fields) == 2 and fields[1] == ref:
+                value = fields[0]
+                break
+    if not value:
+        return None
+    return value[:7]
+
+
+def _field_record(npz_path: Path):
+    """The study record beside a dump, read quietly (the state path is a report)."""
+    for candidate in _record_candidates(npz_path):
+        if candidate.is_file():
+            return _read_json(candidate)
+    return None
+
+
+def _multifreq_point(row):
+    """One sweep row as a dict, or (None, why-not) when it cannot be drawn.
+
+    Every number is read; ``k`` and ``beta_ambiguous`` ride along because the
+    chart has to mark the bins whose dispersion branch is unresolved, and that
+    is a property of the ROW, not of the picture.
+    """
+    if not isinstance(row, dict):
+        return None, "a row that is not an object"
+    label = row.get("artefact") or "a row with no artefact name"
+    f_ghz = _as_float(row.get("f_ghz_used"))
+    if f_ghz is None:
+        f_hz = _as_float(row.get("f_hz_used"))
+        f_ghz = None if f_hz is None else f_hz / 1e9
+    s11 = _as_float(row.get("s11.magnitude"))
+    s21 = _as_float(row.get("s21.magnitude"))
+    if f_ghz is None or s11 is None or s21 is None:
+        return None, f"{label} (no frequency or no magnitude)"
+    errors = row.get("errors") or []
+    if errors:
+        return None, f"{label} (errors: {errors})"
+    ambiguous = row.get("beta_ambiguous")
+    return {
+        "f_ghz": f_ghz,
+        "s11": s11,
+        "s21": s21,
+        "artefact": str(label),
+        "k": _as_int(row.get("k")),
+        "beta_ambiguous": None if ambiguous is None else bool(ambiguous),
+        "beta": _as_float(row.get("line.beta")),
+        "beta_model": _as_float(row.get("line.beta_model")),
+    }, None
+
+
+def _multifreq_points(summary):
+    """(points, skipped) for a sweep summary dict, sorted by recorded frequency."""
+    rows = summary.get("rows") if isinstance(summary, dict) else None
+    if not isinstance(rows, list):
+        return [], []
+    points, skipped = [], []
+    for row in rows:
+        point, why = _multifreq_point(row)
+        if point is None:
+            skipped.append(why)
+            continue
+        points.append(point)
+    points.sort(key=lambda point: point["f_ghz"])
+    return points, skipped
+
+
 def load_multifreq(npz_path: Path):
     """Read the multi-frequency |S11| / |S21| sweep beside the dump.
 
-    Returns ``{"path", "points", "skipped", ...}`` or None; ``points`` are
-    ``(f_ghz, |S11|, |S21|, artefact)`` tuples, sorted by frequency and otherwise
-    as recorded. Nothing here interpolates, smooths or re-orders into a curve: a
+    Returns ``{"path", "points", "skipped", ...}`` or None; ``points`` are dicts
+    with keys ``f_ghz``, ``s11``, ``s21``, ``artefact``, ``k``,
+    ``beta_ambiguous``, ``beta``, ``beta_model``, sorted by frequency and
+    otherwise as recorded. Nothing here interpolates, smooths or re-orders into a
+    curve: a
     row whose ``errors`` list is not empty, or which is missing a frequency or
     either magnitude, is DROPPED and counted, because drawing it as zero would
     invent a measurement.
@@ -268,27 +624,7 @@ def load_multifreq(npz_path: Path):
         )
         return None
 
-    points = []
-    skipped: list[str] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            skipped.append("a row that is not an object")
-            continue
-        label = row.get("artefact") or "a row with no artefact name"
-        f_ghz = _as_float(row.get("f_ghz_used"))
-        if f_ghz is None:
-            f_hz = _as_float(row.get("f_hz_used"))
-            f_ghz = None if f_hz is None else f_hz / 1e9
-        s11 = _as_float(row.get("s11.magnitude"))
-        s21 = _as_float(row.get("s21.magnitude"))
-        if f_ghz is None or s11 is None or s21 is None:
-            skipped.append(f"{label} (no frequency or no magnitude)")
-            continue
-        errors = row.get("errors") or []
-        if errors:
-            skipped.append(f"{label} (errors: {errors})")
-            continue
-        points.append((f_ghz, s11, s21, str(label)))
+    points, skipped = _multifreq_points(summary)
 
     if not points:
         print(
@@ -297,7 +633,6 @@ def load_multifreq(npz_path: Path):
             file=sys.stderr,
         )
         return None
-    points.sort(key=lambda point: point[0])
     # Provenance in the log too, not only in the panel: whoever reads this has to
     # be able to tell which file the plotted rows came from.
     print(
@@ -333,11 +668,20 @@ def _own_frequency_ghz(record):
     return None if f_hz is None else f_hz / 1e9
 
 
+_AMBIGUOUS_NOTE = "beta ambiguous - dispersion branch unresolved"
+_DEFAULT_CHART_TITLE = "|S11|, |S21| per recorded frequency"
+
+
 def _frequency_rows(mf: dict) -> list[str]:
     """The recorded rows as plain text: the fallback when no chart is drawn."""
-    rows = [f"{'f [GHz]':>9}  {'|S11|':>7}  {'|S21|':>7}  artefact"]
-    for f_ghz, s11, s21, artefact in mf["points"]:
-        rows.append(f"{f_ghz:9.4f}  {s11:7.4f}  {s21:7.4f}  {artefact}")
+    rows = [f"{'f [GHz]':>9}  {'|S11|':>7}  {'|S21|':>7}  {'k':>3}  artefact"]
+    for point in mf["points"]:
+        k_text = "-" if point.get("k") is None else f"{point['k']:d}"
+        suffix = " beta ambiguous" if point.get("beta_ambiguous") else ""
+        rows.append(
+            f"{point['f_ghz']:9.4f}  {point['s11']:7.4f}  {point['s21']:7.4f}  "
+            f"{k_text:>3}  {point['artefact']}{suffix}"
+        )
     return rows
 
 
@@ -360,7 +704,7 @@ def _frequency_caption(mf: dict, record) -> str:
     return caption
 
 
-def build_frequency_chart(mf: dict) -> dict:
+def build_frequency_chart(mf: dict, title: str | None = None) -> dict:
     """Render |S11| and |S21| vs frequency to a PNG data URI.
 
     Returns ``{"image": data_uri | None, "rows": [...], "reason": str | None}``.
@@ -370,7 +714,13 @@ def build_frequency_chart(mf: dict) -> dict:
     caller falls back to the text rows.
 
     Markers only, no connecting line: a line between two recorded bins is a
-    claim about the frequencies between them, and no run covers those.
+    claim about the frequencies between them, and no run covers those. Bins whose
+    dispersion branch is unresolved get their own open marker and one note - they
+    stay discrete points at their recorded frequency, they are not smoothed or
+    dropped.
+
+    ``title`` names the selected structure; when it is not given the panel keeps a
+    structure-neutral default rather than naming a run the caller did not choose.
     """
     rows = _frequency_rows(mf)
     try:
@@ -392,14 +742,13 @@ def build_frequency_chart(mf: dict) -> dict:
             "reason": f"matplotlib unusable: {exc}",
         }
 
-    freqs = [point[0] for point in mf["points"]]
-    s11s = [point[1] for point in mf["points"]]
-    s21s = [point[2] for point in mf["points"]]
+    definite = [point for point in mf["points"] if not point.get("beta_ambiguous")]
+    ambiguous = [point for point in mf["points"] if point.get("beta_ambiguous")]
     try:
         fig, ax = plt.subplots(figsize=(5.4, 1.9), dpi=110)
         ax.plot(
-            freqs,
-            s11s,
+            [point["f_ghz"] for point in definite],
+            [point["s11"] for point in definite],
             "o",
             color="#1f77b4",
             markersize=5,
@@ -407,23 +756,51 @@ def build_frequency_chart(mf: dict) -> dict:
             label="|S11|",
         )
         ax.plot(
-            freqs,
-            s21s,
+            [point["f_ghz"] for point in definite],
+            [point["s21"] for point in definite],
             "s",
             color="#d62728",
             markersize=5,
             linestyle="none",
             label="|S21|",
         )
+        if ambiguous:
+            ax.plot(
+                [point["f_ghz"] for point in ambiguous],
+                [point["s11"] for point in ambiguous],
+                "o",
+                markerfacecolor="none",
+                markeredgecolor="#1f77b4",
+                markeredgewidth=1.2,
+                markersize=6,
+                linestyle="none",
+                label="|S11|, beta ambiguous",
+            )
+            ax.plot(
+                [point["f_ghz"] for point in ambiguous],
+                [point["s21"] for point in ambiguous],
+                "s",
+                markerfacecolor="none",
+                markeredgecolor="#d62728",
+                markeredgewidth=1.2,
+                markersize=6,
+                linestyle="none",
+                label="|S21|, beta ambiguous",
+            )
+            ax.annotate(
+                _AMBIGUOUS_NOTE,
+                xy=(ambiguous[0]["f_ghz"], ambiguous[0]["s11"]),
+                xytext=(6, -12),
+                textcoords="offset points",
+                fontsize=5.5,
+                color="#8c6d1f",
+            )
         ax.set_xlabel("frequency [GHz]", fontsize=7)
         ax.set_ylabel("magnitude", fontsize=7)
         ax.tick_params(labelsize=6)
         ax.grid(True, color="#dddddd", linewidth=0.5)
         ax.legend(fontsize=6, frameon=False, loc="best")
-        ax.set_title(
-            "Build A, 50 ohm load: |S11| and |S21| per recorded frequency",
-            fontsize=7,
-        )
+        ax.set_title(title or _DEFAULT_CHART_TITLE, fontsize=7)
         fig.tight_layout()
         buffer = io.BytesIO()
         fig.savefig(buffer, format="png", bbox_inches="tight")
@@ -440,6 +817,520 @@ def build_frequency_chart(mf: dict) -> dict:
     uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
     print(f"[poc_app] frequency chart: {len(png)} PNG bytes, {len(uri)} URI chars")
     return {"image": uri, "rows": rows, "reason": None, "png_bytes": len(png)}
+
+
+# --- chart title, port waves, and the numpy-only state dump ------------------
+#
+# Everything below is stdlib + numpy. --dump-state is a REPORT: it says which
+# artefacts this page would composite and where the seams are, and it has to do
+# that on a machine with no pyvista, no trame and no matplotlib. Every number is
+# read from a file; the only derived values are the two residual percentages,
+# and those carry the basis string that produced them.
+
+_PORT_TITLE = "station phasors, as recorded"
+_PORT_FIELDS = ("v_re", "v_im", "i_re", "i_im")
+STATE_SCHEMA = "emfit.poc-state/1"
+RESIDUAL_BASIS = "50/(50 + 2*z0)"
+# Why two extents and not one: the domain box is what was SOLVED, the sampled
+# span is what the npz STORES, and on x they are nx cells versus the n_stations
+# captured planes. The basis string ships with the numbers so a reader never has
+# to guess which of the two a millimetre figure came from.
+EXTENT_BASIS = (
+    "domain_mm = nx*cell (the simulated box); sampled_mm = the span of the "
+    "field samples actually stored in the npz (9 planes of 0.4 mm = 3.6 mm "
+    "here)"
+)
+
+
+def _utc_now() -> str:
+    """ISO-8601 UTC, seconds resolution: the state dump's own timestamp."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _fmt(value, digits=6) -> str:
+    """A number for a text table, or 'n/a' when the record did not carry it."""
+    return "n/a" if value is None else f"{value:.{digits}f}"
+
+
+def _chart_title(structure) -> str:
+    """The frequency chart's title, derived from the selected entry.
+
+    No literal case name lives here any more: the page names whichever structure
+    is loaded. When the entry declares a mismatch the parenthetical names BOTH
+    runs, because the markers are S-parameter rows while the field beside them
+    came from another run - that composite is the title's most important word.
+    """
+    if not isinstance(structure, dict):
+        return _DEFAULT_CHART_TITLE
+    title = f"{_structure_label(structure)}: " + _DEFAULT_CHART_TITLE
+    if structure.get("mismatch"):
+        sparams_run = _run_letter(structure, "sparams")
+        field_run = _run_letter(structure, "field_dump")
+        if sparams_run and field_run:
+            title += f" (S-params run {sparams_run}; field run {field_run})"
+    return title
+
+
+def _float_list(value):
+    """A list of floats as recorded, or None when it is not one."""
+    if not isinstance(value, list):
+        return None
+    numbers = []
+    for item in value:
+        number = _as_float(item)
+        if number is None:
+            return None
+        numbers.append(number)
+    return numbers
+
+
+def _port_waves_block(path, record=None):
+    """``s11.station_phasors`` as a state block, or ``(None, reason)``.
+
+    Every parallel array is checked against the record's own ``n`` BEFORE a single
+    row is emitted. A short array is a broken artefact: zipping it silently would
+    present part of a measurement as the whole of one. Returns
+    ``(block, None)`` or ``(None, reason)`` - never raises, never truncates.
+    """
+    data = record if isinstance(record, dict) else _read_json(path)
+    name = Path(path).name if path is not None else "the S-parameter record"
+    if not isinstance(data, dict):
+        return None, f"no readable S-parameter record at {path}"
+    s11 = data.get("s11")
+    if not isinstance(s11, dict):
+        return None, f"{name} carries no s11 block"
+    phasors = s11.get("station_phasors")
+    if not isinstance(phasors, dict):
+        return None, f"{name} carries no s11.station_phasors block"
+    n = _as_int(phasors.get("n"))
+    if n is None:
+        return None, f"{name} station_phasors records no n"
+    x_m = _float_list(phasors.get("x_m"))
+    columns = {field: _float_list(phasors.get(field)) for field in _PORT_FIELDS}
+    for label, values in [("x_m", x_m)] + list(columns.items()):
+        if values is None:
+            return None, f"{name} station_phasors.{label} is absent or not numeric"
+        if len(values) != n:
+            return None, (
+                f"{name} station_phasors.{label} holds {len(values)} entries but n "
+                f"= {n}; refusing to truncate to the shorter array"
+            )
+    stations = []
+    for idx in range(n):
+        row = {"x_m": x_m[idx]}
+        for field in _PORT_FIELDS:
+            row[field] = columns[field][idx]
+        stations.append(row)
+    return {
+        "file": str(path),
+        "beta_two": _as_float(phasors.get("beta_two")),
+        "beta_used": _as_float(phasors.get("beta_used")),
+        "n_stations": n,
+        "status": phasors.get("status"),
+        "note": phasors.get("note"),
+        "stations": stations,
+    }, None
+
+
+def _port_wave_rows(port_waves) -> list[str]:
+    """The station phasors as plain text: the fallback when no chart is drawn."""
+    rows = [f"{'x [mm]':>6}  {'v_re':>11}  {'v_im':>11}  {'i_re':>11}  {'i_im':>11}"]
+    for station in port_waves["stations"]:
+        rows.append(
+            f"{station['x_m'] * 1e3:6.3f}  {_fmt(station['v_re']):>11}  "
+            f"{_fmt(station['v_im']):>11}  {_fmt(station['i_re']):>11}  "
+            f"{_fmt(station['i_im']):>11}"
+        )
+    return rows
+
+
+def _port_caption(port_waves, reason) -> str:
+    """One line naming the file, and what this panel is not."""
+    if port_waves is None:
+        return f"no station phasors to show: {reason}"
+    return (
+        f"{_PORT_TITLE} - {port_waves['n_stations']} stations from "
+        f"{Path(port_waves['file']).name}; markers only, nothing refitted here "
+        f"(beta_two {_fmt(port_waves.get('beta_two'), 4)} rad/m, beta_used "
+        f"{_fmt(port_waves.get('beta_used'), 4)} rad/m, status "
+        f"{port_waves.get('status') or 'not recorded'})"
+    )
+
+
+def build_port_wave_chart(port_waves) -> dict:
+    """Render the recorded station phasors to a PNG data URI.
+
+    Two panels - voltage and current - markers only, against x in mm. Guarded
+    exactly like build_frequency_chart: matplotlib is imported lazily and a broken
+    installation costs the picture, never the page, because the caller falls back
+    to ``rows``. Nothing is fitted, smoothed or extrapolated off the station span.
+    """
+    rows = _port_wave_rows(port_waves)
+    try:
+        import base64
+        import io
+
+        import matplotlib
+
+        try:
+            matplotlib.use("Agg")
+        except Exception:  # noqa: BLE001 - an existing backend is acceptable
+            pass
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001 - text rows instead of a picture
+        print(f"[poc_app] no port-wave chart (matplotlib unusable: {exc})", file=sys.stderr)
+        return {"image": None, "rows": rows, "reason": f"matplotlib unusable: {exc}"}
+
+    x_mm = [station["x_m"] * 1e3 for station in port_waves["stations"]]
+    try:
+        fig, (ax_v, ax_i) = plt.subplots(1, 2, figsize=(6.0, 1.9), dpi=110)
+        for ax, field_re, field_im, colour, symbol in (
+            (ax_v, "v_re", "v_im", "#1f77b4", "V"),
+            (ax_i, "i_re", "i_im", "#d62728", "I"),
+        ):
+            ax.plot(
+                x_mm,
+                [station[field_re] for station in port_waves["stations"]],
+                "o",
+                color=colour,
+                markersize=5,
+                linestyle="none",
+                label=f"{symbol} re",
+            )
+            ax.plot(
+                x_mm,
+                [station[field_im] for station in port_waves["stations"]],
+                "s",
+                color=colour,
+                markerfacecolor="none",
+                markeredgewidth=1.1,
+                markersize=5,
+                linestyle="none",
+                label=f"{symbol} im",
+            )
+            ax.set_xlabel("x [mm]", fontsize=7)
+            ax.tick_params(labelsize=6)
+            ax.grid(True, color="#dddddd", linewidth=0.5)
+            ax.legend(fontsize=6, frameon=False, loc="best")
+        ax_v.set_ylabel("voltage, as recorded", fontsize=7)
+        ax_i.set_ylabel("current, as recorded", fontsize=7)
+        fig.suptitle(
+            f"{_PORT_TITLE} - beta_two {_fmt(port_waves.get('beta_two'), 4)}, "
+            f"beta_used {_fmt(port_waves.get('beta_used'), 4)}, status "
+            f"{port_waves.get('status') or 'not recorded'}, "
+            f"n = {port_waves['n_stations']}",
+            fontsize=6.5,
+        )
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format="png", bbox_inches="tight")
+        plt.close(fig)
+        png = buffer.getvalue()
+    except Exception as exc:  # noqa: BLE001 - never take the server down
+        print(f"[poc_app] port-wave chart skipped: {exc}", file=sys.stderr)
+        return {"image": None, "rows": rows, "reason": f"chart render failed: {exc}"}
+
+    uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    print(f"[poc_app] port-wave chart: {len(png)} PNG bytes")
+    return {"image": uri, "rows": rows, "reason": None, "png_bytes": len(png)}
+
+
+def _structure_artifact_path(structure, key):
+    """An entry's artefact path for ``key``, but only if it exists on disk."""
+    block = structure.get(key) if isinstance(structure, dict) else None
+    value = block.get("path") if isinstance(block, dict) else None
+    if not isinstance(value, str) or not value:
+        return None
+    path = _resolve(value)
+    return path if path.is_file() else None
+
+
+def _sparams_path(npz_path: Path, structure):
+    """The S-parameter record for this page: the entry's, else the dump's own."""
+    declared = _structure_artifact_path(structure, "sparams")
+    if declared is not None:
+        return declared
+    for candidate in _record_candidates(npz_path):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _multifreq_path(npz_path: Path, structure):
+    """The sweep file for this page: the entry's, else the one beside the dump."""
+    declared = _structure_artifact_path(structure, "multifreq")
+    if declared is not None:
+        return declared
+    for candidate in _multifreq_candidates(npz_path):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _field_dump_block(info: dict, path: Path) -> dict:
+    """The field-dump half: cells from the ARRAY SHAPE, never from a record.
+
+    TWO extents, deliberately kept apart. ``extent_domain_mm`` is the simulated
+    box, nx cells across. ``extent_sampled_mm`` is the span of the samples the
+    npz actually stores - and on x that is the n_stations captured planes, not
+    nx. One number called "extent" cannot say which of the two it means, and
+    here they differ by a factor of seven (24.8 mm vs 3.6 mm): reading the
+    domain box as "the field I have" is the misreading this split exists to
+    make impossible. ``extent_basis`` says it in words as well.
+
+    The two extents therefore come from two different places, and the counts
+    behind them are named for where they were read: nx/ny/nz are the DOMAIN
+    cells the record declares, while the sampled span is the STORED array's own
+    shape. Those do not agree on every axis - the stored plane is 9 x 213 x 22
+    inside a 62 x 212 x 22 box, one row more in y than the box has cells - so
+    borrowing the domain count for the sampled y would report 84.8 mm for an
+    array that spans 85.2 mm.
+    """
+    plane = info[PLANE_KEY]
+    nx_domain, ny_domain, nz_domain = int(info["nx"]), int(info["ny"]), int(info["nz"])
+    cell_m = float(info["cell_m"])
+    cell_mm = cell_m * 1e3
+    n_stations_sampled, ny_sampled, nz_sampled = (int(n) for n in plane.shape)
+    return {
+        "file": str(path),
+        "cells": {"nx": nx_domain, "ny": ny_domain, "nz": nz_domain},
+        "cell_m": cell_m,
+        "grid_cell_mm": round(cell_mm, 9),
+        "extent_domain_mm": {
+            "x": round(nx_domain * cell_mm, 9),
+            "y": round(ny_domain * cell_mm, 9),
+            "z": round(nz_domain * cell_mm, 9),
+        },
+        "extent_sampled_mm": {
+            "x": round(n_stations_sampled * cell_mm, 9),
+            "y": round(ny_sampled * cell_mm, 9),
+            "z": round(nz_sampled * cell_mm, 9),
+        },
+        "extent_basis": EXTENT_BASIS,
+        "stations_x_mm": [idx * cell_mm for idx in range(n_stations_sampled)],
+        "n_stations": n_stations_sampled,
+        "nstep": int(info["nstep"]),
+    }
+
+
+def _sparams_block(path) -> dict:
+    """The S-parameter half, every number read and nothing guessed.
+
+    ``cells`` is parsed out of the record's own summary_line ("cells=72x212x22")
+    and nowhere else: that line and the npz array shape are precisely the two
+    numbers the mismatch check compares. Unreadable fields are null.
+    """
+    data = _read_json(path) if path is not None else None
+    record = data if isinstance(data, dict) else {}
+    s11 = record.get("s11") if isinstance(record.get("s11"), dict) else {}
+    s21 = record.get("s21") if isinstance(record.get("s21"), dict) else {}
+    line = record.get("line") if isinstance(record.get("line"), dict) else {}
+    at_plane = (
+        record.get("s11_at_plane")
+        if isinstance(record.get("s11_at_plane"), dict)
+        else {}
+    )
+    return {
+        "file": None if path is None else str(path),
+        "cells": _cells_from_summary(record.get("summary_line")),
+        "n_line": _n_line(record),
+        "s11_two_wave": _as_float(s11.get("magnitude")),
+        "s11_one_wave": _as_float(s11.get("magnitude_one_wave_station_fit")),
+        "s21_magnitude": _as_float(s21.get("magnitude")),
+        "s11_at_plane": {
+            "magnitude": _as_float(at_plane.get("magnitude")),
+            "plane_index": _as_int(at_plane.get("plane_index")),
+            # The record does not adjudicate this number, so neither do we: a
+            # reflection read at an internal plane is quarantined until someone
+            # shows it is the quantity it looks like.
+            "status": "quarantined",
+        },
+        "beta_used": _as_float(line.get("beta")),
+        "beta_model": _as_float(line.get("beta_model")),
+        "validation_status": s11.get("validation_status"),
+    }
+
+
+def _n_line_or_unknown(value) -> str:
+    return "unknown" if value is None else str(value)
+
+
+def _mismatch_block(field_text, sparams_text, field_n_line, sparams_n_line) -> dict:
+    """Whether the two halves of this page are even the same solve, and why not."""
+    flag = bool(field_text) and bool(sparams_text) and field_text != sparams_text
+    if flag:
+        reason = (
+            f"Field dump is {field_text} but the S-parameter record is "
+            f"{sparams_text}; they come from different runs (n_line "
+            f"{_n_line_or_unknown(field_n_line)} vs "
+            f"{_n_line_or_unknown(sparams_n_line)}) and are not the same solve."
+        )
+    elif field_text and sparams_text:
+        reason = (
+            f"Field dump and S-parameter record both report {field_text}; the "
+            "cell counts agree, which is not by itself proof of one run."
+        )
+    else:
+        missing = "field dump" if not field_text else "S-parameter record"
+        reason = (
+            f"Cell counts could not be compared: the {missing} carries no "
+            "readable cells=... line, so no claim is made either way."
+        )
+    return {
+        "flag": flag,
+        "reason": reason,
+        "field_cells": field_text,
+        "sparams_cells": sparams_text,
+    }
+
+
+def _residual_block(z0_ohm, s11_two_wave) -> dict:
+    """One anchor and the two-wave |S11| measured against it.
+
+    ``anchor`` is |Gamma| for a 50 ohm load in a Z0 line: 50/(50 + 2*Z0). Both the
+    anchor and the percentage are derived here and ship with their basis string,
+    because the whole DR-19 confusion is two denominators wearing one label.
+    """
+    z0 = _as_float(z0_ohm)
+    s11 = _as_float(s11_two_wave)
+    anchor = None if z0 is None else 50.0 / (50.0 + 2.0 * z0)
+    pct = None
+    if anchor is not None and s11 is not None and anchor != 0.0:
+        pct = round(100.0 * (s11 / anchor - 1.0), 2)
+    return {
+        "z0_ohm": z0,
+        "anchor": None if anchor is None else round(anchor, 6),
+        "s11_over_anchor_pct": pct,
+        "basis": RESIDUAL_BASIS,
+    }
+
+
+def _residuals_block(anchors, s11_two_wave) -> dict:
+    """Both declared anchors against the same measurement; never 'validated'."""
+    anchors = anchors if isinstance(anchors, dict) else {}
+    independent = anchors.get("independent")
+    circular = anchors.get("circular")
+    return {
+        "anchor_independent": _residual_block(
+            independent.get("z0_ohm") if isinstance(independent, dict) else None,
+            s11_two_wave,
+        ),
+        "anchor_circular": _residual_block(
+            circular.get("z0_ohm") if isinstance(circular, dict) else None,
+            s11_two_wave,
+        ),
+        "status": "diagnosis in progress",
+        "validated": False,
+        "ledger_refs": ["E1", "E11"],
+    }
+
+
+def _multifreq_block(path):
+    """The sweep as recorded, or None when no row could be read."""
+    data = _read_json(path) if path is not None else None
+    if not isinstance(data, dict):
+        return None
+    points, _skipped = _multifreq_points(data)
+    if not points:
+        return None
+    return {
+        "file": str(path),
+        "bin_spacing_mhz": _as_float(data.get("bin_spacing_mhz")),
+        "k_values": [point["k"] for point in points if point["k"] is not None],
+        "ambiguous_bins": [
+            point["k"]
+            for point in points
+            if point["beta_ambiguous"] and point["k"] is not None
+        ],
+        "points": [
+            {
+                "f_ghz": point["f_ghz"],
+                "s11": point["s11"],
+                "s21": point["s21"],
+                "artefact": point["artefact"],
+                "k": point["k"],
+                "beta_ambiguous": point["beta_ambiguous"],
+                "beta": point["beta"],
+                "beta_model": point["beta_model"],
+            }
+            for point in points
+        ],
+    }
+
+
+def _chart_block(multifreq, structure) -> dict:
+    """What the chart DOES: discrete markers at recorded frequencies only."""
+    points = [] if multifreq is None else [
+        [point["f_ghz"], point["s11"], point["s21"]]
+        for point in multifreq["points"]
+    ]
+    ambiguous = [] if multifreq is None else [
+        point["f_ghz"] for point in multifreq["points"] if point["beta_ambiguous"]
+    ]
+    return {
+        "mode": "markers-only",
+        "interpolation": False,
+        "title": _chart_title(structure),
+        "points": points,
+        "ambiguous_marked": ambiguous,
+    }
+
+
+def _mismatch_banner_text(mismatch):
+    """The exact banner sentence, or None when there is nothing to warn about."""
+    if not isinstance(mismatch, dict) or not mismatch.get("flag"):
+        return None
+    return (
+        f"WARNING Field dump ({mismatch['field_cells']}) and S-parameters "
+        f"({mismatch['sparams_cells']}) are from different runs. "
+        "Nothing below is one solve."
+    )
+
+
+def build_state_dump(info: dict, structure, structures=None) -> dict:
+    """The whole page state as one JSON document, numpy-only.
+
+    A report, not a picture: it lists the artefacts this page would composite, the
+    cell count each one is on, and the seam between them. Anything unparseable is
+    null - a state dump that invents a number to look complete is the defect this
+    document exists to expose.
+    """
+    path = Path(info["path"])
+    entry = structure if isinstance(structure, dict) else {}
+    field_block = _field_dump_block(info, path)
+    sparams_path = _sparams_path(path, entry)
+    sparams = _sparams_block(sparams_path)
+    record = _field_record(path)
+    field_text = _cells_as_text(field_block["cells"])
+    sparams_text = _cells_as_text(sparams["cells"])
+    mismatch = _mismatch_block(
+        field_text, sparams_text, _n_line(record), sparams["n_line"]
+    )
+    multifreq = _multifreq_block(_multifreq_path(path, entry))
+    port_waves, port_reason = _port_waves_block(sparams_path)
+    return {
+        "schema": STATE_SCHEMA,
+        "generated_utc": _utc_now(),
+        "head_commit": _git_head_short(),
+        "structure": {
+            "id": entry.get("id"),
+            "label": entry.get("label"),
+            "status": entry.get("status"),
+            "notes": entry.get("notes"),
+        },
+        "input_npz": str(path),
+        "field_dump": field_block,
+        "sparams": sparams,
+        "mismatch": mismatch,
+        "residuals": _residuals_block(entry.get("anchors"), sparams["s11_two_wave"]),
+        "multifreq": multifreq,
+        "port_waves": port_waves,
+        # Not in the spec's key list, and deliberately so: the spec asks for
+        # port_waves OR null plus a reason, and a sibling key is the only place a
+        # null can carry one without changing port_waves' own shape.
+        "port_waves_reason": port_reason,
+        "chart": _chart_block(multifreq, entry),
+    }
 
 
 def _plane_layout(info: dict, record) -> dict:
@@ -1108,7 +1999,24 @@ def check_web_requirements() -> list[str]:
     return missing
 
 
-def run_web(info: dict, host: str, port: int, station: int) -> int:
+def run_web(
+    info: dict,
+    host: str,
+    port: int,
+    station: int,
+    structure=None,
+    structures=None,
+) -> int:
+    """Serve the viewer for ONE structure entry.
+
+    ``structure`` is the registry entry the page names, ``structures`` the list
+    the picker lists; both fall back to what the registry resolves on its own, so
+    a caller that passes only the dump still gets a page.
+    """
+    structures = load_structures() if structures is None else structures
+    if structure is None:
+        structure = _structure_by_id(DEFAULT_STRUCTURE, structures)
+    structure_label = _structure_label(structure)
     missing = check_web_requirements()
     if missing:
         print(
@@ -1248,14 +2156,28 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
         server = get_server()
 
     state, ctrl = server.state, server.controller
-    state.trame__title = "Build A |Ez| PoC"
+    state.trame__title = f"{structure_label} |Ez| PoC"
     state.station = int(station)
     state.station_label = _station_text(int(station), cell_mm, n_st)
+    structure_id = structure.get("id") if isinstance(structure, dict) else None
+    structure_options = _structure_options(structures)
+    state.structure = structure_id
+    state.structure_note = f"showing {structure_label}"
 
     # Plane positions come from the record beside the dump, so the markers and
     # the labels below cannot drift from the geometry that produced the numbers.
     record = load_record(info["path"])
     planes = _plane_layout(info, record)
+
+    # The page state the banner and the port-wave panel read from: the same
+    # document --dump-state writes, so the warning sentence and the two cell
+    # counts inside it are the state file's own numbers - computed once, never a
+    # second reading that could disagree with the report.
+    page_state = build_state_dump(info, structure, structures)
+    mismatch = page_state["mismatch"]
+    banner_text = _mismatch_banner_text(mismatch)
+    port_waves = page_state["port_waves"]
+    port_reason = page_state["port_waves_reason"]
     # The toggle needs the button widget AND the toolbar that carries it: when
     # any probed widget is missing the layout falls back to a label-only bar, so
     # the label then says the toggle is unavailable rather than lying.
@@ -1287,7 +2209,9 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
     # quiet.
     multifreq = load_multifreq(info["path"])
     frequency_panel = (
-        None if multifreq is None else build_frequency_chart(multifreq)
+        None
+        if multifreq is None
+        else build_frequency_chart(multifreq, _chart_title(structure))
     )
     if multifreq is None:
         frequency_caption = (
@@ -1297,6 +2221,12 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
         )
     else:
         frequency_caption = _frequency_caption(multifreq, record)
+    # The recorded station phasors. No matplotlib costs the picture and prints the
+    # rows instead - build_port_wave_chart returns its rows and the reason rather
+    # than raising, so the 3-D view and the caption still come up.
+    port_wave_chart = (
+        None if port_waves is None else build_port_wave_chart(port_waves)
+    )
     # The plotter_ui handle only exists once the layout has been built, so the
     # handlers below reach it through this dict instead of closing over it.
     handles: dict = {}
@@ -1422,6 +2352,46 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
             file=sys.stderr,
         )
 
+    # The structure picker is a convenience exactly like the sliders, so it is
+    # probed on its own: a Vuetify variant without VSelect costs the picker, never
+    # the toolbar. VSelect is deliberately NOT in the probed widget tuple above -
+    # putting it there would degrade the whole layout whenever only the picker is
+    # unavailable.
+    select_cls = None
+    try:
+        select_cls = getattr(widgets_module, "VSelect", None)
+    except Exception as exc:  # noqa: BLE001 - optional layer
+        print(f"[poc_app] VSelect unavailable: {exc}", file=sys.stderr)
+
+    def _emit_mismatch_banner() -> None:
+        """The full-width warning, or nothing at all when the two runs agree.
+
+        The sentence and both cell counts come out of the state dump's mismatch
+        block; no cell count is typed here. The block is built ONLY when that
+        block is flagged, so an agreeing page carries no empty box whose presence
+        would imply something is wrong.
+        """
+        if banner_text is None:
+            return
+        if html_div is None:
+            if placeholder is not None:
+                placeholder(banner_text)
+                return
+            print(
+                "[poc_app] mismatch banner not shown: no html widgets",
+                file=sys.stderr,
+            )
+            return
+        with html_div(
+            style=(
+                "width: 100%; box-sizing: border-box; background: #fff3cd; "
+                "color: #8a1c00; border: 3px solid #b00020; "
+                "border-radius: 4px; padding: 8px 14px; margin: 6px 12px; "
+                "font-size: 15px; font-weight: 700; line-height: 1.35;"
+            )
+        ):
+            html_div(banner_text)
+
     def _emit_cut_sliders() -> None:
         """Emit the two cut sliders, or the label alone when they cannot be.
 
@@ -1461,6 +2431,62 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
             if placeholder is not None:
                 placeholder("{{ cut_label }}")
 
+    def _emit_structure_picker() -> None:
+        """The case picker: every entry, record-only ones present but disabled.
+
+        Each label carries that entry's cell counts and run letters, so the seam
+        between two runs is readable BEFORE a case is opened - the picker is the
+        only place that is possible. Picking another entry cannot reload a dump
+        into a running page (the npz, the record, the markers and the plotter are
+        all built once), so the note beside the picker names the command that
+        opens the picked case instead of pretending to switch to it.
+        """
+        if not structure_options:
+            if placeholder is not None:
+                placeholder(f"no structures in {STRUCTURES_FILE}")
+            return
+        if select_cls is None:
+            # No VSelect: the labels still come out, disabled state spelled out in
+            # words, rather than the page going quiet about the other cases.
+            if placeholder is not None:
+                placeholder(
+                    "structure: "
+                    + "; ".join(item["title"] for item in structure_options)
+                )
+            return
+        try:
+            select_cls(
+                v_model=("structure", structure_id),
+                items=structure_options,
+                # Vuetify 2 spells these item-text, Vuetify 3 item-title. Both are
+                # passed because every variant is probed at runtime; whichever
+                # one this variant knows is the one that names the label.
+                item_title="title",
+                item_text="title",
+                item_value="value",
+                label="structure",
+                hide_details=True,
+                style="max-width: 520px; margin-right: 16px;",
+            )
+            # The note is a plain html label, not a Vuetify fallback: the picker
+            # itself is a probed widget, so a missing probed class must not take
+            # the note with it. It is what tells the reader a pick cannot swap
+            # the dump under a running page.
+            if html_div is not None:
+                html_div(
+                    "{{ structure_note }}",
+                    style=(
+                        "align-self: center; margin-left: 4px; font-size: 13px; "
+                        "color: #444;"
+                    ),
+                )
+            elif placeholder is not None:
+                placeholder("{{ structure_note }}")
+        except Exception as exc:  # noqa: BLE001 - label only, never the page
+            print(f"[poc_app] structure picker unavailable: {exc}", file=sys.stderr)
+            if placeholder is not None:
+                placeholder(f"structure: {structure_label}")
+
     def _emit_frequency_panel() -> None:
         """Emit the |S11| / |S21| panel under the 3-D view, caption first.
 
@@ -1496,11 +2522,60 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
                     style="font-size: 11px; margin: 0 12px;",
                 )
 
+    def _emit_port_wave_panel() -> None:
+        """Emit the recorded station phasors under the frequency panel.
+
+        The caption comes out even when no picture could be drawn: a missing panel
+        reads as "no phasors were recorded", which is a different statement from
+        "matplotlib is not installed here" or "the parallel arrays were short".
+        The heading is _PORT_TITLE - the same words the caption and the chart
+        title use - so the panel cannot be read as a refit or an extrapolation.
+        """
+        if html_div is None:
+            return
+        with html_div(
+            style="border-top: 1px solid #d0d0d0; padding: 2px 0 4px 0;"
+        ):
+            html_div(
+                _PORT_TITLE,
+                style="font-size: 12px; font-weight: 600; padding: 2px 12px;",
+            )
+            html_div(
+                _port_caption(port_waves, port_reason),
+                style="font-size: 11px; color: #333; padding: 0 12px 2px 12px;",
+            )
+            if port_waves is None or port_wave_chart is None:
+                return
+            image = port_wave_chart.get("image")
+            img_cls = getattr(html_widgets, "Img", None)
+            if image and img_cls is not None:
+                img_cls(
+                    src=image,
+                    style="height: 170px; display: block; margin: 0 12px;",
+                )
+                return
+            reason = port_wave_chart.get("reason")
+            if reason:
+                html_div(
+                    f"no picture drawn ({reason}); the recorded rows are "
+                    "printed instead",
+                    style="font-size: 11px; color: #8a1c00; padding: 0 12px;",
+                )
+            pre_cls = getattr(html_widgets, "Pre", None)
+            if pre_cls is not None:
+                pre_cls(
+                    "\n".join(port_wave_chart["rows"]),
+                    style="font-size: 11px; margin: 0 12px;",
+                )
+
     with SinglePageLayout(server) as layout:
-        layout.title.set_text("Build A - |Ez| (9 captured x-planes)")
+        layout.title.set_text(
+            f"{structure_label} - |Ez| ({n_st} captured x-planes)"
+        )
         if not missing_widgets:
             with layout.toolbar:
                 widgets["VSpacer"]()
+                _emit_structure_picker()
                 widgets["VSlider"](
                     v_model=("station", station),
                     min=0,
@@ -1536,6 +2611,7 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
         with layout.content:
             container = widgets.get("VContainer")
             if container is None:
+                _emit_mismatch_banner()
                 if placeholder is not None:
                     with placeholder():
                         view = plotter_ui(plotter)
@@ -1544,11 +2620,13 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
             elif html_div is None:
                 # No html widgets: the plotter keeps the whole content area.
                 with container(fluid=True, classes="pa-0 fill-height"):
+                    _emit_mismatch_banner()
                     view = plotter_ui(plotter)
             else:
                 # Fixed slider + panel rows around a flexed plotter, so the
                 # sliders are always reachable and the panel never floats over
-                # the 3-D view.
+                # the 3-D view. The banner is FIRST in that column: a reader who
+                # never scrolls still meets the warning.
                 with container(fluid=True, classes="pa-0 fill-height"):
                     with html_div(
                         style=(
@@ -1556,6 +2634,7 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
                             "height: 100%; width: 100%; overflow: hidden;"
                         )
                     ):
+                        _emit_mismatch_banner()
                         with html_div(
                             style=(
                                 "display: flex; flex-wrap: wrap; "
@@ -1567,10 +2646,41 @@ def run_web(info: dict, host: str, port: int, station: int) -> int:
                             style="flex: 1 1 auto; min-height: 320px;"
                         ):
                             view = plotter_ui(plotter)
-                        _emit_frequency_panel()
+                        # The two panels share one scroll box: each is a fixed
+                        # height image while the plotter keeps its min-height, and
+                        # without this the second panel would be clipped by the
+                        # column's overflow:hidden instead of shown.
+                        with html_div(
+                            style=(
+                                "flex: 0 0 auto; max-height: 42%; "
+                                "overflow-y: auto;"
+                            )
+                        ):
+                            _emit_frequency_panel()
+                            _emit_port_wave_panel()
 
     # Now that the plotter_ui handle exists, hand it to the toggle handler.
     handles["view"] = view
+
+    @ctrl.set("structure")
+    def _on_structure_change(*args, **_kwargs):
+        """Say what picking another entry would take; never half-reload the page.
+
+        The npz, the record, the markers and the plotter are built once, for the
+        ONE structure this process was started with. Switching the dropdown cannot
+        rebuild them, so the page keeps its numbers and the note names the command
+        that opens the picked case.
+        """
+        value = args[0] if args else _kwargs.get("structure", state.structure)
+        if value is None or value == structure_id:
+            state.structure_note = f"showing {structure_label}"
+            return
+        entry = _structure_by_id(value, structures)
+        state.structure_note = (
+            f"{_structure_label(entry)} is not loaded in this page - re-run "
+            f"python3 server/poc_app.py --structure {value} to open it "
+            f"(still showing {structure_label})"
+        )
 
     @ctrl.set("station")
     def _on_station_change(*args, **_kwargs):
@@ -1615,9 +2725,10 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="poc_app.py",
         description=(
-            "PoC Trame + pyvista web viewer for the Build A npz field dump. The "
-            "9 captured x-planes are stacked at one cell spacing - this is not a "
-            "dense volumetric solve, so x is quantised to 9 positions."
+            "PoC Trame + pyvista viewer for a microstrip field dump and its "
+            "S-parameter records. The structure is selected from "
+            f"{STRUCTURES_FILE}; the captured x-planes are stacked at one cell "
+            "spacing, so x is quantised to those positions."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -1628,8 +2739,20 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--input",
-        default=DEFAULT_INPUT,
-        help=f"npz dump to read (default: {DEFAULT_INPUT})",
+        default=None,
+        help=(
+            "npz dump to read; wins over --structure when given (default: the "
+            "selected structure's field_dump.path, else "
+            f"{DEFAULT_INPUT})"
+        ),
+    )
+    parser.add_argument(
+        "--structure",
+        default=DEFAULT_STRUCTURE,
+        help=(
+            "structure id from "
+            f"{STRUCTURES_FILE} (default: {DEFAULT_STRUCTURE})"
+        ),
     )
     parser.add_argument(
         "--host", default=DEFAULT_HOST, help=f"bind address (default: {DEFAULT_HOST})"
@@ -1644,12 +2767,55 @@ def main(argv=None) -> int:
         help="print dump metadata and exit (numpy only, no pyvista)",
     )
     parser.add_argument(
+        "--dump-state",
+        dest="dump_state",
+        metavar="PATH",
+        default=None,
+        help=(
+            "write a JSON snapshot of everything the viewer knows and exit "
+            "(numpy only, no pyvista, no trame)"
+        ),
+    )
+    parser.add_argument(
         "--station", type=int, default=4, help="initial station index (default: 4)"
     )
     args = parser.parse_args(argv)
 
-    src = _resolve(args.input)
+    structures = load_structures()
+    structure = _structure_by_id(args.structure, structures)
+    if structure is None:
+        valid = ", ".join(
+            str(entry.get("id")) for entry in structures if entry.get("id")
+        )
+        parser.error(
+            f"unknown --structure {args.structure}; "
+            f"valid ids: {valid or 'none (structures.json unreadable)'}"
+        )
+
+    # A record-only entry is REFUSED, never substituted: its S-parameters were
+    # recorded without a field solve, and the only field data on disk belongs to
+    # a different case. The check is on the resolved entry, so it covers
+    # --structure OMITTED as well as given - args.structure is DEFAULT_STRUCTURE
+    # there, so if the default itself had no dump this same branch would fire on
+    # it, with the same message and the same exit status, rather than rendering
+    # run A under the default's name. It runs before load_dump, so a refusal
+    # reads nothing and writes no half-finished state file.
+    if _structure_is_record_only(structure):
+        parser.error(_record_only_refusal(args.structure, structures))
+
+    # --input wins when given, then the entry's own dump, then the default - see
+    # _structure_input_path. The registry never overrides an explicit path, so a
+    # run that is not registered yet can still be opened.
+    src = _structure_input_path(args.input, structure)
     info = load_dump(src)
+
+    if args.dump_state:
+        out = _resolve(args.dump_state)
+        state = build_state_dump(info, structure, structures)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        print(f"[poc_app] wrote {out}")
+        return 0
 
     n_st = info[PLANE_KEY].shape[0]
     station = args.station
@@ -1666,7 +2832,7 @@ def main(argv=None) -> int:
         print_keys(info)
         return 0
 
-    return run_web(info, args.host, args.port, station)
+    return run_web(info, args.host, args.port, station, structure, structures)
 
 
 if __name__ == "__main__":
