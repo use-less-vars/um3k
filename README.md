@@ -99,7 +99,9 @@ broken at least once.
   twin run's own fitted impedance rather than an independent one, so that
   comparison is retracted. Against the independent quasistatic value for the
   same strip width (`Z0 = 48.0237405` ohm at `w = 3.2` mm) the residual is
-  `-3.10` to `-4.90` percent, not sub-percent. See E1 and E10 in
+  `-3.10` to `-6.52` percent (`-6.52` on the fine mesh, two-wave; `-4.90` on the
+  coarse mesh, two-wave, superseded by the fine mesh), not sub-percent. See E1,
+  E10 and E11 in
   [`docs/design/EM_SOLVER_LEDGER.md`](docs/design/EM_SOLVER_LEDGER.md) and
   `evidence/termination/build_A_50ohm.superseded.json`.
 - **No speed claim without a measurement.** The OpenMP pragmas measured about 50x

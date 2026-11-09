@@ -8,6 +8,19 @@
 **Refs:** DR-36 (quasistatic Z0 box-limited), DR-37 (w=3.2 rerun at
 48.023741), DR-39 (pytest config defects).
 
+> **Amendment 2026-11-10 (dispatch `substrate-shift-2026-11-10`).** The target
+> has moved to the fine mesh. The preregistered 4.90 % (coarse mesh, two-wave)
+> is superseded by **6.52 % (fine mesh, two-wave)**, raw -6.517281 % against
+> Gamma_anchor; the one-wave pair moves from 4.81 % (coarse mesh) to **6.42 %
+> (fine mesh, one-wave)**, raw -4.810109 -> -6.415728 per cent. The coarse mesh
+> was partly cancelling the extraction bias, so the coarse numbers understated
+> the true miss: the H2 mesh term is 0.5523 pp of the coarse 4.90 pp residual
+> and is wrong-signed (section 7.6). Section 1 below is the preregistration as
+> written and is not rewritten here; every 4.90 % or 4.81 % in it is a
+> coarse-mesh figure, read as superseded by the fine-mesh target. House rule
+> for this document from here on: no residual is quoted without its mesh and
+> its estimator.
+
 ## 1. The question
 
 Given the retraction of the circular 0.34465 anchor (E1) and the verification
@@ -24,9 +37,13 @@ Five residuals against this anchor:
 |---|---|---|---|
 | two-wave, run A | `evidence/termination/build_A_50ohm.json:278` | 0.32586326 | **−4.82 %** |
 | one-wave, run A | `evidence/termination/build_A_50ohm.json:279` | 0.32613492 | −4.74 % |
-| two-wave, run B | `evidence/termination/build_A_50ohm_p51_phasors.json:286` | 0.32556487 | **−4.90 %** |
+| two-wave, run B - coarse (superseded by fine) | `evidence/termination/build_A_50ohm_p51_phasors.json:286` | 0.32556487 | **−4.90 %** |
 | one-wave, run B | `evidence/termination/build_A_50ohm_p51_phasors.json:287` | 0.32588679 | −4.81 % |
 | one-wave, run B at β_KJ | `docs/design/s11_port_forensics_2026-11-07.md:99` (row) | 0.33174966 | **−3.10 %** |
+
+All five rows above are **coarse-mesh** values (2026-11-09 runs). Their fine-mesh
+counterparts are 6.52 % (fine mesh, two-wave) and 6.42 % (fine mesh, one-wave),
+raw -6.517281 and -6.415728 per cent; see section 7.6.
 
 Four of the five lie in [−4.90 %, −4.74 %], spread 0.16 pp across two runs
 (n_line 54 vs 64) and two estimators. Run variation ~0.08 pp, estimator
