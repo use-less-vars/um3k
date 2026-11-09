@@ -2244,3 +2244,149 @@ def eps_eff_laplace(mesh: Mesh2D, eps_t, *, boundaries=(), groups=None) -> dict:
         "v0": v0,
         "n_free": int(mesh.n_nodes - np.count_nonzero(v1 | v0)),
     }
+
+
+# ----------------------------------------------------------------------
+# power-voltage impedance of a solved cross-section mode
+# ----------------------------------------------------------------------
+def mode_z0_from_power(
+    mesh: Mesh2D,
+    k0: float,
+    sigma: float = 1.0,
+    *,
+    eps_r=1.0,
+    mu_r=1.0,
+    boundaries=(),
+    k: int = 8,
+    dense: bool | None = None,
+    guard: bool = True,
+) -> tuple:
+    r"""``Z0 = V**2 / (2 P)`` of the mode :func:`solve_modes_mixed` selects [ohm].
+
+    The same inputs (and therefore the same mode) as :func:`solve_modes_mixed`;
+    nothing here changes that solve, it only adds the two integrals the
+    impedance needs.
+
+    Definitions -- exactly what is integrated
+    -----------------------------------------
+    ``V`` (volts, peak phasor)
+        the line integral ``int E . dl`` along the **shortest edge chain** of
+        the mesh between the two conductor groups, oriented from
+        ``boundaries[0]``'s group **to** ``boundaries[1]``'s group (for the
+        microstrip predicates that is *ground -> strip*, i.e. straight up the
+        substrate).  The groups are the two connected node masks
+        :func:`_dirichlet_groups` splits the PEC union into.  Each edge
+        contributes its own DOF ``e_t[e] = int_e E . t_hat dl`` with the sign
+        taken from the traversal direction, so the chain telescopes and ``V``
+        is a pure sum of solver unknowns -- no interpolation, no normalisation
+        of the eigenvector beyond the unit ``|x|`` the solve returns (it
+        cancels in ``V**2 / P``).
+    ``P`` (watts, **time-averaged** for a peak amplitude of 1)
+        ``P = 0.5 * int_Omega (1/eta) |E_t|**2 dA`` over the whole
+        cross-section ``Omega``, ``eta = eta0 / sqrt(eps_r)`` locally.  It is
+        assembled with the *same* Whitney mass matrix the pencil uses,
+        ``int sqrt(eps_r) W_e . W_f dA`` (``assemble_mixed`` with
+        ``eps_r -> sqrt(eps_r)``), so the discrete field energy being
+        integrated is the one the eigenvector actually represents.  The
+        ``0.5`` is the phasor convention: ``P = 0.5 Re int (E x conj(H)) . z``
+        for peak amplitudes, i.e. ``V`` is a peak voltage and ``P`` its
+        time-averaged power -- hence ``Z0 = V**2 / (2P)`` and not ``V**2/P``.
+
+    Modelling assumptions (a reviewer may reject any of these)
+    ----------------------------------------------------------
+    * ``H_t = z_hat x E_t / eta`` -- the **local TEM (quasi-TEM)** relation
+      between the transverse fields.  The solve returns ``e_t`` and ``e_z``
+      only, **no ``h_t``**, so ``P`` cannot be a Poynting integral of two
+      independently solved fields; this is the modelling choice, stated
+      rather than buried.
+    * the longitudinal field ``e_z`` is omitted from ``P`` (its contribution
+      is the ``E_z H_y`` cross term, second order in the quasi-TEM regime).
+    * the eigenvector normalisation is arbitrary, so only the **ratio**
+      ``V**2/P`` is meaningful; it is invariant to rescaling ``e_t``.
+    * ``eps_r`` is treated as real and piecewise constant per triangle
+      (lossless; no dispersion), exactly as in the solve.
+
+    Returns
+    -------
+    ``(z0, beta, eps_eff, converged)``: the impedance [ohm], the propagation
+    constant [rad/m], ``beta**2 / k0**2``, and whether the numbers may be
+    trusted (finite positive ``z0``, positive ``beta``, and the block residual
+    of the solve below :data:`_MIXED_RESIDUAL_TOL`).  ``converged=False``
+    comes with the numbers still returned, for inspection, never raised away.
+    """
+    mode = solve_modes_mixed(
+        mesh, k0, sigma=sigma, eps_r=eps_r, mu_r=mu_r,
+        boundaries=boundaries, k=k, dense=dense, guard=guard,
+    )
+
+    # --- two conductor groups: A = boundaries[0]'s group, B = the other ------
+    nodes_a, nodes_b = _dirichlet_groups(mesh, boundaries)
+
+    # --- V: shortest edge chain, A -> B, then sum the (signed) edge DOFs ----
+    edges = mesh.edges
+    n_node = int(mesh.n_nodes)
+    src = np.concatenate([edges[:, 0], edges[:, 1]])
+    dst = np.concatenate([edges[:, 1], edges[:, 0]])
+    eid = np.concatenate([np.arange(edges.shape[0], dtype=int)] * 2)
+    order = np.argsort(src, kind="stable")
+    src, dst, eid = src[order], dst[order], eid[order]
+    ptr = np.searchsorted(src, np.arange(n_node + 1))
+
+    start = int(np.flatnonzero(nodes_a)[0])
+    prev = np.full(n_node, -1, dtype=int)        # predecessor node
+    via = np.full(n_node, -1, dtype=int)         # edge used to reach it
+    seen = np.zeros(n_node, dtype=bool)
+    seen[start] = True
+    queue = [start]
+    qi = 0
+    found = -1
+    while qi < len(queue) and found < 0:
+        u = queue[qi]
+        qi += 1
+        for kk in range(int(ptr[u]), int(ptr[u + 1])):
+            w = int(dst[kk])
+            if seen[w]:
+                continue
+            seen[w] = True
+            prev[w] = u
+            via[w] = int(eid[kk])
+            if nodes_b[w]:
+                found = w
+                break
+            queue.append(w)
+    if found < 0:
+        raise ValueError(
+            "no edge chain connects the two conductor groups; the PEC "
+            "predicates must touch the same triangulation"
+        )
+
+    v = 0.0 + 0.0j
+    cur = found
+    while cur != start:
+        u = int(prev[cur])
+        e = int(via[cur])
+        # e_t[e] is int E.t_hat dl along edges[e,0] -> edges[e,1]: take it as is
+        # when the chain runs that way (u == edges[e, 0]), negate otherwise.
+        step = mode.e_t[e] if edges[e, 0] == u else -mode.e_t[e]
+        v += step
+        cur = u
+
+    # --- P: 0.5 * int (1/eta)|E_t|^2 dA, eta0 = mu0 c0 ----------------------
+    eta0 = 376.73031366804177                    # vacuum wave impedance [ohm]
+    eps_tri = _per_triangle(eps_r, mesh, "eps_r")
+    _m1, m_sqrt_eps, _c, _kzz, _mzz = assemble_mixed(
+        mesh, eps_r=np.sqrt(eps_tri), mu_r=mu_r
+    )
+    x = np.asarray(mode.e_t)
+    p_avg = 0.5 * float(np.real(x @ (m_sqrt_eps @ x))) / eta0
+
+    converged = bool(
+        np.isfinite(p_avg) and p_avg > 0.0 and mode.beta > 0.0
+        and np.isfinite(mode.residual) and mode.residual < _MIXED_RESIDUAL_TOL
+    )
+    if not (np.isfinite(p_avg) and p_avg > 0.0):
+        return float("nan"), float(mode.beta), float(mode.eps_eff), False
+
+    z0 = float(abs(v) ** 2 / (2.0 * p_avg))
+    return z0, float(mode.beta), float(mode.eps_eff), converged
+
