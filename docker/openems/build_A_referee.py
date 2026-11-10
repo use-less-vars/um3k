@@ -719,7 +719,8 @@ PORT1_RATIONALE = {  # one entry per arm; "mslport" is the DEFAULT, "lumped"
     "mslport": (
         "DEFAULT -- FDTD.AddMSLPort(1, <port1_feed property>, start=[x_port, "
         "y_lo, z_strip], stop=[x_port+cell, y_hi, 0.0], prop_dir='x', "
-        "exc_dir='z', excite=1).  This is the reference's own microstrip port "
+        "exc_dir='z', excite=1, priority=<strip priority>).  This is the "
+        "reference's own microstrip port "
         "(infra/openems/reference/ports.py:311-448): it adds the strip metal "
         "itself (ports.py:346-349), writes FIVE probes of its own "
         "(port_1_utA/B/C, port_1_itA/B), and takes Z_ref from the measured "
@@ -1006,6 +1007,18 @@ def port1_box(p: dict) -> tuple:
     return start, stop
 
 
+def port1_msl_priority(priority):
+    """The priority the MSL launch metal carries: the strip's, never None.
+
+    build_model() passes strip_priority, which is None for --strip metal (the
+    control builds its boxes at the CSX default).  None must NOT reach the
+    port: Port.__init__ resolves it to 0 (ports.py:107-109), and at 0 the
+    launch metal ties with the coplanar substrate top face at z_strip and
+    CSXCAD drops the box.  So None falls back to STRIP_PRIORITY.
+    """
+    return STRIP_PRIORITY if priority is None else priority
+
+
 def _port1_call_text(p: dict, priority) -> str:
     """The exact port-1 construction the API in force performs, as source.
 
@@ -1014,13 +1027,18 @@ def _port1_call_text(p: dict, priority) -> str:
     """
     start, stop = port1_box(p)
     if PORT1_API == "mslport":
-        # No priority= here: Port.__init__ defaults self.priority to 0
-        # (ports.py:107-109) and MSLPort forwards it unconditionally
-        # (ports.py:349), so the metal already lands at priority 0 -- the
-        # same priority the lumped arms get by passing none.
+        # priority= IS passed, and it has to be.  The launch metal is
+        # coplanar with the substrate's top face at z_strip; ports.py:349
+        # forwards the port priority to its AddBox; at Port.__init__'s
+        # default 0 (ports.py:107-109) that box ties with the substrate's
+        # own box and CSXCAD drops it -- "Unused primitive (type: Box)
+        # detected in property: port1_feed!", feed never connected, energy
+        # trace flat at -8.54 dB.  It carries the strip's priority instead.
         return ("      FDTD.AddMSLPort(1, <port1_feed property>, start=%s,"
-                " stop=%s, prop_dir='x', exc_dir='z', excite=1)"
-                % (_nums(start), _nums(stop)))
+                " stop=%s, prop_dir='x', exc_dir='z', excite=1,"
+                " priority=%d)"
+                % (_nums(start), _nums(stop),
+                   port1_msl_priority(priority)))
     kw = {"p_dir": "z", "excite": 1.0}
     if PORT1_API in ("priority", "x-cell-priority") and priority is not None:
         kw["priority"] = priority
@@ -1048,8 +1066,13 @@ def port1_report(p: dict, priority=None, stream=sys.stdout) -> None:
                     int(round((stop[1] - start[1]) / CELL)),
                     int(round((stop[2] - start[2]) / CELL))))
     if PORT1_API == "mslport":
-        prio_note = ("0 -- Port.__init__'s default (ports.py:107-109), "
-                     "forwarded by MSLPort (ports.py:349); never a kwarg here")
+        prio_note = ("%d -- passed as priority=: the strip's own value, or "
+                     "STRIP_PRIORITY when the representation passes none.  "
+                     "Port.__init__ keeps it (ports.py:107-109) and MSLPort "
+                     "puts it on the launch metal's AddBox (ports.py:349); "
+                     "at the default 0 that box ties with the coplanar "
+                     "substrate top face and CSXCAD drops it."
+                     % port1_msl_priority(priority))
     elif PORT1_API in ("lumped", "x-cell"):
         prio_note = "none -- this API never forwards one (Port default 0)"
     elif priority is None:
@@ -1071,9 +1094,11 @@ def port1_report(p: dict, priority=None, stream=sys.stdout) -> None:
             "                         strip's.  ports.py:349 calls "
             "metal_prop.AddBox(...,\n"
             "                         priority=self.priority), i.e. priority "
-            "0 onto THAT\n"
-            "                         object; the strip property holds sheets "
-            "A/B only.\n"
+            "%d onto THAT\n"
+            "                         object -- never 0, where CSXCAD drops "
+            "the tie with the\n"
+            "                         substrate; the strip property holds "
+            "sheets A/B only.\n"
             "  metal plane          : z = %s m == START z.  ports.py:348 does\n"
             "                         MSL_stop[exc] = MSL_start[exc]: stop z is "
             "DISCARDED\n"
@@ -1122,7 +1147,8 @@ def port1_report(p: dict, priority=None, stream=sys.stdout) -> None:
             "                         count is compared against that "
             "floor, not against\n"
             "                         the raw expectation.\n"
-            % (_num(p["z_strip"]), _num(p["z_strip"]), _num(p["z_strip"]),
+            % (port1_msl_priority(priority),
+               _num(p["z_strip"]), _num(p["z_strip"]), _num(p["z_strip"]),
                " ".join(PORT1_MSL_PROBES), _num(_pl["measplane_pos"]),
                _pl["meas_pos_idx"], len(p["xs"]) - 1, _pl["prope_idx"],
                _pl["clamped"], _pl["wrap"],
@@ -1174,9 +1200,16 @@ def add_port1(FDTD, p: dict, priority=None, strip_prop=None) -> None:
                 "with port1_feed = csx.AddMetal('port1_feed').")
         start, stop = port1_box(p)
         # excite is an INT here, not an impedance: ports.py:403 multiplies it
-        # into a -1/0/+1 vector.  No priority kwarg -- see port1_report().
+        # into a -1/0/+1 vector.  priority= is NOT optional -- see
+        # port1_msl_priority(): ports.py:349 forwards it to the launch
+        # metal's AddBox, and at the default 0 that box is coplanar with the
+        # substrate's top face at z_strip, ties with it, and CSXCAD drops it
+        # ("Unused primitive ... property: port1_feed"), which flatlines the
+        # energy trace at -8.54 dB.  It therefore carries the strip's
+        # priority, and STRIP_PRIORITY when the representation passes none.
         FDTD.AddMSLPort(1, strip_prop, start=start, stop=stop,
-                        prop_dir="x", exc_dir="z", excite=1)
+                        prop_dir="x", exc_dir="z", excite=1,
+                        priority=port1_msl_priority(priority))
         return
     start, stop = port1_box(p)
     kw = {"p_dir": "z", "excite": 1.0}
