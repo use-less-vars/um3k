@@ -56,7 +56,10 @@ USAGE
               --strip X.
     Exit 3  = solve ran but produced no port records (model is wrong).
     Exit 4  = openEMS reported geometry it did not apply (a primitive it
-              called "Unused", or a lumped load with "Active cells: 0"), or
+              called "Unused", or a lumped load with "Active cells: 0" --
+              only on --port2-api element, the one arm whose load must own
+              cell volume; a zero-thickness port is EXPECTED to read 0, see
+              trap (13)), or
               the strip did not attach ON THE SOLVE PATH (there the "Number
               of PEC edges:" line is REQUIRED and must clear its floor; a
               SETUP-ONLY probe does not require it -- see
@@ -69,7 +72,8 @@ USAGE
     Exit 6  = openEMS rejected the CONSTRUCTION of port 2 (the load): the
               binding raised while building csx.AddLumpedElement(...) or
               FDTD.AddLumpedPort(2, ...).  This is NOT exit 4 -- exit 4 means
-              the load was built and the LOG says it activated no cell, while
+              the load was built and the LOG condemns it ("Active cells: 0"
+              on the element arm, or an unused-primitive line naming it), while
               6 means it was never built at all.  The diagnostic prints the
               API name, the exact call, the exception verbatim, and the retry
               ladder  --port2-api port -> port-priority -> port-zext ->
@@ -140,6 +144,25 @@ API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
     ALTERNATIVE that was DEMOTED on 2026-11-12; never make it the default
     again without a probe that shows the load's cells ACTIVE.
 
+(13) A zero-thickness lumped port (or element) is a SURFACE impedance: it owns
+    no cell volume, so `Active cells: 0` on its LOAD line is EXPECTED for a
+    port that works perfectly.  The 2026-11-09 solve measured V2/I2 = 50.00
+    ohm through AddLumpedPort(2, ...) -- a terminated 50 ohm load -- and this
+    file nonetheless failed it for reading `Active cells: 0`.  That guard was
+    MISCALIBRATED, and the 'repair' it drove -- AddLumpedElement, i.e. the
+    'element' arm -- emitted
+        Warning: Unused primitive (type: Box) detected in property: port_2_resist!
+    and genuinely BROKE the load (trap (12)): a fix applied to a non-fault.
+    The guard now demands `Active cells > 0` ONLY for --port2-api element, the
+    one arm that gives the element cell volume.  On port / port-priority /
+    port-zext `Active cells: 0` is ACCEPTED, and the ONLY load failure there
+    is an unused-primitive line naming the port property.  Corollary for
+    accept_note(): on those arms the load's ACTIVATION belongs in the
+    NOT-verified clause, never in the established one.  What IS established is
+    the port's PRESENCE -- and only through the absence of such an
+    unused-primitive line (on a full solve, also its port_ut_2/port_it_2 V/I
+    ratio).  Its `Active cells` count is evidence in neither direction.
+
 --------------------------------------------------------------------------
 NUMERIC FIELDS, AND THE LOAD AS ITS OWN VERDICT
 --------------------------------------------------------------------------
@@ -151,15 +174,18 @@ cells", "Number of PEC edges") are read out of the headed block that owns
 them (_section()), with the reader TOLD when a block cannot be located
 instead of being handed a number from somewhere else.
 
-The strip and the load are DIFFERENT verdicts.  A strip representation CSXCAD
-keeps can sit beside a lumped element it never activated -- the 2026-11-09
-logs show exactly that, "--- Series/Parallel Lumped RLC load ---" with
-"Active cells: 0" -- and a strip verdict must not be able to hide it.
-resolve_strip() therefore judges the strip ONLY and can RESOLVE with a dead
-load, while a "LOAD: Active cells <N>" line reports the load, verbatim and
-separately, on every path: it is exit 4 on a real solve and a note on a
-setup probe.  --port2-api chooses how the load is built; the chosen API, its
-rationale and the exact call are printed.
+The strip and the load are DIFFERENT verdicts.  What CSXCAD keeps for the
+strip proves nothing about the load, and the load's own line is the only thing
+that speaks for it: the 2026-11-09 run printed "--- Series/Parallel Lumped RLC
+load ---" with "Active cells: 0" in the same log as the strip's primitives,
+and on a zero-thickness arm that reading is EXPECTED rather than a fault (trap
+(13)), so it is evidence about which arm built the load, not about the strip.
+A strip verdict must not be able to answer for the load.  resolve_strip()
+therefore judges the strip ONLY and can RESOLVE whatever the load's line says,
+while a "LOAD: ..." line reports the load, verbatim and separately, on every
+path: it is exit 4 on a real solve and a note on a setup probe.
+--port2-api chooses how the load is built; the chosen API, its rationale and
+the exact call are printed.
 
 --------------------------------------------------------------------------
 EXTRACTION PLAN (reader + DFT helpers implemented in this file; still never
@@ -508,14 +534,22 @@ def geometry_boxes(p: dict, rep: str = "metal") -> list:
 # ---------------------------------------------------------------------------
 # PORT 2 (THE LOAD): WHICH API BUILDS IT.
 #
-# The load is the primitive that failed.  Both 2026-11-09 host runs printed
+# The load is the primitive this file spent 2026-11-09 .. 2026-11-12
+# misjudging.  The 2026-11-09 host run printed
 #
 #     --- Series/Parallel Lumped RLC load ---
 #     Active cells: 0
 #
-# so the 50 ohm termination was never activated and port_ut_2 / port_it_2
-# describe nothing.  The recon (infra/openems/reference/) says exactly what
-# AddLumpedPort(2, R, ...) builds for it:
+# and this file read that as a dead load.  It is not one (trap (13)): the
+# 50 ohm termination WAS activated on that arm -- its port_ut_2 / port_it_2
+# post-process to V2/I2 = 50.00 ohm, a correctly terminated 50 ohm load -- and
+# `Active cells: 0` is the EXPECTED reading for a zero-thickness lumped port,
+# which is a surface impedance and owns no cell volume.  That count proves
+# nothing either way about whether the load attached.  What WOULD show a
+# dropped load is an "Unused primitive" line naming the port property (trap
+# (12)), and no such line can be squared with a V2/I2 of 50.00 ohm.  The recon
+# (infra/openems/reference/) says exactly what AddLumpedPort(2, R, ...) builds
+# for it:
 #
 #   openEMS.pyx:339   def AddLumpedPort(self, port_nr, R, start, stop, p_dir,
 #                                      excite=0, **kw)
@@ -551,6 +585,17 @@ def geometry_boxes(p: dict, rep: str = "metal") -> list:
 
 PORT2_API = "port"           # replaced from --port2-api in main()
 PORT2_API_CHOICES = ("port", "element", "port-priority", "port-zext")
+
+# Which arm's load has to own cell volume, and which arms are plane-thin.
+# Trap (13): 'port' and 'port-priority' build the zero-thickness element that
+# ports.py:266-271 builds -- a SURFACE impedance owning no cell volume, so
+# "Active cells: 0" is the EXPECTED reading for a working load.  'port-zext'
+# is deliberately NOT listed as zero-thickness (it fills one z cell), but its
+# count is still not failed on: see load_verdict().  'element' is the only arm
+# whose element must be seen to occupy a cell, so it is the only arm that
+# FAILS on "Active cells: 0".
+PORT2_CELLS_REQUIRED_ARMS = ("element",)
+PORT2_ZERO_THICKNESS_ARMS = ("port", "port-priority")
 
 PORT2_RATIONALE = {
     "element": (
@@ -766,7 +811,8 @@ def _port2_build_failure(p: dict, priority, exc: BaseException):
     print("  This is a CONSTRUCTION failure: the load was never built at all.",
           file=sys.stderr)
     print("  It is NOT exit 4 -- exit 4 means the load WAS built and the log "
-          "says it activated no cell.", file=sys.stderr)
+          "condemns it (\"Active cells: 0\" on the element arm, or an "
+          "unused-primitive line naming it).", file=sys.stderr)
     print("  RETRY LADDER (most likely first):", file=sys.stderr)
     print("      --port2-api port  ->  port-priority  ->  port-zext  ->  "
           "element", file=sys.stderr)
@@ -1302,7 +1348,7 @@ def build_model(p: dict, rep: str = "metal"):
     # reason -- see doc section 2 for the arithmetic.
     #
     # HOW port 2 is built is --port2-api's job (PORT2_API, and the rationale
-    # quoted from infra/openems/reference/ above it).  The 2026-11-09 runs got
+    # quoted from infra/openems/reference/ above it).  The 2026-11-09 run got
     # "Active cells: 0" from this primitive, so this file no longer assumes
     # one construction is the only one; port2_report() prints the API in
     # force, its rationale and the exact call, and add_port2() builds it, on
@@ -1397,7 +1443,7 @@ _UNUSED_PROP_PAT = re.compile(
 # the primitive's fields UNDERNEATH it.  "Active cells" therefore belongs to
 # whichever heading precedes it, and reading it without knowing which block it
 # sits in is how a zero-active LOAD gets mistaken for the strip's verdict --
-# the 2026-11-09 logs print both blocks in one log.
+# the 2026-11-09 run printed both blocks in one log.
 _SECTION_HEADERS = {
     "pec": ("--- PEC ---", "PEC:"),
     "load": ("--- Series/Parallel Lumped RLC load ---", "Lumped RLC load:"),
@@ -1599,16 +1645,26 @@ def _stray_active_cells(text: str) -> list:
 def load_verdict(text: str, p: dict) -> tuple:
     """(ok, lines, fatal) for the LOAD alone.  Every line starts with "LOAD:".
 
-    The load is its own verdict because it fails independently of the strip:
-    the 2026-11-09 logs keep the strip's primitives and still print
-    "--- Series/Parallel Lumped RLC load ---" followed by "Active cells: 0",
-    so a strip verdict must not be able to answer for the load.
+    The load is its own verdict because it is judged independently of the
+    strip: the 2026-11-09 run printed "--- Series/Parallel Lumped RLC load
+    ---" followed by "Active cells: 0" in the same log as the strip's
+    primitives, and that reading speaks about the load's construction only
+    (trap (13)), so a strip verdict must not be able to answer for the load.
 
-    `fatal` is True ONLY for the case that is a real signal: a LOCATED block
-    that says 'Active cells: 0'.  A block we cannot locate, and a located
-    block with no Active-cells line, are PARSE GAPS -- ok=False, fatal=False,
-    so the caller reports them as notes on both phases.  A parse gap must
-    never be promoted to a verdict; that is the 80ce5cb failure.
+    WHAT 'Active cells: 0' MEANS DEPENDS ON --port2-api (trap (13)).  A
+    zero-thickness lumped port is a surface impedance: it owns no cell volume,
+    so 0 is the EXPECTED reading on the arms that build one, and it is NOT a
+    failure there.  Only 'element' -- the one arm that gives the element cell
+    volume -- must show cells > 0.  On EVERY arm an unused-primitive line that
+    names the port property is a real failure, and a zero-thickness reading is
+    accepted only in the ABSENCE of one.
+
+    `fatal` is True ONLY for a real signal: a LOCATED block whose reading
+    fails under the arm in force, or an unused-primitive line naming the load.
+    A block we cannot locate, and a located block with no Active-cells line,
+    are PARSE GAPS -- ok=False, fatal=False, so the caller reports them as
+    notes on both phases.  A parse gap must never be promoted to a verdict;
+    that is the 80ce5cb failure.
     """
     lines = []
     if not _section(text, "load"):
@@ -1629,18 +1685,65 @@ def load_verdict(text: str, p: dict) -> tuple:
                      "this log does not say how many cells the load activated")
         return False, lines, False
     expect = _expected_active_cells(p)[-1][1]
+    cells_required = PORT2_API in PORT2_CELLS_REQUIRED_ARMS
+    zero_thick = PORT2_API in PORT2_ZERO_THICKNESS_ARMS
     ok = True
     fatal = False
+    # TWO streams, and they must never be mixed.  `fails` says why the block is
+    # REJECTED; `readings` is what the block says when it is not.  The caller
+    # routes the returned list into `problems` whenever the block is fatal, so a
+    # reading travelling in it prints an "EXPECTED" sentence underneath MODEL
+    # NOT APPLIED, which reads as a reason to reject the run.  A reading is
+    # emitted only when the block is ACCEPTED.
+    fails = []
+    readings = []
     for count, raw in found:
+        if count == 0 and not cells_required:
+            # Trap (13).  A zero-thickness port activates no cell volume by
+            # construction, so a 0 here is the shape of a WORKING load.
+            if zero_thick:
+                readings.append("LOAD: Active cells 0 -- EXPECTED for a "
+                                "zero-thickness lumped port (a surface "
+                                "impedance activates no cell volume); the "
+                                "load is present unless an unused-primitive "
+                                "line names it: %r" % raw.strip())
+            else:
+                # port-zext is NOT zero-thickness, so the sentence above would
+                # be false; it is still not failed on (it is an experiment),
+                # but nothing is asserted about the number either way.
+                readings.append("LOAD: Active cells 0 -- NOT a failure for "
+                                "--port2-api %s, which is not zero-thickness: "
+                                "that arm gives the element one cell of z "
+                                "extent, so no assertion is made about this "
+                                "reading: %r" % (PORT2_API, raw.strip()))
+            continue
         if count == 0:
             ok = False
             fatal = True
-            lines.append("LOAD: Active cells 0 (expected %d) -- the load "
+            fails.append("LOAD: Active cells 0 (expected %d) -- the load "
                          "activated NO cell, so port_ut_2/port_it_2 describe "
                          "nothing: %r" % (expect, raw.strip()))
             continue
-        lines.append("LOAD: Active cells %d (expected %d): %r"
-                     % (count, expect, raw.strip()))
+        if cells_required:
+            readings.append("LOAD: Active cells %d (expected %d): %r"
+                            % (count, expect, raw.strip()))
+        else:
+            readings.append("LOAD: Active cells %d (no count is asserted "
+                            "for --port2-api %s): %r"
+                            % (count, PORT2_API, raw.strip()))
+    # The zero-thickness acceptance above is conditioned on the load being
+    # PRESENT, and the one line that proves it is NOT is an unused-primitive
+    # line naming the port property.  That is fatal on every arm (trap (13)).
+    for _kind, unused_line in classify_unused(text):
+        if _kind != "load":
+            continue
+        ok = False
+        fatal = True
+        fails.append("LOAD: an unused-primitive line names the load, so the "
+                     "port is NOT in the model: %s" % unused_line)
+    lines.extend(fails)
+    if not fails:
+        lines.extend(readings)
     return ok, lines, fatal
 _VERSION_PAT = re.compile(
     r"openEMS 64bit -- version \S+|CSXCAD -- Version: \S+"
@@ -1726,11 +1829,20 @@ def _expected_pec_faces(p: dict, rep: str = "metal") -> int:
 
 
 def _expected_active_cells(p: dict) -> list:
-    """[(port label, cells it should activate)] -- 8 cells each here.
+    """[(port label, cells it should activate)] -- 8 cells each by THIS geometry.
 
     A port is a plane element: the cells it activates are the product of its
     spans on the axes that are neither its p_dir nor the one axis it is flat
     on.  Both ports span the 8-cell strip width in y.
+
+    WHAT IS DONE WITH THE NUMBER IS --port2-api's BUSINESS, and for the load it
+    is a contract on ONE arm (trap (13)).  An AddLumpedElement is a VOLUME
+    impedance: it should occupy a cell, so a count of 0 there means the element
+    was not attached and the block is rejected.  A lumped PORT is a
+    zero-thickness SURFACE impedance: it owns no cell volume and legitimately
+    activates none, so 0 is EXPECTED on those arms and this number is a
+    contract against nothing.  This function only computes the geometry;
+    load_verdict() decides whether the number may be acted on.
     """
     out = []
     for label, start, stop, p_dir in port_boxes(p):
@@ -1770,10 +1882,11 @@ def audit_solver_output(text: str, where: str, p: dict,
     `scope` says WHICH verdict this call may draw: "all" (the strip AND the
     load), "strip" or "load".  resolve_strip() audits with scope="strip",
     because a strip representation has to be judgeable on its own -- the
-    2026-11-09 logs keep the strip and still print a zero-active load -- while
-    the load's "LOAD: ..." lines are still emitted, as NOTES, so a resolution
-    can never hide it.  A zero-active load is exit 4 only where the call owns
-    the load AND the log is a real solve.
+    2026-11-09 run printed the strip's primitives beside a load block reading
+    "Active cells: 0", which on a zero-thickness arm is EXPECTED (trap (13))
+    -- while the load's "LOAD: ..." lines are still emitted, as NOTES, so a
+    resolution can never hide it.  A load that fails is exit 4 only where the
+    call owns the load AND the log is a real solve.
     """
     if phase not in ("setup-probe", "solve"):
         raise ValueError("phase must be 'setup-probe' or 'solve', not %r"
@@ -2059,6 +2172,23 @@ def accept_note(capture: str, scope: str, p: dict,
                                 "above): %s" % load_lines[0])
         else:
             not_verified.append("the LOAD -- %s" % load_lines[0])
+    elif load_ok and PORT2_API not in PORT2_CELLS_REQUIRED_ARMS:
+        # Trap (13): on these arms a count is evidence in NEITHER direction --
+        # it is the EXPECTED 0 (a zero-thickness surface impedance owns no
+        # cell volume), or a number nothing asserts.  So the load's ACTIVATION
+        # is NOT established here; only its PRESENCE is, and only through the
+        # unused-primitive signal above.  Claiming more would be the
+        # 2026-11-12 failure in reverse: a note outrunning its evidence.
+        established.append("the LOAD's port is PRESENT -- established ONLY by "
+                           "the unused-primitive signal above, never by a "
+                           "cell count (--port2-api %s asserts no 'Active "
+                           "cells' number here: %s; see trap (13))"
+                           % (PORT2_API,
+                              ", ".join(str(count) for count in counts)))
+        not_verified.append("the LOAD's ACTIVATION -- 'Active cells' cannot "
+                            "show it on this arm; only port_ut_2/port_it_2's "
+                            "V/I ratio on a full solve does, and this note "
+                            "draws no such reading")
     elif load_ok:
         established.append("the LOAD's 'Active cells' %s (expected %d)"
                            % (", ".join(str(count) for count in counts),
