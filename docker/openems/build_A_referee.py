@@ -530,6 +530,13 @@ def geometry_boxes(p: dict, rep: str = "metal") -> list:
     cell, sheet B resumes one cell later, and the empty cell carries the
     termination.
 
+    ONE value is arm-dependent: sheet A's x START.  The x-cell arms put the
+    launch's metal in the strip's first x cell, so on the mslport arm that
+    cell belongs to the port and the sheet must start where the port box
+    STOPS (port1_box(p)[1][0], a mesh-derived cell width) instead of at
+    x_port.  Metal and sheet are then CONTIGUOUS and share no volume; the
+    four lumped arms keep x_port, byte for byte.
+
     `rep` moves exactly ONE face: the strip's UPPER z face, by
     STRIP_REPS[rep]["dz"].  A zero-thickness representation leaves it on the
     strip plane as before; the slab representation lifts it by one cell, and
@@ -541,6 +548,15 @@ def geometry_boxes(p: dict, rep: str = "metal") -> list:
     dz = strip_dz(rep)
     z_upper = z_strip + dz
     thickness = ", 1 cell thick (slab)" if dz else ", zero-thickness"
+    # Where the feed sheet STARTS.  On the mslport arm the launch's metal
+    # patch already occupies the strip's first x cell, so starting the sheet
+    # at x_port too would put two properties on one cell -- an overlap, not a
+    # contiguous line.  port1_box() is the single source for where that box
+    # stops, so the sheet follows the API in force at call time (like
+    # add_port1() does) instead of carrying a second constant that could
+    # drift.  port1_box() is defined further down this module; it is a
+    # module-level function, so calling it here at run time is legal.
+    x_feed = port1_box(p)[1][0] if PORT1_API == "mslport" else p["x_port"]
     return [
         ("substrate",
          "substrate, eps_r = %g" % EPS_R,
@@ -548,7 +564,7 @@ def geometry_boxes(p: dict, rep: str = "metal") -> list:
          [x_max, p["y_max"], p["h_sub"]]),
         ("strip",
          "strip sheet A (feed)" + thickness,
-         [p["x_port"], y_lo, z_strip],
+         [x_feed, y_lo, z_strip],
          [p["x_load"], y_hi, z_upper]),
         ("strip",
          "strip sheet B (stub)" + thickness,
@@ -1084,15 +1100,27 @@ def port1_report(p: dict, priority=None, stream=sys.stdout) -> None:
             "  prope_idx            : %r (clamped=%s, wraps grid=%s)\n"
             "  U probe x            : %s m   U_delta = %s m\n"
             "  I probe x            : %s m   I_delta = %s m\n"
-            "  PEC accounting       : the MSL metal box is COINCIDENT with "
-            "strip sheet A's\n"
-            "                         first x cell -- same x span, same 8 y "
-            "cells, flat at\n"
-            "                         z_strip -- so it adds NO PEC area; the "
-            "expected face count\n"
-            "                         and PEC_EDGES_FLOOR are unchanged, and a "
-            "FLOOR could not\n"
-            "                         be broken by added metal anyway.\n"
+            "  PEC accounting       : the MSL metal box fills the strip's "
+            "first x cell and\n"
+            "                         the feed sheet STARTS where that box "
+            "STOPS -- adjacent,\n"
+            "                         never coincident.  Same 8 y cells, both "
+            "flat at z_strip, so\n"
+            "                         metal and sheet are CONTIGUOUS and share "
+            "no volume: the line\n"
+            "                         has no gap and the union still covers "
+            "the same columns.\n"
+            "                         Sheet A is one cell shorter, so the "
+            "EXPECTED face count\n"
+            "                         is 8 lower (496, not 504) and the "
+            "attachment floor is\n"
+            "                         DERIVED from it -- 496 - 4 slack = 492, "
+            "not the lumped\n"
+            "                         arms' 500 -- the floor tracks the arm; "
+            "the CAPTURED edge\n"
+            "                         count is compared against that "
+            "floor, not against\n"
+            "                         the raw expectation.\n"
             % (_num(p["z_strip"]), _num(p["z_strip"]), _num(p["z_strip"]),
                " ".join(PORT1_MSL_PROBES), _num(_pl["measplane_pos"]),
                _pl["meas_pos_idx"], len(p["xs"]) - 1, _pl["prope_idx"],
@@ -2518,12 +2546,19 @@ _VERSION_PAT = re.compile(
 #     sheet B  x nodes 51..72  ->  72 - 51 = 21 cells x 110 - 102 = 8 = 168
 #                                     (50-8)*8 + (72-51)*8 = 336 + 168 = 504
 #
-# PEC_EDGES_FLOOR is 504 rounded DOWN, for slack: the solver counts edges, not
-# faces, so its number need not equal 504 exactly.  It is a CONSTANT and is
-# deliberately not recomputed here -- _expected_pec_faces() recomputes 504
-# from the box table, so a geometry edit moves the expected value while the
-# floor stays put and the comparison stays honest.
-PEC_EDGES_FLOOR = 500
+# The verdict compares the CAPTURED edge count against a floor DERIVED from
+# that expectation (pec_edges_floor(), just after _expected_pec_faces()):
+#
+#     floor = _expected_pec_faces(p) - PEC_EDGES_SLACK
+#
+# The slack is 4 because the floor was 500 against an expectation of 504 --
+# the solver counts edges, not faces, so its number need not equal the face
+# count exactly.  Deriving the floor instead of hard-coding 500 keeps the two
+# ends in step PER ARM: 504 - 4 = 500 on the four lumped arms (unchanged),
+# while the mslport arm, whose launch metal takes one cell of sheet A, now
+# expects 496 and therefore floors at 492 -- a fixed 500 would have been the
+# floor for an expectation that arm does not have.
+PEC_EDGES_SLACK = 4
 
 
 @contextlib.contextmanager
@@ -2573,10 +2608,14 @@ def report_solver_provenance(text: str) -> None:
 
 
 def _expected_pec_faces(p: dict, rep: str = "metal") -> int:
-    """PEC faces the strip sheets should contribute if they attach (504).
+    """PEC faces the strip sheets should contribute if they attach (504;
+    496 on the mslport arm, whose launch metal takes one cell of sheet A).
 
     Recomputed from the same box table the model is built from, so it tracks
-    the geometry; PEC_EDGES_FLOOR deliberately does not.
+    the geometry, and pec_edges_floor() derives the attachment floor FROM it
+    (minus PEC_EDGES_SLACK), so the two move together.  This number itself is
+    only ever REPORTED -- the verdict compares the captured edge count against
+    the floor, never against the raw expectation.
     """
     total = 0
     for _prop, _label, start, stop in geometry_boxes(p, rep):
@@ -2585,6 +2624,23 @@ def _expected_pec_faces(p: dict, rep: str = "metal") -> int:
         i0, i1, j0, j1, k0, k1 = mesh_indices(start, stop)
         total += (i1 - i0) * (j1 - j0) * (2 if k1 > k0 else 1)
     return total
+
+
+def pec_edges_floor(p: dict) -> int:
+    """PEC edges the solver must report for the strip to count as attached.
+
+    _expected_pec_faces() minus PEC_EDGES_SLACK -- derived, so a geometry edit
+    moves the floor with the expectation instead of leaving a stale literal
+    behind: 504 - 4 = 500 on the four lumped arms (exactly the old constant),
+    496 - 4 = 492 on the mslport arm.
+
+    The expectation is taken at the DEFAULT zero-thickness representation on
+    purpose: the slack was measured against the sheet face count (504), and
+    folding a slab strip's doubled count in would tighten the other four arms,
+    which are unchanged otherwise.  The representation actually in force is
+    still named in every message that quotes this number.
+    """
+    return _expected_pec_faces(p) - PEC_EDGES_SLACK
 
 
 def _expected_active_cells(p: dict) -> list:
@@ -2688,6 +2744,7 @@ def audit_solver_output(text: str, where: str, p: dict,
 
     if want_strip:
         expect_faces = _expected_pec_faces(p, rep)
+        floor_edges = pec_edges_floor(p)
         seen = _pec_edges(text)
         if seen is None:
             if phase == "solve":
@@ -2702,16 +2759,17 @@ def audit_solver_output(text: str, where: str, p: dict,
                     "openEMS may print it only during a full run, so this "
                     "probe judges attachment from the block-scoped "
                     "Unused-primitive signal only")
-        elif seen < PEC_EDGES_FLOOR:
+        elif seen < floor_edges:
             problems.append(
                 "the strip did not attach: %d PEC edges, below the floor of "
-                "%d (representation %r; the sheets should contribute %d "
-                "faces, and a dropped strip leaves only the port-1 plane)"
-                % (seen, PEC_EDGES_FLOOR, rep, expect_faces))
+                "%d (= %d faces - %d slack; representation %r, and a dropped "
+                "strip leaves only the port-1 plane)"
+                % (seen, floor_edges, expect_faces, PEC_EDGES_SLACK, rep))
         else:
-            notes.append("%d PEC edges (floor %d; the sheets should "
-                         "contribute %d faces)"
-                         % (seen, PEC_EDGES_FLOOR, expect_faces))
+            notes.append("%d PEC edges (floor %d = %d faces - %d slack; the "
+                         "sheets should contribute %d faces)"
+                         % (seen, floor_edges, expect_faces, PEC_EDGES_SLACK,
+                            expect_faces))
             notes.append("PEC edges read from: %s" % _PEC_EDGES_ROUTE["how"])
 
     # The load is ALWAYS reported, in its own words.  The lines are notes
@@ -2907,9 +2965,11 @@ def accept_note(capture: str, scope: str, p: dict,
                 "Unused-primitive signal alone; the sheets should contribute "
                 "%d faces" % faces)
         else:
-            established.append("%d PEC edges read (floor %d; the sheets "
-                               "should contribute %d faces)"
-                               % (pec, PEC_EDGES_FLOOR, faces))
+            established.append("%d PEC edges read (floor %d = %d faces - %d "
+                               "slack; the sheets should contribute %d "
+                               "faces)"
+                               % (pec, pec_edges_floor(p), faces,
+                                  PEC_EDGES_SLACK, faces))
 
     # --- Active cells: the load's number -------------------------------
     load_ok, load_lines, load_fatal = load_verdict(capture, p)
