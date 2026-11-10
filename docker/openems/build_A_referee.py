@@ -72,8 +72,8 @@ USAGE
               the load was built and the LOG says it activated no cell, while
               6 means it was never built at all.  The diagnostic prints the
               API name, the exact call, the exception verbatim, and the retry
-              ladder  --port2-api element -> port-zext -> port-priority ->
-              port.
+              ladder  --port2-api port -> port-priority -> port-zext ->
+              element.
 
 --------------------------------------------------------------------------
 API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
@@ -125,6 +125,20 @@ API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
     bindings source is not vendored in this workspace.  The evidence is which
     primitives were dropped (every one strictly inside the air box) and which
     was not (the air box itself).
+
+(12) AddLumpedPort(2, ...) is NOT the same construction as transcribing what
+    ports.py:266-271 does.  A 2026-11-12 host probe,
+        --probe-only --strip priority --port2-api element
+    printed, verbatim,
+        Warning: Unused primitive (type: Box) detected in property: port_2_resist!
+    so a hand-built csx.AddLumpedElement("port_2_resist", ...) plus our OWN
+    AddBox(priority=10) does NOT attach the load -- CSXCAD drops it the way it
+    dropped the strip sheets in trap (11).  AddLumpedPort(2, ...) is the
+    construction with evidence BEHIND it: the 2026-11-09 full solve built the
+    load through it, and its port_ut_2 / port_it_2 post-process to
+    V2/I2 = 50.00 ohm -- terminated correctly.  'element' is therefore an
+    ALTERNATIVE that was DEMOTED on 2026-11-12; never make it the default
+    again without a probe that shows the load's cells ACTIVE.
 
 --------------------------------------------------------------------------
 NUMERIC FIELDS, AND THE LOAD AS ITS OWN VERDICT
@@ -517,52 +531,120 @@ def geometry_boxes(p: dict, rep: str = "metal") -> list:
 #   CSXCAD.pyx:382    def AddLumpedElement(self, name, **kw)
 #
 # So the load is ONE zero-thickness AddBox on ONE LumpedElement property, and
-# a priority reaches it only through **kw.  WHICH of those makes a
-# zero-thickness element report "Active cells: 0" is NOT known: nothing in
-# this workspace was ever run against a live solver.  This file therefore
-# does not pick one and call it the fix.  It exposes the alternatives as
-# --port2-api, prints the choice, its rationale and the exact call on every
-# path, and records the answer when a host run finally produces one.
+# a priority reaches it only through **kw.
+#
+# STATUS 2026-11-12.  Two host runs have now answered part of that question:
+#   * the 2026-11-09 FULL SOLVE built the load with AddLumpedPort(2, R_PORT,
+#     ...) -- no priority kwarg -- and its port_ut_2 / port_it_2 post-process
+#     to V2/I2 = 50.00 ohm, i.e. a correctly terminated 50 ohm load.  'port'
+#     is therefore the DEFAULT.
+#   * a 2026-11-12 --probe-only run with --port2-api element printed
+#         Warning: Unused primitive (type: Box) detected in property:
+#         port_2_resist!
+#     so writing ports.py:266-271 out by hand -- AddLumpedElement plus OUR OWN
+#     AddBox(priority=10) -- does NOT attach the load.  That arm is a
+#     REGRESSION, not a fix: 'element' was DEMOTED on 2026-11-12 and stays
+#     only so a known-worse alternative can still be reproduced (trap (12)).
+# --port2-api keeps all four arms, prints the choice, its rationale and the
+# exact call on every path, and records the answer a host run produces.
 # ---------------------------------------------------------------------------
 
-PORT2_API = "element"        # replaced from --port2-api in main()
-PORT2_API_CHOICES = ("element", "port", "port-priority", "port-zext")
+PORT2_API = "port"           # replaced from --port2-api in main()
+PORT2_API_CHOICES = ("port", "element", "port-priority", "port-zext")
 
 PORT2_RATIONALE = {
     "element": (
-        "DEFAULT -- build the element the way ports.py:266-296 builds it "
-        "(csx.AddLumpedElement('port_2_resist', caps=True, R=50) + one "
-        "AddBox(priority=...) + the port_2_ut / port_2_it probe boxes) HERE, "
-        "so this file owns the box and the priority instead of Port's **kw "
-        "plumbing.  Same geometry as 'port-priority'; what changes is how "
-        "many layers sit between the call and the primitive, and that is the "
-        "cheapest thing to rule out first."),
+        "ALTERNATIVE, DEMOTED 2026-11-12 -- build the element the way "
+        "ports.py:266-296 builds it: csx.AddLumpedElement('port_2_resist', "
+        "caps=True, R=50) plus one AddBox(priority=...) plus the port_2_ut / "
+        "port_2_it probe boxes, all written out HERE, so this file owns the "
+        "box and the priority instead of Port's **kw plumbing.  DEMOTED "
+        "because a 2026-11-12 host probe (--probe-only --strip priority "
+        "--port2-api element) printed, verbatim, \"Warning: Unused primitive "
+        "(type: Box) detected in property: port_2_resist!\" -- transcribing "
+        "ports.py does NOT attach the load.  It is a REGRESSION against "
+        "'port', kept only so it can be reproduced; do not promote it."),
     "port": (
-        "CONTROL -- FDTD.AddLumpedPort(2, 50, ...) with NO priority kwarg, so "
+        "DEFAULT -- FDTD.AddLumpedPort(2, 50, ...) with NO priority kwarg, so "
         "Port keeps self.priority = 0 (ports.py:107-109) and hands 0 to the "
-        "element's AddBox (ports.py:271).  This is the plain call: the "
-        "2026-11-09 load cannot be blamed on a kwarg this path never sends."),
+        "element's AddBox (ports.py:271).  This is the construction with "
+        "evidence behind it: the 2026-11-09 full solve built the load through "
+        "exactly this call, and its port_ut_2 / port_it_2 post-process to "
+        "V2/I2 = 50.00 ohm, i.e. a correctly terminated 50 ohm load.  The "
+        "evidence is that post-processed V2/I2; no host log of that run's "
+        "LOAD lines is quoted in this file, so this entry makes no claim "
+        "about their 'Active cells' count."),
     "port-priority": (
         "FDTD.AddLumpedPort(2, 50, ..., priority=10): openEMS.pyx:339 "
         "forwards **kw into Port.__init__, so 10 lands on the element's "
         "AddBox (ports.py:107-109, 271) and the load wins the one cell the "
         "strip boxes argue over.  This is the construction this file carried "
-        "before --port2-api existed; whether the priority or the zero "
-        "thickness is what leaves the load at 'Active cells: 0' is NOT "
-        "settled by anything in this workspace."),
+        "before --port2-api existed.  It is NOT the one with evidence: the "
+        "2026-11-09 run whose V2/I2 came out at 50.00 ohm went through "
+        "AddLumpedPort(2, ...) with no priority kwarg at all, so treat the "
+        "priority as UNTESTED rather than as the fix."),
     "port-zext": (
         "EXPERIMENT -- give the element ONE CELL of z extent (%g .. %g mm) "
         "instead of zero so it has cell volume at all, plus priority=10.  A "
-        "plane-thin element that occupies no cell is the leading SUSPECT for "
-        "'Active cells: 0'; suspicion, not a finding, because it was never "
-        "run -- and this is the one API that changes the geometry to test "
-        "it.  It is a PHYSICS DEVIATION: the load then fills a 0.4 mm cell "
+        "plane-thin element that occupies no cell was the leading SUSPECT "
+        "for 'Active cells: 0'; that suspicion is now WEAK, because the "
+        "plane-thin AddLumpedPort(2, ...) of 2026-11-09 post-processed to "
+        "V2/I2 = 50.00 ohm, yet this is still the one API that changes the "
+        "geometry to test it.  It is a PHYSICS DEVIATION: the load fills a "
+        "0.4 mm cell "
         "above the strip plane."
         % (K_STRIP * CELL * 1e3, (K_STRIP + 1) * CELL * 1e3)),
 }
 
 _AXIS = {"x": 0, "y": 1, "z": 2}     # CheckNyDir's mapping, x -> 0
 _PORT2_P_DIR = "x"                    # the load resists the LONGITUDINAL E_x
+
+
+# ---------------------------------------------------------------------------
+# PORT 1 (THE LAUNCH): WHICH API BUILDS IT.
+# The launch is a z-directed lumped PLANE: zero thickness in x at x_port, the
+# full 8-cell strip width in y, from the ground wall (z = 0) up to the strip
+# plane.  It is NOT a 2026-11-09 suspect -- those logs called the LOAD into
+# question -- so nothing here is promoted as a fix; the arms exist so the
+# launch can be moved independently of the load when a run has to be split.
+#   lumped           -- the original call, written out verbatim in add_port1()
+#   priority         -- the same zero-volume plane, priority= forwarded to Port
+#   x-cell           -- the box grows ONE CELL in x, so port and strip SHARE
+#                       volume: a PHYSICS DEVIATION, not a fix
+#   x-cell-priority  -- x-cell's geometry AND priority's kwarg at once
+# ---------------------------------------------------------------------------
+PORT1_API = "lumped"         # replaced from --port1-api in main()
+PORT1_API_CHOICES = ("lumped", "x-cell", "priority", "x-cell-priority")
+
+PORT1_RATIONALE = {  # one entry per arm; "lumped" is the DEFAULT and is
+                     # UNCHANGED, "priority" is TEST 3, "x-cell" is TEST 2
+                     # plus its deviation, "x-cell-priority" is both at once.
+    "lumped": (
+        "DEFAULT, unchanged -- FDTD.AddLumpedPort(1, 50, ...) with p_dir='z', "
+        "excite=1.0 and NO priority kwarg: a zero-volume plane at x_port "
+        "spanning the 8-cell strip width and the full substrate height.  This "
+        "is the call this file has always made, and it is the one the "
+        "2026-11-09 runs made, so it stays the default."),
+    "priority": (
+        "FDTD.AddLumpedPort(1, 50, ..., priority=10): openEMS.pyx forwards "
+        "**kw into Port.__init__, so 10 lands on the element's AddBox -- the "
+        "same hop port 2's 'port-priority' arm uses.  It changes who owns a "
+        "contested cell, NOT the geometry.  There is no evidence either way "
+        "for the launch: nothing in the 2026-11-09 logs implicates it, so "
+        "treat this as UNTESTED rather than as an improvement."),
+    "x-cell": (
+        "EXPERIMENT, and a PHYSICS DEVIATION -- give the launch ONE CELL of x "
+        "extent (%g mm) instead of zero.  Zero-volume geometry was a suspect "
+        "for the load, so the same question can be asked of the launch, but "
+        "the answer costs physics: port and strip then SHARE the same x cell, "
+        "so the launch sits inside the strip's cell instead of on a plane "
+        "touching it." % (CELL * 1e3,)),
+    "x-cell-priority": (
+        "EXPERIMENT -- x-cell's one-cell-thick box AND priority=10 together.  "
+        "It carries x-cell's PHYSICS DEVIATION and priority's lack of "
+        "evidence at the same time, so a result from it answers neither "
+        "question on its own."),
+}
 
 
 def _num(v: float) -> str:
@@ -686,8 +768,8 @@ def _port2_build_failure(p: dict, priority, exc: BaseException):
     print("  It is NOT exit 4 -- exit 4 means the load WAS built and the log "
           "says it activated no cell.", file=sys.stderr)
     print("  RETRY LADDER (most likely first):", file=sys.stderr)
-    print("      --port2-api element  ->  port-zext  ->  port-priority  ->  "
-          "port", file=sys.stderr)
+    print("      --port2-api port  ->  port-priority  ->  port-zext  ->  "
+          "element", file=sys.stderr)
     print("  i.e.  python3 %s --strip %s --port2-api <next>"
           % (sys.argv[0], PORT2_API), file=sys.stderr)
     raise Port2BuildError(None)
@@ -759,6 +841,117 @@ def port2_box(p: dict) -> tuple:
     return start, stop
 
 
+PORT1_DEVIATION = (
+    "PORT 1 (%s): port box overlaps the strip by one cell in x -- DEVIATION "
+    "from the zero-volume launch; port and strip share volume.")
+
+
+def port1_cell(p: dict) -> float:
+    """The x cell port 1 sits on, taken FROM THE MESH, not from CELL.
+
+    p["xs"] is _lines(NX) -- [i*CELL for i in range(NX+1)] -- and is what
+    build_model() hands to g.SetLines("x", p["xs"]), so this is the width the
+    solver will actually see (0.4 mm on the reference grid).  A grid change
+    moves the port's box with it instead of leaving a stale constant behind.
+    """
+    xs = p["xs"]
+    i = int(round(p["x_port"] / CELL))
+    if i < 0 or i + 1 >= len(xs):
+        raise SystemExit(
+            "PORT 1 BOX: x_port = %.12g m has no cell to its right; an x-cell "
+            "launch needs one" % (p["x_port"],))
+    return xs[i + 1] - xs[i]
+
+
+def port1_box(p: dict) -> tuple:
+    """(start, stop) of the launch's box, for the PORT 1 API in force.
+
+    The launch is z-directed: zero extent in x at x_port, the full 8-cell
+    strip width in y, ground wall (z = 0) up to the strip plane.  Only the two
+    x-cell arms move it, and they move it in x -- into the strip's own cell.
+    The box is consumed by port_boxes(), check_boxes(), the pre-flight and the
+    active-cell expectation, so all of them follow the API with no second
+    table to keep in step.
+    """
+    start = [p["x_port"], p["y_lo"], 0.0]
+    stop = [p["x_port"], p["y_hi"], p["h_sub"]]
+    if PORT1_API in ("x-cell", "x-cell-priority"):
+        stop = [p["x_port"] + port1_cell(p), p["y_hi"], p["h_sub"]]
+    return start, stop
+
+
+def _port1_call_text(p: dict, priority) -> str:
+    """The exact port-1 construction the API in force performs, as source.
+
+    Printed, not paraphrased: the reader has to be able to compare this with
+    the log the solver actually produced.
+    """
+    start, stop = port1_box(p)
+    kw = {"p_dir": "z", "excite": 1.0}
+    if PORT1_API in ("priority", "x-cell-priority") and priority is not None:
+        kw["priority"] = priority
+    kw_text = ", ".join("%s=%r" % (k, kw[k]) for k in sorted(kw))
+    return ("      FDTD.AddLumpedPort(1, %r, start=%s, stop=%s, %s)"
+            % (R_PORT, _nums(start), _nums(stop), kw_text))
+
+
+def port1_report(p: dict, priority=None, stream=sys.stdout) -> None:
+    """Say which API builds the launch, why, and the exact call.
+
+    Same contract as port2_report(): the echo calls this, and the echo is the
+    only thing reviewable on a machine with no openEMS installed.  For the two
+    x-cell arms it also prints PORT1_DEVIATION -- moving the launch into the
+    strip's cell is a physics change and every report of it says so.
+    """
+    start, stop = port1_box(p)
+    stream.write("PORT 1 API: %s -- %s\n"
+                 % (PORT1_API, PORT1_RATIONALE[PORT1_API]))
+    stream.write("  exact call:\n%s\n" % _port1_call_text(p, priority))
+    stream.write("  box                  : start = %s, stop = %s\n"
+                 % (_nums(start), _nums(stop)))
+    stream.write("  cell span            : %d in x, %d in y, %d in z\n"
+                 % (int(round((stop[0] - start[0]) / CELL)),
+                    int(round((stop[1] - start[1]) / CELL)),
+                    int(round((stop[2] - start[2]) / CELL))))
+    if PORT1_API in ("lumped", "x-cell"):
+        prio_note = "none -- this API never forwards one (Port default 0)"
+    elif priority is None:
+        prio_note = "none -- the representation passes none (Port default 0)"
+    else:
+        prio_note = repr(priority)
+    stream.write("  priority             : %s\n" % prio_note)
+    if PORT1_API in ("x-cell", "x-cell-priority"):
+        stream.write(PORT1_DEVIATION % (PORT1_API,) + "\n")
+
+
+def add_port1(FDTD, p: dict, priority=None) -> None:
+    """Add the launch (port 1) by the API --port1-api selected.  Never Run().
+
+    PORT1_API is read HERE, at call time, so main() can set it once and every
+    path that builds a model -- setup probe, dry-run probe, solve -- builds
+    the same primitive.
+
+    The 'lumped' arm performs the ORIGINAL literal call, unchanged, because it
+    is the default and must keep reproducing the geometry this file has always
+    had; every other arm goes through port1_box().  Unlike add_port2() there is
+    NO exit-6 wrapper: the load is the primitive with a construction-failure
+    history, the launch has none, so a binding that refuses this call surfaces
+    as the exception it is rather than as a port-1 verdict.
+    """
+    if PORT1_API == "lumped":
+        FDTD.AddLumpedPort(
+            1, R_PORT,
+            start=[p["x_port"], p["y_lo"], 0.0],
+            stop=[p["x_port"], p["y_hi"], p["h_sub"]],
+            p_dir="z", excite=1.0)
+        return
+    start, stop = port1_box(p)
+    kw = {"p_dir": "z", "excite": 1.0}
+    if PORT1_API in ("priority", "x-cell-priority") and priority is not None:
+        kw["priority"] = priority
+    FDTD.AddLumpedPort(1, R_PORT, start=start, stop=stop, **kw)
+
+
 def port_boxes(p: dict) -> list:
     """Both port footprints as (label, start, stop, propagation_axis).
 
@@ -766,15 +959,14 @@ def port_boxes(p: dict) -> list:
     them -- but they are checked against the same mesh, because a port that
     misses the grid is the other way a model quietly turns into air.
 
-    Port 2's footprint comes from port2_box(), so --port2-api moves it and the
-    pre-flight moves with it.
+    Each footprint comes from its own box function -- port1_box() /
+    port2_box() -- so --port1-api and --port2-api move them and the pre-flight
+    moves with them.
     """
+    start1, stop1 = port1_box(p)
     start2, stop2 = port2_box(p)
     return [
-        ("port 1 launch (z-directed)",
-         [p["x_port"], p["y_lo"], 0.0],
-         [p["x_port"], p["y_hi"], p["h_sub"]],
-         "z"),
+        ("port 1 launch (z-directed)", start1, stop1, "z"),
         ("port 2 load (x-directed)", start2, stop2, "x"),
     ]
 
@@ -969,6 +1161,10 @@ target                : |S11| at f = 5.827786408327286 GHz
 def echo(p: dict, rep: str = "metal", stream=sys.stdout) -> None:
     """Print the geometry echo.  Pure arithmetic -- needs no openEMS."""
     stream.write(ECHO)
+    # Port 1's construction is printed too: which API built the launch, and --
+    # for the two x-cell arms -- the physics deviation that comes with it.
+    port1_report(p, priority=None if rep == "metal" else STRIP_PRIORITY,
+                 stream=stream)
     for _line in strip_report_lines(p, rep):
         stream.write(_line + "\n")
     # Port 2 is the primitive whose construction the 2026-11-09 logs called
@@ -1092,11 +1288,11 @@ def build_model(p: dict, rep: str = "metal"):
     # MAY span their whole cross-section -- port 1 spans the entire
     # 8-cell strip width in y.  check_boxes() enforces exactly this.
     # Port 1 -- vertical lumped launch, ground wall (z=0) up to the strip.
-    FDTD.AddLumpedPort(
-        1, R_PORT,
-        start=[p["x_port"], p["y_lo"], 0.0],
-        stop=[p["x_port"], p["y_hi"], p["h_sub"]],
-        p_dir="z", excite=1.0)
+    # HOW it is built is --port1-api's job (PORT1_API, and the rationale quoted
+    # above it).  add_port1()'s 'lumped' arm is this very call, written out
+    # verbatim; port1_report() prints the API in force on the echo and
+    # port1_box() moves the pre-flight with it.
+    add_port1(FDTD, p, priority=strip_priority)
 
     # Port 2 -- THE LOAD.  A series element must resist the longitudinal
     # current, so it lies ALONG the strip: one cell in x, full width in y.
@@ -1997,9 +2193,9 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
 
 
 def main(argv=None) -> int:
-    # FIRST statement: add_argument() READS PORT2_API for its default, and a
-    # `global PORT2_API` declared after that read is a SyntaxError.
-    global PORT2_API
+    # FIRST statement: add_argument() READS PORT1_API / PORT2_API for its
+    # defaults, and a `global` declared after those reads is a SyntaxError.
+    global PORT1_API, PORT2_API
     ap = argparse.ArgumentParser(
         description="openEMS referee for E11 termination build A (p51).")
     ap.add_argument("--out", default="evidence/referee",
@@ -2027,6 +2223,13 @@ def main(argv=None) -> int:
                          "4 rejected / 5 no bindings.  Never resolves, never "
                          "solves, never creates --out.  Use it when `auto`'s "
                          "in-process probes disagree.")
+    ap.add_argument("--port1-api", choices=PORT1_API_CHOICES,
+                    default=PORT1_API,
+                    help="how port 1, the 50 ohm LAUNCH, is built (default: "
+                         "%s). The chosen API, its rationale and the exact "
+                         "call are printed by the geometry echo; see the "
+                         "PORT 1 block above for what each one builds."
+                         % PORT1_API)
     ap.add_argument("--port2-api", choices=PORT2_API_CHOICES,
                     default=PORT2_API,
                     help="how port 2, the 50 ohm LOAD, is built (default: %s). "
@@ -2037,6 +2240,7 @@ def main(argv=None) -> int:
 
     # ONE place, before the echo and before any model is built, so the echo,
     # the setup probe, the dry run and the solve all build the same primitive.
+    PORT1_API = args.port1_api
     PORT2_API = args.port2_api
 
     p = plan()
