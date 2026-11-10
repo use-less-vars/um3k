@@ -3619,11 +3619,32 @@ def run_web_wavedude(
         )
         return 1
 
-    _wavedude_geometry(plotter, info)
+    # The substrate box, the strip and the load marker are 3-D objects wrapped
+    # around a plane that the camera now looks at SQUARE ON, so they are recorded
+    # here - with the opacity they were drawn at - for _show() to dim in y-cut and
+    # restore in x-cut. Only what _wavedude_geometry adds is recorded, so a later
+    # decoration cannot be mistaken for the structure.
+    overlay: list = []
     try:
-        plotter.view_isometric()
+        _already_drawn = set(plotter.actors)
+        _wavedude_geometry(plotter, info)
+        for _name, _actor in plotter.actors.items():
+            if _name in _already_drawn:
+                continue
+            overlay.append((_actor, float(_actor.prop.opacity)))
+    except Exception as exc:  # noqa: BLE001 - the overlay is decoration only
+        print(
+            f"[poc_app] overlay bookkeeping skipped: {exc}", file=sys.stderr
+        )
+
+    # No up-front camera view any more: _show() frames the plane it is actually
+    # about to draw (and re-frames when the plane family changes). Parallel
+    # projection is what makes that framing a 2-D picture instead of a
+    # perspective one, so it is set once, here, and never touched again.
+    try:
+        plotter.camera.parallel_projection = True
     except Exception as exc:  # noqa: BLE001
-        print(f"[poc_app] camera view skipped: {exc}", file=sys.stderr)
+        print(f"[poc_app] parallel projection skipped: {exc}", file=sys.stderr)
 
     try:
         server = get_server(
@@ -3681,8 +3702,10 @@ def run_web_wavedude(
         swaps the scalar array: there is no per-frame normalisation here that
         could paint the recorded decay away.
         """
+        previous_mode = state.mode
         mode = state.mode if mode is None else mode
         mode = "xcut" if mode == "xcut" else "ycut"
+        mode_changed = mode != previous_mode
         frames = nt if mode == "ycut" else nt_x
         try:
             index = int(round(float(frame)))
@@ -3722,6 +3745,56 @@ def run_web_wavedude(
                     file=sys.stderr,
                 )
 
+        if mode_changed or not handles.get("camera_framed"):
+            # Frame the sheet that is about to be drawn, not the whole 3-D box:
+            # with all three sheets plus the substrate in view the animated field
+            # was a sliver in the middle of the picture. view_xz looks along -y
+            # (the y-cut sheet's own plane), view_yz along -x (the plane both
+            # x-cut sheets sit in).
+            bounds = None
+            for entry in sheets.values():
+                if entry["family"] != mode:
+                    continue
+                b = entry["grid"].bounds
+                bounds = (
+                    b
+                    if bounds is None
+                    else (
+                        min(bounds[0], b[0]),
+                        max(bounds[1], b[1]),
+                        min(bounds[2], b[2]),
+                        max(bounds[3], b[3]),
+                        min(bounds[4], b[4]),
+                        max(bounds[5], b[5]),
+                    )
+                )
+            for actor, drawn_opacity in overlay:
+                try:
+                    if mode == "ycut":
+                        # Square on to the x-z sheet the substrate is edge-on and
+                        # would cover the field it is meant to annotate, so it is
+                        # dimmed (and outlined) only for this family.
+                        actor.prop.opacity = 0.15
+                        actor.prop.show_edges = True
+                    else:
+                        actor.prop.opacity = drawn_opacity
+                except Exception as exc:  # noqa: BLE001 - decoration only
+                    print(
+                        f"[poc_app] overlay opacity skipped: {exc}",
+                        file=sys.stderr,
+                    )
+            try:
+                if mode == "ycut":
+                    plotter.view_xz(bounds=bounds, render=False)
+                else:
+                    plotter.view_yz(bounds=bounds, render=False)
+                handles["camera_framed"] = True
+            except Exception as exc:  # noqa: BLE001 - keep the previous camera
+                print(
+                    f"[poc_app] camera reframe skipped: {exc}",
+                    file=sys.stderr,
+                )
+
         t_ns = _wavedude_frame_time_ns(info, mode, index)
         state.t_label = (
             "sim time: not recorded"
@@ -3755,10 +3828,15 @@ def run_web_wavedude(
     # loads already carries frame 1's own numbers.
     _show(0, "ycut")
 
-    # Registered BEFORE the layout is built, so ctrl.frame exists by the time the
-    # slider binds to it.
-    @ctrl.set("frame")
+    # v_model=("frame", 0) only WRITES state["frame"]: trame turns a callable
+    # into a server call for EVENT kwargs (click=, change=), never for v_model,
+    # so an @ctrl.set("frame") trigger would never be reached. Hang the redraw
+    # off the state change itself - the slider and every other writer of
+    # state.frame then take the same path.
+    @state.change("frame")
     def _on_frame(frame=None, **_kwargs) -> None:
+        if handles.get("suppress_frame_listener"):
+            return  # the play loop drives _show() itself
         _show(state.frame if frame is None else frame, state.mode)
 
     @ctrl.set("mode_toggle")
@@ -3767,6 +3845,22 @@ def run_web_wavedude(
         mode = "xcut" if state.mode == "ycut" else "ycut"
         state.frame_max = (nt if mode == "ycut" else nt_x) - 1
         _show(min(int(state.frame), int(state.frame_max)), mode)
+
+    @ctrl.set("step_back")
+    def _on_step_back(**_kwargs) -> None:
+        """Move exactly one frame back, and stop playing."""
+        frames = nt if state.mode == "ycut" else nt_x
+        state.playing = False
+        state.play_label = "play"
+        _show((int(state.frame) - 1) % frames, state.mode)
+
+    @ctrl.set("step_fwd")
+    def _on_step_fwd(**_kwargs) -> None:
+        """Move exactly one frame forward, and stop playing."""
+        frames = nt if state.mode == "ycut" else nt_x
+        state.playing = False
+        state.play_label = "play"
+        _show((int(state.frame) + 1) % frames, state.mode)
 
     @ctrl.set("play_toggle")
     async def _on_play_toggle(**_kwargs) -> None:
@@ -3781,16 +3875,30 @@ def run_web_wavedude(
         if state.playing:
             state.playing = False
             state.play_label = "play"
+            state.flush()  # publish the label change before returning
             return
         state.playing = True
         state.play_label = "pause"
+        state.flush()  # publish "pause" before entering the loop
         while int(handles.get("generation", 0)) == generation and state.playing:
             frames = nt if state.mode == "ycut" else nt_x
-            _show((int(state.frame) + 1) % frames, state.mode)
+            # The trigger RPC awaits this coroutine INSIDE `with server.state:`,
+            # and State pushes nothing until flush() (the with-block's own exit
+            # flush only runs when the loop returns). Per tick that flush never
+            # came, so the browser stayed on frame 1 forever - hence one flush
+            # per tick. The frame listener is muted meanwhile: _show() already IS
+            # this tick's redraw and must not be run a second time.
+            handles["suppress_frame_listener"] = True
+            try:
+                _show((int(state.frame) + 1) % frames, state.mode)
+                state.flush()  # publish frame / labels / scene for THIS tick
+            finally:
+                handles["suppress_frame_listener"] = False
             await asyncio.sleep(1.0 / fps)
         if int(handles.get("generation", 0)) == generation:
             state.playing = False
             state.play_label = "play"
+            state.flush()
 
     with SinglePageLayout(server) as layout:
         layout.title.set_text(f"{structure_label} - |Ez| animation")
@@ -3817,6 +3925,8 @@ def run_web_wavedude(
             if "VBtn" in widgets:
                 try:
                     widgets["VBtn"]("{{ play_label }}", click=ctrl.play_toggle)
+                    widgets["VBtn"]("prev", click=ctrl.step_back)
+                    widgets["VBtn"]("next", click=ctrl.step_fwd)
                     widgets["VBtn"]("Switch plane", click=ctrl.mode_toggle)
                 except Exception as exc:  # noqa: BLE001 - button bindings differ
                     print(
@@ -3832,7 +3942,7 @@ def run_web_wavedude(
             if container is None or html_div is None:
                 # No container or no html widgets: the plotter keeps the whole
                 # content area. The toolbar labels still carry the numbers.
-                view = plotter_ui(plotter)
+                view = plotter_ui(plotter, mode="server", add_menu=False)
             else:
                 with container(fluid=True, classes="pa-0 fill-height"):
                     with html_div(
@@ -3854,9 +3964,21 @@ def run_web_wavedude(
                             html_div("{{ velocity_label }}")
                             html_div("{{ velocity_note }}")
                         with html_div(
-                            style="flex: 1 1 auto; min-height: 320px;"
+                            style=(
+                                "flex: 1 1 auto; min-height: 320px; "
+                                "height: 100%;"
+                            )
                         ):
-                            view = plotter_ui(plotter)
+                            # mode="server" (PyVistaRemoteView): the server
+                            # renders and streams the image, so the view does
+                            # not depend on the client's WebGL context surviving
+                            # inside a flexed container. "remote" is not a valid
+                            # mode (valid: trame/client/server/wasm) and
+                            # default_server_rendering only applies to
+                            # mode="trame", so both are left alone.
+                            view = plotter_ui(
+                                plotter, mode="server", add_menu=False
+                            )
 
     handles["view"] = view
 
