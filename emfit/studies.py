@@ -2563,6 +2563,11 @@ def microstrip_wave(
     # E and H field vectors, exactly as the stepper holds them.  Allocated only
     # when asked for, so a run without the flag pays nothing and returns None.
     field_snapshot: bool = False,
+    # Per-timestep hook (default off, purely additive): called as
+    # ``frame_callback(stepper)`` immediately after every Yee step, so a
+    # caller can stream field frames out of the time loop.  Allocated only
+    # when given, so a run without it pays nothing.
+    frame_callback=None,
 ) -> MicrostripWave:
     """Drive a microstrip line and read its phasors, beta, Z0 and ground current.
 
@@ -3239,6 +3244,8 @@ def microstrip_wave(
             ramp = min(1.0, (n + 1) / max(n_warm, 1))
             current[port_edges] = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt) * launch_profile
         stepper.step(current)
+        if frame_callback is not None:
+            frame_callback(stepper)
         if n < n_warm:
             continue
         for i, col in enumerate(columns):
