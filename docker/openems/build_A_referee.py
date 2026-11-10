@@ -163,8 +163,8 @@ API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
     unused-primitive line (on a full solve, also its port_ut_2/port_it_2 V/I
     ratio).  Its `Active cells` count is evidence in neither direction.
 
-(14) FDTD.AddMSLPort(1, <strip property>, ...) is NOT "the lumped port under
-    another name".  Three of its failure modes are SILENT:
+(14) FDTD.AddMSLPort(1, <port1_feed property>, ...) is NOT "the lumped port
+    under another name".  Three of its failure modes are SILENT:
     (a) z GEOMETRY.  ports.py:348 assigns MSL_stop[exc] = MSL_start[exc]
         BEFORE the metal box is added, so the metal plane comes from START[z]
         and STOP[z] is DISCARDED for it.  The box must therefore START on the
@@ -717,9 +717,9 @@ PORT1_RATIONALE = {  # one entry per arm; "mslport" is the DEFAULT, "lumped"
                      # is TEST 3, "x-cell" is TEST 2 plus its deviation,
                      # "x-cell-priority" is both at once.
     "mslport": (
-        "DEFAULT -- FDTD.AddMSLPort(1, <strip property>, start=[x_port, y_lo, "
-        "z_strip], stop=[x_port+cell, y_hi, 0.0], prop_dir='x', exc_dir='z', "
-        "excite=1).  This is the reference's own microstrip port "
+        "DEFAULT -- FDTD.AddMSLPort(1, <port1_feed property>, start=[x_port, "
+        "y_lo, z_strip], stop=[x_port+cell, y_hi, 0.0], prop_dir='x', "
+        "exc_dir='z', excite=1).  This is the reference's own microstrip port "
         "(infra/openems/reference/ports.py:311-448): it adds the strip metal "
         "itself (ports.py:346-349), writes FIVE probes of its own "
         "(port_1_utA/B/C, port_1_itA/B), and takes Z_ref from the measured "
@@ -1018,8 +1018,8 @@ def _port1_call_text(p: dict, priority) -> str:
         # (ports.py:107-109) and MSLPort forwards it unconditionally
         # (ports.py:349), so the metal already lands at priority 0 -- the
         # same priority the lumped arms get by passing none.
-        return ("      FDTD.AddMSLPort(1, <strip property>, start=%s, stop=%s,"
-                " prop_dir='x', exc_dir='z', excite=1)"
+        return ("      FDTD.AddMSLPort(1, <port1_feed property>, start=%s,"
+                " stop=%s, prop_dir='x', exc_dir='z', excite=1)"
                 % (_nums(start), _nums(stop)))
     kw = {"p_dir": "z", "excite": 1.0}
     if PORT1_API in ("priority", "x-cell-priority") and priority is not None:
@@ -1066,13 +1066,14 @@ def port1_report(p: dict, priority=None, stream=sys.stdout) -> None:
             "                         ports.py:311-448.  NOT a lumped plane: "
             "it adds metal,\n"
             "                         probes and its own extraction.\n"
-            "  property object      : REUSED -- the strip's own property.  "
-            "ports.py:349\n"
-            "                         calls metal_prop.AddBox(..., "
-            "priority=self.priority), i.e.\n"
-            "                         priority 0, so the port metal "
-            "coalesces with the strip\n"
-            "                         instead of contesting it.\n"
+            "  property object      : DEDICATED -- csx.AddMetal"
+            "('port1_feed'), NOT the\n"
+            "                         strip's.  ports.py:349 calls "
+            "metal_prop.AddBox(...,\n"
+            "                         priority=self.priority), i.e. priority "
+            "0 onto THAT\n"
+            "                         object; the strip property holds sheets "
+            "A/B only.\n"
             "  metal plane          : z = %s m == START z.  ports.py:348 does\n"
             "                         MSL_stop[exc] = MSL_start[exc]: stop z is "
             "DISCARDED\n"
@@ -1165,10 +1166,12 @@ def add_port1(FDTD, p: dict, priority=None, strip_prop=None) -> None:
     if PORT1_API == "mslport":
         if strip_prop is None:
             raise SystemExit(
-                "PORT 1 (mslport): no strip property handed in.  The MSL port "
-                "adds its own metal ON the strip plane, so it must reuse the "
-                "strip's property object; build_model() has to call "
-                "add_port1(FDTD, p, priority=..., strip_prop=strip).")
+                "PORT 1 (mslport): no metal property handed in.  The MSL port "
+                "adds its own metal ON the strip plane, and that metal needs "
+                "a DEDICATED property -- never the strip's own object; "
+                "build_model() has to call "
+                "add_port1(FDTD, p, priority=..., strip_prop=port1_feed) "
+                "with port1_feed = csx.AddMetal('port1_feed').")
         start, stop = port1_box(p)
         # excite is an INT here, not an impedance: ports.py:403 multiplies it
         # into a -1/0/+1 vector.  No priority kwarg -- see port1_report().
@@ -1571,10 +1574,17 @@ def build_model(p: dict, rep: str = "metal"):
     # above it).  add_port1()'s 'lumped' arm is this very call, written out
     # verbatim; port1_report() prints the API in force on the echo and
     # port1_box() moves the pre-flight with it.
-    # strip_prop: the MSL arm adds its metal onto the STRIP's property, so
-    # the launch and the strip share one material instead of two that CSXCAD
-    # would have to arbitrate.  The lumped arms ignore the argument.
-    add_port1(FDTD, p, priority=strip_priority, strip_prop=strip)
+    # strip_prop: a DEDICATED metal property for the MSL arm's launch metal,
+    # never the strip's own object.  ports.py:349 files the port metal under
+    # whatever property it is handed at the PORT's priority (0, Port.__init__'s
+    # default), so sharing the strip's property buries the launch inside the
+    # strip's material, where the sheets' priority arbitrates over it -- and an
+    # "Unused primitive ... in property: strip" line could then be about the
+    # launch instead of the sheets.  The lumped arms ignore the argument, so the
+    # property is only created on the arm that uses it.
+    port1_feed = (csx.AddMetal("port1_feed")
+                  if PORT1_API == "mslport" else None)
+    add_port1(FDTD, p, priority=strip_priority, strip_prop=port1_feed)
 
     # Port 2 -- THE LOAD.  A series element must resist the longitudinal
     # current, so it lies ALONG the strip: one cell in x, full width in y.
