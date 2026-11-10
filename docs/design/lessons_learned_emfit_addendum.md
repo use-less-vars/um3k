@@ -25,6 +25,17 @@ output has been read. Written code is a hypothesis about behaviour; only an
 execution turns it into an instrument. Before quoting a number a script emits,
 name the run that produced it and what that run was checked against.
 
+**Amendment 2026-11-14 — earned a second time.** The same lesson was paid for
+again on the referee integration: `docker/openems/build_A_referee.py` existed,
+imported cleanly and was cited as the referee, but its MSLPort launch path had
+never been exercised against the shipped geometry, so the same class of failure
+— a model that solves without the physics it claims to model — came back and
+was caught only by running it and reading the observable (see L11 and DR-41).
+This is an **amendment to L7, deliberately not a new L-number**: restating a
+rule that already exists in new words is how a knowledge base stops being
+searchable. When a lesson fires again, date it in place and say what the second
+occurrence taught that the first did not.
+
 ## L8 — Zero-thickness lumped ports activate zero cells. That is physics, not a bug.
 
 **What happened.** A guard demanded a non-zero solver `Active cells:` count for
@@ -78,3 +89,31 @@ stated slack, which yields 500 on the lumped arms and 492 on the mslport arm —
 and make the expectation the thing written down. A literal is a fact about one
 geometry; write the derivation so the fact stays true when the geometry
 legitimately changes.
+
+## L11 — A priority tie in CSXCAD does not raise; it deletes geometry
+
+**What happened.** CSXCAD resolves overlapping primitives by `priority`, and a
+**tie is resolved by dropping one of them, silently**. openEMS's own `MSLPort`
+leaves `priority` at its default of `0` (`infra/openems/reference/ports.py:107`,
+consumed at `:349` when the port's metal box is added), which is exactly the
+priority a substrate top face carries. On the referee the port's feed box sat
+coplanar with the substrate at `z_strip`, lost the tie and vanished: no
+exception, no warning on stdout, a fully populated result set, and a `|S11|` of
+-8.54 dB that reads as a well-matched line and is in fact a measurement of
+nothing. The fix is one explicit number — `STRIP_PRIORITY = 10`
+(`docker/openems/build_A_referee.py:388`), chosen because any value above the
+CSXCAD default `0` wins and deliberately not tuned — passed through to
+`FDTD.AddMSLPort(..., priority=...)` (`:1213-1215`). The drop is visible only in
+the CSXCAD echo, as `Unused primitive (type: Box) ... property: port1_feed`
+(`:1036-1038`).
+
+**What it cost.** Three days on the openEMS side, and a model that measured
+nothing being read as a model that measured something — DR-41.
+
+**The rule.** Set `priority` explicitly on every primitive that can be coplanar
+with a substrate or with another primitive; an inherited default is a tie
+waiting to happen. More generally: a failure mode that cannot raise must be
+caught by an assertion on the **physical observable** — total energy in the
+box, field amplitude in the gap, the trace itself — and never inferred from the
+absence of an exception. Silence is not success; for a silent-drop mode,
+silence is the symptom.
