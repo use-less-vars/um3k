@@ -1970,16 +1970,136 @@ def dump_captured_log(tag: str, text: str, probe_dir: str = None) -> None:
     print("--- end %s log ---" % tag)
 
 
-def _accept_note(text: str) -> str:
-    """Which signals an ACCEPTED setup probe actually used.  Names them."""
-    if _pec_edges(text) is not None:
-        return ("no 'Unused primitive' warning, no zero-active-cells load, "
-                "PEC edges above the floor (signals used: Unused-primitive "
-                "+ Active-cells + PEC-edges)")
-    return ("no 'Unused primitive' warning, no zero-active-cells load "
-            "(signals used: Unused-primitive + Active-cells; this setup-only "
-            "log carries no 'Number of PEC edges:' line, which openEMS may "
-            "print only during a full run)")
+def accept_note(capture: str, scope: str, p: dict,
+                rep: str = "metal") -> str:
+    """What an ACCEPTED probe ESTABLISHED, and what it did NOT verify.
+
+    A success line may assert a negative ONLY about the region of the log the
+    verdict was drawn from.  The operator's 2026-11-12 run printed an
+    "ACCEPTED --" note that flatly denied both signals (no unused-primitive
+    warning, no zero-active load) two lines under a log that said the
+    port_2_resist box was unused AND printed "LOAD: Active cells 0 (expected
+    8)": the note was the STRIP's verdict, repeated as though it spoke for the
+    whole model.  A note may not outrun its scope, so this one names the
+    scope, says what was searched, and lists what it left unjudged -- with the
+    findings this log DOES carry about those parts, because "resolved" must
+    never read as "the rest is fine too".
+
+    `scope` is the scope audit_solver_output() drew its verdict at: "all"
+    (the strip AND the load AND the rest of the model), "strip" or "load".
+    Only "all" searched the whole log, so only "all" may print a negative
+    about the whole log -- and it says "scope=all" out loud.
+    """
+    if scope not in ("all", "strip", "load"):
+        raise ValueError("scope must be 'all', 'strip' or 'load', not %r"
+                         % (scope,))
+    if _empty_capture(capture):
+        # A HARNESS fault is not a model verdict: nothing was read, so nothing
+        # was established, and no "nothing was reported" here is a finding.
+        return ("NOTHING WAS ESTABLISHED (scope=%s): the captured log was "
+                "EMPTY (%d bytes), so every 'nothing was reported' above is "
+                "a statement about an empty file, not about the model"
+                % (scope, len(capture.encode("utf-8"))))
+    want_strip = scope in ("all", "strip")
+    want_load = scope in ("all", "load")
+    owned = {"all": ("strip", "load", "other", "unattributed"),
+             "strip": ("strip",),
+             "load": ("load",)}[scope]
+    established = []
+    not_verified = []
+    unused = classify_unused(capture)
+
+    # --- the scope's own Unused-primitive signal -----------------------
+    in_scope = [line for kind, line in unused if kind in owned]
+    if in_scope:
+        established.append("an unused-primitive line this scope cannot "
+                           "dismiss: %s"
+                           % "; ".join(repr(line) for line in in_scope))
+    elif scope == "all":
+        established.append("no 'Unused primitive' line ANYWHERE in this log "
+                           "(strip, load and the rest of the model searched)")
+    else:
+        # Deliberately NOT a flat "no unused-primitive warning": this scope
+        # searched the %s's own line only, and says exactly that.
+        established.append("no unused-primitive line attributed to the %s"
+                           % scope.upper())
+
+    # --- PEC edges: the strip's attachment number ----------------------
+    pec = _pec_edges(capture)
+    if want_strip:
+        faces = _expected_pec_faces(p, rep)
+        if pec is None:
+            established.append(
+                "no 'Number of PEC edges' line anywhere in this log (a "
+                "setup-only log may carry none), so attachment rests on the "
+                "Unused-primitive signal alone; the sheets should contribute "
+                "%d faces" % faces)
+        else:
+            established.append("%d PEC edges read (floor %d; the sheets "
+                               "should contribute %d faces)"
+                               % (pec, PEC_EDGES_FLOOR, faces))
+
+    # --- Active cells: the load's number -------------------------------
+    load_ok, load_lines, load_fatal = load_verdict(capture, p)
+    counts = [count for count, _raw in _active_cell_lines(capture)]
+    expect = _expected_active_cells(p)[-1][1]
+    if not want_load:
+        # Outside this scope.  A strip-scoped probe never judges the load, and
+        # a resolution must not be able to read as "the load is fine too":
+        # whatever the log says about the load goes into the note verbatim.
+        if load_ok:
+            not_verified.append("the LOAD -- its 'Active cells' %s was read, "
+                                "but no verdict about the load is drawn here"
+                                % ", ".join(str(count) for count in counts))
+        elif load_fatal:
+            # Not a parse gap: this log SAYS the load activated nothing.  Lead
+            # with the token, then the verbatim line, so it cannot be skimmed
+            # past as one more unjudged item.
+            not_verified.append("the LOAD NOT ACTIVATED (see the LOAD: line "
+                                "above): %s" % load_lines[0])
+        else:
+            not_verified.append("the LOAD -- %s" % load_lines[0])
+    elif load_ok:
+        established.append("the LOAD's 'Active cells' %s (expected %d)"
+                           % (", ".join(str(count) for count in counts),
+                              expect))
+    elif load_fatal:
+        # In scope and it failed for real: the same token, same verbatim line.
+        not_verified.append("the LOAD NOT ACTIVATED (see the LOAD: line "
+                            "above): %s" % load_lines[0])
+    else:
+        not_verified.append("the LOAD -- %s" % load_lines[0])
+
+    # --- the strip when the scope does not own it ----------------------
+    if not want_strip:
+        if pec is None:
+            not_verified.append(
+                "the STRIP -- no 'Number of PEC edges' line in this log, so "
+                "strip attachment was not measured at all")
+        else:
+            not_verified.append("the STRIP -- %d PEC edges read, but no "
+                                "verdict about the strip is drawn here" % pec)
+
+    # --- every finding this log makes OUTSIDE the scope, never dropped --
+    for kind, line in unused:
+        if kind not in owned:
+            not_verified.append("a primitive CSXCAD did not apply (%s), "
+                                "outside this scope: %r" % (kind, line))
+    if not not_verified:
+        not_verified.append("nothing else in THIS log -- every primitive it "
+                            "mentions was searched; a setup-only log takes "
+                            "no timestep, so this is not a solve result")
+    if scope == "all":
+        closing = ("scope=all, printed only because the WHOLE log was "
+                   "searched for every one of these signals")
+    else:
+        closing = ("scope=%s, so this speaks for the %s ONLY -- the items "
+                   "above were NOT verified here, and a full solve is the "
+                   "only phase that speaks for the whole model"
+                   % (scope, scope.upper()))
+    return ("ACCEPTED (scope=%s): %s; NOT verified by this probe: %s; %s"
+            % (scope, "; ".join(established), "; ".join(not_verified),
+               closing))
 
 
 def _fresh_process_hint(empty_rep: str, good_rep: str) -> str:
@@ -2009,6 +2129,10 @@ def resolve_strip(p: dict, threads: int = 2) -> tuple:
     EVERY probed log is dumped in full before the verdict on it, accepted or
     not: see the block comment above.
     """
+    # ONE source of truth for the scope: the verdict is drawn at this scope, so
+    # accept_note() may speak for this scope and no other.  Passing a literal
+    # twice is how the audit and the note drifted apart in the first place.
+    scope = "strip"
     winner = None
     winner_text = ""
     probed_empty = []
@@ -2054,7 +2178,7 @@ def resolve_strip(p: dict, threads: int = 2) -> tuple:
         probed_nonempty.append(rep)
         problems, notes = audit_solver_output(
             text, "setup-only strip candidate %r" % rep, p, rep,
-            phase="setup-probe", scope="strip")
+            phase="setup-probe", scope=scope)
         # The strip verdict is drawn below; the load's lines are printed
         # regardless, because a resolution must never hide a dead load.
         for note in notes:
@@ -2064,7 +2188,7 @@ def resolve_strip(p: dict, threads: int = 2) -> tuple:
             for extra in problems[1:]:
                 print("    also: %s" % extra)
             continue
-        print("candidate %s: ACCEPTED -- %s" % (rep, _accept_note(text)))
+        print("candidate %s: %s" % (rep, accept_note(text, scope, p, rep)))
         winner, winner_text = rep, text
     if winner is None:
         announce_resolution("STRIP REPRESENTATION RESOLVED: none -- every "
@@ -2072,6 +2196,9 @@ def resolve_strip(p: dict, threads: int = 2) -> tuple:
                             stream=sys.stderr)
         raise SystemExit(4)
     announce_resolution("STRIP REPRESENTATION RESOLVED: %s" % winner)
+    # The resolution is a STRIP verdict; the note says so and names what it
+    # did not verify, so "resolved" cannot read as "the whole model is fine".
+    print("  %s" % accept_note(winner_text, scope, p, winner))
     print("  exact geometry?      : %s" % strip_exactness_line(winner))
     return winner, winner_text
 
@@ -2089,6 +2216,8 @@ def probe_only(p: dict, rep: str, threads: int = 2) -> int:
     No resolution, no solve, and `outdir` is never created.  Returns
     0 accepted / 4 rejected / 5 no bindings.
     """
+    # Same single source of truth as resolve_strip(): audit scope == note scope.
+    scope = "strip"
     tag = "probe-only %s" % rep
     try:
         text, probe_dir = _setup_probe(p, rep, threads)
@@ -2112,7 +2241,7 @@ def probe_only(p: dict, rep: str, threads: int = 2) -> int:
         return 4
     problems, notes = audit_solver_output(
         text, "setup-only strip candidate %r" % rep, p, rep,
-        phase="setup-probe", scope="strip")
+        phase="setup-probe", scope=scope)
     for note in notes:
         print("%s: %s" % (tag, note))
     if problems:
@@ -2120,7 +2249,7 @@ def probe_only(p: dict, rep: str, threads: int = 2) -> int:
         for extra in problems[1:]:
             print("    also: %s" % extra)
         return 4
-    print("%s: ACCEPTED -- %s" % (tag, _accept_note(text)))
+    print("%s: %s" % (tag, accept_note(text, scope, p, rep)))
     print("  outdir was NOT created; this was a setup probe, not a solve.")
     return 0
 
@@ -2155,10 +2284,27 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
             if _empty_capture(text):
                 print("EMPTY CAPTURE -- %s" % EMPTY_CAPTURE)
         report_solver_provenance(text)
+        # Same single source of truth as the candidate probes: the audit and
+        # the note both speak for the WHOLE model, so neither is widened here.
+        scope = "all"
         guard_solver_output(text, "setup-only", p, rep,
-                            phase="setup-probe", scope="all")
-        print("SETUP-ONLY PROBE OK: openEMS accepted every primitive; no "
-              "timestep was taken and %r was not touched." % outdir)
+                            phase="setup-probe", scope=scope)
+        if _empty_capture(text):
+            # An EMPTY capture cannot show that a primitive was accepted: an
+            # "accepted every primitive" line under it would be a claim about a
+            # file with nothing in it, which is exactly the overreach this note
+            # exists to stop.  The build DID happen, so say only that.
+            print("SETUP-ONLY PROBE: the model was BUILT and openEMS.Run was "
+                  "not called; %r was not touched." % outdir)
+            print("NOTHING WAS VERIFIED -- the captured log was EMPTY (%d "
+                  "bytes), so no primitive was checked."
+                  % len(text.encode("utf-8")))
+        else:
+            print("SETUP-ONLY PROBE OK: openEMS accepted every primitive; no "
+                  "timestep was taken and %r was not touched." % outdir)
+            # guard_solver_output() above spoke for the WHOLE model
+            # (scope="all"), so the note is allowed to, and has to say so.
+            print(accept_note(text, scope, p, rep))
         return 0
 
     # The model is built exactly ONCE on the solve path, for the resolved
