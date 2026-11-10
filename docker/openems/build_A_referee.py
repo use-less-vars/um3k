@@ -66,6 +66,14 @@ USAGE
     Exit 5  = --with-bindings was requested but openEMS is not importable, so
               the model was never exercised at all.  A plain --dry-run (no
               --with-bindings) still exits 0 in that situation.
+    Exit 6  = openEMS rejected the CONSTRUCTION of port 2 (the load): the
+              binding raised while building csx.AddLumpedElement(...) or
+              FDTD.AddLumpedPort(2, ...).  This is NOT exit 4 -- exit 4 means
+              the load was built and the LOG says it activated no cell, while
+              6 means it was never built at all.  The diagnostic prints the
+              API name, the exact call, the exception verbatim, and the retry
+              ladder  --port2-api element -> port-zext -> port-priority ->
+              port.
 
 --------------------------------------------------------------------------
 API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
@@ -117,6 +125,27 @@ API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
     bindings source is not vendored in this workspace.  The evidence is which
     primitives were dropped (every one strictly inside the air box) and which
     was not (the air box itself).
+
+--------------------------------------------------------------------------
+NUMERIC FIELDS, AND THE LOAD AS ITS OWN VERDICT
+--------------------------------------------------------------------------
+openEMS separates a label from its colon with a TAB -- "Number of PEC edges
+<TAB>: 1119" -- so the space-only patterns this file used to carry matched
+nothing in a real log.  Every labelled integer now goes through _find_int(),
+and the two fields that can belong to more than one primitive ("Active
+cells", "Number of PEC edges") are read out of the headed block that owns
+them (_section()), with the reader TOLD when a block cannot be located
+instead of being handed a number from somewhere else.
+
+The strip and the load are DIFFERENT verdicts.  A strip representation CSXCAD
+keeps can sit beside a lumped element it never activated -- the 2026-11-09
+logs show exactly that, "--- Series/Parallel Lumped RLC load ---" with
+"Active cells: 0" -- and a strip verdict must not be able to hide it.
+resolve_strip() therefore judges the strip ONLY and can RESOLVE with a dead
+load, while a "LOAD: Active cells <N>" line reports the load, verbatim and
+separately, on every path: it is exit 4 on a real solve and a note on a
+setup probe.  --port2-api chooses how the load is built; the chosen API, its
+rationale and the exact call are printed.
 
 --------------------------------------------------------------------------
 EXTRACTION PLAN (reader + DFT helpers implemented in this file; still never
@@ -399,7 +428,8 @@ def strip_report_lines(p: dict, rep: str) -> list:
     return [
         "strip representation   : %s  [%s]" % (rep, STRIP_REPS[rep]["what"]),
         "  AddBox priority     : %s" % priority,
-        "  port 2 priority     : %s (same value on AddLumpedPort)" % priority,
+        "  port 2 priority     : %s (see the PORT 2 API line; forwarded only "
+        "by --port2-api port-priority / port-zext)" % priority,
         "  z span              : %s .. %s (z nodes %d..%d, %s)"
         % (_mm(z0).strip(), _mm(z0 + dz).strip(), K_STRIP, k1,
            "zero thickness" if not dz
@@ -461,22 +491,291 @@ def geometry_boxes(p: dict, rep: str = "metal") -> list:
     ]
 
 
+# ---------------------------------------------------------------------------
+# PORT 2 (THE LOAD): WHICH API BUILDS IT.
+#
+# The load is the primitive that failed.  Both 2026-11-09 host runs printed
+#
+#     --- Series/Parallel Lumped RLC load ---
+#     Active cells: 0
+#
+# so the 50 ohm termination was never activated and port_ut_2 / port_it_2
+# describe nothing.  The recon (infra/openems/reference/) says exactly what
+# AddLumpedPort(2, R, ...) builds for it:
+#
+#   openEMS.pyx:339   def AddLumpedPort(self, port_nr, R, start, stop, p_dir,
+#                                      excite=0, **kw)
+#                     -> ports.LumpedPort(self.__CSX, port_nr, R, start,
+#                                         stop, p_dir, excite, **kw)
+#   ports.py:107-109  self.priority = 0
+#                     if 'priority' in kw: self.priority = kw['priority']
+#   ports.py:266-271  lumped_R = CSX.AddLumpedElement(lbl, ny=self.exc_ny,
+#                                                     caps=True, R=self.R)
+#                     lumped_R.AddBox(self.start, self.stop,
+#                                     priority=self.priority)
+#   ports.py:280-296  the port_2_ut / port_2_it probe boxes
+#   CSXCAD.pyx:382    def AddLumpedElement(self, name, **kw)
+#
+# So the load is ONE zero-thickness AddBox on ONE LumpedElement property, and
+# a priority reaches it only through **kw.  WHICH of those makes a
+# zero-thickness element report "Active cells: 0" is NOT known: nothing in
+# this workspace was ever run against a live solver.  This file therefore
+# does not pick one and call it the fix.  It exposes the alternatives as
+# --port2-api, prints the choice, its rationale and the exact call on every
+# path, and records the answer when a host run finally produces one.
+# ---------------------------------------------------------------------------
+
+PORT2_API = "element"        # replaced from --port2-api in main()
+PORT2_API_CHOICES = ("element", "port", "port-priority", "port-zext")
+
+PORT2_RATIONALE = {
+    "element": (
+        "DEFAULT -- build the element the way ports.py:266-296 builds it "
+        "(csx.AddLumpedElement('port_2_resist', caps=True, R=50) + one "
+        "AddBox(priority=...) + the port_2_ut / port_2_it probe boxes) HERE, "
+        "so this file owns the box and the priority instead of Port's **kw "
+        "plumbing.  Same geometry as 'port-priority'; what changes is how "
+        "many layers sit between the call and the primitive, and that is the "
+        "cheapest thing to rule out first."),
+    "port": (
+        "CONTROL -- FDTD.AddLumpedPort(2, 50, ...) with NO priority kwarg, so "
+        "Port keeps self.priority = 0 (ports.py:107-109) and hands 0 to the "
+        "element's AddBox (ports.py:271).  This is the plain call: the "
+        "2026-11-09 load cannot be blamed on a kwarg this path never sends."),
+    "port-priority": (
+        "FDTD.AddLumpedPort(2, 50, ..., priority=10): openEMS.pyx:339 "
+        "forwards **kw into Port.__init__, so 10 lands on the element's "
+        "AddBox (ports.py:107-109, 271) and the load wins the one cell the "
+        "strip boxes argue over.  This is the construction this file carried "
+        "before --port2-api existed; whether the priority or the zero "
+        "thickness is what leaves the load at 'Active cells: 0' is NOT "
+        "settled by anything in this workspace."),
+    "port-zext": (
+        "EXPERIMENT -- give the element ONE CELL of z extent (%g .. %g mm) "
+        "instead of zero so it has cell volume at all, plus priority=10.  A "
+        "plane-thin element that occupies no cell is the leading SUSPECT for "
+        "'Active cells: 0'; suspicion, not a finding, because it was never "
+        "run -- and this is the one API that changes the geometry to test "
+        "it.  It is a PHYSICS DEVIATION: the load then fills a 0.4 mm cell "
+        "above the strip plane."
+        % (K_STRIP * CELL * 1e3, (K_STRIP + 1) * CELL * 1e3)),
+}
+
+_AXIS = {"x": 0, "y": 1, "z": 2}     # CheckNyDir's mapping, x -> 0
+_PORT2_P_DIR = "x"                    # the load resists the LONGITUDINAL E_x
+
+
+def _num(v: float) -> str:
+    """One coordinate as the exact Python float the call receives."""
+    return repr(float(v))
+
+
+def _nums(points) -> str:
+    """A start/stop triple as '[x, y, z]', exact floats."""
+    return "[%s]" % ", ".join(_num(v) for v in points)
+
+
+def _port2_probe_boxes(p: dict) -> list:
+    """Port 2's two probe boxes: [(name, start, stop, kwargs)].
+
+    Transcribed from ports.py:280-296, not invented.  The VOLTAGE probe spans
+    the element box in p_dir and is collapsed to zero extent at each end; the
+    CURRENT probe is collapsed to zero extent at the MIDDLE and carries
+    weight = direction (+1 here: x_gap_hi > x_load) and norm_dir = exc_ny.
+    The names are ports.py's own lbl_temp.format(...): 'port_2_ut',
+    'port_2_it'.  These are the two files the extraction plan reads.
+    """
+    ny = _AXIS[_PORT2_P_DIR]
+    start, stop = port2_box(p)
+    mid = [0.5 * (start[i] + stop[i]) for i in range(3)]
+    u_start = list(mid)
+    u_start[ny] = start[ny]
+    u_stop = list(mid)
+    u_stop[ny] = stop[ny]
+    i_start = list(start)
+    i_start[ny] = mid[ny]
+    i_stop = list(stop)
+    i_stop[ny] = mid[ny]
+    direction = 1 if stop[ny] > start[ny] else -1
+    return [
+        ("port_2_ut", u_start, u_stop, {"p_type": 0, "weight": -1}),
+        ("port_2_it", i_start, i_stop,
+         {"p_type": 1, "weight": direction, "norm_dir": ny}),
+    ]
+
+
+def _port2_call_text(p: dict, priority) -> str:
+    """The exact port-2 construction the API in force performs, as source.
+
+    Printed, not paraphrased: the reader has to be able to compare this with
+    the log the solver actually produced.
+    """
+    start, stop = port2_box(p)
+    prio = "" if priority is None else ", priority=%r" % (priority,)
+    if PORT2_API == "element":
+        out = ['resist = csx.AddLumpedElement("port_2_resist", caps=True, '
+               'R=%r)' % (R_TERM,),
+               "resist.AddBox(start=%s, stop=%s%s)"
+               % (_nums(start), _nums(stop), prio)]
+        for name, p_start, p_stop, kw in _port2_probe_boxes(p):
+            kw_text = ", ".join("%s=%r" % (k, kw[k]) for k in sorted(kw))
+            out.append('probe = csx.AddProbe("%s", %s)' % (name, kw_text))
+            out.append("probe.AddBox(start=%s, stop=%s)"
+                       % (_nums(p_start), _nums(p_stop)))
+        return "\n".join("      " + line for line in out)
+    kw = {"p_dir": _PORT2_P_DIR, "excite": 0.0}
+    if PORT2_API != "port" and priority is not None:
+        kw["priority"] = priority
+    kw_text = ", ".join("%s=%r" % (k, kw[k]) for k in sorted(kw))
+    return ("      FDTD.AddLumpedPort(2, %r, start=%s, stop=%s, %s)"
+            % (R_TERM, _nums(start), _nums(stop), kw_text))
+
+
+def port2_report(p: dict, priority=None, stream=sys.stdout) -> None:
+    """Say which API builds the load, why, and the exact call.  Never a guess.
+
+    The echo calls this because the echo is the only thing reviewable on a
+    machine with no openEMS installed, and the load is the primitive whose
+    construction the 2026-11-09 logs called into question.
+    """
+    start, stop = port2_box(p)
+    stream.write("PORT 2 API: %s -- %s\n"
+                 % (PORT2_API, PORT2_RATIONALE[PORT2_API]))
+    stream.write("  exact call:\n%s\n" % _port2_call_text(p, priority))
+    stream.write("  box                  : start = %s, stop = %s\n"
+                 % (_nums(start), _nums(stop)))
+    stream.write("  cell span            : %d in x, %d in y, %s in z\n"
+                 % (int(round((stop[0] - start[0]) / CELL)),
+                    int(round((stop[1] - start[1]) / CELL)),
+                    "0 (plane)" if abs(stop[2] - start[2]) < 1e-15
+                    else "%d" % int(round((stop[2] - start[2]) / CELL))))
+    if PORT2_API == "port":
+        prio_note = "none -- this API never forwards one (Port default 0)"
+    elif priority is None:
+        prio_note = "none -- the representation passes none (Port default 0)"
+    else:
+        prio_note = repr(priority)
+    stream.write("  priority             : %s\n" % prio_note)
+
+
+class Port2BuildError(SystemExit):
+    """Exit 6: openEMS refused to CONSTRUCT the load.  Never a traceback.
+
+    SystemExit on purpose -- it is a BaseException, so the `except Exception`
+    clauses that turn a candidate probe into "candidate X: REJECTED" cannot
+    swallow it.  A binding that rejects the load's construction is NOT a strip
+    verdict, and reporting it as one sends the operator hunting the wrong
+    thing; it aborts the run with the retry ladder instead.
+    """
+
+    def __init__(self, lines):
+        self.lines = lines
+        super().__init__(6)
+
+
+def _port2_build_failure(p: dict, priority, exc: BaseException):
+    """Say exactly which construction failed, then exit 6.  One place."""
+    print("PORT 2 BUILD FAILED -- exit 6", file=sys.stderr)
+    print("  API                 : --port2-api %s" % PORT2_API, file=sys.stderr)
+    print("  openEMS raised      : %s: %s"
+          % (type(exc).__name__, exc), file=sys.stderr)
+    print("  exact call it was building:", file=sys.stderr)
+    print(_port2_call_text(p, priority), file=sys.stderr)
+    print("  This is a CONSTRUCTION failure: the load was never built at all.",
+          file=sys.stderr)
+    print("  It is NOT exit 4 -- exit 4 means the load WAS built and the log "
+          "says it activated no cell.", file=sys.stderr)
+    print("  RETRY LADDER (most likely first):", file=sys.stderr)
+    print("      --port2-api element  ->  port-zext  ->  port-priority  ->  "
+          "port", file=sys.stderr)
+    print("  i.e.  python3 %s --strip %s --port2-api <next>"
+          % (sys.argv[0], PORT2_API), file=sys.stderr)
+    raise Port2BuildError(None)
+
+
+def add_port2(FDTD, csx, p: dict, priority=None) -> None:
+    """Add the load (port 2) by the API --port2-api selected.  Never Run().
+
+    PORT2_API is read HERE, at call time, so main() can set it once and every
+    path that builds a model -- setup probe, dry-run probe, solve -- builds
+    the same primitive.
+
+    NOTHING raised by the binding escapes as a traceback: a TypeError from a
+    C++ signature that does not accept a kwarg is a real possibility here (see
+    trap (3) for the same class of failure), and a traceback costs the
+    operator a host round trip without telling them what to try next.  Exit 6
+    and the ladder say it.
+    """
+    try:
+        _add_port2(FDTD, csx, p, priority)
+    except Port2BuildError:
+        raise
+    except Exception as exc:                  # noqa: BLE001 -- see docstring
+        _port2_build_failure(p, priority, exc)
+
+
+def _add_port2(FDTD, csx, p: dict, priority=None) -> None:
+    """The construction itself.  Every binding call lives inside here."""
+    start, stop = port2_box(p)
+    if PORT2_API == "element":
+        # ports.py:266-271, written out here: no Port object, no **kw hop.
+        # ports.py:267 passes ny=self.exc_ny, and exc_ny is
+        # CSXCAD.Utilities.CheckNyDir(p_dir) (ports.py:22,260).  CheckNyDir is
+        # NOT in infra/openems/reference/ -- it is a CSXCAD module this tree
+        # does not carry -- so the integer it returns for p_dir='x' is not
+        # knowable from the files here.  ny is therefore OMITTED rather than
+        # guessed: a wrong 0 is worse than its absence.  AddBox carries start
+        # AND stop, which is what defines the box.
+        resist = csx.AddLumpedElement("port_2_resist", caps=True, R=R_TERM)
+        if priority is None:
+            resist.AddBox(start=start, stop=stop)
+        else:
+            resist.AddBox(start=start, stop=stop, priority=priority)
+        # ports.py:280-296: the two probes.  KEPT because run_solve() requires
+        # port_ut_2 / port_it_2 to exist (see the `missing = [...]` check), so
+        # dropping them would turn this arm into a guaranteed exit 3.
+        for name, p_start, p_stop, kw in _port2_probe_boxes(p):
+            csx.AddProbe(name, **kw).AddBox(start=p_start, stop=p_stop)
+        return
+    kw = {"p_dir": _PORT2_P_DIR, "excite": 0.0}
+    if PORT2_API != "port" and priority is not None:
+        kw["priority"] = priority
+    FDTD.AddLumpedPort(2, R_TERM, start=start, stop=stop, **kw)
+
+
+def port2_box(p: dict) -> tuple:
+    """(start, stop) of the load's box, for the PORT 2 API in force.
+
+    Only 'port-zext' moves it: a zero-thickness element has no cell volume for
+    the solver to activate, so that API gives the load ONE CELL of z extent.
+    The box is consumed by port_boxes(), check_boxes(), the pre-flight and the
+    active-cell expectation, so all of them follow the API with no second
+    table to keep in step.
+    """
+    start = [p["x_load"], p["y_lo"], p["z_strip"]]
+    stop = [p["x_gap_hi"], p["y_hi"], p["z_strip"]]
+    if PORT2_API == "port-zext":
+        stop = [p["x_gap_hi"], p["y_hi"], p["z_strip"] + CELL]
+    return start, stop
+
+
 def port_boxes(p: dict) -> list:
     """Both port footprints as (label, start, stop, propagation_axis).
 
     build_model() does not add these as primitives -- AddLumpedPort() creates
     them -- but they are checked against the same mesh, because a port that
     misses the grid is the other way a model quietly turns into air.
+
+    Port 2's footprint comes from port2_box(), so --port2-api moves it and the
+    pre-flight moves with it.
     """
+    start2, stop2 = port2_box(p)
     return [
         ("port 1 launch (z-directed)",
          [p["x_port"], p["y_lo"], 0.0],
          [p["x_port"], p["y_hi"], p["h_sub"]],
          "z"),
-        ("port 2 load (x-directed)",
-         [p["x_load"], p["y_lo"], p["z_strip"]],
-         [p["x_gap_hi"], p["y_hi"], p["z_strip"]],
-         "x"),
+        ("port 2 load (x-directed)", start2, stop2, "x"),
     ]
 
 
@@ -573,11 +872,15 @@ def check_boxes(p: dict, rep: str = "metal") -> list:
         axes = {"x": (idx[0], idx[1]), "y": (idx[2], idx[3]),
                 "z": (idx[4], idx[5])}
         flat = [ax for ax in ("x", "y", "z") if axes[ax][0] == axes[ax][1]]
-        if len(flat) != 1:
+        # A port is normally a PLANE: exactly one flat axis.  --port2-api
+        # port-zext deliberately gives the load one cell of z, so NO flat axis
+        # (a volume) is accepted too; two flat axes is a line, not a port.
+        if len(flat) > 1:
             raise SystemExit(
                 "PRE-FLIGHT FAILED: %s has zero extent on %r; a port must be "
-                "a plane element, flat on exactly one axis" % (label, flat))
-        if flat[0] == p_dir:
+                "a plane element (one flat axis) or a volume (none, --port2-api "
+                "port-zext)" % (label, flat))
+        if flat and flat[0] == p_dir:
             raise SystemExit(
                 "PRE-FLIGHT FAILED: %s is flat along its own p_dir=%r, so it "
                 "occupies no cell to excite" % (label, p_dir))
@@ -587,7 +890,7 @@ def check_boxes(p: dict, rep: str = "metal") -> list:
                 "PRE-FLIGHT FAILED: %s spans less than one cell along "
                 "p_dir=%r (%d..%d)" % (label, p_dir, lo, hi))
         cross = [axes[ax][1] - axes[ax][0] for ax in ("x", "y", "z")
-                 if ax != p_dir and ax != flat[0]]
+                 if ax != p_dir and ax not in flat]
         if min(cross) < 1:
             raise SystemExit(
                 "PRE-FLIGHT FAILED: %s has less than one cell of "
@@ -668,6 +971,11 @@ def echo(p: dict, rep: str = "metal", stream=sys.stdout) -> None:
     stream.write(ECHO)
     for _line in strip_report_lines(p, rep):
         stream.write(_line + "\n")
+    # Port 2 is the primitive whose construction the 2026-11-09 logs called
+    # into question, so how it is built is printed HERE too: this echo is the
+    # one thing reviewable on a machine with no openEMS installed.
+    port2_report(p, priority=None if rep == "metal" else STRIP_PRIORITY,
+                 stream=stream)
     stream.write("derived: port->load span = %s, sigma per E_x edge = %s S\n"
                  % (_mm(p["span_port_load"]), p["sigma_edge"]))
     stream.write("derived: load cell = [%s, %s] x [%s, %s] x z=%s\n"
@@ -797,24 +1105,13 @@ def build_model(p: dict, rep: str = "metal"):
     # 0.345.  The reference builds 9 parallel E_x edges for exactly this
     # reason -- see doc section 2 for the arithmetic.
     #
-    # Port 2 carries the SAME priority as the strip property, because the load
-    # has to win the very cell the strip boxes are fighting over.  PART 4
-    # provenance for the kwarg (the bindings are not vendored here, so these
-    # are the lines the forwarded kwarg lands in):
-    #   infra/openems/reference/ports.py:96-119, Port.__init__ sets
-    #       self.priority = 0
-    #       if 'priority' in kw: self.priority = kw['priority']
-    #     and that value is consumed by
-    #       lumped_R.AddBox(self.start, self.stop, priority=self.priority)
-    #   infra/openems/reference/openEMS.pyx:339 forwards **kw into it:
-    #       def AddLumpedPort(self, port_nr, R, start, stop, p_dir,
-    #                         excite=0, **kw)
-    port2_kw = {} if strip_priority is None else {"priority": strip_priority}
-    FDTD.AddLumpedPort(
-        2, R_TERM,
-        start=[p["x_load"], p["y_lo"], p["z_strip"]],
-        stop=[p["x_gap_hi"], p["y_hi"], p["z_strip"]],
-        p_dir="x", excite=0.0, **port2_kw)
+    # HOW port 2 is built is --port2-api's job (PORT2_API, and the rationale
+    # quoted from infra/openems/reference/ above it).  The 2026-11-09 runs got
+    # "Active cells: 0" from this primitive, so this file no longer assumes
+    # one construction is the only one; port2_report() prints the API in
+    # force, its rationale and the exact call, and add_port2() builds it, on
+    # the echo and on every path that reaches here.
+    add_port2(FDTD, csx, p, priority=strip_priority)
 
     # Convergence: linear ratio, rendered by the solver as 10*log10 = -60 dB.
     FDTD.SetEndCriteria(END_CRIT)            # explicit, do not rely on default
@@ -896,9 +1193,259 @@ def extract_s11(outdir: str, f: float = F_REF, zref: float = Z_REF) -> dict:
 # ---------------------------------------------------------------------------
 
 _UNUSED_PAT = re.compile(r"Unused primitive")
-_ZERO_LOAD_PAT = re.compile(r"Active cells:\s*0(?:\D|\Z)")
-_PEC_EDGES_PAT = re.compile(r"Number of PEC edges:\s*(\d+)")
-_ACTIVE_PAT = re.compile(r"Active cells:\s*(\d+)")
+_UNUSED_PROP_PAT = re.compile(
+    r"Unused primitive \(type: ([^)]*)\) detected in property: (\S+?)!")
+
+# --- headed blocks ----------------------------------------------------------
+# openEMS heads each primitive's report with a "--- ... ---" line and prints
+# the primitive's fields UNDERNEATH it.  "Active cells" therefore belongs to
+# whichever heading precedes it, and reading it without knowing which block it
+# sits in is how a zero-active LOAD gets mistaken for the strip's verdict --
+# the 2026-11-09 logs print both blocks in one log.
+_SECTION_HEADERS = {
+    "pec": ("--- PEC ---", "PEC:"),
+    "load": ("--- Series/Parallel Lumped RLC load ---", "Lumped RLC load:"),
+}
+_HEADING_PAT = re.compile(r"^\s*---")
+# Which route answered the PEC-edge question, so the caller can PRINT it
+# instead of leaving the reader to guess how the number was found.
+_PEC_EDGES_ROUTE = {"how": None}
+# What a lumped-element heading may say.  We do NOT know what openEMS prints
+# for a plain csx.AddLumpedElement() -- that is what --port2-api element
+# builds, and it is not the '--- Series/Parallel Lumped RLC load ---' block a
+# lumped PORT prints.  So match on the words that survive a rename instead of
+# pinning the one spelling that happened to appear in the 2026-11-09 logs.
+_LOAD_WORDS = ("lumped rlc", "lumped element", "lumped load", "rlc load")
+
+
+def _find_int(text, label: str):
+    """The integer after `label` in `text`, or None.  TABs included.
+
+    openEMS separates a label from its colon with a TAB --
+    "Number of PEC edges<TAB>: 1119" -- so a space-only pattern matched
+    nothing in a real log.  `\\s*` is what makes the space-only logs AND the
+    TAB logs match; re.escape() keeps labels with regex punctuation (such as
+    "Voltage excitation(s)") literal.
+
+    `text` is a whole log or the lines of one block (_section()), so the same
+    reader serves both and a caller can scope a field to the block that owns
+    it.  Labels in this file's logs: "Number of PEC edges", "Active cells";
+    "Voltage excitation(s)", "Number of timesteps" and "in x/y/z direction"
+    are labelled the same way and are read with the same call.
+    """
+    lines = text.splitlines() if isinstance(text, str) else list(text)
+    pat = re.compile(r"%s\s*:\s*(-?\d+)" % re.escape(label))
+    for line in lines:
+        hit = pat.search(line)
+        if hit:
+            return int(hit.group(1))
+    return None
+
+
+def _section_name(line: str):
+    """Which headed block `line` opens, or None.  Both spellings, any case.
+
+    Case-insensitive on purpose: a heading is a label, not a contract.  If a
+    renamed or re-cased heading failed to match here the block would simply
+    vanish from the parse -- and a vanished load block used to read as a dead
+    load, which is the 80ce5cb failure in miniature.  Every miss is now
+    reported by load_verdict() as LOAD UNVERIFIED, never as a verdict.
+    """
+    stripped = line.strip()
+    low = stripped.lower()
+    for name, headers in _SECTION_HEADERS.items():
+        for head in headers:
+            if low.startswith(head.lower()):
+                return name
+    if _HEADING_PAT.match(line):
+        for word in _LOAD_WORDS:
+            if word in low:
+                return "load"
+    return None
+
+
+def _section(text, name: str) -> list:
+    """The lines of the block `name` heads, heading included.  [] = no block.
+
+    An EMPTY list is a FINDING, not a zero: every caller must say the block
+    could not be located instead of reporting a number taken from somewhere
+    else in the log.  The block runs from its heading to the next heading.
+    """
+    lines = text.splitlines() if isinstance(text, str) else list(text)
+    out = []
+    for line in lines:
+        if out:
+            if _section_name(line) is not None:
+                break
+            out.append(line)
+        elif _section_name(line) == name:
+            out.append(line)
+    return out
+
+
+def _pec_edges(text):
+    """"Number of PEC edges", block-scoped when possible, else whole-log.
+
+    The block scope is an OPTIMISATION, not a requirement.  We do not know the
+    real header spelling in the operator's log -- "--- PEC ---" was inferred --
+    so demanding the block made an unlocatable header look like a missing
+    line, and on a solve log that is exit 4: "the strip cannot be shown to
+    have attached" said about a log that plainly contains the count.  That is
+    exactly the 80ce5cb shape, a parse demand masquerading as a verdict.
+
+    The label is unique to the PEC summary, so the whole-log search is safe;
+    it is only ever used when the block is absent or does not carry the line.
+    _PEC_EDGES_ROUTE records which route answered so the caller can say so.
+    """
+    block = _section(text, "pec")
+    if block:
+        seen = _find_int(block, "Number of PEC edges")
+        if seen is not None:
+            _PEC_EDGES_ROUTE["how"] = "the located PEC block"
+            return seen
+        reason = "the located PEC block carried no 'Number of PEC edges' line"
+    else:
+        reason = "no '--- PEC ---' block located"
+    seen = _find_int(text, "Number of PEC edges")
+    if seen is not None:
+        _PEC_EDGES_ROUTE["how"] = ("'Number of PEC edges' anywhere in the log "
+                                   "(%s)" % reason)
+        return seen
+    _PEC_EDGES_ROUTE["how"] = None
+    return None
+
+
+def _active_cell_lines(text: str) -> list:
+    """[(N, verbatim line)] for every Active-cells line inside the LOAD block."""
+    out = []
+    for line in _section(text, "load"):
+        count = _find_int([line], "Active cells")
+        if count is not None:
+            out.append((count, line.rstrip()))
+    return out
+
+
+def classify_unused(text: str) -> list:
+    """[(kind, VERBATIM line)] for every Unused-primitive line.  Nothing dropped.
+
+    kind is "strip" when the dropped property is the strip, "load" when it is
+    port 2 / a lumped element / anything reported under the load heading, and
+    "other" otherwise.  A dropped primitive is only evidence about the strip or
+    about the load if it IS the strip or the load, and which one it is cannot
+    be decided by the warning text alone -- the property name and the block it
+    sits in decide it.
+    """
+    lines = text.splitlines() if isinstance(text, str) else list(text)
+    out = []
+    block = None
+    for line in lines:
+        head = _section_name(line)
+        if head is not None:
+            block = head
+            continue
+        if _HEADING_PAT.match(line):
+            # An UNRECOGNISED heading ends the previous block: carrying the old
+            # block name across it would attribute the next warning to a block
+            # it is not in.  None here is honest, and lands in "unattributed".
+            block = None
+            continue
+        if not _UNUSED_PAT.search(line):
+            continue
+        hit = _UNUSED_PROP_PAT.search(line)
+        prop = (hit.group(2) if hit else "").lower()
+        # Attribution ladder.  (i) a parseable property name decides; (ii) with
+        # no name, the enclosing headed block decides; (iii) with neither the
+        # kind is "unattributed" -- NOT "other".  The ladder exists because an
+        # unrecognised REAL strip warning used to land in "other", which is
+        # only a note under scope="strip", so a broken strip could resolve
+        # while its own warning was demoted to silence.  "other" must mean
+        # "attributed to something that is neither", not "could not tell".
+        if prop.startswith("strip"):
+            kind = "strip"
+        elif (prop.startswith("port_2") or prop.startswith("port2")
+              or "lumped" in prop):
+            kind = "load"
+        elif prop:
+            kind = "other"
+        elif block == "pec":
+            kind = "strip"
+        elif block == "load":
+            kind = "load"
+        else:
+            kind = "unattributed"
+        out.append((kind, line.rstrip()))
+    return out
+
+
+def _stray_active_cells(text: str) -> list:
+    """Every 'Active cells' line ANYWHERE in the log, verbatim, with neighbours.
+
+    Used only when no lumped-element block could be located.  A renamed or
+    relocated 'Active cells: 0' must still reach the reader: the block failing
+    to parse is OUR ignorance, and it must not be able to make a real
+    zero-active warning invisible.
+    """
+    lines = text.splitlines() if isinstance(text, str) else list(text)
+    out = []
+    for i, line in enumerate(lines):
+        if _find_int([line], "Active cells") is None:
+            continue
+        out.append("LOAD: stray 'Active cells' line at log line %d: %r"
+                   % (i + 1, line.rstrip()))
+        for j in range(max(0, i - 2), min(len(lines), i + 3)):
+            if j == i:
+                continue
+            out.append("LOAD:     neighbour line %d: %r"
+                       % (j + 1, lines[j].rstrip()))
+    return out
+
+
+def load_verdict(text: str, p: dict) -> tuple:
+    """(ok, lines, fatal) for the LOAD alone.  Every line starts with "LOAD:".
+
+    The load is its own verdict because it fails independently of the strip:
+    the 2026-11-09 logs keep the strip's primitives and still print
+    "--- Series/Parallel Lumped RLC load ---" followed by "Active cells: 0",
+    so a strip verdict must not be able to answer for the load.
+
+    `fatal` is True ONLY for the case that is a real signal: a LOCATED block
+    that says 'Active cells: 0'.  A block we cannot locate, and a located
+    block with no Active-cells line, are PARSE GAPS -- ok=False, fatal=False,
+    so the caller reports them as notes on both phases.  A parse gap must
+    never be promoted to a verdict; that is the 80ce5cb failure.
+    """
+    lines = []
+    if not _section(text, "load"):
+        lines.append("LOAD UNVERIFIED: could not locate a lumped-element "
+                     "block in this log, so 'Active cells' for the load "
+                     "could not be read -- this is NOT a report that the "
+                     "load is fine")
+        stray = _stray_active_cells(text)
+        if stray:
+            lines.extend(stray)
+        else:
+            lines.append("LOAD: no 'Active cells' line anywhere in this log "
+                         "either, so it says nothing about the load")
+        return False, lines, False
+    found = _active_cell_lines(text)
+    if not found:
+        lines.append("LOAD: the load block carries no 'Active cells' line -- "
+                     "this log does not say how many cells the load activated")
+        return False, lines, False
+    expect = _expected_active_cells(p)[-1][1]
+    ok = True
+    fatal = False
+    for count, raw in found:
+        if count == 0:
+            ok = False
+            fatal = True
+            lines.append("LOAD: Active cells 0 (expected %d) -- the load "
+                         "activated NO cell, so port_ut_2/port_it_2 describe "
+                         "nothing: %r" % (expect, raw.strip()))
+            continue
+        lines.append("LOAD: Active cells %d (expected %d): %r"
+                     % (count, expect, raw.strip()))
+    return ok, lines, fatal
 _VERSION_PAT = re.compile(
     r"openEMS 64bit -- version \S+|CSXCAD -- Version: \S+"
     r"|hdf5\s+-- Version: \S+")
@@ -1004,7 +1551,8 @@ def _expected_active_cells(p: dict) -> list:
 
 
 def audit_solver_output(text: str, where: str, p: dict,
-                        rep: str = "metal", phase: str = "solve") -> tuple:
+                        rep: str = "metal", phase: str = "solve",
+                        scope: str = "all") -> tuple:
     """(problems, notes) for one captured solver log.  Never raises.
 
     PROBLEMS are the things that mean the log describes a geometry other than
@@ -1022,35 +1570,71 @@ def audit_solver_output(text: str, where: str, p: dict,
     about the model and rejected candidates that had no warning against them.
     Everything else (Unused primitive, Active cells, and the floor when the
     line IS present) is identical in both phases.
+
+    `scope` says WHICH verdict this call may draw: "all" (the strip AND the
+    load), "strip" or "load".  resolve_strip() audits with scope="strip",
+    because a strip representation has to be judgeable on its own -- the
+    2026-11-09 logs keep the strip and still print a zero-active load -- while
+    the load's "LOAD: ..." lines are still emitted, as NOTES, so a resolution
+    can never hide it.  A zero-active load is exit 4 only where the call owns
+    the load AND the log is a real solve.
     """
     if phase not in ("setup-probe", "solve"):
         raise ValueError("phase must be 'setup-probe' or 'solve', not %r"
                          % (phase,))
+    if scope not in ("all", "strip", "load"):
+        raise ValueError("scope must be 'all', 'strip' or 'load', not %r"
+                         % (scope,))
     problems = []
     notes = []
-    for pat, what in ((_UNUSED_PAT, "a primitive CSXCAD did not apply"),
-                      (_ZERO_LOAD_PAT, "a lumped load with no active cells")):
-        for line in text.splitlines():
-            if pat.search(line):
-                problems.append("%s -> %r" % (what, line.strip()))
+    want_strip = scope in ("all", "strip")
+    want_load = scope in ("all", "load")
 
-    expect_faces = _expected_pec_faces(p, rep)
-    hits = _PEC_EDGES_PAT.findall(text)
-    if not hits:
-        if phase == "solve":
-            problems.append(
-                "expected line not found: no 'Number of PEC edges: <N>' in "
-                "the captured %s log, so the strip cannot be shown to have "
-                "attached" % where)
+    # EVERY unused-primitive line, VERBATIM, classified, and never folded into
+    # one verdict: a line about the load is not evidence against the strip, or
+    # the other way round.  "other" is evidence against neither, so it is a
+    # problem only when this call speaks for the whole model.
+    for kind, line in classify_unused(text):
+        if kind in ("strip", "load"):
+            about = ("a primitive CSXCAD did not apply (about the %s): %r"
+                     % (kind, line))
+        elif kind == "other":
+            about = ("a primitive CSXCAD did not apply (about the rest of "
+                     "the model): %r" % line)
         else:
-            notes.append(
-                "note: no 'Number of PEC edges:' line in this setup-only log "
-                "-- openEMS may print it only during a full run, so this "
-                "probe judges attachment from the Unused-primitive and "
-                "Active-cells signals only")
-    else:
-        seen = max(int(h) for h in hits)
-        if seen < PEC_EDGES_FLOOR:
+            about = ("a primitive CSXCAD did not apply (UNATTRIBUTED -- no "
+                     "parseable property name and no recognisable enclosing "
+                     "block): %r" % line)
+        # "other" and "unattributed" are PROBLEMS only where this call speaks
+        # for the whole model.  Elsewhere they are printed, verbatim, as notes
+        # -- demoted in the verdict but never dropped from the output, because
+        # an unattributed warning might BE the strip and silence is not an
+        # option.
+        if ((kind == "strip" and want_strip)
+                or (kind == "load" and want_load)
+                or (kind in ("other", "unattributed") and scope == "all")):
+            problems.append(about)
+        else:
+            notes.append("NOT evidence about the %s verdict, reported anyway: "
+                         "%s" % (scope, about))
+
+    if want_strip:
+        expect_faces = _expected_pec_faces(p, rep)
+        seen = _pec_edges(text)
+        if seen is None:
+            if phase == "solve":
+                problems.append(
+                    "expected line not found: no 'Number of PEC edges' line "
+                    "ANYWHERE in the captured %s log (neither in a located "
+                    "PEC block nor in the whole log), so the strip cannot be "
+                    "shown to have attached" % where)
+            else:
+                notes.append(
+                    "no 'Number of PEC edges' line in this setup-only log -- "
+                    "openEMS may print it only during a full run, so this "
+                    "probe judges attachment from the block-scoped "
+                    "Unused-primitive signal only")
+        elif seen < PEC_EDGES_FLOOR:
             problems.append(
                 "the strip did not attach: %d PEC edges, below the floor of "
                 "%d (representation %r; the sheets should contribute %d "
@@ -1060,27 +1644,33 @@ def audit_solver_output(text: str, where: str, p: dict,
             notes.append("%d PEC edges (floor %d; the sheets should "
                          "contribute %d faces)"
                          % (seen, PEC_EDGES_FLOOR, expect_faces))
+            notes.append("PEC edges read from: %s" % _PEC_EDGES_ROUTE["how"])
 
-    actives = _ACTIVE_PAT.findall(text)
-    expects = _expected_active_cells(p)
-    for i, count in enumerate(actives):
-        if i < len(expects):
-            label, expect = expects[i]
-        else:
-            label, expect = "an unidentified element", None
-        notes.append("%s: Active cells: %s (expected %s)"
-                     % (label, count, "?" if expect is None else expect))
+    # The load is ALWAYS reported, in its own words.  The lines are notes
+    # unless this call owns the load AND the log is a real solve: a missing
+    # load block in a setup-only probe is a NOTE, never a permanent exit 4.
+    load_ok, load_lines, load_fatal = load_verdict(text, p)
+    if want_load and phase == "solve" and load_fatal:
+        problems.extend(load_lines)
+    else:
+        notes.extend(load_lines)
     return problems, notes
 
 
 def guard_solver_output(text: str, where: str, p: dict,
-                        rep: str = "metal", phase: str = "solve") -> None:
+                        rep: str = "metal", phase: str = "solve",
+                        scope: str = "all") -> None:
     """Exit 4 if openEMS reported geometry it did not apply.  Trap (11).
 
-    `phase` is forwarded to audit_solver_output(); the dry-run call site is a
-    setup-only probe, the solve call site is a solve.
+    `phase` and `scope` are forwarded to audit_solver_output(): the dry-run
+    call site is a setup-only probe, the solve call site is a solve, and both
+    speak for the whole model (scope="all").
+
+    NOTES are printed here as `guard: ...` lines -- that is where the load's
+    "LOAD: ..." lines surface on the solve path.
     """
-    problems, notes = audit_solver_output(text, where, p, rep, phase=phase)
+    problems, notes = audit_solver_output(text, where, p, rep, phase=phase,
+                                          scope=scope)
     for note in notes:
         print("guard: %s" % note)
     if not problems:
@@ -1186,7 +1776,7 @@ def dump_captured_log(tag: str, text: str, probe_dir: str = None) -> None:
 
 def _accept_note(text: str) -> str:
     """Which signals an ACCEPTED setup probe actually used.  Names them."""
-    if _PEC_EDGES_PAT.search(text):
+    if _pec_edges(text) is not None:
         return ("no 'Unused primitive' warning, no zero-active-cells load, "
                 "PEC edges above the floor (signals used: Unused-primitive "
                 "+ Active-cells + PEC-edges)")
@@ -1266,9 +1856,13 @@ def resolve_strip(p: dict, threads: int = 2) -> tuple:
             print(_fresh_process_hint(probed_empty[0], rep))
             hinted = True
         probed_nonempty.append(rep)
-        problems, _notes = audit_solver_output(
+        problems, notes = audit_solver_output(
             text, "setup-only strip candidate %r" % rep, p, rep,
-            phase="setup-probe")
+            phase="setup-probe", scope="strip")
+        # The strip verdict is drawn below; the load's lines are printed
+        # regardless, because a resolution must never hide a dead load.
+        for note in notes:
+            print("candidate %s: %s" % (rep, note))
         if problems:
             print("candidate %s: REJECTED -- %s" % (rep, problems[0]))
             for extra in problems[1:]:
@@ -1322,7 +1916,7 @@ def probe_only(p: dict, rep: str, threads: int = 2) -> int:
         return 4
     problems, notes = audit_solver_output(
         text, "setup-only strip candidate %r" % rep, p, rep,
-        phase="setup-probe")
+        phase="setup-probe", scope="strip")
     for note in notes:
         print("%s: %s" % (tag, note))
     if problems:
@@ -1365,7 +1959,8 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
             if _empty_capture(text):
                 print("EMPTY CAPTURE -- %s" % EMPTY_CAPTURE)
         report_solver_provenance(text)
-        guard_solver_output(text, "setup-only", p, rep, phase="setup-probe")
+        guard_solver_output(text, "setup-only", p, rep,
+                            phase="setup-probe", scope="all")
         print("SETUP-ONLY PROBE OK: openEMS accepted every primitive; no "
               "timestep was taken and %r was not touched." % outdir)
         return 0
@@ -1402,6 +1997,9 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
 
 
 def main(argv=None) -> int:
+    # FIRST statement: add_argument() READS PORT2_API for its default, and a
+    # `global PORT2_API` declared after that read is a SyntaxError.
+    global PORT2_API
     ap = argparse.ArgumentParser(
         description="openEMS referee for E11 termination build A (p51).")
     ap.add_argument("--out", default="evidence/referee",
@@ -1429,7 +2027,17 @@ def main(argv=None) -> int:
                          "4 rejected / 5 no bindings.  Never resolves, never "
                          "solves, never creates --out.  Use it when `auto`'s "
                          "in-process probes disagree.")
+    ap.add_argument("--port2-api", choices=PORT2_API_CHOICES,
+                    default=PORT2_API,
+                    help="how port 2, the 50 ohm LOAD, is built (default: %s). "
+                         "The chosen API, its rationale and the exact call are "
+                         "printed by the geometry echo; see the PORT 2 block "
+                         "above for what each one builds." % PORT2_API)
     args = ap.parse_args(argv)
+
+    # ONE place, before the echo and before any model is built, so the echo,
+    # the setup probe, the dry run and the solve all build the same primitive.
+    PORT2_API = args.port2_api
 
     p = plan()
 
