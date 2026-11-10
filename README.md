@@ -11,7 +11,7 @@ down rather than assumed.
 
 | read this | it tells you |
 |---|---|
-| [`docs/design/EM_SOLVER_LEDGER.md`](docs/design/EM_SOLVER_LEDGER.md) | The open work: nine items, each with a status label and the artefact that decides it. Read before planning anything. |
+| [`docs/design/EM_SOLVER_LEDGER.md`](docs/design/EM_SOLVER_LEDGER.md) | The open work: twelve items, each with a status label and the artefact that decides it. Read before planning anything. |
 | [`docs/design/lessons_learned_emfit.md`](docs/design/lessons_learned_emfit.md) | Six mistakes this project made and the rules that would have prevented them. Read before trusting a number. |
 | [`docs/design/cpp-kernel-status-2026-11-09.md`](docs/design/cpp-kernel-status-2026-11-09.md) | The C++ kernel: what it implements, how parity is measured, what would make the claim wrong. |
 
@@ -82,7 +82,9 @@ python3 server/poc_app.py --station 4        # choose the station to show
 
 `server/poc_app.py` starts a Trame/pyvista view of a field dump; `--input` selects
 the dump, `--station` the station (default 4), `--host` and `--port` the bind
-address. The browser view itself is **unverified here**: the Trame/pyvista/VTK
+address. **The view is currently a DEBUG SCAFFOLD, not a real field visualizer**:
+it draws marker spheres at the dump's sample points, nothing more. The browser
+view itself is **unverified here**: the Trame/pyvista/VTK
 stack is absent from the container and there is no network, so only the numpy-only
 `--list-keys` path has been exercised. `requirements-web.txt` names the six
 packages that stack needs and pins no versions.
@@ -100,8 +102,10 @@ broken at least once.
   comparison is retracted. Against the independent quasistatic value for the
   same strip width (`Z0 = 48.0237405` ohm at `w = 3.2` mm) the residual is
   `-3.10` to `-6.52` percent (`-6.52` on the fine mesh, two-wave; `-4.90` on the
-  coarse mesh, two-wave, superseded by the fine mesh), not sub-percent. See E1,
-  E10 and E11 in
+  coarse mesh, two-wave, superseded by the fine mesh), not sub-percent. The
+  **active verification** of it is the openEMS referee in E12: a second solver
+  runs the same build A and its `|S11|` is compared against `0.326` (artefact)
+  and `0.342` (anchor). See E1, E10 and E11 in
   [`docs/design/EM_SOLVER_LEDGER.md`](docs/design/EM_SOLVER_LEDGER.md) and
   `evidence/termination/build_A_50ohm.superseded.json`.
 - **No speed claim without a measurement.** The OpenMP pragmas measured about 50x
