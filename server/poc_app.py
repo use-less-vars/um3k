@@ -87,6 +87,21 @@ DEFAULT_HOST = "127.0.0.1"
 # the operator's machine.
 DEFAULT_PORT = 8080
 
+# The wave-animation dumps (``emfit.wavedude/1``) are a different artefact from
+# the legacy single-plane dump: they carry a TIME axis, so the loader and the
+# viewer built for them are their own path. The npz ``schema`` key is what tells
+# the two apart - never the file name, because a dump may be copied anywhere.
+WAVEDUDE_SCHEMA = "emfit.wavedude/1"
+STATE_SCHEMA_WAVEDUDE = "emfit.poc-state/2"
+# Frames per second for the animation. The dump stores no wall-clock rate: t_ns
+# is SIMULATION time, so this number is a viewing choice, and the page prints
+# both times rather than implying the animation runs at the solver's rate.
+DEFAULT_FPS = 24
+# ONE colour ceiling for the whole animation, taken at this percentile of |Ez|
+# over every stored frame of every plane. Frame-local scaling would renormalise
+# on each step and make a decaying pulse look like it never decays.
+COLOR_PERCENTILE = 99.5
+
 
 def _resolve(path_str: str) -> Path:
     """Absolute paths pass through, relative ones are taken from the repo root."""
@@ -122,6 +137,242 @@ def load_dump(path: Path) -> dict:
         )
         raise SystemExit(2)
     return info
+
+
+# --- the wave-animation dump ------------------------------------------------
+#
+# Two artefacts share this viewer, and they are not versions of each other: the
+# legacy dump stores ONE vector field of captured x-planes, the wavedude dump
+# stores a SEQUENCE of them plus the geometry that produced it. The functions
+# below read the second; everything above reads the first, untouched.
+
+
+def _npz_scalar(data, key: str, default=float("nan")) -> float:
+    """One stored 0-d value, or ``default`` when the dump does not carry it.
+
+    A missing optional number is NOT a reason to refuse the file - the page can
+    say "not recorded" for a velocity or a substrate height, and an overlay that
+    is skipped is visible as a skip. It is a reason to refuse a number the
+    picture cannot be drawn without, which is why the mandatory keys are
+    checked separately in load_wavedude.
+    """
+    try:
+        return float(data[key])
+    except (KeyError, TypeError, ValueError):
+        return default
+
+
+def _npz_text(data, key: str):
+    """One stored string, or None when the dump does not carry it."""
+    try:
+        return str(data[key])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _wavedude_colour_limit(arrays, percentile: float = COLOR_PERCENTILE):
+    """One |Ez| ceiling for EVERY frame, plus a flag for an all-zero cube.
+
+    WHY one ceiling: a frame's own maximum travels with the pulse, so a clim
+    taken per frame would paint the leading edge equally bright at every step and
+    the decay the dump records would be invisible. The percentile (not the
+    maximum) is used so one hot cell cannot flatten the rest of the picture; the
+    cost is that the brightest 0.5 % of cells clip, and the page's scale label
+    says so in words.
+
+    Returns ``(0.0, ceiling, empty)``. |Ez| is a magnitude, so the floor is 0: a
+    symmetric -vmax..+vmax clim would spend half the colour map on values this
+    array cannot hold.
+    """
+    magnitudes = [
+        np.abs(np.asarray(array, dtype=np.float64)).ravel() for array in arrays
+    ]
+    magnitudes = [flat for flat in magnitudes if flat.size]
+    if not magnitudes:
+        return 0.0, 1.0, True
+    ceiling = float(np.percentile(np.concatenate(magnitudes), percentile))
+    if not np.isfinite(ceiling) or ceiling <= 0.0:
+        # An all-zero (or non-finite) cube has no scale of its own. 1.0 keeps a
+        # degenerate range away from VTK, and the flag says why the page shows
+        # an empty picture rather than an average-looking one.
+        return 0.0, 1.0, True
+    return 0.0, ceiling, False
+
+
+def _is_wavedude(info: dict) -> bool:
+    """True when ``info`` came from load_wavedude, not from load_dump."""
+    return info.get("format") == "wavedude"
+
+
+def load_wavedude(path: Path) -> dict:
+    """Load an ``emfit.wavedude/1`` animation dump. numpy only, no pyvista.
+
+    Three planes are stored and they are NOT interchangeable: ``ez_ycut`` is an
+    x-z sheet at one fixed y (``nt`` frames), while the two x-cuts are y-z sheets
+    at two fixed x (``nt_x`` frames, written every ``dump_stride * 10`` steps).
+    That asymmetry is why the time of a frame is rebuilt from that plane's own
+    ``frame_index`` array below instead of from a shared counter: indexing an
+    x-cut frame number into ``t_ns`` would read an instant up to ten times too
+    early and never raise.
+
+    Everything the page prints about time, position or scale is read here, so a
+    missing or inconsistent axis fails with the key's own name instead of
+    becoming a wrong picture later.
+    """
+    if not path.is_file():
+        print(f"[poc_app] input not found: {path}", file=sys.stderr)
+        raise SystemExit(2)
+
+    mandatory = (
+        "ez_ycut",
+        "ez_xcut_near",
+        "ez_xcut_far",
+        "t_ns",
+        "frame_index",
+        "frame_index_xcut",
+        "x_mm",
+        "y_mm",
+        "z_mm",
+        "nx",
+        "ny",
+        "nz",
+        "nt",
+        "nt_x",
+        "dt_s",
+        "cell_m",
+    )
+    with np.load(path) as data:
+        names = set(data.files)
+        schema = str(data["schema"]) if "schema" in names else ""
+        if schema != WAVEDUDE_SCHEMA:
+            print(
+                f"[poc_app] {path} declares schema {schema or 'none'!r}; this "
+                f"loader reads {WAVEDUDE_SCHEMA!r}.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        absent = [key for key in mandatory if key not in names]
+        if absent:
+            print(
+                f"[poc_app] {path} declares {WAVEDUDE_SCHEMA} but is missing "
+                f"{', '.join(absent)}.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+
+        info = {
+            "path": path,
+            "format": "wavedude",
+            "schema": schema,
+            "engine": _npz_text(data, "engine"),
+            "created_utc": _npz_text(data, "created_utc"),
+            "ez_ycut": np.asarray(data["ez_ycut"]),
+            "ez_xcut_near": np.asarray(data["ez_xcut_near"]),
+            "ez_xcut_far": np.asarray(data["ez_xcut_far"]),
+            "t_ns": np.asarray(data["t_ns"], dtype=float),
+            "frame_index": np.asarray(data["frame_index"], dtype=int),
+            "frame_index_xcut": np.asarray(data["frame_index_xcut"], dtype=int),
+            "x_mm": np.asarray(data["x_mm"], dtype=float),
+            "y_mm": np.asarray(data["y_mm"], dtype=float),
+            "z_mm": np.asarray(data["z_mm"], dtype=float),
+            "nx": int(data["nx"]),
+            "ny": int(data["ny"]),
+            "nz": int(data["nz"]),
+            "nt": int(data["nt"]),
+            "nt_x": int(data["nt_x"]),
+            "dt_s": float(data["dt_s"]),
+            "cell_m": float(data["cell_m"]),
+            # Geometry the overlays draw. Recorded values only - a NaN here is
+            # drawn as nothing and printed as "not recorded", never invented.
+            "j_cut": int(_npz_scalar(data, "j_cut", 0.0)),
+            "dump_stride": int(_npz_scalar(data, "dump_stride", 1.0)),
+            "nstep": int(_npz_scalar(data, "nsteps", 0.0)),
+            "f_ref_hz": _npz_scalar(data, "f_ref_hz"),
+            "f_pulse_hz": _npz_scalar(data, "f_pulse_hz"),
+            "xcut_near_mm": _npz_scalar(data, "xcut_near_mm"),
+            "xcut_far_mm": _npz_scalar(data, "xcut_far_mm"),
+            "port_x_mm": _npz_scalar(data, "port_x_mm"),
+            "load_x_mm": _npz_scalar(data, "load_x_mm"),
+            "substrate_h_mm": _npz_scalar(data, "substrate_h_mm"),
+            "strip_w_mm": _npz_scalar(data, "strip_w_mm"),
+            "eps_r": _npz_scalar(data, "eps_r"),
+            "v_analytic_m_s": _npz_scalar(data, "v_analytic_m_s"),
+            "v_measured_m_s": _npz_scalar(data, "v_measured_m_s"),
+            "t_traverse_ns": _npz_scalar(data, "t_traverse_ns"),
+            # The dump marks its own windowed fit good or bad; the page repeats
+            # that verdict instead of re-deciding it.
+            "v_measured_reliable": bool(_npz_scalar(data, "v_measured_reliable", 0.0)),
+            "velocity_note": _npz_text(data, "velocity_note"),
+        }
+
+    problems = []
+    ycut, near, far = info["ez_ycut"], info["ez_xcut_near"], info["ez_xcut_far"]
+    for label, array in (("ez_ycut", ycut), ("ez_xcut_near", near), ("ez_xcut_far", far)):
+        if array.ndim != 3:
+            problems.append(f"{label} is {array.ndim}D, expected a 3D array")
+    if not problems:
+        if ycut.shape != (info["nt"], info["nx"], info["nz"]):
+            problems.append(
+                f"ez_ycut has shape {ycut.shape}, expected (nt, nx, nz) = "
+                f"({info['nt']}, {info['nx']}, {info['nz']})"
+            )
+        if near.shape != far.shape:
+            problems.append(
+                f"ez_xcut_near {near.shape} and ez_xcut_far {far.shape} differ; "
+                "the two x-cuts are shown side by side and must share a grid"
+            )
+        elif near.shape != (info["nt_x"], info["ny"], info["nz"]):
+            problems.append(
+                f"ez_xcut_near has shape {near.shape}, expected (nt_x, ny, nz) = "
+                f"({info['nt_x']}, {info['ny']}, {info['nz']})"
+            )
+        for key, size, expected in (
+            ("t_ns", info["t_ns"].size, info["nt"]),
+            ("frame_index", info["frame_index"].size, info["nt"]),
+            ("frame_index_xcut", info["frame_index_xcut"].size, info["nt_x"]),
+            ("x_mm", info["x_mm"].size, info["nx"]),
+            ("y_mm", info["y_mm"].size, info["ny"]),
+            ("z_mm", info["z_mm"].size, info["nz"]),
+        ):
+            if size != expected:
+                problems.append(f"{key} has {size} entries, expected {expected}")
+    if problems:
+        for problem in problems:
+            print(f"[poc_app] {path}: {problem}", file=sys.stderr)
+        raise SystemExit(2)
+
+    # Computed once, here, from every stored frame of every plane: the viewer
+    # then has no way to rescale between frames because it is never given a
+    # per-frame number to rescale with.
+    vmin, vmax, empty = _wavedude_colour_limit((ycut, near, far))
+    info["color_range"] = (vmin, vmax)
+    info["color_range_empty"] = empty
+    return info
+
+
+def load_any_dump(path: Path) -> dict:
+    """Open either artefact. Dispatch on the npz ``schema`` key, nothing else.
+
+    A legacy dump carries no ``schema`` key at all, so "has a schema and it is
+    not ours" is a REFUSAL rather than a fallback: a future dump format must not
+    be read by this loader's shape expectations just because the filename looked
+    familiar.
+    """
+    schema = ""
+    if path.is_file():
+        with np.load(path) as data:
+            if "schema" in data.files:
+                schema = str(data["schema"])
+    if schema == WAVEDUDE_SCHEMA:
+        return load_wavedude(path)
+    if schema:
+        print(
+            f"[poc_app] {path} declares schema {schema!r}, which this viewer does "
+            f"not read; it reads {WAVEDUDE_SCHEMA!r} or a legacy plane dump.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return load_dump(path)
 
 
 def _cell_mm(info: dict) -> float:
@@ -1287,7 +1538,152 @@ def _mismatch_banner_text(mismatch):
     )
 
 
-def build_state_dump(info: dict, structure, structures=None) -> dict:
+def _finite(value):
+    """A float for JSON, or None when it is not finite.
+
+    Strict JSON has no NaN and no Infinity, and the state dump is parsed by
+    readers that reject both. A number that is not finite is reported as null,
+    which is the same thing this document already says for unparseable records.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
+
+
+WAVEDUDE_EXTENT_BASIS = (
+    "extent_domain_mm is cells x cell (the simulated box); extent_sampled_mm is "
+    "the span of the stored node coordinates x_mm / y_mm / z_mm. A wavedude dump "
+    "is a dense cube, so the two differ by one cell per axis and never by a "
+    "factor; there is no captured-plane quantisation in this artefact."
+)
+
+
+def _wavedude_field_block(info: dict, path: Path) -> dict:
+    """The animation's own field block: a dense cube, so the extents agree.
+
+    Same keys as _field_dump_block so one reader can read both documents, but the
+    sampled span is read from the stored coordinate arrays instead of from a
+    captured-plane count: this dump holds nx x ny x nz nodes on x_mm / y_mm /
+    z_mm, which is what the animation interpolates over.
+    """
+    cell_mm = _cell_mm(info)
+    nx, ny, nz = int(info["nx"]), int(info["ny"]), int(info["nz"])
+    x_mm, y_mm, z_mm = info["x_mm"], info["y_mm"], info["z_mm"]
+
+    def _span(axis) -> float:
+        return float(np.max(axis) - np.min(axis)) if axis.size else 0.0
+
+    return {
+        "file": str(path),
+        "cells": {"nx": nx, "ny": ny, "nz": nz},
+        "cell_m": float(info["cell_m"]),
+        "grid_cell_mm": round(cell_mm, 9),
+        "extent_domain_mm": {
+            "x": round(nx * cell_mm, 9),
+            "y": round(ny * cell_mm, 9),
+            "z": round(nz * cell_mm, 9),
+        },
+        "extent_sampled_mm": {
+            "x": round(_span(x_mm), 9),
+            "y": round(_span(y_mm), 9),
+            "z": round(_span(z_mm), 9),
+        },
+        "extent_basis": WAVEDUDE_EXTENT_BASIS,
+        "stations_x_mm": [float(value) for value in x_mm],
+        "n_stations": nx,
+        "nstep": int(info["nstep"]),
+    }
+
+
+def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
+    """What the animation adds to the state dump: frames, time, scale, geometry.
+
+    ``fps`` is a VIEWING choice and is labelled as one: ``wall_clock_s`` is how
+    long the page will take to play the dump once, while ``sim_time_ns`` is the
+    dump's own simulation clock. Letting the two be read as one number is how a
+    reader comes to believe the solver ran at 24 frames per second.
+    """
+    fps = max(1, int(fps))
+    vmin, vmax = info["color_range"]
+    dt_ns = float(info["dt_s"]) * 1e9
+    nt = int(info["nt"])
+    t_ns = info["t_ns"]
+    cell_mm = _cell_mm(info)
+    return {
+        "frames": nt,
+        "frames_xcut": int(info["nt_x"]),
+        "fps": fps,
+        "wall_clock_s": round(nt / float(fps), 6),
+        "sim_time_ns": {
+            "first": _finite(t_ns[0]) if t_ns.size else None,
+            "last": _finite(t_ns[-1]) if t_ns.size else None,
+            "dt": _finite(dt_ns),
+            "basis": (
+                "t_ns = frame_index * dt_s; the two x-cut planes are written every "
+                "dump_stride * 10 steps and carry their own frame_index_xcut, so "
+                "their frame number must never be used to index t_ns"
+            ),
+        },
+        "colour": {
+            "vmin": _finite(vmin),
+            "vmax": _finite(vmax),
+            "percentile": COLOR_PERCENTILE,
+            "empty": bool(info["color_range_empty"]),
+            "basis": (
+                "one limit for every frame of every plane: the "
+                f"{COLOR_PERCENTILE:g}th percentile of |Ez| over all stored frames; "
+                "a per-frame maximum would renormalise each step and hide the decay"
+            ),
+        },
+        "planes": [
+            {
+                "key": "ez_ycut",
+                "label": "x-z plane through the strip (one fixed y sample)",
+                "shape": [int(n) for n in info["ez_ycut"].shape],
+                "frames": nt,
+                "fixed_mm": {"y": round(int(info["j_cut"]) * cell_mm, 9)},
+            },
+            {
+                "key": "ez_xcut_near",
+                "label": "y-z plane at the near x-cut",
+                "shape": [int(n) for n in info["ez_xcut_near"].shape],
+                "frames": int(info["nt_x"]),
+                "fixed_mm": {"x": _finite(info["xcut_near_mm"])},
+            },
+            {
+                "key": "ez_xcut_far",
+                "label": "y-z plane at the far x-cut",
+                "shape": [int(n) for n in info["ez_xcut_far"].shape],
+                "frames": int(info["nt_x"]),
+                "fixed_mm": {"x": _finite(info["xcut_far_mm"])},
+            },
+        ],
+        "geometry_mm": {
+            "port_x": _finite(info["port_x_mm"]),
+            "load_x": _finite(info["load_x_mm"]),
+            "substrate_h": _finite(info["substrate_h_mm"]),
+            "strip_w": _finite(info["strip_w_mm"]),
+            # Not in the dump: the strip's y offset. The overlay centres it and
+            # the page says so rather than implying a recorded position.
+            "strip_y": "not recorded - the overlay centres the strip on the grid",
+        },
+        "velocity": {
+            "analytic_m_s": _finite(info["v_analytic_m_s"]),
+            "measured_m_s": _finite(info["v_measured_m_s"]),
+            "reliable": bool(info["v_measured_reliable"]),
+            "t_traverse_ns": _finite(info["t_traverse_ns"]),
+            "note": info["velocity_note"],
+        },
+        "frequencies_hz": {
+            "f_ref": _finite(info["f_ref_hz"]),
+            "f_pulse": _finite(info["f_pulse_hz"]),
+        },
+    }
+
+
+def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_FPS) -> dict:
     """The whole page state as one JSON document, numpy-only.
 
     A report, not a picture: it lists the artefacts this page would composite, the
@@ -1297,7 +1693,11 @@ def build_state_dump(info: dict, structure, structures=None) -> dict:
     """
     path = Path(info["path"])
     entry = structure if isinstance(structure, dict) else {}
-    field_block = _field_dump_block(info, path)
+    field_block = (
+        _wavedude_field_block(info, path)
+        if _is_wavedude(info)
+        else _field_dump_block(info, path)
+    )
     sparams_path = _sparams_path(path, entry)
     sparams = _sparams_block(sparams_path)
     record = _field_record(path)
@@ -1309,7 +1709,7 @@ def build_state_dump(info: dict, structure, structures=None) -> dict:
     multifreq = _multifreq_block(_multifreq_path(path, entry))
     port_waves, port_reason = _port_waves_block(sparams_path)
     return {
-        "schema": STATE_SCHEMA,
+        "schema": STATE_SCHEMA_WAVEDUDE if _is_wavedude(info) else STATE_SCHEMA,
         "generated_utc": _utc_now(),
         "head_commit": _git_head_short(),
         "structure": {
@@ -1330,6 +1730,11 @@ def build_state_dump(info: dict, structure, structures=None) -> dict:
         # null can carry one without changing port_waves' own shape.
         "port_waves_reason": port_reason,
         "chart": _chart_block(multifreq, entry),
+        # Which artefact this document describes. The legacy dump keeps
+        # emfit.poc-state/1 byte-for-byte; a wavedude dump is /2, because it adds
+        # the two keys below and reads field_dump's extents off stored nodes.
+        "format": "wavedude" if _is_wavedude(info) else "legacy",
+        "animation": _animation_block(info, fps) if _is_wavedude(info) else None,
     }
 
 
@@ -1674,8 +2079,132 @@ def _marker_cut_lines(
     return _marker_cut_relation(planes, layout)
 
 
+def _print_wavedude_keys(info: dict) -> None:
+    """Print the wave-animation metadata. numpy only - no pyvista, no trame."""
+    ycut = info["ez_ycut"]
+    near = info["ez_xcut_near"]
+    far = info["ez_xcut_far"]
+    cell_mm = _cell_mm(info)
+    dt_ns = info["dt_s"] * 1e9
+    t_ns = np.asarray(info["t_ns"])
+    fi = np.asarray(info["frame_index"])
+    fx = np.asarray(info["frame_index_xcut"])
+
+    print(f"file        : {info['path']}")
+    print(f"format      : wave animation (schema {info['schema']})")
+    print(f"engine      : {info['engine']}")
+    print(f"created_utc : {info['created_utc']}")
+    print(f"ez_ycut     : shape={ycut.shape} dtype={ycut.dtype} (frame, x, z)")
+    print(f"ez_xcut_near: shape={near.shape} dtype={near.dtype} (frame, y, z)")
+    print(f"ez_xcut_far : shape={far.shape} dtype={far.dtype} (frame, y, z)")
+    # The two x-cuts are NOT frames of the y-cut series: they are the same
+    # simulation sampled on a coarser, independent schedule.
+    print(
+        f"x-cut planes: y-z sheets at x={info['xcut_near_mm']:.4f} and "
+        f"x={info['xcut_far_mm']:.4f} mm"
+    )
+    print(f"nx/ny/nz    : {info['nx']} / {info['ny']} / {info['nz']} (cells)")
+    print(f"cell_m      : {info['cell_m']:.6e} m  ({cell_mm:.6f} mm)")
+    xs, ys, zs = info["x_mm"], info["y_mm"], info["z_mm"]
+    # The STORED coordinate arrays are what the planes are sampled on; nx*cell_m
+    # is the solver's box and is one cell wider, so both are printed and named.
+    print(
+        "extent      : "
+        + ", ".join(
+            f"{name} {axis.min():.4f} .. {axis.max():.4f}"
+            for name, axis in (("x", xs), ("y", ys), ("z", zs))
+            if axis.size
+        )
+        + f" mm (stored coordinates, {info['nx']}/{info['ny']}/{info['nz']} nodes)"
+    )
+    print(
+        f"domain      : {info['nx'] * cell_mm:.4f} x {info['ny'] * cell_mm:.4f} x "
+        f"{info['nz'] * cell_mm:.4f} mm (cell count x cell_m, the solver's box)"
+    )
+    print(f"nstep       : {info['nstep']} (dump_stride={info['dump_stride']})")
+    print(
+        f"frames      : {info['nt']} on ez_ycut, {info['nt_x']} on each x-cut "
+        f"(written every dump_stride*10 steps)"
+    )
+    print(f"dt_s        : {info['dt_s']:.6e} s  ({dt_ns:.6f} ns per frame)")
+    if t_ns.size:
+        print(
+            f"t_ns        : {t_ns[0]:.6f} .. {t_ns[-1]:.6f} ns "
+            f"(= frame_index * dt_s)"
+        )
+    if fi.size:
+        print(
+            f"frame_index : {int(fi[0])} .. {int(fi[-1])} (ez_ycut, every step)"
+        )
+    if fx.size:
+        print(
+            f"frame_index_xcut: {int(fx[0])} .. {int(fx[-1])} (both x-cuts, "
+            f"STRIDE {int(np.diff(fx).min()) if fx.size > 1 else 0}) - these are "
+            f"solver frames, so their instants run "
+            f"{int(fx[0]) * dt_ns:.6f} .. {int(fx[-1]) * dt_ns:.6f} ns and do "
+            f"NOT line up one-for-one with the ez_ycut frames"
+        )
+    print(f"f_ref_hz    : {info['f_ref_hz']:.6e} Hz ({info['f_ref_hz'] / 1e9:.6f} GHz)")
+    print(
+        f"f_pulse_hz  : {info['f_pulse_hz']:.6e} Hz "
+        f"({info['f_pulse_hz'] / 1e9:.6f} GHz)"
+    )
+    print(
+        f"geometry    : strip_w={info['strip_w_mm']:.4f} mm, "
+        f"substrate_h={info['substrate_h_mm']:.4f} mm, eps_r={info['eps_r']:.4f}, "
+        f"port_x={info['port_x_mm']:.4f} mm, load_x={info['load_x_mm']:.4f} mm"
+    )
+
+    print("|Ez|        : per plane, over every stored frame")
+    for label, array in (("ez_ycut", ycut), ("ez_xcut_near", near), ("ez_xcut_far", far)):
+        if array.size == 0:
+            print(f"  {label}: [no samples]")
+            continue
+        magnitudes = np.abs(np.asarray(array, dtype=np.float64))
+        if magnitudes.ndim:
+            per_frame = magnitudes.reshape(magnitudes.shape[0], -1).max(axis=1)
+        else:
+            per_frame = magnitudes.reshape(1)
+        low, high = float(per_frame.min()), float(per_frame.max())
+        # A frame that is exactly zero (the pulse has not arrived yet) makes the
+        # ratio infinite; say so rather than printing "xinf".
+        spread = f"x{high / low:.3f}" if low > 0.0 else "unbounded (a frame is all zero)"
+        print(
+            f"  {label}: min={magnitudes.min():.6e} max={magnitudes.max():.6e} "
+            f"frame-max {low:.6e} .. {high:.6e} (spread {spread})"
+        )
+
+    vmin, vmax = info["color_range"]
+    print(
+        f"colour      : ONE limit for every frame and plane: |Ez| {vmin:.6e} .. "
+        f"{vmax:.6e} (percentile {COLOR_PERCENTILE} of |Ez| over all stored "
+        f"frames); a per-frame limit would renormalise a decaying pulse"
+    )
+    if info.get("color_range_empty"):
+        print(
+            "[EMPTY DUMP] every stored plane is zero (or non-finite): the "
+            "colour limit fell back to 0 .. 1 and there is nothing to animate"
+        )
+
+    if info.get("v_measured_reliable"):
+        verdict = "shift-and-correlate fit accepted by the dump"
+    else:
+        verdict = "fit NOT reliable - treat as an estimate"
+    print(
+        f"velocity    : v_measured={info['v_measured_m_s']:.6e} m/s, "
+        f"v_analytic={info['v_analytic_m_s']:.6e} m/s, "
+        f"t_traverse={info['t_traverse_ns']:.6f} ns ({verdict})"
+    )
+    note = info.get("velocity_note")
+    if note:
+        print(f"velocity_note: {note}")
+
+
 def print_keys(info: dict) -> None:
     """Print dump metadata. numpy only - no pyvista, no trame."""
+    if _is_wavedude(info):
+        _print_wavedude_keys(info)
+        return
     plane = info[PLANE_KEY]
     cell_mm = _cell_mm(info)
     n_st, n_j, n_k = plane.shape
@@ -1789,8 +2318,8 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
     the record), and a position taken from a built-in constant is spelled out
     as FALLBACK in the legend.
 
-    Both halves are guarded: a pyvista that disagrees about a Plane or a Sphere
-    keyword must cost the markers, not the viewer.
+    The plane is guarded: a pyvista that disagrees about a Plane keyword must
+    cost the plane, not the viewer.
     """
     import pyvista as pv
 
@@ -1810,8 +2339,11 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
     except Exception as exc:  # noqa: BLE001 - losing the plane is survivable
         print(f"[poc_app] load plane not drawn: {exc}", file=sys.stderr)
 
-    # Point markers at mid-height of each plane: x is the axis that matters
-    # here, so a sphere plus a label is unambiguous where a disc is not.
+    # Labels at mid-height of each plane: x is the axis that matters here, so a
+    # text anchor is unambiguous where a disc is not. There are NO sphere glyphs
+    # any more: sized from the y span they came out with radius >= 0.5 mm, and
+    # three opaque spheres that size sat on top of the field and hid it.
+    # add_point_labels draws the anchor itself, so a label keeps its position.
     points = [
         (planes["x_s11_mm"], y_mid, z_mid),
         (planes["x_load_mm"], y_mid, z_mid),
@@ -1822,13 +2354,6 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
         f"load (termination)\nx = {planes['x_load_mm']:.4f} mm",
         _s21_label(planes),
     ]
-    colours = ("blue", "red", "orange")
-    radius = max(0.5, 0.02 * y_span)
-    for point, colour in zip(points, colours):
-        try:
-            plotter.add_mesh(pv.Sphere(radius=radius, center=point), color=colour)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[poc_app] marker sphere not drawn: {exc}", file=sys.stderr)
     try:
         plotter.add_point_labels(points, labels, font_size=9, text_color="black")
     except Exception as exc:  # noqa: BLE001 - the corner legend still says it
@@ -2721,6 +3246,652 @@ def run_web(
     return 0
 
 
+# --- the wave animation page ------------------------------------------------
+#
+# The legacy page below draws ONE snapshot of nine captured planes. This one
+# animates a recorded sequence: a frame slider, a play/pause button and a plane
+# switch. Everything it draws comes out of load_wavedude, and the colour limit
+# is the ONE ceiling computed there, so no frame can renormalise itself.
+
+
+def _wavedude_frame_time_ns(info: dict, mode: str, frame) -> float:
+    """Simulation time of ``frame`` on the plane family ``mode``, in ns.
+
+    ``mode`` is "ycut" or "xcut", and the two families do NOT share a clock:
+    ez_ycut is written every step with frame_index 1..nt, while the x-cuts are
+    written every dump_stride * 10 steps with frame_index_xcut 1..nt_x. Indexing
+    t_ns with an x-cut frame number looks perfectly well formed and reads an
+    instant up to ten times too early, which is why this function exists instead
+    of a bare ``t_ns[frame]`` at every call site.
+    """
+    try:
+        frame = int(round(float(frame)))
+    except (TypeError, ValueError):
+        return float("nan")
+    if mode == "xcut":
+        index = info["frame_index_xcut"]
+        if index.size == 0:
+            return float("nan")
+        frame = max(0, min(index.size - 1, frame))
+        return float(int(index[frame]) * float(info["dt_s"]) * 1e9)
+    t_ns = info["t_ns"]
+    if t_ns.size == 0:
+        return float("nan")
+    frame = max(0, min(t_ns.size - 1, frame))
+    return float(t_ns[frame])
+
+
+def _wavedude_phase_text(t_ns: float, t_traverse_ns: float) -> str:
+    """Where the frame sits relative to one trip along the line.
+
+    t_traverse_ns is the recorded time for the wave to cross the line once, so
+    the ratio below reads as "how many line crossings in". It is a READING AID
+    with a threshold at 1.0, NOT a measurement of when the load was reached: the
+    sentence is the ratio of two recorded numbers and nothing else. When either
+    number is missing the sentence says so instead of inventing a phase.
+    """
+    try:
+        traverse = float(t_traverse_ns)
+        time_ns = float(t_ns)
+    except (TypeError, ValueError):
+        return "phase: sim time not recorded"
+    if not np.isfinite(traverse) or not np.isfinite(time_ns) or traverse <= 0.0:
+        return "phase: t_traverse not recorded - no line-crossing ratio"
+    ratio = time_ns / traverse
+    if ratio < 1.0:
+        return f"phase: launching ({ratio:.2f} x t_traverse, still on the line)"
+    return f"phase: past the load ({ratio:.2f} x t_traverse)"
+
+
+def _wavedude_grid(info: dict, plane_key: str, frame) -> "pyvista.ImageData":
+    """One frame of one plane as a single-sample-thick ImageData.
+
+    Deferred import: --help / --list-keys / --dump-state stay numpy-only. The
+    sheet is one cell thick on its fixed axis and sits at the recorded station,
+    so it is drawn as a sheet rather than smeared into a volume.
+    """
+    import pyvista as pv
+
+    cell_mm = _cell_mm(info)
+    array = info[plane_key]
+    if array.shape[0] == 0:
+        raise SystemExit(2)
+    frame = max(0, min(int(array.shape[0]) - 1, int(frame)))
+    data = np.abs(np.asarray(array[frame], dtype=float))
+    if plane_key == "ez_ycut":
+        dims = (int(info["nx"]), 1, int(info["nz"]))
+        origin = (0.0, float(int(info["j_cut"])) * cell_mm, 0.0)
+    elif plane_key == "ez_xcut_near":
+        dims = (1, int(info["ny"]), int(info["nz"]))
+        origin = (float(info["xcut_near_mm"]), 0.0, 0.0)
+    else:
+        dims = (1, int(info["ny"]), int(info["nz"]))
+        origin = (float(info["xcut_far_mm"]), 0.0, 0.0)
+
+    image = pv.ImageData()
+    image.dimensions = dims
+    image.spacing = (cell_mm, cell_mm, cell_mm)
+    image.origin = origin
+    # VTK expects x to vary fastest, so ravel in Fortran order.
+    image.point_data["ez_abs"] = np.ascontiguousarray(
+        data.ravel(order="F"), dtype=float
+    )
+    return image
+
+
+def _wavedude_geometry(plotter, info: dict) -> None:
+    """The substrate, the strip and the load, at their recorded positions.
+
+    Two of these are ASSUMPTIONS about SHAPE, not about position, and the
+    comments beside them say so:
+
+    * the strip is drawn as a zero-thickness foil on top of the substrate: the
+      dump records its width and no thickness;
+    * the strip's y offset is NOT recorded anywhere. The overlay centres it on
+      the grid, which is the only choice the dump supports.
+
+    Every part is added in its own try/except: a pyvista that refuses one Box
+    must cost that box, not the animation.
+    """
+    import pyvista as pv
+
+    cell_mm = _cell_mm(info)
+    x_span = int(info["nx"]) * cell_mm
+    y_span = int(info["ny"]) * cell_mm
+    y_mid = 0.5 * y_span
+    substrate_h = float(info["substrate_h_mm"])
+    strip_w = float(info["strip_w_mm"])
+    port_x = float(info["port_x_mm"])
+    load_x = float(info["load_x_mm"])
+
+    if np.isfinite(substrate_h) and substrate_h > 0.0:
+        try:
+            plotter.add_mesh(
+                pv.Box(bounds=(0.0, x_span, 0.0, y_span, 0.0, substrate_h)),
+                color="steelblue",
+                opacity=0.25,
+            )
+        except Exception as exc:  # noqa: BLE001 - losing one box is survivable
+            print(f"[poc_app] substrate not drawn: {exc}", file=sys.stderr)
+
+    if (
+        np.isfinite(strip_w)
+        and strip_w > 0.0
+        and np.isfinite(substrate_h)
+        and np.isfinite(port_x)
+        and np.isfinite(load_x)
+    ):
+        try:
+            # ASSUMPTION: zero-thickness foil, centred on y, on the substrate
+            # top. The dump records neither a thickness nor a y offset.
+            plotter.add_mesh(
+                pv.Box(
+                    bounds=(
+                        port_x,
+                        load_x,
+                        y_mid - 0.5 * strip_w,
+                        y_mid + 0.5 * strip_w,
+                        substrate_h,
+                        substrate_h + 0.05,
+                    )
+                ),
+                color="gold",
+                opacity=0.9,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[poc_app] strip not drawn: {exc}", file=sys.stderr)
+
+    if np.isfinite(load_x) and np.isfinite(substrate_h):
+        try:
+            plotter.add_mesh(
+                pv.Line((load_x, y_mid, 0.0), (load_x, y_mid, substrate_h)),
+                color="red",
+                line_width=4,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[poc_app] load marker not drawn: {exc}", file=sys.stderr)
+
+
+def _probe_trame_ui():
+    """A usable Trame Vuetify module pair, or None after naming what failed.
+
+    Same probe chain as run_web, newest first, and every candidate is guarded in
+    its own try/except so a broken fallback cannot escape the loop. Returns
+    ``(ui_module, widgets_module, SinglePageLayout, trame_version, ui_path,
+    label)``.
+    """
+    import importlib
+
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        trame_version = _pkg_version("trame")
+    except Exception:  # noqa: BLE001 - an unknown version is not a failure
+        try:
+            import trame
+
+            trame_version = getattr(trame, "__version__", "unknown")
+        except Exception:  # noqa: BLE001
+            trame_version = "unknown"
+
+    for label, ui_path, widgets_path in (
+        ("vuetify3", "trame.ui.vuetify3", "trame.widgets.vuetify3"),
+        ("vuetify2", "trame.ui.vuetify2", "trame.widgets.vuetify2"),
+        ("vuetify", "trame.ui.vuetify", "trame.widgets.vuetify"),
+    ):
+        try:
+            candidate_ui = importlib.import_module(ui_path)
+            candidate_widgets = importlib.import_module(widgets_path)
+            candidate_layout = getattr(candidate_ui, "SinglePageLayout")
+        except Exception as exc:  # noqa: BLE001 - deliberate, see docstring
+            print(f"[poc_app] probe {label} unusable: {exc}", file=sys.stderr)
+            continue
+        return (
+            candidate_ui,
+            candidate_widgets,
+            candidate_layout,
+            trame_version,
+            ui_path,
+            label,
+        )
+
+    print(
+        "[poc_app] trame is installed but no Vuetify UI module was found.",
+        file=sys.stderr,
+    )
+    print(f"[poc_app] trame version: {trame_version}", file=sys.stderr)
+    print(
+        "[poc_app] modules tried: trame.ui.vuetify3, trame.ui.vuetify2, "
+        "trame.ui.vuetify",
+        file=sys.stderr,
+    )
+    print("[poc_app] fix: python3 -m pip install trame-vuetify", file=sys.stderr)
+    print(
+        "[poc_app] then re-run: python3 server/poc_app.py --input <wavedude.npz>",
+        file=sys.stderr,
+    )
+    return None
+
+
+def run_web_wavedude(
+    info: dict,
+    host: str,
+    port: int,
+    fps: int = DEFAULT_FPS,
+    structure=None,
+    structures=None,
+) -> int:
+    """Serve the animation page for an ``emfit.wavedude/1`` dump.
+
+    The page is ONE plotter with three flat sheets in it; a frame only swaps the
+    scalar array inside those sheets, so nothing is rebuilt between frames and no
+    camera state is lost. The colour limits are fixed once at add_mesh time from
+    the dump's single stored ceiling, which is what stops a frame from painting
+    its own maximum as brightly as the first one.
+
+    Only one plane family is animated at a time, because the two families do not
+    share a clock (see _wavedude_frame_time_ns): advancing both from one slider
+    would put two different instants under one frame number.
+
+    Every widget layer is probed and degrades on its own: no VSlider costs the
+    slider (the frame label still counts), no html widgets costs the readout
+    rows, and a missing pyvista.trame.ui is the only hard stop because without it
+    there is no view at all.
+    """
+    # Deliberately BEFORE any import of pyvista: on a machine without the web
+    # stack the missing package must be a named message and exit 1, exactly as
+    # run_web does, not a ModuleNotFoundError traceback.
+    structures = load_structures() if structures is None else structures
+    if structure is None:
+        structure = _structure_by_id(DEFAULT_STRUCTURE, structures)
+    structure_label = _structure_label(structure)
+
+    missing = check_web_requirements()
+    if missing:
+        print(
+            "[poc_app] the web UI cannot start: packages are missing.",
+            file=sys.stderr,
+        )
+        print(
+            "[poc_app] fix: python3 -m pip install " + " ".join(missing),
+            file=sys.stderr,
+        )
+        print(
+            "[poc_app] or:  python3 -m pip install -r requirements-web.txt",
+            file=sys.stderr,
+        )
+        print("[poc_app] then re-run the same command.", file=sys.stderr)
+        return 1
+    print("[poc_app] web dependencies present")
+
+    import asyncio
+
+    import pyvista as pv
+
+    probed = _probe_trame_ui()
+    if probed is None:
+        return 1
+    (
+        ui_module,
+        widgets_module,
+        SinglePageLayout,
+        trame_version,
+        ui_path,
+        variant,
+    ) = probed
+    print(f"[poc_app] trame {trame_version} - ui modules: {ui_path}")
+
+    # Resolve the widget classes instead of hardcoding them, so a variant that
+    # lacks one degrades to a label instead of a traceback.
+    widgets = {}
+    missing_widgets = []
+    for name in ("VSpacer", "VSlider", "VLabel", "VContainer", "VBtn"):
+        try:
+            widgets[name] = getattr(widgets_module, name)
+        except Exception:
+            missing_widgets.append(name)
+    for name in missing_widgets:
+        print(f"[poc_app] widget {name} missing from {variant}", file=sys.stderr)
+
+    html_div = None
+    try:
+        from trame.widgets import html as html_widgets
+
+        html_div = getattr(html_widgets, "Div", None)
+    except Exception as exc:  # noqa: BLE001 - optional layer
+        print(
+            f"[poc_app] trame.widgets.html unavailable ({exc}): no readout rows",
+            file=sys.stderr,
+        )
+
+    try:
+        from pyvista.trame.ui import plotter_ui
+    except Exception as exc:  # noqa: BLE001 - diagnose instead of traceback
+        print(f"[poc_app] pyvista.trame.ui is unusable: {exc}", file=sys.stderr)
+        print(
+            "[poc_app] fix: python3 -m pip install -r requirements-web.txt",
+            file=sys.stderr,
+        )
+        return 1
+
+    from trame.app import get_server
+
+    fps = max(1, int(fps))
+    nt = int(info["nt"])
+    nt_x = int(info["nt_x"])
+    cell_mm = _cell_mm(info)
+    vmin, vmax = info["color_range"]
+    j_mm = float(int(info["j_cut"])) * cell_mm
+
+    plotter = pv.Plotter(off_screen=True)
+    plotter.set_background("white")
+    try:
+        plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")
+    except Exception as exc:  # noqa: BLE001 - decoration only
+        print(f"[poc_app] axes not drawn: {exc}", file=sys.stderr)
+
+    # Three sheets, added ONCE. clim is the dump's single ceiling for every one
+    # of them, so no later frame has a scale of its own to renormalise with.
+    sheets: dict = {}
+    for key, family in (
+        ("ez_ycut", "ycut"),
+        ("ez_xcut_near", "xcut"),
+        ("ez_xcut_far", "xcut"),
+    ):
+        try:
+            grid = _wavedude_grid(info, key, 0)
+            actor = plotter.add_mesh(
+                grid,
+                scalars="ez_abs",
+                cmap="turbo",
+                clim=(vmin, vmax),
+                show_scalar_bar=(family == "ycut"),
+                scalar_bar_args={"title": "|Ez| [V/m]"},
+            )
+        except Exception as exc:  # noqa: BLE001 - one sheet is not the picture
+            print(f"[poc_app] plane {key} not drawn: {exc}", file=sys.stderr)
+            continue
+        sheets[key] = {"grid": grid, "actor": actor, "family": family}
+    if not sheets:
+        print(
+            "[poc_app] no plane could be drawn - check the pyvista/VTK build",
+            file=sys.stderr,
+        )
+        return 1
+
+    _wavedude_geometry(plotter, info)
+    try:
+        plotter.view_isometric()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[poc_app] camera view skipped: {exc}", file=sys.stderr)
+
+    try:
+        server = get_server(
+            client_type="vue3" if variant == "vuetify3" else "vue2"
+        )
+    except TypeError:
+        # Older trame builds do not accept client_type.
+        server = get_server()
+
+    state, ctrl = server.state, server.controller
+    state.trame__title = f"{structure_label} |Ez| animation"
+    state.mode = "ycut"
+    state.playing = False
+    state.frame = 0
+    state.frame_max = nt - 1
+    state.play_label = "play"
+
+    measured = _finite(info["v_measured_m_s"])
+    analytic = _finite(info["v_analytic_m_s"])
+    traverse = _finite(info["t_traverse_ns"])
+    reliability = "reliable" if info["v_measured_reliable"] else "NOT reliable"
+    state.velocity_label = (
+        "velocity: measured "
+        + (
+            f"{measured:.4e} m/s ({reliability})"
+            if measured is not None
+            else "not recorded"
+        )
+        + ", analytic "
+        + (f"{analytic:.4e} m/s" if analytic is not None else "not recorded")
+        + ", t_traverse "
+        + (f"{traverse:.4f} ns" if traverse is not None else "not recorded")
+    )
+    state.velocity_note = info["velocity_note"] or "velocity note: not recorded"
+    if info["color_range_empty"]:
+        state.scale_label = (
+            "scale: [EMPTY DUMP] every stored |Ez| is zero - 0 .. 1 is a "
+            "placeholder and no frame has a scale of its own"
+        )
+    else:
+        state.scale_label = (
+            f"scale: |Ez| {vmin:.4e} .. {vmax:.4e} V/m, ONE limit for EVERY "
+            f"frame (p{COLOR_PERCENTILE:g} ceiling; the brightest "
+            f"{100.0 - COLOR_PERCENTILE:g} % of cells clip)"
+        )
+
+    # The plotter_ui handle only exists once the layout is built, so the frame
+    # handler reaches it through this dict instead of closing over it.
+    handles: dict = {}
+
+    def _show(frame, mode=None) -> None:
+        """Draw ONE frame of the selected family. Never rescales.
+
+        The colour limits were fixed when the sheets were added, so this only
+        swaps the scalar array: there is no per-frame normalisation here that
+        could paint the recorded decay away.
+        """
+        mode = state.mode if mode is None else mode
+        mode = "xcut" if mode == "xcut" else "ycut"
+        frames = nt if mode == "ycut" else nt_x
+        try:
+            index = int(round(float(frame)))
+        except (TypeError, ValueError):
+            index = int(state.frame)
+        index = max(0, min(frames - 1, index))
+        state.frame = index
+        state.mode = mode
+
+        for key, entry in sheets.items():
+            visible = entry["family"] == mode
+            try:
+                entry["actor"].visibility = visible
+            except Exception as exc:  # noqa: BLE001 - a stuck sheet is not fatal
+                print(
+                    f"[poc_app] sheet visibility skipped: {exc}", file=sys.stderr
+                )
+            if not visible:
+                continue
+            array = info[key]
+            if array.shape[0] == 0:
+                continue
+            data = np.abs(
+                np.asarray(
+                    array[min(index, int(array.shape[0]) - 1)], dtype=float
+                )
+            )
+            try:
+                entry["grid"].point_data["ez_abs"] = np.ascontiguousarray(
+                    data.ravel(order="F"), dtype=float
+                )
+                entry["grid"].point_data.active_scalars_name = "ez_abs"
+                entry["grid"].Modified()
+            except Exception as exc:  # noqa: BLE001 - keep the old frame
+                print(
+                    f"[poc_app] frame update skipped for {key}: {exc}",
+                    file=sys.stderr,
+                )
+
+        t_ns = _wavedude_frame_time_ns(info, mode, index)
+        state.t_label = (
+            "sim time: not recorded"
+            if not np.isfinite(t_ns)
+            else f"sim time: t = {t_ns:.6f} ns"
+        )
+        state.frame_label = f"frame {index + 1} / {frames}"
+        state.phase_label = _wavedude_phase_text(t_ns, info["t_traverse_ns"])
+        state.mode_label = (
+            f"x-z sheet at y = {j_mm:.4f} mm (one recorded y sample)"
+            if mode == "ycut"
+            else (
+                "y-z sheets at x = "
+                f"{float(info['xcut_near_mm']):.4f} / "
+                f"{float(info['xcut_far_mm']):.4f} mm, written every "
+                f"{int(info['dump_stride']) * 10} steps"
+            )
+        )
+        try:
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - never take the server down
+            print(f"[poc_app] render skipped: {exc}", file=sys.stderr)
+        view_handle = handles.get("view")
+        if view_handle is not None:
+            try:
+                view_handle.update()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+
+    # Initial labels, set before the layout is built so the first page a browser
+    # loads already carries frame 1's own numbers.
+    _show(0, "ycut")
+
+    # Registered BEFORE the layout is built, so ctrl.frame exists by the time the
+    # slider binds to it.
+    @ctrl.set("frame")
+    def _on_frame(frame=None, **_kwargs) -> None:
+        _show(state.frame if frame is None else frame, state.mode)
+
+    @ctrl.set("mode_toggle")
+    def _on_mode_toggle(**_kwargs) -> None:
+        """Swap which family is animated. The two clocks are never mixed."""
+        mode = "xcut" if state.mode == "ycut" else "ycut"
+        state.frame_max = (nt if mode == "ycut" else nt_x) - 1
+        _show(min(int(state.frame), int(state.frame_max)), mode)
+
+    @ctrl.set("play_toggle")
+    async def _on_play_toggle(**_kwargs) -> None:
+        """Advance one frame per wall-clock step until the button is pressed again.
+
+        The generation counter is what actually stops a running loop: a second
+        press bumps it, the older coroutine sees its generation superseded and
+        returns, so two loops can never interleave frames into the same sheet.
+        """
+        generation = int(handles.get("generation", 0)) + 1
+        handles["generation"] = generation
+        if state.playing:
+            state.playing = False
+            state.play_label = "play"
+            return
+        state.playing = True
+        state.play_label = "pause"
+        while int(handles.get("generation", 0)) == generation and state.playing:
+            frames = nt if state.mode == "ycut" else nt_x
+            _show((int(state.frame) + 1) % frames, state.mode)
+            await asyncio.sleep(1.0 / fps)
+        if int(handles.get("generation", 0)) == generation:
+            state.playing = False
+            state.play_label = "play"
+
+    with SinglePageLayout(server) as layout:
+        layout.title.set_text(f"{structure_label} - |Ez| animation")
+        with layout.toolbar:
+            if "VSpacer" in widgets:
+                widgets["VSpacer"]()
+            if "VSlider" in widgets and "VLabel" in widgets:
+                try:
+                    widgets["VSlider"](
+                        v_model=("frame", 0),
+                        min=0,
+                        max=("frame_max", nt - 1),
+                        step=1,
+                        thumb_label=True,
+                        hide_details=True,
+                        style="max-width: 420px; margin-right: 16px;",
+                    )
+                    widgets["VLabel"]("{{ frame_label }}")
+                except Exception as exc:  # noqa: BLE001 - label only
+                    print(
+                        f"[poc_app] frame slider unavailable: {exc}",
+                        file=sys.stderr,
+                    )
+            if "VBtn" in widgets:
+                try:
+                    widgets["VBtn"]("{{ play_label }}", click=ctrl.play_toggle)
+                    widgets["VBtn"]("Switch plane", click=ctrl.mode_toggle)
+                except Exception as exc:  # noqa: BLE001 - button bindings differ
+                    print(
+                        f"[poc_app] playback buttons unavailable: {exc}",
+                        file=sys.stderr,
+                    )
+                    if "VLabel" in widgets:
+                        widgets["VLabel"](
+                            "playback unavailable (button binding failed)"
+                        )
+        with layout.content:
+            container = widgets.get("VContainer")
+            if container is None or html_div is None:
+                # No container or no html widgets: the plotter keeps the whole
+                # content area. The toolbar labels still carry the numbers.
+                view = plotter_ui(plotter)
+            else:
+                with container(fluid=True, classes="pa-0 fill-height"):
+                    with html_div(
+                        style=(
+                            "display: flex; flex-direction: column; "
+                            "height: 100%; width: 100%; overflow: hidden;"
+                        )
+                    ):
+                        with html_div(
+                            style=(
+                                "flex: 0 0 auto; padding: 4px 12px; "
+                                "font-size: 13px; line-height: 1.4;"
+                            )
+                        ):
+                            html_div("{{ t_label }}")
+                            html_div("{{ mode_label }}")
+                            html_div("{{ phase_label }}")
+                            html_div("{{ scale_label }}")
+                            html_div("{{ velocity_label }}")
+                            html_div("{{ velocity_note }}")
+                        with html_div(
+                            style="flex: 1 1 auto; min-height: 320px;"
+                        ):
+                            view = plotter_ui(plotter)
+
+    handles["view"] = view
+
+    print(
+        f"[poc_app] animation: {nt} frames on ez_ycut, {nt_x} on each x-cut, "
+        f"played at {fps} fps (a VIEWING rate - see the sim time readout)"
+    )
+    print(
+        "[poc_app] each frame's sim time is rebuilt from its own plane's "
+        "frame index: the x-cuts are written every "
+        f"{int(info['dump_stride']) * 10} steps"
+    )
+    print(f"[poc_app] serving on http://{host}:{port}")
+    print("[poc_app] open that URL in a browser; Ctrl-C to stop")
+    try:
+        server.start(host=host, port=port, open_browser=False)
+    except OSError as exc:
+        in_use = getattr(exc, "errno", None) == errno.EADDRINUSE or (
+            "Address already in use" in str(exc)
+        )
+        if not in_use:
+            raise
+        print(f"[poc_app] port {port} is already in use.", file=sys.stderr)
+        print(
+            f"[poc_app] something else is listening on {host}:{port}.",
+            file=sys.stderr,
+        )
+        print(
+            f"[poc_app] fix: python3 server/poc_app.py --port {port + 1}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="poc_app.py",
@@ -2779,6 +3950,16 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--station", type=int, default=4, help="initial station index (default: 4)"
     )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=DEFAULT_FPS,
+        help=(
+            "frames per second for the wave animation (default: "
+            f"{DEFAULT_FPS}); applies to a {WAVEDUDE_SCHEMA} dump only - "
+            "a legacy station dump has no time axis and ignores it"
+        ),
+    )
     args = parser.parse_args(argv)
 
     structures = load_structures()
@@ -2807,15 +3988,26 @@ def main(argv=None) -> int:
     # _structure_input_path. The registry never overrides an explicit path, so a
     # run that is not registered yet can still be opened.
     src = _structure_input_path(args.input, structure)
-    info = load_dump(src)
+    # Dispatch on the npz schema, so one entry point opens either artefact.
+    info = load_any_dump(src)
 
     if args.dump_state:
         out = _resolve(args.dump_state)
-        state = build_state_dump(info, structure, structures)
+        state = build_state_dump(info, structure, structures, fps=args.fps)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
         print(f"[poc_app] wrote {out}")
         return 0
+
+    # The animation dump has no station axis (its planes carry TIME instead), so
+    # it forks BEFORE the legacy station clamp and station-driven viewer.
+    if _is_wavedude(info):
+        if args.list_keys:
+            print_keys(info)
+            return 0
+        return run_web_wavedude(
+            info, args.host, args.port, args.fps, structure, structures
+        )
 
     n_st = info[PLANE_KEY].shape[0]
     station = args.station
