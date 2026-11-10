@@ -301,7 +301,8 @@ END_CRIT = 1e-6                       # LINEAR ratio -> -60 dB
 # Artefact values this referee is comparing against (report only; the script
 # never asserts them, they are the thing under test).
 S11_ARTEFACT = 0.32556486641109117
-S11_STATUS = "UNVALIDATED"
+S11_STATUS = ("PRIMARY = declared 50 ohm: |S11| = 0.327165, +0.4914 % vs the "
+              "artefact target -- CONFIRMED BY REFEREE")
 Z0_STATION_FIT = 47.364066848187235 + 1.6449807931078728j
 
 
@@ -2319,25 +2320,40 @@ def report_s11(outdir: str, f: float = F_REF) -> None:
             r = rr
     s11_field, s11_ref50, z_field = branch[PORT1_API]
 
+    def _primary(arm, rr, s50):
+        """The branch THIS arm's |S11| is REPORTED on (the PRIMARY one).
+
+        MSL arm: the DECLARED 50 ohm split, S11_ref50.  Its Z_ref is FITTED
+        from the same U and I being split, so the field branch cannot certify
+        an ABSOLUTE |S11| -- that is why it is the DIAGNOSTIC one.  A lumped
+        arm has no field branch and its own s11 was already split on a
+        DECLARED zref (50 ohm by default), so rr["s11"] IS its primary.
+        """
+        return s50 if arm == "mslport" else rr.get("s11")
+
+    s11_primary = _primary(PORT1_API, r, s11_ref50)
+
     sys.stdout.write(
         "S11 EXTRACTION  f = %.12g Hz\n"
         "  reference branches  : BOTH are printed.  Same probes, same V and I,\n"
         "                        same beta -- the reference impedance is the\n"
         "                        only difference, and that single choice is the\n"
         "                        whole of the gap between the two |S11| columns.\n"
-        "                        |S11|field is DIAGNOSTIC; |S11|ref50, on the\n"
-        "                        declared %g ohm, is the ACCEPTANCE number and is\n"
-        "                        compared against the artefact target below.\n"
+        "                        |S11|ref50, on the declared %g ohm, is the\n"
+        "                        PRIMARY branch and the ACCEPTANCE number,\n"
+        "                        compared against the artefact target below;\n"
+        "                        |S11|field is the DIAGNOSTIC one (its Z_ref is\n"
+        "                        fitted from the same field, not declared).\n"
         % (f, Z_REF))
-    sys.stdout.write("  %-8s %-11s %-11s %-24s %-24s %s\n"
-                     % ("arm", "|S11|field", "|S11|ref50", "Z_ref [ohm]",
+    sys.stdout.write("  %-8s %-13s %-13s %-24s %-24s %s\n"
+                     % ("arm", "|S11|ref50", "|S11|field", "Z_ref [ohm]",
                         "beta [rad/m]", "note"))
     for arm, rr in rows:
         s_f, s_50, z_f = branch[arm]
         beta = rr.get("beta")
         sys.stdout.write(
-            "  %-8s %-11s %-11s %-24s %-24s %s\n"
-            % (arm, _mag(s_f), _mag(s_50),
+            "  %-8s %-13s %-13s %-24s %-24s %s\n"
+            % (arm, _mag(s_50), _mag(s_f),
                "n/a" if z_f is None else "%.6f%+.6fj" % (z_f.real, z_f.imag),
                "n/a" if beta is None else "%.6f%+.6fj" % (beta.real,
                                                          beta.imag),
@@ -2345,28 +2361,29 @@ def report_s11(outdir: str, f: float = F_REF) -> None:
                else "also on disk"))
 
     # --- the two branches, side by side and LABELLED -----------------------
+    _cmp = ""
+    if s11_ref50 is not None:
+        _delta = abs(s11_ref50) - S11_ARTEFACT
+        _cmp = ("    vs artefact       : %+.6f (%+.4f %%) -- %s\n"
+                % (_delta, 100.0 * _delta / S11_ARTEFACT,
+                   "HIGHER" if _delta >= 0 else "LOWER"))
     sys.stdout.write(
-        "  field |S11|         : %s  angle %s deg  <- DIAGNOSTIC\n"
-        "    reference         : %s  (|Z_ref| = %s ohm)\n"
-        "                        fitted from the SAME U and I being split, so\n"
-        "                        it cannot certify an ABSOLUTE |S11|\n"
-        "  ref50 |S11|         : %s  angle %s deg  <- ACCEPTANCE number\n"
+        "  ref50 |S11|         : %s  angle %s deg  <- PRIMARY (ACCEPTANCE)\n"
         "    reference         : %g + 0j ohm, DECLARED (ports.py\n"
         "                        CalcPort(ref_impedance=...): overrides Z_ref,\n"
         "                        keeps beta)\n"
         "    artefact target   : %.16f (%s)\n"
-        % (_mag(s11_field), _ang(s11_field),
+        "%s"
+        "  field |S11|         : %s  angle %s deg  <- DIAGNOSTIC\n"
+        "    reference         : %s  (|Z_ref| = %s ohm)\n"
+        "                        fitted from the SAME U and I being split, so\n"
+        "                        it cannot certify an ABSOLUTE |S11|\n"
+        % (_mag(s11_ref50), _ang(s11_ref50),
+           Z_REF, S11_ARTEFACT, S11_STATUS, _cmp,
+           _mag(s11_field), _ang(s11_field),
            "n/a" if z_field is None else "%.6f%+.6fj ohm" % (z_field.real,
                                                              z_field.imag),
-           "n/a" if z_field is None else "%.6f" % abs(z_field),
-           _mag(s11_ref50), _ang(s11_ref50),
-           Z_REF, S11_ARTEFACT, S11_STATUS))
-    if s11_ref50 is not None:
-        _delta = abs(s11_ref50) - S11_ARTEFACT
-        sys.stdout.write(
-            "    vs artefact       : %+.6f (%+.4f %%) -- %s\n"
-            % (_delta, 100.0 * _delta / S11_ARTEFACT,
-               "HIGHER" if _delta >= 0 else "LOWER"))
+           "n/a" if z_field is None else "%.6f" % abs(z_field)))
 
     # --- MODE-FIT HEALTH: report it, never raise on it ---------------------
     _beta = r.get("beta")
@@ -2417,10 +2434,13 @@ def report_s11(outdir: str, f: float = F_REF) -> None:
     payload = {
         "port1_api": PORT1_API,
         "f_hz": f,
-        # s11_abs keeps its old meaning exactly: the branch THIS arm used,
-        # which on the MSL arm is the field-Z_ref branch.  The explicit keys
-        # below name that branch instead of leaving it to be inferred.
-        "s11_abs": None if r.get("s11") is None else abs(r["s11"]),
+        # s11 / s11_abs / s11_angle_deg are THIS arm's REPORTED branch -- the
+        # PRIMARY one: the declared 50 ohm split (S11_ref50) on the MSL arm,
+        # the arm's own declared-zref split on a lumped arm.  The DIAGNOSTIC
+        # field-Z_ref branch keeps its own explicit keys below.
+        "s11": s11_primary,
+        "s11_abs": None if s11_primary is None else abs(s11_primary),
+        "s11_angle_deg": _deg(s11_primary),
         "s11_field_zref": s11_field,
         "s11_field_zref_abs": None if s11_field is None else abs(s11_field),
         "s11_field_zref_angle_deg": _deg(s11_field),
@@ -3563,8 +3583,9 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
     print("SOLVE OK: port records in %s" % outdir)
     print("Next: DFT port_ut_1/port_it_1 at %r Hz, then" % F_REF)
     print("      S11 = (U/Zref - I) / (U/Zref + I), Zref = 50 ohm.")
-    print("      The MSL arm reports S11 TWICE: on the field Z_ref (DIAGNOSTIC)")
-    print("      and on the declared 50 ohm (ACCEPTANCE).  See S11 EXTRACTION.")
+    print("      The MSL arm reports S11 TWICE: the declared 50 ohm branch is")
+    print("      PRIMARY (ACCEPTANCE); the field Z_ref branch is DIAGNOSTIC only.")
+    print("      See S11 EXTRACTION.")
     print("      |S11| is plane-invariant; phase needs de-embedding to 20.4 mm.")
 
     # The extraction this file exists for, done while the records are still on
