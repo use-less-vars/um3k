@@ -163,6 +163,31 @@ API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
     unused-primitive line (on a full solve, also its port_ut_2/port_it_2 V/I
     ratio).  Its `Active cells` count is evidence in neither direction.
 
+(14) FDTD.AddMSLPort(1, <strip property>, ...) is NOT "the lumped port under
+    another name".  Three of its failure modes are SILENT:
+    (a) z GEOMETRY.  ports.py:348 assigns MSL_stop[exc] = MSL_start[exc]
+        BEFORE the metal box is added, so the metal plane comes from START[z]
+        and STOP[z] is DISCARDED for it.  The box must therefore START on the
+        strip plane (z = z_strip = 1.6 mm); stop[z] survives only as the FAR
+        END of the three voltage probes (ports.py:373-374) and as the sign of
+        upside_down (ports.py:326).  Give both ends the same z and NOTHING
+        raises: the metal still lands correctly, but upside_down = sign(0) = 0,
+        the excitation vector is scaled to zero and the launch excites
+        nothing at all.  port1_box() and msl_probe_planes() both refuse that
+        box, so the silence cannot reach a solve.
+    (b) ORDER.  MSLPort reads GetLines(prop_ny) in its CONSTRUCTOR
+        (ports.py:351-353) and raises "At least 5 lines in propagation
+        direction required!" if the mesh has not been handed over yet.
+        build_model() must call g.SetLines(...) BEFORE add_port1(); it does
+        (SetLines at ~1305-1315, add_port1 at ~1341), and that order is the
+        reason, not a matter of taste.
+    (c) FIVE probe records, not two.  There is no port_ut_1 / port_it_1 in an
+        MSL run: the voltage probes are port_1_utA / utB / utC and the
+        current probes are port_1_itA / itB (ports.py:382 adds TWO current
+        probes; ports.py:440 indexes I_delta[0]).  extract_s11() would raise
+        FileNotFoundError on the lumped names, and port1_probe_names() is the
+        one place that knows which set this run wrote.
+
 --------------------------------------------------------------------------
 NUMERIC FIELDS, AND THE LOAD AS ITS OWN VERDICT
 --------------------------------------------------------------------------
@@ -216,6 +241,7 @@ That is a separate build; do not mix AddMSLPort in to get it.
 from __future__ import annotations
 
 import argparse
+import cmath
 import contextlib
 import math
 import os
@@ -652,18 +678,38 @@ _PORT2_P_DIR = "x"                    # the load resists the LONGITUDINAL E_x
 # plane.  It is NOT a 2026-11-09 suspect -- those logs called the LOAD into
 # question -- so nothing here is promoted as a fix; the arms exist so the
 # launch can be moved independently of the load when a run has to be split.
+#   mslport          -- DEFAULT.  FDTD.AddMSLPort(...): the reference's own
+#                       microstrip port (infra/openems/reference/ports.py),
+#                       which adds its own metal, writes its own FIVE probes
+#                       and takes Z_ref from the FIELDS instead of from a
+#                       declared 50 ohm.  A different PRIMITIVE, not a tweak
+#                       of the lumped plane.
 #   lumped           -- the original call, written out verbatim in add_port1()
 #   priority         -- the same zero-volume plane, priority= forwarded to Port
 #   x-cell           -- the box grows ONE CELL in x, so port and strip SHARE
 #                       volume: a PHYSICS DEVIATION, not a fix
 #   x-cell-priority  -- x-cell's geometry AND priority's kwarg at once
+# The four lumped arms are the 2026-11-09 geometry and stay selectable; they
+# are the only arms that were ever run, so they remain the control.
 # ---------------------------------------------------------------------------
-PORT1_API = "lumped"         # replaced from --port1-api in main()
-PORT1_API_CHOICES = ("lumped", "x-cell", "priority", "x-cell-priority")
+PORT1_API = "mslport"        # replaced from --port1-api in main()
+PORT1_API_CHOICES = ("mslport", "lumped", "x-cell", "priority",
+                     "x-cell-priority")
 
-PORT1_RATIONALE = {  # one entry per arm; "lumped" is the DEFAULT and is
-                     # UNCHANGED, "priority" is TEST 3, "x-cell" is TEST 2
-                     # plus its deviation, "x-cell-priority" is both at once.
+PORT1_RATIONALE = {  # one entry per arm; "mslport" is the DEFAULT, "lumped"
+                     # is the 2026-11-09 control and is UNCHANGED, "priority"
+                     # is TEST 3, "x-cell" is TEST 2 plus its deviation,
+                     # "x-cell-priority" is both at once.
+    "mslport": (
+        "DEFAULT -- FDTD.AddMSLPort(1, <strip property>, start=[x_port, y_lo, "
+        "z_strip], stop=[x_port+cell, y_hi, 0.0], prop_dir='x', exc_dir='z', "
+        "excite=1).  This is the reference's own microstrip port "
+        "(infra/openems/reference/ports.py:311-448): it adds the strip metal "
+        "itself (ports.py:346-349), writes FIVE probes of its own "
+        "(port_1_utA/B/C, port_1_itA/B), and takes Z_ref from the measured "
+        "fields (ports.py:447) instead of from a declared 50 ohm.  It is the "
+        "only arm whose extraction is ports.py's arithmetic, so it is the "
+        "only arm that can be compared with the reference at all."),
     "lumped": (
         "DEFAULT, unchanged -- FDTD.AddLumpedPort(1, 50, ...) with p_dir='z', "
         "excite=1.0 and NO priority kwarg: a zero-volume plane at x_port "
@@ -919,6 +965,24 @@ def port1_box(p: dict) -> tuple:
     active-cell expectation, so all of them follow the API with no second
     table to keep in step.
     """
+    if PORT1_API == "mslport":
+        # MANDATORY GEOMETRY -- do not "tidy" this back to z = 0 / h_sub.
+        # ports.py:348 does  MSL_stop[exc_ny] = MSL_start[exc_ny]  BEFORE it
+        # adds the metal, so stop[z] is DISCARDED for the metal: the strip
+        # plane comes from start[z] and must therefore BE z_strip.  stop[z]
+        # survives only where ports.py still uses it -- as the far end of the
+        # three voltage probes (ports.py:373-374) and as the sign source for
+        # upside_down (ports.py:326).  A z extent of exactly 0 would give
+        # upside_down = sign(0) = 0, hence exc_vec = 0: a silent zero
+        # excitation with no error anywhere.
+        start = [p["x_port"], p["y_lo"], p["z_strip"]]
+        stop = [p["x_port"] + port1_cell(p), p["y_hi"], 0.0]
+        if start[2] == stop[2]:
+            raise SystemExit(
+                "PORT 1 BOX (mslport): z_strip == stop z == %.12g m, so the "
+                "MSL excitation would be scaled by upside_down = sign(0) = 0 "
+                "and the launch would excite nothing" % (start[2],))
+        return start, stop
     start = [p["x_port"], p["y_lo"], 0.0]
     stop = [p["x_port"], p["y_hi"], p["h_sub"]]
     if PORT1_API in ("x-cell", "x-cell-priority"):
@@ -933,6 +997,14 @@ def _port1_call_text(p: dict, priority) -> str:
     the log the solver actually produced.
     """
     start, stop = port1_box(p)
+    if PORT1_API == "mslport":
+        # No priority= here: Port.__init__ defaults self.priority to 0
+        # (ports.py:107-109) and MSLPort forwards it unconditionally
+        # (ports.py:349), so the metal already lands at priority 0 -- the
+        # same priority the lumped arms get by passing none.
+        return ("      FDTD.AddMSLPort(1, <strip property>, start=%s, stop=%s,"
+                " prop_dir='x', exc_dir='z', excite=1)"
+                % (_nums(start), _nums(stop)))
     kw = {"p_dir": "z", "excite": 1.0}
     if PORT1_API in ("priority", "x-cell-priority") and priority is not None:
         kw["priority"] = priority
@@ -959,18 +1031,89 @@ def port1_report(p: dict, priority=None, stream=sys.stdout) -> None:
                  % (int(round((stop[0] - start[0]) / CELL)),
                     int(round((stop[1] - start[1]) / CELL)),
                     int(round((stop[2] - start[2]) / CELL))))
-    if PORT1_API in ("lumped", "x-cell"):
+    if PORT1_API == "mslport":
+        prio_note = ("0 -- Port.__init__'s default (ports.py:107-109), "
+                     "forwarded by MSLPort (ports.py:349); never a kwarg here")
+    elif PORT1_API in ("lumped", "x-cell"):
         prio_note = "none -- this API never forwards one (Port default 0)"
     elif priority is None:
         prio_note = "none -- the representation passes none (Port default 0)"
     else:
         prio_note = repr(priority)
     stream.write("  priority             : %s\n" % prio_note)
+    if PORT1_API == "mslport":
+        _pl = msl_probe_planes(p)
+        _fl = msl_bias_floor(p)
+        stream.write(
+            "  primitive            : FDTD.AddMSLPort -- the reference's own "
+            "microstrip port,\n"
+            "                         ports.py:311-448.  NOT a lumped plane: "
+            "it adds metal,\n"
+            "                         probes and its own extraction.\n"
+            "  property object      : REUSED -- the strip's own property.  "
+            "ports.py:349\n"
+            "                         calls metal_prop.AddBox(..., "
+            "priority=self.priority), i.e.\n"
+            "                         priority 0, so the port metal "
+            "coalesces with the strip\n"
+            "                         instead of contesting it.\n"
+            "  metal plane          : z = %s m == START z.  ports.py:348 does\n"
+            "                         MSL_stop[exc] = MSL_start[exc]: stop z is "
+            "DISCARDED\n"
+            "                         for the metal.  stop z = 0.0 here "
+            "supplies only the\n"
+            "                         U-probe span and the excitation sign.\n"
+            "  U probes             : 3, spanning z = %s -> 0.0 m (full "
+            "start[exc]->stop[exc],\n"
+            "                         ports.py:373-374); p_type=0.\n"
+            "  I probes             : 2, FLATTENED on the strip plane "
+            "z = %s m\n"
+            "                         (ports.py:386); p_type=1, "
+            "weight=direction, norm_dir=prop.\n"
+            "  probe records        : %s\n"
+            "  Z reference          : from the FIELDS -- "
+            "sqrt(Et*dEt/(Ht*dHt)), ports.py:447.\n"
+            "                         NOT a declared 50 ohm, and NOT asserted "
+            "to equal one.\n"
+            "  measplane            : x_port + 0.5*cell = %s m -> mesh index "
+            "%d of %d,\n"
+            "                         tie resolved DOWNWARD (numpy argmin "
+            "returns the first\n"
+            "                         minimum; the measplane sits exactly "
+            "between two nodes).\n"
+            "  prope_idx            : %r (clamped=%s, wraps grid=%s)\n"
+            "  U probe x            : %s m   U_delta = %s m\n"
+            "  I probe x            : %s m   I_delta = %s m\n"
+            "  PEC accounting       : the MSL metal box is COINCIDENT with "
+            "strip sheet A's\n"
+            "                         first x cell -- same x span, same 8 y "
+            "cells, flat at\n"
+            "                         z_strip -- so it adds NO PEC area; the "
+            "expected face count\n"
+            "                         and PEC_EDGES_FLOOR are unchanged, and a "
+            "FLOOR could not\n"
+            "                         be broken by added metal anyway.\n"
+            % (_num(p["z_strip"]), _num(p["z_strip"]), _num(p["z_strip"]),
+               " ".join(PORT1_MSL_PROBES), _num(_pl["measplane_pos"]),
+               _pl["meas_pos_idx"], len(p["xs"]) - 1, _pl["prope_idx"],
+               _pl["clamped"], _pl["wrap"],
+               _nums(_pl["u_pos"]), _nums(_pl["u_delta"]),
+               _nums(_pl["i_pos"]), _nums(_pl["i_delta"])))
+        stream.write(
+            "  BIAS FLOOR (computed, not assumed): beta*dx = %.6f rad.  A "
+            "two-wave field at\n"
+            "    the exact probe planes gives %s\n"
+            "    -- the reference estimator's own error at that reflection "
+            "coefficient.\n"
+            % (_fl["beta_dx_rad"],
+               ", ".join("gamma=%.6g -> |dS11| = %.3e, Z_ref/Z_line = %.6f"
+                         % (r["gamma"], r["s11_error_abs"],
+                            r["z_ref_over_z_line"]) for r in _fl["rows"])))
     if PORT1_API in ("x-cell", "x-cell-priority"):
         stream.write(PORT1_DEVIATION % (PORT1_API,) + "\n")
 
 
-def add_port1(FDTD, p: dict, priority=None) -> None:
+def add_port1(FDTD, p: dict, priority=None, strip_prop=None) -> None:
     """Add the launch (port 1) by the API --port1-api selected.  Never Run().
 
     PORT1_API is read HERE, at call time, so main() can set it once and every
@@ -990,6 +1133,19 @@ def add_port1(FDTD, p: dict, priority=None) -> None:
             start=[p["x_port"], p["y_lo"], 0.0],
             stop=[p["x_port"], p["y_hi"], p["h_sub"]],
             p_dir="z", excite=1.0)
+        return
+    if PORT1_API == "mslport":
+        if strip_prop is None:
+            raise SystemExit(
+                "PORT 1 (mslport): no strip property handed in.  The MSL port "
+                "adds its own metal ON the strip plane, so it must reuse the "
+                "strip's property object; build_model() has to call "
+                "add_port1(FDTD, p, priority=..., strip_prop=strip).")
+        start, stop = port1_box(p)
+        # excite is an INT here, not an impedance: ports.py:403 multiplies it
+        # into a -1/0/+1 vector.  No priority kwarg -- see port1_report().
+        FDTD.AddMSLPort(1, strip_prop, start=start, stop=stop,
+                        prop_dir="x", exc_dir="z", excite=1)
         return
     start, stop = port1_box(p)
     kw = {"p_dir": "z", "excite": 1.0}
@@ -1011,10 +1167,15 @@ def port_boxes(p: dict) -> list:
     """
     start1, stop1 = port1_box(p)
     start2, stop2 = port2_box(p)
-    return [
-        ("port 1 launch (z-directed)", start1, stop1, "z"),
-        ("port 2 load (x-directed)", start2, stop2, "x"),
-    ]
+    # The MSL arm propagates along +x (ports.py:321, CheckNyDir(prop_dir)):
+    # its metal is ONE cell of x on the strip plane, FLAT in z.  Reporting
+    # p_dir="z" for it would make check_boxes() reject a box that is flat in z
+    # along the very axis it claims to propagate on.
+    if PORT1_API == "mslport":
+        first = ("port 1 launch (x-directed, MSLPort)", start1, stop1, "x")
+    else:
+        first = ("port 1 launch (z-directed)", start1, stop1, "z")
+    return [first, ("port 2 load (x-directed)", start2, stop2, "x")]
 
 
 def mesh_indices(start, stop) -> tuple:
@@ -1105,8 +1266,54 @@ def check_boxes(p: dict, rep: str = "metal") -> list:
     # is never p_dir, and p_dir itself must span at least one cell.  A lumped
     # port MAY span its cross-section -- port 1 deliberately spans the whole
     # 8-cell strip width in y.  See trap (6).
-    for label, start, stop, p_dir in port_boxes(p):
+    for _n, (label, start, stop, p_dir) in enumerate(port_boxes(p)):
         idx = mesh_indices(start, stop)
+        if _n == 0 and PORT1_API == "mslport":
+            # The MSL port is the one box the plane rule above cannot describe:
+            # it runs from the strip plane DOWN to the ground wall, so its z
+            # index span is descending and its "cross-section" is the strip
+            # width, not a launch aperture.  These are its own assertions --
+            # replacing the generic ones for THIS arm only, never relaxing them
+            # for the four lumped arms, which keep the code below untouched.
+            n_x = int(round((stop[0] - start[0]) / CELL))
+            if n_x != 1:
+                raise SystemExit(
+                    "PRE-FLIGHT FAILED: %s spans %d cells in x (%s .. %s); "
+                    "AddMSLPort draws its metal patch over exactly ONE cell of "
+                    "x from start[0], so any other span is a different line "
+                    "length and a different reference plane"
+                    % (label, n_x, _mm(start[0]).strip(), _mm(stop[0]).strip()))
+            n_y = int(round((stop[1] - start[1]) / CELL))
+            strip_w = p["y_hi"] - p["y_lo"]
+            if n_y < 1 or (stop[1] - start[1]) != strip_w:
+                raise SystemExit(
+                    "PRE-FLIGHT FAILED: %s spans %d cells in y (%s .. %s = "
+                    "%s), but the strip is %s wide; ports.py puts both the "
+                    "launch patch and all five probes on this box's y span, so "
+                    "a narrower port excites only part of the line and a wider "
+                    "one adds metal off the strip"
+                    % (label, n_y, _mm(start[1]).strip(), _mm(stop[1]).strip(),
+                       _mm(stop[1] - start[1]).strip(), _mm(strip_w).strip()))
+            if start[2] != p["z_strip"] or stop[2] != 0.0:
+                raise SystemExit(
+                    "PRE-FLIGHT FAILED: %s has z = %s .. %s, expected z_strip "
+                    ".. 0.0 (%s .. %s); ports.py:348 overwrites stop[z] with "
+                    "start[z] before adding the metal, so start[z] IS the strip "
+                    "plane, stop[z] survives only as the far end of the U "
+                    "probes, and any other z span measures a different voltage"
+                    % (label, _num(start[2]), _num(stop[2]),
+                       _mm(p["z_strip"]).strip(), _mm(0.0).strip()))
+            if p["z_strip"] == 0.0:
+                raise SystemExit(
+                    "PRE-FLIGHT FAILED: %s has z_strip = %s; the metal plane is "
+                    "start[z] alone, so z_strip == 0.0 would put the launch on "
+                    "the GROUND plane -- the port would short the line instead "
+                    "of exciting it" % (label, _num(p["z_strip"])))
+            rows.append((label, idx,
+                         "p_dir=%s, 1 cell in x, %d cells in y, z nodes "
+                         "%d..%d (strip plane down to ground)"
+                         % (p_dir, n_y, idx[4], idx[5])))
+            continue
         axes = {"x": (idx[0], idx[1]), "y": (idx[2], idx[3]),
                 "z": (idx[4], idx[5])}
         flat = [ax for ax in ("x", "y", "z") if axes[ax][0] == axes[ax][1]]
@@ -1170,9 +1377,7 @@ load                  : SERIES 50.000 ohm across the gap, column 50
   openEMS equivalent  : cut strip + lumped element spanning the full 3.2 mm
                         width in y, one cell in x.  NOT a z-directed element
                         and NOT a shunt to ground -- see doc section 2.
-launch port 1         : LUMPED, x = 3.2000 mm (col 8), ground -> strip
-  span                : z = 0 .. 1.6000 mm, y = 40.8000 .. 44.0000 mm
-  impedance           : 50 ohm, excite = 1.0
+@@PORT1@@
 probe port 2          : the load element itself (excite = 0, R = 50)
                         -> port_ut_2 / port_it_2 are the referee's V and I
 reference plane       : x = 3.2000 mm.  |S11| is compared as a MAGNITUDE only,
@@ -1206,7 +1411,7 @@ target                : |S11| at f = 5.827786408327286 GHz
 
 def echo(p: dict, rep: str = "metal", stream=sys.stdout) -> None:
     """Print the geometry echo.  Pure arithmetic -- needs no openEMS."""
-    stream.write(ECHO)
+    stream.write(ECHO.replace("@@PORT1@@", _port1_echo_lines(p)))
     # Port 1's construction is printed too: which API built the launch, and --
     # for the two x-cell arms -- the physics deviation that comes with it.
     port1_report(p, priority=None if rep == "metal" else STRIP_PRIORITY,
@@ -1338,7 +1543,10 @@ def build_model(p: dict, rep: str = "metal"):
     # above it).  add_port1()'s 'lumped' arm is this very call, written out
     # verbatim; port1_report() prints the API in force on the echo and
     # port1_box() moves the pre-flight with it.
-    add_port1(FDTD, p, priority=strip_priority)
+    # strip_prop: the MSL arm adds its metal onto the STRIP's property, so
+    # the launch and the strip share one material instead of two that CSXCAD
+    # would have to arbitrate.  The lumped arms ignore the argument.
+    add_port1(FDTD, p, priority=strip_priority, strip_prop=strip)
 
     # Port 2 -- THE LOAD.  A series element must resist the longitudinal
     # current, so it lies ALONG the strip: one cell in x, full width in y.
@@ -1425,6 +1633,557 @@ def extract_s11(outdir: str, f: float = F_REF, zref: float = Z_REF) -> dict:
     a = U / zref
     return {"f_hz": f, "zref_ohm": zref, "U": U, "I": I,
             "s11": (a - I) / (a + I)}
+
+
+# ---------------------------------------------------------------------------
+# PORT 1 EXTRACTION -- ports.py's OWN ARITHMETIC AND ITS OWN BIAS FLOOR
+#
+# The MSL arm does not write port_ut_1 / port_it_1.  It writes FIVE records of
+# its own and takes its reference impedance from the FIELDS, so neither the
+# lumped extraction nor a declared 50 ohm applies to it.  Everything below is
+# ports.py's arithmetic restated, so the echo can print what that arithmetic
+# will report -- including the error it carries -- before any solve exists.
+# ---------------------------------------------------------------------------
+
+# The mesh coordinate IS a length in metres: build_model() calls
+# g.SetDeltaUnit(1.0) and hands SetLines() metre values, so a probe position
+# expressed in mesh units needs no conversion.  The arithmetic below still
+# multiplies by this, so a future SetDeltaUnit() change breaks in ONE place.
+DELTA_UNIT = 1.0
+
+# beta in the loaded line at F_REF, rad/m.  Used ONLY by the bias floor, to
+# synthesise a KNOWN two-wave field at the exact probe planes.  beta*CELL =
+# 0.09262132669165131 rad on this grid, so beta = that / 0.4e-3.  It is an
+# artefact value, not a solver result.
+BETA_ARTEFACT = 231.55331672912826
+
+# The five records MSLPort writes: three voltage probes along the U path and
+# TWO current probes (ports.py:382; ports.py:440 indexes I_delta[0]).  None of
+# the lumped names exist in an MSL run, and none of these five exist in a
+# lumped run.  Trap (14c).
+PORT1_MSL_PROBES = ("port_1_utA", "port_1_utB", "port_1_utC",
+                    "port_1_itA", "port_1_itB")
+PORT1_LUMPED_PROBES = ("port_ut_1", "port_it_1")
+
+
+def port1_probe_names(p: dict) -> tuple:
+    """The port-1 records the arm in force makes the solver write.
+
+    PORT1_API is read HERE, at call time, like everywhere else.  The four
+    lumped arms all go through AddLumpedPort(1, ...), whose two probe boxes
+    are port_ut_1 / port_it_1; mslport writes five different records.  Nothing
+    downstream may assume the lumped pair exists -- trap (14c).
+    """
+    if PORT1_API == "mslport":
+        return PORT1_MSL_PROBES
+    return PORT1_LUMPED_PROBES
+
+
+def msl_probe_planes(p: dict) -> dict:
+    """The exact x planes MSLPort puts its five probes on, recomputed.
+
+    RECONSTRUCTED from ports.py:355-390 (the bindings are not vendored in this
+    workspace), so every field is named after the quantity it stands for and
+    the echo prints all of them:
+
+        measplane_pos = x_port + 0.5*cell        the measurement plane
+        meas_pos_idx  = argmin(|xs - measplane_pos|)
+
+    numpy's argmin returns the FIRST minimum, so a measplane that lands
+    exactly between two nodes resolves DOWNWARD.  On this grid it does: 3.4 mm
+    is halfway between the 3.2 mm and 3.6 mm nodes and node 8 wins.  The U
+    probes are the node BELOW, the node itself and the node ABOVE; the I
+    probes straddle the SAME centre by half a cell each (3.0 and 3.4 mm), so
+    they do not sit on the U nodes and dHt is a HALF-CELL-offset difference.
+    That offset is the whole reason the estimator carries a sinc() bias --
+    see msl_bias_floor().
+
+    Also returns the excitation sign.  ports.py:326 takes upside_down from
+    stop[exc] - start[exc], so a box whose two z ends are EQUAL gives sign(0)
+    = 0 and a SILENT zero excitation (trap 14a).  Refused here as well as in
+    port1_box(), because this is the function that hands the value on.
+    """
+    xs = p["xs"]
+    cell = port1_cell(p)
+    meas = p["x_port"] + 0.5 * cell
+    idx = 0
+    best = abs(xs[0] - meas)
+    for i in range(1, len(xs)):
+        d = abs(xs[i] - meas)
+        if d < best:                  # STRICT '<': a tie keeps the LOWER
+            idx, best = i, d          # index, which is argmin's own rule
+    lo, hi = idx - 1, idx + 1
+    clamped = lo < 0 or hi > len(xs) - 1
+    if clamped:
+        lo = max(lo, 0)
+        hi = min(hi, len(xs) - 1)
+    centre = xs[idx]
+    start, stop = port1_box(p)
+    dz = stop[2] - start[2]
+    upside_down = 0 if dz == 0.0 else (-1 if dz < 0.0 else 1)
+    if upside_down == 0:
+        raise SystemExit(
+            "MSL PORT 1: start z == stop z == %.12g m, so upside_down = "
+            "sign(0) = 0 and the excitation vector is scaled to zero: the "
+            "launch would excite NOTHING, silently (trap 14a)" % (start[2],))
+    return {
+        "x_port": p["x_port"],
+        "cell": cell,
+        "measplane_pos": meas,
+        "meas_pos_idx": idx,
+        "prope_idx": [lo, idx, hi],
+        "clamped": clamped,
+        "wrap": False,                # no periodic wrap on this grid
+        "u_pos": [xs[lo], centre, xs[hi]],
+        "u_delta": [centre - xs[lo], xs[hi] - centre],
+        "i_pos": [centre - 0.5 * cell, centre + 0.5 * cell],
+        "i_delta": [cell],
+        "direction": 1,               # prop_dir is +x
+        "upside_down": upside_down,   # exc_dir: start z is ABOVE stop z
+        "z_strip": p["z_strip"],
+        "z_u_far": stop[2],
+    }
+
+
+# --- ports.py's MSL arithmetic, transcribed and then GUARDED ----------------
+# ports.py divides by probe differences without a second thought, which is
+# right for a solve that is expected to work.  The referee has to survive a
+# solve that did not: every division below is transcribed in ports.py's own
+# order (so the same rounding survives) and then guarded, storing None for
+# that quantity -- and for everything downstream of it -- instead of raising.
+# A degenerate probe set must come out as a DIAGNOSED None, never as a
+# ZeroDivisionError traceback from inside the thing being reported on.
+
+
+def _sinc(x: float) -> float:
+    """sin(x)/x with the removable singularity at 0 filled in.  numpy-free."""
+    if abs(x) < 1e-15:
+        return 1.0
+    return math.sin(x) / x
+
+
+def _msl_arithmetic(u, i, delta_unit: float, u_delta, i_delta) -> dict:
+    """ports.py's MSL S11 arithmetic for ONE frequency.
+
+    `u` is the three probe voltages (ports.py's efield -> voltage), at the
+    centre plane and one cell either side, `i` the two probe currents half a
+    cell either side of the measurement plane; `u_delta` / `i_delta` are the
+    spacings those probes sit on (msl_probe_planes) and `delta_unit` the
+    length unit the DFT bins carry (DELTA_UNIT).
+
+    Quantities and their ports.py sources:
+        uf_tot  = u[1]                       total voltage at the plane
+        if_tot  = 0.5 * (i[0] + i[1])        total current at the plane
+        dEt     = (u[2] - u[0]) / sum(|u_delta|) / delta_unit     dE/dx
+        dHt     = (i[1] - i[0]) / |i_delta[0]| / delta_unit       dH/dx
+        Z_ref   = sqrt(Et dEt / (Ht dHt))
+        beta    = sqrt(-dEt dHt / (Ht Et))
+        uf_inc  = 0.5 * (uf_tot + if_tot * Z_ref)
+        uf_ref  = uf_tot - uf_inc
+        S11     = uf_ref / uf_inc
+
+    beta is a PROPAGATING mode's phase constant and must be real and
+    positive; a numerically imaginary residual on a real beta is folded onto
+    the real axis (sign dropped -- beta is reported as a magnitude, its sign
+    is the launch's prop_dir and is carried by planes["direction"]).  A
+    genuinely complex beta is left alone, not clipped: on a bad solve the
+    shape of the failure is the information.  Nothing here raises.
+    """
+
+    def _div(num, den):
+        if num is None or den is None or den == 0:
+            return None
+        return num / den
+
+    uf_tot = u[1]
+    if_tot = 0.5 * (i[0] + i[1])
+    Et = u[1]
+    Ht = if_tot
+
+    dEt = _div(u[2] - u[0], sum(abs(x) for x in u_delta) * delta_unit)
+    dHt = _div(i[1] - i[0], abs(i_delta[0]) * delta_unit)
+
+    Z_ref = None
+    beta = None
+    if dEt is not None and dHt is not None:
+        z_arg = _div(Et * dEt, Ht * dHt)
+        if z_arg is not None:
+            Z_ref = cmath.sqrt(z_arg)
+        b_arg = _div(-dEt * dHt, Ht * Et)
+        if b_arg is not None:
+            try:
+                beta = cmath.sqrt(b_arg)
+            except (ValueError, OverflowError):
+                beta = None
+            if beta is not None:
+                tol = 1e-9 * max(abs(beta.real), 1e-300)
+                if abs(beta.imag) <= tol:
+                    beta = complex(abs(beta.real), 0.0)
+
+    uf_inc = None
+    if Z_ref is not None:
+        uf_inc = 0.5 * (uf_tot + if_tot * Z_ref)
+    uf_ref = None if uf_inc is None else uf_tot - uf_inc
+    s11 = _div(uf_ref, uf_inc)
+
+    return {
+        "uf_tot": uf_tot,
+        "if_tot": if_tot,
+        "Et": Et,
+        "Ht": Ht,
+        "dEt": dEt,
+        "dHt": dHt,
+        "Z_ref": Z_ref,
+        "beta": beta,
+        "uf_inc": uf_inc,
+        "uf_ref": uf_ref,
+        "s11": s11,
+    }
+
+
+def extract_s11_msl(freqs, probes, planes, delta_unit=None) -> dict:
+    """extract_s11's contract, per frequency, for the MSL port.
+
+    `freqs` is a plain sequence of frequencies; `probes` maps every record
+    name in PORT1_MSL_PROBES to a sequence of complex DFT values, one per
+    frequency (read_port() + dft_at() produce them); `planes` is
+    msl_probe_planes(p), which supplies u_delta / i_delta.
+
+    The dict mirrors extract_s11 key for key -- f_hz, zref_ohm, U, I, s11 --
+    with one entry per frequency instead of a scalar, plus the two
+    quantities only the MSL arm has, Z_ref and beta, per frequency.  U is the
+    centre probe voltage Et and I the mean probe current if_tot: exactly the
+    pair the wave split is performed on.  A frequency whose arithmetic was
+    undecidable (a zero denominator, see _msl_arithmetic) carries None in
+    s11 / Z_ref / beta rather than dropping out of step with f_hz.
+    """
+    du = DELTA_UNIT if delta_unit is None else float(delta_unit)
+    fs = [float(f) for f in freqs]
+
+    series = {}
+    for name in PORT1_MSL_PROBES:
+        if name not in probes:
+            raise KeyError(
+                "extract_s11_msl: probe record %r missing (have: %s)"
+                % (name, ", ".join(sorted(probes)) or "nothing"))
+        series[name] = list(probes[name])
+        if len(series[name]) != len(fs):
+            raise ValueError(
+                "extract_s11_msl: probe record %r carries %d values for %d "
+                "frequencies" % (name, len(series[name]), len(fs)))
+
+    u_delta = planes["u_delta"]
+    i_delta = planes["i_delta"]
+
+    rows = []
+    for k in range(len(fs)):
+        u = [series["port_1_utA"][k], series["port_1_utB"][k],
+             series["port_1_utC"][k]]
+        i = [series["port_1_itA"][k], series["port_1_itB"][k]]
+        rows.append(_msl_arithmetic(u, i, du, u_delta, i_delta))
+
+    return {
+        "f_hz": fs,
+        "zref_ohm": Z_REF,
+        "delta_unit": du,
+        "cell": planes.get("cell"),
+        "U": [r["Et"] for r in rows],
+        "I": [r["if_tot"] for r in rows],
+        "s11": [r["s11"] for r in rows],
+        "Z_ref": [r["Z_ref"] for r in rows],
+        "beta": [r["beta"] for r in rows],
+        "uf_tot": [r["uf_tot"] for r in rows],
+        "if_tot": [r["if_tot"] for r in rows],
+        "dEt": [r["dEt"] for r in rows],
+        "dHt": [r["dHt"] for r in rows],
+        "uf_inc": [r["uf_inc"] for r in rows],
+        "uf_ref": [r["uf_ref"] for r in rows],
+    }
+
+
+def extract_s11_any(outdir: str, f: float = F_REF, zref: float = Z_REF) -> dict:
+    """extract_s11 for whichever port-1 API is in force.  PORT1_API is read
+    HERE, at call time, so main() can set it once.
+
+    Same signature and same SCALAR contract as extract_s11, so every caller
+    downstream stays API-agnostic: the MSL arm's per-frequency lists are
+    unwrapped to the single bin asked for, and the two MSL-only quantities
+    (Z_ref, beta) ride alongside the shared keys.  zref applies to the lumped
+    arms only -- the MSL arm measures its own Z_ref and reports it.
+    """
+    if PORT1_API != "mslport":
+        return extract_s11(outdir, f=f, zref=zref)
+
+    probes = {}
+    for name in PORT1_MSL_PROBES:
+        t, x = read_port(outdir, name)
+        probes[name] = [dft_at(t, x, f)]
+    row = extract_s11_msl([f], probes, msl_probe_planes(plan()), DELTA_UNIT)
+
+    out = dict(row)
+    for key in ("f_hz", "U", "I", "s11", "Z_ref", "beta", "uf_tot", "if_tot",
+                "dEt", "dHt", "uf_inc", "uf_ref"):
+        out[key] = row[key][0]
+    return out
+
+
+def msl_bias_floor(p: dict) -> dict:
+    """The referee's own accuracy floor, MEASURED with three asserted identities.
+
+    _msl_arithmetic is ports.py's arithmetic.  Fed an ideal two-wave field
+    sampled at the REAL probe planes, it must return three exact answers, and
+    this function feeds it exactly that and then checks each one to 1e-12:
+
+      (1) |Z_ref| / Z_line  ==  1
+      (2) beta_est / beta   ==  sinc(theta)
+      (3) S11               ==  ((1-c) + (1+c)G) / ((1+c) + (1-c)G)
+
+    with theta = beta * cell / 2 and c = cos(theta).  Note what (2) and (3)
+    say about the referee rather than about the device:
+
+    (3) is NOT G.  ports.py measures the current at the plane as the
+    HALF-CELL average 0.5*(i[0] + i[1]), half a cell either side of the
+    voltage plane, so the wave it splits is low by sinc(theta) and a MATCHED
+    load lands at (1-c)/(1+c) instead of at 0.  At the artefact's own beta
+    and cell that is 5.4e-4, and no |S11| smaller than that can be read as
+    anything but zero.  Same number from the other side: the current probes
+    are displaced half a cell from the voltage plane, hence the sinc.
+
+    Synthesis, x measured from the voltage centre plane (planes["u_pos"][1]):
+        U(x) = exp(+j beta x) + G exp(-j beta x)
+        I(x) = (exp(+j beta x) - G exp(-j beta x)) / Z_line
+    sampled at the u_pos / i_pos that msl_probe_planes() returns -- the
+    geometry the solve is actually probed at, not a convenient one.
+
+    A failed identity raises SystemExit naming it and by how much: a
+    self-check that cannot fail is decoration.
+    """
+    planes = msl_probe_planes(p)
+    cell = planes["cell"]
+    z_line = Z_REF
+    beta = BETA_ARTEFACT
+    beta_dx = beta * cell
+    theta = 0.5 * beta_dx
+    c = math.cos(theta)
+    floor_gamma0 = (1.0 - c) / (1.0 + c)
+    x0 = planes["u_pos"][1]
+    u_x = list(planes["u_pos"])
+    i_x = list(planes["i_pos"])
+    sinc_theta = _sinc(theta)
+
+    names = ("|Z_ref|/Z_line - 1", "beta_est/beta - sinc(theta)",
+             "S11 - closed form")
+    worst = dict((n, 0.0) for n in names)
+    rows = []
+    for gamma in (0.0, 0.1, 0.345475, 0.6):
+        def _u_at(x):
+            d = x - x0
+            return (cmath.exp(1j * beta * d)
+                    + gamma * cmath.exp(-1j * beta * d))
+
+        def _i_at(x):
+            d = x - x0
+            return ((cmath.exp(1j * beta * d)
+                     - gamma * cmath.exp(-1j * beta * d)) / z_line)
+
+        row = _msl_arithmetic([_u_at(x) for x in u_x],
+                              [_i_at(x) for x in i_x],
+                              DELTA_UNIT, planes["u_delta"], planes["i_delta"])
+        z_ref = row["Z_ref"]
+        z_over = (None if z_ref is None
+                  else abs(z_ref) / z_line)
+        beta_est = None if row["beta"] is None else row["beta"].real / beta
+        closed = (((1.0 - c) + (1.0 + c) * gamma)
+                  / ((1.0 + c) + (1.0 - c) * gamma))
+        s11 = row["s11"]
+        rows.append({
+            "gamma": gamma,
+            "s11": s11,
+            "s11_closed_form": closed,
+            "s11_error_abs": None if s11 is None else abs(s11 - gamma),
+            "s11_form_error": None if s11 is None else abs(s11 - closed),
+            "z_ref": z_ref,
+            "z_ref_over_z_line": z_over,
+            "beta_est_over_beta": beta_est,
+        })
+        seen = {
+            names[0]: (float("inf") if z_over is None
+                       else abs(z_over - 1.0)),
+            names[1]: (float("inf") if beta_est is None
+                       else abs(beta_est - sinc_theta)),
+            names[2]: float("inf") if s11 is None else abs(s11 - closed),
+        }
+        for n in names:
+            if seen[n] > worst[n]:
+                worst[n] = seen[n]
+
+    for n in names:
+        if not worst[n] <= 1e-12:
+            raise SystemExit(
+                "msl_bias_floor SELF-CHECK FAILED: identity %r is off by "
+                "%.3e (tolerance 1e-12).  _msl_arithmetic no longer "
+                "reproduces ports.py's arithmetic, so every S11 this script "
+                "reports is unsupported." % (n, worst[n]))
+
+    return {
+        "beta_dx_rad": beta_dx,
+        "theta_rad": theta,
+        "c_cos_theta": c,
+        "floor_gamma0": floor_gamma0,
+        "rows": rows,
+        "identities": worst,
+        "cell_m": cell,
+        "z_line_ohm": z_line,
+        "beta_rad_per_m": beta,
+    }
+
+
+S11_JSON = "s11_extraction.json"      # written into outdir by report_s11()
+
+
+def report_s11(outdir: str, f: float = F_REF) -> None:
+    """Print and persist the S11 extraction for the arm(s) present on disk.
+
+    extract_s11_any returns SCALARS on both arms -- the MSL branch unwraps its
+    single-frequency lists -- so nothing here indexes into a list.  The bias
+    floor is computed FIRST: if the referee's own arithmetic has drifted, the
+    number this prints is not worth reading.
+
+    Two arms are reported when both sets of records are on disk, because a
+    referee holding both answers for the same run is worth more than one, and
+    whichever matches PORT1_API is marked IN FORCE.
+    """
+    import json
+
+    os.makedirs(outdir, exist_ok=True)
+    p = plan()
+    floor = msl_bias_floor(p)
+
+    def _arm(arm):
+        try:
+            if arm == "mslport":
+                probes = {}
+                for name in PORT1_MSL_PROBES:
+                    t, x = read_port(outdir, name)
+                    probes[name] = [dft_at(t, x, f)]
+                r = extract_s11_msl([f], probes, msl_probe_planes(p),
+                                    DELTA_UNIT)
+                return dict((k, v[0] if isinstance(v, list) and len(v) == 1
+                             else v) for k, v in r.items())
+            return extract_s11(outdir, f=f)
+        except FileNotFoundError:
+            return None
+
+    rows = []
+    for arm in ("mslport", "lumped"):
+        r = _arm(arm)
+        if r is not None:
+            rows.append((arm, r))
+    if not rows:
+        raise SystemExit(
+            "report_s11: %r holds neither the MSL probe records nor "
+            "port_ut_1 / port_it_1 -- nothing to extract" % (outdir,))
+
+    sys.stdout.write("S11 EXTRACTION  f = %.12g Hz  (zref = %g ohm)\n"
+                     % (f, Z_REF))
+    sys.stdout.write("  %-8s %-11s %-22s %-22s %s\n"
+                     % ("arm", "|S11|", "Z_ref [ohm]", "beta [rad/m]",
+                        "note"))
+    for arm, r in rows:
+        s11, z_ref, beta = r.get("s11"), r.get("Z_ref"), r.get("beta")
+        sys.stdout.write(
+            "  %-8s %-11s %-22s %-22s %s\n"
+            % (arm,
+               "None" if s11 is None else "%.6f" % abs(s11),
+               "None" if z_ref is None else "%.4f%+.4fj" % (z_ref.real,
+                                                           z_ref.imag),
+               "None" if beta is None else "%.4f%+.4fj" % (beta.real,
+                                                          beta.imag),
+               "IN FORCE (--port1-api)" if arm == PORT1_API
+               else "also on disk"))
+    sys.stdout.write(
+        "  bias floor          : |S11| is only trustworthy to ~%.1e at F_REF "
+        "(G = 0) -- the\n"
+        "                        referee's OWN accuracy.  WHY: Ht at the "
+        "plane is the HALF-CELL\n"
+        "                        average 0.5*(i[0] + i[1]), half a cell "
+        "either side of the voltage\n"
+        "                        plane, so the split wave is low by "
+        "sinc(theta) and S11 lands at\n"
+        "                        (1-c)/(1+c) = %.3e instead of 0.  Nothing "
+        "smaller is a result.\n"
+        % (floor["floor_gamma0"], floor["floor_gamma0"]))
+
+    r = rows[0][1]
+    for arm, rr in rows:
+        if arm == PORT1_API:
+            r = rr
+
+    def _jsafe(v):
+        if isinstance(v, complex):
+            return [v.real, v.imag]
+        if isinstance(v, dict):
+            return dict((k, _jsafe(x)) for k, x in v.items())
+        if isinstance(v, (list, tuple)):
+            return [_jsafe(x) for x in v]
+        return v
+
+    payload = {
+        "port1_api": PORT1_API,
+        "f_hz": f,
+        "s11_abs": None if r.get("s11") is None else abs(r["s11"]),
+        "Z_ref": r.get("Z_ref"),
+        "beta": r.get("beta"),
+        "uf_inc": r.get("uf_inc"),
+        "uf_ref": r.get("uf_ref"),
+        "bias_floor": floor,
+    }
+    path = os.path.join(outdir, S11_JSON)
+    with open(path, "w") as fh:
+        json.dump(_jsafe(payload), fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    sys.stdout.write("  written             : %s\n" % path)
+
+
+def _port1_echo_lines(p: dict) -> str:
+    """The text @@PORT1@@ is replaced with.  PORT1_API is read HERE.
+
+    The four LUMPED arms reproduce, byte for byte, the three lines the token
+    replaced: the z span they quote is the ground wall (z = 0, exact by
+    construction, not a computed float) up to the substrate top, and _num /
+    _nums are exact-float helpers, so the four-decimal millimetre text is
+    formatted here rather than through them.
+
+    The MSL arm builds a different thing and says so: AddMSLPort carries no
+    impedance argument (it measures one), its metal sits on the START z --
+    ports.py:348 overwrites stop[z] with start[z] -- and it writes five probe
+    records instead of the lumped pair.
+    """
+    if PORT1_API == "mslport":
+        start, stop = port1_box(p)
+        return (
+            "launch port 1         : MSLPORT -- FDTD.AddMSLPort, x = %.4f mm"
+            " (col %d), excite = 1.0\n"
+            "  span                : x = %.4f .. %.4f mm, y = %.4f .. %.4f mm,"
+            " z = %.4f .. %.4f mm\n"
+            "  metal plane         : z = START z = %.4f mm -- ports.py:348"
+            " discards the stop z\n"
+            "  probes              : %s\n"
+            "  impedance           : measured from the probes (Z_ref),"
+            " excite = 1.0\n"
+            % (p["x_port"] * 1e3, int(round(p["x_port"] / CELL)),
+               start[0] * 1e3, stop[0] * 1e3,
+               start[1] * 1e3, stop[1] * 1e3,
+               start[2] * 1e3, stop[2] * 1e3,
+               start[2] * 1e3,
+               ", ".join(PORT1_MSL_PROBES)))
+    return (
+        "launch port 1         : LUMPED, x = %.4f mm (col %d), ground -> strip\n"
+        "  span                : z = 0 .. %.4f mm, y = %.4f .. %.4f mm\n"
+        "  impedance           : %g ohm, excite = 1.0\n"
+        % (p["x_port"] * 1e3, int(round(p["x_port"] / CELL)),
+           p["h_sub"] * 1e3, p["y_lo"] * 1e3, p["y_hi"] * 1e3, R_PORT))
+
 
 
 # ---------------------------------------------------------------------------
@@ -2454,7 +3213,10 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
     report_solver_provenance(text)
     guard_solver_output(text, "solve", p, rep)
 
-    missing = [n for n in ("port_ut_1", "port_it_1", "port_ut_2", "port_it_2")
+    # Port 1's record names come from the arm in force (trap 14c): five MSL
+    # records, or the lumped pair -- never both.  Port 2's pair is unchanged.
+    port1_names = port1_probe_names(p)
+    missing = [n for n in port1_names + ("port_ut_2", "port_it_2")
                if not os.path.exists(os.path.join(outdir, n))]
     if missing:
         print("SOLVE FAILED: no port records for %s in %s"
@@ -2465,6 +3227,16 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
     print("Next: DFT port_ut_1/port_it_1 at %r Hz, then" % F_REF)
     print("      S11 = (U/Zref - I) / (U/Zref + I), Zref = 50 ohm.")
     print("      |S11| is plane-invariant; phase needs de-embedding to 20.4 mm.")
+
+    # The extraction this file exists for, done while the records are still on
+    # disk.  Guarded: a partial record set is a verdict about the run, not a
+    # traceback out of the referee -- the solve itself already succeeded.
+    try:
+        report_s11(outdir)
+    except (SystemExit, KeyError, FileNotFoundError, OSError, ValueError) as exc:
+        print("S11 EXTRACTION UNAVAILABLE: %s" % (exc,), file=sys.stderr)
+        print("  the solve succeeded and its records are in %r; only the "
+              "extraction could not be completed." % outdir, file=sys.stderr)
     return 0
 
 
