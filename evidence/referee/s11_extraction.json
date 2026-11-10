@@ -1,127 +1,128 @@
 {
-  "what": "Offline S11 extraction from the openEMS referee's stored port records.",
-  "date_local": "2026-11-09",
-  "inputs_dir": "evidence/referee/",
-  "inputs": {
-    "port_ut_1": {
-      "file_plain": true,
-      "file_h5": false,
-      "rows": 820,
-      "t_first_s": 0.0,
-      "t_last_s": 8.201738196e-09
+  "Z_ref": [
+    23.24570567738614,
+    -16.48020529222403
+  ],
+  "beta": [
+    165.24586187231208,
+    1835.8472426253652
+  ],
+  "bias_floor": {
+    "beta_dx_rad": 0.09262132669165135,
+    "beta_rad_per_m": 231.55331672912826,
+    "c_cos_theta": 0.9989278528682738,
+    "cell_m": 0.0004000000000000002,
+    "floor_gamma0": 0.0005363610948678204,
+    "identities": {
+      "S11 - closed form": 1.1102230246251565e-16,
+      "beta_est/beta - sinc(theta)": 1.1102230246251565e-16,
+      "|Z_ref|/Z_line - 1": 1.1102230246251565e-16
     },
-    "port_it_1": {
-      "file_plain": true,
-      "file_h5": false,
-      "rows": 820,
-      "t_first_s": 3.85166628909e-13,
-      "t_last_s": 8.20212336263e-09
-    },
-    "port_ut_2": {
-      "file_plain": true,
-      "file_h5": false,
-      "rows": 820,
-      "t_first_s": 0.0,
-      "t_last_s": 8.201738196e-09
-    },
-    "port_it_2": {
-      "file_plain": true,
-      "file_h5": false,
-      "rows": 820,
-      "t_first_s": 3.85166628909e-13,
-      "t_last_s": 8.20212336263e-09
-    }
+    "rows": [
+      {
+        "beta_est_over_beta": 0.9996425920718022,
+        "gamma": 0.0,
+        "s11": [
+          0.000536361094867876,
+          0.0
+        ],
+        "s11_closed_form": 0.0005363610948678204,
+        "s11_error_abs": 0.000536361094867876,
+        "s11_form_error": 5.561957144850638e-17,
+        "z_ref": [
+          50.0,
+          0.0
+        ],
+        "z_ref_over_z_line": 1.0
+      },
+      {
+        "beta_est_over_beta": 0.9996425920718022,
+        "gamma": 0.1,
+        "s11": [
+          0.10053096900480747,
+          0.0
+        ],
+        "s11_closed_form": 0.10053096900480747,
+        "s11_error_abs": 0.0005309690048074661,
+        "s11_form_error": 0.0,
+        "z_ref": [
+          50.0,
+          0.0
+        ],
+        "z_ref_over_z_line": 1.0
+      },
+      {
+        "beta_est_over_beta": 0.9996425920718022,
+        "gamma": 0.345475,
+        "s11": [
+          0.3459472572932167,
+          0.0
+        ],
+        "s11_closed_form": 0.34594725729321674,
+        "s11_error_abs": 0.0004722572932167046,
+        "s11_form_error": 5.551115123125783e-17,
+        "z_ref": [
+          49.99999999999999,
+          0.0
+        ],
+        "z_ref_over_z_line": 0.9999999999999999
+      },
+      {
+        "beta_est_over_beta": 0.9996425920718023,
+        "gamma": 0.6,
+        "s11": [
+          0.6003431606658971,
+          0.0
+        ],
+        "s11_closed_form": 0.600343160665897,
+        "s11_error_abs": 0.00034316066589712424,
+        "s11_form_error": 1.1102230246251565e-16,
+        "z_ref": [
+          50.0,
+          0.0
+        ],
+        "z_ref_over_z_line": 1.0
+      }
+    ],
+    "theta_rad": 0.046310663345825676,
+    "z_line_ohm": 50.0
   },
-  "method": {
-    "reader": "docker/openems/build_A_referee.py:read_port (extension-less ASCII first, then .h5)",
-    "dft": "sum_k x_k exp(-2j*pi*f*t_k) * median(dt)  -- rectangular window, full record",
-    "s11": "S11 = (U/Zref - I) / (U/Zref + I)",
-    "f_hz": 5827786408.327286,
-    "zref_ohm": 50.0,
-    "note_phase": "phase not comparable to the artefact without de-embedding to x=20.4 mm"
-  },
-  "capture": {
-    "dt_s": 1.0014332349999962e-11,
-    "n_samples": 820,
-    "span_s": 8.201738196e-09,
-    "periods_at_f": 47.79797838330755,
-    "bin_aligned": false,
-    "tail_over_peak": 1.197e-08,
-    "snapshot_note": "820 rows / 8.201738196e-09 s describe the record snapshot actually read (port files 30060 B, mtime 2026-11-09 ~18:00 UTC). The record files in evidence/referee/ were subsequently rewritten by a later host-side write whose headers are stamped 'Mon Nov  9 19:21:08 2026' local; they settled at 813 rows / 8.131638e-09 s / 47.39 periods. The port_1 values below reproduce to 8-9 significant digits from that later snapshot (U=-1.1225952338e-13-3.0942255092e-14j, I=9.1523936999e-17-3.3049120887e-16j, S11=0.9578897496-0.2883480888j, |S11|=1.0003486356, arg=-16.753071 deg); the difference is a partial run's worth of tail samples and does not affect the |S11|~1 finding."
-  },
-  "provenance_check": {
-    "claim_checked": "that the 820-row / 8.2017 ns port record is consistent with the stated 10647-timestep run (it is; an earlier reading said it was not)",
-    "resolution": "the port write interval is NOT the solver step: the records are written every 13th timestep",
-    "port_write_interval_s": 1.0014332349999962e-11,
-    "solver_dt_s": 7.703332576923048e-13,
-    "decimation": 13,
-    "timesteps_closed_exactly": "819 intervals * 13 = 10647, and 10647 % 13 == 0",
-    "span_predicted_s": 8.201738194650e-09,
-    "span_recorded_s": 8.201738196e-09,
-    "span_relative_difference": 1.6e-10,
-    "et_ht_grid_check": "all 639 et timestamps are integer multiples of solver_dt_s to within 3.8e-16 s, which is the 6-significant-figure print rounding of the ASCII t column; ht sits on half-integer multiples (the Yee stagger)",
-    "cfl_check_c": 7.703332806185882e-13,
-    "cfl_check_note": "0.4 mm uniform cell, dx/(c*sqrt(3)) with c = 299792458 m/s reproduces solver_dt_s",
-    "nyquist_port_record_ghz": 49.928440811134,
-    "f_ref_over_nyquist": 0.116722780,
-    "samples_per_period_at_f_ref": 17.134616,
-    "et_ht_span_ns": 0.491473,
-    "et_ht_fraction_of_run": 0.05992303,
-    "et_ht_no_metadata": "et and ht carry zero '%' header lines -- no openEMS version, no timestamp, no window declaration -- so from the files alone it cannot be determined whether their 0.4915 ns window (5.99 % of the run) was configured or truncated. Not needed for the S11 number: the extraction reads only port_ut_1 and port_it_1.",
-    "effect_on_s11": "none: decimation changes data density, not per-sample values, and 5.8278 GHz is 11.7 % of the record's 49.93 GHz Nyquist. This is NOT a fix for |S11| ~ 1.",
-    "rerun_note": "SetPortDataCounter(1) would store 10647 samples over 106.6 ns (621 periods at F_REF) instead of 820 over 8.20 ns (47.8 periods) -- a data-density improvement that removes the bin-alignment caveat, not a fix for the physics."
-  },
-  "port_1": {
-    "excite": 1.0,
-    "U": {
-      "re": -1.1225952267489939e-13,
-      "im": -3.094225577610002e-14
-    },
-    "I": {
-      "re": 9.152392148958743e-17,
-      "im": -3.304911934083721e-16
-    },
-    "Z_eq_ohm": {
-      "re": -0.4106145195123553,
-      "im": -339.56106505139394,
-      "abs": 339.5613133192894
-    },
-    "s11": {
-      "re": 0.9578897431467193,
-      "im": -0.28834807142980595,
-      "abs": 1.0003486243920048,
-      "arg_deg": -16.75307032061918
-    }
-  },
-  "port_2": {
-    "excite": 0.0,
-    "note": "port 2 is the 50 ohm series load (excite=0); (U/50-I)/(U/50+I) is NOT a reflection coefficient there. Its U/I is reported as a load check.",
-    "Z_eq_ohm": {
-      "re": -49.77065610450244,
-      "im": 2.98833030927615,
-      "abs": 49.86028807688524
-    },
-    "ratio_pointless": {
-      "abs": 33.30379295540473
-    }
-  },
-  "sweep_2_to_10_GHz": {
-    "abs_s11_min": 0.9821604665474378,
-    "abs_s11_max": 1.0012201324808654,
-    "current_over_U_by_z_at_f": 0.14724881203703266
-  },
-  "adequacy": {
-    "length": "ADEQUATE for a single bin: 47.8 periods at 5.8278 GHz, tail decayed to ~1.2e-8 of peak, full-record and first-half results agree to 6e-7.",
-    "bin_alignment": "NOT bin-aligned: the capture spans 47.8 periods, so F_REF is not an integer bin of this record; rectangular-window leakage is present.",
-    "result_validity": "NOT VALID as a referee S11. |S11| = 1.0003 at every frequency from 2 to 10 GHz, i.e. the port looks OPEN, not matched to ~0.33.",
-    "localisation": "The 50 ohm series load is present in the model: port 2 U/I = -49.8 + 3.0j ohm (|Z| = 49.9 ohm). The anomaly sits in port 1's U/I = -0.4 - 339.6j ohm, i.e. nearly purely reactive at the launch; |I|*50/|U| = 0.145 where ~0.5 is needed for |S11| = 0.33.",
-    "hypothesis_unverified": "Port-1 current is ~3.4x too small to yield a 0.33 reflection. Candidate causes (unverified here, no openEMS available): port-1 current normalisation/ground-return in the model, or port-data sampling/truncation. Needs a solver-side check.",
-    "model_geometry_defect": "DATED CORRECTION 2026-11-11 (referee-geometry-attach-2026-11-11): the two 2026-11-09 host runs solved EMPTY GEOMETRY -- openEMS warned 'Unused primitive (type: Box) detected in property: substrate!' and '... property: strip!  x2', and the lumped load reported 'Active cells: 0'. Solver-side numbers of that empty model: port-1 U/I = 317 ohm (a 50 ohm line was expected), the 50 ohm series load itself read 49.9 ohm, port1->port2 = -94 dB, |S11| = 1.0003 at every bin from 2 to 10 GHz; the FDTD core was healthy (converged on the -60 dB criterion, 10647 timesteps, ~73 s). So |S11| ~ 1 is a CORRECT measurement of a model with no substrate and no strip, not an extraction failure: the offline extraction over the same records gives port-1 U/I = -0.41 - 339.56j ohm, ~7% from 317 ohm, same conclusion. This defect supersedes the unverified hypothesis above as the explanation of the open-looking port; the model-side fix lives in build_A_referee.py (geometry_boxes(), check_boxes(), guard_solver_output() -> exit 4, no epsilon=1 air box, setup_only=True probe, exit 5 for missing bindings) and is AUTHORED-UNEXERCISED -- its acceptance criteria are not verified until a host run. Model/setup defect finding, not a residual and not an E12."
-  },
-  "not_done": [
-    "no comparison against evidence/termination/build_A_50ohm_p51_phasors.json",
-    "no residual, no verdict on build A",
-    "no de-embedding (phase)",
-    "no S21"
-  ]
+  "f_hz": 5827786408.327286,
+  "mode_fit_ok": false,
+  "mode_fit_ratio": 11.109792534738036,
+  "mode_fit_tol": 0.01,
+  "port1_api": "mslport",
+  "s11": [
+    0.25780769892569566,
+    -0.20142451488753219
+  ],
+  "s11_abs": 0.3271645531273824,
+  "s11_angle_deg": -38.000423022549114,
+  "s11_artefact_target": 0.32556486641109117,
+  "s11_field_zref": [
+    0.49150272259940364,
+    0.07354784866017297
+  ],
+  "s11_field_zref_abs": 0.49697506211596376,
+  "s11_field_zref_angle_deg": 8.510521398642311,
+  "s11_ref50": [
+    0.25780769892569566,
+    -0.20142451488753219
+  ],
+  "s11_ref50_abs": 0.3271645531273824,
+  "s11_ref50_angle_deg": -38.000423022549114,
+  "uf_inc": [
+    1.236351991683125e-13,
+    -3.1682716780959145e-14
+  ],
+  "uf_ref": [
+    6.309723265929422e-14,
+    -6.4790386396858416e-15
+  ],
+  "zref_field_ohm": [
+    23.24570567738614,
+    -16.48020529222403
+  ],
+  "zref_field_ohm_abs": 28.494911807435223,
+  "zref_ref50_ohm": 50.0
 }
