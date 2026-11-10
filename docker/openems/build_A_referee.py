@@ -182,9 +182,10 @@ API TRAPS ALREADY PAID FOR -- do not re-learn these the hard way
         (SetLines at ~1305-1315, add_port1 at ~1341), and that order is the
         reason, not a matter of taste.
     (c) FIVE probe records, not two.  There is no port_ut_1 / port_it_1 in an
-        MSL run: the voltage probes are port_1_utA / utB / utC and the
-        current probes are port_1_itA / itB (ports.py:382 adds TWO current
-        probes; ports.py:440 indexes I_delta[0]).  extract_s11() would raise
+        MSL run: the voltage probes are port_ut_1A / port_ut_1B / port_ut_1C
+        and the current probes are port_it_1A / port_it_1B (ports.py:375, 390
+        append the suffix to lbl_temp; ports.py:382 adds TWO current probes;
+        ports.py:440 indexes I_delta[0]).  extract_s11() would raise
         FileNotFoundError on the lumped names, and port1_probe_names() is the
         one place that knows which set this run wrote.
 
@@ -723,7 +724,7 @@ PORT1_RATIONALE = {  # one entry per arm; "mslport" is the DEFAULT, "lumped"
         "reference's own microstrip port "
         "(infra/openems/reference/ports.py:311-448): it adds the strip metal "
         "itself (ports.py:346-349), writes FIVE probes of its own "
-        "(port_1_utA/B/C, port_1_itA/B), and takes Z_ref from the measured "
+        "(port_ut_1A/B/C, port_it_1A/B), and takes Z_ref from the measured "
         "fields (ports.py:447) instead of from a declared 50 ohm.  It is the "
         "only arm whose extraction is ports.py's arithmetic, so it is the "
         "only arm that can be compared with the reference at all."),
@@ -1149,7 +1150,8 @@ def port1_report(p: dict, priority=None, stream=sys.stdout) -> None:
             "                         the raw expectation.\n"
             % (port1_msl_priority(priority),
                _num(p["z_strip"]), _num(p["z_strip"]), _num(p["z_strip"]),
-               " ".join(PORT1_MSL_PROBES), _num(_pl["measplane_pos"]),
+               " ".join(probe_record_basenames(PORT1_MSL_PROBES)),
+               _num(_pl["measplane_pos"]),
                _pl["meas_pos_idx"], len(p["xs"]) - 1, _pl["prope_idx"],
                _pl["clamped"], _pl["wrap"],
                _nums(_pl["u_pos"]), _nums(_pl["u_delta"]),
@@ -1649,11 +1651,43 @@ def build_model(p: dict, rep: str = "metal"):
 
 Z_REF = 50.0                    # ohm -- the artefact's reference impedance
 
+# A propagating mode's beta is REAL.  Past this much imaginary part relative to
+# the real one, the voltage probes are not sampling a clean mode, and the Z_ref
+# fitted from that same field is not trustworthy either -- the S11 report
+# raises a WARNING on it.  Advisory: nothing raises or exits on it.
+MODE_FIT_TOL = 0.01
+
 
 def _port_paths(outdir: str, name: str):
     """The two candidate paths for a port basename; the plain one comes first."""
     plain = os.path.join(outdir, name)
     return plain, plain + ".h5"
+
+
+def probe_record_candidates(name: str) -> tuple:
+    """On-disk basenames to try for canonical record `name`, best match first."""
+    return PROBE_NAME_CANDIDATES.get(name, (name,))
+
+
+def resolve_port_record(outdir: str, name: str):
+    """The existing path for canonical record `name`, or None.  Never raises.
+
+    Same resolution order as read_port() (candidate by candidate, plain ASCII
+    before `.h5`) but without reading the file, so the pre-extraction
+    existence check and the extraction itself agree on what counts as present.
+    """
+    for cand in probe_record_candidates(name):
+        plain, h5 = _port_paths(outdir, cand)
+        for path in (plain, h5):
+            if os.path.exists(path):
+                PROBE_NAME_ROUTE[name] = path
+                return path
+    return None
+
+
+def probe_record_basenames(names) -> tuple:
+    """The openEMS basename each canonical record maps to (for the echo)."""
+    return tuple(probe_record_candidates(n)[0] for n in names)
 
 
 def read_port_ascii(path: str):
@@ -1673,17 +1707,35 @@ def read_port_h5(path: str):
 
 
 def read_port(outdir: str, name: str):
-    """(t, x) for port `name`: extension-less ASCII first, then `<name>.h5`.
+    """(t, x) for canonical record `name`: extension-less ASCII first, then `.h5`.
 
-    Raises FileNotFoundError naming BOTH candidates if neither can be read.
+    `name` is the CANONICAL key (PORT1_MSL_PROBES / PORT1_LUMPED_PROBES), not
+    necessarily the basename openEMS wrote.  probe_record_candidates() supplies
+    the on-disk basenames to try: openEMS builds MSLPort's record names as
+    lbl_temp.format('ut') + suffix -- lbl_temp is prefix + 'port_{}' + '_{}'.
+    format(number) (ports.py:119), so the files are port_ut_1A / port_it_1B,
+    NOT port_1_utA (ports.py:375, 390).  Each candidate is tried plain first,
+    then `.h5`.
+
+    The path actually opened is recorded in PROBE_NAME_ROUTE[name] and logged
+    once to stderr, so a name that stops matching cannot silently rot again.
+
+    Raises FileNotFoundError naming EVERY candidate tried.
     """
-    plain, h5 = _port_paths(outdir, name)
-    if os.path.exists(plain):
-        return read_port_ascii(plain)
-    if os.path.exists(h5):
-        return read_port_h5(h5)
+    tried = []
+    for cand in probe_record_candidates(name):
+        plain, h5 = _port_paths(outdir, cand)
+        for path, reader in ((plain, read_port_ascii), (h5, read_port_h5)):
+            tried.append(path)
+            if os.path.exists(path):
+                if PROBE_NAME_ROUTE.get(name) != path:
+                    PROBE_NAME_ROUTE[name] = path
+                    print("port record %r -> %s"
+                          % (name, os.path.basename(path)), file=sys.stderr)
+                return reader(path)
     raise FileNotFoundError(
-        "port record %r not found: tried %r and %r" % (name, plain, h5))
+        "port record %r not found: tried %s"
+        % (name, ", ".join(repr(t) for t in tried)))
 
 
 def dft_at(t, x, f: float) -> complex:
@@ -1732,9 +1784,36 @@ BETA_ARTEFACT = 231.55331672912826
 # TWO current probes (ports.py:382; ports.py:440 indexes I_delta[0]).  None of
 # the lumped names exist in an MSL run, and none of these five exist in a
 # lumped run.  Trap (14c).
+#
+# These tuples hold CANONICAL KEYS -- the dict keys extract_s11_msl() indexes,
+# named after ports.py's own quantities (ut / it precede the port number).
+# They are NOT the basenames openEMS writes: lbl_temp is
+# prefix + 'port_{}' + '_{}'.format(number) (ports.py:119) and the suffix is
+# APPENDED, so the files on disk are port_ut_1A / port_ut_1B / port_ut_1C and
+# port_it_1A / port_it_1B (ports.py:375, 390).  PROBE_NAME_CANDIDATES carries
+# that mapping, read_port() resolves through it, and the echo prints the
+# ON-DISK names rather than the keys.
 PORT1_MSL_PROBES = ("port_1_utA", "port_1_utB", "port_1_utC",
                     "port_1_itA", "port_1_itB")
 PORT1_LUMPED_PROBES = ("port_ut_1", "port_it_1")
+
+# canonical key -> on-disk basenames, in the order they are tried.  The
+# openEMS pattern comes FIRST; the canonical spelling is kept as a fallback so
+# a record set written by a patched namer still reads.  Keys absent from this
+# table resolve to themselves -- port_ut_2 / port_it_2 are already on-disk
+# names, and the lumped pair is unaffected.
+PROBE_NAME_CANDIDATES = {
+    "port_1_utA": ("port_ut_1A", "port_1_utA"),
+    "port_1_utB": ("port_ut_1B", "port_1_utB"),
+    "port_1_utC": ("port_ut_1C", "port_1_utC"),
+    "port_1_itA": ("port_it_1A", "port_1_itA"),
+    "port_1_itB": ("port_it_1B", "port_1_itB"),
+}
+
+# canonical key -> the path actually opened.  Filled by read_port() and
+# resolve_port_record() so the extraction report can quote the files that were
+# used instead of the names it hoped for.
+PROBE_NAME_ROUTE = {}
 
 
 def port1_probe_names(p: dict) -> tuple:
@@ -1853,6 +1932,11 @@ def _msl_arithmetic(u, i, delta_unit: float, u_delta, i_delta) -> dict:
         uf_ref  = uf_tot - uf_inc
         S11     = uf_ref / uf_inc
 
+    and, on the SAME uf_tot / if_tot / beta, the DECLARED-reference branch
+    ports.py reaches with CalcPort(ref_impedance=50):
+
+        S11_ref50 = (uf_tot - 50 * if_tot) / (uf_tot + 50 * if_tot)
+
     beta is a PROPAGATING mode's phase constant and must be real and
     positive; a numerically imaginary residual on a real beta is folded onto
     the real axis (sign dropped -- beta is reported as a magnitude, its sign
@@ -1897,6 +1981,29 @@ def _msl_arithmetic(u, i, delta_unit: float, u_delta, i_delta) -> dict:
     uf_ref = None if uf_inc is None else uf_tot - uf_inc
     s11 = _div(uf_ref, uf_inc)
 
+    # SECOND, EXPLICIT reference -- the same probes asked a different question.
+    # ports.py's Port.CalcPort(ref_impedance=...) OVERRIDES the field-measured
+    # Z_ref and leaves beta alone, so this branch is ports.py arithmetic too,
+    # not a rival formula: same uf_tot, same if_tot, one DECLARED reference in
+    # place of the fitted one.  beta does not enter the expression -- at a
+    # single plane the impedance-normalised reflection is a direct V/I split,
+    # with no de-embedding to do -- and it rides through unchanged.
+    s11_ref50 = _div(uf_tot - Z_REF * if_tot, uf_tot + Z_REF * if_tot)
+
+    # MODE-FIT HEALTH.  A propagating mode's beta is real; a large imaginary
+    # part means these probes are not sampling one, which also spoils the Z_ref
+    # fitted from the same field.  Recorded, never raised: on a bad solve the
+    # shape of the failure is the information (see the docstring).
+    mode_fit_ratio = None
+    mode_fit_ok = None
+    if beta is not None:
+        b_re, b_im = abs(beta.real), abs(beta.imag)
+        if b_re > 0:
+            mode_fit_ratio = b_im / b_re
+        else:
+            mode_fit_ratio = float("inf") if b_im > 0 else 0.0
+        mode_fit_ok = mode_fit_ratio <= MODE_FIT_TOL
+
     return {
         "uf_tot": uf_tot,
         "if_tot": if_tot,
@@ -1909,6 +2016,9 @@ def _msl_arithmetic(u, i, delta_unit: float, u_delta, i_delta) -> dict:
         "uf_inc": uf_inc,
         "uf_ref": uf_ref,
         "s11": s11,
+        "s11_ref50": s11_ref50,
+        "mode_fit_ratio": mode_fit_ratio,
+        "mode_fit_ok": mode_fit_ok,
     }
 
 
@@ -1920,10 +2030,13 @@ def extract_s11_msl(freqs, probes, planes, delta_unit=None) -> dict:
     frequency (read_port() + dft_at() produce them); `planes` is
     msl_probe_planes(p), which supplies u_delta / i_delta.
 
-    The dict mirrors extract_s11 key for key -- f_hz, zref_ohm, U, I, s11 --
-    with one entry per frequency instead of a scalar, plus the two
-    quantities only the MSL arm has, Z_ref and beta, per frequency.  U is the
-    centre probe voltage Et and I the mean probe current if_tot: exactly the
+    The dict mirrors extract_s11 key for key -- f_hz, U, I, s11 -- with one
+    entry per frequency instead of a scalar, plus the two quantities only the
+    MSL arm has, Z_ref and beta, per frequency, plus the SECOND branch of the
+    same split taken on the DECLARED reference (s11_ref50).  The two zref
+    fields NAME the branch each belongs to: zref_ohm_field is s11's reference
+    (the fitted Z_ref, per frequency) and zref_ohm_ref50 is s11_ref50's.  U is
+    the centre probe voltage Et and I the mean probe current if_tot: exactly the
     pair the wave split is performed on.  A frequency whose arithmetic was
     undecidable (a zero denominator, see _msl_arithmetic) carries None in
     s11 / Z_ref / beta rather than dropping out of step with f_hz.
@@ -1955,12 +2068,20 @@ def extract_s11_msl(freqs, probes, planes, delta_unit=None) -> dict:
 
     return {
         "f_hz": fs,
-        "zref_ohm": Z_REF,
+        # WHICH REFERENCE FEEDS WHICH S11 -- named, because this dict used to
+        # say "zref_ohm": Z_REF while its "s11" had been split on the FIELD
+        # Z_ref.  That label was true of the second branch only; neither
+        # branch borrows the other's name now.
+        "zref_ohm_ref50": Z_REF,                       # reference of s11_ref50
+        "zref_ohm_field": [r["Z_ref"] for r in rows],  # reference of s11
         "delta_unit": du,
         "cell": planes.get("cell"),
         "U": [r["Et"] for r in rows],
         "I": [r["if_tot"] for r in rows],
         "s11": [r["s11"] for r in rows],
+        "s11_ref50": [r["s11_ref50"] for r in rows],
+        "mode_fit_ratio": [r["mode_fit_ratio"] for r in rows],
+        "mode_fit_ok": [r["mode_fit_ok"] for r in rows],
         "Z_ref": [r["Z_ref"] for r in rows],
         "beta": [r["beta"] for r in rows],
         "uf_tot": [r["uf_tot"] for r in rows],
@@ -1992,8 +2113,9 @@ def extract_s11_any(outdir: str, f: float = F_REF, zref: float = Z_REF) -> dict:
     row = extract_s11_msl([f], probes, msl_probe_planes(plan()), DELTA_UNIT)
 
     out = dict(row)
-    for key in ("f_hz", "U", "I", "s11", "Z_ref", "beta", "uf_tot", "if_tot",
-                "dEt", "dHt", "uf_inc", "uf_ref"):
+    for key in ("f_hz", "U", "I", "s11", "s11_ref50", "Z_ref", "beta",
+                "zref_ohm_field", "mode_fit_ratio", "mode_fit_ok",
+                "uf_tot", "if_tot", "dEt", "dHt", "uf_inc", "uf_ref"):
         out[key] = row[key][0]
     return out
 
@@ -2155,23 +2277,121 @@ def report_s11(outdir: str, f: float = F_REF) -> None:
             "report_s11: %r holds neither the MSL probe records nor "
             "port_ut_1 / port_it_1 -- nothing to extract" % (outdir,))
 
-    sys.stdout.write("S11 EXTRACTION  f = %.12g Hz  (zref = %g ohm)\n"
-                     % (f, Z_REF))
-    sys.stdout.write("  %-8s %-11s %-22s %-22s %s\n"
-                     % ("arm", "|S11|", "Z_ref [ohm]", "beta [rad/m]",
-                        "note"))
-    for arm, r in rows:
-        s11, z_ref, beta = r.get("s11"), r.get("Z_ref"), r.get("beta")
+    def _mag(v):
+        return "n/a" if v is None else "%.6f" % abs(v)
+
+    def _ang(v):
+        return "n/a" if v is None else "%+.6f" % math.degrees(cmath.phase(v))
+
+    def _deg(v):
+        return None if v is None else math.degrees(cmath.phase(v))
+
+    def _branches(rr):
+        """(s11_field_zref, s11_ref50, z_ref_field) for ONE arm row.
+
+        Same probes, same V and I, same beta -- only the reference impedance
+        differs.  NOTHING is re-extracted here: this reads a row.
+
+        Which slot takes a value is the ARM's business.  The MSL arm's s11 was
+        split on the FIELD Z_ref, so it lands in the field slot; a lumped arm's
+        s11 was split on a DECLARED zref (50 ohm by default), so it lands in
+        the ref50 slot and its field slot stays empty -- that arm measures no
+        Z_ref and no beta to fit one from.
+        """
+        U, I = rr.get("uf_tot"), rr.get("if_tot")
+        if U is None or I is None:
+            U, I = rr.get("U"), rr.get("I")
+        s50 = None
+        if U is not None and I is not None:
+            den = U + Z_REF * I
+            if den != 0:              # degenerate reference: None, never raise
+                s50 = (U - Z_REF * I) / den
+        z_field = rr.get("Z_ref")
+        return (rr.get("s11") if z_field is not None else None), s50, z_field
+
+    branch = dict((arm, _branches(rr)) for arm, rr in rows)
+
+    # Whichever arm --port1-api selected is THE result; any other row on disk
+    # is a witness.  Selected HERE so every line below reads the same row.
+    r = rows[0][1]
+    for arm, rr in rows:
+        if arm == PORT1_API:
+            r = rr
+    s11_field, s11_ref50, z_field = branch[PORT1_API]
+
+    sys.stdout.write(
+        "S11 EXTRACTION  f = %.12g Hz\n"
+        "  reference branches  : BOTH are printed.  Same probes, same V and I,\n"
+        "                        same beta -- the reference impedance is the\n"
+        "                        only difference, and that single choice is the\n"
+        "                        whole of the gap between the two |S11| columns.\n"
+        "                        |S11|field is DIAGNOSTIC; |S11|ref50, on the\n"
+        "                        declared %g ohm, is the ACCEPTANCE number and is\n"
+        "                        compared against the artefact target below.\n"
+        % (f, Z_REF))
+    sys.stdout.write("  %-8s %-11s %-11s %-24s %-24s %s\n"
+                     % ("arm", "|S11|field", "|S11|ref50", "Z_ref [ohm]",
+                        "beta [rad/m]", "note"))
+    for arm, rr in rows:
+        s_f, s_50, z_f = branch[arm]
+        beta = rr.get("beta")
         sys.stdout.write(
-            "  %-8s %-11s %-22s %-22s %s\n"
-            % (arm,
-               "None" if s11 is None else "%.6f" % abs(s11),
-               "None" if z_ref is None else "%.4f%+.4fj" % (z_ref.real,
-                                                           z_ref.imag),
-               "None" if beta is None else "%.4f%+.4fj" % (beta.real,
-                                                          beta.imag),
+            "  %-8s %-11s %-11s %-24s %-24s %s\n"
+            % (arm, _mag(s_f), _mag(s_50),
+               "n/a" if z_f is None else "%.6f%+.6fj" % (z_f.real, z_f.imag),
+               "n/a" if beta is None else "%.6f%+.6fj" % (beta.real,
+                                                         beta.imag),
                "IN FORCE (--port1-api)" if arm == PORT1_API
                else "also on disk"))
+
+    # --- the two branches, side by side and LABELLED -----------------------
+    sys.stdout.write(
+        "  field |S11|         : %s  angle %s deg  <- DIAGNOSTIC\n"
+        "    reference         : %s  (|Z_ref| = %s ohm)\n"
+        "                        fitted from the SAME U and I being split, so\n"
+        "                        it cannot certify an ABSOLUTE |S11|\n"
+        "  ref50 |S11|         : %s  angle %s deg  <- ACCEPTANCE number\n"
+        "    reference         : %g + 0j ohm, DECLARED (ports.py\n"
+        "                        CalcPort(ref_impedance=...): overrides Z_ref,\n"
+        "                        keeps beta)\n"
+        "    artefact target   : %.16f (%s)\n"
+        % (_mag(s11_field), _ang(s11_field),
+           "n/a" if z_field is None else "%.6f%+.6fj ohm" % (z_field.real,
+                                                             z_field.imag),
+           "n/a" if z_field is None else "%.6f" % abs(z_field),
+           _mag(s11_ref50), _ang(s11_ref50),
+           Z_REF, S11_ARTEFACT, S11_STATUS))
+    if s11_ref50 is not None:
+        _delta = abs(s11_ref50) - S11_ARTEFACT
+        sys.stdout.write(
+            "    vs artefact       : %+.6f (%+.4f %%) -- %s\n"
+            % (_delta, 100.0 * _delta / S11_ARTEFACT,
+               "HIGHER" if _delta >= 0 else "LOWER"))
+
+    # --- MODE-FIT HEALTH: report it, never raise on it ---------------------
+    _beta = r.get("beta")
+    _ratio = r.get("mode_fit_ratio")
+    if _ratio is None and _beta is not None:
+        _bre, _bim = abs(_beta.real), abs(_beta.imag)
+        _ratio = ((_bim / _bre) if _bre > 0
+                  else (float("inf") if _bim > 0 else 0.0))
+    if _ratio is not None and _ratio > MODE_FIT_TOL:
+        sys.stdout.write(
+            "  WARNING             : the probe-plane fit is NOT a clean "
+            "propagating mode.\n"
+            "                        beta = %.6f%+.6fj rad/m; a propagating "
+            "mode's beta is REAL,\n"
+            "                        and |imag|/|real| = %.6f exceeds the %.2f "
+            "tolerance.\n"
+            "                        |Z_ref| = %s ohm was fitted from that same "
+            "field, so\n"
+            "                        S11_field_zref = %s is NOT reliable and "
+            "must not be read\n"
+            "                        as a measurement.  Not fatal: reported "
+            "anyway, flagged.\n"
+            % (_beta.real, _beta.imag, _ratio, MODE_FIT_TOL,
+               "n/a" if z_field is None else "%.6f" % abs(z_field),
+               _mag(s11_field)))
     sys.stdout.write(
         "  bias floor          : |S11| is only trustworthy to ~%.1e at F_REF "
         "(G = 0) -- the\n"
@@ -2185,11 +2405,6 @@ def report_s11(outdir: str, f: float = F_REF) -> None:
         "smaller is a result.\n"
         % (floor["floor_gamma0"], floor["floor_gamma0"]))
 
-    r = rows[0][1]
-    for arm, rr in rows:
-        if arm == PORT1_API:
-            r = rr
-
     def _jsafe(v):
         if isinstance(v, complex):
             return [v.real, v.imag]
@@ -2202,7 +2417,23 @@ def report_s11(outdir: str, f: float = F_REF) -> None:
     payload = {
         "port1_api": PORT1_API,
         "f_hz": f,
+        # s11_abs keeps its old meaning exactly: the branch THIS arm used,
+        # which on the MSL arm is the field-Z_ref branch.  The explicit keys
+        # below name that branch instead of leaving it to be inferred.
         "s11_abs": None if r.get("s11") is None else abs(r["s11"]),
+        "s11_field_zref": s11_field,
+        "s11_field_zref_abs": None if s11_field is None else abs(s11_field),
+        "s11_field_zref_angle_deg": _deg(s11_field),
+        "s11_ref50": s11_ref50,
+        "s11_ref50_abs": None if s11_ref50 is None else abs(s11_ref50),
+        "s11_ref50_angle_deg": _deg(s11_ref50),
+        "zref_ref50_ohm": Z_REF,
+        "zref_field_ohm": z_field,
+        "zref_field_ohm_abs": None if z_field is None else abs(z_field),
+        "s11_artefact_target": S11_ARTEFACT,
+        "mode_fit_ratio": r.get("mode_fit_ratio"),
+        "mode_fit_ok": r.get("mode_fit_ok"),
+        "mode_fit_tol": MODE_FIT_TOL,
         "Z_ref": r.get("Z_ref"),
         "beta": r.get("beta"),
         "uf_inc": r.get("uf_inc"),
@@ -2247,7 +2478,7 @@ def _port1_echo_lines(p: dict) -> str:
                start[1] * 1e3, stop[1] * 1e3,
                start[2] * 1e3, stop[2] * 1e3,
                start[2] * 1e3,
-               ", ".join(PORT1_MSL_PROBES)))
+               ", ".join(probe_record_basenames(PORT1_MSL_PROBES))))
     return (
         "launch port 1         : LUMPED, x = %.4f mm (col %d), ground -> strip\n"
         "  span                : z = 0 .. %.4f mm, y = %.4f .. %.4f mm\n"
@@ -3319,8 +3550,11 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
     # Port 1's record names come from the arm in force (trap 14c): five MSL
     # records, or the lumped pair -- never both.  Port 2's pair is unchanged.
     port1_names = port1_probe_names(p)
+    # Resolved, not assumed: an MSL run's records are port_ut_1A ... on disk
+    # (PROBE_NAME_CANDIDATES), so a plain join(outdir, key) would report every
+    # one of them missing and turn a good solve into exit 3.
     missing = [n for n in port1_names + ("port_ut_2", "port_it_2")
-               if not os.path.exists(os.path.join(outdir, n))]
+               if resolve_port_record(outdir, n) is None]
     if missing:
         print("SOLVE FAILED: no port records for %s in %s"
               % (", ".join(missing), outdir), file=sys.stderr)
@@ -3329,6 +3563,8 @@ def run_solve(p: dict, outdir: str, dry_run: bool, threads: int = 2,
     print("SOLVE OK: port records in %s" % outdir)
     print("Next: DFT port_ut_1/port_it_1 at %r Hz, then" % F_REF)
     print("      S11 = (U/Zref - I) / (U/Zref + I), Zref = 50 ohm.")
+    print("      The MSL arm reports S11 TWICE: on the field Z_ref (DIAGNOSTIC)")
+    print("      and on the declared 50 ohm (ACCEPTANCE).  See S11 EXTRACTION.")
     print("      |S11| is plane-invariant; phase needs de-embedding to 20.4 mm.")
 
     # The extraction this file exists for, done while the records are still on
