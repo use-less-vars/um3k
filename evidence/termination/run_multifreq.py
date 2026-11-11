@@ -48,11 +48,12 @@ every bin from one solve.  It cannot be used here: a pulse run REFUSES
 (studies.py:1947), which is off the build_A artefact path.  Five single-tone
 solves it is: same mesh, same stations, same load, one frequency each.
 
-Outputs (all under evidence/termination/)
------------------------------------------
-build_A_50ohm_multifreq_k{K}_{f:.4f}GHz.json   one per frequency
-build_A_50ohm_multifreq_summary.json
-build_A_50ohm_multifreq_summary.md
+Outputs (all under evidence/termination/, named from the arm's
+``artefact_prefix`` -- A: build_A_50ohm_multifreq, B: build_B_100ohm_multifreq)
+-------------------------------------------------------------------------------
+{artefact_prefix}_k{K}_{f:.4f}GHz.json   one per frequency
+{artefact_prefix}_summary.json
+{artefact_prefix}_summary.md
 
 Exit codes: 0 = all five frequencies extracted; 5 = BLOCKED (the F4 falsifier
 fired: more than half the bins failed to yield a station fit or a beta).
@@ -122,6 +123,51 @@ AARM_KWARGS = dict(
 LOAD_AT_MM = 20.0
 LOAD_OHM = 50.0
 LOAD_KIND = "series_r"
+
+
+def _utc_date():
+    """UTC calendar date: the B arm's default dossier is date-stamped."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _script_name() -> str:
+    """Name of the file the operator invoked, not the module that defines main().
+
+    A wrapper (run_multifreq_B.py) must be recorded as itself: the provenance
+    record has to name the entry point the user actually ran. argv[0] is empty,
+    '-c' or '-' under -c/-m invocation, where __file__ is the honest answer.
+    """
+    argv0 = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else ""
+    if argv0 in ("", "-", "-c"):
+        argv0 = Path(__file__).name
+    return argv0
+
+
+#: Per-arm provenance, resolved ONCE per run by resolve_structure() and then
+#: threaded through every place an output name, a load or a dossier is built.
+#: The A entry repeats the module constants above by value -- they stay this
+#: file's documented default -- and the B entry is the 100 ohm twin.
+#:
+#: It is a table because the alternative was tried and it lied: the arm-B sweep
+#: was produced by patching ARTEFACT_PREFIX / LOAD_OHM from outside, so its
+#: artefacts came out headed "A-arm", carrying the A arm's dossier, with no
+#: load recorded anywhere and ``meta.argv`` naming a call that passed no load at
+#: all.  A name, a load and a dossier are ONE decision; they are resolved here,
+#: together, from one string.
+STRUCTURES = {
+    "A": {
+        "load_ohm": LOAD_OHM,
+        "artefact_prefix": ARTEFACT_PREFIX,
+        "arm_title": "A-arm",
+        "dossier_default": "multifreq-beta-test-2026-11-07",
+    },
+    "B": {
+        "load_ohm": 100.0,
+        "artefact_prefix": "build_B_100ohm_multifreq",
+        "arm_title": "B-arm",
+        "dossier_default": f"multifreq-B-test-{_utc_date()}",
+    },
+}
 
 #: k values chosen in the dispatch: 3.5 / 5.0 / 5.83 / 7.5 / 9.0 GHz asked,
 #: each snapped to the nearest bin of the one record.  k = 8 is the existing
@@ -437,11 +483,67 @@ def extract(result):
     return row
 
 
+def resolve_structure(structure_id, load_ohm=None, artefact_prefix=None,
+                      dossier=None):
+    """Resolve one run's provenance: the STRUCTURES row, then the flags.
+
+    A ``None`` flag means "unset, take the arm's default", so ``--structure B``
+    alone is a complete, self-describing B run.  Returns a plain dict; nothing
+    here mutates a module global, and nothing downstream reads one back.
+    """
+    spec = STRUCTURES[structure_id]
+    return {
+        "structure_id": structure_id,
+        "load_ohm": float(spec["load_ohm"] if load_ohm is None else load_ohm),
+        "artefact_prefix": (spec["artefact_prefix"]
+                            if artefact_prefix is None else artefact_prefix),
+        "arm_title": spec["arm_title"],
+        "dossier": spec["dossier_default"] if dossier is None else dossier,
+        "title": f"{spec['arm_title']} multifrequency beta sweep",
+    }
+
+
+def load_provenance(prov, unloaded):
+    """The load numbers as they belong in a kwargs record.
+
+    ``loads`` is an object, not a library keyword (see the comment in main()),
+    so the numbers that built it are written into the kwargs record by hand: a
+    meta that cannot say which load a record came from is exactly how an arm-B
+    run passed for arm A.  A load-free run records none of them.
+    """
+    if unloaded:
+        return {"load_ohm": None, "load_kind": None, "load_at_mm": None}
+    return {"load_ohm": float(prov["load_ohm"]), "load_kind": LOAD_KIND,
+            "load_at_mm": LOAD_AT_MM}
+
+
+def row_status(row):
+    """One word for a bin: failed > incomplete > ambiguous > ok.
+
+    ``failed`` is a raise, ``incomplete`` a record with named gaps, and
+    ``ambiguous`` a station fit whose beta wrapped (``beta_ambiguous``): three
+    different failures, and a report must not merge them.
+    """
+    if row.get("error"):
+        return "failed"
+    if row.get("errors"):
+        return "incomplete"
+    if row.get("beta_ambiguous"):
+        return "ambiguous"
+    return "ok"
+
+
 def write_summary(rows, summary):
+    load_txt = ("none" if summary.get("load_ohm") is None
+                else f"{summary['load_ohm']:g} ohm")
     md = [
-        "# A-arm multifrequency beta sweep",
+        f"# {summary['title']}",
         "",
         "Generated by `evidence/termination/run_multifreq.py`.",
+        "",
+        f"Structure {summary['structure_id']} ({summary['arm']}): "
+        f"load {load_txt}, dossier `{summary['dossier']}`, "
+        f"generated {summary['generated_utc']}.",
         "",
         f"Record length: nsteps={summary['cross_check'].get('nsteps')}, "
         f"n_acc={summary['cross_check'].get('n_acc')}, "
@@ -453,15 +555,18 @@ def write_summary(rows, summary):
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
-        if r.get("error"):
+        # The status column is the row's OWN status (row_status(), stored on the
+        # row): the .md and the .json must never disagree about a bin.
+        status = r.get("status") or row_status(r)
+        if status == "failed":
             md.append(f"| {r['k']} | {r['f_ghz_asked']:.4f} | - | - | - | - "
                       f"| - | - | FAILED: {r['error']} |")
             continue
         db = r.get("delta_beta_frac")
         # A row with named gaps is never "ok": the status column is what a
         # reader skims, so it carries the gaps rather than hiding them.
-        errors = r.get("errors") or []
-        status = "ok" if not errors else "INCOMPLETE: " + "; ".join(errors)
+        if status == "incomplete":
+            status = "INCOMPLETE: " + "; ".join(r.get("errors") or [])
         md.append(
             f"| {r['k']} | {r['f_ghz_asked']:.4f} | {r['f_ghz_used']:.6f} | "
             f"{_f(r.get('station_fit.beta'), 4)} | "
@@ -469,8 +574,9 @@ def write_summary(rows, summary):
             f"{'n/a' if db is None else format(100 * db, '+.3f') + ' %'} | "
             f"{_f(r.get('s11.magnitude'), 6)} | "
             f"{_f(r.get('s21.magnitude'), 6)} | {status} |")
-    (HERE / f"{ARTEFACT_PREFIX}_summary.md").write_text("\n".join(md) + "\n")
-    (HERE / f"{ARTEFACT_PREFIX}_summary.json").write_text(
+    (HERE / f"{summary['artefact_prefix']}_summary.md").write_text(
+        "\n".join(md) + "\n")
+    (HERE / f"{summary['artefact_prefix']}_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n")
     return "\n".join(md)
 
@@ -489,6 +595,19 @@ def main(argv=None):
                          "itself lives in run_build_A.py, not here)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the five planned calls and exit: no FDTD")
+    ap.add_argument("--structure", choices=sorted(STRUCTURES), default="A",
+                    help="arm this run IS: its load, output prefix, .md "
+                         "heading and default dossier (default A)")
+    ap.add_argument("--load-ohm", type=float, default=None,
+                    help="series-R load in ohm (default: the --structure's "
+                         "own value -- 50 for A, 100 for B)")
+    ap.add_argument("--artefact-prefix", default=None,
+                    help="output filename prefix (default: the --structure's "
+                         "own -- build_A_50ohm_multifreq / "
+                         "build_B_100ohm_multifreq)")
+    ap.add_argument("--dossier", default=None,
+                    help="dossier string recorded in the summary (default: "
+                         "the --structure's own)")
     ap.add_argument("--reference", type=Path, default=REFERENCE,
                     help="artefact the mesh cross-check compares against "
                          "(default: build_A_50ohm_p51_phasors.json beside "
@@ -502,9 +621,16 @@ def main(argv=None):
                          "grid does not move")
     ap.add_argument("--unloaded", action="store_true",
                     help="omit the ``loads`` entry, i.e. run the arm with no "
-                         "series-R load (intended to be mutually exclusive "
-                         "with a future --load-ohm)")
+                         "series-R load.  --load-ohm sets that load's value "
+                         "instead of removing it, so when both are given "
+                         "--unloaded wins and the run records no load")
     args = ap.parse_args(argv)
+    # One provenance record for the whole run: --structure fills the load, the
+    # output prefix, the .md heading and the dossier, and an explicit flag
+    # overrides its own field only.  Nothing below patches a module global.
+    prov = resolve_structure(args.structure, args.load_ohm,
+                             args.artefact_prefix, args.dossier)
+    prefix = prov["artefact_prefix"]
 
     import json as _json
     if args.no_cross_check:
@@ -552,11 +678,18 @@ def main(argv=None):
     plan_kwargs = dict(AARM_KWARGS)
     if args.unloaded:
         plan_kwargs = unloaded_kwargs(plan_kwargs)
+    plan_kwargs.update(load_provenance(prov, args.unloaded))
 
     if args.dry_run:
         print(_json.dumps({
             "cross_check": cross,
             "bin_spacing_hz": bin_hz,
+            "resolved": dict(
+                prov,
+                script=_script_name(),
+                artefacts=[f"{prefix}_k{k}_{k / span / 1e9:.4f}GHz.json"
+                           for k in args.k]
+                + [f"{prefix}_summary.json", f"{prefix}_summary.md"]),
             "calls": [{"k": k, "f_hz": k / span, "kwargs_hint": plan_kwargs}
                       for k in args.k], }, indent=2, sort_keys=True))
         return 0
@@ -575,13 +708,15 @@ def main(argv=None):
         # emfit/studies.py:2920-:2925 for the library's own reason -- a
         # load-free record has no cut to name, and ``None`` measures the
         # station span a load-free run wants).  The same driver, a bare line.
-        # It is meant to be mutually exclusive with a FUTURE --load-ohm knob,
-        # which would change the value here rather than remove the entry; that
-        # knob does not exist in this script.
+        # --load-ohm changes the value HERE rather than removing the entry, and
+        # the value used is the RESOLVED one (--structure B -> 100 ohm), never
+        # the module constant read back at this line: patching LOAD_OHM from
+        # outside is what left the arm-B artefacts with no load on record.
         if args.unloaded:
             kwargs = unloaded_kwargs(kwargs)
         else:
-            kwargs["loads"] = [Load(LOAD_AT_MM * 1e-3, LOAD_KIND, LOAD_OHM)]
+            kwargs["loads"] = [Load(LOAD_AT_MM * 1e-3, LOAD_KIND,
+                                    prov["load_ohm"])]
         row = {"k": k, "f_hz_asked": f_target,
                "f_ghz_asked": f_target / 1e9}
         started = time.monotonic()
@@ -589,14 +724,25 @@ def main(argv=None):
             result = studies.microstrip_wave(**kwargs)
             row.update(extract(result))
             row["f_ghz_used"] = (row["f_hz_used"] or f_target) / 1e9
-            out = HERE / (f"{ARTEFACT_PREFIX}_k{k}_"
+            out = HERE / (f"{prefix}_k{k}_"
                           f"{row['f_ghz_used']:.4f}GHz.json")
+            # ``argv`` is the PROCESS command line (the wrapper's, when one is
+            # used) and ``main_argv`` what main() was actually handed; the load
+            # numbers go INTO ``kwargs`` because they are not a library kwarg
+            # and would otherwise be recorded nowhere at all.
+            meta_kwargs = {kk: vv for kk, vv in kwargs.items()
+                           if kk not in ("loads", "reference")}
+            meta_kwargs.update(load_provenance(prov, args.unloaded))
             out.write_text(_json.dumps(
-                {"meta": {"script": Path(__file__).name, "k": k,
+                {"meta": {"script": _script_name(), "k": k,
                           "started_utc": start_utc,
+                          "structure_id": prov["structure_id"],
+                          "arm": prov["arm_title"],
+                          "load_ohm": meta_kwargs["load_ohm"],
                           "argv": list(sys.argv[1:]),
-                          "kwargs": {kk: vv for kk, vv in kwargs.items()
-                                     if kk not in ("loads", "reference")}},
+                          "main_argv": (list(sys.argv[1:]) if argv is None
+                                        else list(argv)),
+                          "kwargs": meta_kwargs},
                  "row": row,
                  "artefact_keys": sorted(k2 for k2 in dir(result)
                                          if not k2.startswith("_"))},
@@ -605,6 +751,7 @@ def main(argv=None):
         except Exception as exc:                      # noqa: BLE001
             row["error"] = f"{type(exc).__name__}: {exc}"
             row["traceback"] = traceback.format_exc(limit=4)
+        row["status"] = row_status(row)
         row["wall_s"] = round(time.monotonic() - started, 2)
         rows.append(row)
         gaps = row.get("errors") or []
@@ -616,7 +763,13 @@ def main(argv=None):
               file=sys.stderr)
 
     summary = {
-        "dossier": "multifreq-beta-test-2026-11-07",
+        "dossier": prov["dossier"],
+        "title": prov["title"],
+        "structure_id": prov["structure_id"],
+        "arm": prov["arm_title"],
+        "load_ohm": (None if args.unloaded else float(prov["load_ohm"])),
+        "artefact_prefix": prefix,
+        "started_utc": start_utc,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "cross_check": cross,
         "bin_spacing_hz": bin_hz,
@@ -630,6 +783,13 @@ def main(argv=None):
         "raised": sum(1 for r in rows if r.get("error")),
         "incomplete": sum(1 for r in rows if r.get("errors")),
     }
+    # "ok" is a claim about the RUN, so it is only made when all three counters
+    # are zero; otherwise the status names the counters that fired.
+    summary["status"] = "ok"
+    if summary["failures"] or summary["incomplete"] or summary["raised"]:
+        summary["status"] = "not_ok: " + ", ".join(
+            f"{name}={summary[name]}" for name in
+            ("failures", "incomplete", "raised") if summary[name])
     write_summary(rows, summary)
     if summary["failures"] * 2 > len(rows):
         print("BLOCKED: the F4 falsifier fired -- more than half the bins did "
