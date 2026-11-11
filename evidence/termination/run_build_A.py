@@ -1050,7 +1050,9 @@ def write_vis_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
                    load_x_mm: float = VIS_LOAD_X_MM,
                    substrate_h_mm: float = VIS_SUBSTRATE_H_MM,
                    strip_w_mm: float = VIS_STRIP_W_MM,
-                   eps_r: float = VIS_EPS_R) -> dict:
+                   eps_r: float = VIS_EPS_R,
+                   load_v=None, load_i=None,
+                   load_netlist_json: str = "") -> dict:
     """Write the one ``.npz`` this script's animation reads, and describe it.
 
     Units are the file's own: millimetres and nanoseconds everywhere, ``Ez`` in
@@ -1082,6 +1084,20 @@ def write_vis_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
     time; and ``v_measured_reliable`` / ``velocity_note`` say out loud whether
     the measurement earned the name, the frozen provenance of the analytic
     figure included.
+
+    ``load_v`` / ``load_i`` are the element's own V(t) and I(t), one sample per
+    time step, written as ``load_v`` / ``load_i`` beside the ``load_t_ns`` axis
+    they belong to.  The trace is ADDITIVE and absent means absent: no trace
+    writes ``load_trace_present`` 0 and three empty arrays, never zeros,
+    because a load that never sees the wave is a measurement and must not
+    become indistinguishable from a run that took no trace at all.
+    ``load_netlist_json`` is the netlist document the cut was terminated in
+    (JSON text, empty when the load was the lumped ``series_r`` element): which
+    CIRCUIT sat on the cut is no more recoverable from the fields than the arm
+    or the resistance, which are provenance here for the same reason.
+    ``schema`` stays ``emfit.vis/2``: every pre-existing key keeps its name,
+    dtype and meaning, so a reader that ignores these five keys reads exactly
+    the file it read before.
     """
     import numpy as np
 
@@ -1107,6 +1123,34 @@ def write_vis_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
     x_mm = (np.arange(nx, dtype=np.float32) * np.float32(cell_m) * 1e3)
     y_mm = (np.arange(ny, dtype=np.float32) * np.float32(cell_m) * 1e3)
     z_mm = (np.arange(nz, dtype=np.float32) * np.float32(cell_m) * 1e3)
+    # --- the element's own V(t)/I(t), when the caller traced it -------------
+    # One sample per step, and the axis says WHICH instant: sample n is the
+    # state after step n, i.e. the solver clock at (n+1)*dt -- the same
+    # convention ``t_ns`` follows, because both are read after the step.  The
+    # writer is given the trace and never the times, so the axis cannot
+    # disagree with the record it describes.
+    if load_v is None and load_i is None:
+        load_v_arr = np.zeros(0, dtype=np.float32)
+        load_i_arr = np.zeros(0, dtype=np.float32)
+        load_trace_present = 0
+    else:
+        load_v_arr = np.ascontiguousarray(
+            np.asarray(load_v, dtype=np.float32).reshape(-1))
+        load_i_arr = np.ascontiguousarray(
+            np.asarray(load_i, dtype=np.float32).reshape(-1))
+        if load_v_arr.size != load_i_arr.size:
+            raise SystemExit(
+                f"VIS REFUSED: {load_v_arr.size} voltage samples against "
+                f"{load_i_arr.size} current samples; V(t) and I(t) are ONE "
+                "record and cannot be written at two lengths.")
+        if load_v_arr.size > int(nsteps):
+            raise SystemExit(
+                f"VIS REFUSED: {load_v_arr.size} trace samples for a "
+                f"{int(nsteps)}-step run; the trace is one sample per step, "
+                "so a longer record is not this run's.")
+        load_trace_present = 1
+    load_t_ns = ((np.arange(load_v_arr.size, dtype=np.float64) + 1.0)
+                 * float(dt_s) * 1e9).astype(np.float32)
     arrays = {
         "schema": np.str_(VIS_SCHEMA),
         "engine": np.str_(VIS_ENGINE),
@@ -1138,6 +1182,13 @@ def write_vis_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
         "v_analytic_m_s": np.float64(velocity["v_analytic_m_s"]),
         "v_measured_reliable": np.int32(velocity["v_measured_reliable"]),
         "velocity_note": np.str_(velocity_note),
+        # Additive, and appended AFTER every key above so that a reader
+        # indexing the archive by name reads the same file it always did.
+        "load_t_ns": load_t_ns,
+        "load_v": load_v_arr,
+        "load_i": load_i_arr,
+        "load_trace_present": np.int32(load_trace_present),
+        "load_netlist_json": np.str_(str(load_netlist_json)),
     }
     path = Path(path).resolve()
     if path.suffix != ".npz":
@@ -1239,7 +1290,8 @@ def vis_selftest(path=VIS_SELFTEST_DEFAULT) -> dict:
            "xcut_near_mm", "xcut_far_mm", "port_x_mm", "load_x_mm",
            "substrate_h_mm", "strip_w_mm", "eps_r", "v_measured_m_s",
            "t_traverse_ns", "v_analytic_m_s", "v_measured_reliable",
-           "velocity_note")
+           "velocity_note", "load_t_ns", "load_v", "load_i",
+           "load_trace_present", "load_netlist_json")
     nt_x = int(sel.size)
     checks = []
 
@@ -1274,7 +1326,9 @@ def vis_selftest(path=VIS_SELFTEST_DEFAULT) -> dict:
                   f"{tuple(d[k].shape)} want {want}")
         dtypes = {"ez_ycut": "float32", "ez_xcut_near": "float32",
                   "ez_xcut_far": "float32", "frame_index": "int32",
-                  "frame_index_xcut": "int32", "t_ns": "float32"}
+                  "frame_index_xcut": "int32", "t_ns": "float32",
+                  "load_t_ns": "float32", "load_v": "float32",
+                  "load_i": "float32", "load_trace_present": "int32"}
         check("dtype", all(str(d[k].dtype) == t for k, t in dtypes.items()),
               ", ".join(f"{k}={d[k].dtype}" for k in dtypes))
         for k in ("ez_ycut", "ez_xcut_near", "ez_xcut_far"):
@@ -1337,6 +1391,19 @@ def vis_selftest(path=VIS_SELFTEST_DEFAULT) -> dict:
         check("v_measured_reliable", int(d["v_measured_reliable"]) == 1,
               f"v_measured_reliable={int(d['v_measured_reliable'])}; "
               f"{str(d['velocity_note'])}")
+        # The load trace is ADDITIVE, and the synthetic dump traces nothing:
+        # present 0 with EMPTY arrays, which is the difference between "no
+        # trace was taken" and "the trace was all zeros".  A reader that
+        # ignores these keys reads the pre-trace file exactly.
+        check("load_trace_absent",
+              int(d["load_trace_present"]) == 0
+              and tuple(d["load_t_ns"].shape) == (0,)
+              and tuple(d["load_v"].shape) == (0,)
+              and tuple(d["load_i"].shape) == (0,),
+              f"present={int(d['load_trace_present'])}, "
+              f"{int(d['load_t_ns'].size)} samples, 0 expected")
+        check("load_netlist_json", str(d["load_netlist_json"]) == "",
+              "no netlist was hung on the cut")
 
     bad = [c for c in checks if not c["ok"]]
     summary = {"status": "ok" if not bad else "FAIL", "path": summary["path"],
@@ -1453,6 +1520,32 @@ def build_kwargs(args: argparse.Namespace) -> dict:
         "launch": args.launch,
         "flux_projection": bool(args.flux_projection),
     }
+    if args.netlist is not None:
+        # A circuit on the load's cut, parsed HERE.  parse_netlist names the
+        # element and the field it objects to, and a refusal raised before the
+        # mesh, the trip thread and the artefact header exist costs a
+        # millisecond instead of a launch.  The DOCUMENT (not the parsed
+        # object) is what reaches microstrip_wave, so the artefact and the vis
+        # dump record the same text this run was built from -- a parsed object
+        # has no JSON form to record.
+        netlist_path = Path(args.netlist).resolve()
+        try:
+            netlist_doc = json.loads(netlist_path.read_text())
+        except OSError as exc:
+            raise SystemExit(
+                f"REFUSED: --netlist {netlist_path}: {exc}") from exc
+        except ValueError as exc:
+            raise SystemExit(
+                f"REFUSED: --netlist {netlist_path} is not JSON: "
+                f"{exc}") from exc
+        from emfit.netlist import parse_netlist
+
+        try:
+            parse_netlist(netlist_doc)
+        except ValueError as exc:
+            raise SystemExit(
+                f"REFUSED: --netlist {netlist_path}: {exc}") from exc
+        kwargs["load_netlist"] = netlist_doc
     if args.s21_plane_col is not None and args.s21_plane_index is not None:
         # One int reaches the library either way, so two flags naming it would
         # only hide which of the two the artefact was built from.
@@ -1541,7 +1634,7 @@ def build_kwargs(args: argparse.Namespace) -> dict:
 def twin_kwargs_from(kwargs: dict) -> dict:
     """The load-free twin's arguments: the loaded call with the load taken out.
 
-    Exactly three keys move, each for a stated reason:
+    Exactly four keys move, each for a stated reason:
 
     * ``loads`` is **dropped**, not set to ``()``.  The twin is a line with no
       load in it, and ``emfit/studies.py:3229`` reads ``bool(loads_used)`` --
@@ -1553,6 +1646,11 @@ def twin_kwargs_from(kwargs: dict) -> dict:
       is the reference's own span.
     * ``reference`` is ``None``: the twin is where the reference comes from, and
       a reference cannot be normalised against itself.
+    * ``load_netlist`` is **dropped** for the same reason as ``loads``: the
+      netlist is hung on the cut the ``series_r`` load frees, so a load-free
+      call has no cut to hang it on and ``emfit/studies.py:2997-3001`` refuses
+      one.  Dropped, not emptied: the twin's arguments must not name a circuit
+      that is not in it.
 
     Nothing else changes.  ``h``, ``n_sub``, ``n_air``, ``n_top``, ``n_clean``,
     ``n_line``, ``n_pml``, ``nsteps`` and ``excite`` are the loaded run's own
@@ -1567,6 +1665,7 @@ def twin_kwargs_from(kwargs: dict) -> dict:
     """
     twin = dict(kwargs)
     twin.pop("loads", None)
+    twin.pop("load_netlist", None)
     twin["s21_plane"] = None
     twin["reference"] = None
     return twin
@@ -1628,6 +1727,24 @@ def run_reference(reference) -> dict | None:
     }
 
 
+def _netlist_json(doc) -> str:
+    """The netlist document as JSON text, or "" when there is no netlist.
+
+    The records this file writes are JSON, and a netlist is a DOCUMENT: it is
+    carried as text (re-serialised with sorted keys, so one file always gives
+    one string), never as a summary that a reader would have to re-assemble.
+    An already-parsed object -- a caller of ``microstrip_wave`` may hand one in
+    -- is rendered with ``default=str`` rather than dropped: a lossy record of
+    the object is still a record, and the alternative is silence.
+    """
+    if doc is None:
+        return ""
+    try:
+        return json.dumps(doc, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return str(doc)
+
+
 def describe_kwargs(kwargs: dict) -> dict:
     """JSON-safe view of the call, including the load specification (AC-6)."""
     from emfit.board import Load  # noqa: F401  (documented import site)
@@ -1665,6 +1782,25 @@ def describe_kwargs(kwargs: dict) -> dict:
             for ld in loads
         ],
     }
+    # The netlist that terminated the cut, recorded ONLY when --netlist named
+    # one.  A record without this key ran the lumped ``series_r`` element of
+    # ``loads`` above, which is what every banked artefact carries: absent
+    # means "no netlist", never "the same netlist as last time".
+    netlist_doc = kwargs.get("load_netlist")
+    if netlist_doc is not None:
+        doc = netlist_doc if isinstance(netlist_doc, dict) else {}
+        view["load_netlist"] = {
+            "name": doc.get("name"),
+            "nodes": doc.get("nodes"),
+            "elements": doc.get("elements"),
+            "json": _netlist_json(netlist_doc),
+            "note": ("the SPICE document the cut was terminated in, hung on "
+                     "the E_x edges the series_r load in `loads` frees "
+                     "(emfit.studies.microstrip_wave(load_netlist=...)). Its "
+                     "own elements carry every R/L/C/D value, so `loads[]."
+                     "value` is NOT the circuit -- it is the lumped element "
+                     "the netlist replaced."),
+        }
     # The probe-station window, recorded ONLY when --ms-x-window named one.  A
     # record without this key ran the library's own span (MS_X_FIRST..MS_X_LAST,
     # emfit/studies.py:1177-1178) with MS_N_STATIONS stations, which is a
@@ -2352,6 +2488,24 @@ def main(argv: list[str] | None = None) -> int:
                          "100.0 is the exploratory 100 ohm arm (scope L520 "
                          "Ruling 3): graded against a band by grade_2b.py as "
                          "EXPLORATORY, not as an AC.")
+    ap.add_argument("--netlist", default=None, metavar="PATH",
+                    help="terminate the load's cut in a SPICE NETLIST read "
+                         "from this JSON file instead of the lumped "
+                         "--load-ohm resistor. It is hung on exactly the E_x "
+                         "edges a series_r load frees, through "
+                         "emfit.spice.SpicePort (microstrip_wave(load_netlist="
+                         "...)), so the cut, the mesh and the drive are the "
+                         "resistor run's own and the only difference is where "
+                         "the element's current comes from: an MNA solve in "
+                         "place of the per-edge conductance 1/(n_edges*R). The "
+                         "document carries its own R/L/C/D elements, so "
+                         "--load-ohm is IGNORED under --netlist -- the circuit "
+                         "is the netlist's, and the lumped element it replaces "
+                         "frees the cut. Parsed before the mesh, the trip "
+                         "thread and the artefact header exist, and refused by "
+                         "emfit.netlist.parse_netlist with the element and the "
+                         "field named rather than repaired. The load-free twin "
+                         "has no cut, so it is dropped there with `loads`.")
     ap.add_argument("--label", default=None,
                     help="run label written into the artefact (default: the "
                          "resolved --structure, i.e. the arm actually "
@@ -2520,6 +2674,20 @@ def main(argv: list[str] | None = None) -> int:
              "measured velocity, print the JSON summary and exit 0. No "
              f"argument: {VIS_SELFTEST_DEFAULT}.")
     args = ap.parse_args(argv)
+    # A netlist changes WHAT terminates the cut, but the artefact path does not
+    # follow it: with no --out, a netlist run would land on the structure's own
+    # default artefact (A -> evidence/termination/build_A_50ohm.json), the
+    # certified series_r reference whose own `loads` record says 50 ohm.  Writing
+    # netlist numbers there would clobber the reference with a file whose
+    # provenance contradicts its contents, so this fails closed instead.
+    if args.netlist is not None and args.out is None:
+        raise SystemExit(
+            f"REFUSED: --netlist {args.netlist}: a netlist run needs an explicit "
+            "--out. Without one it would be written over the structure's default "
+            f"artefact ({STRUCTURES[args.structure]['out']}), which is the "
+            "certified series_r reference whose `loads` record names a "
+            f"{STRUCTURES[args.structure]['load_ohm']:g} ohm resistor, not this "
+            "netlist. Give the run its own --out.")
     # The arm comes from --structure alone. It is never inferred from the --out
     # filename: in a solver the physics is chosen by a flag, and a typo in a
     # path must not change the simulated load.
@@ -2559,8 +2727,17 @@ def main(argv: list[str] | None = None) -> int:
     # Both resolved paths, out loud, before the solve: the dump's default used
     # to be structure-independent (evidence/vis_dump.npz for every arm), so a
     # B run with a bare --vis-dump would have overwritten A's picture.
-    print(f"structure {structure}: series_r load {float(args.load_ohm):g} ohm, "
-          f"label {label}")
+    if args.netlist is not None:
+        # The termination is the netlist, NOT the lumped resistor: --load-ohm is
+        # still resolved (it is what frees the cut), but announcing "series_r
+        # load 50 ohm" for a diode-terminated run is the provenance lie this
+        # line exists to avoid.
+        print(f"structure {structure}: NETLIST load "
+              f"{Path(args.netlist).resolve()} (series_r termination replaced), "
+              f"label {label}")
+    else:
+        print(f"structure {structure}: series_r load {float(args.load_ohm):g} ohm, "
+              f"label {label}")
     print(f"artefact: {out_path}")
     print("vis: " + (str(Path(args.vis_dump).resolve())
                           if args.vis_dump is not None
@@ -2729,6 +2906,10 @@ def main(argv: list[str] | None = None) -> int:
                 # was terminated in. The dump cannot imply either.
                 "structure_id": structure,
                 "load_ohm": float(args.load_ohm),
+                # Provenance again: which CIRCUIT terminated the cut.  Empty
+                # when the load is the lumped resistor above, because then a
+                # netlist in the file would describe something not in the run.
+                "load_netlist_json": _netlist_json(kwargs.get("load_netlist")),
                 "xcut_near_mm": ix_near * geo["cell_m"] * 1e3,
                 "xcut_far_mm": ix_far * geo["cell_m"] * 1e3,
             }
@@ -2740,8 +2921,15 @@ def main(argv: list[str] | None = None) -> int:
             # studies refuses it under excite="pulse" (the pulse reads its
             # band off the kept record, whose columns are the stations), and
             # the dump run's science is the packet, not S21.
+            # ``load_trace=True`` is what fills the additive per-step trace
+            # the dump carries (``load_t_ns`` / ``load_v`` / ``load_i``):
+            # the element's own V(t) and I(t), one sample per step, read from
+            # the same port the impedance extraction uses.  It goes on the
+            # LOADED call only: the twin has no element, and
+            # emfit/studies.py:3338-3343 refuses a trace with nothing to trace.
             loaded_kwargs = dict(loaded_kwargs, excite="pulse",
-                                 f_pulse=f_pulse_hz, s21_plane=None)
+                                 f_pulse=f_pulse_hz, s21_plane=None,
+                                 load_trace=True)
         t_call = time.monotonic()
         # The two dump flags go on the LOADED call only: the twin is load-free
         # by construction, and ``load_edge_dump`` refuses a record with no
@@ -2766,7 +2954,14 @@ def main(argv: list[str] | None = None) -> int:
             # `write_vis_dump` defaults `beta_rad_per_m` to
             # `VIS_BETA_BANKED_RAD_PER_M`, so `res.beta` is not passed.
             vis = write_vis_dump(args.vis_dump,
-                                           **recorder.payload(), **dump_meta)
+                                           **recorder.payload(), **dump_meta,
+                                           # The traced element: allocated
+                                           # because ``load_trace=True`` was
+                                           # passed above, never re-derived
+                                           # here.  ``None`` writes the "no
+                                           # trace" form.
+                                           load_v=res.load_trace_v,
+                                           load_i=res.load_trace_i)
             vel = vis["velocity"]
             tt = vel["t_traverse_ns"]
             tt_txt = f"{tt:.4f}" if isinstance(tt, float) else "n/a"
@@ -2779,7 +2974,12 @@ def main(argv: list[str] | None = None) -> int:
                 + ("" if vel["v_measured_reliable"] else
                    f" [NOT RELIABLE: {vel['velocity_note']}]")
                 + f", t_traverse_ns={tt_txt} (analytic, "
-                  f"v_analytic={vel['v_analytic_m_s']:.6g} m/s)\n")
+                  f"v_analytic={vel['v_analytic_m_s']:.6g} m/s)"
+                + ("" if res.load_trace_v is None else
+                   f"; load trace {res.load_trace_v.size} samples, "
+                   f"max|v|={float(np.max(np.abs(res.load_trace_v))):.6g} V, "
+                   f"max|i|={float(np.max(np.abs(res.load_trace_i))):.6g} A")
+                + "\n")
     finally:
         trip.stop()
     wall_s = time.monotonic() - started

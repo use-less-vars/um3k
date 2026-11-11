@@ -2946,7 +2946,9 @@ def microstrip_wave(
     loads_used = []
     # The series-R column's edge indices, copied out of the ``for load in
     # loads:`` scope below so they survive the loop (``edges`` is loop-local and
-    # unbound when there are no loads).  ``None`` unless ``load_edge_dump``.
+    # unbound when there are no loads).  ``None`` unless ``load_edge_dump`` or
+    # ``load_trace`` asked for the record (a netlist hangs on them too, so it
+    # asks for them as well).
     # With several loads the LAST series-R one wins; that is the one a
     # single-element record can describe.
     load_edges_used = None
@@ -2970,7 +2972,11 @@ def microstrip_wave(
                     f"{ix_load}, outside the strip ({ix_port} < ix < {nx})")
             if load.kind == "series_r":
                 edges = cc.idx_ex(np.array([ix_load]), j_points, k_strip).ravel()
-                if load_edge_dump or load_netlist is not None:
+                # ``load_trace`` is one more reason to keep the cut's edge
+                # list: it IS the element's two terminals, and a trace with no
+                # edges to project has nothing to report -- the refusal below
+                # at the allocation site is the check, this is the supply.
+                if load_edge_dump or load_netlist is not None or load_trace:
                     load_edges_used = np.array(edges, copy=True)
                 pec[edges] = False
                 # One element spread over the ``len(edges)`` parallel paths.
