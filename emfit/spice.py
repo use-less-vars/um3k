@@ -581,6 +581,13 @@ class SpicePort:
     no private matrix touched -- so ``W_E`` is reused and never inverted.  ``M``
     depends on ``dt``, so it is rebuilt each step; like ``step_rlc`` this is
     written for small ``n_t`` and claims nothing about larger ones.
+
+    ``tests/test_spice.py:383 test_spice_port_reproduces_step_rlc_on_a_series_rlc``
+    is the acceptance test for this coupling: a series R-L-C stepped here and
+    through ``step_rlc`` from the same field must agree to ``1e-14`` on every
+    record.  That is an identity check on the trapezoidal companion -- one
+    algebraic step reproduced by a second implementation -- not a field
+    co-simulation.
     """
 
     def __init__(self, port, m_eps, *, network, advance=None):
