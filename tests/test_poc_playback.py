@@ -862,16 +862,18 @@ def test_solve_argv_targets_the_existing_cut_plane_flag(tmp_path: Path) -> None:
 
     ``--xcut-near-mm`` already exists over there (it is what the user asked for
     when they said ``--xcut``), so a new flag would be an option the solver
-    would reject.  The length assertion is the other half: eight tokens means no
-    stray flag was slipped in beside the five that belong there.
+    would reject.  The length assertion is the other half: ten tokens means no
+    stray flag was slipped in beside the five that belong there - ``--out`` is
+    the sixth, and it is the one that stops a press rewriting a certified file.
     """
     import poc_app as app
 
     argv = app.solve_argv("B", 20.4, app.LIVE_DUMP)
 
-    assert len(argv) == 8, (
+    assert len(argv) == 10, (
         f"the solve argv is {argv!r}: exactly [python, solver, --structure, sid, "
-        "--xcut-near-mm, value, --vis-dump, out] is what the solver accepts"
+        "--xcut-near-mm, value, --vis-dump, out, --out, artefact] is what the "
+        "solver accepts"
     )
     assert argv[0] == sys.executable, (
         "the solve does not run on the interpreter that is serving the page; a "
@@ -891,8 +893,11 @@ def test_solve_argv_targets_the_existing_cut_plane_flag(tmp_path: Path) -> None:
         f"the cut position is {argv[5]!r}: it must read as 20.4, not as the "
         "float's long tail 20.400000000000002"
     )
-    assert argv[6:] == ["--vis-dump", str(app.LIVE_DUMP)], (
-        f"the dump target is not the solver's --vis-dump: {argv[6:]!r}"
+    assert argv[6:8] == ["--vis-dump", str(app.LIVE_DUMP)], (
+        f"the dump target is not the solver's --vis-dump: {argv[6:8]!r}"
+    )
+    assert argv[8] == "--out", (
+        f"the run's own artefact is not passed as the solver's --out: {argv[8]!r}"
     )
 
 
@@ -915,6 +920,97 @@ def test_solve_argv_refuses_to_overwrite_a_certified_dump(tmp_path: Path) -> Non
     assert app.EVIDENCE_DIR.resolve() not in app.LIVE_DUMP.resolve().parents, (
         f"LIVE_DUMP ({app.LIVE_DUMP}) is inside {app.EVIDENCE_DIR}: the default "
         "target a live solve uses must not be a certified directory"
+    )
+
+
+def test_solve_argv_always_names_its_own_out_artefact() -> None:
+    """Every press gets its OWN ``--out``, never the solver's certified default.
+
+    With no ``--out`` the solver falls back to its own table -
+    ``evidence/termination/build_A_50ohm.json``, a file a report quotes - so one
+    press rewrote certified numbers.  The second half is uniqueness: two solves
+    that resolved to one name would have the second silently replace the first
+    run's artefact while the page still said "solved -> ...".
+    """
+    import poc_app as app
+
+    first = app.solve_argv("A", 20.4, app.LIVE_DUMP)
+    second = app.solve_argv("A", 20.4, app.LIVE_DUMP)
+
+    certified = app.SOLVER_SCRIPT.parent / "build_A_50ohm.json"
+    artefacts = []
+    for argv in (first, second):
+        assert argv.count("--out") == 1, f"no single --out in {argv!r}"
+        artefact = Path(argv[argv.index("--out") + 1])
+        artefacts.append(artefact)
+        assert artefact != certified, (
+            f"--out is {artefact}, the solver's own certified default: the press "
+            "would overwrite a file the report quotes"
+        )
+        assert app.EVIDENCE_DIR.resolve() not in artefact.resolve().parents, (
+            f"--out is {artefact}, inside {app.EVIDENCE_DIR}"
+        )
+        assert artefact.parent == app.LIVE_DUMP.parent, (
+            f"--out is {artefact}: a live solve writes beside LIVE_DUMP "
+            f"({app.LIVE_DUMP.parent}), the existing artefacts convention"
+        )
+        assert "resistor" in artefact.name, (
+            f"--out is {artefact.name}: a resistor run has to be tellable at a "
+            "glance from a netlist run"
+        )
+    assert artefacts[0] != artefacts[1], (
+        f"two solves both claim {artefacts[0]}: the second overwrites the first"
+    )
+    # A resistor run appends NOTHING but its own --out: no --netlist, no file.
+    assert app.solve_netlist_file(first) is None, (
+        "the built-in resistor run was given a --netlist"
+    )
+
+
+def test_solve_argv_passes_the_netlist_as_a_file(tmp_path: Path) -> None:
+    """A supplied netlist reaches the solver as a ``--netlist`` FILE, beside --out.
+
+    The solver's interface is a path, so the text is written to disk - in the
+    run's own directory rather than /tmp, where the copy would say nothing about
+    which run it belonged to and would survive a crash of the page - and named
+    off that run's artefact, so the pair is unmistakable in a listing.
+    """
+    import poc_app as app
+
+    text = json.dumps({"name": "cut diode", "nodes": ["p", "n"], "elements": []})
+    argv = app.solve_argv("A", 20.4, tmp_path / "live_run.npz", netlist_json=text)
+    netlist_file = app.solve_netlist_file(argv)
+    try:
+        assert "--netlist" in argv and "--out" in argv, (
+            f"the netlist run is missing a flag: {argv!r}"
+        )
+        assert netlist_file is not None
+        assert argv[argv.index("--netlist") + 1] == str(netlist_file), (
+            f"--netlist does not name the file that was written: {argv!r}"
+        )
+        assert netlist_file.parent == tmp_path, (
+            f"the netlist was written to {netlist_file.parent}, not beside the run"
+        )
+        assert netlist_file.read_text(encoding="utf-8") == text, (
+            "the file the solver reads is not the text the user supplied"
+        )
+        artefact = Path(argv[argv.index("--out") + 1])
+        assert artefact.parent == tmp_path
+        assert "netlist" in artefact.name and "cut_diode" in artefact.name, (
+            f"--out is {artefact.name}: a netlist run has to say so, and say which "
+            "circuit"
+        )
+        assert netlist_file.name.startswith(artefact.stem), (
+            f"{netlist_file.name} does not pair with {artefact.name}"
+        )
+    finally:
+        if netlist_file is not None:
+            netlist_file.unlink()
+
+    with pytest.raises(ValueError):
+        app.solve_argv("A", 20.4, tmp_path / "live_run.npz", netlist_json="{oops")
+    assert not list(tmp_path.glob("*netlist*")), (
+        "a refused netlist left a file behind - one per bad edit would pile up"
     )
 
 
@@ -2220,3 +2316,158 @@ def test_every_bound_attribute_is_a_valid_vue_expression(builder, tmp_path):
         "enough to leave the app blank):\n  " + "\n  ".join(invalid)
     )
 
+
+
+# --- the load's own trace, drawn under the Circuit netlist box ---------------
+#
+# The panel is emitted STRAIGHT INTO the layout (there is no handle and no
+# click for it), so what has to be observed is the widget constructors it
+# calls. ``run_web_vis`` resolves Div/Pre/Img off the ``trame.widgets.html``
+# module AT CALL TIME, which is what makes patching those three attributes
+# before the boot sufficient - and it is why an assertion about the pixels
+# would be the wrong assertion: the figure is a data URI and the rows beside
+# it are the only part of the picture a headless check can read back.
+
+
+def _add_load_trace(path: Path, *, netlist_name="cut_A_test", n=5) -> Path:
+    """Rewrite the fixture dump with the solver's own load-trace keys.
+
+    ``_fixture_info`` writes the vis field set only, so the trace is added to
+    the file and the dump is re-loaded through ``load_vis``: the panel reads
+    ``info["load_series"]``, and what must be proved is that the LOADER hands
+    it a real series, not that a stand-in dict renders.
+    """
+    with np.load(path) as data:
+        payload = {key: data[key] for key in data.files}
+    payload["load_t_ns"] = np.linspace(0.0, 0.5, n)
+    payload["load_v"] = np.linspace(-2.0, 0.85, n)
+    payload["load_i"] = np.linspace(-2e-3, 1e-3, n)
+    payload["load_trace_present"] = np.array(1)
+    payload["load_netlist_json"] = np.array(
+        json.dumps({"name": netlist_name, "elements": []})
+    )
+    np.savez(path, **payload)
+    return path
+
+
+def _capture_html_widgets(monkeypatch):
+    """Record every Div/Pre/Img the boot builds, in construction order."""
+    import trame.widgets.html as html_mod
+
+    log = []
+    for name in ("Div", "Pre", "Img"):
+        real = getattr(html_mod, name)
+
+        def _factory(*args, _real=real, _name=name, **kwargs):
+            log.append(
+                {
+                    "kind": _name,
+                    "text": args[0] if args else None,
+                    "src": kwargs.get("src"),
+                }
+            )
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(html_mod, name, _factory)
+    return log
+
+
+def _texts(log) -> list:
+    return [str(entry["text"]) for entry in log if isinstance(entry["text"], str)]
+
+
+def test_load_series_panel_draws_the_recorded_trace(tmp_path: Path,
+                                                    monkeypatch) -> None:
+    """A traced dump puts a picture, a caption and rows on the Circuit tab."""
+    import poc_app as app
+
+    # _fixture_info RETURNS the info dict, not the path it wrote, so the file
+    # is named here: _add_load_trace rewrites it and load_vis re-reads it.
+    dump = tmp_path / "traced.npz"
+    _fixture_info(app, dump)
+    _add_load_trace(dump)
+    info = app.load_vis(dump)
+    series = info["load_series"]
+    assert isinstance(series, dict), (
+        "load_vis did not hand the page a trace for a dump that carries one: "
+        f"{series!r} (reason {info['load_series_reason']!r})"
+    )
+
+    log = _capture_html_widgets(monkeypatch)
+    _boot_app(info)
+
+    texts = _texts(log)
+    assert app._LOAD_SERIES_TITLE in texts, (
+        "the Circuit tab carries no load-trace panel at all (the title "
+        f"{app._LOAD_SERIES_TITLE!r} was never emitted), so a recorded trace "
+        "would be invisible on the page"
+    )
+    caption = [text for text in texts if text.startswith(app._LOAD_SERIES_TITLE + " - ")]
+    assert caption, f"the panel drew no caption; texts were:\n" + "\n".join(texts)
+    caption = caption[0]
+    for fragment in (f"{series['n']} samples", dump.name, "cut_A_test"):
+        assert fragment in caption, (
+            f"the caption does not name {fragment!r}, so a reader cannot tell "
+            f"which trace is on screen: {caption!r}"
+        )
+    images = [
+        str(entry["src"])
+        for entry in log
+        if entry["kind"] == "Img" and str(entry["src"]).startswith("data:image/png;base64,")
+    ]
+    assert len(images) == 1, (
+        "the traced dump produced "
+        f"{len(images)} data-URI images; without one the panel shows no picture "
+        "and without exactly one it is drawing somebody else's"
+    )
+    rows = "\n".join(text for text in texts if "t span [ns]:" in text)
+    assert "samples: " + str(series["n"]) in rows, (
+        f"the rows do not report this trace's sample count: {rows!r}"
+    )
+    t_ns = series["load_t_ns"]
+    span = f"t span [ns]: {min(t_ns):.6g} .. {max(t_ns):.6g}"
+    assert span in rows, (
+        f"the rows do not report this trace's own time span ({span!r}): {rows!r}"
+    )
+    assert "element: netlist circuit 'cut_A_test'" in rows, (
+        f"the rows do not name the circuit that terminated the cut: {rows!r}"
+    )
+
+
+def test_load_series_panel_states_the_reason_instead_of_drawing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A trace-less dump gets the reason, and no picture and no rows."""
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "no_trace.npz")
+    reason = info["load_series_reason"]
+    assert info["load_series"] is None and isinstance(reason, str), (
+        f"the fixture dump is supposed to carry no trace; got {info['load_series']!r} "
+        f"and reason {reason!r}"
+    )
+
+    log = _capture_html_widgets(monkeypatch)
+    _boot_app(info)
+
+    texts = _texts(log)
+    assert app._LOAD_SERIES_TITLE in texts, (
+        "the panel disappeared entirely for a trace-less dump; the reason it "
+        "cannot be drawn has nowhere to be said then"
+    )
+    assert f"no load trace to show: {reason}" in texts, (
+        "the panel did not repeat the dump's own reason, so the page would "
+        f"claim something the file does not say: {texts}"
+    )
+    assert "no picture drawn: no load trace was taken for this run" in texts, (
+        f"the panel did not say why there is no figure: {texts}"
+    )
+    assert not [
+        str(entry["src"])
+        for entry in log
+        if entry["kind"] == "Img"
+        and str(entry["src"]).startswith("data:image/png;base64,")
+    ], "the panel drew a picture of a trace the dump does not carry"
+    assert not [text for text in texts if "t span [ns]:" in text], (
+        f"rows from a trace that does not exist were printed: {texts}"
+    )

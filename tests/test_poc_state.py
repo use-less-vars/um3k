@@ -350,3 +350,141 @@ def test_t10_t11_record_only_structure_is_refused_not_substituted(structure_id):
         f"{structure_id} has no dump and must not be offered as renderable: "
         f"{renderable}"
     )
+
+
+# --- T12/T13: the load's own trace, and its absence, in the state document ---
+
+
+def _vis_schema() -> str:
+    """The vis schema literal the loader accepts, read from the module emitting it."""
+    server = REPO_ROOT / "server"
+    if str(server) not in sys.path:
+        sys.path.insert(0, str(server))
+    import poc_app
+
+    return poc_app.VIS_SCHEMA
+
+
+def _write_vis_dump(path: Path, *, trace: bool) -> Path:
+    """A minimal vis dump: the keys load_vis demands, plus the trace or nothing.
+
+    ``trace=False`` is the dump an older solver wrote - it carries none of the
+    ``load_*`` keys at all, which is a DIFFERENT absence from a run that took no
+    trace and says so. Only the first is built here.
+    """
+    import numpy as np
+
+    nt, nx, nz = 3, 6, 4
+    nt_x, ny_x = 2, 5
+    rng = np.random.default_rng(0)
+    payload = {
+        "schema": _vis_schema(),
+        "ez_ycut": rng.normal(size=(nt, nx, nz)),
+        "ez_xcut_near": rng.normal(size=(nt_x, ny_x, nz)),
+        "ez_xcut_far": rng.normal(size=(nt_x, ny_x, nz)),
+        "t_ns": np.arange(nt) * 1e-3,
+        "frame_index": np.arange(nt),
+        "frame_index_xcut": np.arange(nt_x) * 2,
+        "x_mm": np.linspace(0.0, 5.0, nx),
+        "y_mm": np.linspace(-1.0, 1.0, ny_x),
+        "z_mm": np.linspace(0.0, 2.0, nz),
+        "nx": np.array(nx),
+        "ny": np.array(ny_x),
+        "nz": np.array(nz),
+        "nt": np.array(nt),
+        "nt_x": np.array(nt_x),
+        "dt_s": np.array(1e-13),
+        "cell_m": np.array(1e-5),
+        "structure_id": np.array("A"),
+        "load_ohm": np.array(50.0),
+    }
+    if trace:
+        payload["load_t_ns"] = np.array([0.0, 0.5, 1.0])
+        payload["load_v"] = np.array([-0.85, 0.0, 0.85])
+        payload["load_i"] = np.array([-1e-3, 0.0, 1e-3])
+        payload["load_trace_present"] = np.array(1)
+        payload["load_netlist_json"] = np.array(
+            json.dumps({"name": "cut_test", "elements": []})
+        )
+    np.savez(path, **payload)
+    return path
+
+
+@pytest.fixture(scope="module")
+def vis_states(tmp_path_factory):
+    """Run ``--input <vis dump> --dump-state`` once per trace case, parse both."""
+    root = tmp_path_factory.mktemp("vis_load_series")
+    docs = {}
+    for name, has_trace in (("traced", True), ("untraced", False)):
+        npz = _write_vis_dump(root / f"{name}.npz", trace=has_trace)
+        out = root / f"{name}.json"
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--input", str(npz),
+             "--dump-state", str(out)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=CLI_TIMEOUT_S,
+        )
+        assert proc.returncode == 0, (
+            f"--dump-state on the {name} vis dump exited {proc.returncode}\n"
+            f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        )
+        docs[name] = json.loads(
+            out.read_text(encoding="utf-8"), parse_constant=_reject_constant
+        )
+    return docs
+
+
+def test_t12_vis_document_carries_the_load_trace(vis_states):
+    """The vis document names its own version AND ships the recorded series."""
+    document = vis_states["traced"]
+    assert document["schema"] == "emfit.poc-state/3", (
+        "the vis branch gained the load_series keys, so its document is /3; "
+        f"the dump declares {document['schema']!r}"
+    )
+    assert document["format"] == "wavedude", document["format"]
+    series = document["load_series"]
+    assert isinstance(series, dict), (
+        "the traced dump produced no load_series block, so the page has no "
+        f"trace to draw: {series!r} (reason {document['load_series_reason']!r})"
+    )
+    assert series["n"] == 3, series
+    for key, expected in (
+        ("load_t_ns", [0.0, 0.5, 1.0]),
+        ("load_v", [-0.85, 0.0, 0.85]),
+        ("load_i", [-0.001, 0.0, 0.001]),
+    ):
+        values = series[key]
+        assert values == pytest.approx(expected), (key, values)
+        assert all(isinstance(value, float) for value in values), (
+            f"{key} left the loader as {[type(v) for v in values]}, not floats: "
+            "the document is JSON-serialised for the browser"
+        )
+    assert series["netlist_name"] == "cut_test", series
+    assert document["load_series_reason"] is None, (
+        "a dump that carries a trace must not also carry a reason for its "
+        f"absence: {document['load_series_reason']!r}"
+    )
+
+
+def test_t13_trace_less_dump_is_null_plus_the_reason_it_is_absent(vis_states):
+    """An old dump still opens, and says WHY there is nothing to draw."""
+    document = vis_states["untraced"]
+    assert document["schema"] == "emfit.poc-state/3", document["schema"]
+    assert document["load_series"] is None, (
+        "a dump with no load_* keys produced a series: a zero-filled or "
+        f"zero-length one would be a picture of a run that never measured it: "
+        f"{document['load_series']!r}"
+    )
+    reason = document["load_series_reason"]
+    assert isinstance(reason, str) and reason.strip(), (
+        f"the null trace carries no reason: {reason!r}"
+    )
+    assert "untraced.npz" in reason, (
+        f"the reason must name the dump it looked in: {reason!r}"
+    )
+    assert "before the solver" in reason, (
+        "the reason must say the dump PREDATES the trace rather than claiming "
+        f"this run skipped it: {reason!r}"
+    )

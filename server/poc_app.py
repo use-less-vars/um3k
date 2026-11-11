@@ -127,7 +127,12 @@ VIS_SCHEMA = "emfit.vis/2"
 # "emfit.wavedude/1" the one before the provenance bump; both still open.
 VIS_LEGACY_SCHEMAS = ("emfit.wavedude/1", "emfit.wavedude/2")
 VIS_SCHEMAS = (VIS_SCHEMA,) + VIS_LEGACY_SCHEMAS
-STATE_SCHEMA_VIS = "emfit.poc-state/2"
+# A vis document gains a version when it gains a KEY - that is the rule /2 was
+# introduced under. /3 adds ``load_series`` and its sibling ``load_series_reason``
+# (the load's own recorded V(t)/I(t) trace) and changes nothing else. The legacy
+# dump stays emfit.poc-state/1 byte-for-byte: a legacy dump HAS no load trace, so
+# /1 never gains the two keys and that document is unchanged.
+STATE_SCHEMA_VIS = "emfit.poc-state/3"
 # Frames per second for the animation. The dump stores no wall-clock rate: t_ns
 # is SIMULATION time, so this number is a viewing choice, and the page prints
 # both times rather than implying the animation runs at the solver's rate.
@@ -259,6 +264,92 @@ def _is_vis(info: dict) -> bool:
     return info.get("format") == "wavedude"
 
 
+def _load_series_block(data, path: Path):
+    """The load's own V(t)/I(t) trace as ONE state block, or ``(None, reason)``.
+
+    WHY a block beside a sibling reason rather than four loose keys: that is
+    precisely how this page already carries its per-port wave data
+    (``port_waves`` beside ``port_waves_reason``), and a null is the only honest
+    value for "no trace was taken" - a zero-filled, or zero-length-but-present,
+    series would be a picture of a measurement nobody made.
+
+    TWO absences, one answer, two sentences. A dump written before the solver
+    recorded a trace carries none of these keys at all; a run that took no trace
+    stores ``load_trace_present`` 0 with three EMPTY arrays (empty on purpose,
+    so "no trace" cannot be read as "a trace that was all zero"). Both come back
+    as ``None`` plus the reason saying WHICH of the two this is, because "the
+    dump predates the feature" and "this run skipped the probe" are different
+    facts and only the second one is about the run on screen.
+
+    Never raises: this loader runs on page load for every artefact the server can
+    see, so a malformed key costs this one panel and nothing else.
+    """
+    name = Path(path).name if path is not None else "the dump"
+    try:
+        names = set(data.files)
+    except Exception as exc:  # noqa: BLE001 - unreadable/closed handle
+        return None, f"{name}: its key list could not be read ({exc})"
+    trace_keys = ("load_t_ns", "load_v", "load_i")
+    if "load_trace_present" not in names and not any(k in names for k in trace_keys):
+        return None, (
+            f"{name} records no load trace at all - it was written before the "
+            "solver started storing one"
+        )
+    try:
+        present = int(_npz_scalar(data, "load_trace_present", 0.0))
+    except (TypeError, ValueError, OverflowError):
+        present = 0
+    if present != 1:
+        return None, f"no load trace was taken for this run ({name} says so)"
+    series = {}
+    for key in trace_keys:
+        if key not in names:
+            return None, f"{name} records a load trace but carries no {key}"
+        try:
+            values = np.asarray(data[key], dtype=float).ravel()
+        except Exception as exc:  # noqa: BLE001 - wrong dtype or shape
+            return None, f"{name}: {key} is not a numeric series ({exc})"
+        if values.size == 0:
+            return None, f"{name}: {key} is empty although a trace is recorded"
+        if not np.all(np.isfinite(values)):
+            return None, f"{name}: {key} holds non-finite samples"
+        series[key] = [float(value) for value in values]
+    count = len(series["load_t_ns"])
+    for key in ("load_v", "load_i"):
+        if len(series[key]) != count:
+            return None, (
+                f"{name}: {key} holds {len(series[key])} samples but load_t_ns "
+                f"holds {count}; refusing to truncate to the shorter array"
+            )
+    # The netlist text is carried VERBATIM as well as parsed for its name: the
+    # figure names the circuit when the document parses, and falls back to the
+    # raw text when it does not, so a trace can never be drawn anonymously.
+    netlist_json = _npz_text(data, "load_netlist_json") or ""
+    netlist_name = None
+    if netlist_json.strip():
+        try:
+            document = json.loads(netlist_json)
+        except Exception:  # noqa: BLE001 - the raw text is still shown
+            document = None
+        if isinstance(document, dict):
+            recorded = document.get("name")
+            if isinstance(recorded, str) and recorded.strip():
+                netlist_name = recorded.strip()
+    return {
+        "file": str(path),
+        "n": count,
+        "load_t_ns": series["load_t_ns"],
+        "load_v": series["load_v"],
+        "load_i": series["load_i"],
+        "load_netlist_json": netlist_json,
+        "netlist_name": netlist_name,
+        # The terminated resistance as recorded. Carried so the figure can say
+        # WHICH element these series belong to - an unlabelled V/I trace beside
+        # the series_r artefact's 50 ohm record would be read as that resistor's.
+        "load_ohm": _npz_scalar(data, "load_ohm"),
+    }, None
+
+
 def load_vis(path: Path) -> dict:
     """Load an ``emfit.vis/2`` animation dump. numpy only, no pyvista.
 
@@ -365,6 +456,15 @@ def load_vis(path: Path) -> dict:
             "v_measured_reliable": bool(_npz_scalar(data, "v_measured_reliable", 0.0)),
             "velocity_note": _npz_text(data, "velocity_note"),
         }
+        # The load's own probe trace, and what terminated it. Handed to the page
+        # as one block beside its own reason (see _load_series_block), so that
+        # "this dump predates the trace", "this run took no trace" and "here is
+        # the trace" are three distinguishable states and none of them is zeros.
+        # Array values leave here as plain Python lists: the page document is
+        # JSON-serialised for the browser, and a numpy array must not reach it.
+        info["load_series"], info["load_series_reason"] = _load_series_block(
+            data, path
+        )
 
     problems = []
     ycut, near, far = info["ez_ycut"], info["ez_xcut_near"], info["ez_xcut_far"]
@@ -1521,6 +1621,10 @@ def build_frequency_chart(mf: dict, title: str | None = None) -> dict:
 # and those carry the basis string that produced them.
 
 _PORT_TITLE = "station phasors, as recorded"
+# The load trace's heading, in the same voice as _PORT_TITLE: the words say WHERE
+# the numbers came from (the load's cut, as recorded) so the panel cannot be read
+# as a refit, an extrapolation, or the series_r artefact's 50 ohm record.
+_LOAD_SERIES_TITLE = "the load's own V(t) and I(t) at the cut, as recorded"
 _PORT_FIELDS = ("v_re", "v_im", "i_re", "i_im")
 STATE_SCHEMA = "emfit.poc-state/1"
 RESIDUAL_BASIS = "50/(50 + 2*z0)"
@@ -1650,6 +1754,35 @@ def _port_caption(port_waves, reason) -> str:
     )
 
 
+def _load_series_caption(load_series, reason) -> str:
+    """One line naming the trace's file, its sample count and its element.
+
+    Same contract as _port_caption: the caption comes out whether or not anything
+    can be drawn, because "no trace was taken for this run" and "the picture could
+    not be drawn" are different facts and the caption is where the first is said.
+    """
+    if not isinstance(load_series, dict):
+        return f"no load trace to show: {reason or 'the dump carries none'}"
+    recorded_name = load_series.get("netlist_name")
+    if isinstance(recorded_name, str) and recorded_name.strip():
+        element = f"netlist circuit '{recorded_name.strip()}'"
+    elif str(load_series.get("load_netlist_json") or "").strip():
+        element = "a netlist circuit (unnamed in the dump)"
+    else:
+        ohm_text = "not recorded"
+        try:
+            if math.isfinite(float(load_series.get("load_ohm"))):
+                ohm_text = f"{float(load_series.get('load_ohm')):g} ohm"
+        except (TypeError, ValueError):
+            pass
+        element = f"lumped resistor ({ohm_text})"
+    return (
+        f"{_LOAD_SERIES_TITLE} - {load_series.get('n')} samples from "
+        f"{Path(load_series.get('file') or 'the dump').name}, terminating the "
+        f"cut in {element}"
+    )
+
+
 def build_port_wave_chart(port_waves) -> dict:
     """Render the recorded station phasors to a PNG data URI.
 
@@ -1726,6 +1859,141 @@ def build_port_wave_chart(port_waves) -> dict:
     uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
     print(f"[poc_app] port-wave chart: {len(png)} PNG bytes")
     return {"image": uri, "rows": rows, "reason": None, "png_bytes": len(png)}
+
+
+def build_port_series_chart(load_series) -> dict:
+    """Render the load's recorded V(t)/I(t) trace to a PNG data URI.
+
+    Two panels on ONE figure - voltage left, current right - against the same
+    simulated time axis in ns. Guarded exactly like build_port_wave_chart:
+    matplotlib is imported lazily and a broken installation, or a series this
+    module cannot use, costs the picture and never the page.
+
+    The x axis is deliberately given NO fixed span. A 60-step run spans a few
+    hundredths of a nanosecond and a 400-step run a few nanoseconds, and this one
+    figure serves both: a hard-coded range would flatten the short run into a
+    single column and hide most of the long one.
+
+    The element is named IN the figure, not only in a caption beside it. This page
+    also shows the series_r artefact, whose own ``loads`` record names a 50 ohm
+    resistor; an unlabelled V(t)/I(t) trace would be read as that resistor's, so
+    the circuit is named (from the netlist's own ``name``, else the raw text
+    truncated) whenever a netlist was supplied.
+
+    An empty trace is a NORMAL case - no netlist and no ``--vis-dump`` trace - so
+    it is a clean ``reason``, not an exception and not an empty plot.
+    """
+    if not isinstance(load_series, dict):
+        return {
+            "image": None,
+            "rows": [],
+            "reason": "no load trace was taken for this run",
+        }
+    try:
+        t_ns = [float(value) for value in load_series["load_t_ns"]]
+        volts = [float(value) for value in load_series["load_v"]]
+        amps = [float(value) for value in load_series["load_i"]]
+    except Exception as exc:  # noqa: BLE001 - a malformed block is a reason
+        return {
+            "image": None,
+            "rows": [],
+            "reason": f"the load trace is unusable: {exc}",
+        }
+    if not t_ns or len(volts) != len(t_ns) or len(amps) != len(t_ns):
+        return {
+            "image": None,
+            "rows": [],
+            "reason": (
+                f"the load trace holds {len(t_ns)}/{len(volts)}/{len(amps)} "
+                "samples (t/V/I); refusing to draw part of it"
+            ),
+        }
+
+    # Which element these series belong to, resolved once and printed both in the
+    # figure's title and in the rows, so the two can never drift apart.
+    raw_json = load_series.get("load_netlist_json") or ""
+    recorded_name = load_series.get("netlist_name")
+    if isinstance(recorded_name, str) and recorded_name.strip():
+        element = (
+            f"netlist circuit '{recorded_name.strip()}' "
+            "(series_r termination replaced)"
+        )
+    elif str(raw_json).strip():
+        flat = " ".join(str(raw_json).split())
+        element = (
+            f"netlist circuit '{flat[:60]}{'...' if len(flat) > 60 else ''}' "
+            "(series_r termination replaced)"
+        )
+    else:
+        ohm = load_series.get("load_ohm")
+        ohm_text = "not recorded"
+        try:
+            if math.isfinite(float(ohm)):
+                ohm_text = f"{float(ohm):g} ohm"
+        except (TypeError, ValueError):
+            pass
+        element = f"lumped resistor ({ohm_text})"
+
+    rows = [
+        ["element", element],
+        ["samples", str(len(t_ns))],
+        ["t span [ns]", f"{min(t_ns):.6g} .. {max(t_ns):.6g}"],
+        ["V min / max [V]", f"{min(volts):.6g} / {max(volts):.6g}"],
+        ["I min / max [A]", f"{min(amps):.6g} / {max(amps):.6g}"],
+    ]
+
+    try:
+        import base64
+        import io
+
+        import matplotlib
+
+        try:
+            matplotlib.use("Agg")
+        except Exception:  # noqa: BLE001 - an existing backend is acceptable
+            pass
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001 - no picture, no rows, just a reason
+        print(
+            f"[poc_app] no port-series chart (matplotlib unusable: {exc})",
+            file=sys.stderr,
+        )
+        return {"image": None, "rows": [], "reason": f"matplotlib unusable: {exc}"}
+
+    fig = None
+    try:
+        fig, (ax_v, ax_i) = plt.subplots(1, 2, figsize=(6.0, 1.9), dpi=110)
+        for ax, values, colour, symbol, unit in (
+            (ax_v, volts, "#1f77b4", "V", "V"),
+            (ax_i, amps, "#d62728", "I", "A"),
+        ):
+            ax.plot(t_ns, values, color=colour, linewidth=1.1)
+            ax.set_xlabel("t [ns]", fontsize=7)
+            ax.set_title(f"{symbol}(t) at the load [{unit}]", fontsize=7)
+            ax.tick_params(labelsize=6)
+            ax.grid(True, color="#dddddd", linewidth=0.5)
+        ax_v.set_ylabel("voltage, as recorded", fontsize=7)
+        ax_i.set_ylabel("current, as recorded", fontsize=7)
+        fig.suptitle(
+            f"load series - {element}, n = {len(t_ns)}",
+            fontsize=6.5,
+        )
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format="png", bbox_inches="tight")
+        png = buffer.getvalue()
+    except Exception as exc:  # noqa: BLE001 - never take the server down
+        print(f"[poc_app] port-series chart skipped: {exc}", file=sys.stderr)
+        return {"image": None, "rows": [], "reason": f"chart render failed: {exc}"}
+    finally:
+        # EVERY path leaves the figure closed, including the one above: the server
+        # is long-lived, so a leaked figure is a leak per page load.
+        if fig is not None:
+            plt.close(fig)
+
+    uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    print(f"[poc_app] port-series chart: {len(png)} PNG bytes")
+    return {"image": uri, "rows": rows, "reason": None}
 
 
 def _structure_artifact_path(structure, key):
@@ -2568,7 +2836,7 @@ def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_
     multifreq = _multifreq_block(
         _multifreq_path(path, entry, info.get("structure_id")))
     port_waves, port_reason = _port_waves_block(sparams_path)
-    return {
+    page = {
         "schema": STATE_SCHEMA_VIS if _is_vis(info) else STATE_SCHEMA,
         "generated_utc": _utc_now(),
         "head_commit": _git_head_short(),
@@ -2591,11 +2859,25 @@ def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_
         "port_waves_reason": port_reason,
         "chart": _chart_block(multifreq, entry),
         # Which artefact this document describes. The legacy dump keeps
-        # emfit.poc-state/1 byte-for-byte; a vis dump is /2, because it adds
-        # the two keys below and reads field_dump's extents off stored nodes.
+        # emfit.poc-state/1 byte-for-byte; a vis dump is /3, because it adds the
+        # keys below (format/animation under /2, load_series beside its reason
+        # under /3) and reads field_dump's extents off stored nodes.
         "format": "wavedude" if _is_vis(info) else "legacy",
         "animation": _animation_block(info, fps) if _is_vis(info) else None,
     }
+    # The load's own V(t)/I(t) trace, added on the vis branch only - the same rule
+    # the format/animation keys above follow, and the reason STATE_SCHEMA_VIS is
+    # now /3: a document that gained a KEY gained a version, while the legacy dump
+    # (which carries no trace to add) stays /1 exactly.
+    if _is_vis(info):
+        page["load_series"] = info.get("load_series")
+        # A sibling slot, exactly as port_waves_reason is a sibling of port_waves:
+        # a null trace has to carry the sentence saying why, and it must not be
+        # folded into the block's own shape. Nothing is defaulted here - load_vis
+        # always sets the reason beside the block, so a missing key means a dump
+        # from a build that did not, and null is the honest value for it.
+        page["load_series_reason"] = info.get("load_series_reason")
+    return page
 
 
 def _plane_layout(info: dict, record) -> dict:
@@ -4487,13 +4769,49 @@ def _probe_trame_ui():
     return None
 
 
-def solve_argv(structure_id, xcut_near_mm, out_npz) -> list[str]:
+#: The sequence number every solve's OWN artefact name is built from. Two
+# presses must not land on one file: the second would overwrite the first, and
+# the page would then report "solved -> x.json" over numbers nobody had read.
+_SOLVE_RUN_LOCK = threading.Lock()
+_SOLVE_RUN_SEQ = 0
+
+
+def _next_solve_run_tag() -> str:
+    """A readable - and UNIQUE - stamp for one solve's files.
+
+    The clock half makes a directory listing say when the run happened; the
+    sequence half is what makes the name unique, because two presses inside the
+    same second would otherwise resolve to the same path.
+    """
+    global _SOLVE_RUN_SEQ
+    with _SOLVE_RUN_LOCK:
+        _SOLVE_RUN_SEQ += 1
+        seq = _SOLVE_RUN_SEQ
+    return f"{time.strftime('%Y%m%dT%H%M%S')}_{seq:03d}"
+
+
+def _solve_netlist_slug(netlist_document) -> str:
+    """The circuit's own ``name``, flattened to something a file name can hold.
+
+    A netlist may name itself with spaces, dots or slashes, and none of those
+    survive as a path component unchanged; an unnamed one still has to produce a
+    readable name, so it falls back to ``custom``.  The name only has to be
+    recognisable at a glance - the verbatim text is in the file beside it.
+    """
+    raw = ""
+    if isinstance(netlist_document, dict):
+        raw = str(netlist_document.get("name") or "").strip()
+    slug = re.sub(r"[^A-Za-z0-9-]+", "_", raw).strip("_")
+    return slug[:40] or "custom"
+
+
+def solve_argv(structure_id, xcut_near_mm, out_npz, netlist_json="") -> list[str]:
     """The argv that would run a fresh field solve. BUILT here, never run.
 
     It exists so the command line is assertable without paying for a solve: the
-    flags are the solver's OWN - ``--structure``, ``--xcut-near-mm`` and
-    ``--vis-dump`` all already exist over there - so this function adds no
-    solver option and touches no solver behaviour.
+    flags are the solver's OWN - ``--structure``, ``--xcut-near-mm``,
+    ``--vis-dump``, ``--netlist`` and ``--out`` all already exist over there - so
+    this function adds no solver option and touches no solver behaviour.
 
     ``structure_id`` is REQUIRED: the arm is a choice, and when the caller did
     not name one there is no default arm worth guessing.
@@ -4501,6 +4819,18 @@ def solve_argv(structure_id, xcut_near_mm, out_npz) -> list[str]:
     ``out_npz`` may not resolve anywhere under ``EVIDENCE_DIR``: those dumps are
     certified artefacts, so a UI press must never be able to clobber one.
     ``LIVE_DUMP`` is the location a live solve is meant to use.
+
+    ``--out`` is ALWAYS passed, and it is never the solver's own default (the
+    certified ``evidence/termination/build_A_50ohm.json``): without it every
+    button press rewrote a file a report quotes.  It names ONE run, so two solves
+    never share an artefact.
+
+    ``netlist_json`` is the netlist as JSON TEXT, and empty means "the built-in
+    resistor study".  Non-empty: the text is checked HERE (a ``ValueError``
+    before anything is written or spawned), then written to a file beside that
+    run's artefact - the solver's interface is a path, not a string - and passed
+    as ``--netlist``.  The file is the caller's to delete once the child exits
+    (``solve_netlist_file`` reads its path back out of the argv).
     """
     sid = _structure_key(structure_id)
     if not sid:
@@ -4517,7 +4847,40 @@ def solve_argv(structure_id, xcut_near_mm, out_npz) -> list[str]:
             f"{evidence} is a certified artefact; write to LIVE_DUMP "
             f"({LIVE_DUMP}) instead"
         )
-    return [
+
+    # ---- the netlist, before a single file is touched -----------------------
+    text = str(netlist_json or "")
+    document = None
+    if text.strip():
+        try:
+            document = json.loads(text)
+        except ValueError as exc:
+            raise ValueError(
+                f"solve_argv: the netlist is not JSON ({exc}) - the solver loads "
+                "it with json.load, so the page refuses it here instead of "
+                "spawning a child that would exit on it"
+            ) from exc
+        if not isinstance(document, dict):
+            raise ValueError(
+                "solve_argv: the netlist must be a JSON OBJECT (a mapping), not "
+                f"a {type(document).__name__} - that is what the solver loads"
+            )
+
+    # ---- this run's OWN artefact -------------------------------------------
+    artefact = out.parent / (
+        f"vis_run_{sid}_"
+        f"{'resistor' if document is None else 'netlist_' + _solve_netlist_slug(document)}_"
+        f"{_next_solve_run_tag()}.json"
+    )
+    resolved_artefact = artefact.resolve()
+    if resolved_artefact == evidence or evidence in resolved_artefact.parents:
+        raise ValueError(
+            f"solve_argv: refusing to write {resolved_artefact} - everything "
+            f"under {evidence} is a certified artefact; write to "
+            f"{LIVE_DUMP.parent} instead"
+        )
+
+    argv = [
         sys.executable,
         str(SOLVER_SCRIPT),
         "--structure",
@@ -4530,6 +4893,34 @@ def solve_argv(structure_id, xcut_near_mm, out_npz) -> list[str]:
         "--vis-dump",
         str(out),
     ]
+    if document is None:
+        return argv + ["--out", str(artefact)]
+
+    # The netlist reaches the solver as a FILE - that is its interface - and it
+    # is written beside this run's own artefact rather than in /tmp: same
+    # directory, so it cannot fail on a full tmpfs, it is obvious which run it
+    # belonged to, and the caller removes it as soon as the child exits.  It is
+    # named off the artefact's stem, so the pair is unmistakable in a listing.
+    netlist_path = artefact.with_suffix(".netlist.json")
+    netlist_path.write_text(text, encoding="utf-8")
+    return argv + ["--netlist", str(netlist_path), "--out", str(artefact)]
+
+
+def solve_netlist_file(argv):
+    """The netlist FILE a ``solve_argv`` command line points at, else ``None``.
+
+    ONE place reads the path back out of the argv, so the caller that has to
+    DELETE the file uses the same rule as the builder above and the two cannot
+    drift apart.  A line with no ``--netlist`` is a resistor run and has no file
+    to clean up.
+    """
+    argv = list(argv or [])
+    if "--netlist" not in argv:
+        return None
+    i = argv.index("--netlist")
+    if i + 1 >= len(argv) or not str(argv[i + 1]).strip():
+        return None
+    return Path(argv[i + 1])
 
 
 def reload_page(npz_path, structure_id=None) -> dict:
@@ -6303,8 +6694,125 @@ def run_web_vis(
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
+    def _emit_circuit_netlist() -> None:
+        """Emit the CIRCUIT NETLIST editor: one optional multi-line box.
+
+        WHY a box and not a form: the netlist is a whole circuit written as
+        JSON, pasted in from wherever it was designed. The box is bound to
+        `solve_netlist_json`, which the solve path already reads, so EMPTY and
+        absent mean the same thing: the built-in 50 ohm resistor study, exactly
+        as it behaved before this box existed. Nothing here validates the text
+        - a netlist half-typed must never put a banner on screen while it is
+        still being typed, and the field is optional besides.
+
+        The wrapper belongs to the caller: the SETUP column folds this into its
+        Circuit section and the DATA column's Circuit tab emits it bare, so
+        this emits the note and the box and nothing else.
+
+        The widget class is resolved with the same getattr idiom the controls
+        use, so a variant shipping no VTextarea gets a plain note instead of a
+        traceback: the editor is a convenience, the solve is the point.
+        """
+        note = (
+            "Leave EMPTY for the built-in 50 ohm resistor study; fill it to "
+            "terminate the load's cut in the circuit instead."
+        )
+        if html_div is not None:
+            html_div(
+                note,
+                style="font-size: 11px; color: #333; padding: 2px 0;",
+            )
+        elif "VLabel" in widgets:
+            widgets["VLabel"](note)
+        textarea_cls = getattr(widgets_module, "VTextarea", None)
+        if textarea_cls is not None:
+            textarea_cls(
+                v_model=("solve_netlist_json", ""),
+                label="Circuit Netlist (JSON)",
+                placeholder=(
+                    "Leave empty for the built-in 50 ohm resistor study; "
+                    "fill it to terminate the load's cut in a circuit."
+                ),
+                rows=6,
+                density="compact",
+                hide_details=True,
+                classes="mb-1",
+            )
+            return
+        pre_cls = getattr(html_widgets, "Pre", None)
+        if pre_cls is not None:
+            pre_cls(
+                "netlist editor unavailable (no VTextarea) - solves stay on "
+                "the built-in resistor study",
+                style=(
+                    "font-size: 10px; white-space: pre-wrap; "
+                    "margin: 4px 0;"
+                ),
+            )
+        elif "VLabel" in widgets:
+            widgets["VLabel"](
+                "netlist editor unavailable (no VTextarea) - solves stay on "
+                "the built-in resistor study"
+            )
+
+    def _emit_load_series_panel(load_series, reason) -> None:
+        """Emit the load's recorded V(t)/I(t) trace under the Circuit netlist box.
+
+        WHY it takes its block and reason as ARGUMENTS rather than reading `info`
+        itself: the panel is emitted from two places (the Circuit tab, and the flat
+        fallback used when the tab widgets are missing) and both must show the same
+        run's trace, so the source of the pair stays single.
+
+        The caption comes out even when nothing can be drawn, for the reason
+        _emit_port_wave_panel gives: "no trace was taken for this run" is a
+        different statement from "matplotlib is unusable here", and only the
+        caption can make the first one.
+
+        The rows are printed even when the picture IS drawn. That is deliberate:
+        the figure's axes carry no numbers a headless check can read back, so the
+        rows are what proves the panel drew THIS trace - its sample count, its time
+        span and its V/I extremes - and they cost two lines.
+        """
+        if html_div is None:
+            return
+        try:
+            chart = build_port_series_chart(load_series)
+        except Exception as exc:  # noqa: BLE001 - the chart is never the point
+            chart = {
+                "image": None,
+                "rows": [],
+                "reason": f"the trace could not be drawn: {exc}",
+            }
+        html_div(
+            _LOAD_SERIES_TITLE,
+            style="font-size: 12px; font-weight: 600; padding: 4px 0 0 0;",
+        )
+        html_div(
+            _load_series_caption(load_series, reason),
+            style="font-size: 11px; color: #333; padding: 0 0 2px 0;",
+        )
+        image = chart.get("image")
+        img_cls = getattr(html_widgets, "Img", None)
+        if image and img_cls is not None:
+            img_cls(
+                src=image,
+                style="height: 170px; display: block; margin: 4px 0;",
+            )
+        elif chart.get("reason"):
+            html_div(
+                f"no picture drawn: {chart['reason']}",
+                style="font-size: 11px; color: #8a1c00; padding: 0 0 2px 0;",
+            )
+        rows = chart.get("rows") or []
+        pre_cls = getattr(html_widgets, "Pre", None)
+        if pre_cls is not None and rows:
+            pre_cls(
+                "\n".join(f"{label}: {value}" for label, value in rows),
+                style="font-size: 10px; margin: 4px 0;",
+            )
+
     def _emit_solve_controls() -> None:
-        """Emit the SETUP column as a three-section engineering form.
+        """Emit the SETUP column as a four-section engineering form.
 
         The caller decides which column the form lands in (the SETUP VCol, or the
         bare content area on the no-container fallback), so nothing here sizes or
@@ -6314,8 +6822,9 @@ def run_web_vis(
         230 px column that already has both.
 
         Order is the order a run is set up in: Project (which arm), Mesh &
-        Geometry (where the cut plane is, which cross-section is shown), Action
-        (the solve, and what it said).
+        Geometry (where the cut plane is, which cross-section is shown), Circuit
+        (the netlist that terminates the cut, if there is one), Action (the
+        solve, and what it said).
 
         Every widget class is resolved with the same getattr idiom the controls
         use, so a variant shipping no VCard degrades to a label plus the same
@@ -6434,6 +6943,7 @@ def run_web_vis(
         try:
             _section("Project", _project, first=True)
             _section("Mesh & Geometry", _mesh_and_geometry)
+            _section("Circuit", _emit_circuit_netlist)
             _section("Action", _action)
         except Exception as exc:  # noqa: BLE001 - solve UI is optional
             print(
@@ -6594,6 +7104,11 @@ def run_web_vis(
     state.solve_xcut_mm = SOLVE_DEFAULT_XCUT_MM
     state.solve_status = "no solve run in this session"
     state.solve_label = "Solve"
+    # The netlist a solve may be run on, as JSON TEXT. It lives in the state so
+    # the editor in the solve panel binds it the usual way
+    # (v_model=("solve_netlist_json", "")) and the button reads it from here;
+    # empty means "solve the built-in resistor study".
+    state.solve_netlist_json = ""
     solve: dict = {}
 
     async def _watch_solve() -> None:
@@ -6677,7 +7192,21 @@ def run_web_vis(
         _rebuild_sheets()
         state.solve_status = f"solved -> {Path(applied['new_path']).name}"
 
-    def _run_job(job) -> None:
+    def _drop_netlist(netlist_path) -> None:
+        """Delete one run's netlist FILE. Never raises: the run is over anyway.
+
+        Called from a ``finally``, so a clean exit, a crashed child and a start
+        that never happened all leave the artefacts directory equally tidy - one
+        file per click would otherwise pile up unseen.
+        """
+        if netlist_path is None:
+            return
+        try:
+            Path(netlist_path).unlink()
+        except OSError as exc:
+            print(f"[poc_app] netlist not removed: {exc}", file=sys.stderr)
+
+    def _run_job(job, netlist_path=None) -> None:
         """Worker thread: run the solve to completion, never raising."""
         try:
             job.run()
@@ -6685,10 +7214,20 @@ def run_web_vis(
             print(f"[poc_app] solve could not start: {exc}", file=sys.stderr)
             job.status = "failed"
             job.returncode = None
+        finally:
+            # The child has exited (or never started), so the netlist file has
+            # been read for the last time.
+            _drop_netlist(netlist_path)
 
     @ctrl.set("solve_start")
-    def _on_solve_start(**_kwargs) -> None:
-        """Start a solve and return IMMEDIATELY. The watcher brings it back."""
+    def _on_solve_start(netlist_json="", **_kwargs) -> None:
+        """Start a solve and return IMMEDIATELY. The watcher brings it back.
+
+        ``netlist_json`` is the netlist as JSON TEXT; empty (the default, and
+        what an ordinary press gives) solves the built-in resistor study.  An
+        explicit keyword wins, otherwise the text comes from the page's own
+        slot, ``state.solve_netlist_json``.
+        """
         running = solve.get("job")
         if running is not None and running.status == "running":
             state.solve_status = "a solve is already running - one at a time"
@@ -6698,18 +7237,33 @@ def run_web_vis(
             xcut_mm = float(state.solve_xcut_mm)
         except (TypeError, ValueError):
             xcut_mm = SOLVE_DEFAULT_XCUT_MM
+        netlist_text = str(
+            netlist_json or getattr(state, "solve_netlist_json", "") or ""
+        )
+        # A refused netlist raises HERE, before solve_argv has written anything,
+        # so a bad edit costs a message and no file and no child process.
         try:
-            argv = solve_argv(structure, xcut_mm, LIVE_DUMP)
+            argv = solve_argv(
+                structure, xcut_mm, LIVE_DUMP, netlist_json=netlist_text
+            )
         except (ValueError, OSError) as exc:
             state.solve_status = f"refused: {exc}"
             return
+        # From here a netlist file exists on disk; the worker thread's finally
+        # removes it once the child is gone, and this frame's cleanup removes it
+        # if the job never gets started at all.
+        netlist_path = solve_netlist_file(argv)
         try:
             LIVE_DUMP.parent.mkdir(parents=True, exist_ok=True)
             job = SolveJob(argv)
             threading.Thread(
-                target=_run_job, args=(job,), daemon=True, name="poc-solve"
+                target=_run_job,
+                args=(job, netlist_path),
+                daemon=True,
+                name="poc-solve",
             ).start()
         except Exception as exc:  # noqa: BLE001 - report, never take the page
+            _drop_netlist(netlist_path)
             state.solve_status = f"could not start the solver: {exc}"
             print(f"[poc_app] solve not started: {exc}", file=sys.stderr)
             return
@@ -6938,6 +7492,7 @@ def run_web_vis(
                                         tab_cls("S-Parameters")
                                         tab_cls("Confidence N-lambda")
                                         tab_cls("Modes")
+                                        tab_cls("Circuit")
                                     with tabs_window_cls(
                                         v_model=("tab", "s_params")
                                     ):
@@ -6954,19 +7509,43 @@ def run_web_vis(
                                                 "{{ mode_view_caption }}",
                                                 style="padding: 2px 0;",
                                             )
+                                        with tabs_item_cls(value="circuit"):
+                                            # The netlist's OWN home, so it is
+                                            # reachable without scrolling the
+                                            # SETUP column to find it.
+                                            html_div(
+                                                "The netlist names the circuit "
+                                                "on the load's cut; its V(t) "
+                                                "and I(t) become part of the "
+                                                "run. Empty box = the built-in "
+                                                "resistor.",
+                                                style="padding: 2px 0;",
+                                            )
+                                            _emit_circuit_netlist()
+                                            # The load's trace belongs to the netlist above it.
+                                            _emit_load_series_panel(
+                                                info.get("load_series"),
+                                                info.get("load_series_reason"),
+                                            )
                                 else:
                                     # FALLBACK, and here is why it exists: the tab
                                     # widgets come from trame-vuetify, an optional
                                     # install. Without them the page still has to
-                                    # show all three panels, so they are stacked in
+                                    # show all four panels, so they are stacked in
                                     # the flat order they had before the tabs -
-                                    # Confidence, then S-Parameters, then the Mode
-                                    # caption that used to sit in the readout. Same
+                                    # Confidence, then S-Parameters, then the
+                                    # Circuit box, then the Mode caption that used
+                                    # to sit in the readout. Same
                                     # emitters, same state names, same eagerly
                                     # loaded payloads; only the tab container around
                                     # them is missing.
                                     _emit_confidence_panel()
                                     _emit_s_params_panel()
+                                    _emit_circuit_netlist()
+                                    _emit_load_series_panel(
+                                        info.get("load_series"),
+                                        info.get("load_series_reason"),
+                                    )
                                     html_div(
                                         "{{ mode_view_caption }}",
                                         style="padding: 2px 0;",
