@@ -58,6 +58,7 @@ STATUS: the web path (trame server, layout, slider callbacks, panel placement)
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime
 import errno
 import json
@@ -4430,6 +4431,62 @@ def mode_view(page, *, lateral_cells=44, k=2, cache=None) -> dict:
         return _mode_fail(f"{type(exc).__name__}: {exc}")
 
 
+#: What the Mode control says before it has ever been pressed. The panel is an
+#: EXTRA beside the animation, so its resting text states both the promise and
+#: the price: one press, solved from the record beside the dump.
+MODE_PANEL_HINT = (
+    "Mode (2D cross-section) has not been run for this page yet: press the "
+    "Mode button to solve the quasi-TEM mode of the cross-section on screen. "
+    "The solve reads the study record written beside the dump and reports "
+    "beta, eps_eff, the solver residual and the mesh size - it adds no picture."
+)
+
+
+def _mode_button_label(result) -> str:
+    """The Mode control's LABEL for a ``mode_view`` result. NEVER raises.
+
+    One function, because the label at boot, the label after a press and the
+    label after a finished solve replaces the page must say the same thing for
+    the same result: the control reports whether its panel is unsolved, solved
+    or refused before a reader gets to the caption.
+    """
+    try:
+        if not isinstance(result, dict):
+            return "Mode (2D cross-section)"
+        if result.get("ok"):
+            beta = result.get("beta_rad_per_m")
+            if isinstance(beta, (int, float)) and beta == beta:
+                return f"Mode: {float(beta):.2f} rad/m"
+            return "Mode: solved"
+        return "Mode: refused"
+    except Exception:  # noqa: BLE001 - a label is never worth a traceback
+        return "Mode (2D cross-section)"
+
+
+def _mode_caption_text(result) -> str:
+    """The Mode panel's CAPTION for a ``mode_view`` result. NEVER raises.
+
+    Three states, and the refusal is one of them: a press that cannot solve says
+    WHY on the same line the numbers would have used, so a dump with no study
+    record beside it is a visible answer rather than a button that did nothing.
+    An OK result is quoted from the solve's OWN caption, so the panel never
+    re-words what the compute layer measured.
+    """
+    try:
+        if not isinstance(result, dict):
+            return MODE_PANEL_HINT
+        if result.get("ok"):
+            caption = result.get("caption")
+            if isinstance(caption, str) and caption.strip():
+                return caption
+            return "mode solved (the solve returned no caption)"
+        reason = result.get("reason")
+        text = reason.strip() if isinstance(reason, str) else ""
+        return "mode refused: " + (text or "no reason given")
+    except Exception:  # noqa: BLE001 - the hint is a safe floor
+        return MODE_PANEL_HINT
+
+
 SOLVE_DEFAULT_XCUT_MM = 20.4
 
 
@@ -4805,6 +4862,14 @@ def run_web_vis(
     state.s_params_rows = ""
     state.s_params_rows_style = "display: none;"
 
+    # The Mode panel: caption and numbers only - one press solves the 2D
+    # cross-section for the page on screen and reports it on these two strings.
+    # They are built by the SAME module helpers a later press uses, so the boot
+    # text, the refreshed text after a solve replaces the page and the text a
+    # press produces are one rule, assertable headlessly.
+    state.mode_view_label = _mode_button_label(None)
+    state.mode_view_caption = _mode_caption_text(None)
+
     # Provenance, from the dump's own record (see _structure_readout_text).
     state.structure_readout = _structure_readout_text(info)
 
@@ -5080,6 +5145,11 @@ def run_web_vis(
         state.velocity_label = _velocity_label(live)
         state.scale_label = _scale_label(live)
         state.velocity_note = live["velocity_note"] or "velocity note: not recorded"
+        # A finished solve put a NEW dump on screen and this one has not had its
+        # mode solved, so the panel goes back to the boot text - through the very
+        # helpers that set it at boot, not by re-typing the sentence here.
+        state.mode_view_label = _mode_button_label(None)
+        state.mode_view_caption = _mode_caption_text(None)
         handles["camera_framed"] = False
         _show(0, mode or state.mode)
 
@@ -5265,6 +5335,32 @@ def run_web_vis(
             state.s_params_label = "Hide S-Parameters"
         except Exception as exc:  # noqa: BLE001 - the panel is not the page
             print(f"[poc_app] s-params panel unavailable: {exc}", file=sys.stderr)
+
+    @ctrl.set("mode_view_toggle")
+    async def _on_mode_view(**_kwargs) -> None:
+        """Solve the 2D cross-section for the page ON SCREEN, OFF the event loop.
+
+        ``mode_view`` is a scipy mesh solve (~0.1 s, and unbounded on a bad
+        geometry), so it is pushed to a worker thread: the play loop keeps
+        turning while it runs. It is handed the LIVE page, so a press after a
+        solve describes the dump now on screen and not the one the app booted
+        with, and its result is turned into the two state strings by the module
+        helpers - a refusal is shown on the same line the numbers would have
+        used. Nothing here may raise: this panel is an extra beside the
+        animation, so a failure costs the panel and one caption line.
+        """
+        try:
+            result = await asyncio.to_thread(mode_view, page)
+        except Exception as exc:  # noqa: BLE001 - mode_view is not supposed to raise
+            result = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        state.mode_view_label = _mode_button_label(result)
+        state.mode_view_caption = _mode_caption_text(result)
+        view_handle = handles.get("view")
+        if view_handle is not None:
+            try:
+                view_handle.update()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
     def _emit_s_params_panel() -> None:
         """Emit the |S11| / |S21| panel BESIDE the 3-D view, caption first.
@@ -5530,6 +5626,14 @@ def run_web_vis(
             try:
                 if "VBtn" in widgets:
                     widgets["VBtn"]("{{ solve_label }}", click=ctrl.solve_start)
+                    # The Mode control, in the SAME guarded block: its label is
+                    # bound, so the button itself says whether the panel is
+                    # unsolved, solved or refused. A binding failure here costs
+                    # the mode panel, never play/pause or the solve button.
+                    widgets["VBtn"](
+                        "{{ mode_view_label }}",
+                        click=ctrl.mode_view_toggle,
+                    )
                 solve_xcut_field = getattr(widgets_module, "VTextField", None)
                 if solve_xcut_field is not None:
                     solve_xcut_field(
@@ -5586,6 +5690,13 @@ def run_web_vis(
                             html_div("{{ scale_label }}")
                             html_div("{{ velocity_label }}")
                             html_div("{{ velocity_note }}")
+                            # The Mode panel's ONE line: the hint before the
+                            # first press, the solve's own caption after one, or
+                            # the reason the solve refused.
+                            html_div(
+                                "{{ mode_view_caption }}",
+                                style="padding: 2px 0;",
+                            )
                             # Two things the button does NOT tell you: where it
                             # runs, and what it cannot produce.
                             html_div(

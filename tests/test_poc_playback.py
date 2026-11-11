@@ -1132,3 +1132,95 @@ def test_mode_view_memo_hits_on_the_second_call(tmp_path: Path) -> None:
         "identity is the proof, because a second solve returns the same numbers"
     )
 
+
+
+# --- the Mode panel's SHIPPED half ------------------------------------------
+#
+# The compute half (``mode_view``) is frozen and proven above, by tests that call
+# it directly.  What these two cover is the half this layer ships: the registered
+# ``mode_view_toggle`` trigger, the module helpers that turn a result into the two
+# state strings, and what the browser is therefore told.  ``mode_view`` itself is
+# DOUBLED here (a dict in, no scipy) so a failure points at the wiring and never
+# at the solver - and the boot is the real ``run_web_vis``, because a stand-in for
+# the trigger would prove nothing about what the button calls.
+
+
+def _press_mode(app, info, monkeypatch, fake_result):
+    """Boot the page, then press the SHIPPED Mode button with a doubled solve.
+
+    Returns the two state strings as they were at boot and the live ``state``
+    after the press, so a test can assert both the resting text and the answer.
+    """
+    pyvista = pytest.importorskip("pyvista")
+
+    real_render = pyvista.Plotter.render
+    pyvista.Plotter.render = lambda self, *a, **k: None  # no OpenGL in this image
+    try:
+        # The trigger looks ``mode_view`` up in the module namespace at call time,
+        # so patching the attribute is enough - the shipped body still runs.
+        monkeypatch.setattr(app, "mode_view", lambda *a, **k: fake_result)
+        app_module, srv = _boot_app(info)
+        trigger = _registered_trigger(srv.controller, "mode_view_toggle")
+        cells = _closure_cells(trigger)
+        assert "state" in cells, (
+            "the Mode trigger is not closed over the page's `state` (freevars: "
+            f"{sorted(cells)}), so what it publishes cannot be asserted on"
+        )
+        state = cells["state"]
+        boot = (state.mode_view_label, state.mode_view_caption)
+        asyncio.run(trigger())  # the shipped handler, awaited as trame would
+        return app_module, boot, state
+    finally:
+        pyvista.Plotter.render = real_render
+
+
+def test_mode_panel_publishes_the_solve_caption(tmp_path: Path,
+                                                monkeypatch) -> None:
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "dump.npz")
+    solved = {
+        "ok": True,
+        "beta_rad_per_m": 223.180967,
+        "eps_eff": 3.338787,
+        "caption": "CAPTION from the solve: beta = 223.18 rad/m",
+    }
+    _app, (boot_label, boot_caption), state = _press_mode(
+        app, info, monkeypatch, solved
+    )
+
+    assert boot_caption == app.MODE_PANEL_HINT, (
+        "the panel does not rest on the hint the module defines: "
+        f"{boot_caption!r}"
+    )
+    assert boot_label == "Mode (2D cross-section)", boot_label
+    assert state.mode_view_caption == solved["caption"], (
+        "the panel re-worded (or dropped) the solve's own caption: "
+        f"{state.mode_view_caption!r}"
+    )
+    assert "223.18" in state.mode_view_label, (
+        "the button does not report the beta it just solved for: "
+        f"{state.mode_view_label!r}"
+    )
+
+
+def test_mode_panel_publishes_a_refusal_without_raising(tmp_path: Path,
+                                                       monkeypatch) -> None:
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "dump.npz")
+    refused = {"ok": False, "reason": "arm B has no geometry"}
+    _app, (_boot_label, boot_caption), state = _press_mode(
+        app, info, monkeypatch, refused
+    )
+
+    assert boot_caption == app.MODE_PANEL_HINT, boot_caption
+    assert "arm B has no geometry" in state.mode_view_caption, (
+        "a refused solve left the panel without its reason: "
+        f"{state.mode_view_caption!r}"
+    )
+    assert state.mode_view_caption.startswith("mode refused:"), (
+        state.mode_view_caption
+    )
+    assert state.mode_view_label == "Mode: refused", state.mode_view_label
+
