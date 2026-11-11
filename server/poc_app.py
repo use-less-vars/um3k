@@ -101,6 +101,11 @@ DEFAULT_FPS = 24
 # over every stored frame of every plane. Frame-local scaling would renormalise
 # on each step and make a decaying pulse look like it never decays.
 COLOR_PERCENTILE = 99.5
+# Cell edges ON for the animated field sheets. A smooth-shaded sheet hides the
+# grid the field is sampled on, so a coarse dump reads as a continuous picture
+# and the eye cannot tell one cell from the interpolation between two of them.
+# Only the field sheets get this: the overlay boxes are decoration, not data.
+WAVEDUDE_SHOW_EDGES = True
 
 
 def _resolve(path_str: str) -> Path:
@@ -3493,6 +3498,10 @@ def run_web_wavedude(
     share a clock (see _wavedude_frame_time_ns): advancing both from one slider
     would put two different instants under one frame number.
 
+    The two x-cut planes are FIXED at the x positions the dump records, because
+    those two y-z slices are all it carries and moving them would need the whole
+    3-D field dumped (~2 GB) rather than two sheets.
+
     Every widget layer is probed and degrades on its own: no VSlider costs the
     slider (the frame label still counts), no html widgets costs the readout
     rows, and a missing pyvista.trame.ui is the only hard stop because without it
@@ -3590,8 +3599,16 @@ def run_web_wavedude(
     except Exception as exc:  # noqa: BLE001 - decoration only
         print(f"[poc_app] axes not drawn: {exc}", file=sys.stderr)
 
+    # The bar's title is also the KEY pyvista stores the bar under, so the one
+    # string is used both to create it here and to swap it per family in _show:
+    # two different strings would be two bars.
+    scalar_bar_title = "|Ez| [V/m]"
+
     # Three sheets, added ONCE. clim is the dump's single ceiling for every one
     # of them, so no later frame has a scale of its own to renormalise with.
+    # smooth_shading=False plus the cell edges are the same statement twice: this
+    # is a FIELD on a grid, so the grid stays visible and a cell's colour is not
+    # smeared into its neighbour's.
     sheets: dict = {}
     for key, family in (
         ("ez_ycut", "ycut"),
@@ -3605,8 +3622,10 @@ def run_web_wavedude(
                 scalars="ez_abs",
                 cmap="turbo",
                 clim=(vmin, vmax),
+                smooth_shading=False,
+                show_edges=WAVEDUDE_SHOW_EDGES,
                 show_scalar_bar=(family == "ycut"),
-                scalar_bar_args={"title": "|Ez| [V/m]"},
+                scalar_bar_args={"title": scalar_bar_title},
             )
         except Exception as exc:  # noqa: BLE001 - one sheet is not the picture
             print(f"[poc_app] plane {key} not drawn: {exc}", file=sys.stderr)
@@ -3695,6 +3714,45 @@ def run_web_wavedude(
     # handler reaches it through this dict instead of closing over it.
     handles: dict = {}
 
+    def _swap_scalar_bar(mode: str) -> None:
+        """Leave exactly ONE bar standing, for the family now on screen.
+
+        The y-cut sheet makes its bar at add_mesh time and the x-cut sheets make
+        none, so a plane switch would otherwise keep the y-cut's bar over a field
+        it does not describe. The replacement is built from the ACTIVE sheet's
+        own mapper: every sheet was added with the same fixed (vmin, vmax), so
+        the numbers do not move, only the actor the bar reads from does. A bar
+        is decoration, so every step here degrades to a stderr line.
+        """
+        try:
+            if scalar_bar_title in plotter.scalar_bars:
+                plotter.remove_scalar_bar(
+                    title=scalar_bar_title, render=False
+                )
+        except Exception as exc:  # noqa: BLE001 - decoration only
+            print(
+                f"[poc_app] stale scalar bar kept: {exc}", file=sys.stderr
+            )
+        try:
+            entry = next(
+                (
+                    item
+                    for item in sheets.values()
+                    if item["family"] == mode
+                ),
+                None,
+            )
+            if entry is None:
+                return
+            plotter.add_scalar_bar(
+                title=scalar_bar_title, mapper=entry["actor"].mapper
+            )
+        except Exception as exc:  # noqa: BLE001 - decoration only
+            print(
+                f"[poc_app] scalar bar for {mode} not drawn: {exc}",
+                file=sys.stderr,
+            )
+
     def _show(frame, mode=None) -> None:
         """Draw ONE frame of the selected family. Never rescales.
 
@@ -3744,6 +3802,9 @@ def run_web_wavedude(
                     f"[poc_app] frame update skipped for {key}: {exc}",
                     file=sys.stderr,
                 )
+
+        if mode_changed:
+            _swap_scalar_bar(mode)
 
         if mode_changed or not handles.get("camera_framed"):
             # Frame the sheet that is about to be drawn, not the whole 3-D box:
@@ -3803,16 +3864,36 @@ def run_web_wavedude(
         )
         state.frame_label = f"frame {index + 1} / {frames}"
         state.phase_label = _wavedude_phase_text(t_ns, info["t_traverse_ns"])
-        state.mode_label = (
-            f"x-z sheet at y = {j_mm:.4f} mm (one recorded y sample)"
-            if mode == "ycut"
-            else (
-                "y-z sheets at x = "
-                f"{float(info['xcut_near_mm']):.4f} / "
-                f"{float(info['xcut_far_mm']):.4f} mm, written every "
-                f"{int(info['dump_stride']) * 10} steps"
+        if mode == "ycut":
+            state.mode_label = (
+                f"x-z sheet at y = {j_mm:.4f} mm (one recorded y sample)"
             )
-        )
+        else:
+            # FIXED planes. These two y-z slices are the only ones the dump
+            # carries, so the viewer cannot sweep x through them: that would
+            # mean dumping the whole 3-D field (~2 GB) instead of two sheets.
+            # The positions are read from the dump, never written as literals,
+            # and the near/far names are claimed only when the recorded load
+            # position agrees with them - otherwise they are slice 1 and 2.
+            near_mm = _finite(info["xcut_near_mm"])
+            far_mm = _finite(info["xcut_far_mm"])
+            load_mm = _finite(info["load_x_mm"])
+            near_side, far_side = "slice 1", "slice 2"
+            if (
+                near_mm is not None
+                and far_mm is not None
+                and load_mm is not None
+                and abs(near_mm - load_mm) <= abs(far_mm - load_mm)
+            ):
+                near_side, far_side = "load side", "stub side"
+            near_text = (
+                "not recorded" if near_mm is None else f"{near_mm:.4f}"
+            )
+            far_text = "not recorded" if far_mm is None else f"{far_mm:.4f}"
+            state.mode_label = (
+                f"y-z planes FIXED at x = {near_text} / {far_text} mm "
+                f"({near_side} / {far_side}; the dump stores only these two)"
+            )
         try:
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - never take the server down
