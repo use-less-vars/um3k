@@ -780,3 +780,33 @@ Two facts follow from `:2366-2368`, and they are separate defects:
 
 **Gates:** any `|S11|` quoted from the openEMS referee whose extraction does not report `port1_api` — that key is what says which launch was modelled, and a lumped-port or empty-air run answers a different question; any referee number quoted without its probe route, since a name resolved by fallback is not the name the plan expected; any new `AddMSLPort` / `AddLumpedPort` / coplanar primitive added without an explicit `priority=`; and any verdict that treats exit status zero plus a plausible `|S11|` as evidence that the model was attached.
 
+## DR-42 — the OpenMP default thread team makes the C++ kernel ~33x slower than single-thread, and single-thread is already 2.4x faster than Python, so E3 is a regression unless the thread count is pinned
+
+- **id:** DR-42
+- **title:** The compiled kernel is ~33x slower than the Python path it is meant to replace when it inherits the default OpenMP thread team, and ~78x slower than the same kernel at one thread — so a naive E3 wiring would deliver a large slowdown while looking like a speedup.
+- **status:** OPEN
+- **severity:** HIGH. It does not move any verdict today (the kernel is not on any call path — `emfit/` never imports it, see E3), but it would turn the E3 rewrite into a ~33x regression if the thread team were left unpinned, and it is why no kernel figure may be quoted without a thread count.
+- **opened:** 2026-11-14 (this entry)
+
+**What is wrong.** The compiled kernel (`src/emfit_core.cpp`, authoritative `.so` `build/cpp/emfit_core.cpython-312-x86_64-linux-gnu.so`, 258720 bytes) is built with `-fopenmp` and its row-dot loops carry OpenMP pragmas. Run with the default thread team it is ~33x slower than the Python path it is meant to replace. At this grid size the parallelism is not merely unhelpful, it is the dominant cost: each row's dot product is a handful of flops, so a thread team's barrier and spin cost is paid per row and dwarfs the arithmetic it distributes.
+
+**Evidence** — re-measured in this container on 2026-11-14, golden grid (133 edges, 392 nonzeros), kernel step timed in isolation:
+
+| configuration | per call |
+|---|---|
+| compiled, 1 thread | **3.71 us** |
+| compiled, default OpenMP team | **291 us** (~78x the 1-thread figure, ~33x the Python step) |
+| Python `step_explicit` | **8.84 us** |
+
+- Thread ladder, same grid: 3.8 / 19.6 / 54.3 / 145.6 / 351.5 us per call at 1 / 2 / 4 / 8 / 12 threads. Monotonically worse with more threads; no crossover anywhere in the tested range.
+- The Python step's own budget on the same grid: the two scipy matvecs `C@e` 2.46 us and `Ct@h` 2.53 us are **56 percent**, the remaining **44 percent** is numpy dispatch. So the compiled kernel at one thread (3.71 us) is **2.4x faster** than the interpreter path, and at the default team it is **33x slower** than it.
+- The cgroup's own limit is `cpu.max` 50000/100000 = **0.5 CPU**, so a 12-thread team is contending for half a core; the ladder is a symptom of that as much as of the arithmetic.
+
+**Recorded versus measured — do not quote the older ladder as current.** The ladder recorded in `docs/design/cpp-kernel-status-2026-11-09.md` section 5 and repeated in the E3 row of `EM_SOLVER_LEDGER.md` reads 1 thread 5,926 ns, 2 threads 49,252, 4 threads 124,111, 8 threads 353,937, over 98/133 iterations with 392 nonzeros. The **shape** reproduces exactly — monotone degradation with thread count — but the **magnitudes** do not: this container measures **145.6 us at 8 threads** against the recorded 353,937 ns (a factor of **2.43**), and 3.8 us at 1 thread against the recorded 5,926 ns. The conclusion (one thread is the only defensible configuration at this size) is robust to that discrepancy; the individual timings are not, and no ladder number may be carried forward from either document without re-measuring it here.
+
+**Candidate causes** — (i) one OpenMP region per row: the team is synchronised once per row for a few flops, so barrier latency is the whole cost; (ii) oversubscription against a 0.5 CPU quota, with spinning threads burning the quota they are waiting for; (iii) any parallel reduction reassociates the row sum, which would cost bit-parity with the Python path — an independent second reason not to enable it, and the trade the E3 row already names as the open decision.
+
+**What closes it — done, not proposed.** Pin the thread count in the kernel entry point or the binding so a caller cannot inherit an ambient team; re-run the ladder with the pin in force and record it beside the machine's `cpu.max`; and state the thread count on every kernel figure from then on. The E3 performance gate must be written as a statement at target mesh size with the thread count pinned, never as a bare ratio.
+
+**Gates:** `tests/test_cpp_parity.py` (13 tests, passing with the `.so` importable) pins numerics and neither pins nor measures thread count — nothing in the suite fails today if a caller passes an ambient 12-thread team, which is part of what this entry is about. This entry does not move E3, which stays UNVERIFIED.
+
