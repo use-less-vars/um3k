@@ -3416,6 +3416,32 @@ def _wavedude_geometry(plotter, info: dict) -> None:
         except Exception as exc:  # noqa: BLE001 - losing one box is survivable
             print(f"[poc_app] substrate not drawn: {exc}", file=sys.stderr)
 
+    # THE LINE END. The dump records no line-end constant: the x axis it stores
+    # stops at its last node, 24.4 mm (24.8 mm at the outer face of the last
+    # cell), while the 28.8 mm box of
+    # evidence/termination/run_build_A_nsub6.py:37 belongs to a different,
+    # larger domain than this artefact. The stub therefore ends where the
+    # recorded x axis ends - never at a literal, and never past the grid.
+    try:
+        _x_axis = np.asarray(info["x_mm"], dtype=float).ravel()
+        line_end = float(_x_axis[-1]) if _x_axis.size else float("nan")
+    except (KeyError, TypeError, ValueError):
+        line_end = float("nan")
+    try:
+        near_xcut = float(info["xcut_near_mm"])
+    except (KeyError, TypeError, ValueError):
+        near_xcut = float("nan")
+
+    # THE STRIP, in TWO segments: the load is a GAP in the conductor, not the
+    # end of it. Segment A runs from the port plane to the recorded load plane;
+    # segment B carries on from the near x-cut plane to the end of the line, so
+    # the empty span between them (20.0 .. 20.4 mm on the real dump) is what
+    # the picture shows as the load.
+    #
+    # ASSUMPTION, both segments: zero-thickness foil, centred on y, on the
+    # substrate top. The dump records neither a thickness nor a y offset; the
+    # 0.05 mm of thickness the old Box invented is what is gone - a Plane has
+    # no z extent at all.
     if (
         np.isfinite(strip_w)
         and strip_w > 0.0
@@ -3425,11 +3451,6 @@ def _wavedude_geometry(plotter, info: dict) -> None:
         and load_x > port_x
     ):
         try:
-            # ASSUMPTION: zero-thickness foil, centred on y, on the substrate
-            # top. The dump records neither a thickness nor a y offset. The x
-            # range is the one the old Box already used (port_x .. load_x); the
-            # 0.05 mm of thickness that Box invented is what is gone - a Plane
-            # has no z extent at all.
             plotter.add_mesh(
                 pv.Plane(
                     center=(0.5 * (port_x + load_x), y_mid, substrate_h + eps),
@@ -3439,21 +3460,57 @@ def _wavedude_geometry(plotter, info: dict) -> None:
                 ),
                 color="gold",
                 opacity=0.9,
-                name="strip",
+                name="strip_feed",
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"[poc_app] strip not drawn: {exc}", file=sys.stderr)
+            print(f"[poc_app] strip feed not drawn: {exc}", file=sys.stderr)
+
+    if (
+        np.isfinite(strip_w)
+        and strip_w > 0.0
+        and np.isfinite(substrate_h)
+        and np.isfinite(near_xcut)
+        and np.isfinite(line_end)
+        and line_end > near_xcut
+    ):
+        try:
+            plotter.add_mesh(
+                pv.Plane(
+                    center=(
+                        0.5 * (near_xcut + line_end),
+                        y_mid,
+                        substrate_h + eps,
+                    ),
+                    direction=(0.0, 0.0, 1.0),
+                    i_size=line_end - near_xcut,
+                    j_size=strip_w,
+                ),
+                color="gold",
+                opacity=0.9,
+                name="strip_stub",
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[poc_app] strip stub not drawn: {exc}", file=sys.stderr)
 
     # THE TWO VIRTUAL PORTS. Each is the gap the port bridges: a wire from the
     # ground plane up to the strip, at the recorded x and on the strip's own
     # centre line (no y offset is recorded). Without them the strip and the
     # ground plane are two unconnected sheets and the picture never says where
     # the wave enters or leaves.
+    # The load IS the gap the two segments leave, so its wire goes in the MIDDLE
+    # of that gap - derived from the recorded load plane and the near x-cut
+    # plane (20.2 mm on the real dump), never a literal. With no near x-cut
+    # recorded the gap has no second edge, and the load plane is the only
+    # position the dump supports.
+    if np.isfinite(load_x) and np.isfinite(near_xcut):
+        load_gap_x = 0.5 * (load_x + near_xcut)
+    else:
+        load_gap_x = load_x
     wire_tops = []
     if np.isfinite(substrate_h) and substrate_h > 0.0:
         for port_label, port_name, port_x_mm in (
             ("Source", "port_source", port_x),
-            ("Load (50 Ohm)", "port_load", load_x),
+            ("Load", "port_load", load_gap_x),
         ):
             if not np.isfinite(port_x_mm):
                 continue
