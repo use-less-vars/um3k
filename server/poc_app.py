@@ -43,8 +43,9 @@ same thing they said above: nothing between recorded samples is invented.
     * a |S11| / |S21| vs frequency panel. The record beside the dump is a SINGLE
       frequency, so a curve cannot come from it: the panel reads a separate
       multi-frequency sweep artefact beside the dump, plots the recorded rows as
-      markers only (no line, nothing between the bins), and says in words when
-      no such sweep is on disk.
+      markers joined by a thin guide line for the eye (nothing between the bins
+      is measured, solved or interpolated), and says in words when no such
+      sweep is on disk.
 
 STATUS: the web path (trame server, layout, slider callbacks, panel placement)
     is UNTESTED. Only the numpy / CLI path (--help, --list-keys) has been
@@ -535,12 +536,32 @@ def _as_float(value):
 
 
 def _record_candidates(npz_path: Path) -> list[Path]:
-    """Candidate record paths for a dump, best first.
+    """Candidate record paths for a dump, best first. NEVER raises.
 
-    The dump and its record do not always share a stem exactly: the shipped
-    field dump is ``..._ghostwave_fields.npz`` while the study that produced it
-    wrote ``..._ghostwave.json``. Both spellings are tried instead of guessing
-    one and silently reporting "no record".
+    The dump and its record do not always share a stem exactly, and two naming
+    conventions are on disk. The shipped field dump is
+    ``..._ghostwave_fields.npz`` while the study that produced it wrote
+    ``..._ghostwave.json`` (the ``_fields`` suffix is dropped). The viewer's own
+    animation dumps follow a second convention: ``vis_dump_<case>.npz`` is the
+    dump, ``vis_run_<case>.json`` is the record written by the run - ``dump`` in
+    one stem, ``run`` in the other, same case. Every such spelling is tried
+    instead of guessing one and silently reporting "no record".
+
+    The multi-frequency summary is a THIRD artefact with a third spelling,
+    ``<run-stem>_multifreq_summary.json``, appended after the single-run
+    records for a reason: a record that describes THIS dump must outrank a sweep
+    that merely shares its case name.
+
+    The sibling glob is LAST, and it is the only candidate that is a guess: it
+    matches a ``*_multifreq_summary.json`` in the dump's own directory whose
+    name carries the same run key, which is a naming convention rather than a
+    promise that the file describes this dump. Being last (and one directory
+    listing rather than a search) is what keeps a name-matching summary from
+    ever outranking an exact spelling.
+
+    Total by construction: a missing parent directory, an unresolvable path or a
+    bad type costs the candidates that could not be built, never the caller -
+    ``load_record`` and ``_mode_view`` both treat this list as advisory.
 
     ``npz_path`` is coerced for the same reason ``_multifreq_candidates``
     coerces it: the caller passes ``info["path"]``, which is a ``str`` off disk
@@ -548,15 +569,63 @@ def _record_candidates(npz_path: Path) -> list[Path]:
     ``'str' object has no attribute 'with_suffix'`` and took the whole panel
     down with it.
     """
-    npz = Path(npz_path)
-    candidates = [npz.with_suffix(".json")]
-    stem = npz.stem
-    for suffix in ("_fields", "_planes", "_dump"):
-        if stem.endswith(suffix):
-            candidates.append(
-                npz.with_name(stem[: -len(suffix)] + ".json")
-            )
-            break
+    candidates: list[Path] = []
+    try:
+        npz = Path(npz_path)
+        candidates.append(npz.with_suffix(".json"))
+        stem = npz.stem
+        stripped = stem
+        for suffix in ("_fields", "_planes", "_dump"):
+            if stem.endswith(suffix):
+                stripped = stem[: -len(suffix)]
+                candidates.append(npz.with_name(stripped + ".json"))
+                break
+        # dump -> run, FIRST occurrence only: the convention is
+        # ``vis_dump_<case>`` -> ``vis_run_<case>``, i.e. the prefix changes and
+        # the case is untouched. Replacing every "dump" in the stem would also
+        # rewrite a case whose own name happens to contain the word.
+        run_stem = stripped.replace("dump", "run", 1)
+        if run_stem != stripped:
+            candidates.append(npz.with_name(run_stem + ".json"))
+        candidates.append(npz.with_name(run_stem + "_multifreq_summary.json"))
+        # The run key is what identifies this run inside a summary's name:
+        # ``vis_run_B_100ohm`` -> ``B_100ohm``. A stem with no "run_" (a build
+        # dump) keeps its whole stem, which simply will not match anything.
+        run_key = (
+            run_stem.rsplit("run_", 1)[-1] if "run_" in run_stem else run_stem
+        )
+        seen = set()
+        for path in candidates:
+            try:
+                seen.add(path.resolve())
+            except Exception:  # noqa: BLE001 - a path that will not resolve
+                pass
+        siblings: list[Path] = []
+        if run_key:
+            pattern = re.compile(r"(^|_)" + re.escape(run_key) + r"(_|\.|$)")
+            try:
+                siblings = sorted(npz.parent.glob("*_multifreq_summary.json"))
+            except Exception as exc:  # noqa: BLE001 - a bad parent is not fatal
+                print(
+                    f"[poc_app] record scan skipped in {npz.parent}: {exc}",
+                    file=sys.stderr,
+                )
+        for sibling in siblings:
+            if not pattern.search(sibling.name):
+                continue
+            try:
+                resolved = sibling.resolve()
+            except Exception:  # noqa: BLE001 - compare what we can
+                resolved = sibling
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            candidates.append(sibling)
+    except Exception as exc:  # noqa: BLE001 - an advisory list, never a raise
+        print(
+            f"[poc_app] record candidates incomplete for {npz_path}: {exc}",
+            file=sys.stderr,
+        )
     return candidates
 
 
@@ -1229,8 +1298,8 @@ def _frequency_caption(mf: dict, record) -> str:
     else:
         caption = (
             f"{len(mf['points'])} recorded frequencies from {mf['path'].name} - "
-            "markers only, no line and no interpolation: nothing was solved "
-            "between these bins"
+            "markers joined by a guide line for the eye: nothing between "
+            "these bins was solved or interpolated"
         )
         if mf.get("bin_spacing_mhz"):
             caption += f" (bin spacing {mf['bin_spacing_mhz']:.1f} MHz)"
@@ -1305,10 +1374,12 @@ def build_frequency_chart(mf: dict, title: str | None = None) -> dict:
     a missing or broken matplotlib has to cost the picture, not the page - the
     caller falls back to the text rows.
 
-    Markers only, no connecting line: a line between two recorded bins is a
-    claim about the frequencies between them, and no run covers those. Bins whose
-    dispersion branch is unresolved get their own open marker and one note - they
-    stay discrete points at their recorded frequency, they are not smoothed or
+    A thin line joins the recorded bins as a guide to the eye, and it is the only
+    thing drawn between them: nothing between two recorded frequencies was solved,
+    so the line interpolates nothing the sweep reported. It sits UNDER the markers
+    and carries no legend label, which keeps the legend to the four recorded point
+    sets. Solid joins the definite bins, dashed the ambiguous ones; their open
+    markers stay discrete points at their recorded frequency - not smoothed, not
     dropped.
 
     ``title`` names the selected structure; when it is not given the panel keeps a
@@ -1334,10 +1405,40 @@ def build_frequency_chart(mf: dict, title: str | None = None) -> dict:
             "reason": f"matplotlib unusable: {exc}",
         }
 
-    definite = [point for point in mf["points"] if not point.get("beta_ambiguous")]
-    ambiguous = [point for point in mf["points"] if point.get("beta_ambiguous")]
+    # Sorted by frequency: a guide line drawn through bins in file order would
+    # double back on itself and read as a measurement it is not.
+    definite = sorted(
+        (point for point in mf["points"] if not point.get("beta_ambiguous")),
+        key=lambda point: point["f_ghz"],
+    )
+    ambiguous = sorted(
+        (point for point in mf["points"] if point.get("beta_ambiguous")),
+        key=lambda point: point["f_ghz"],
+    )
     try:
         fig, ax = plt.subplots(figsize=(5.4, 1.9), dpi=110)
+        # The guide lines go down FIRST and under everything (zorder=1 against a
+        # marker's default 2), and they carry no legend label: the legend counts
+        # the four RECORDED point sets, and a joining line is not a fifth
+        # measurement. Solid joins the definite bins - an unbroken set on one
+        # dispersion branch, in frequency order. Dashed joins the ambiguous ones,
+        # whose open markers sit on top of it, because the dash makes the same
+        # statement the open marker makes: these bins may not be read as one
+        # sequence. Fewer than two bins in a class draws no line at all, so a lone
+        # recorded frequency never gains a segment it did not measure.
+        for series, colour in (("s11", "#1f77b4"), ("s21", "#d62728")):
+            for points, style in ((definite, "-"), (ambiguous, (0, (4, 3)))):
+                if len(points) < 2:
+                    continue
+                ax.plot(
+                    [point["f_ghz"] for point in points],
+                    [point[series] for point in points],
+                    color=colour,
+                    linewidth=1.0,
+                    linestyle=style,
+                    zorder=1,
+                    label="_nolegend_",
+                )
         ax.plot(
             [point["f_ghz"] for point in definite],
             [point["s11"] for point in definite],
@@ -1933,7 +2034,7 @@ def _confidence_resolution_rows(record) -> list:
     """
     geometry = record.get("geometry")
     geometry = geometry if isinstance(geometry, dict) else {}
-    line = record.get("line")
+    line = record.get("line") if isinstance(record, dict) else None
     line = line if isinstance(line, dict) else {}
     cell_m = geometry.get("cell_m", geometry.get("cell"))
     rows, betas = [], {}
@@ -4662,6 +4763,11 @@ def _mode_caption(result, mesh) -> str:
     systematic (~4 % above the run's own model) so it is never quoted alone, and
     names the mesh and the wall clock - the last unflattering facts a reader
     needs in order to distrust the number appropriately.
+
+    When the geometry did NOT come from a study record, a provenance clause is
+    appended: a solve replayed from the dump's own metadata is not the run's
+    recorded solve (its drive frequency is the dump's ``f_ref_hz``) and it must
+    not be printed as if it were.
     """
     beta_model = result["beta_model"]
     beta_banked = result["beta_banked"]
@@ -4671,15 +4777,61 @@ def _mode_caption(result, mesh) -> str:
         if beta_model is not None
         else "not recorded in the run's own record"
     )
+    # How far run A's fit sits above the run's own model - and what is left to say
+    # when one of the two numbers is absent. The both-present branch is the
+    # sentence this caption has always printed, kept word for word: it is the only
+    # branch a record-backed dump ever takes. The other branches exist because the
+    # dump-metadata path has no record at all, and "not measurable here above the
+    # run's own beta_model" is not a sentence - a missing model is named as
+    # missing, never measured against.
     if beta_model is not None and beta_banked is not None:
         gap = (float(beta_banked) / float(beta_model) - 1.0) * 100.0
-        gap_text = f"{gap:+.1f} %"
+        systematic_text = (
+            f". That banked fit sits {gap:+.1f} % above the run's own "
+            "beta_model, i.e. the fit carries a systematic, so beta_banked is "
+            "quoted beside the model and never on its own. "
+        )
+    elif beta_banked is not None:
+        systematic_text = (
+            ". The run's own beta_model is absent here, so how far that fit sits "
+            "above it cannot be measured on this dump: beta_banked is an "
+            "order-of-magnitude cross-check only, never a number to quote on its "
+            "own. "
+        )
+    elif beta_model is not None:
+        systematic_text = (
+            ". No run A two-wave fit is recorded beside this dump, so there is "
+            "nothing to check the run's own model against. "
+        )
     else:
-        gap_text = "not measurable here"
+        systematic_text = (
+            ". Neither the run's own beta_model nor run A's two-wave fit is "
+            "recorded here, so beta stands alone - there is nothing beside it to "
+            "check it against. "
+        )
     axes = mesh.grid_axes
     lateral = int(np.asarray(axes[0]).size - 1) if axes else 0
     vertical = int(np.asarray(axes[1]).size - 1) if axes else 0
     y_max, z_max = result["extent"]
+    provenance = ""
+    if result.get("geometry_source", "record") != "record":
+        driven_ghz = result.get("geometry_f_hz")
+        driven_text = (
+            f"{driven_ghz / 1e9:.4f} GHz"
+            if isinstance(driven_ghz, float) and math.isfinite(driven_ghz)
+            else "its recorded f_ref_hz (value not usable here)"
+        )
+        provenance = (
+            " GEOMETRY PROVENANCE: no study record sits beside this dump, so "
+            "the cross-section was read from the dump's own metadata (eps_r, "
+            "substrate_h_mm, strip_w_mm, f_ref_hz, and height = nz x cell_m) "
+            "and the mode was driven at the dump's own reference frequency, "
+            f"{driven_text}. That is not the frequency the mode was originally "
+            "solved at: where a record does exist the two differ - "
+            "artifacts/vis_run_B_100ohm.json states 6.1192 GHz against a dump "
+            "f_ref_hz of 5.8278 GHz - and beta moves with the drive frequency, "
+            "so beta above is this replay's number, not the run's recorded one."
+        )
     return (
         "2D cross-section mode (fundamental, quasi-TEM): beta = "
         f"{result['beta_rad_per_m']:.4f} rad/m, eps_eff = {result['eps_eff']:.6f}, "
@@ -4692,20 +4844,90 @@ def _mode_caption(result, mesh) -> str:
             if beta_banked is not None
             else "not recorded"
         )
-        + f". That banked fit sits {gap_text} above the run's own beta_model, "
-        "i.e. the fit carries a systematic, so beta_banked is quoted beside the "
-        "model and never on its own. Mesh: "
-        f"{lateral} lateral x {vertical} vertical cells = {result['n_nodes']} "
+        + systematic_text
+        + f"Mesh: {lateral} lateral x {vertical} vertical cells = "
+        f"{result['n_nodes']} "
         f"nodes / {result['n_edges']} edges, box +/-{y_max * 1e3:.2f} mm x "
         f"{z_max * 1e3:.2f} mm, solved in {result['seconds']:.2f} s. The open top "
         "and sides are PEC walls (this solver has no PML), so the lateral "
         "truncation is a conductor, not an absorber."
+        + provenance
     )
 
 
 def _mode_fail(reason: str) -> dict:
     """The refusal shape: ``ok`` False and one short, honest cause."""
     return {"ok": False, "reason": str(reason)}
+
+
+def _mode_geometry_from_dump(dump):
+    """Cross-section geometry from the DUMP's own metadata: ``(geometry, note)``.
+
+    The study record is the authority - it carries the geometry the run was
+    actually built on. When no record sits beside the dump, the vis dump still
+    records part of that cross-section, and reading it is not the same as
+    guessing: ``eps_r``, ``substrate_h_mm`` and ``strip_w_mm`` are stored
+    numbers, and the box top is ``nz * cell_m`` - the stored grid, which is what
+    the record's own ``height`` is too (22 cells x 0.4 mm = 8.8 mm, while the
+    stored ``z_mm`` axis stops at 8.4 mm because it holds node positions, not
+    the far cell face).
+
+    ``geometry`` has the same keys and units ``cross_section_mesh`` expects
+    (metres). ``note`` is the provenance when the geometry was found, and the
+    plain list of ABSENT quantities when it was not: a dump that records no
+    ``eps_r`` gets a refusal naming ``eps_r``, never a plausible filler. A NaN
+    from a missing key (``_npz_scalar``'s default) counts as absent.
+
+    Only stdlib + numpy: no matplotlib, no trame, no pyvista.
+    """
+    dump = Path(dump)
+    try:
+        with np.load(dump) as data:
+            eps_r = _npz_scalar(data, "eps_r")
+            h_mm = _npz_scalar(data, "substrate_h_mm")
+            w_mm = _npz_scalar(data, "strip_w_mm")
+            f_hz = _npz_scalar(data, "f_ref_hz")
+            nz = _npz_scalar(data, "nz")
+            cell_m = _npz_scalar(data, "cell_m")
+    except Exception as exc:  # noqa: BLE001 - reported, never raised
+        return None, f"{dump.name} could not be opened ({type(exc).__name__}: {exc})"
+
+    def recorded(value):
+        """The stored float, or None when it is absent or not finite."""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    eps_r = recorded(eps_r)
+    h_mm = recorded(h_mm)
+    w_mm = recorded(w_mm)
+    f_hz = recorded(f_hz)
+    nz = recorded(nz)
+    cell_m = recorded(cell_m)
+    geometry = {
+        "eps_r": eps_r,
+        "h": None if h_mm is None else h_mm * 1e-3,
+        "w": None if w_mm is None else w_mm * 1e-3,
+        "height": None if (nz is None or cell_m is None) else nz * cell_m,
+        "f_hz": f_hz,
+    }
+    absent = [
+        name
+        for name in ("eps_r", "h", "w", "height", "f_hz")
+        if _as_float(geometry.get(name)) is None
+    ]
+    if absent:
+        names = ", ".join(absent)
+        return None, (
+            "the dump records no cross-section geometry for this dump, so "
+            f"{names} is/are absent from both the record and the npz"
+        )
+    return geometry, (
+        "eps_r, substrate_h_mm, strip_w_mm, f_ref_hz and nz x cell_m from the "
+        "dump itself"
+    )
 
 
 def _mode_view(page, *, lateral_cells, k, memo, started):
@@ -4720,40 +4942,54 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
     dump = Path(path)
     candidates = _record_candidates(dump)
     record_path = next((p for p in candidates if p.is_file()), None)
-    if record_path is None:
-        return _mode_fail(
-            "no study record beside the dump (tried "
-            + ", ".join(p.name for p in candidates)
-            + "); the arm geometry lives in that record, not in the npz"
-        )
-    key = (
-        str(record_path),
-        record_path.stat().st_mtime,
-        int(lateral_cells),
-        int(k),
-    )
+    # The memo key names the file that actually carries the geometry, and when it
+    # last changed: the record when one exists, otherwise the dump the fallback
+    # reads - so an edited input is a miss on either path.
+    source = record_path if record_path is not None else dump
+    try:
+        key = (str(source), source.stat().st_mtime, int(lateral_cells), int(k))
+    except OSError:
+        key = (str(source), 0.0, int(lateral_cells), int(k))
     if key in memo:
         # The stored dict itself, deliberately: identity is the observable proof
         # that the memo answered, and it is treated as read-only by every caller.
         return memo[key]
 
-    record = page.get("record")
-    if not isinstance(record, dict):
-        record = _read_json(record_path)
-    if not isinstance(record, dict):
-        return _mode_fail(f"study record {record_path.name} is unreadable")
-    geometry = record.get("geometry")
-    if not isinstance(geometry, dict):
-        return _mode_fail(
-            f"study record {record_path.name} has no geometry block"
-        )
-    missing = [
-        name
-        for name in ("eps_r", "h", "w", "height", "f_hz")
-        if _as_float(geometry.get(name)) is None
-    ]
-    if missing:
-        return _mode_fail(f"record geometry lacks {', '.join(missing)}")
+    record = None
+    if record_path is not None:
+        record = page.get("record")
+        if not isinstance(record, dict):
+            record = _read_json(record_path)
+        if not isinstance(record, dict):
+            return _mode_fail(f"study record {record_path.name} is unreadable")
+        geometry = record.get("geometry")
+        if not isinstance(geometry, dict):
+            return _mode_fail(
+                f"study record {record_path.name} has no geometry block"
+            )
+        missing = [
+            name
+            for name in ("eps_r", "h", "w", "height", "f_hz")
+            if _as_float(geometry.get(name)) is None
+        ]
+        if missing:
+            return _mode_fail(f"record geometry lacks {', '.join(missing)}")
+        geometry_source = "record"
+    else:
+        # No record is not the same as no geometry. The vis dump stores part of
+        # its own cross-section, so the mode is solved from the numbers that ARE
+        # recorded and the caption says which file they came from. When even
+        # those are absent this refuses and NAMES them - the panel never fills
+        # in an eps_r or a substrate height it did not read.
+        geometry, note = _mode_geometry_from_dump(dump)
+        if not isinstance(geometry, dict):
+            return _mode_fail(
+                "no study record beside the dump (tried "
+                + ", ".join(p.name for p in candidates)
+                + "), and the dump's own metadata cannot stand in for it: "
+                + note
+            )
+        geometry_source = "dump"
 
     mode2d = _mode2d()
     mesh, boundaries, extent = cross_section_mesh(
@@ -4773,7 +5009,7 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
         mesh, k0, sigma, eps_r=eps_t, boundaries=boundaries, k=int(k)
     )
 
-    line = record.get("line")
+    line = record.get("line") if isinstance(record, dict) else None
     line = line if isinstance(line, dict) else {}
     beta = float(solved.beta)
     ratios = tuple(solved.curl_ratio or ())
@@ -4798,6 +5034,10 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
         "n_edges": int(mesh.n_edges),
         "seconds": 0.0,
         "caption": "",
+        "geometry_source": geometry_source,
+        # The frequency this solve was actually driven at: the caption must be
+        # able to print it rather than inherit the record's, which is absent.
+        "geometry_f_hz": float(geometry["f_hz"]),
     }
     # The field needs the solved mode, so it is sampled after the dict exists and
     # before the timing is closed: a caption that under-reports the wall clock is
@@ -4813,8 +5053,21 @@ def mode_view(page, *, lateral_cells=44, k=2, cache=None) -> dict:
     """Solve the cross-section mode for the arm a page is showing. NEVER raises.
 
     ``page`` is the dict :func:`reload_page` returns (or anything carrying a
-    ``path``); the geometry is read from the STUDY RECORD written beside that
-    dump, never from the npz, which stores no geometry at all.
+    ``path``). The geometry is looked for in this order, and the order matters:
+
+    1. the STUDY RECORD written beside the dump - it carries the geometry the
+       run was actually built on, so it is the authority;
+    2. the dump's OWN metadata, when no record sits beside it - ``eps_r``,
+       ``substrate_h_mm``, ``strip_w_mm``, ``f_ref_hz`` and ``nz * cell_m`` are
+       stored numbers, not estimates, and a solve from them is a real solve
+       (the caption then says so, because its drive frequency is the dump's
+       ``f_ref_hz``, not the run's recorded single frequency);
+    3. a refusal from ``_mode_fail`` naming the quantities that are absent from
+       BOTH - a missing ``eps_r`` is reported by name and never filled in.
+
+    The label the answer carries, ``geometry_source``, says which of the first
+    two answered. It never raises and every failure is ``{'ok': False,
+    'reason': ...}``.
 
     Returns ``ok`` True plus ``beta_rad_per_m``, ``eps_eff``, ``residual``,
     ``curl_ratio``, ``beta_banked``, ``beta_model``, ``delta_vs_banked_pct``,
