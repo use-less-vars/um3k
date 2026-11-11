@@ -119,13 +119,23 @@ re-derived.  The three impedance names of the scope document
 ``SParameterReferenceImpedance``) are **not** created as types and never
 convert into one another.
 
-Absent on purpose: no netlist-file reader, no subcircuits, no ``.model``, no
+Absent on purpose: no SPICE-syntax reader, no subcircuits, no ``.model``, no
 nonlinear device (that needs a Newton loop; this coupling is explicit by
 construction), no transmission line, no adaptive step, no operating-point
-solve, no ``s_parameters`` (the ``(I - z0 Y)(I + z0 Y)^{-1}`` check against
+solve, and no ``s_parameters`` (the ``(I - z0 Y)(I + z0 Y)^{-1}`` check against
 ``(R - z0)/(R + z0)`` was never carried out -- no closed-form verification
-was ever obtained -- so the method was dropped rather than shipped unverified),
-and no time-dependent sources -- ``V`` and ``I`` branches carry fixed values.
+was ever obtained -- so the method was dropped rather than shipped unverified).
+
+The one thing this module does now carry is a **per-step source level**.
+:meth:`MNASolver.step` and :meth:`SpicePort.step` take a keyword-only
+``sources`` vector of length ``n_branches``; ``None`` (the default, and the
+only form used by ``tests/test_spice.py``) leaves every ``V``/``I`` branch at
+its frozen ``value``.  Nothing here evaluates a waveform, owns a clock or reads
+a file: :mod:`emfit.netlist` parses a JSON netlist into a
+:class:`CircuitNetwork`, evaluates the waveforms it declares at each step, and
+passes that vector in.  A ``V``/``I`` branch is therefore still immutable --
+the level moves in the argument, not in the branch -- and a step still depends
+only on ``(dt, state, sources)``.
 
 Sign conventions
 ----------------
@@ -376,7 +386,30 @@ def _history(kind, g, v_prev, i_prev, scheme):
     return -g * v_prev if kind == "C" else i_prev
 
 
-def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None):
+def _source_values(network, sources):
+    """Per-branch source levels for one step; ``None`` means ``Branch.value``.
+
+    A ``V`` or ``I`` branch's level is normally its frozen ``value``.  A driver
+    that owns a waveform evaluates it at the new time and passes the resulting
+    length-``n_branches`` vector here, so the level can move between steps
+    without making a branch mutable: ``Branch`` stays frozen and a step still
+    depends only on ``(dt, state, sources)``.  Entries for ``R``/``L``/``C``
+    branches are carried for indexing convenience and never read.
+    """
+    if sources is None:
+        return np.array([br.value for br in network.branches], dtype=float)
+    src = np.asarray(sources, dtype=float).ravel()
+    if src.shape != (network.n_branches,):
+        raise ValueError(
+            f"sources must have shape ({network.n_branches},), one level per "
+            f"branch; got shape {src.shape}"
+        )
+    if not np.all(np.isfinite(src)):
+        raise ValueError(f"sources must be finite; got {src.tolist()}")
+    return src
+
+
+def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None):
     """Assemble ``A x = b`` for one step; returns ``(A, b, info)``.
 
     ``coupling`` is ``None`` for the standalone network, or
@@ -384,6 +417,10 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None):
     the ``n_t`` port-current unknowns: ``M`` into the ``(i, i)`` block and
     ``-M i^n`` into the source row, the field's own discretisation stamped as
     the circuit sees it.
+
+    ``sources`` is ``None`` (use each branch's frozen ``value``) or a
+    length-``n_branches`` vector of source levels for this step; see
+    :func:`_source_values`.  It only moves ``V`` and ``I`` branches.
     """
     n_rows = network.n_nodes - 1
     v_cols = {}
@@ -392,6 +429,7 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None):
             v_cols[k] = n_rows + len(v_cols)
     n_port = 0 if coupling is None else int(np.shape(coupling[0])[0])
     size = n_rows + len(v_cols) + n_port
+    src = _source_values(network, sources)
 
     A = np.zeros((size, size))
     b = np.zeros(size)
@@ -422,8 +460,8 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None):
                 inject(c, hist)
                 inject(a, -hist)
         elif br.kind == "I":
-            inject(c, br.value)
-            inject(a, -br.value)
+            inject(c, src[k])
+            inject(a, -src[k])
         else:  # "V": u_a - u_b = value, with its own branch current unknown
             col = v_cols[k]
             if ra is not None:
@@ -432,7 +470,7 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None):
             if rc is not None:
                 A[col, rc] -= 1.0
                 A[rc, col] -= 1.0
-            b[col] = br.value
+            b[col] = src[k]
 
     base_port = n_rows + len(v_cols)
     if coupling is not None:
@@ -456,6 +494,7 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None):
         "i_prev": i_prev,
         "dt": dt,
         "scheme": scheme,
+        "sources": src,
     }
     return A, b, info
 
@@ -476,7 +515,7 @@ def _recover(network, x, info):
         elif br.kind == "V":
             currents[k] = x[info["v_cols"][k]]
         else:
-            currents[k] = br.value
+            currents[k] = info["sources"][k]
     return u, currents
 
 
@@ -517,7 +556,7 @@ class MNASolver:
         """All-zero history: no charge, no current, no node voltage."""
         return SpiceState(self.network)
 
-    def step(self, dt, state):
+    def step(self, dt, state, *, sources=None):
         """One step.  Returns ``(state_new, u, i_branch)``.
 
         Parameters
@@ -526,6 +565,10 @@ class MNASolver:
             Time step (s), finite and positive.
         state : SpiceState
             History at ``t^n``, on this network.
+        sources : array_like, shape (n_branches,), keyword-only, optional
+            Source levels evaluated at ``t^{n+1}``, the implicit-Euler point
+            this step solves at.  ``None`` uses each branch's frozen
+            ``value``, i.e. a source whose level never moves.
 
         Returns
         -------
@@ -547,7 +590,7 @@ class MNASolver:
                 "count silently disagree"
             )
         A, b, info = _assemble(self.network, dt, state.u, state.i_branch,
-                               self.scheme)
+                               self.scheme, sources=sources)
         x = np.linalg.solve(A, b)
         u, currents = _recover(self.network, x, info)
         return (
@@ -649,12 +692,16 @@ class SpicePort:
             )
         return 0.5 * dt * block
 
-    def step(self, e, h, dt, state):
+    def step(self, e, h, dt, state, *, sources=None):
         """One coupled trapezoidal step.  Returns ``(e_new, h_new, state_new)``.
 
         Same signature and same return shape as
         ``emfit.terminations.step_rlc``: ``e`` and ``state`` are unmodified, and
         ``h_new`` is ``h`` itself when ``advance`` is ``None``.
+
+        ``sources`` is the per-step source-level vector ``MNASolver.step``
+        takes, evaluated at ``t^{n+1}``; ``None`` keeps every source at its
+        frozen ``value``.
         """
         dt = float(dt)
         if not np.isfinite(dt) or dt <= 0.0:
@@ -682,7 +729,8 @@ class SpicePort:
 
         M = self._field_reactance(dt)
         A, b, info = _assemble(self.network, dt, state.u, state.i_branch,
-                               "trapezoidal", coupling=(M, v_star, state.i))
+                               "trapezoidal", coupling=(M, v_star, state.i),
+                               sources=sources)
         x = np.linalg.solve(A, b)
         u, currents = _recover(self.network, x, info)
 
