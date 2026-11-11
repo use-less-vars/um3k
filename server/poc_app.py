@@ -4487,6 +4487,61 @@ def _mode_caption_text(result) -> str:
         return MODE_PANEL_HINT
 
 
+def _mode_picture_grid(result, *, x_mm: float):
+    """A ``mode_view`` result as ONE y-z sheet standing at ``x_mm``. NEVER raises.
+
+    The compute layer hands back ``grid`` (a ``(z, y)`` sampled ``|E|`` of the
+    fundamental) and ``extent`` = ``(y_max_m, z_max_m)``. This maps them onto a
+    single-sample-thick ``pyvista.ImageData`` in MILLIMETRES - the unit the
+    plotter, the cell size and the cut-plane stations are all in - spanning y in
+    [-y_max, +y_max] and z in [0, z_max] at one fixed x, which is the plane the
+    two x-cut sheets already stand in.
+
+    Returns None when there is nothing drawable: a refusal, a grid that is not a
+    usable 2-D array, a non-finite or empty extent. The caller keeps its caption
+    and numbers in that case - the picture is the extra, never the answer.
+    """
+    try:
+        if not isinstance(result, dict) or not result.get("ok"):
+            return None
+        grid = result.get("grid")
+        extent = result.get("extent")
+        if grid is None or extent is None:
+            return None
+        data = np.asarray(grid, dtype=float)
+        if data.ndim != 2 or min(data.shape) < 2:
+            return None
+        if not np.all(np.isfinite(data)):
+            return None
+        y_max_m, z_max_m = float(extent[0]), float(extent[1])
+        if not (np.isfinite(y_max_m) and np.isfinite(z_max_m)):
+            return None
+        if y_max_m <= 0.0 or z_max_m <= 0.0:
+            return None
+        import pyvista as pv  # deferred: --list-keys / --dump-state stay numpy-only
+
+        # ``grid`` is indexed (z, y) and VTK wants its FASTEST axis first, so the
+        # transpose plus a Fortran ravel puts y fastest and z next - the same
+        # order the dump's own x-cut sheets are handed over in. Getting this
+        # wrong does not raise: it draws the cross-section mirrored into the
+        # wrong axis.
+        values = np.ascontiguousarray(data.T.ravel(order="F"), dtype=float)
+        n_y, n_z = int(data.shape[1]), int(data.shape[0])
+        y_max_mm, z_max_mm = y_max_m * 1e3, z_max_m * 1e3
+        image = pv.ImageData()
+        image.dimensions = (1, n_y, n_z)
+        # A 1 mm stand-in along the single-sample x axis: with one point on that
+        # axis the spacing cannot move the sheet, and a zero spacing would be a
+        # singular transform.
+        image.spacing = (1.0, 2.0 * y_max_mm / float(n_y - 1), z_max_mm / float(n_z - 1))
+        image.origin = (float(x_mm), -y_max_mm, 0.0)
+        image.point_data["mode_e_abs"] = values
+        image.point_data.active_scalars_name = "mode_e_abs"
+        return image
+    except Exception:  # noqa: BLE001 - a picture is never worth a traceback
+        return None
+
+
 SOLVE_DEFAULT_XCUT_MM = 20.4
 
 
@@ -4920,6 +4975,78 @@ def run_web_vis(
                 file=sys.stderr,
             )
 
+    def _clear_mode_picture() -> None:
+        """Drop the Mode picture. ONE actor, OUTSIDE ``sheets``, own handle.
+
+        It is a still cross-section, not an animation frame: keeping it out of
+        ``sheets`` is what stops _show from swapping its scalars or hiding it as
+        one of the three families. Removal is best-effort - once the handle is
+        gone the actor can never be made visible again except by a fresh solve,
+        so a stuck picture is invisible rather than wrong.
+        """
+        entry = handles.pop("mode_actor", None)
+        if entry is None:
+            return
+        try:
+            plotter.remove_actor(entry["actor"], render=False)
+        except Exception as exc:  # noqa: BLE001 - an orphan is not a failure
+            print(f"[poc_app] stale mode picture kept: {exc}", file=sys.stderr)
+
+    def _draw_mode_picture(result) -> None:
+        """Draw a solve's 48 x 48 |E| on the cross-section plane. NEVER raises.
+
+        Placed in the y-z plane of the x-cut family (that is the plane the mode
+        describes), one cell toward the viewer from the recorded near plane, so
+        the still picture and the opaque sheet at the same x never fight for the
+        same pixels. A refusal or an unusable grid CLEARS any old picture and
+        draws nothing: a stale mode beside an error caption would be a lie about
+        what was actually solved.
+        """
+        _clear_mode_picture()
+        live = page["info"]
+        cell_mm_now = _cell_mm(live)
+        x0_mm = _finite(live["xcut_near_mm"])
+        if x0_mm is None:
+            station = _finite(live["j_cut"])
+            x0_mm = None if station is None else station * cell_mm_now
+        if x0_mm is None:
+            print(
+                "[poc_app] mode picture skipped: no cut-plane x recorded",
+                file=sys.stderr,
+            )
+            return
+        grid = _mode_picture_grid(result, x_mm=x0_mm + cell_mm_now)
+        if grid is None:
+            print(
+                "[poc_app] mode picture skipped: no drawable grid",
+                file=sys.stderr,
+            )
+            return
+        values = np.asarray(grid.point_data["mode_e_abs"], dtype=float)
+        ceiling = float(np.nanmax(values)) if values.size else 0.0
+        actor = plotter.add_mesh(
+            grid,
+            scalars="mode_e_abs",
+            cmap="turbo",
+            # Its OWN limits, from its own array: |E| of the mode is not |Ez| of
+            # the dump, so borrowing the sheet's (vmin, vmax) would paint a
+            # meaningless colour. No bar either, for the same reason.
+            clim=(0.0, ceiling if ceiling > 0.0 else 1.0),
+            smooth_shading=False,
+            show_edges=False,
+            show_scalar_bar=False,
+            name="mode_picture",
+        )
+        handles["mode_actor"] = {
+            "actor": actor,
+            "grid": grid,
+            "page_path": page.get("path"),
+            "family": "xcut",
+        }
+        # _show's rule, applied immediately: a press made from the y-cut view
+        # leaves the picture hidden instead of letting it appear edge-on.
+        actor.visibility = state.mode == "xcut"
+
     def _show(frame, mode=None) -> None:
         """Draw ONE frame of the selected family. Never rescales.
 
@@ -4970,6 +5097,25 @@ def run_web_vis(
             except Exception as exc:  # noqa: BLE001 - keep the old frame
                 print(
                     f"[poc_app] frame update skipped for {key}: {exc}",
+                    file=sys.stderr,
+                )
+
+        # The Mode picture is NOT one of the three sheets and must never be
+        # treated as one: it is a still cross-section, so it is shown only for
+        # its OWN family (the y-z plane the x-cuts are drawn in - edge-on to the
+        # y-cut camera it would be a line) and only for the dump it was solved
+        # from. A family switch, or a solve that swapped the page, must never
+        # resurrect it.
+        mode_entry = handles.get("mode_actor")
+        if mode_entry is not None:
+            try:
+                mode_entry["actor"].visibility = (
+                    mode_entry.get("family") == mode
+                    and mode_entry.get("page_path") == page.get("path")
+                )
+            except Exception as exc:  # noqa: BLE001 - a picture is not the page
+                print(
+                    f"[poc_app] mode picture visibility skipped: {exc}",
                     file=sys.stderr,
                 )
 
@@ -5112,6 +5258,11 @@ def run_web_vis(
                     f"[poc_app] stale sheet kept: {exc}", file=sys.stderr
                 )
         sheets.clear()
+        # A finished solve put a NEW dump on screen, so the mode picture was
+        # solved for a page that is no longer live: it goes with the old sheets.
+        # Same "one rule" as the caption helpers - after a solve the Mode panel
+        # says nothing has been run, and now nothing is drawn either.
+        _clear_mode_picture()
         for key, family in (
             ("ez_ycut", "ycut"),
             ("ez_xcut_near", "xcut"),
@@ -5355,6 +5506,16 @@ def run_web_vis(
             result = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
         state.mode_view_label = _mode_button_label(result)
         state.mode_view_caption = _mode_caption_text(result)
+        # The picture is the EXTRA, and it is attempted only AFTER the two
+        # strings above are published: every step here is guarded, so a press
+        # that cannot draw still shows its numbers.
+        try:
+            _draw_mode_picture(result)
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - the caption is already on screen
+            print(
+                f"[poc_app] mode picture skipped: {exc}", file=sys.stderr
+            )
         view_handle = handles.get("view")
         if view_handle is not None:
             try:

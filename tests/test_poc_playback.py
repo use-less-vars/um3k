@@ -1224,3 +1224,69 @@ def test_mode_panel_publishes_a_refusal_without_raising(tmp_path: Path,
     )
     assert state.mode_view_label == "Mode: refused", state.mode_view_label
 
+
+
+def test_mode_picture_grid_lands_on_the_cross_section_plane() -> None:
+    """The one picture rule checkable WITHOUT OpenGL: where the quad lands.
+
+    This image has no EGL/OSMesa (a real ``render()`` segfaults the interpreter),
+    so what is asserted here is the geometry the actor is built from - the grid
+    handed to ``add_mesh``, in the plotter's millimetres - and not one pixel. What
+    it pins down is the pair of mistakes that would not raise: a quad in the
+    wrong plane (a second picture floating outside the box) and a transposed map
+    (the cross-section mirrored into the wrong axis).
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    cells = app.MODE_GRID_CELLS
+    result = {
+        "ok": True,
+        # |E| of the fundamental, indexed (z, y), as the compute layer returns it
+        "grid": np.ones((cells, cells), dtype=float),
+        "extent": (1.5e-3, 2.0e-3),  # y_max, z_max in METRES
+    }
+    grid = app._mode_picture_grid(result, x_mm=20.4)
+
+    assert grid is not None, "a solved result produced no picture at all"
+    x0, x1, y0, y1, z0, z1 = grid.bounds
+    assert x0 == pytest.approx(20.4) and x1 == pytest.approx(20.4), (
+        f"the quad stands at x = {x0} / {x1}, not on the cut-plane x = 20.4: it "
+        "would float in front of, or behind, the x-cut sheets"
+    )
+    assert (y0, y1) == (pytest.approx(-1.5), pytest.approx(1.5)), (
+        f"y spans {y0}..{y1} mm, not the recorded +-y_max = +-1.5 mm"
+    )
+    assert (z0, z1) == (pytest.approx(0.0), pytest.approx(2.0)), (
+        f"z spans {z0}..{z1} mm, not the recorded 0..z_max = 0..2 mm"
+    )
+    assert grid.n_points == cells * cells, (
+        f"the picture carries {grid.n_points} points, not the {cells} x {cells} "
+        "square the solve sampled"
+    )
+    points = np.asarray(grid.points, dtype=float)
+    assert points[1][1] > points[0][1] and points[1][2] == pytest.approx(
+        points[0][2]
+    ), (
+        "the second point of the picture steps along z, not y: a transposed "
+        "48 x 48 map draws the cross-section mirrored into the wrong axis and "
+        "nothing raises"
+    )
+
+    # A refusal, and a grid that is not a picture, are picture-LESS answers and
+    # never exceptions: the caption path has to survive them.
+    assert (
+        app._mode_picture_grid({"ok": False, "reason": "no record"}, x_mm=1.0)
+        is None
+    ), "a refusal produced a picture"
+    assert (
+        app._mode_picture_grid(
+            {"ok": True, "grid": np.zeros((0, 0)), "extent": (1.0, 1.0)}, x_mm=1.0
+        )
+        is None
+    )
+    assert (
+        app._mode_picture_grid({"ok": True, "grid": np.ones((4, 4))}, x_mm=1.0)
+        is None
+    ), "a result with no extent still produced a picture"
+
