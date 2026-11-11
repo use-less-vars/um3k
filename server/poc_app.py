@@ -62,7 +62,10 @@ import datetime
 import errno
 import json
 import re
+import subprocess
 import sys
+import threading
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -134,6 +137,18 @@ COLOR_PERCENTILE = 99.5
 # and the eye cannot tell one cell from the interpolation between two of them.
 # Only the field sheets get this: the overlay boxes are decoration, not data.
 VIS_SHOW_EDGES = True
+
+# The solver that writes a fresh wave dump. It is NOT at the repo root: it lives
+# beside the study that produced the dumps this viewer opens, and is run from
+# there, so that is the path that actually works.
+SOLVER_SCRIPT = REPO_ROOT / "evidence" / "termination" / "run_build_A.py"
+# Everything under here is CERTIFIED: a report quotes these files. A button
+# press must never be able to overwrite one, which is why solve_argv refuses any
+# target inside it.
+EVIDENCE_DIR = REPO_ROOT / "evidence"
+# ... and this is where a live solve writes instead. Regenerable, disposable,
+# and named so the page can say which of the two it is showing.
+LIVE_DUMP = REPO_ROOT / "artifacts" / "live_run.npz"
 
 
 def _resolve(path_str: str) -> Path:
@@ -417,6 +432,50 @@ def load_any_dump(path: Path) -> dict:
         )
         raise SystemExit(2)
     return load_dump(path)
+
+
+def _velocity_label(info: dict) -> str:
+    """The velocity line, from the dump's OWN recorded numbers.
+
+    A predicate over ``info`` and nothing else, so boot and a live page swap
+    print the same sentence from the same code: a dump that arrives mid-session
+    must not get a differently-worded readout than the one the app booted with.
+    """
+    measured = _finite(info["v_measured_m_s"])
+    analytic = _finite(info["v_analytic_m_s"])
+    traverse = _finite(info["t_traverse_ns"])
+    reliability = "reliable" if info["v_measured_reliable"] else "NOT reliable"
+    return (
+        "velocity: measured "
+        + (
+            f"{measured:.4e} m/s ({reliability})"
+            if measured is not None
+            else "not recorded"
+        )
+        + ", analytic "
+        + (f"{analytic:.4e} m/s" if analytic is not None else "not recorded")
+        + ", t_traverse "
+        + (f"{traverse:.4f} ns" if traverse is not None else "not recorded")
+    )
+
+
+def _scale_label(info: dict) -> str:
+    """The ONE colour-limit line, from this dump's own ``color_range``.
+
+    Same reason as _velocity_label: the sentence names the ceiling of the dump
+    now on screen, so it has to be rebuilt from that dump, not kept from boot.
+    """
+    if info["color_range_empty"]:
+        return (
+            "scale: [EMPTY DUMP] every stored |Ez| is zero - 0 .. 1 is a "
+            "placeholder and no frame has a scale of its own"
+        )
+    vmin, vmax = info["color_range"]
+    return (
+        f"scale: |Ez| {vmin:.4e} .. {vmax:.4e} V/m, ONE limit for EVERY "
+        f"frame (p{COLOR_PERCENTILE:g} ceiling; the brightest "
+        f"{100.0 - COLOR_PERCENTILE:g} % of cells clip)"
+    )
 
 
 def _structure_readout_text(info: dict) -> str:
@@ -3894,6 +3953,239 @@ def _probe_trame_ui():
     return None
 
 
+def solve_argv(structure_id, xcut_near_mm, out_npz) -> list[str]:
+    """The argv that would run a fresh field solve. BUILT here, never run.
+
+    It exists so the command line is assertable without paying for a solve: the
+    flags are the solver's OWN - ``--structure``, ``--xcut-near-mm`` and
+    ``--vis-dump`` all already exist over there - so this function adds no
+    solver option and touches no solver behaviour.
+
+    ``structure_id`` is REQUIRED: the arm is a choice, and when the caller did
+    not name one there is no default arm worth guessing.
+
+    ``out_npz`` may not resolve anywhere under ``EVIDENCE_DIR``: those dumps are
+    certified artefacts, so a UI press must never be able to clobber one.
+    ``LIVE_DUMP`` is the location a live solve is meant to use.
+    """
+    sid = _structure_key(structure_id)
+    if not sid:
+        raise ValueError(
+            "solve_argv: no structure id, so no arm to solve - pass the arm "
+            'key the dump records ("A" or "B")'
+        )
+    out = Path(out_npz)
+    resolved = out.resolve()
+    evidence = EVIDENCE_DIR.resolve()
+    if resolved == evidence or evidence in resolved.parents:
+        raise ValueError(
+            f"solve_argv: refusing to write {resolved} - everything under "
+            f"{evidence} is a certified artefact; write to LIVE_DUMP "
+            f"({LIVE_DUMP}) instead"
+        )
+    return [
+        sys.executable,
+        str(SOLVER_SCRIPT),
+        "--structure",
+        sid,
+        "--xcut-near-mm",
+        # %g, so 20.4 reads as 20.4: the float's repr can carry a long tail
+        # (20.400000000000002) that looks like a different number than the one
+        # the user asked for.
+        f"{float(xcut_near_mm):g}",
+        "--vis-dump",
+        str(out),
+    ]
+
+
+def reload_page(npz_path, structure_id=None) -> dict:
+    """Everything the page reads off disk for ONE dump, as a plain dict.
+
+    ONE code path from a path to page data: boot calls this and a reload calls
+    this, so a reloaded dump cannot be loaded differently from one that booted.
+    No trame object and no module global is touched by this function or by
+    anything it calls, which is exactly what makes it callable again later on a
+    different file - the scene redraws from whatever it is handed.
+
+    ``structure_id`` is a FALLBACK only: the dump's own recorded provenance wins
+    whenever it carries one, so a reload can never relabel a dump.
+
+    It RAISES on a dump it cannot read - ``load_any_dump``'s refusals and the
+    npz errors propagate untouched - because the UI has to be able to report a
+    failed solve. Only the PANELS below it degrade quietly, as they always have.
+    """
+    path = Path(npz_path)
+    info = load_any_dump(path)
+    # The path the DUMP records, not the spelling the caller used: boot reads
+    # info["path"], so a reload that read anything else could resolve a
+    # different neighbour file for the same dump.
+    dump_path = Path(info.get("path") or path)
+    recorded = info.get("structure_id")
+    sid = recorded if recorded is not None else structure_id
+    # The record beside the dump: the legacy page's plane positions and every
+    # caption come from it. ``load_record`` returning None is a legitimate "no
+    # record" and is NOT a failed dump load, so it stays permissive.
+    record = load_record(dump_path)
+    if _is_vis(info):
+        # An animation dump's cut planes ARE its three stored field arrays, and
+        # the recorded positions are where the overlay is drawn; the sheets are
+        # built from those arrays per frame by _vis_grid. Nothing is copied
+        # here - the arrays are referenced - and _vis_grid's geometry is NOT
+        # duplicated, because a second copy of it could drift from the drawn
+        # one.
+        planes = {
+            "cell_mm": _cell_mm(info),
+            "j_cut": int(info["j_cut"]),
+            "xcut_near_mm": float(info["xcut_near_mm"]),
+            "xcut_far_mm": float(info["xcut_far_mm"]),
+            "ez_ycut": info["ez_ycut"],
+            "ez_xcut_near": info["ez_xcut_near"],
+            "ez_xcut_far": info["ez_xcut_far"],
+        }
+    else:
+        planes = _plane_layout(info, record)
+    return {
+        "path": dump_path,
+        "info": info,
+        "planes": planes,
+        # The dump's OWN arm, so a page can only read the sweep of the arm it
+        # says it is.
+        "multifreq": load_multifreq(dump_path, sid),
+        "structure_id": recorded,
+        "record": record,
+        # Which kind of page this is, decided once here rather than re-tested by
+        # every caller that has to know.
+        "is_vis": _is_vis(info),
+    }
+
+
+SOLVE_DEFAULT_XCUT_MM = 20.4
+
+
+class SolveJob:
+    """ONE solve, in a child process, driven from a worker thread.
+
+    No trame in here and no plotting in here: the process boundary is the whole
+    interface, so this class can be driven to completion by a test in a second.
+
+    ``cwd`` defaults to the solver's OWN directory because the solver imports its
+    siblings - started anywhere else it cannot even be imported.
+    """
+
+    #: How much of the combined output is kept. The child can print a study's
+    #: worth of numbers; the operator needs the last screen of it, not all of it.
+    LOG_TAIL_CHARS = 4000
+    LOG_TAIL_LINES = 400
+
+    def __init__(self, argv, cwd=None):
+        self.argv = list(argv)
+        self.cwd = str(SOLVER_SCRIPT.parent if cwd is None else cwd)
+        self.status = "idle"
+        self.returncode = None
+        self._tail: deque = deque(maxlen=self.LOG_TAIL_LINES)
+        self._proc = None
+        self._lock = threading.Lock()
+
+    @property
+    def log(self) -> str:
+        """The TAIL of the combined stdout+stderr, newest last."""
+        return "".join(self._tail)[-self.LOG_TAIL_CHARS:]
+
+    def _finish(self, returncode) -> None:
+        self.returncode = returncode
+        self.status = "ok" if returncode == 0 else "failed"
+
+    def _drain(self) -> None:
+        """Read whatever is left. Safe only once the child has exited."""
+        stream = getattr(self._proc, "stdout", None)
+        if stream is None:
+            return
+        for line in stream:
+            self._tail.append(line)
+
+    def start(self) -> "SolveJob":
+        """Spawn the child. REFUSES to start a second one."""
+        with self._lock:
+            if self.status == "running":
+                raise RuntimeError(
+                    "SolveJob.start(): a solve is already running - one at a "
+                    "time, because two would write the same LIVE_DUMP"
+                )
+            self._tail.clear()
+            self.returncode = None
+            self._proc = subprocess.Popen(
+                self.argv,
+                cwd=self.cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            self.status = "running"
+        return self
+
+    def run(self) -> str:
+        """start(), then block until the child exits. THE WORKER THREAD'S CALL."""
+        self.start()
+        self._drain()
+        self._finish(self._proc.wait())
+        return self.status
+
+    def poll(self) -> str:
+        """Non-blocking: finalise here once the child has exited on its own.
+
+        Returns the status and never raises, so a timer can call it forever.
+        """
+        if self.status != "running":
+            return self.status
+        try:
+            code = self._proc.poll()
+        except Exception:  # noqa: BLE001 - a dead handle is a failed solve
+            code = -1
+        if code is None:
+            return self.status
+        self._drain()
+        self._finish(code)
+        return self.status
+
+
+#: The keys the draw path reads off the live page, and the ONLY ones apply_page
+#: overwrites. Everything else in the holder is somebody else's business.
+PAGE_KEYS = ("path", "info", "planes", "multifreq", "structure_id", "record")
+
+
+def apply_page(holder: dict, page: dict) -> dict:
+    """Make a freshly loaded page the LIVE one, in place.
+
+    The single way a page becomes live: boot fills the holder, a finished solve
+    fills it again through this function, and every draw path reads the holder.
+    Nothing here clears unrelated keys - the holder also carries the app's own
+    bookkeeping, and a reload must not drop it.
+
+    Returns what changed, in terms of the page's identity: the old path, the new
+    path and the keys that were actually replaced.
+    """
+    if not isinstance(holder, dict):
+        raise TypeError(
+            f"apply_page: holder must be a dict, not {type(holder).__name__}"
+        )
+    old_path = holder.get("path")
+    changed: list[str] = []
+    for key in PAGE_KEYS:
+        if key not in page:
+            continue
+        if holder.get(key) is not page[key]:
+            changed.append(key)
+        holder[key] = page[key]
+    if "is_vis" in page:
+        holder["is_vis"] = page["is_vis"]
+    return {
+        "old_path": old_path,
+        "new_path": holder.get("path"),
+        "changed": changed,
+    }
+
+
 def run_web_vis(
     info: dict,
     host: str,
@@ -4000,6 +4292,21 @@ def run_web_vis(
         return 1
 
     from trame.app import get_server
+
+    # THE LIVE PAGE, in ONE mutable dict. Every draw path reads `page["info"]`
+    # rather than the `info` this function was called with, because a finished
+    # solve REPLACES the page (apply_page) while the server keeps running. A
+    # closure that captured `info` directly would keep drawing the dump that is
+    # no longer on disk under the name the operator just re-solved for.
+    page = {
+        "path": info.get("path"),
+        "info": info,
+        "planes": None,
+        "multifreq": None,
+        "record": None,
+        "structure_id": info.get("structure_id"),
+        "is_vis": True,
+    }
 
     fps = max(1, int(fps))
     nt = int(info["nt"])
@@ -4130,34 +4437,9 @@ def run_web_vis(
     # Provenance, from the dump's own record (see _structure_readout_text).
     state.structure_readout = _structure_readout_text(info)
 
-    measured = _finite(info["v_measured_m_s"])
-    analytic = _finite(info["v_analytic_m_s"])
-    traverse = _finite(info["t_traverse_ns"])
-    reliability = "reliable" if info["v_measured_reliable"] else "NOT reliable"
-    state.velocity_label = (
-        "velocity: measured "
-        + (
-            f"{measured:.4e} m/s ({reliability})"
-            if measured is not None
-            else "not recorded"
-        )
-        + ", analytic "
-        + (f"{analytic:.4e} m/s" if analytic is not None else "not recorded")
-        + ", t_traverse "
-        + (f"{traverse:.4f} ns" if traverse is not None else "not recorded")
-    )
+    state.velocity_label = _velocity_label(info)
     state.velocity_note = info["velocity_note"] or "velocity note: not recorded"
-    if info["color_range_empty"]:
-        state.scale_label = (
-            "scale: [EMPTY DUMP] every stored |Ez| is zero - 0 .. 1 is a "
-            "placeholder and no frame has a scale of its own"
-        )
-    else:
-        state.scale_label = (
-            f"scale: |Ez| {vmin:.4e} .. {vmax:.4e} V/m, ONE limit for EVERY "
-            f"frame (p{COLOR_PERCENTILE:g} ceiling; the brightest "
-            f"{100.0 - COLOR_PERCENTILE:g} % of cells clip)"
-        )
+    state.scale_label = _scale_label(info)
 
     # The plotter_ui handle only exists once the layout is built, so the frame
     # handler reaches it through this dict instead of closing over it.
@@ -4209,6 +4491,9 @@ def run_web_vis(
         swaps the scalar array: there is no per-frame normalisation here that
         could paint the recorded decay away.
         """
+        # The LIVE page, read on every draw: a finished solve swaps the dump
+        # under this closure, and the readouts below must follow it.
+        info = page["info"]
         previous_mode = state.mode
         mode = state.mode if mode is None else mode
         mode = "xcut" if mode == "xcut" else "ycut"
@@ -4365,6 +4650,68 @@ def run_web_vis(
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
+    def _rebuild_sheets(mode=None) -> None:
+        """Re-create the three field sheets from the LIVE page's own info.
+
+        A finished solve replaces every array on the page, so the sheets built at
+        boot belong to a dump that is no longer the one on screen. They are
+        removed and rebuilt here with the NEW dump's single colour limit, and the
+        camera is re-framed because the new domain need not have the old bounds.
+        """
+        nonlocal nt, nt_x, vmin, vmax, cell_mm, j_mm, y_span_mm
+        live = page["info"]
+        nt = int(live["nt"])
+        nt_x = int(live["nt_x"])
+        vmin, vmax = live["color_range"]
+        cell_mm = _cell_mm(live)
+        j_mm = float(int(live["j_cut"])) * cell_mm
+        y_span_mm = float(int(live["ny"])) * cell_mm
+        for entry in list(sheets.values()):
+            try:
+                plotter.remove_actor(entry["actor"], render=False)
+            except Exception as exc:  # noqa: BLE001 - a stuck sheet is invisible
+                # _show() only ever makes the SELECTED family visible, so an
+                # actor that refuses to be removed still cannot be seen.
+                print(
+                    f"[poc_app] stale sheet kept: {exc}", file=sys.stderr
+                )
+        sheets.clear()
+        for key, family in (
+            ("ez_ycut", "ycut"),
+            ("ez_xcut_near", "xcut"),
+            ("ez_xcut_far", "xcut"),
+        ):
+            try:
+                grid = _vis_grid(live, key, 0)
+                actor = plotter.add_mesh(
+                    grid,
+                    scalars="ez_abs",
+                    cmap="turbo",
+                    clim=(vmin, vmax),
+                    smooth_shading=False,
+                    show_edges=VIS_SHOW_EDGES,
+                    show_scalar_bar=(family == "ycut"),
+                    scalar_bar_args={"title": scalar_bar_title},
+                )
+            except Exception as exc:  # noqa: BLE001 - one sheet is not the page
+                print(
+                    f"[poc_app] plane {key} not redrawn: {exc}", file=sys.stderr
+                )
+                continue
+            sheets[key] = {"grid": grid, "actor": actor, "family": family}
+        state.frame_max = (
+            nt if (mode or state.mode) == "ycut" else nt_x
+        ) - 1
+        # The prose lines that name THIS dump's numbers are rebuilt from `live`
+        # rather than kept from boot: a solve can change the arm, the velocity
+        # record and the colour ceiling all at once.
+        state.structure_readout = _structure_readout_text(live)
+        state.velocity_label = _velocity_label(live)
+        state.scale_label = _scale_label(live)
+        state.velocity_note = live["velocity_note"] or "velocity note: not recorded"
+        handles["camera_framed"] = False
+        _show(0, mode or state.mode)
+
     # Initial labels, set before the layout is built so the first page a browser
     # loads already carries frame 1's own numbers.
     _show(0, "ycut")
@@ -4444,6 +4791,7 @@ def run_web_vis(
         animation beside it (the dump is one run at one frequency), which is why
         the caption names the file it came from.
         """
+        info = page["info"]
         # The dump's OWN provenance picks the arm, so a B dump can only ever be
         # drawn from B's sweep - or from B's single run, or from nothing.
         structure_id = info.get("structure_id")
@@ -4627,6 +4975,135 @@ def run_web_vis(
         state.flush()
         asyncio.create_task(_play_loop(generation))
 
+    # ---- the SOLVE control --------------------------------------------------
+    # A solve is a CHILD PROCESS (see SolveJob): the page keeps drawing while it
+    # runs and the only thing that crosses back is the npz it leaves behind.
+    # ONE at a time, because two would write the SAME live dump.
+    default_arm = _structure_key(info.get("structure_id")) or next(
+        iter(MULTIFREQ_BY_STRUCTURE)
+    )
+    state.solve_structure = default_arm
+    state.solve_xcut_mm = SOLVE_DEFAULT_XCUT_MM
+    state.solve_status = "no solve run in this session"
+    state.solve_label = "Solve"
+    solve: dict = {}
+
+    async def _watch_solve() -> None:
+        """THE poll driver: the ONE thing that watches the job and lands it.
+
+        It rides the server's own event loop, the same mechanism _play_loop uses.
+        There is deliberately no timer branch: this trame exposes no timer
+        widget, so a second driver could never run.
+
+        It exits as soon as the job has a VERDICT, and exits on the first check
+        when there is no job at all - it cannot poll forever.
+
+        "idle" is not a verdict: the worker thread may not have entered run()
+        yet when the task first gets the loop, and treating that instant as
+        "finished" reported ``solve idle (rc=None)`` for a solve that was just
+        starting. The thread always leaves "idle" (run() sets the status), so
+        waiting on it cannot spin forever.
+        """
+        while True:
+            job = solve.get("job")
+            if job is None or job.status not in ("idle", "running"):
+                break
+            await asyncio.sleep(0.5)
+        _poll_solve()
+
+    def _start_watch() -> None:
+        """Start the ONE poll driver on the loop this trigger is running on."""
+        try:
+            asyncio.get_running_loop().create_task(_watch_solve())
+        except RuntimeError as exc:  # noqa: BLE001 - no loop, nothing to drive it
+            print(
+                f"[poc_app] solve result not picked up ({exc}): reopen the page "
+                "to see it",
+                file=sys.stderr,
+            )
+
+    def _poll_solve() -> None:
+        """Watcher callback: watch the ONE job and, when it lands, show it.
+
+        Runs on the server's own event loop, so the page swap below is the same
+        thread that draws every frame - a browser that asks for frame n while
+        the solve is running keeps getting the OLD page, and never a half-built
+        one.
+        """
+        job = solve.get("job")
+        if job is None:
+            return
+        status = job.poll()
+        if status in ("idle", "running"):
+            # "idle" is a child that has not been spawned yet, not a failure.
+            state.solve_status = (
+                f"solving {state.solve_structure} at x_cut = "
+                f"{float(state.solve_xcut_mm):g} mm ..."
+            )
+            return
+        if status != "ok":
+            # The OLD page stays live and drawable: a failed solve is a message,
+            # not a broken viewer.
+            state.solve_status = (
+                f"solve {status} (rc={job.returncode}) - the page on screen is "
+                f"still the previous dump\n{job.log[-400:]}"
+            )
+            return
+        try:
+            applied = apply_page(page, reload_page(LIVE_DUMP))
+        except BaseException as exc:  # noqa: BLE001 - SystemExit is a refusal
+            state.solve_status = f"solve ok, but the new dump did not load: {exc}"
+            print(f"[poc_app] solved dump not loaded: {exc}", file=sys.stderr)
+            return
+        # The S-parameters panel read the OLD page's arm: drop the cache so the
+        # next open reads the sweep that belongs to the dump now on screen.
+        handles.pop("s_params", None)
+        _rebuild_sheets()
+        state.solve_status = f"solved -> {Path(applied['new_path']).name}"
+
+    def _run_job(job) -> None:
+        """Worker thread: run the solve to completion, never raising."""
+        try:
+            job.run()
+        except BaseException as exc:  # noqa: BLE001 - a dead spawn is a failure
+            print(f"[poc_app] solve could not start: {exc}", file=sys.stderr)
+            job.status = "failed"
+            job.returncode = None
+
+    @ctrl.set("solve_start")
+    def _on_solve_start(**_kwargs) -> None:
+        """Start a solve and return IMMEDIATELY. The watcher brings it back."""
+        running = solve.get("job")
+        if running is not None and running.status == "running":
+            state.solve_status = "a solve is already running - one at a time"
+            return
+        structure = str(state.solve_structure or default_arm)
+        try:
+            xcut_mm = float(state.solve_xcut_mm)
+        except (TypeError, ValueError):
+            xcut_mm = SOLVE_DEFAULT_XCUT_MM
+        try:
+            argv = solve_argv(structure, xcut_mm, LIVE_DUMP)
+        except (ValueError, OSError) as exc:
+            state.solve_status = f"refused: {exc}"
+            return
+        try:
+            LIVE_DUMP.parent.mkdir(parents=True, exist_ok=True)
+            job = SolveJob(argv)
+            threading.Thread(
+                target=_run_job, args=(job,), daemon=True, name="poc-solve"
+            ).start()
+        except Exception as exc:  # noqa: BLE001 - report, never take the page
+            state.solve_status = f"could not start the solver: {exc}"
+            print(f"[poc_app] solve not started: {exc}", file=sys.stderr)
+            return
+        solve["job"] = job
+        state.solve_status = (
+            f"solving {structure} at x_cut = {xcut_mm:g} mm -> "
+            f"{LIVE_DUMP.name}"
+        )
+        _start_watch()
+
     with SinglePageLayout(server) as layout:
         layout.title.set_text(f"{structure_label} - |Ez| animation")
         with layout.toolbar:
@@ -4676,6 +5153,41 @@ def run_web_vis(
                         widgets["VLabel"](
                             "playback unavailable (button binding failed)"
                         )
+            # The SOLVE controls, in their OWN guarded block: a binding failure
+            # here costs the solve button, never play/pause or the S-Parameters
+            # panel.
+            try:
+                if "VBtn" in widgets:
+                    widgets["VBtn"]("{{ solve_label }}", click=ctrl.solve_start)
+                solve_xcut_field = getattr(widgets_module, "VTextField", None)
+                if solve_xcut_field is not None:
+                    solve_xcut_field(
+                        v_model=("solve_xcut_mm", SOLVE_DEFAULT_XCUT_MM),
+                        label="x_cut [mm]",
+                        type="number",
+                        density="compact",
+                        hide_details=True,
+                        style="max-width: 120px; margin: 0 8px;",
+                    )
+                solve_arm_field = getattr(widgets_module, "VSelect", None)
+                if solve_arm_field is not None:
+                    solve_arm_field(
+                        v_model=("solve_structure", default_arm),
+                        items=list(MULTIFREQ_BY_STRUCTURE),
+                        label="arm",
+                        density="compact",
+                        hide_details=True,
+                        style="max-width: 110px; margin: 0 8px;",
+                    )
+                if "VLabel" in widgets:
+                    widgets["VLabel"]("{{ solve_status }}")
+            except Exception as exc:  # noqa: BLE001 - solve UI is optional
+                print(
+                    f"[poc_app] solve controls unavailable: {exc}",
+                    file=sys.stderr,
+                )
+                if "VLabel" in widgets:
+                    widgets["VLabel"]("solve unavailable (binding failed)")
         with layout.content:
             container = widgets.get("VContainer")
             if container is None or html_div is None:
@@ -4703,6 +5215,16 @@ def run_web_vis(
                             html_div("{{ scale_label }}")
                             html_div("{{ velocity_label }}")
                             html_div("{{ velocity_note }}")
+                            # Two things the button does NOT tell you: where it
+                            # runs, and what it cannot produce.
+                            html_div(
+                                "solve runs on the HOST machine running this "
+                                "app (a child process, not in the browser). A "
+                                "vis-dump solve forces the PULSE excitation, "
+                                "so it writes NO cut-plane S21 - the "
+                                "S-Parameters panel keeps whatever sweep file "
+                                "it already finds."
+                            )
                         # The 3-D view and the S-parameters panel share ONE
                         # horizontal row: the panel is a fixed 420 px column
                         # beside the picture, so opening it never shortens the
@@ -4865,8 +5387,12 @@ def main(argv=None) -> int:
     # _structure_input_path. The registry never overrides an explicit path, so a
     # run that is not registered yet can still be opened.
     src = _structure_input_path(args.input, structure)
-    # Dispatch on the npz schema, so one entry point opens either artefact.
-    info = load_any_dump(src)
+    # Dispatch on the npz schema, so one entry point opens either artefact - and
+    # through the SAME call a reload uses, so boot and reload cannot load a dump
+    # two different ways. Everything below still reads ``info`` exactly as it
+    # did before.
+    page = reload_page(src)
+    info = page["info"]
 
     if args.dump_state:
         out = _resolve(args.dump_state)

@@ -694,3 +694,351 @@ def test_sweep_beside_the_dump_ignores_the_other_arm(tmp_path: Path,
         f"the caption names the other arm's sweep while drawing B: {caption!r}"
     )
 
+
+# --- the live solve: the command line, and where it may write -----------------
+# Nothing here runs a solve.  ``solve_argv`` builds the argv and stops, which is
+# the whole point of splitting it out: the flags can be asserted in milliseconds
+# instead of by waiting out a field solve, and a wrong flag is caught here rather
+# than at the end of one.
+
+
+def test_solve_argv_targets_the_existing_cut_plane_flag(tmp_path: Path) -> None:
+    """The argv is the solver's own command line, with no invented flag.
+
+    ``--xcut-near-mm`` already exists over there (it is what the user asked for
+    when they said ``--xcut``), so a new flag would be an option the solver
+    would reject.  The length assertion is the other half: eight tokens means no
+    stray flag was slipped in beside the five that belong there.
+    """
+    import poc_app as app
+
+    argv = app.solve_argv("B", 20.4, app.LIVE_DUMP)
+
+    assert len(argv) == 8, (
+        f"the solve argv is {argv!r}: exactly [python, solver, --structure, sid, "
+        "--xcut-near-mm, value, --vis-dump, out] is what the solver accepts"
+    )
+    assert argv[0] == sys.executable, (
+        "the solve does not run on the interpreter that is serving the page; a "
+        "bare 'python' would pick whatever is on PATH instead"
+    )
+    assert "run_build_A.py" in argv[1] and Path(argv[1]) == app.SOLVER_SCRIPT, (
+        f"argv[1] is {argv[1]!r}, not the solver at {app.SOLVER_SCRIPT}"
+    )
+    assert argv[2:4] == ["--structure", "B"], (
+        f"the arm is not passed as the solver's own --structure: {argv[2:4]!r}"
+    )
+    assert argv[4] == "--xcut-near-mm", (
+        f"the cut plane is not passed as --xcut-near-mm: {argv[4]!r} - the "
+        "solver has no --xcut, so this would exit on an unknown argument"
+    )
+    assert argv[5] == "20.4", (
+        f"the cut position is {argv[5]!r}: it must read as 20.4, not as the "
+        "float's long tail 20.400000000000002"
+    )
+    assert argv[6:] == ["--vis-dump", str(app.LIVE_DUMP)], (
+        f"the dump target is not the solver's --vis-dump: {argv[6:]!r}"
+    )
+
+
+def test_solve_argv_refuses_to_overwrite_a_certified_dump(tmp_path: Path) -> None:
+    """Two refusals, both about not being allowed to guess or to clobber.
+
+    ``evidence/`` holds the certified dumps a report quotes, so a page button
+    must not be able to write there at all.  And an unnamed arm has no default:
+    solving "whatever A is" when the caller said nothing would write a dump that
+    claims a provenance nobody chose.
+    """
+    import poc_app as app
+
+    certified = app.EVIDENCE_DIR / "vis_dump.npz"
+    with pytest.raises(ValueError):
+        app.solve_argv("A", 20.4, certified)
+    with pytest.raises(ValueError):
+        app.solve_argv(None, 20.4, app.LIVE_DUMP)
+
+    assert app.EVIDENCE_DIR.resolve() not in app.LIVE_DUMP.resolve().parents, (
+        f"LIVE_DUMP ({app.LIVE_DUMP}) is inside {app.EVIDENCE_DIR}: the default "
+        "target a live solve uses must not be a certified directory"
+    )
+
+
+def test_reload_page_sees_a_different_dump(tmp_path: Path) -> None:
+    """Reload is a real second load, and it does not reach back into the first.
+
+    Two dumps that record different arms are loaded through the same call boot
+    uses.  What is asserted is that the returned dict follows the FILE (path and
+    recorded provenance), and that the first dict still describes the first dump
+    afterwards - a reload that mutated the live data in place would pass the
+    first half and fail this one.
+    """
+    import poc_app as app
+
+    path_a = tmp_path / "first" / "a.npz"
+    path_b = tmp_path / "second" / "b.npz"
+    for parent in (path_a.parent, path_b.parent):
+        parent.mkdir(parents=True)
+    _fixture_info(app, path_a, structure_id="A", load_ohm=50.0)
+    _fixture_info(app, path_b, structure_id="B", load_ohm=100.0)
+
+    first = app.reload_page(path_a)
+    first_path = first["info"]["path"]
+    first_ez = np.array(first["planes"]["ez_ycut"], copy=True)
+
+    second = app.reload_page(path_b)
+
+    assert first["structure_id"] == "A" and second["structure_id"] == "B", (
+        f"the two loads reported {first['structure_id']!r} and "
+        f"{second['structure_id']!r}: reload did not read the arm off each file"
+    )
+    assert Path(first["info"]["path"]) == path_a
+    assert Path(second["info"]["path"]) == path_b, (
+        "the second reload still points at the first dump: the page would "
+        "redraw the old file under the new one's name"
+    )
+    assert first["info"] is not second["info"]
+    assert first["planes"] is not second["planes"]
+    assert first["info"]["path"] == first_path, (
+        "the second load rewrote the first dict's path"
+    )
+    assert np.array_equal(first["planes"]["ez_ycut"], first_ez), (
+        "the second load changed the first page's field arrays in place"
+    )
+
+
+
+# --- the solve JOB, and the page swap it causes -------------------------------
+# No solve is run here: the child is a two-line interpreter, so what is asserted
+# is the plumbing (the return code becomes a status, the output becomes a log)
+# rather than the physics, which the solver's own tests own.
+
+
+def test_solve_job_reports_ok_and_failed(tmp_path: Path) -> None:
+    """A finished child becomes 'ok'/'failed' with its own return code and log."""
+    import poc_app as app
+
+    # A job that has never been started is 'idle', and asking it is not an error:
+    # the page's timer polls exactly like this on a page where nobody solved.
+    idle = app.SolveJob([sys.executable, "-c", "print('unused')"], cwd=tmp_path)
+    assert idle.poll() == "idle", (
+        f"an unstarted job reported {idle.status!r}, expected 'idle': the poll "
+        "timer must be able to ask before any button is pressed"
+    )
+
+    good = app.SolveJob([sys.executable, "-c", "print('hello')"], cwd=tmp_path)
+    assert good.run() == "ok", (
+        f"a child that exited 0 reported {good.status!r} (rc={good.returncode})"
+    )
+    assert good.returncode == 0
+    assert "hello" in good.log, (
+        "the child's stdout never reached the job log, so a failed solve would "
+        f"show an empty tail to the operator: {good.log!r}"
+    )
+
+    bad = app.SolveJob(
+        [sys.executable, "-c", "raise SystemExit(3)"], cwd=tmp_path
+    )
+    assert bad.run() == "failed", (
+        f"a child that exited 3 reported {bad.status!r}: a failed solve would be "
+        "shown as a success"
+    )
+    assert bad.returncode == 3, (
+        f"the job recorded rc={bad.returncode} for a child that exited 3"
+    )
+
+
+def test_apply_page_swaps_the_live_page(tmp_path: Path) -> None:
+    """apply_page replaces the page's own keys - and nothing else - in place."""
+    import poc_app as app
+
+    old = tmp_path / "old" / "a.npz"
+    new = tmp_path / "new" / "b.npz"
+    for parent in (old.parent, new.parent):
+        parent.mkdir(parents=True)
+    _fixture_info(app, old, structure_id="A", load_ohm=50.0)
+    _fixture_info(app, new, structure_id="B", load_ohm=100.0)
+
+    new_page = app.reload_page(new)
+    holder = dict(app.reload_page(old))
+    # The live holder also carries the app's own bookkeeping; a reload must not
+    # drop it, which is the half of this that a "holder = new_page" would miss.
+    holder["frame_of_interest"] = 2
+
+    summary = app.apply_page(holder, new_page)
+
+    for key in app.PAGE_KEYS:
+        assert key in new_page, (
+            f"reload_page no longer returns {key!r}: apply_page would silently "
+            "leave the old page in place"
+        )
+        assert holder[key] is new_page[key], (
+            f"holder[{key!r}] was not replaced by the new page's: a finished "
+            "solve would keep drawing the dump it replaced"
+        )
+    assert holder["frame_of_interest"] == 2, (
+        "apply_page dropped an unrelated key from the holder: the page swap "
+        "cleared bookkeeping it does not own"
+    )
+    assert Path(summary["old_path"]) == old, (
+        f"the summary names {summary['old_path']!r} as the old page, not {old}"
+    )
+    assert Path(summary["new_path"]) == new, (
+        f"the summary names {summary['new_path']!r} as the new page, not {new}"
+    )
+    assert summary["changed"], (
+        "apply_page reported nothing as changed although every page key moved"
+    )
+
+
+
+def test_solve_button_reloads_the_page(tmp_path: Path, monkeypatch) -> None:
+    """One press of Solve, end to end: the finished dump BECOMES the page.
+
+    Everything under the child process is the shipped code - the ``solve_start``
+    trigger the button binds, ``SolveJob.poll``, the ``_watch_solve`` task that
+    trigger starts on the server's own loop, ``_poll_solve``, ``apply_page`` and
+    ``_rebuild_sheets``.  The child is a stand-in that writes a dump saying a
+    DIFFERENT arm, load, colour ceiling and velocity, so "the page swapped" is
+    visible in the labels a reader actually sees, not only in a dict.
+
+    Doubled: the OpenGL draw only (this image has no EGL), exactly as the
+    playback fixture doubles it.
+    """
+    pyvista = pytest.importorskip("pyvista")
+    import time
+
+    import poc_app as app
+
+    # The dump the child will "solve": arm B, 100 ohm, a different colour
+    # ceiling and a different velocity record than the page booted with.
+    solved_dump = tmp_path / "solved_B.npz"
+    _fixture_info(app, solved_dump, structure_id="B", load_ohm=100.0)
+    with np.load(solved_dump) as handle:
+        payload = {key: handle[key] for key in handle.files}
+    for key in ("ez_ycut", "ez_xcut_near", "ez_xcut_far"):
+        payload[key] = payload[key] * 3.0
+    payload["v_measured_m_s"] = np.array(2.0e8)
+    payload["velocity_note"] = np.array("probe after solve")
+    np.savez(solved_dump, **payload)
+
+    fake_solver = tmp_path / "fake_solver.py"
+    fake_solver.write_text(
+        "import shutil, sys\n"
+        f"shutil.copyfile({str(solved_dump)!r}, "
+        "sys.argv[sys.argv.index('--vis-dump') + 1])\n"
+        "print('fake solve done')\n",
+        encoding="utf-8",
+    )
+    live_dump = tmp_path / "live" / "live_run.npz"
+    # Both are module globals read at CALL time, so patching them redirects the
+    # shipped code paths instead of re-implementing them.
+    monkeypatch.setattr(app, "SOLVER_SCRIPT", fake_solver)
+    monkeypatch.setattr(app, "LIVE_DUMP", live_dump)
+
+    info = _fixture_info(
+        app, tmp_path / "boot_A.npz", structure_id="A", load_ohm=50.0
+    )
+
+    real_render = pyvista.Plotter.render
+    pyvista.Plotter.render = lambda self, *args, **kwargs: None
+    try:
+        app, srv = _boot_app(info)
+        state, ctrl = srv.state, srv.controller
+        trigger = _registered_trigger(ctrl, "solve_start")
+        cells = _closure_cells(trigger)
+        assert "state" in cells and "_start_watch" in cells, (
+            "the solve trigger is not closed over the live page objects "
+            f"(freevars: {sorted(cells)})"
+        )
+        # The watcher's own closures lead to the LIVE page holder and handles
+        # dict, so nothing below is a stand-in for the shipped objects.
+        poll = _closure_cells(
+            _closure_cells(cells["_start_watch"])["_watch_solve"]
+        )["_poll_solve"]
+        poll_cells = _closure_cells(poll)
+        assert state.structure_readout == "structure: A (50 \u03a9)", (
+            f"the page did not boot on arm A: {state.structure_readout!r}"
+        )
+        boot_readout = state.structure_readout
+        boot_scale = state.scale_label
+        boot_velocity = state.velocity_label
+
+        handles = poll_cells["handles"]
+        view = handles.get("view")
+        if view is not None and hasattr(view, "update"):
+            view.update = lambda *args, **kwargs: None
+        # The LIVE page holder, reached through the shipped watcher's own
+        # closure: no stand-in dict is substituted anywhere.
+        page = poll_cells["page"]
+        assert Path(page["path"]) == Path(info["path"]), (
+            f"the live page starts on {page['path']!r}, not the boot dump"
+        )
+
+        state.solve_structure = "B"  # the arm the child will actually write
+        state.solve_xcut_mm = 20.4
+
+        async def one_press() -> None:
+            started = time.monotonic()
+            trigger()  # exactly what the button calls; returns immediately
+            assert state.solve_status.startswith("solving"), (
+                f"the press did not start a solve: {state.solve_status!r}"
+            )
+            while time.monotonic() - started < 20.0:
+                if state.solve_status.startswith("solved"):
+                    return
+                assert not state.solve_status.startswith("solve "), (
+                    "the solve failed instead of landing a page: "
+                    f"{state.solve_status!r}"
+                )
+                await asyncio.sleep(0.05)
+            raise AssertionError(
+                "nothing landed the finished solve: _watch_solve is not polling, "
+                f"so the page still says {state.solve_status!r} and the result "
+                "would need a manual reload"
+            )
+
+        asyncio.run(one_press())
+    finally:
+        pyvista.Plotter.render = real_render
+
+    # ASSERTION 1 - the child really ran, and wrote where the UI asked it to.
+    assert live_dump.is_file(), (
+        f"the solve never produced {live_dump}: the child was not spawned, or "
+        f"it wrote somewhere else ({fake_solver})"
+    )
+    # ASSERTION 2 - the LIVE page holder now carries the solved dump.
+    assert page["structure_id"] == "B", (
+        f"the page still holds {page['structure_id']!r} after a successful "
+        "solve: the swap did not happen"
+    )
+    assert Path(page["path"]) == live_dump, (
+        f"the page holds {page['path']!r}, not the solved dump {live_dump}"
+    )
+    # ASSERTION 3 - the readout names the arm now on screen, not the boot arm.
+    assert state.structure_readout == "structure: B (100 \u03a9)", (
+        f"the readout still says {state.structure_readout!r} (boot said "
+        f"{boot_readout!r}): a solved page would keep describing the old arm"
+    )
+    # ASSERTION 4 - the two prose lines were rebuilt from the NEW dump.
+    live_info = page["info"]
+    assert state.scale_label == app._scale_label(live_info), (
+        "the colour-limit line was not rebuilt from the solved dump: it says "
+        f"{state.scale_label!r}, this dump's ceiling is "
+        f"{app._scale_label(live_info)!r}"
+    )
+    assert state.velocity_label == app._velocity_label(live_info), (
+        "the velocity line was not rebuilt from the solved dump: it says "
+        f"{state.velocity_label!r}, this dump records "
+        f"{app._velocity_label(live_info)!r}"
+    )
+    assert state.scale_label != boot_scale, (
+        "the colour-limit line is still the boot dump's: a new field would be "
+        "drawn against the old ceiling"
+    )
+    assert state.velocity_label != boot_velocity, (
+        "the velocity line is still the boot dump's"
+    )
+    assert state.velocity_note == "probe after solve", (
+        f"the velocity note still reads {state.velocity_note!r}"
+    )
+
