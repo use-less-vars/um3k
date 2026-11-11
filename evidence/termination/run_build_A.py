@@ -458,7 +458,12 @@ def check_mesh(kwargs: dict) -> None:
 # with fewer frames -- and the stride it settled on is recorded in the file as
 # ``dump_stride``, so the cadence of a file is read from the file.
 
-WAVEDUDE_SCHEMA = "emfit.wavedude/1"
+#: Version 2 adds the dump PROVENANCE: ``structure_id`` (the ``--structure``
+#: arm that was simulated) and ``load_ohm`` (the load actually used). Both are
+#: records of the choice, not numbers the geometry implies -- a 50 ohm and a
+#: 100 ohm run can share a mesh -- so a viewer cannot derive them and must be
+#: told. Version 1 files load without them and read as "unknown".
+WAVEDUDE_SCHEMA = "emfit.wavedude/2"
 WAVEDUDE_ENGINE = "emfit.fdtd.fit-leapfrog/microstrip_wave"
 WAVEDUDE_DEFAULT_OUT = "evidence/vis_dump.npz"
 WAVEDUDE_SELFTEST_DEFAULT = "artifacts/vis_dump_selftest.npz"
@@ -1038,6 +1043,7 @@ def write_wavedude_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
                         nx: int, ny: int, nz: int, cell_m: float, j_cut: int,
                         dump_stride: int, nsteps: int, f_pulse_hz: float,
                         xcut_near_mm: float, xcut_far_mm: float,
+                        structure_id: str, load_ohm: float,
                         f_ref_hz: float = WAVEDUDE_F_REF_HZ,
                         beta_rad_per_m: float =
                         WAVEDUDE_BETA_BANKED_RAD_PER_M,
@@ -1054,6 +1060,13 @@ def write_wavedude_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
     phasor convention lives in the artefacts, not in this file).  Every array is
     float32 or int32 and every scalar is a numpy scalar, so the result loads
     with ``np.load(path, allow_pickle=False)``.
+
+    ``structure_id`` and ``load_ohm`` are PROVENANCE, recorded because they
+    cannot be recovered from the file: the arm was chosen by ``--structure`` and
+    the resistance by ``--load-ohm``, and neither leaves a trace in the fields.
+    They are required arguments rather than optional ones for exactly that
+    reason -- a caller with nothing to say would have to pass an empty id, and
+    the reader reports that as "unknown" instead of inventing a match.
 
     ``t_ns`` is derived from the solver's own clock (``stepper.time`` per
     frame), not from ``frame_index * dt`` recomputed here: the two agree by
@@ -1100,6 +1113,8 @@ def write_wavedude_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
         "engine": np.str_(WAVEDUDE_ENGINE),
         "created_utc": np.str_(datetime.now(timezone.utc)
                                .isoformat(timespec="seconds")),
+        "structure_id": np.str_(structure_id),
+        "load_ohm": np.float64(load_ohm),
         "ez_ycut": ez_ycut,
         "ez_xcut_near": ez_near,
         "ez_xcut_far": ez_far,
@@ -1210,9 +1225,15 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
         frame_index=fi, frame_index_xcut=fi[sel], frame_time_s=time_s,
         dt_s=dt_s, nx=nx, ny=ny, nz=nz, cell_m=cell_m, j_cut=j_cut,
         dump_stride=1, nsteps=nt, f_pulse_hz=15.0e9, beta_rad_per_m=beta_sel,
-        xcut_near_mm=x_mm[ix_near], xcut_far_mm=x_mm[ix_far])
+        xcut_near_mm=x_mm[ix_near], xcut_far_mm=x_mm[ix_far],
+        # The synthetic packet is drawn on Run A's geometry (the banked
+        # port/load positions), so the provenance it records is Run A's own
+        # arm and load rather than a made-up fourth structure.
+        structure_id=STRUCTURE_DEFAULT,
+        load_ohm=float(STRUCTURES[STRUCTURE_DEFAULT]["load_ohm"]))
 
-    req = ("schema", "engine", "created_utc", "ez_ycut", "ez_xcut_near",
+    req = ("schema", "engine", "created_utc", "structure_id", "load_ohm",
+           "ez_ycut", "ez_xcut_near",
            "ez_xcut_far", "frame_index", "frame_index_xcut", "x_mm", "y_mm",
            "z_mm", "t_ns", "nx", "ny", "nz", "nt", "nt_x", "dt_s", "cell_m",
            "j_cut", "dump_stride", "nsteps", "f_ref_hz", "f_pulse_hz",
@@ -1235,6 +1256,12 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
               f"{len(keys)} keys; missing {missing}; unexpected {extra}")
         check("schema", str(d["schema"]) == WAVEDUDE_SCHEMA, str(d["schema"]))
         check("engine", str(d["engine"]) == WAVEDUDE_ENGINE, str(d["engine"]))
+        check("structure_id", str(d["structure_id"]) == STRUCTURE_DEFAULT,
+              str(d["structure_id"]))
+        check("load_ohm",
+              float(d["load_ohm"])
+              == float(STRUCTURES[STRUCTURE_DEFAULT]["load_ohm"]),
+              float(d["load_ohm"]))
         shapes = {
             "ez_ycut": (int(d["nt"]), nx, nz),
             "ez_xcut_near": (nt_x, ny, nz),
@@ -2699,6 +2726,10 @@ def main(argv: list[str] | None = None) -> int:
                 "cell_m": geo["cell_m"], "j_cut": geo["j_cut"],
                 "dump_stride": stride, "nsteps": int(kwargs["nsteps"]),
                 "f_pulse_hz": f_pulse_hz,
+                # Provenance, not geometry: which arm this run IS and what it
+                # was terminated in. The dump cannot imply either.
+                "structure_id": structure,
+                "load_ohm": float(args.load_ohm),
                 "xcut_near_mm": ix_near * geo["cell_m"] * 1e3,
                 "xcut_far_mm": ix_far * geo["cell_m"] * 1e3,
             }

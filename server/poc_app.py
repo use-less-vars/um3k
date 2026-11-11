@@ -87,11 +87,17 @@ DEFAULT_HOST = "127.0.0.1"
 # the operator's machine.
 DEFAULT_PORT = 8080
 
-# The wave-animation dumps (``emfit.wavedude/1``) are a different artefact from
+# The wave-animation dumps (``emfit.wavedude/2``) are a different artefact from
 # the legacy single-plane dump: they carry a TIME axis, so the loader and the
 # viewer built for them are their own path. The npz ``schema`` key is what tells
 # the two apart - never the file name, because a dump may be copied anywhere.
-WAVEDUDE_SCHEMA = "emfit.wavedude/1"
+WAVEDUDE_SCHEMA = "emfit.wavedude/2"
+# Version 2 added the dump's own provenance (``structure_id``, ``load_ohm``).
+# Version 1 is still READ - the fields are the same and the two extra keys were
+# never required to draw the picture - so a dump written before the bump opens
+# and reads as "structure: unknown" instead of being refused.
+WAVEDUDE_LEGACY_SCHEMAS = ("emfit.wavedude/1",)
+WAVEDUDE_SCHEMAS = (WAVEDUDE_SCHEMA,) + WAVEDUDE_LEGACY_SCHEMAS
 STATE_SCHEMA_WAVEDUDE = "emfit.poc-state/2"
 # Frames per second for the animation. The dump stores no wall-clock rate: t_ns
 # is SIMULATION time, so this number is a viewing choice, and the page prints
@@ -210,7 +216,7 @@ def _is_wavedude(info: dict) -> bool:
 
 
 def load_wavedude(path: Path) -> dict:
-    """Load an ``emfit.wavedude/1`` animation dump. numpy only, no pyvista.
+    """Load an ``emfit.wavedude/2`` animation dump. numpy only, no pyvista.
 
     Three planes are stored and they are NOT interchangeable: ``ez_ycut`` is an
     x-z sheet at one fixed y (``nt`` frames), while the two x-cuts are y-z sheets
@@ -249,17 +255,17 @@ def load_wavedude(path: Path) -> dict:
     with np.load(path) as data:
         names = set(data.files)
         schema = str(data["schema"]) if "schema" in names else ""
-        if schema != WAVEDUDE_SCHEMA:
+        if schema not in WAVEDUDE_SCHEMAS:
             print(
                 f"[poc_app] {path} declares schema {schema or 'none'!r}; this "
-                f"loader reads {WAVEDUDE_SCHEMA!r}.",
+                f"loader reads {', '.join(repr(s) for s in WAVEDUDE_SCHEMAS)}.",
                 file=sys.stderr,
             )
             raise SystemExit(2)
         absent = [key for key in mandatory if key not in names]
         if absent:
             print(
-                f"[poc_app] {path} declares {WAVEDUDE_SCHEMA} but is missing "
+                f"[poc_app] {path} declares {schema} but is missing "
                 f"{', '.join(absent)}.",
                 file=sys.stderr,
             )
@@ -271,6 +277,12 @@ def load_wavedude(path: Path) -> dict:
             "schema": schema,
             "engine": _npz_text(data, "engine"),
             "created_utc": _npz_text(data, "created_utc"),
+            # Provenance: which arm produced this file and what it was
+            # terminated in. Absent from a version-1 dump, and absent means
+            # "not recorded" - the readout says so rather than guessing from
+            # the geometry, which two arms can share.
+            "structure_id": _npz_text(data, "structure_id"),
+            "load_ohm": _npz_scalar(data, "load_ohm"),
             "ez_ycut": np.asarray(data["ez_ycut"]),
             "ez_xcut_near": np.asarray(data["ez_xcut_near"]),
             "ez_xcut_far": np.asarray(data["ez_xcut_far"]),
@@ -368,16 +380,38 @@ def load_any_dump(path: Path) -> dict:
         with np.load(path) as data:
             if "schema" in data.files:
                 schema = str(data["schema"])
-    if schema == WAVEDUDE_SCHEMA:
+    if schema in WAVEDUDE_SCHEMAS:
         return load_wavedude(path)
     if schema:
         print(
             f"[poc_app] {path} declares schema {schema!r}, which this viewer does "
-            f"not read; it reads {WAVEDUDE_SCHEMA!r} or a legacy plane dump.",
+            "not read; it reads "
+            f"{', '.join(repr(s) for s in WAVEDUDE_SCHEMAS)} or a legacy plane "
+            "dump.",
             file=sys.stderr,
         )
         raise SystemExit(2)
     return load_dump(path)
+
+
+def _structure_readout_text(info: dict) -> str:
+    """One line of dump provenance: ``structure: A (50 Ω)``.
+
+    Read from the DUMP, never from the structure registry: the registry says
+    which case this page was started for, while this line says which arm the
+    file in front of the reader was written by - the two stop agreeing the
+    moment a dump is copied beside another case, which is exactly why the
+    writer records them. Neither field can be derived from the geometry (two
+    arms share a mesh), so a version-1 dump that carries neither reads as
+    ``structure: unknown`` instead of being filled in from the registry.
+    """
+    structure_id = (info.get("structure_id") or "").strip()
+    if not structure_id:
+        return "structure: unknown"
+    load_ohm = _finite(info.get("load_ohm"))
+    if load_ohm is None:
+        return f"structure: {structure_id}"
+    return f"structure: {structure_id} ({load_ohm:g} Ω)"
 
 
 def _cell_mm(info: dict) -> float:
@@ -3893,6 +3927,9 @@ def run_web_wavedude(
     state.s_params_rows = ""
     state.s_params_rows_style = "display: none;"
 
+    # Provenance, from the dump's own record (see _structure_readout_text).
+    state.structure_readout = _structure_readout_text(info)
+
     measured = _finite(info["v_measured_m_s"])
     analytic = _finite(info["v_analytic_m_s"])
     traverse = _finite(info["t_traverse_ns"])
@@ -4437,6 +4474,7 @@ def run_web_wavedude(
                                 "font-size: 13px; line-height: 1.4;"
                             )
                         ):
+                            html_div("{{ structure_readout }}")
                             html_div("{{ t_label }}")
                             html_div("{{ mode_label }}")
                             html_div("{{ phase_label }}")

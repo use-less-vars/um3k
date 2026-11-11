@@ -62,13 +62,20 @@ class _Stop(Exception):
     """Unwinds ``run_web_wavedude`` just before it enters the event loop."""
 
 
-def _fixture_info(app, path: Path) -> dict:
-    """Minimal ``emfit.wavedude/1`` dump, the same field set verify_wd.py uses."""
+def _fixture_info(app, path: Path, *, structure_id="A", load_ohm=50.0,
+                  schema=None) -> dict:
+    """Minimal ``emfit.wavedude/2`` dump, the same field set verify_wd.py uses.
+
+    ``structure_id`` / ``load_ohm`` are the dump's PROVENANCE keys; pass ``None``
+    for either to write a version-1-shaped file that does not carry it.  The
+    default pair is Run A's own arm and load, which is what every other test
+    here reads back.  ``schema`` overrides the declared version.
+    """
     nt, nx, nz = 4, 8, 5
     nt_x, ny_x = 3, 6
     rng = np.random.default_rng(0)
     payload = {
-        "schema": app.WAVEDUDE_SCHEMA,
+        "schema": app.WAVEDUDE_SCHEMA if schema is None else schema,
         "ez_ycut": rng.normal(size=(nt, nx, nz)),
         "ez_xcut_near": rng.normal(size=(nt_x, ny_x, nz)),
         "ez_xcut_far": rng.normal(size=(nt_x, ny_x, nz)),
@@ -103,6 +110,12 @@ def _fixture_info(app, path: Path) -> dict:
         "v_measured_reliable": np.array(1.0),
         "velocity_note": np.array("probe"),
     }
+    # Written only when recorded, so `None` produces the version-1 shape: a dump
+    # that says nothing about the arm it came from.
+    if structure_id is not None:
+        payload["structure_id"] = np.array(structure_id)
+    if load_ohm is not None:
+        payload["load_ohm"] = np.array(float(load_ohm))
     np.savez(path, **payload)
     return app.load_wavedude(path)
 
@@ -311,3 +324,61 @@ def test_play_trigger_returns_and_schedules_exactly_one_task(playback):
                     await task
 
     asyncio.run(scenario())
+
+
+# --- the dump's own provenance, read back ------------------------------------
+#
+# The .npz records WHICH arm wrote it (``structure_id``) and what it was
+# terminated in (``load_ohm``).  Neither is in the fields and neither can be
+# derived from them, so these tests read the two keys off a written file and
+# assert the one line the page shows - not a re-formatted copy of the inputs.
+
+READOUT_A = "structure: A (50 \u03a9)"
+
+
+def test_dump_provenance_is_read_back_from_the_file(tmp_path: Path) -> None:
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "a.npz")
+    assert info["structure_id"] == "A", (
+        "the loader dropped structure_id; without it the page cannot say which "
+        "arm wrote the dump"
+    )
+    assert info["load_ohm"] == pytest.approx(50.0)
+    assert app._structure_readout_text(info) == READOUT_A
+
+
+def test_readout_names_the_recorded_load_not_a_default(tmp_path: Path) -> None:
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "b.npz", structure_id="B",
+                         load_ohm=100.0)
+    assert app._structure_readout_text(info) == "structure: B (100 \u03a9)", (
+        "the readout did not follow the file: a 100 ohm arm must print 100, not "
+        "a hard-coded 50"
+    )
+
+
+def test_version_1_dump_without_provenance_still_loads(tmp_path: Path) -> None:
+    import poc_app as app
+
+    path = tmp_path / "legacy.npz"
+    info = _fixture_info(app, path, structure_id=None, load_ohm=None,
+                        schema="emfit.wavedude/1")
+    assert info["format"] == "wavedude"
+    assert info["structure_id"] is None
+    assert app._structure_readout_text(info) == "structure: unknown", (
+        "a dump that records no arm must read as unknown, not be guessed"
+    )
+    assert app.load_any_dump(path)["format"] == "wavedude", (
+        "load_any_dump refused a version-1 dump after the schema bump; the bump "
+        "must not orphan the files already on disk"
+    )
+
+
+def test_page_publishes_the_structure_readout(playback) -> None:
+    assert playback.state.structure_readout == READOUT_A, (
+        "the page never published state.structure_readout (got "
+        f"{getattr(playback.state, 'structure_readout', '<absent>')!r}); the "
+        "readout line is emitted from state and would render blank"
+    )
