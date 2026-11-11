@@ -58,3 +58,44 @@ Both are recorded in `docs/design/EM_SOLVER_LEDGER.md` E1 (`:26`) and E12 (`:37`
 `ls -1 evidence/termination/ | grep -i twin` returns 13 files plus one directory (`twin_multifreq`): `build_A_50ohm_twin_p51.json`, `build_A_50ohm_twin_p51_s11fix.json`, `build_A_50ohm_twin_p51_s11fix_twin.json`, `build_A_50ohm_twin_p51_twin.json`, `build_A_50ohm_v3_twin.json`, `build_A_50ohm_v3_twin_check.json`, `build_A_50ohm_v3_twin_check_twin.json`, `build_A_50ohm_v3b_s11fix_twin.json`, `build_A_50ohm_v3c_twin.json`, `build_B_100ohm_v3d_p51_twin.json`, `build_B_100ohm_v3d_twin.json`, `build_E_50ohm_v3d_twin.json`, `build_smoke_50ohm_twin.json`.
 
 `build_A_50ohm_twin_p51_s11fix.json` (16,594 B, tracked in HEAD) is easy to overlook because its name lacks the `_twin` suffix; do not read its absence from a `*_twin*` glob as its absence from the record.
+
+## 7. The twin that wasn't: the interrupted `referee_run2` write
+
+Everything above depends on knowing which directory a number was read from,
+because a "twin" that is not byte-for-byte a twin silently converts a
+re-extraction into a quotation. There is a live instance of that failure mode
+in this very repository.
+
+`evidence/referee_run2/` was written by a run that did not finish. The write was
+interrupted at **Wed Nov 11 02:07:03 2026**, on build **`5fecbb5`**, and was
+parked before the tree was restored from **`db162d6`**. The park is still in the
+stash:
+
+```
+stash@{0}: On master: interrupted referee_run2 write (run @Wed Nov 11 02:07:03 2026, build 5fecbb5) — parked before restoring from db162d6
+```
+
+Seven tracked `port_*` files under `evidence/referee_run2/` were truncated by
+that interruption. They are still tracked, still present, and still quotable.
+Two other files, by contrast, are provably shared: `et` (blob `8f47122`) and
+`ht` (blob `9b85496`) have identical blob hashes in `evidence/referee/` and in
+`evidence/referee_run2/`.
+
+So `referee_run2/` is **not** a byte-identical twin of `referee/`. It is
+consistent with a partial copy of the same run, interrupted mid-write. Identity
+has been established for two blobs and for nothing else, and the `port_*`
+divergence is positive evidence against extending that identity to the rest.
+
+Two consequences, both of which this note has to live with:
+
+1. **The two directories are distinct corpora.** A number belongs to the tree it
+   was read from. "It is the same run as `referee/`" is not available as a
+   licence to re-attribute a `referee_run2/` figure — that premise is exactly
+   what the `port_*` truncation falsifies.
+2. **`0.34465` is retracted.** It was derived on the twin premise. The anchor
+   that replaces it is `0.3423544 = 50 / (2 · 48.0237405 + 50)`, DR-37 at
+   w = 3.2 mm, taken from its own tree with its own provenance.
+
+This is not an aside. The whole of sections 1-6 is an argument about twin
+provenance and about anchors that are twin-derived; `referee_run2/` is that
+argument's own failure mode, sitting in the working tree, tracked and quotable.
