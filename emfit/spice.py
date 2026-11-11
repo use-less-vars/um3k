@@ -120,9 +120,8 @@ re-derived.  The three impedance names of the scope document
 convert into one another.
 
 Absent on purpose: no SPICE-syntax reader, no subcircuits, no ``.model``, no
-nonlinear device (that needs a Newton loop; this coupling is explicit by
-construction), no transmission line, no adaptive step, no operating-point
-solve, and no ``s_parameters`` (the ``(I - z0 Y)(I + z0 Y)^{-1}`` check against
+transmission line, no adaptive step, no operating-point solve, and no
+``s_parameters`` (the ``(I - z0 Y)(I + z0 Y)^{-1}`` check against
 ``(R - z0)/(R + z0)`` was never carried out -- no closed-form verification
 was ever obtained -- so the method was dropped rather than shipped unverified).
 
@@ -135,7 +134,22 @@ a file: :mod:`emfit.netlist` parses a JSON netlist into a
 :class:`CircuitNetwork`, evaluates the waveforms it declares at each step, and
 passes that vector in.  A ``V``/``I`` branch is therefore still immutable --
 the level moves in the argument, not in the branch -- and a step still depends
-only on ``(dt, state, sources)``.
+only on ``(dt, state, sources)``, plus the Newton bound ``max_iter`` below.
+
+Nonlinear steps
+---------------
+:class:`Diode` is the one nonlinear device, and it is **not** linearised once
+and for all: :meth:`MNASolver.step` and :meth:`SpicePort.step` run a
+Newton-Raphson loop *inside* the time step, re-stamping each junction at the
+current iterate until the junction voltages stop moving.  Only the diode's own
+stamp is re-evaluated and the same ``A x = b`` is solved again, so the history
+vectors keep their meaning and the linear path is untouched: a network with no
+diode assembles once and solves once, exactly as before.  What the loop adds is
+a convergence claim the linear part never needed, so a step that fails to
+converge **raises** :class:`DiodeConvergenceError` -- carrying its iteration
+count and last update -- instead of returning its last iterate.  There is still
+no operating-point solve: the loop converges *this step* starting from the
+previous state's junction voltages, and ``initial_state()`` is still all zeros.
 
 Sign conventions
 ----------------
@@ -145,7 +159,9 @@ power is delivered from the field into the circuit's positive terminal, the
 convention ``emfit/terminations.py`` pins and the only one used here.  A branch
 current is positive from ``branch.nodes[0]`` to ``branch.nodes[1]``, and an
 ``I`` branch drives ``value`` amperes through itself from ``nodes[0]`` to
-``nodes[1]`` (so it injects into ``nodes[1]``).
+``nodes[1]`` (so it injects into ``nodes[1]``).  A ``D`` branch's current is its
+conduction current from anode ``nodes[0]`` to cathode ``nodes[1]``, reported at
+the solved junction voltage.
 
 The field energy functional ``U_f = (1/2) sum_k w_k m_k e_k^2`` is exported as
 :func:`U_f`, so a caller that needs it (a balance check, say) reads the module's
@@ -160,11 +176,37 @@ import numpy as np
 
 from .terminations import TerminalPort
 
-__all__ = ["Branch", "CircuitNetwork", "SpiceState", "MNASolver", "SpicePort", "U_f"]
+__all__ = [
+    "Branch",
+    "CircuitNetwork",
+    "Diode",
+    "DiodeConvergenceError",
+    "SpiceState",
+    "MNASolver",
+    "SpicePort",
+    "U_f",
+]
 
 _GROUND = 0
 _KINDS = ("R", "L", "C", "V", "I")
 _SCHEMES = ("backward_euler", "trapezoidal")
+
+# Newton loop of one step, for the diodes only.  ``max_iter`` is a bound, not an
+# iteration target: a step that reaches it is refused, never accepted.
+_MAX_ITER = 100
+# Convergence is on the junction voltages alone, ``max_j |dv_j| <=
+# reltol * max_j |v_j| + vntol``.  1e-9 is far tighter than SPICE's 1e-3 because
+# a time step is not an operating point: what the loop must deliver is the
+# exact root of *this step's* discretised equations, so the only error left
+# when it returns should be the companion model's own.  Newton is quadratic, so
+# the extra digits cost one or two iterations.  1e-12 V absolute catches the
+# reverse-biased junction, whose voltage is ~1e-11 V: a purely relative test
+# there would ask for updates below what float64 resolves and the loop could
+# never satisfy it.
+_RELTOL = 1e-9
+_VNTOL = 1e-12
+# ``exp`` argument clamp for the junction exponential; see ``Diode.current``.
+_EXP_CLAMP = 100.0
 
 
 @dataclass(frozen=True)
@@ -213,15 +255,178 @@ class Branch:
         object.__setattr__(self, "value", value)
 
 
+class DiodeConvergenceError(RuntimeError):
+    """The Newton loop inside one step did not converge.
+
+    A ``RuntimeError`` because it is not a bad argument -- the caller passed a
+    legal ``dt`` and a legal state -- but a step this module refuses to accept.
+    Nothing is returned alongside it: handing back the last iterate would be a
+    silently wrong answer that only a later comparison could catch, so the loop
+    stops instead.
+
+    Attributes
+    ----------
+    iterations : int
+        How many Newton iterations were taken, i.e. ``max_iter``.
+    step : float
+        The last measured junction-voltage update ``max_j |dv_j|``, in volts.
+    tolerance : float
+        The tolerance that update had to meet, in volts.  ``step`` and
+        ``tolerance`` together say *how far* from convergence it stopped, which
+        an iteration count alone does not.
+    """
+
+    def __init__(self, message, *, iterations, step, tolerance):
+        super().__init__(message)
+        self.iterations = int(iterations)
+        self.step = float(step)
+        self.tolerance = float(tolerance)
+
+
+@dataclass(frozen=True)
+class Diode:
+    """A junction diode: Shockley conduction in parallel with ``gmin``.
+
+    Parameters
+    ----------
+    nodes : (int, int)
+        ``(a, b)``, **anode first**: conduction current is positive from
+        ``nodes[0]`` to ``nodes[1]``.  Node ``0`` is ground, the two nodes must
+        be distinct, and a diode adds no node of its own.
+    isat : float, optional
+        Saturation current (A), default ``1e-14``.
+    n : float, optional
+        Emission coefficient, default ``1.0`` -- the ideal-junction value.
+    vt : float, optional
+        Thermal voltage ``k T / q`` (V), default ``0.02585``.
+    gmin : float, optional
+        Parallel leakage conductance (S), default ``1e-12``.
+
+    The defaults are **model parameters for a silicon junction near 300 K, not
+    the physics**: nothing here measures a temperature, a band gap or a doping
+    profile, and no junction capacitance is modelled.  ``vt`` is a plain
+    parameter precisely so that a run at another temperature can pass
+    ``vt = 8.617333e-5 * T`` and get the exponential's scale right, while
+    ``isat`` and ``n`` stay whatever the caller measured; a germanium junction
+    is a different ``isat``, not a different class.
+
+    ``gmin`` is part of the **model**, not a solver regulariser: it is stamped
+    as a real conductance and it appears on both sides of every current this
+    class reports, so the law is exactly
+
+    ``I(v) = isat * (exp(v / (n vt)) - 1) + gmin * v``
+
+    ``g(v) = dI/dv = (isat / (n vt)) * exp(v / (n vt)) + gmin``.
+
+    Without it a strongly reverse-biased junction would carry exactly ``-isat``
+    with zero slope, and a netlist whose only path to ground ran through that
+    junction would be singular; ``gmin`` gives it a finite, physical slope
+    instead.  It is the same element SPICE's own diodes carry, and it is why a
+    reverse-biased diode here is an emitter of ``-isat``, not an open circuit.
+    """
+
+    nodes: tuple
+    isat: float = 1e-14
+    n: float = 1.0
+    vt: float = 0.02585
+    gmin: float = 1e-12
+
+    def __post_init__(self):
+        nodes = tuple(int(node) for node in self.nodes)
+        if len(nodes) != 2:
+            raise ValueError(f"nodes must be a pair (a, b); got {self.nodes!r}")
+        if min(nodes) < 0:
+            raise ValueError(f"node indices are non-negative; got {nodes}")
+        if nodes[0] == nodes[1]:
+            raise ValueError(
+                f"nodes must be distinct; got {nodes}, and a diode from a node "
+                "to itself would stamp a conductance plus its own companion "
+                "current that cancel exactly, i.e. nothing at all"
+            )
+        for field_name in ("isat", "n", "vt"):
+            value = float(getattr(self, field_name))
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(
+                    f"{field_name} must be finite and positive; got "
+                    f"{getattr(self, field_name)!r}"
+                )
+            object.__setattr__(self, field_name, value)
+        gmin = float(self.gmin)
+        if not np.isfinite(gmin) or gmin < 0.0:
+            raise ValueError(
+                f"gmin must be finite and non-negative; got {self.gmin!r}.  "
+                "Zero is allowed only if nothing relies on the junction's "
+                "reverse slope; it makes a reverse-biased diode an exact "
+                "current source of -isat"
+            )
+        object.__setattr__(self, "gmin", gmin)
+        object.__setattr__(self, "nodes", nodes)
+
+    @property
+    def kind(self):
+        """``"D"``: the branch kind this device occupies in a network."""
+        return "D"
+
+    @property
+    def vcrit(self):
+        """The junction voltage above which ``pnjlim`` starts limiting (V).
+
+        ``n vt log(n vt / (sqrt(2) isat))`` -- SPICE's critical voltage, the
+        point where the exponential's slope has outgrown the loop's ability to
+        chase it without help.  At the defaults it is ``0.7297`` V.
+        """
+        return self.n * self.vt * np.log(
+            self.n * self.vt / (np.sqrt(2.0) * self.isat)
+        )
+
+    def current(self, v):
+        """Conduction current (A) from ``nodes[0]`` to ``nodes[1]`` at ``v``.
+
+        The exponential's argument is clamped at ``_EXP_CLAMP`` so a wild Newton
+        iterate cannot overflow to ``inf`` and poison the linear solve with a
+        NaN.  At the clamp the junction already carries ~1e29 A, so the clamp
+        never binds on a *converged* step (that would need ~2.6 V across one
+        junction at 300 K): it trades an unrepresentable current for a finite
+        one far outside the model's domain, and that is the whole point.
+        ``expm1`` is used because near ``v = 0`` -- where a blocking junction
+        spends its time -- ``exp(x) - 1`` would lose every significant digit.
+        """
+        v = np.asarray(v, dtype=float)
+        x = np.minimum(v / (self.n * self.vt), _EXP_CLAMP)
+        return self.isat * np.expm1(x) + self.gmin * v
+
+    def conductance(self, v):
+        """``dI/dv`` (S) at ``v``: the slope the Newton loop stamps."""
+        return self.isat * _clamped_exp(
+            np.asarray(v, dtype=float) / (self.n * self.vt)
+        ) / (self.n * self.vt) + self.gmin
+
+
+def _clamped_exp(x):
+    """``exp(x)`` with ``x`` clamped at ``_EXP_CLAMP``; see ``Diode.current``."""
+    with np.errstate(over="ignore"):
+        return np.exp(np.minimum(np.asarray(x, dtype=float), _EXP_CLAMP))
+
+
+# What a ``CircuitNetwork`` may hold: a linear ``Branch`` or a nonlinear
+# ``Diode``.  Both answer ``.kind`` and ``.nodes``, which is all the assembly
+# and the recovery need to treat them as one ordered list of elements.
+_ELEMENT_TYPES = (Branch, Diode)
+
+
 @dataclass(frozen=True)
 class CircuitNetwork:
     """A frozen, ordered branch list plus the node count it lives on.
 
     Parameters
     ----------
-    branches : tuple of Branch
+    branches : tuple of Branch and Diode
         Branch order is the order of the element-current vector and fixes the
-        MNA row order, so a network is comparable and reproducible.
+        MNA row order, so a network is comparable and reproducible.  A
+        :class:`Diode` sits in the same tuple and adds **no** MNA unknown: it
+        is stamped as a conductance plus a companion current, so ``i_branch``
+        keeps length ``n_branches`` and the diode's slot holds its conduction
+        current.
     n_nodes : int
         Total node count **including** ground: indices ``0 .. n_nodes - 1`` are
         legal and ``0`` is ground.
@@ -243,9 +448,10 @@ class CircuitNetwork:
                 f"n_nodes = 2; got {self.n_nodes!r}"
             )
         for branch in branches:
-            if not isinstance(branch, Branch):
+            if not isinstance(branch, _ELEMENT_TYPES):
                 raise TypeError(
-                    f"branches must be Branch instances, not {type(branch).__name__}"
+                    "branches must be Branch or Diode instances, not "
+                    f"{type(branch).__name__}"
                 )
             for node in branch.nodes:
                 if node >= n_nodes:
@@ -393,11 +599,16 @@ def _source_values(network, sources):
     that owns a waveform evaluates it at the new time and passes the resulting
     length-``n_branches`` vector here, so the level can move between steps
     without making a branch mutable: ``Branch`` stays frozen and a step still
-    depends only on ``(dt, state, sources)``.  Entries for ``R``/``L``/``C``
-    branches are carried for indexing convenience and never read.
+    depends only on ``(dt, state, sources)``.  Entries for ``R``/``L``/``C`` and
+    ``D`` branches are carried for indexing convenience and never read -- a
+    diode has no ``value`` at all, so its slot is a literal ``0.0`` rather than
+    a number that means anything.
     """
     if sources is None:
-        return np.array([br.value for br in network.branches], dtype=float)
+        return np.array(
+            [0.0 if br.kind == "D" else br.value for br in network.branches],
+            dtype=float,
+        )
     src = np.asarray(sources, dtype=float).ravel()
     if src.shape != (network.n_branches,):
         raise ValueError(
@@ -409,7 +620,8 @@ def _source_values(network, sources):
     return src
 
 
-def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None):
+def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None,
+              diode_bias=None):
     """Assemble ``A x = b`` for one step; returns ``(A, b, info)``.
 
     ``coupling`` is ``None`` for the standalone network, or
@@ -421,6 +633,15 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None):
     ``sources`` is ``None`` (use each branch's frozen ``value``) or a
     length-``n_branches`` vector of source levels for this step; see
     :func:`_source_values`.  It only moves ``V`` and ``I`` branches.
+
+    ``diode_bias`` maps a diode's branch index to the junction voltage the
+    Newton loop has linearised it at, ``v^k``; ``None`` means the network has no
+    diode (and then nothing below changes).  It is **required** as soon as one
+    exists: a diode has no linear companion, so an assembly that reached this
+    point without a bias would silently stamp a different circuit.  The stamp
+    is the diode's conductance at ``v^k`` -- exactly the shape of the ``R``
+    stamp -- plus the companion current ``I(v^k) - g(v^k) v^k`` injected from
+    ``nodes[0]`` to ``nodes[1]`` with the same sign an ``I`` branch uses.
     """
     n_rows = network.n_nodes - 1
     v_cols = {}
@@ -442,23 +663,45 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None):
         if r is not None:
             b[r] += value
 
+    def add_conductance(ra, rc, g):
+        """Stamp ``g`` across its two rows, ground having no row to write."""
+        if ra is not None:
+            A[ra, ra] += g
+            if rc is not None:
+                A[ra, rc] -= g
+        if rc is not None:
+            A[rc, rc] += g
+            if ra is not None:
+                A[rc, ra] -= g
+
     for k, br in enumerate(network.branches):
         a, c = br.nodes
         ra, rc = row(a), row(c)
         if br.kind in ("R", "L", "C"):
             g = _conductance(br.kind, br.value, dt, scheme)
             hist = _history(br.kind, g, u_prev[a] - u_prev[c], i_prev[k], scheme)
-            if ra is not None:
-                A[ra, ra] += g
-                if rc is not None:
-                    A[ra, rc] -= g
-            if rc is not None:
-                A[rc, rc] += g
-                if ra is not None:
-                    A[rc, ra] -= g
+            add_conductance(ra, rc, g)
             if hist != 0.0:
                 inject(c, hist)
                 inject(a, -hist)
+        elif br.kind == "D":
+            if diode_bias is None or k not in diode_bias:
+                raise ValueError(
+                    f"branch {k} is a diode: a diode has no linear companion, "
+                    "its conductance and its companion current both depend on "
+                    "the junction voltage the Newton loop has linearised at, "
+                    "so _assemble needs diode_bias[k] -- stamping the bare "
+                    "model instead would solve a different circuit"
+                )
+            v_k = float(diode_bias[k])
+            g = br.conductance(v_k)
+            i_eq = br.current(v_k) - g * v_k
+            add_conductance(ra, rc, g)
+            # The companion current flows *inside* the branch, from nodes[0] to
+            # nodes[1], so it enters exactly as an ``I`` branch does: -i_eq at
+            # the first node, +i_eq at the second.
+            inject(c, i_eq)
+            inject(a, -i_eq)
         elif br.kind == "I":
             inject(c, src[k])
             inject(a, -src[k])
@@ -514,9 +757,124 @@ def _recover(network, x, info):
             currents[k] = g * (u[a] - u[c]) + hist
         elif br.kind == "V":
             currents[k] = x[info["v_cols"][k]]
+        elif br.kind == "D":
+            # A diode carries its conduction current at the *solved* junction
+            # voltage.  There is no diode current in ``x`` to read -- the diode
+            # occupies no row -- only the node voltages that set it.
+            currents[k] = br.current(u[a] - u[c])
         else:
             currents[k] = info["sources"][k]
     return u, currents
+
+
+def _pnjlim(v_old, v_new, diode):
+    """Limit one Newton update the way SPICE's ``pnjlim`` does.
+
+    Without this the loop diverges on the very first forward step instead of
+    converging.  The reason is the exponential's shape, not its size: a solve
+    linearised at ``v = 0`` stamps the *flat* part of the junction, so it puts
+    the whole source voltage across the diode (5 V where the answer is 0.7 V),
+    and the next linearisation at 5 V stamps the near-vertical part, which
+    throws the iterate far the other way.  ``pnjlim`` caps each update at the
+    point where the exponential's own curvature stops tolerating it: above
+    ``vcrit`` the step is compressed to ``n vt log(...)``, which turns the
+    geometric blow-up into a walk of ``n vt``-sized steps that Newton then
+    finishes quadratically once it is below ``vcrit``.  This is SPICE's own
+    limiter, formula for formula (``v_old > 0`` and ``v_old <= 0`` are handled
+    separately because the log's argument differs).
+
+    Limiting cannot move the *answer*: it only ever moves an iterate, and the
+    loop converges on the unlimited solves once the iterates are close.
+    """
+    step = v_new - v_old
+    threshold = 2.0 * diode.n * diode.vt
+    if v_new > diode.vcrit and abs(step) > threshold:
+        if v_old > 0.0:
+            return v_old + diode.n * diode.vt * np.log1p(step / (diode.n * diode.vt))
+        return diode.n * diode.vt * np.log(v_new / (diode.n * diode.vt))
+    return v_new
+
+
+def _diode_slots(network):
+    """Branch indices of the diodes, in branch order."""
+    return tuple(k for k, br in enumerate(network.branches) if br.kind == "D")
+
+
+def _solve_step(network, dt, u_prev, i_prev, scheme, *, coupling=None,
+                sources=None, max_iter=_MAX_ITER):
+    """Solve one step's ``A x = b``, Newton-iterating if there are diodes.
+
+    Returns ``(x, info, iterations)``; ``iterations`` is ``0`` exactly when the
+    network has no diode and the loop below never ran.  Both
+    :meth:`MNASolver.step` and :meth:`SpicePort.step` come through here, so the
+    loop body, its tolerances and its failure mode exist once.
+
+    The iteration is the textbook one, and the reason it is safe here is that a
+    *step* is not an operating point: the diodes start from the previous
+    state's junction voltages, which for a waveform-driven netlist are within a
+    few ``n vt`` of this step's, and the limiter covers the rest.  Per
+    iteration: linearise each junction at ``v^k`` (conductance plus companion
+    current, see :func:`_assemble`), solve, and read each junction's new voltage
+    off the solved node voltages.  Convergence is judged on the **junction
+    voltages only** -- not on ``x``, whose port and source rows carry amperes
+    and volts at once and would make one scalar tolerance meaningless.
+
+    The last solve's ``x`` is what is returned, i.e. the solution at the
+    converged iterate rather than at the converged iterate plus its last,
+    below-tolerance correction.  That difference is bounded by ``reltol`` and
+    entering the residual one more time through the conductance would not
+    remove it; the alternative (an extra assembly and solve for no visible
+    digits) is not worth an iteration.
+    """
+    slots = _diode_slots(network)
+    if not slots:
+        # No diode: one assembly, one solve, no iteration.  The linear path is
+        # this branch, untouched by the loop below.
+        A, b, info = _assemble(network, dt, u_prev, i_prev, scheme,
+                               coupling=coupling, sources=sources)
+        return np.linalg.solve(A, b), info, 0
+
+    max_iter = int(max_iter)
+    if max_iter < 1:
+        raise ValueError(f"max_iter must be at least 1; got {max_iter}")
+    diodes = tuple(network.branches[k] for k in slots)
+    n_rows = network.n_nodes - 1
+    # The initial guess is the previous state's junction voltages, never zero:
+    # a zero start lands in the flat part of the exponential and would need the
+    # limiter to walk all the way up on every step (see _pnjlim).
+    bias = np.array(
+        [u_prev[br.nodes[0]] - u_prev[br.nodes[1]] for br in diodes], dtype=float
+    )
+    step = tolerance = float("inf")
+    iteration = 0
+    for iteration in range(1, max_iter + 1):
+        A, b, info = _assemble(
+            network, dt, u_prev, i_prev, scheme, coupling=coupling,
+            sources=sources,
+            diode_bias={k: bias[j] for j, k in enumerate(slots)},
+        )
+        x = np.linalg.solve(A, b)
+        u = np.zeros(network.n_nodes)
+        u[1:] = x[:n_rows]
+        raw = np.array([u[br.nodes[0]] - u[br.nodes[1]] for br in diodes])
+        bias_new = np.array(
+            [_pnjlim(bias[j], raw[j], diodes[j]) for j in range(len(diodes))]
+        )
+        tolerance = _RELTOL * float(np.max(np.abs(bias_new))) + _VNTOL
+        step = float(np.max(np.abs(bias_new - bias)))
+        if step <= tolerance:
+            return x, info, iteration
+        bias = bias_new
+    raise DiodeConvergenceError(
+        "the Newton loop inside this step did not converge: after "
+        f"{iteration} iteration(s) the largest junction-voltage update was "
+        f"still {step:.3e} V against a tolerance of {tolerance:.3e} V, so this "
+        "step is refused rather than returned as if it were solved.  A forward "
+        "junction that will not settle means the step is too large, the model "
+        "parameters are self-contradictory (isat/n/vt), or max_iter is below "
+        "what the step needs -- shrink dt or raise max_iter, do not ignore it",
+        iterations=iteration, step=step, tolerance=tolerance,
+    )
 
 
 class MNASolver:
@@ -556,7 +914,7 @@ class MNASolver:
         """All-zero history: no charge, no current, no node voltage."""
         return SpiceState(self.network)
 
-    def step(self, dt, state, *, sources=None):
+    def step(self, dt, state, *, sources=None, max_iter=_MAX_ITER):
         """One step.  Returns ``(state_new, u, i_branch)``.
 
         Parameters
@@ -569,6 +927,11 @@ class MNASolver:
             Source levels evaluated at ``t^{n+1}``, the implicit-Euler point
             this step solves at.  ``None`` uses each branch's frozen
             ``value``, i.e. a source whose level never moves.
+        max_iter : int, keyword-only, optional
+            Newton iteration cap, used only when the network contains a
+            diode; a linear network is solved in one shot and never iterates.
+            Exceeding the cap raises :class:`DiodeConvergenceError`, never a
+            silent under-converged answer.
 
         Returns
         -------
@@ -589,9 +952,10 @@ class MNASolver:
                 "its state must agree on the netlist, or branch order and node "
                 "count silently disagree"
             )
-        A, b, info = _assemble(self.network, dt, state.u, state.i_branch,
-                               self.scheme, sources=sources)
-        x = np.linalg.solve(A, b)
+        x, info, _ = _solve_step(
+            self.network, dt, state.u, state.i_branch, self.scheme,
+            sources=sources, max_iter=max_iter,
+        )
         u, currents = _recover(self.network, x, info)
         return (
             SpiceState(self.network, u=u, i_branch=currents, i=state.i, v=state.v),
@@ -692,7 +1056,7 @@ class SpicePort:
             )
         return 0.5 * dt * block
 
-    def step(self, e, h, dt, state, *, sources=None):
+    def step(self, e, h, dt, state, *, sources=None, max_iter=_MAX_ITER):
         """One coupled trapezoidal step.  Returns ``(e_new, h_new, state_new)``.
 
         Same signature and same return shape as
@@ -701,7 +1065,10 @@ class SpicePort:
 
         ``sources`` is the per-step source-level vector ``MNASolver.step``
         takes, evaluated at ``t^{n+1}``; ``None`` keeps every source at its
-        frozen ``value``.
+        frozen ``value``.  ``max_iter`` is that method's Newton cap for a
+        network with diodes; the field coupling is external to the Newton loop
+        (``v_star`` is fixed before it starts), exactly as the linear case
+        already was.
         """
         dt = float(dt)
         if not np.isfinite(dt) or dt <= 0.0:
@@ -728,10 +1095,10 @@ class SpicePort:
         v_star = self.port.voltage(e_star)
 
         M = self._field_reactance(dt)
-        A, b, info = _assemble(self.network, dt, state.u, state.i_branch,
-                               "trapezoidal", coupling=(M, v_star, state.i),
-                               sources=sources)
-        x = np.linalg.solve(A, b)
+        x, info, _ = _solve_step(
+            self.network, dt, state.u, state.i_branch, "trapezoidal",
+            coupling=(M, v_star, state.i), sources=sources, max_iter=max_iter,
+        )
         u, currents = _recover(self.network, x, info)
 
         n_t = self.port.n_terminals

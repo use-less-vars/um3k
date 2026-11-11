@@ -206,9 +206,12 @@ class TerminalPort:
 # (R + M) s = v* + v^n, i.e. the trapezoidal decay of a plain resistance to
 # ground -- not the open circuit that C -> 0 as a LIMIT would give.
 #
-# No Newton iteration is needed and none is used: every element is linear, so
-# e* is linear in the unknown current and one solve is exact.  The resulting
-# scheme conserves a discrete energy EXACTLY, per step:
+# No Newton iteration is needed and none is used *on this RLC path*: every
+# term below is linear, so e* is linear in the unknown current and one solve is
+# exact.  (A circuit network reached through ``emfit.spice`` may carry a diode
+# and then does iterate -- see ``spice._solve_step`` -- but that is a different
+# element set, not this one.)  The resulting scheme conserves a discrete energy
+# EXACTLY, per step:
 #
 #     dU_field + dU_L + dU_C + (dt/4) R s^2 = 0,   s = i^{n+1} + i^n
 #

@@ -130,7 +130,7 @@ from typing import Mapping
 
 import numpy as np
 
-from .spice import Branch, CircuitNetwork, MNASolver
+from .spice import Branch, CircuitNetwork, Diode, MNASolver
 
 __all__ = [
     "Element",
@@ -141,7 +141,7 @@ __all__ = [
     "parse_netlist",
 ]
 
-_KINDS = ("R", "L", "C", "V", "I")
+_KINDS = ("R", "L", "C", "V", "I", "D")
 _SOURCE_KINDS = ("V", "I")
 _GROUND_NAMES = frozenset({"0", "gnd", "ground"})
 
@@ -152,6 +152,9 @@ _ELEMENT_FIELDS = {
     "C": frozenset({"kind", "name", "nodes", "value"}),
     "V": frozenset({"kind", "name", "nodes", "value", "waveform"}),
     "I": frozenset({"kind", "name", "nodes", "value", "waveform"}),
+    # a diode has a model, not a value: 'value' is deliberately absent, so a
+    # netlist that tries to set one is rejected rather than silently ignored
+    "D": frozenset({"kind", "name", "nodes", "isat", "n", "vt", "gmin"}),
 }
 _WAVEFORM_FIELDS = {
     "step": frozenset({"type", "amplitude", "delay"}),
@@ -256,14 +259,16 @@ class Element:
     Parameters
     ----------
     kind, name : str
-        ``kind`` in ``("R", "L", "C", "V", "I")``; ``name`` unique in the
-        document.
+        ``kind`` in ``("R", "L", "C", "V", "I", "D")``; ``name`` unique in
+        the document.
     nodes : (int, int)
         Resolved node indices, ``0`` ground.  ``nodes[0] -> nodes[1]`` is the
         positive branch-current direction.
     value : float
         The ``Branch`` value: ohm, henry, farad, or for a source its **DC
-        level**, which is what a source with no waveform carries.
+        level**, which is what a source with no waveform carries.  A diode
+        carries its model parameters on the ``Diode`` branch instead and
+        reports ``0.0`` here.
     waveform : Waveform or None
         ``None`` for an element with a constant level.
     index : int
@@ -746,16 +751,25 @@ def parse_netlist(source):
                 f"{label}: a {kind} source needs a 'value' (a DC level) or a "
                 "'waveform'; got neither"
             )
-        if kind not in _SOURCE_KINDS and "value" not in entry:
+        if kind not in _SOURCE_KINDS + ("D",) and "value" not in entry:
             raise NetlistError(f"{label}: field 'value' is required for a {kind}")
         value = entry.get("value", 0.0)
         waveform = _waveform(entry["waveform"], label) if has_waveform else None
+        model = {}
+        if kind == "D":
+            # defaults mirror the Diode dataclass; validation of the numbers
+            # themselves is Diode's job, so it happens in one place only
+            for field, default in (
+                ("isat", 1e-14), ("n", 1.0), ("vt", 0.02585), ("gmin", 1e-12),
+            ):
+                model[field] = entry.get(field, default)
         staged.append(
             {
                 "kind": kind,
                 "name": element_name,
                 "refs": refs,
                 "value": value,
+                "model": model,
                 "waveform": waveform,
                 "label": label,
             }
@@ -841,10 +855,18 @@ def parse_netlist(source):
     element_index = {}
     for k, (element, nodes) in enumerate(zip(staged, resolved)):
         label = element["label"]
-        try:
-            branch = Branch(element["kind"], nodes, element["value"])
-        except (TypeError, ValueError) as exc:
-            raise NetlistError(f"{label}: field 'value': {exc}") from None
+        if element["kind"] == "D":
+            try:
+                branch = Diode(nodes, **element["model"])
+            except (TypeError, ValueError) as exc:
+                raise NetlistError(f"{label}: field 'model': {exc}") from None
+            branch_value = 0.0
+        else:
+            try:
+                branch = Branch(element["kind"], nodes, element["value"])
+            except (TypeError, ValueError) as exc:
+                raise NetlistError(f"{label}: field 'value': {exc}") from None
+            branch_value = branch.value
         branches.append(branch)
         element_index[element["name"]] = k
         elements.append(
@@ -852,7 +874,7 @@ def parse_netlist(source):
                 kind=element["kind"],
                 name=element["name"],
                 nodes=branch.nodes,
-                value=branch.value,
+                value=branch_value,
                 waveform=element["waveform"],
                 index=k,
             )
