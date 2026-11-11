@@ -6340,7 +6340,14 @@ def run_web_vis(
                 # behaviour and stay exactly as they were.
                 solve_arm_field(
                     v_model=("solve_structure", default_arm),
-                    items=list(MULTIFREQ_BY_STRUCTURE),
+                    # A LIST here is read by trame as (state_name, default) and
+                    # emitted as a bare `:items="A"` - the JS identifier of the
+                    # first arm. v_bind_* is the only py-name trame maps back to
+                    # `:items`, and a str value there is passed through as a JS
+                    # expression, so the array literal survives verbatim. Single
+                    # quotes, not json.dumps: the string is re-wrapped in double
+                    # quotes by trame, so a " inside it would end the attribute.
+                    v_bind_items=repr(list(MULTIFREQ_BY_STRUCTURE)),
                     label="Structure",
                     density="compact",
                     hide_details=True,
@@ -6380,7 +6387,9 @@ def run_web_vis(
                 # throwaway state name.
                 solve_arm_field(
                     v_model=("mesh_size_placeholder", "fixed (0.5 mm)"),
-                    items=["fixed (0.5 mm)"],
+                    # Same trap: a one-element list emits `:items="fixed (0.5 mm)"`,
+                    # which is not JavaScript at all. Bind the literal instead.
+                    v_bind_items="['fixed (0.5 mm)']",
                     label="Mesh size",
                     density="compact",
                     hide_details=True,

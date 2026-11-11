@@ -1989,3 +1989,157 @@ def test_unknown_key_is_a_silent_no_op(playback):
 
     asyncio.run(scenario())
 
+
+def _looks_like_vue_expression(expr: str) -> bool:
+    """Whether `expr` can be a Vue template expression, decided without node.
+
+    This is the fallback for images that carry no JS parser.  It is weaker than
+    compiling the expression, but it fails on the bug class that motivated the
+    check: trame renders a Python list passed as ``items=`` by emitting its
+    FIRST ELEMENT as a bare expression, so a one-element list ships
+    ``:items="fixed (0.5 mm)"`` - a repr, not JavaScript.  Anything this cannot
+    recognise is accepted rather than guessed at.
+    """
+    import json
+    import re
+
+    text = expr.strip()
+    if not text:
+        return False
+
+    # A bare path: frame_max, s_params_image_style, trame.refs['x'], !!busy
+    if re.match(
+        r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\[\]]*\])*$",
+        text.lstrip("!+-~ "),
+    ):
+        return True
+
+    # A literal, once the single quotes trame emits are turned back into JSON.
+    if text[0] in "[{'\"":
+        try:
+            json.loads(text.replace("'", '"'))
+            return True
+        except ValueError:
+            pass
+
+    # A parenthesis outside a string is the shape a Python repr leaks in with -
+    # `fixed (0.5 mm)`.  Vue parses neither that nor an unbalanced one, and the
+    # only expressions that legitimately hold a parenthesis are a call, an arrow
+    # function and a template literal.
+    quote = None
+    for ch in text:
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'`":
+            quote = ch
+        elif ch in "()":
+            return bool(re.search(r"=>|\bfunction\b", text)) or "`" in text
+
+    return True
+
+
+def test_every_bound_attribute_is_a_valid_vue_expression(tmp_path):
+    """No emitted `:attr="..."` may carry a value that is not JavaScript.
+
+    trame renders attributes to text in
+    trame_client/widgets/vue.py::HtmlElement._process_attrs:
+
+        self._elem._attributes[name] = f'{js_key}="{translated_value}"'
+
+    so a Python list passed as ``items=`` is read as a (state_name, default)
+    pair and the FIRST ELEMENT is emitted as a bare JS expression - a
+    one-element list therefore ships ``:items="fixed (0.5 mm)"``, which Vue's
+    template compiler cannot parse, and the runtime compiler compiles the whole
+    page template at once.  Two invariants are cheap to check here and both
+    were violated: the value must not contain the attribute delimiter, and the
+    expression must parse as JavaScript.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    import trame_client.widgets.core as core
+
+    import poc_app as app
+
+    registry = []
+    orig_init = core.AbstractElement.__init__
+
+    def recording_init(self, *args, **kwargs):
+        orig_init(self, *args, **kwargs)
+        registry.append(self)
+
+    core.AbstractElement.__init__ = recording_init
+    try:
+        info = _fixture_info(app, tmp_path / "dump.npz")
+        _boot_app(info)
+    finally:
+        core.AbstractElement.__init__ = orig_init
+
+    bound = []
+    for elem in registry:
+        try:
+            elem.html  # forces render() -> _process_attrs()
+            attrs = elem._attributes
+        except Exception:  # noqa: BLE001 - a widget that cannot render is not this test's subject
+            continue
+        for name, stored in attrs.items():
+            text = str(stored)
+            if text.startswith(":") or text.startswith("v-"):
+                bound.append((elem._elem_name, name, text))
+
+    assert len(bound) > 5, (
+        f"only {len(bound)} bound attributes were captured from the page; the "
+        "layout did not render, so this test would prove nothing"
+    )
+
+    # 1. The whole value must fit inside the one pair of double quotes trame
+    #    wraps it in.  `["A", "B"]` looks right in Python and truncates in HTML.
+    for comp, name, text in bound:
+        assert text.count('"') == 2, (
+            f"{comp}.{name} emits {text!r}: the value contains a double quote, "
+            "which ends the attribute early and truncates the expression the "
+            "browser compiles"
+        )
+
+    # 2. The expression must be JavaScript.  node is the only JS parser in this
+    #    image (no esprima/pyjsparser/quickjs), so use it when it is there.
+    node = shutil.which("node")
+    if node is None:
+        # No JS parser in this image, so fall back to the Python-side screen.
+        # It is weaker than node but it fails on exactly this bug class: a
+        # Python repr (`fixed (0.5 mm)`) is not a Vue expression.
+        for comp, name, text in bound:
+            expr = text[text.index('="') + 2 :].rstrip('"')
+            assert _looks_like_vue_expression(expr), (
+                f"{comp}.{name} emits {text!r}, whose value is not a Vue "
+                "expression (node is not installed, so this was decided "
+                "without a JS parser)"
+            )
+        return
+
+    payload = [
+        [comp, name, text[text.index('="') + 2 : -1]] for comp, name, text in bound
+    ]
+    js = (
+        'const rows=JSON.parse(require("fs").readFileSync(0,"utf8"));'
+        "const bad=rows.map(([c,n,x])=>{try{new Function('return ('+x+')');"
+        "return null}catch(e){return c+'.'+n+' emits :'+n+'=\"'+x+'\" -> '+e.message}});"
+        "console.log(JSON.stringify(bad.filter(Boolean)))"
+    )
+    proc = subprocess.run(
+        [node, "-e", js],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, f"node failed: {proc.stderr}"
+    invalid = json.loads(proc.stdout)
+    assert invalid == [], (
+        "these bound attributes carry an expression Vue's template compiler "
+        "cannot parse (the page compiles as one template, so one of these is "
+        "enough to leave the app blank):\n  " + "\n  ".join(invalid)
+    )
+
