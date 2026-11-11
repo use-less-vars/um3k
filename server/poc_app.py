@@ -960,6 +960,54 @@ def _frequency_caption(mf: dict, record) -> str:
     return caption
 
 
+def _s_params_nearest(mf: dict, f_ref_ghz):
+    """The RECORDED point nearest a frequency: ``(point, ref_ghz, offset, why)``.
+
+    Nothing is interpolated. The offset is not a rounding detail - it is the
+    distance between the frequency the model was driven at and the bin the
+    number was actually measured at, so the caller can print both and a reader
+    can see whether the quoted |S11| belongs to that frequency or merely to the
+    nearest one. When the dump records no reference frequency the band centre of
+    the recorded bins is used instead, and ``why`` says so in words.
+    """
+    points = mf.get("points") or []
+    if not points:
+        return None, None, None, "no recorded points"
+    ref_ghz = _finite(f_ref_ghz)
+    if ref_ghz is None:
+        lo = min(point["f_ghz"] for point in points)
+        hi = max(point["f_ghz"] for point in points)
+        ref_ghz = 0.5 * (lo + hi)
+        why = f"the band centre {ref_ghz:.4f} GHz (the dump records no f_ref)"
+    else:
+        why = f"f_ref {ref_ghz:.4f} GHz"
+    point = min(points, key=lambda item: abs(item["f_ghz"] - ref_ghz))
+    return point, ref_ghz, abs(point["f_ghz"] - ref_ghz), why
+
+
+def _s_params_number_text(mf: dict, f_ref_ghz) -> str:
+    """One line: the |S11| of the recorded point nearest the driven frequency.
+
+    The wording says "nearest recorded point" every time, and prints the offset,
+    because a single number beside a curve is the easiest thing on the page to
+    misread as "the |S11| at exactly this frequency". No curve is fitted and no
+    value is interpolated to make the two frequencies coincide.
+    """
+    point, _ref_ghz, offset, why = _s_params_nearest(mf, f_ref_ghz)
+    if point is None:
+        return "|S11|: no recorded sweep point to quote"
+    text = (
+        f"|S11| {point['s11']:.4f} at {point['f_ghz']:.4f} GHz "
+        f"(nearest recorded point to {why}; offset {offset:.4f} GHz, "
+        "no interpolation"
+    )
+    if point.get("k") is not None:
+        text += f"; k={point['k']}"
+    if point.get("beta_ambiguous"):
+        text += "; beta ambiguous"
+    return text + ")"
+
+
 def build_frequency_chart(mf: dict, title: str | None = None) -> dict:
     """Render |S11| and |S21| vs frequency to a PNG data URI.
 
@@ -3823,6 +3871,28 @@ def run_web_wavedude(
     state.frame_max = nt - 1
     state.play_label = "play"
 
+    # The S-parameters panel: CLOSED at boot, and its visibility lives in ONE
+    # state STRING rather than in a Vue directive. A style attribute is set by
+    # the server and can be read back off the layout, so what the browser is told
+    # and what a headless proof asserts on are literally the same value; a
+    # directive's effect is only ever visible in a browser. Closed, the string is
+    # `display: none;` and the panel is OUT of the flex row entirely, leaving the
+    # 3-D view at the full width it has today.
+    s_params_hidden = "display: none;"
+    s_params_shown = (
+        "flex: 0 0 420px; max-width: 420px; overflow-y: auto; "
+        "border-left: 1px solid #d0d0d0; padding: 4px 8px;"
+    )
+    state.s_params_open = False
+    state.s_params_label = "S-Parameters"
+    state.s_params_style = s_params_hidden
+    state.s_params_caption = ""
+    state.s_params_number = ""
+    state.s_params_image = ""
+    state.s_params_image_style = "display: none;"
+    state.s_params_rows = ""
+    state.s_params_rows_style = "display: none;"
+
     measured = _finite(info["v_measured_m_s"])
     analytic = _finite(info["v_analytic_m_s"])
     traverse = _finite(info["t_traverse_ns"])
@@ -4127,6 +4197,134 @@ def run_web_wavedude(
         except Exception as exc:  # noqa: BLE001 - never take the server down
             print(f"[poc_app] side view render skipped: {exc}", file=sys.stderr)
 
+    def _build_s_params() -> dict:
+        """Read the sweep from disk, draw it, and pick the ONE number to quote.
+
+        Called on the FIRST open of the panel only: reading the JSON and
+        rendering the PNG are the slow steps on this page and neither depends on
+        the animation frame, so doing them again on every open would cost the
+        same and show nothing new. The sweep is a DIFFERENT artefact from the
+        animation beside it (the dump is one run at one frequency), which is why
+        the caption names the file it came from.
+        """
+        multifreq = load_multifreq(info["path"])
+        if multifreq is None:
+            return {
+                "path": None,
+                "points": [],
+                "chart": None,
+                "image": None,
+                "rows": [],
+                "reason": "no sweep on disk",
+                "caption": (
+                    "no multi-frequency |S11|/|S21| sweep on disk: looked for "
+                    "*multifreq*summary*.json beside "
+                    f"{info['path']} and at {DEFAULT_MULTIFREQ}"
+                ),
+                "number": "",
+            }
+        # The RESOLVED path is printed rather than assumed: load_multifreq falls
+        # back to DEFAULT_MULTIFREQ when no summary sits beside the dump, and a
+        # reader has to be able to tell which file these rows came from.
+        print(f"[poc_app] s-params panel: sweep {multifreq['path']}")
+        chart = build_frequency_chart(multifreq, _chart_title(structure))
+        # The dump records f_ref_hz in HZ while the sweep rows are in GHz, and the
+        # nearest-point comparison happens in GHz: convert here, once, so the
+        # scale never has to be guessed from the printed text.
+        f_ref_hz = _finite(info.get("f_ref_hz"))
+        f_ref_ghz = None if f_ref_hz is None else f_ref_hz / 1e9
+        return {
+            "path": multifreq["path"],
+            "points": multifreq["points"],
+            "chart": chart,
+            "image": chart.get("image"),
+            "rows": chart.get("rows") or [],
+            "reason": chart.get("reason"),
+            "caption": _frequency_caption(multifreq, _field_record(info["path"])),
+            "number": _s_params_number_text(multifreq, f_ref_ghz),
+        }
+
+    @ctrl.set("s_params_toggle")
+    def _on_s_params_toggle(**_kwargs) -> None:
+        """Open or close the S-parameters panel; load the sweep on FIRST open only.
+
+        Lazy on purpose: a reader who never opens the panel never pays for the
+        JSON parse or the matplotlib render. ``handles["s_params"]`` is the
+        cache - a second open re-uses the same parsed rows and the same PNG, and
+        the state strings pushed from it are identical.
+
+        Nothing here may raise: the panel is an extra, so a failure costs the
+        panel and one stderr line, never the animation beside it.
+        """
+        try:
+            if state.s_params_open:
+                state.s_params_open = False
+                state.s_params_style = s_params_hidden
+                state.s_params_label = "S-Parameters"
+                return
+            if "s_params" not in handles:
+                handles["s_params"] = _build_s_params()
+            panel = handles["s_params"]
+            caption = panel["caption"]
+            image = panel.get("image")
+            if image:
+                state.s_params_image = image
+                state.s_params_image_style = (
+                    "height: 150px; display: block; margin: 4px 0;"
+                )
+            else:
+                # No picture is a REASON, not an empty panel: the text rows are
+                # the numbers the chart would have drawn, and the reason is
+                # printed with the caption instead of being swallowed.
+                state.s_params_rows = "\n".join(panel.get("rows") or [])
+                state.s_params_rows_style = "font-size: 10px; margin: 4px 0;"
+                if panel.get("reason"):
+                    caption += f" (text rows instead: {panel['reason']})"
+            state.s_params_caption = caption
+            state.s_params_number = panel["number"]
+            state.s_params_open = True
+            state.s_params_style = s_params_shown
+            state.s_params_label = "Hide S-Parameters"
+        except Exception as exc:  # noqa: BLE001 - the panel is not the page
+            print(f"[poc_app] s-params panel unavailable: {exc}", file=sys.stderr)
+
+    def _emit_s_params_panel() -> None:
+        """Emit the |S11| / |S21| panel BESIDE the 3-D view, caption first.
+
+        Everything inside is bound to state, because the sweep is read on the
+        first open of the panel and not while the layout is being built. The
+        wrapper's visibility is the ``s_params_style`` string itself: closed it
+        is `display: none;`, which removes the panel from the flex row instead of
+        reserving a blank column beside the picture.
+        """
+        if html_div is None:
+            return
+        with html_div(style=("s_params_style", s_params_hidden)):
+            html_div(
+                "{{ s_params_label }}",
+                style="font-size: 12px; font-weight: 600; padding: 2px 0;",
+            )
+            html_div(
+                "{{ s_params_number }}",
+                style="font-size: 12px; padding: 2px 0;",
+            )
+            html_div(
+                "{{ s_params_caption }}",
+                style="font-size: 11px; color: #333; padding: 2px 0;",
+            )
+            img_cls = getattr(html_widgets, "Img", None)
+            if img_cls is not None:
+                img_cls(
+                    src=("s_params_image", ""),
+                    style=("s_params_image_style", "display: none;"),
+                )
+            pre_cls = getattr(html_widgets, "Pre", None)
+            if pre_cls is not None:
+                pre_cls(
+                    "{{ s_params_rows }}",
+                    style=("s_params_rows_style", "display: none;"),
+                )
+
     async def _play_loop(gen: int) -> None:
         """Advance one frame per wall-clock step until the trigger bumps the
         generation or state.playing is cleared.
@@ -4200,6 +4398,16 @@ def run_web_wavedude(
                     widgets["VBtn"]("Switch plane", click=ctrl.mode_toggle)
                     widgets["VBtn"]("Top View", click=ctrl.top_view)
                     widgets["VBtn"]("Side View", click=ctrl.side_view)
+                    # The S-parameters panel's one control, in the SAME guarded
+                    # block as the six above: a binding failure here costs the
+                    # panel, never play/pause/prev/next. Its label is bound, so
+                    # the button says what the next press will do. Added only
+                    # when there are html widgets to emit the panel into.
+                    if html_div is not None:
+                        widgets["VBtn"](
+                            "{{ s_params_label }}",
+                            click=ctrl.s_params_toggle,
+                        )
                 except Exception as exc:  # noqa: BLE001 - button bindings differ
                     print(
                         f"[poc_app] playback buttons unavailable: {exc}",
@@ -4235,22 +4443,37 @@ def run_web_wavedude(
                             html_div("{{ scale_label }}")
                             html_div("{{ velocity_label }}")
                             html_div("{{ velocity_note }}")
+                        # The 3-D view and the S-parameters panel share ONE
+                        # horizontal row: the panel is a fixed 420 px column
+                        # beside the picture, so opening it never shortens the
+                        # height the animation is drawn in. Closed, its own
+                        # display:none takes it out of the row entirely and the
+                        # plotter is full width - exactly today's layout.
                         with html_div(
                             style=(
+                                "display: flex; flex-direction: row; "
                                 "flex: 1 1 auto; min-height: 320px; "
-                                "height: 100%;"
+                                "overflow: hidden;"
                             )
                         ):
-                            # mode="server" (PyVistaRemoteView): the server
-                            # renders and streams the image, so the view does
-                            # not depend on the client's WebGL context surviving
-                            # inside a flexed container. "remote" is not a valid
-                            # mode (valid: trame/client/server/wasm) and
-                            # default_server_rendering only applies to
-                            # mode="trame", so both are left alone.
-                            view = plotter_ui(
-                                plotter, mode="server", add_menu=False
-                            )
+                            with html_div(
+                                style=(
+                                    "flex: 1 1 auto; min-height: 320px; "
+                                    "height: 100%;"
+                                )
+                            ):
+                                # mode="server" (PyVistaRemoteView): the server
+                                # renders and streams the image, so the view
+                                # does not depend on the client's WebGL context
+                                # surviving inside a flexed container. "remote"
+                                # is not a valid mode (valid:
+                                # trame/client/server/wasm) and
+                                # default_server_rendering only applies to
+                                # mode="trame", so both are left alone.
+                                view = plotter_ui(
+                                    plotter, mode="server", add_menu=False
+                                )
+                            _emit_s_params_panel()
 
     handles["view"] = view
 
