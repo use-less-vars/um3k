@@ -3844,7 +3844,25 @@ def run_web(
         try:
             select_cls(
                 v_model=("structure", structure_id),
-                items=structure_options,
+                # v_bind_* is the only py-name trame maps back to `:items`, and a
+                # (state_name, default) TUPLE is how trame is told to bind rather
+                # than to inline: it puts the tuple's second element in its own
+                # state under the tuple's first element and emits that NAME as
+                # the JS expression, so the attribute becomes the bare
+                # `:items="structure_items"`. That indirection is the point. Any
+                # literal form here - repr() or json.dumps() - would have to
+                # spell Python's True/False into a JavaScript expression, where
+                # `True` is an undefined identifier rather than a boolean, and the
+                # record-only entries would come out enabled. Held in state the
+                # value crosses to the browser as JSON, so Vuetify sees true/false
+                # and `props: {disabled: ...}` survives. A LIST here must not be
+                # used: trame reads a list as (state_name, default) too, but its
+                # FIRST ELEMENT alone reaches the attribute, which is label text
+                # where JavaScript belongs, and the whole page template is
+                # compiled at once so one bad expression takes the page down. The
+                # keys are the ones item_title / item_value below read: title,
+                # value, and props on a record-only entry.
+                v_bind_items=("structure_items", structure_options),
                 # Vuetify 2 spells these item-text, Vuetify 3 item-title. Both are
                 # passed because every variant is probed at runtime; whichever
                 # one this variant knows is the one that names the label.

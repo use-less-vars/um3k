@@ -140,6 +140,29 @@ def _fixture_info(app, path: Path, *, structure_id="A", load_ohm=50.0,
     return app.load_vis(path)
 
 
+def _fixture_legacy_info(app, path: Path) -> dict:
+    """Minimal legacy single-plane dump: the artefact the 8080 path serves.
+
+    ``load_dump`` unpacks ``plane_ez`` plus five scalars and nothing else, and a
+    dump that sits without a study record beside it is a supported state - the
+    plane positions then fall back to the built-in constants.  That is exactly
+    the shape ``evidence/termination/build_A_50ohm_p51_ghostwave_fields.npz``
+    has, so ``run_web`` - not ``run_web_vis`` - is the builder this fixture
+    feeds.
+    """
+    rng = np.random.default_rng(0)
+    np.savez(
+        path,
+        plane_ez=rng.normal(size=(9, 12, 5)),
+        nstep=np.array(6),
+        nx=np.array(9),
+        ny=np.array(12),
+        nz=np.array(5),
+        cell_m=np.array(1e-4),
+    )
+    return app.load_dump(path)
+
+
 def _boot_app(info):
     """Run ``run_web_vis`` up to the point it would call ``server.start``.
 
@@ -174,6 +197,49 @@ def _boot_app(info):
     assert "srv" in box, (
         "run_web_vis never reached server.start(): it returned early "
         "(missing web dependency) so no trigger was registered"
+    )
+    return app, box["srv"]
+
+
+def _boot_web(info):
+    """The same boot for ``run_web``, the builder a legacy dump is served by.
+
+    ``run_web`` places no station clamp in front of its layout, so the station is
+    handed the last captured plane.  ``pyvista.Plotter.render`` is doubled for
+    the same reason the ``playback`` fixture doubles it: this image has no EGL,
+    no libOSMesa and no X server, so a real render segfaults the interpreter.
+    Nothing else about the builder is replaced.
+    """
+    import pyvista
+    import trame.app as trame_app
+    import poc_app as app
+
+    real_get_server = trame_app.get_server
+    real_render = pyvista.Plotter.render
+    box: dict = {}
+
+    def fake_get_server(*args, **kwargs):
+        srv = real_get_server(*args, **kwargs)
+        box["srv"] = srv
+
+        def _no_start(*_a, **_k):
+            raise _Stop()
+
+        srv.start = _no_start
+        return srv
+
+    trame_app.get_server = fake_get_server
+    pyvista.Plotter.render = lambda self, *a, **k: None  # no OpenGL here
+    try:
+        with contextlib.suppress(_Stop):
+            app.run_web(info, "127.0.0.1", 8999, int(info["plane_ez"].shape[0]) - 1)
+    finally:
+        pyvista.Plotter.render = real_render
+        trame_app.get_server = real_get_server
+
+    assert "srv" in box, (
+        "run_web never reached server.start(): it returned early (missing web "
+        "dependency) so its layout was never built"
     )
     return app, box["srv"]
 
@@ -2039,8 +2105,15 @@ def _looks_like_vue_expression(expr: str) -> bool:
     return True
 
 
-def test_every_bound_attribute_is_a_valid_vue_expression(tmp_path):
+@pytest.mark.parametrize("builder", ["run_web_vis", "run_web"])
+def test_every_bound_attribute_is_a_valid_vue_expression(builder, tmp_path):
     """No emitted `:attr="..."` may carry a value that is not JavaScript.
+
+    BOTH builders are swept, because the page has two of them: ``run_web_vis``
+    serves an ``emfit.vis/2`` dump, ``run_web`` serves a legacy single-plane
+    dump - and that legacy builder is the one ``python3 server/poc_app.py``
+    reaches on port 8080, because the default structure's dump carries
+    ``plane_ez`` and no ``format`` key.
 
     trame renders attributes to text in
     trame_client/widgets/vue.py::HtmlElement._process_attrs:
@@ -2072,8 +2145,12 @@ def test_every_bound_attribute_is_a_valid_vue_expression(tmp_path):
 
     core.AbstractElement.__init__ = recording_init
     try:
-        info = _fixture_info(app, tmp_path / "dump.npz")
-        _boot_app(info)
+        if builder == "run_web_vis":
+            info = _fixture_info(app, tmp_path / "dump.npz")
+            _boot_app(info)
+        else:
+            info = _fixture_legacy_info(app, tmp_path / "legacy.npz")
+            _boot_web(info)
     finally:
         core.AbstractElement.__init__ = orig_init
 
@@ -2090,8 +2167,8 @@ def test_every_bound_attribute_is_a_valid_vue_expression(tmp_path):
                 bound.append((elem._elem_name, name, text))
 
     assert len(bound) > 5, (
-        f"only {len(bound)} bound attributes were captured from the page; the "
-        "layout did not render, so this test would prove nothing"
+        f"only {len(bound)} bound attributes were captured from {builder}'s "
+        "page; the layout did not render, so this test would prove nothing"
     )
 
     # 1. The whole value must fit inside the one pair of double quotes trame
