@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -57,6 +58,24 @@ FPS = 25
 TRIGGER_NAME = "play_toggle"
 RETURN_TIMEOUT_S = 1.0
 LOOP_EXIT_TIMEOUT_S = 2.0
+
+
+def _flatten_block(block) -> str:
+    """Every string a confidence block carries, joined with newlines.
+
+    The panel is PROSE: the number a reader is meant to see may be in a row's
+    text, and the formula it came from is in ``basis``.  A test that only looked
+    at the row texts would miss a deviation restated in the basis (or, worse,
+    miss that it is NOT restated anywhere), so the assertions look at one blob.
+    """
+    parts = []
+    for label, text in block.get("rows") or []:
+        parts.append(str(label))
+        parts.append(str(text))
+    parts.extend(str(item) for item in block.get("basis") or [])
+    parts.extend(str(item) for item in block.get("sources") or [])
+    parts.append(str(block.get("caption") or ""))
+    return "\n".join(parts)
 
 
 class _Stop(Exception):
@@ -1289,4 +1308,306 @@ def test_mode_picture_grid_lands_on_the_cross_section_plane() -> None:
         app._mode_picture_grid({"ok": True, "grid": np.ones((4, 4))}, x_mm=1.0)
         is None
     ), "a result with no extent still produced a picture"
+
+
+# --- the Confidence & Accuracy panel, derived from the record -----------------
+#
+# The panel is a PURE function of the study record (``build_confidence_block``),
+# so every number below is computed from a record dict this file owns: no
+# evidence/ file is required, no npz is read, no plotter and no trame layout is
+# built.  What is pinned is the arithmetic a reader is shown - cells per
+# wavelength at the RECORDED beta and at the model beta, and the referee
+# deviation that must never quote the other artefact's 0.49 % - plus the refusal
+# to render a missing value (the string "ABSENT", a null commit) as a number.
+
+
+def test_confidence_panel_computes_cells_per_lambda() -> None:
+    """67.5 and 70.3 cells per lambda, derived HERE from the recorded betas.
+
+    A resolution claim is only worth its arithmetic.  The fit's beta and the
+    model's beta disagree, so the panel has to print a ratio for EACH and say
+    which is which; the ratios are recomputed below from the same betas and
+    compared as numbers, so a string that drifted away from the formula fails.
+    """
+    import poc_app as app
+
+    record = {
+        "geometry": {
+            "cell_m": 4e-4,
+            "grid": [62, 212, 22],
+            "cells": 289168,
+            "f": 5827786408.327286,
+            "f_target": 6e9,
+        },
+        "line": {
+            "beta": 232.79891853803187,
+            "beta_model": 223.35306683909533,
+        },
+        "meta": {"git_rev": None},
+        "s11": {"magnitude": 0.32586326001662264},
+    }
+
+    block = app.build_confidence_block(record)
+    assert block["status"] == "ok", (
+        f"a record carrying every key this panel reads produced status "
+        f"{block['status']!r}: {block['caption']!r}"
+    )
+
+    rows = [
+        (str(label), str(text))
+        for label, text in block["rows"]
+        if "cells per wavelength" in str(label).lower()
+    ]
+    assert len(rows) == 2, (
+        f"{len(rows)} resolution rows for the two betas the record carries: "
+        f"{[label for label, _ in rows]}"
+    )
+
+    by_label = {label.lower(): text for label, text in rows}
+    measured = [label for label in by_label if "measured" in label]
+    model = [label for label in by_label if "model" in label]
+    assert len(measured) == 1 and len(model) == 1, (
+        f"the resolution rows are not labelled measured / model: "
+        f"{sorted(by_label)} - a reader cannot tell which beta a ratio came from"
+    )
+    measured_text = by_label[measured[0]]
+    model_text = by_label[model[0]]
+
+    assert "67.5" in measured_text, (
+        f"the measured-beta resolution is not 67.5 cells per wavelength: "
+        f"{measured_text!r}"
+    )
+    assert "70.3" in model_text, (
+        f"the model-beta resolution is not 70.3 cells per wavelength: "
+        f"{model_text!r}"
+    )
+
+    # The bad illustrative "N-lambda = 20" phrasing: neither row may quote it.
+    for text in (measured_text, model_text):
+        assert "20.0" not in text, (
+            f"a resolution row quotes 20.0 cells per wavelength, which is not "
+            f"what this mesh resolves: {text!r}"
+        )
+    assert "20.0" not in measured_text
+
+    # 2*pi/beta/cell_m, recomputed here rather than taken on trust, and compared
+    # as a NUMBER: the first token of each row is the printed ratio.
+    cell_m = record["geometry"]["cell_m"]
+    for text, beta in (
+        (measured_text, record["line"]["beta"]),
+        (model_text, record["line"]["beta_model"]),
+    ):
+        expected = 2.0 * math.pi / beta / cell_m
+        printed = float(text.split()[0])
+        assert abs(printed - expected) < 0.1, (
+            f"the panel prints {printed} cells per wavelength at beta = {beta}; "
+            f"2*pi/beta/cell_m = {expected:.2f}, so the printed ratio is not the "
+            f"formula it names: {text!r}"
+        )
+    # The two ranges, so a silently changed beta cannot slip through the
+    # tolerance above: 2*pi/232.7989.../4e-4 = 67.5, 2*pi/223.3530.../4e-4 = 70.3.
+    assert 67.46 < 2.0 * math.pi / record["line"]["beta"] / cell_m < 67.56, (
+        "the measured beta in this record no longer resolves to 67.5 cells per "
+        "wavelength, so the 67.5 asserted above proves nothing"
+    )
+    assert 70.26 < 2.0 * math.pi / record["line"]["beta_model"] / cell_m < 70.36, (
+        "the model beta in this record no longer resolves to 70.3 cells per "
+        "wavelength, so the 70.3 asserted above proves nothing"
+    )
+
+
+def test_confidence_panel_labels_the_referee_basis() -> None:
+    """0.40 %, naming BOTH sides - and never the other artefact's 0.49 %.
+
+    The referee is a second extraction of the same |S11| at the same frequency:
+    0.32716455... against this record's 0.32586326..., i.e. 0.40 %.  The
+    historical 0.49 % belongs to a DIFFERENT artefact (the phasors one), so its
+    absence is asserted: seeing it here would mean the panel is comparing the
+    record with a value carried forward from itself - a check that can only pass.
+    """
+    import poc_app as app
+
+    record = {
+        "geometry": {
+            "cell_m": 4e-4,
+            "grid": [62, 212, 22],
+            "cells": 289168,
+            "f": 5827786408.327286,
+            "f_target": 6e9,
+        },
+        "line": {
+            "beta": 232.79891853803187,
+            "beta_model": 223.35306683909533,
+        },
+        "meta": {"git_rev": None},
+        "s11": {"magnitude": 0.32586326001662264},
+    }
+    referee = {
+        "s11_abs": 0.3271645531273824,
+        "f_hz": 5827786408.327286,
+    }
+
+    blob = _flatten_block(app.build_confidence_block(record, referee))
+    assert "0.40" in blob, (
+        f"the referee deviation is not printed as 0.40 %: {blob!r}"
+    )
+    assert "s11_abs" in blob and "s11.magnitude" in blob, (
+        "the panel does not name BOTH comparands (s11_abs, s11.magnitude), so a "
+        f"reader cannot tell what was compared with what: {blob!r}"
+    )
+    assert "0.49" not in blob, (
+        f"the panel quotes 0.49 %, which is the OTHER artefact's number: this "
+        f"deviation must be 0.40 % or it is not the comparison it claims: {blob!r}"
+    )
+
+    # A referee that was never read degrades to a row that says so - and still
+    # never to 0.49.
+    absent = _flatten_block(app.build_confidence_block(record, None))
+    assert "not available" in absent, (
+        f"a missing referee did not produce a 'not available' row: {absent!r}"
+    )
+    assert "0.49" not in absent, (
+        f"a missing referee still produced 0.49 %: {absent!r}"
+    )
+
+    # The real artefact, when this checkout carries it: same invariants, and a
+    # checkout without evidence/ simply does not reach them (it cannot fail).
+    record_path = REPO_ROOT / "evidence" / "termination" / (
+        "build_A_50ohm_p51_ghostwave.json"
+    )
+    referee_path = REPO_ROOT / "evidence" / "referee" / "s11_extraction.json"
+    if record_path.is_file() and referee_path.is_file():
+        real_record = json.loads(record_path.read_text(encoding="utf-8"))
+        real_referee = json.loads(referee_path.read_text(encoding="utf-8"))
+        real_blob = _flatten_block(
+            app.build_confidence_block(
+                real_record, real_referee, record_path=str(record_path)
+            )
+        )
+        assert "0.40" in real_blob, (
+            f"the real record's referee deviation is not 0.40 %: {real_blob!r}"
+        )
+        assert "0.49" not in real_blob, (
+            f"the real record quotes 0.49 %, the other artefact's number: "
+            f"{real_blob!r}"
+        )
+
+
+def test_confidence_panel_survives_absent_and_string_fields() -> None:
+    """The adversarial record: a STRING where a number belongs, and a null commit.
+
+    ``line.sigma_beta_from_curvature`` is the TEXT "ABSENT" - not a float, not a
+    missing key - and ``meta.git_rev`` is null.  Formatting either with a float
+    spec raises, and that raise would cost the reader the whole panel on its
+    first press, so the panel is asserted to render them as words.  A refusal
+    with no record at all is asserted to be an ANSWER, not an exception.
+    """
+    import poc_app as app
+
+    record = {
+        "geometry": {
+            "cell_m": 4e-4,
+            "grid": [62, 212, 22],
+            "cells": 289168,
+            "f": 5827786408.327286,
+            "f_target": 6e9,
+        },
+        "line": {
+            "beta": 232.79891853803187,
+            "beta_model": 223.35306683909533,
+            "sigma_beta_from_curvature": "ABSENT",  # a STRING, not a number
+            "station_fit_n": 8,
+            "load_station_excluded": True,
+            "z0_re": 42.75850315700394,
+            "z0_im": -16.046149777568516,
+        },
+        "run": {
+            "station_fit": {
+                "z0_re": 47.30581504575999,
+                "z0_im": 1.558214298741411,
+            },
+        },
+        "s11": {
+            "magnitude": 0.32586326001662264,
+            "validation_status": "UNVALIDATED",
+            "validation_reason": (
+                "the magnitude above is the modulus of the two-wave B/A, not the "
+                "one-wave station-fit reflection"
+            ),
+            "station_phasors": {"n": 9, "beta_used": 232.7989, "status": "ok"},
+        },
+        "ac": {
+            "AC-1": {"pass": None},
+            "AC-2": {"pass": True},
+            "AC-3": {"pass": False},
+            "AC-4": {"pass": None},
+        },
+        "meta": {"git_rev": None},
+    }
+
+    # The call itself must not raise: no pytest.raises, because a raise here is
+    # the failure, not the expectation.
+    block = app.build_confidence_block(record)
+    blob = _flatten_block(block)
+
+    assert "ABSENT" in blob, (
+        f"the string sigma is not shown as text: {blob!r}"
+    )
+    assert "UNVALIDATED" in blob, (
+        f"the record's |S11| validation status is not shown: {blob!r}"
+    )
+
+    def _row(needle: str) -> str:
+        found = [
+            str(text)
+            for label, text in block["rows"]
+            if needle in str(label).lower()
+        ]
+        assert len(found) == 1, (
+            f"{len(found)} rows match {needle!r}: {[l for l, _ in block['rows']]}"
+        )
+        return found[0]
+
+    # The two station counts, on the stations row specifically - 9 phasors in the
+    # dump, 8 stations in the fit, because the load station is dropped.
+    stations = _row("stations")
+    assert "9" in stations and "8" in stations, (
+        f"the stations row carries neither count: {stations!r}"
+    )
+    assert "phasors" in stations and "station_fit_n" in stations, (
+        f"the stations row does not name both keys its counts came from: "
+        f"{stations!r}"
+    )
+
+    # The failing criterion is NAMED, not just counted.
+    criteria = _row("acceptance criteria")
+    assert "AC-3" in criteria, (
+        f"the acceptance tally does not name the one criterion that failed: "
+        f"{criteria!r}"
+    )
+    assert "1 fail" in criteria and "1 pass" in criteria, (
+        f"the acceptance tally miscounts this ac block: {criteria!r}"
+    )
+
+    # BOTH z0s, and which one the fit consumed: they differ, so quoting one
+    # without its key is ambiguous.
+    z0 = _row("z0")
+    assert "47.3058" in z0 and "42.7585" in z0, (
+        f"the Z0 row does not carry both impedances: {z0!r}"
+    )
+    assert "station_fit" in z0 and "NOT used by the fit" in z0, (
+        f"the Z0 row does not say which impedance the fit consumed: {z0!r}"
+    )
+
+    # No record at all is a refusal, and a refusal is an answer.
+    refusal = app.build_confidence_block(None, None)
+    assert refusal["status"] == "no record", (
+        f"a missing record produced status {refusal['status']!r}"
+    )
+    assert refusal["rows"] == [], (
+        f"a refusal still carries rows: {refusal['rows']!r}"
+    )
+    assert str(refusal["caption"]).startswith("confidence refused"), (
+        f"the refusal is not captioned as one: {refusal['caption']!r}"
+    )
 

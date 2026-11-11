@@ -62,6 +62,7 @@ import asyncio
 import datetime
 import errno
 import json
+import math
 import re
 import subprocess
 import sys
@@ -1819,6 +1820,418 @@ def _residuals_block(anchors, s11_two_wave) -> dict:
         "validated": False,
         "ledger_refs": ["E1", "E11"],
     }
+
+
+# --- how much to trust the numbers -----------------------------------------
+#
+# The Confidence & Accuracy panel is the one place on this page that says what a
+# number is WORTH rather than what it is. Every row it carries is DERIVED here
+# from the dump's own study record (and, when one is on disk, the referee
+# extraction), nothing is typed in, and each row names its basis, so a reader
+# never has to guess which file or which formula produced it.
+#
+# Two rules shape the wording:
+#
+#   * A missing number is a missing FIELD, never a zero. A sigma recorded as the
+#     string "ABSENT" and a residual the writer never serialised are both printed
+#     as what they are, because a page that rendered them as 0.0 would be
+#     inventing the most reassuring value it could.
+#   * The referee is a SECOND OPINION, not a validation. It is a different
+#     extraction of the same |S11| at the same frequency, and its own mode fit
+#     failed (its own scalars say so), so its agreement is printed beside that
+#     failure instead of being quoted as a clean result.
+REFEREE_S11_FILE = "evidence/referee/s11_extraction.json"
+# The referee key this panel compares against. `s11_abs` is the referee's own
+# extraction; `s11_artefact_target` is the artefact's recorded value carried
+# forward, so comparing against THAT would compare the record with itself.
+REFEREE_S11_KEY = "s11_abs"
+
+
+def _referee_s11_path():
+    """The referee extraction's resolved path, or None when it cannot be made."""
+    try:
+        return _resolve(REFEREE_S11_FILE)
+    except Exception:  # noqa: BLE001 - a path is never worth a traceback
+        return None
+
+
+def _confidence_mm(meters, digits=3) -> str:
+    """A recorded length in METRES printed in MILLIMETRES, or 'n/a'."""
+    value = _finite(_as_float(meters))
+    return "n/a" if value is None else f"{value * 1e3:.{digits}f} mm"
+
+
+def _confidence_ghz(hz, digits=6) -> str:
+    """A recorded frequency in HZ printed in GHZ, or 'n/a'."""
+    value = _finite(_as_float(hz))
+    return "n/a" if value is None else f"{value / 1e9:.{digits}f} GHz"
+
+
+def _confidence_z0(z0_re, z0_im) -> str:
+    """One complex impedance in ohm, or 'n/a' when either part is missing."""
+    re = _finite(_as_float(z0_re))
+    im = _finite(_as_float(z0_im))
+    if re is None or im is None:
+        return "n/a"
+    sign = "+" if im >= 0.0 else "-"
+    return f"{re:.4f} {sign} j{abs(im):.4f} ohm"
+
+
+def _confidence_cells_per_lambda(beta, cell_m):
+    """(lambda_m, cells_per_lambda) for one recorded beta, or (None, None)."""
+    beta = _finite(_as_float(beta))
+    cell = _finite(_as_float(cell_m))
+    if beta is None or cell is None or beta <= 0.0 or cell <= 0.0:
+        return None, None
+    lam = 2.0 * math.pi / beta
+    return lam, lam / cell
+
+
+def _confidence_mesh_rows(record) -> list:
+    """What was SOLVED: the cell size and the grid, cross-checked against itself.
+
+    The grid product is multiplied here rather than trusted: a dump whose
+    ``geometry.cells`` disagrees with ``nx*ny*nz`` is a dump whose cell count
+    cannot be quoted, and the row says which of the two it agrees with.
+    """
+    geometry = record.get("geometry")
+    geometry = geometry if isinstance(geometry, dict) else {}
+    rows = [(
+        "mesh: cell size",
+        f"{_confidence_mm(geometry.get('cell_m', geometry.get('cell')))}"
+        " (geometry.cell_m) - the mesh every length on this panel is counted in",
+    )]
+    grid = geometry.get("grid")
+    axes = [_as_int(item) for item in grid] if isinstance(grid, (list, tuple)) else []
+    if len(axes) != 3 or any(axis is None for axis in axes):
+        rows.append(("mesh: grid", "n/a (geometry.grid is not three integers)"))
+        return rows
+    product = axes[0] * axes[1] * axes[2]
+    recorded = _as_int(geometry.get("cells"))
+    if recorded == product:
+        agreement = f"the recorded geometry.cells = {recorded} AGREES"
+    else:
+        agreement = (
+            f"the recorded geometry.cells = {recorded if recorded is not None else 'n/a'}"
+            " DISAGREES with it"
+        )
+    rows.append((
+        "mesh: grid",
+        f"{axes[0]} x {axes[1]} x {axes[2]} = {product} cells (geometry.grid, "
+        f"multiplied here); {agreement}",
+    ))
+    return rows
+
+
+def _confidence_resolution_rows(record) -> list:
+    """Cells per wavelength at BOTH betas: the resolution the run really had.
+
+    ``lambda = 2*pi/beta`` is derived from the RECORDED beta and then counted in
+    mesh cells, because that ratio - not the wave speed - is what decides whether
+    a 0.4 mm mesh can carry this wave at all. It is printed for the measured beta
+    and the model beta: the two disagree, and a reader is entitled to see both.
+    """
+    geometry = record.get("geometry")
+    geometry = geometry if isinstance(geometry, dict) else {}
+    line = record.get("line")
+    line = line if isinstance(line, dict) else {}
+    cell_m = geometry.get("cell_m", geometry.get("cell"))
+    rows, betas = [], {}
+    for label, key, what in (
+        (
+            "resolution: cells per wavelength (measured beta)",
+            "beta",
+            "line.beta, the station fit this run's own |S11| is de-embedded with",
+        ),
+        (
+            "resolution: cells per wavelength (model beta)",
+            "beta_model",
+            "line.beta_model, the quasi-static model at this geometry",
+        ),
+    ):
+        beta = _finite(_as_float(line.get(key)))
+        lam, ratio = _confidence_cells_per_lambda(beta, cell_m)
+        if ratio is None:
+            rows.append((label, f"n/a ({what} is not a positive number)"))
+            continue
+        betas[key] = beta
+        rows.append((
+            label,
+            f"{ratio:.1f} cells per wavelength at beta = {beta:.6f} rad/m "
+            f"(lambda = 2*pi/beta = {_confidence_mm(lam)}; {what})",
+        ))
+    measured, model = betas.get("beta"), betas.get("beta_model")
+    if measured is not None and model:
+        rows.append((
+            "beta: measured vs model",
+            f"{measured:.6f} vs {model:.6f} rad/m, "
+            f"{100.0 * (measured / model - 1.0):+.2f} % (line.beta vs "
+            "line.beta_model) - the fit and the model disagree, so a beta-derived "
+            "number carries that spread",
+        ))
+    return rows
+
+
+def _confidence_referee_rows(record, referee) -> list:
+    """The referee extraction against this record's |S11|: agreement, then trust."""
+    s11 = record.get("s11")
+    s11 = s11 if isinstance(s11, dict) else {}
+    geometry = record.get("geometry")
+    geometry = geometry if isinstance(geometry, dict) else {}
+    label = "referee: |S11| agreement"
+    if not isinstance(referee, dict):
+        return [(
+            label,
+            f"not available ({REFEREE_S11_FILE} was not read beside this dump)",
+        )]
+    here_f = _finite(_as_float(geometry.get("f", geometry.get("f_hz"))))
+    ref_f = _finite(_as_float(referee.get("f_hz")))
+    magnitude = _finite(_as_float(s11.get("magnitude")))
+    theirs = _finite(_as_float(referee.get(REFEREE_S11_KEY)))
+    if magnitude is None or theirs is None or theirs == 0.0:
+        return [(
+            label,
+            "n/a (this record's s11.magnitude or the referee's "
+            f"{REFEREE_S11_KEY} is missing)",
+        )]
+    if ref_f is not None and here_f is not None and ref_f != here_f:
+        return [(
+            label,
+            f"not comparable: the referee recorded {_confidence_ghz(ref_f)} and "
+            f"this record {_confidence_ghz(here_f)} - two frequencies are two "
+            "|S11| values, and one is not a check on the other",
+        )]
+    rows = [(
+        label,
+        f"{100.0 * abs(magnitude / theirs - 1.0):.2f} % (this record "
+        f"s11.magnitude = {magnitude:.6f} vs the referee's {REFEREE_S11_KEY} = "
+        f"{theirs:.6f}, deviation = |a/b - 1|, both at {_confidence_ghz(here_f)})"
+        " - an independent EXTRACTION, not a validation: see the mode fit below",
+    )]
+    ok = referee.get("mode_fit_ok")
+    ratio = _finite(_as_float(referee.get("mode_fit_ratio")))
+    tol = _finite(_as_float(referee.get("mode_fit_tol")))
+    if ratio is not None:
+        verdict = (
+            "the referee's own mode solve met its tolerance"
+            if ok is True
+            else "the referee's own mode solve missed tolerance, so its |S11| is "
+            "a second opinion and not a reference"
+        )
+        tol_text = "not recorded" if tol is None else f"{tol:g}"
+        rows.append((
+            "referee: mode fit",
+            f"{'ok' if ok is True else 'FAILED'} (mode_fit_ok = {ok!r}, "
+            f"mode_fit_ratio = {ratio:.2f} against mode_fit_tol = {tol_text}) - "
+            f"{verdict}",
+        ))
+    return rows
+
+
+def _confidence_extraction_rows(record) -> list:
+    """What the extraction did NOT record, and the two counts that differ."""
+    s11 = record.get("s11")
+    s11 = s11 if isinstance(s11, dict) else {}
+    line = record.get("line")
+    line = line if isinstance(line, dict) else {}
+    run = record.get("run")
+    station = run.get("station_fit") if isinstance(run, dict) else None
+    station = station if isinstance(station, dict) else {}
+    rows = [(
+        "extraction: fit residual",
+        "not serialised - emfit/ports.py drops BetaFit.residual when the record is "
+        "written, so this file carries no residual and the fit's goodness cannot "
+        "be read off it",
+    )]
+    sigma = line.get("sigma_beta_from_curvature")
+    sigma_number = _finite(_as_float(sigma))
+    if isinstance(sigma, str) and sigma_number is None:
+        sigma_text = (
+            f"{sigma!r} recorded as TEXT (line.sigma_beta_from_curvature) - a "
+            "word, not a number: there is no error bar on beta to quote"
+        )
+    elif sigma_number is None:
+        sigma_text = "not recorded (no line.sigma_beta_from_curvature key)"
+    else:
+        sigma_text = (
+            f"{sigma_number:.6f} (line.sigma_beta_from_curvature) - the fit's own "
+            "error bar on beta"
+        )
+    rows.append(("extraction: beta sigma from curvature", sigma_text))
+    status = s11.get("validation_status")
+    status_text = (
+        status.strip() if isinstance(status, str) and status.strip() else "not recorded"
+    )
+    reason = s11.get("validation_reason")
+    if isinstance(reason, str) and reason.strip():
+        one_line = " ".join(reason.split())
+        if len(one_line) > 140:
+            one_line = one_line[:137].rstrip() + "..."
+        status_text += (
+            f": {one_line!r} (one line of prose copied from the record, not a "
+            "serialised field)"
+        )
+    rows.append(("extraction: |S11| validation status", status_text))
+    phasors = s11.get("station_phasors")
+    phasors = _as_int(phasors.get("n")) if isinstance(phasors, dict) else None
+    fit_n = _as_int(line.get("station_fit_n"))
+    span = _confidence_mm(line.get("station_fit_span_m"))
+    parts = []
+    if phasors is not None:
+        parts.append(f"{phasors} phasors recorded (s11.station_phasors.n)")
+    if fit_n is not None:
+        parts.append(f"{fit_n} stations in the fit (line.station_fit_n, span {span})")
+    if parts:
+        excluded = line.get("load_station_excluded")
+        tail = ""
+        if excluded is True:
+            tail = (
+                " - line.load_station_excluded = True: one station is dropped, so "
+                "the two counts measure different things"
+            )
+        rows.append(("extraction: stations", "; ".join(parts) + tail.rstrip(".")))
+    if "z0_re" in line or "z0_re" in station:
+        rows.append((
+            "extraction: Z0 (which one was consumed)",
+            f"the fit consumed run.station_fit.z0 = "
+            f"{_confidence_z0(station.get('z0_re'), station.get('z0_im'))}; "
+            f"line.z0 = {_confidence_z0(line.get('z0_re'), line.get('z0_im'))} is "
+            "the port-plane V/I ratio and was NOT used by the fit - a z0 quoted "
+            "without its key is ambiguous",
+        ))
+    return rows
+
+
+def _confidence_caveat_rows(record) -> list:
+    """Provenance, the frequency actually run, and the acceptance-criteria tally."""
+    geometry = record.get("geometry")
+    geometry = geometry if isinstance(geometry, dict) else {}
+    meta = record.get("meta")
+    meta = meta if isinstance(meta, dict) else {}
+    rows = []
+    here_hz = _finite(_as_float(geometry.get("f", geometry.get("f_hz"))))
+    target_hz = _finite(_as_float(geometry.get("f_target")))
+    if here_hz is not None:
+        text = _confidence_ghz(here_hz) + " recorded (geometry.f)"
+        if target_hz:
+            text += (
+                f" against a {_confidence_ghz(target_hz)} target "
+                f"(geometry.f_target): {100.0 * (here_hz / target_hz - 1.0):+.2f} %"
+            )
+        text += " - every number on this panel is at the RECORDED frequency"
+        rows.append(("frequency actually run", text))
+    git_rev = meta.get("git_rev")
+    if isinstance(git_rev, str) and git_rev.strip():
+        rows.append((
+            "provenance: commit",
+            f"meta.git_rev = {git_rev.strip()!r}"
+            + (
+                f", finished {meta['finished_utc']}"
+                if isinstance(meta.get("finished_utc"), str)
+                else ""
+            ),
+        ))
+    else:
+        rows.append((
+            "provenance: commit",
+            f"meta.git_rev = {git_rev!r} - no commit was recorded, so this "
+            "artefact cannot be tied to a revision",
+        ))
+    criteria = record.get("ac")
+    if isinstance(criteria, dict) and criteria:
+        passed, failed, unknown, partial = [], [], [], []
+        for key, item in criteria.items():
+            verdict = item.get("pass") if isinstance(item, dict) else None
+            if verdict is True:
+                passed.append(str(key))
+                if isinstance(item, dict) and item.get("pass_scope"):
+                    partial.append(str(key))
+            elif verdict is False:
+                failed.append(str(key))
+            else:
+                unknown.append(str(key))
+        text = (
+            f"{len(passed)} pass / {len(failed)} fail / {len(unknown)} "
+            f"indeterminate of {len(criteria)} (counted from the ac block: pass "
+            f"True on {', '.join(passed) or 'none'}; False on "
+            f"{', '.join(failed) or 'none'}; null on {', '.join(unknown) or 'none'})"
+        )
+        if partial:
+            text += f"; partial: {', '.join(partial)} (pass_scope)"
+        rows.append(("acceptance criteria", text))
+    else:
+        rows.append(("acceptance criteria", "not recorded in this file"))
+    return rows
+
+
+def build_confidence_block(record, referee=None, record_path=None) -> dict:
+    """The Confidence & Accuracy panel as DATA: rows, caption, basis, sources.
+
+    ``record`` is a study record already parsed (the reviewer's own JSON, or
+    None when the dump was shipped without one); ``referee`` is the parsed
+    referee extraction or None. NO file is read here, so this is a pure function
+    and a test can hand it a record with numbers of its own.
+
+    Returns ``{"status", "rows", "caption", "basis", "sources"}``: ``rows`` is
+    a list of ``(label, text)`` pairs in reading order, ``basis`` the formulas
+    used and ``sources`` the keys read. NEVER raises: a panel is never worth a
+    traceback, and a refusal is one of its answers.
+    """
+    try:
+        if not isinstance(record, dict) or not record:
+            return {
+                "status": "no record",
+                "rows": [],
+                "caption": "confidence refused: no study record beside this dump",
+                "basis": [],
+                "sources": [],
+            }
+        rows = []
+        rows.extend(_confidence_mesh_rows(record))
+        rows.extend(_confidence_resolution_rows(record))
+        rows.extend(_confidence_referee_rows(record, referee))
+        rows.extend(_confidence_extraction_rows(record))
+        rows.extend(_confidence_caveat_rows(record))
+        return {
+            "status": "ok",
+            "rows": rows,
+            "caption": (
+                "every row is derived from the study record beside this dump; "
+                "each names its own basis. A value that reads ABSENT or "
+                "'not serialised' is MISSING FROM THE FILE, not zero."
+            ),
+            "basis": [
+                "cells per wavelength = (2*pi/beta) / cell_m: lambda from the "
+                "RECORDED beta, counted in mesh cells",
+                "mesh product = nx*ny*nz, compared with the recorded geometry.cells",
+                "beta spread = (line.beta / line.beta_model - 1) * 100",
+                f"referee deviation = |s11.magnitude / {REFEREE_S11_KEY} - 1| * 100, "
+                "at the referee's own recorded f_hz",
+                "frequency deviation = (geometry.f / geometry.f_target - 1) * 100",
+                "acceptance tally = count of ac[*].pass over True / False / null",
+            ],
+            "sources": [
+                f"record: {record_path or 'in memory'}",
+                f"referee: {REFEREE_S11_FILE} as {REFEREE_S11_KEY}",
+                "geometry.cell_m, geometry.grid, geometry.cells, geometry.f, "
+                "geometry.f_target",
+                "line.beta, line.beta_model, line.sigma_beta_from_curvature, "
+                "line.station_fit_n, line.load_station_excluded, line.z0_re, "
+                "line.z0_im",
+                "run.station_fit.z0_re, run.station_fit.z0_im",
+                "s11.magnitude, s11.validation_status, s11.validation_reason, "
+                "s11.station_phasors.n",
+                "ac.*.pass, meta.git_rev",
+            ],
+        }
+    except Exception as exc:  # noqa: BLE001 - the panel is not the page
+        return {
+            "status": "unavailable",
+            "rows": [],
+            "caption": f"confidence unavailable: {type(exc).__name__}: {exc}",
+            "basis": [],
+            "sources": [],
+        }
 
 
 def _multifreq_block(path):
@@ -4925,6 +5338,21 @@ def run_web_vis(
     state.mode_view_label = _mode_button_label(None)
     state.mode_view_caption = _mode_caption_text(None)
 
+    # The Confidence & Accuracy panel: TEXT, full width, under the provenance
+    # lines. It gets no flex column of its own because it is prose, not a
+    # picture, and its visibility is the SAME one-string rule as the
+    # S-parameters panel: closed it is `display: none;`, and what the browser is
+    # told is exactly what a headless proof can read back off the layout.
+    confidence_shown = (
+        "display: block; max-height: 40vh; overflow-y: auto; "
+        "border-top: 1px solid #d0d0d0; padding: 4px 0;"
+    )
+    state.confidence_open = False
+    state.confidence_label = "Confidence & Accuracy"
+    state.confidence_style = s_params_hidden
+    state.confidence_caption = ""
+    state.confidence_rows = ""
+
     # Provenance, from the dump's own record (see _structure_readout_text).
     state.structure_readout = _structure_readout_text(info)
 
@@ -5487,6 +5915,64 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - the panel is not the page
             print(f"[poc_app] s-params panel unavailable: {exc}", file=sys.stderr)
 
+    def _build_confidence() -> dict:
+        """Read this page's record (and the referee) and render the panel rows.
+
+        The ONLY I/O this panel does: the record beside the dump now on screen,
+        plus the referee extraction when it is on disk. The rows themselves are
+        ``build_confidence_block``'s - a pure function - so what a test asserts on
+        and what a reader sees are the same strings.
+        """
+        info = page["info"]
+        referee = None
+        referee_path = _referee_s11_path()
+        if referee_path is not None and Path(referee_path).is_file():
+            referee = _read_json(referee_path)
+        block = build_confidence_block(
+            _field_record(info["path"]), referee, record_path=str(info["path"])
+        )
+        footer = list(block.get("basis") or []) + list(block.get("sources") or [])
+        lines = [f"{label}: {text}" for label, text in block.get("rows") or []]
+        if footer:
+            lines.append("")
+            lines.extend(footer)
+        return {
+            "caption": block["caption"],
+            "text": "\n".join(lines),
+            "status": block["status"],
+        }
+
+    @ctrl.set("confidence_toggle")
+    def _on_confidence_toggle(**_kwargs) -> None:
+        """Open or close the Confidence & Accuracy panel; derive on FIRST open.
+
+        Lazy like the S-parameters panel and for the same reason: reading the
+        record and the referee file is I/O a reader who never opens the panel
+        never pays for. ``handles["confidence"]`` is the cache, and it is dropped
+        when a solve replaces the page.
+
+        Nothing here may raise: the panel is an extra beside the animation, so a
+        failure costs the panel and one stderr line.
+        """
+        try:
+            if state.confidence_open:
+                state.confidence_open = False
+                state.confidence_style = s_params_hidden
+                state.confidence_label = "Confidence & Accuracy"
+                return
+            if "confidence" not in handles:
+                handles["confidence"] = _build_confidence()
+            panel = handles["confidence"]
+            # A refused panel OPENS too: "no study record beside this dump" is
+            # the answer a reader pressed the button for.
+            state.confidence_caption = panel["caption"]
+            state.confidence_rows = panel["text"]
+            state.confidence_open = True
+            state.confidence_style = confidence_shown
+            state.confidence_label = "Hide Confidence & Accuracy"
+        except Exception as exc:  # noqa: BLE001 - the panel is not the page
+            print(f"[poc_app] confidence panel unavailable: {exc}", file=sys.stderr)
+
     @ctrl.set("mode_view_toggle")
     async def _on_mode_view(**_kwargs) -> None:
         """Solve the 2D cross-section for the page ON SCREEN, OFF the event loop.
@@ -5558,6 +6044,34 @@ def run_web_vis(
                 pre_cls(
                     "{{ s_params_rows }}",
                     style=("s_params_rows_style", "display: none;"),
+                )
+
+    def _emit_confidence_panel() -> None:
+        """Emit the Confidence & Accuracy panel as TEXT under the readouts.
+
+        Bound to state throughout, because the record is read on the first open
+        and not while the layout is being built. The rows are pre-wrapped
+        monospace: they are a table of prose, and none of them is a picture.
+        """
+        if html_div is None:
+            return
+        with html_div(style=("confidence_style", s_params_hidden)):
+            html_div(
+                "{{ confidence_label }}",
+                style="font-size: 12px; font-weight: 600; padding: 2px 0;",
+            )
+            html_div(
+                "{{ confidence_caption }}",
+                style="font-size: 11px; color: #333; padding: 2px 0;",
+            )
+            pre_cls = getattr(html_widgets, "Pre", None)
+            if pre_cls is not None:
+                pre_cls(
+                    "{{ confidence_rows }}",
+                    style=(
+                        "font-size: 10px; white-space: pre-wrap; "
+                        "margin: 4px 0;"
+                    ),
                 )
 
     async def _play_loop(gen: int) -> None:
@@ -5686,6 +6200,9 @@ def run_web_vis(
         # The S-parameters panel read the OLD page's arm: drop the cache so the
         # next open reads the sweep that belongs to the dump now on screen.
         handles.pop("s_params", None)
+        # Same for the Confidence panel: its rows name the keys of the record it
+        # read, so the next open must re-derive them from THIS dump.
+        handles.pop("confidence", None)
         _rebuild_sheets()
         state.solve_status = f"solved -> {Path(applied['new_path']).name}"
 
@@ -5795,6 +6312,15 @@ def run_web_vis(
                         "{{ mode_view_label }}",
                         click=ctrl.mode_view_toggle,
                     )
+                    # The Confidence & Accuracy control, in the SAME guarded
+                    # block: its label is bound, so the button says what the
+                    # next press will do. A binding failure here costs this
+                    # panel, never the solve button or the animation.
+                    if html_div is not None:
+                        widgets["VBtn"](
+                            "{{ confidence_label }}",
+                            click=ctrl.confidence_toggle,
+                        )
                 solve_xcut_field = getattr(widgets_module, "VTextField", None)
                 if solve_xcut_field is not None:
                     solve_xcut_field(
@@ -5858,6 +6384,7 @@ def run_web_vis(
                                 "{{ mode_view_caption }}",
                                 style="padding: 2px 0;",
                             )
+                            _emit_confidence_panel()
                             # Two things the button does NOT tell you: where it
                             # runs, and what it cannot produce.
                             html_div(
