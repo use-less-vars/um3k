@@ -5593,21 +5593,35 @@ def run_web_vis(
     state.frame_max = nt - 1
     state.play_label = "play"
 
-    # The S-parameters panel: CLOSED at boot, and its visibility lives in ONE
-    # state STRING rather than in a Vue directive. A style attribute is set by
-    # the server and can be read back off the layout, so what the browser is told
-    # and what a headless proof asserts on are literally the same value; a
-    # directive's effect is only ever visible in a browser. Closed, the string is
-    # `display: none;` and the panel is OUT of the flex row entirely, leaving the
-    # 3-D view at the full width it has today.
-    s_params_hidden = "display: none;"
-    s_params_shown = (
-        "flex: 0 0 420px; max-width: 420px; overflow-y: auto; "
-        "border-left: 1px solid #d0d0d0; padding: 4px 8px;"
-    )
-    state.s_params_open = False
-    state.s_params_label = "S-Parameters"
-    state.s_params_style = s_params_hidden
+    # Keyboard shortcuts (Space = play/pause, arrows = step). The browser side is
+    # server/web_assets/keyboard.js; it calls the very same trigger names the
+    # buttons are bound to, so there is one implementation of each action.
+    #
+    # The serve KEY is deliberately relative ("__trame_kbd") while the DIRECTORY
+    # is absolute: trame publishes the route and the page fetches it relative to
+    # its own base href, so a relative key survives being served under a URL
+    # prefix, while aiohttp resolves the directory against the process cwd, which
+    # a relative path would get wrong the moment the server is started from
+    # anywhere but the repo root.
+    #
+    # Wrapped because shortcuts are a convenience: a trame build that does not
+    # take this module dict must still serve the page.
+    try:
+        server.enable_module(
+            {
+                "serve": {
+                    "__trame_kbd": str(Path(__file__).resolve().parent / "web_assets")
+                },
+                "scripts": ["__trame_kbd/keyboard.js"],
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[poc_app] keyboard shortcuts unavailable: {exc}", file=sys.stderr)
+
+    # The S-parameters pane: the TAB owns its visibility, so there is no style
+    # string, no label and no open flag here. What a headless proof can read is
+    # the PANEL - built at layout time and cached in ``handles["s_params"]`` -
+    # plus the payload strings pushed from it, which its tab shows as-is.
     state.s_params_caption = ""
     state.s_params_number = ""
     state.s_params_image = ""
@@ -5623,18 +5637,10 @@ def run_web_vis(
     state.mode_view_label = _mode_button_label(None)
     state.mode_view_caption = _mode_caption_text(None)
 
-    # The Confidence & Accuracy panel: TEXT, full width, under the provenance
-    # lines. It gets no flex column of its own because it is prose, not a
-    # picture, and its visibility is the SAME one-string rule as the
-    # S-parameters panel: closed it is `display: none;`, and what the browser is
-    # told is exactly what a headless proof can read back off the layout.
-    confidence_shown = (
-        "display: block; max-height: 40vh; overflow-y: auto; "
-        "border-top: 1px solid #d0d0d0; padding: 4px 0;"
-    )
-    state.confidence_open = False
-    state.confidence_label = "Confidence & Accuracy"
-    state.confidence_style = s_params_hidden
+    # The Confidence & Accuracy pane: TEXT, prose rather than a picture. Its tab
+    # owns its visibility, so (like the S-parameters pane) there is no style
+    # string, no label and no open flag - only the caption and the rows a
+    # headless proof can read back off the state and off the cached panel.
     state.confidence_caption = ""
     state.confidence_rows = ""
 
@@ -6153,31 +6159,27 @@ def run_web_vis(
             "number": _s_params_number_text(multifreq, f_ref_ghz),
         }
 
-    @ctrl.set("s_params_toggle")
-    def _on_s_params_toggle(**_kwargs) -> None:
-        """Open or close the S-parameters panel; load the sweep on FIRST open only.
+    def _load_s_params_panel() -> None:
+        """Populate the S-parameters panel; the tab owns its visibility.
 
-        Lazy on purpose: a reader who never opens the panel never pays for the
-        JSON parse or the matplotlib render. ``handles["s_params"]`` is the
-        cache - a second open re-uses the same parsed rows and the same PNG, and
-        the state strings pushed from it are identical.
+        Called ONCE while the layout is being built, not from a controller
+        trigger: there is no button to press any more, so the JSON parse and the
+        matplotlib render are paid here and the tab is populated the first time
+        it is selected. ``handles["s_params"]`` is still the cache - a second
+        call re-uses the same parsed rows and the same PNG, and the state strings
+        pushed from it are identical.
 
         Nothing here may raise: the panel is an extra, so a failure costs the
         panel and one stderr line, never the animation beside it.
         """
         try:
-            if state.s_params_open:
-                state.s_params_open = False
-                state.s_params_style = s_params_hidden
-                state.s_params_label = "S-Parameters"
-                return
             if "s_params" not in handles:
                 handles["s_params"] = _build_s_params()
             panel = handles["s_params"]
             caption = panel["caption"]
-            # No data is still an ANSWER, and the panel opens to show it: the
-            # caption names the arm and every path that was looked for. A press
-            # that silently did nothing would be the worse outcome.
+            # No data is still an ANSWER, and the panel shows it: the caption
+            # names the arm and every path that was looked for. A panel that
+            # silently stayed empty would be the worse outcome.
             image = panel.get("image")
             if image:
                 state.s_params_image = image
@@ -6194,9 +6196,6 @@ def run_web_vis(
                     caption += f" (text rows instead: {panel['reason']})"
             state.s_params_caption = caption
             state.s_params_number = panel["number"]
-            state.s_params_open = True
-            state.s_params_style = s_params_shown
-            state.s_params_label = "Hide S-Parameters"
         except Exception as exc:  # noqa: BLE001 - the panel is not the page
             print(f"[poc_app] s-params panel unavailable: {exc}", file=sys.stderr)
 
@@ -6227,34 +6226,26 @@ def run_web_vis(
             "status": block["status"],
         }
 
-    @ctrl.set("confidence_toggle")
-    def _on_confidence_toggle(**_kwargs) -> None:
-        """Open or close the Confidence & Accuracy panel; derive on FIRST open.
+    def _load_confidence_panel() -> None:
+        """Populate the Confidence & Accuracy panel; the tab owns its visibility.
 
-        Lazy like the S-parameters panel and for the same reason: reading the
-        record and the referee file is I/O a reader who never opens the panel
-        never pays for. ``handles["confidence"]`` is the cache, and it is dropped
-        when a solve replaces the page.
+        Called ONCE while the layout is being built, like the S-parameters
+        loader: reading the record and the referee file is I/O that no button
+        gates any more, so it is paid at layout time and the tab holds text the
+        first time it is selected. ``handles["confidence"]`` is still the cache,
+        and it is dropped when a solve replaces the page.
 
         Nothing here may raise: the panel is an extra beside the animation, so a
         failure costs the panel and one stderr line.
         """
         try:
-            if state.confidence_open:
-                state.confidence_open = False
-                state.confidence_style = s_params_hidden
-                state.confidence_label = "Confidence & Accuracy"
-                return
             if "confidence" not in handles:
                 handles["confidence"] = _build_confidence()
             panel = handles["confidence"]
-            # A refused panel OPENS too: "no study record beside this dump" is
-            # the answer a reader pressed the button for.
+            # A refused panel is FILLED too: "no study record beside this dump"
+            # is the answer its tab exists to show.
             state.confidence_caption = panel["caption"]
             state.confidence_rows = panel["text"]
-            state.confidence_open = True
-            state.confidence_style = confidence_shown
-            state.confidence_label = "Hide Confidence & Accuracy"
         except Exception as exc:  # noqa: BLE001 - the panel is not the page
             print(f"[poc_app] confidence panel unavailable: {exc}", file=sys.stderr)
 
@@ -6295,57 +6286,128 @@ def run_web_vis(
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
     def _emit_solve_controls() -> None:
-        """Emit the SOLVE controls; the caller decides which column they land in.
+        """Emit the SETUP column as a three-section engineering form.
 
-        Hoisted out of the toolbar so the SETUP column and the no-container
-        fallback can emit the same controls without the code being written
-        twice. The try/except guard, the labels and the bindings are verbatim.
+        The caller decides which column the form lands in (the SETUP VCol, or the
+        bare content area on the no-container fallback), so nothing here sizes or
+        places the form itself: the column owns the width, the padding and the
+        scroll. The form is a plain stack rather than a VContainer for the same
+        reason - a container would add its own max-width and centring on top of a
+        230 px column that already has both.
+
+        Order is the order a run is set up in: Project (which arm), Mesh &
+        Geometry (where the cut plane is, which cross-section is shown), Action
+        (the solve, and what it said).
+
+        Every widget class is resolved with the same getattr idiom the controls
+        use, so a variant shipping no VCard degrades to a label plus the same
+        controls instead of a traceback: the cards are the frame, the controls
+        are the point.
         """
-        # The SOLVE controls, in their OWN guarded block: a binding failure
-        # here costs the solve button, never play/pause or the S-Parameters
-        # panel.
-        try:
-            if "VBtn" in widgets:
-                widgets["VBtn"]("{{ solve_label }}", click=ctrl.solve_start)
-                # The Mode control, in the SAME guarded block: its label is
-                # bound, so the button itself says whether the panel is
-                # unsolved, solved or refused. A binding failure here costs
-                # the mode panel, never play/pause or the solve button.
-                widgets["VBtn"](
-                    "{{ mode_view_label }}",
-                    click=ctrl.mode_view_toggle,
+        card_cls = getattr(widgets_module, "VCard", None)
+        card_title_cls = getattr(widgets_module, "VCardTitle", None)
+        card_text_cls = getattr(widgets_module, "VCardText", None)
+        divider_cls = getattr(widgets_module, "VDivider", None)
+        cards = None not in (card_cls, card_title_cls, card_text_cls)
+
+        def _section(title: str, body, *, first: bool = False) -> None:
+            """Emit ONE section: a titled card, or the flat label fallback.
+
+            WHY cards and not expansion panels: each section holds four controls
+            or fewer, so collapsing one would hide settings behind a click that
+            buys no space - and a panel carries its own open/closed state, which
+            is exactly the hidden state the DATA column's tabs just removed. A
+            rule is drawn between sections ONLY on the fallback path, where it is
+            the one thing separating them; a card already draws that edge.
+            """
+            if cards:
+                with card_cls(classes="mb-2"):
+                    card_title_cls(title)
+                    with card_text_cls():
+                        body()
+                return
+            if not first and divider_cls is not None:
+                divider_cls(classes="my-2")
+            if "VLabel" in widgets:
+                widgets["VLabel"](title)
+            body()
+
+        def _project() -> None:
+            solve_arm_field = getattr(widgets_module, "VSelect", None)
+            if solve_arm_field is not None:
+                # The label reads Structure because that is what the value IS -
+                # the map is keyed by the arm's id; items and default are
+                # behaviour and stay exactly as they were.
+                solve_arm_field(
+                    v_model=("solve_structure", default_arm),
+                    items=list(MULTIFREQ_BY_STRUCTURE),
+                    label="Structure",
+                    density="compact",
+                    hide_details=True,
+                    classes="mb-1",
                 )
-                # The Confidence & Accuracy control, in the SAME guarded
-                # block: its label is bound, so the button says what the
-                # next press will do. A binding failure here costs this
-                # panel, never the solve button or the animation.
-                if html_div is not None:
-                    widgets["VBtn"](
-                        "{{ confidence_label }}",
-                        click=ctrl.confidence_toggle,
-                    )
+
+        def _mesh_and_geometry() -> None:
+            # The old max-width/margin styles are gone: inside a card the
+            # controls take the card's width, and `mb-1` restores the vertical
+            # rhythm the old single-row margins provided.
             solve_xcut_field = getattr(widgets_module, "VTextField", None)
             if solve_xcut_field is not None:
                 solve_xcut_field(
                     v_model=("solve_xcut_mm", SOLVE_DEFAULT_XCUT_MM),
-                    label="x_cut [mm]",
+                    label="Cut plane x [mm]",
                     type="number",
                     density="compact",
                     hide_details=True,
-                    style="max-width: 120px; margin: 0 8px;",
+                    classes="mb-1",
+                )
+            # The Mode control sits HERE and not in Action: it does not solve
+            # the structure, it redraws the cross-section of the page already on
+            # screen. Its label is bound, so the button itself says whether the
+            # panel is unsolved, solved or refused.
+            if "VBtn" in widgets:
+                widgets["VBtn"](
+                    "{{ mode_view_label }}",
+                    click=ctrl.mode_view_toggle,
                 )
             solve_arm_field = getattr(widgets_module, "VSelect", None)
             if solve_arm_field is not None:
+                # PLACEHOLDER, and disabled is the honest state: the solve takes
+                # its mesh from the study record, there is no auto-meshing to
+                # configure yet, and a live selector here would imply a setting
+                # that changes nothing. It marks where the control will live
+                # without pretending it works - hence no handler and the
+                # throwaway state name.
                 solve_arm_field(
-                    v_model=("solve_structure", default_arm),
-                    items=list(MULTIFREQ_BY_STRUCTURE),
-                    label="arm",
+                    v_model=("mesh_size_placeholder", "fixed (0.5 mm)"),
+                    items=["fixed (0.5 mm)"],
+                    label="Mesh size",
                     density="compact",
                     hide_details=True,
-                    style="max-width: 110px; margin: 0 8px;",
+                    disabled=True,
+                    classes="mb-1",
+                )
+
+        def _action() -> None:
+            if "VBtn" in widgets:
+                # Full width and large: this is the one control that starts a
+                # multi-second job, so it is the one that should read as the
+                # primary action of the column.
+                widgets["VBtn"](
+                    "{{ solve_label }}",
+                    click=ctrl.solve_start,
+                    size="large",
+                    style="width: 100%;",
                 )
             if "VLabel" in widgets:
                 widgets["VLabel"]("{{ solve_status }}")
+
+        # The SOLVE form, in its OWN guarded block: a binding failure here costs
+        # the solve form, never play/pause or the S-Parameters panel.
+        try:
+            _section("Project", _project, first=True)
+            _section("Mesh & Geometry", _mesh_and_geometry)
+            _section("Action", _action)
         except Exception as exc:  # noqa: BLE001 - solve UI is optional
             print(
                 f"[poc_app] solve controls unavailable: {exc}",
@@ -6355,69 +6417,67 @@ def run_web_vis(
                 widgets["VLabel"]("solve unavailable (binding failed)")
 
     def _emit_s_params_panel() -> None:
-        """Emit the |S11| / |S21| panel BESIDE the 3-D view, caption first.
+        """Emit the |S11| / |S21| panel inside its TAB, caption first.
 
-        Everything inside is bound to state, because the sweep is read on the
-        first open of the panel and not while the layout is being built. The
-        wrapper's visibility is the ``s_params_style`` string itself: closed it
-        is `display: none;`, which removes the panel from the flex row instead of
-        reserving a blank column beside the picture.
+        Everything inside is bound to state. The TAB owns visibility, so there is
+        no visibility wrapper and no style string here: a tab that is not
+        selected hides this content without a widget being created or destroyed,
+        and the payload it shows was pushed by ``_load_s_params_panel`` before
+        the tabs were built.
         """
         if html_div is None:
             return
-        with html_div(style=("s_params_style", s_params_hidden)):
-            html_div(
-                "{{ s_params_label }}",
-                style="font-size: 12px; font-weight: 600; padding: 2px 0;",
+        html_div(
+            "S-Parameters",
+            style="font-size: 12px; font-weight: 600; padding: 2px 0;",
+        )
+        html_div(
+            "{{ s_params_number }}",
+            style="font-size: 12px; padding: 2px 0;",
+        )
+        html_div(
+            "{{ s_params_caption }}",
+            style="font-size: 11px; color: #333; padding: 2px 0;",
+        )
+        img_cls = getattr(html_widgets, "Img", None)
+        if img_cls is not None:
+            img_cls(
+                src=("s_params_image", ""),
+                style=("s_params_image_style", "display: none;"),
             )
-            html_div(
-                "{{ s_params_number }}",
-                style="font-size: 12px; padding: 2px 0;",
+        pre_cls = getattr(html_widgets, "Pre", None)
+        if pre_cls is not None:
+            pre_cls(
+                "{{ s_params_rows }}",
+                style=("s_params_rows_style", "display: none;"),
             )
-            html_div(
-                "{{ s_params_caption }}",
-                style="font-size: 11px; color: #333; padding: 2px 0;",
-            )
-            img_cls = getattr(html_widgets, "Img", None)
-            if img_cls is not None:
-                img_cls(
-                    src=("s_params_image", ""),
-                    style=("s_params_image_style", "display: none;"),
-                )
-            pre_cls = getattr(html_widgets, "Pre", None)
-            if pre_cls is not None:
-                pre_cls(
-                    "{{ s_params_rows }}",
-                    style=("s_params_rows_style", "display: none;"),
-                )
 
     def _emit_confidence_panel() -> None:
-        """Emit the Confidence & Accuracy panel as TEXT under the readouts.
+        """Emit the Confidence & Accuracy panel as TEXT inside its TAB.
 
-        Bound to state throughout, because the record is read on the first open
-        and not while the layout is being built. The rows are pre-wrapped
-        monospace: they are a table of prose, and none of them is a picture.
+        Bound to state throughout. The TAB owns visibility, so there is no
+        wrapper and no style string here. The rows are pre-wrapped monospace:
+        they are a table of prose, and none of them is a picture.
         """
         if html_div is None:
             return
-        with html_div(style=("confidence_style", s_params_hidden)):
-            html_div(
-                "{{ confidence_label }}",
-                style="font-size: 12px; font-weight: 600; padding: 2px 0;",
+        html_div(
+            "Confidence N-lambda",
+            style="font-size: 12px; font-weight: 600; padding: 2px 0;",
+        )
+        html_div(
+            "{{ confidence_caption }}",
+            style="font-size: 11px; color: #333; padding: 2px 0;",
+        )
+        pre_cls = getattr(html_widgets, "Pre", None)
+        if pre_cls is not None:
+            pre_cls(
+                "{{ confidence_rows }}",
+                style=(
+                    "font-size: 10px; white-space: pre-wrap; "
+                    "margin: 4px 0;"
+                ),
             )
-            html_div(
-                "{{ confidence_caption }}",
-                style="font-size: 11px; color: #333; padding: 2px 0;",
-            )
-            pre_cls = getattr(html_widgets, "Pre", None)
-            if pre_cls is not None:
-                pre_cls(
-                    "{{ confidence_rows }}",
-                    style=(
-                        "font-size: 10px; white-space: pre-wrap; "
-                        "margin: 4px 0;"
-                    ),
-                )
 
     async def _play_loop(gen: int) -> None:
         """Advance one frame per wall-clock step until the trigger bumps the
@@ -6461,6 +6521,40 @@ def run_web_vis(
         state.play_label = "pause"
         state.flush()
         asyncio.create_task(_play_loop(generation))
+
+    # REGISTERED WITH @ctrl.trigger, NOT @ctrl.set. The buttons are @ctrl.set
+    # controller METHODS; the trame protocol resolves what the browser calls via
+    # controller.trigger_fn(name), which only knows the names @ctrl.trigger put
+    # in `_triggers` (plus the auto `trigger__N` names minted for a
+    # ControllerFunction handed to a widget). A @ctrl.set name is not in that
+    # table, so `trame.trigger('play_toggle', ...)` finds `fn = None`, logs
+    # "Trigger %s seems to be missing" and returns None - a silent no-op, not an
+    # error. This name has to be a real trigger for the keyboard to reach the
+    # server at all.
+    @ctrl.trigger("kbd_shortcut")
+    async def _on_kbd_shortcut(key=None, **_kwargs) -> None:
+        """Dispatch ONE keyboard shortcut to the handler the button uses.
+
+        The wire contract, pinned by the tests: the browser calls
+        ``window.trame.trigger("kbd_shortcut", [event.key], {})``, the protocol
+        does ``fn(*args)``, so ``key`` arrives positionally and is
+        ``event.key``. The mapping below calls the button closures directly
+        rather than duplicating their bodies, so a shortcut cannot drift from
+        its button. The play handler is async, which is why this one is too
+        (the protocol awaits an awaitable result).
+
+        An unknown or missing key is a silent no-op: a client on a different
+        keyboard layout must never be able to raise inside an RPC.
+        """
+        action = {" ": "play", "ArrowLeft": "back", "ArrowRight": "fwd"}.get(
+            key if isinstance(key, str) else ""
+        )
+        if action == "play":
+            await _on_play_toggle()
+        elif action == "back":
+            _on_step_back()
+        elif action == "fwd":
+            _on_step_fwd()
 
     # ---- the SOLVE control --------------------------------------------------
     # A solve is a CHILD PROCESS (see SolveJob): the page keeps drawing while it
@@ -6542,12 +6636,17 @@ def run_web_vis(
             state.solve_status = f"solve ok, but the new dump did not load: {exc}"
             print(f"[poc_app] solved dump not loaded: {exc}", file=sys.stderr)
             return
-        # The S-parameters panel read the OLD page's arm: drop the cache so the
-        # next open reads the sweep that belongs to the dump now on screen.
+        # Both panels read the OLD page's arm: drop the caches so the refill
+        # below re-reads the sweep and the record that belong to the dump now on
+        # screen.
         handles.pop("s_params", None)
-        # Same for the Confidence panel: its rows name the keys of the record it
-        # read, so the next open must re-derive them from THIS dump.
         handles.pop("confidence", None)
+        # Refill them HERE, not "on the next open": the tabs own visibility now,
+        # so no button triggers a rebuild any more - without this the tabs would
+        # keep the previous page's caption and rows for good. Both loaders
+        # swallow their own failures (stderr only), so no guard is needed here.
+        _load_s_params_panel()
+        _load_confidence_panel()
         _rebuild_sheets()
         state.solve_status = f"solved -> {Path(applied['new_path']).name}"
 
@@ -6778,32 +6877,22 @@ def run_web_vis(
                                         "S-Parameters panel keeps whatever sweep file "
                                         "it already finds."
                                     )
-                                # The S-parameters control is NOT a playback
-                                # button: it belongs beside the panel it opens, so
-                                # it sits in this column's header, above the tabs.
-                                # Both guards are the ones it had inside the
-                                # playback block: no html widgets means no panel to
-                                # open, so no button.
-                                if "VBtn" in widgets:
-                                    try:
-                                        if html_div is not None:
-                                            widgets["VBtn"](
-                                                "{{ s_params_label }}",
-                                                click=ctrl.s_params_toggle,
-                                            )
-                                    except Exception as exc:  # noqa: BLE001
-                                        print(
-                                            f"[poc_app] S-parameters button "
-                                            f"unavailable: {exc}",
-                                            file=sys.stderr,
-                                        )
+                                # Fill both panels ONCE, here, at layout time:
+                                # the tabs own visibility now, so there is no
+                                # button and no first click to load on - whichever
+                                # tab a reader selects must already hold its text.
+                                # Each loader swallows its own failure (stderr).
+                                for _load_panel in (
+                                    _load_s_params_panel,
+                                    _load_confidence_panel,
+                                ):
+                                    _load_panel()
                                 # DATA: one tab per panel, so the column holds the
                                 # readout plus ONE open panel instead of three
-                                # stacked ones. Every panel keeps its own
-                                # html_div(style=...) visibility wrapper INSIDE its
-                                # tab, so the existing toggle still hides a panel
-                                # by CSS - no widget is created or destroyed, and
-                                # the state names and defaults are unchanged.
+                                # stacked ones. The TAB owns visibility here: no
+                                # wrapper, no style string and no toggle button,
+                                # because selecting a tab already shows the panel
+                                # the eager loader above has just filled in.
                                 tabs_cls = getattr(widgets_module, "VTabs", None)
                                 tab_cls = getattr(widgets_module, "VTab", None)
                                 tabs_window_cls = getattr(
@@ -6846,8 +6935,9 @@ def run_web_vis(
                                     # the flat order they had before the tabs -
                                     # Confidence, then S-Parameters, then the Mode
                                     # caption that used to sit in the readout. Same
-                                    # emitters, same wrappers, same state names; only
-                                    # the container around them is missing.
+                                    # emitters, same state names, same eagerly
+                                    # loaded payloads; only the tab container around
+                                    # them is missing.
                                     _emit_confidence_panel()
                                     _emit_s_params_panel()
                                     html_div(

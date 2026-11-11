@@ -441,27 +441,35 @@ def _write_sweep(path: Path, rows) -> Path:
     return path
 
 
-def _press_s_params(app, info, monkeypatch, *, sweeps, runs):
-    """Boot the page with these per-arm maps, then press the S-parameters button.
+def _boot_s_params(app, info, monkeypatch, *, sweeps, runs):
+    """Boot the page with these per-arm maps and return the panel it BUILT.
 
-    The maps are patched on the module BEFORE the boot: ``run_web_vis`` reads the
-    frequency panel while it builds the layout as well, from the same maps.
+    There is no S-parameters button any more: the tab owns visibility, so
+    ``run_web_vis`` fills the panel while it lays the page out and caches it on
+    ``handles["s_params"]``. The maps are patched on the module BEFORE the boot
+    for exactly that reason - the eager load reads this arm's artefact off disk
+    during layout, not on a click.
+
+    ``handles``/``state`` come off the play trigger's closure: it is still the
+    page's own dict and object, and a stand-in would prove nothing about the
+    live page.
     """
     monkeypatch.setattr(app, "MULTIFREQ_BY_STRUCTURE", dict(sweeps))
     monkeypatch.setattr(app, "SINGLE_RUN_BY_STRUCTURE", dict(runs))
     app, srv = _boot_app(info)
-    trigger = _registered_trigger(srv.controller, "s_params_toggle")
+    trigger = _registered_trigger(srv.controller, TRIGGER_NAME)
     cells = _closure_cells(trigger)
     assert "handles" in cells and "state" in cells, (
-        "the S-parameters trigger is not closed over the page's `handles` and "
+        "the play trigger is not closed over the page's `handles` and "
         f"`state` (freevars: {sorted(cells)}), so the live panel cannot be "
         "asserted on and a stand-in would prove nothing"
     )
     handles, state = cells["handles"], cells["state"]
-    trigger()  # first press: reads this arm's artefact off disk
     assert "s_params" in handles, (
-        "the S-parameters press never cached handles['s_params']: the handler "
-        "raised before building the panel"
+        "no handles['s_params'] after the layout was built: the panel is now "
+        "built AT LAYOUT TIME (there is no S-parameters button left to press), "
+        "so a missing entry means run_web_vis never eager-loaded it - or the "
+        "loader raised and only printed to stderr"
     )
     return handles["s_params"], state
 
@@ -483,7 +491,7 @@ def test_s_params_panel_dispatches_on_structure(tmp_path: Path, monkeypatch) -> 
     )
     info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
 
-    panel, state = _press_s_params(
+    panel, state = _boot_s_params(
         app, info, monkeypatch,
         sweeps={"A": str(a_summary), "B": str(b_summary)},
         runs={},
@@ -508,9 +516,17 @@ def test_s_params_panel_dispatches_on_structure(tmp_path: Path, monkeypatch) -> 
     assert a_summary.name not in caption, (
         f"the caption names A's sweep on a B dump: {caption!r}"
     )
-    assert state.s_params_style != "display: none;", (
-        "the panel was built from a real sweep but was left closed (style "
-        f"{state.s_params_style!r})"
+    assert panel.get("image") or panel.get("rows"), (
+        "the panel was built from a real sweep but carries neither a picture nor "
+        f"text rows for its tab to show (image={panel.get('image')!r}, "
+        f"rows={panel.get('rows')!r}): the eager load built nothing"
+    )
+    assert state.s_params_caption == panel["caption"] and (
+        state.s_params_number == panel["number"]
+    ), (
+        "the tab's state strings are not the panel's, so its tab would open "
+        f"empty beside a real sweep (caption {state.s_params_caption!r}, "
+        f"number {state.s_params_number!r})"
     )
 
 
@@ -528,7 +544,7 @@ def test_s_params_panel_never_borrows_the_other_arm(tmp_path: Path,
     )
     info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
 
-    panel, _state = _press_s_params(
+    panel, _state = _boot_s_params(
         app, info, monkeypatch,
         sweeps={"A": str(a_summary),
                 "B": str(tmp_path / "sweeps" / "missing_B_multifreq_summary.json")},
@@ -552,14 +568,14 @@ def test_s_params_panel_never_borrows_the_other_arm(tmp_path: Path,
 
 
 def test_s_params_panel_reports_no_data(tmp_path: Path, monkeypatch) -> None:
-    """Neither arm has an artefact: the press opens and says so, and does not raise."""
+    """Neither arm has an artefact: the tab loads and says so, and does not raise."""
     import poc_app as app
 
     dump = tmp_path / "dumps" / "b.npz"
     dump.parent.mkdir(parents=True)
     info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
 
-    panel, state = _press_s_params(app, info, monkeypatch, sweeps={}, runs={})
+    panel, state = _boot_s_params(app, info, monkeypatch, sweeps={}, runs={})
 
     assert panel["reason"] == "no S-parameter data", (
         "the empty panel did not report the reason it had nothing to show: "
@@ -575,12 +591,66 @@ def test_s_params_panel_reports_no_data(tmp_path: Path, monkeypatch) -> None:
     assert panel["points"] == [] and panel["image"] is None and panel["rows"] == [], (
         "the empty panel carried rows, a point or a picture it could not have read"
     )
-    assert state.s_params_style != "display: none;", (
-        "the press left the panel closed instead of opening it onto the honest "
-        f"'no S-parameter data' caption (style {state.s_params_style!r})"
+    assert panel["caption"] in state.s_params_caption, (
+        "the 'no S-parameter data' panel was built but its caption never reached "
+        f"the tab's state ({state.s_params_caption!r} does not contain "
+        f"{panel['caption']!r}), so the tab would open empty instead of saying so "
+        "- note the state caption legitimately appends the text-rows reason"
     )
-    assert state.s_params_open is True, (
-        "state.s_params_open stayed False: the caption would never be visible"
+
+
+def test_the_s_parameters_tab_is_selected_and_populated_without_a_click(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The boot alone selects the S-Parameters tab AND fills it - no click.
+
+    The tab owns visibility now: there is no S-parameters button and no
+    ``s_params_style`` string, so the page has to arrive with its default tab
+    selected AND with a cached, non-empty panel behind it. That is the whole
+    contract this test pins.
+
+    What it cannot prove: that Vuetify actually RENDERS the tab body in a
+    browser. The layout is a server-side declaration and ``v_model`` is only
+    consumed by the client, so a headless proof can show the selection and the
+    payload but not the pixels. It also cannot prove which tab a human ends up
+    looking at after clicking - only the page's own default selection.
+    """
+    import poc_app as app
+
+    dump = tmp_path / "dumps" / "b.npz"
+    dump.parent.mkdir(parents=True)
+    summary = _write_sweep(
+        tmp_path / "sweeps" / "build_B_100ohm_multifreq_summary.json",
+        [(4.0, 0.48, 0.53), (5.0, 0.47, 0.52)],
+    )
+    info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
+
+    # No interaction of any kind: the helper only boots and looks.
+    panel, state = _boot_s_params(
+        app, info, monkeypatch,
+        sweeps={"B": str(summary)},
+        runs={},
+    )
+
+    assert state.tab == "s_params", (
+        f"the page did not boot onto the S-Parameters tab (state.tab={state.tab!r}), "
+        "so the panel it filled would still be one click away"
+    )
+    assert panel["path"] == summary and len(panel["points"]) == 2, (
+        "the panel built at layout time did not read B's two-row sweep: "
+        f"path={panel['path']!r}, points={len(panel['points'])}"
+    )
+    assert panel.get("image") or panel.get("rows"), (
+        "the eagerly built tab has neither a picture nor text rows to show "
+        f"(image={panel.get('image')!r}, rows={panel.get('rows')!r})"
+    )
+    assert state.s_params_caption == panel["caption"], (
+        "the loader built the panel but never pushed its caption onto the tab's "
+        f"state ({state.s_params_caption!r} != {panel['caption']!r})"
+    )
+    assert state.s_params_number == panel["number"], (
+        "the loader never pushed the panel's number line onto the tab's state "
+        f"({state.s_params_number!r} != {panel['number']!r})"
     )
 
 
@@ -631,7 +701,7 @@ def test_sweep_beside_the_dump_wins_over_the_registry(tmp_path: Path,
     # here the old code would pass this test without ever scanning.
     info["path"] = str(info["path"])
 
-    panel, _state = _press_s_params(
+    panel, _state = _boot_s_params(
         app, info, monkeypatch,
         sweeps={"B": str(registry)},
         runs={},
@@ -687,7 +757,7 @@ def test_sweep_beside_the_dump_ignores_the_other_arm(tmp_path: Path,
     info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
     info["path"] = str(info["path"])
 
-    panel, _state = _press_s_params(
+    panel, _state = _boot_s_params(
         app, info, monkeypatch,
         # A registry entry that cannot match: it is not "multifreq"/"summary"
         # named and does not exist, so only the beside-dump scan can supply a
@@ -1610,4 +1680,312 @@ def test_confidence_panel_survives_absent_and_string_fields() -> None:
     assert str(refusal["caption"]).startswith("confidence refused"), (
         f"the refusal is not captioned as one: {refusal['caption']!r}"
     )
+
+
+# --- keyboard shortcuts: Space plays, the arrows step ------------------------
+# The BROWSER half is server/web_assets/keyboard.js.  Nothing below dispatches a
+# real keydown event - the suite has no browser, and a fake Event would only
+# prove the test wrote the same literals twice.  What IS proved here is the
+# SERVER half of the contract, which is the half that can silently rot:
+#   * the asset is actually registered with the client (otherwise the file can
+#     never run, however correct it is), and
+#   * the `kbd_shortcut` RPC reaches the very same handler each button is bound
+#     to - proved by asserting the effects the buttons have, not by inspecting
+#     the mapping in the handler.
+
+
+async def _press(kbd, key: str) -> None:
+    """One keyboard press as the page delivers it: an RPC that must return."""
+    try:
+        await asyncio.wait_for(kbd(key), timeout=RETURN_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        pytest.fail(
+            f"kbd_shortcut({key!r}) did not return within {RETURN_TIMEOUT_S}s: "
+            "an unreturned trigger leaves the client RPC pending and every "
+            "later control dead"
+        )
+
+
+async def _drain(tasks) -> None:
+    """Stop the play loop(s) these presses started, so the fixture stays clean."""
+    deadline = asyncio.get_running_loop().time() + LOOP_EXIT_TIMEOUT_S
+    for task in tasks:
+        while not task.done() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+def _kbd_binding(server):
+    """The `kbd_shortcut` trigger plus the LIVE objects the handler it calls writes.
+
+    Several tests in this module boot the page a second time, and trame's
+    ``get_server()`` hands the SAME server back, so ``ctrl.set`` re-registers on
+    top of itself over a FRESH ``handles`` dict.  The fixture's snapshot is
+    therefore one boot stale by the time these tests run: walk the closure chain
+    (kbd -> play handler -> its cells) instead, and assert on the dict the
+    registered handler actually bumps.
+    """
+    kbd = server.controller.trigger_fn("kbd_shortcut")
+    assert callable(kbd), (
+        "controller.trigger_fn('kbd_shortcut') returned "
+        f"{kbd!r}. The trame protocol looks a client trigger up in exactly this "
+        "table and returns None (with only a log line) when it is absent, so the "
+        "browser's window.trame.trigger('kbd_shortcut', ...) would be a silent "
+        "no-op. The handler must be registered with @ctrl.trigger, not @ctrl.set."
+    )
+    cells = _closure_cells(kbd)
+    play = cells.get("_on_play_toggle")
+    assert callable(play), (
+        "the kbd trigger is not closed over the play handler "
+        f"(freevars: {sorted(cells)}) - the shortcut is not dispatching to the "
+        "button's handler"
+    )
+    hcells = _closure_cells(play)
+    handles, state = hcells["handles"], hcells["state"]
+    assert state is server.state, (
+        "the play handler is not closed over the live server state"
+    )
+    return kbd, handles, state
+
+
+def test_keyboard_script_is_registered_with_the_client(playback):
+    """``keyboard.js`` is on the list of scripts the page loads.
+
+    The listener is not exercised (no browser here); this is the one thing that
+    decides whether it can ever run at all.
+    """
+    scripts = [str(s) for s in list(playback.server.state.trame__scripts)]
+    assert scripts, (
+        "the client's script list is empty: enable_module never reached state"
+    )
+    assert any(s.endswith("keyboard.js") for s in scripts), (
+        f"the client script list carries no keyboard.js: {scripts!r}"
+    )
+
+    # STATIC check of the one name the two halves must agree on. The listener is
+    # not executed (no browser here), but the trigger name it sends and the
+    # argument shape it sends are readable in the source, and a drift between
+    # them and the server registration is exactly the bug that ships silently:
+    # an unknown trigger name makes the protocol return None without an error.
+    js = (REPO_ROOT / "server" / "web_assets" / "keyboard.js").read_text()
+    kbd = playback.server.controller.trigger_fn("kbd_shortcut")
+    assert kbd is not None, (
+        "keyboard.js sends 'kbd_shortcut' but the server registered no such "
+        "trigger (trigger_fn returned None) - every shortcut would be dropped"
+    )
+    assert "'kbd_shortcut'" in js or '"kbd_shortcut"' in js, (
+        f"keyboard.js does not name the 'kbd_shortcut' trigger: {js[:200]!r}"
+    )
+    assert "[event.key]" in js, (
+        "keyboard.js no longer passes the pressed key as the trigger's first "
+        "positional argument, which is the shape _on_kbd_shortcut reads"
+    )
+
+
+def test_keyboard_space_is_the_play_button(playback):
+    """Space does exactly what the play button does - same handler, same effects.
+
+    A real keydown is not dispatched; this drives the RPC the listener emits.
+    """
+    async def scenario() -> None:
+        kbd, handles, state = _kbd_binding(playback.server)
+
+        if state.playing:  # module-scoped fixture: leave no press behind
+            await _press(kbd, " ")
+        assert state.playing is False, "could not get back to a stopped page"
+
+        baseline = int(handles.get("generation", 0))
+        tasks_before = _other_tasks()
+
+        await _press(kbd, " ")
+
+        # The same three effects the button's handler has, asserted on the live
+        # objects: the flag the template binds, the generation counter, and one
+        # background loop - not two.
+        created = _other_tasks() - tasks_before
+        try:
+            assert state.playing is True, (
+                "Space did not start playback; the shortcut did not reach the "
+                "play handler"
+            )
+            assert int(handles.get("generation", -1)) == baseline + 1, (
+                f"Space went generation {handles.get('generation')}, expected "
+                f"{baseline + 1}: the shortcut did not go through the play "
+                "handler's generation bump"
+            )
+            assert len(created) == 1, (
+                f"expected exactly 1 background loop from a Space press, found "
+                f"{len(created)}"
+            )
+        finally:
+            await _press(kbd, " ")
+            assert state.playing is False, (
+                "the second Space press did not stop playback"
+            )
+            assert int(handles.get("generation", -1)) == baseline + 2, (
+                "the second Space press did not bump the generation counter"
+            )
+            await _drain(created)
+
+    asyncio.run(scenario())
+
+
+def test_keyboard_arrows_are_the_step_buttons(playback):
+    """ArrowRight/ArrowLeft move the frame exactly as next/prev do.
+
+    A real keydown is not dispatched; this drives the RPC the listener emits.
+    The wrap-around is the step handlers' own ``% frames``, asserted here at the
+    frame level rather than by reading the handler's source.
+    """
+    async def scenario() -> None:
+        kbd, _handles, state = _kbd_binding(playback.server)
+
+        assert state.mode == "ycut", (
+            f"the page booted in mode {state.mode!r}, not 'ycut'"
+        )
+        frames = int(state.frame_max) + 1
+        assert frames > 1, f"the fixture only has {frames} frame(s)"
+        start = int(state.frame)
+
+        await _press(kbd, "ArrowRight")
+        assert int(state.frame) == (start + 1) % frames, (
+            f"ArrowRight moved frame {start} -> {state.frame}, expected "
+            f"{(start + 1) % frames}"
+        )
+
+        await _press(kbd, "ArrowLeft")
+        assert int(state.frame) == start, (
+            f"ArrowLeft did not walk the frame back to {start}: it is at "
+            f"{state.frame}"
+        )
+
+        # The step handlers are the buttons' handlers, so they also stop playback
+        # - a frame step while the animation is running is a race.
+        assert state.playing is False, (
+            "a keyboard frame step left playback running"
+        )
+
+    asyncio.run(scenario())
+
+
+def test_two_identical_space_presses_both_take_effect(playback):
+    """Start then stop from two presses of the SAME key.
+
+    The reason the listener uses ``trigger`` and not ``state.set``: a state
+    write is compared with the cached value client-side and dropped when equal,
+    so the second "pressed" would never be sent and the page would play forever.
+    Here the two presses are indistinguishable to the server, and both still
+    land.
+    """
+    async def scenario() -> None:
+        kbd, handles, state = _kbd_binding(playback.server)
+
+        if state.playing:
+            await _press(kbd, " ")
+        assert state.playing is False, "could not get back to a stopped page"
+
+        baseline = int(handles.get("generation", 0))
+        tasks_before = _other_tasks()
+
+        await _press(kbd, " ")
+        await _press(kbd, " ")
+
+        created = _other_tasks() - tasks_before
+        try:
+            assert state.playing is False, (
+                "the second identical Space press did not stop playback: this is "
+                "the state.set equality-guard bug the listener avoids by calling "
+                "trigger()"
+            )
+            assert int(handles.get("generation", -1)) == baseline + 2, (
+                f"two Space presses went generation {handles.get('generation')}, "
+                f"expected {baseline + 2} - one of them was swallowed"
+            )
+        finally:
+            await _drain(created)
+
+    asyncio.run(scenario())
+
+
+def test_js_trigger_call_shape_pins_the_wire_contract(playback):
+    """The JS -> trigger call shape: `trigger('kbd_shortcut', [key], {})` works.
+
+    This is the check that would have caught the shipped bug. The listener calls
+    ``window.trame.trigger(name, args, kwargs)``; the protocol resolves ``name``
+    with ``controller.trigger_fn`` (None for a name registered with
+    ``@ctrl.set`` - and None is a silent no-op, not an error) and then calls
+    ``fn(*args)``. So both halves are pinned here: the NAME resolves, and one
+    positional argument (the key) is the signature the handler accepts. A
+    handler with only ``**_kwargs`` would raise TypeError at this call.
+    """
+    async def scenario() -> None:
+        # exactly what the protocol does: look the name up in the trigger table
+        fn = playback.server.controller.trigger_fn("kbd_shortcut")
+        assert callable(fn), (
+            "trigger_fn('kbd_shortcut') is not callable "
+            f"({fn!r}): the browser's trigger('kbd_shortcut', ...) would be "
+            "dropped with a log line and no error"
+        )
+        cells = _closure_cells(fn)
+        play = cells["_on_play_toggle"]
+        handles, state = _closure_cells(play)["handles"], _closure_cells(play)["state"]
+        kbd = fn
+
+        if state.playing:
+            await _press(kbd, " ")
+        assert state.playing is False, "could not get back to a stopped page"
+        baseline = int(handles.get("generation", 0))
+        tasks_before = _other_tasks()
+
+        # the JS's exact call: args = [event.key], no kwargs -> fn(*[' '])
+        await _press(kbd, " ")
+
+        created = _other_tasks() - tasks_before
+        try:
+            assert state.playing is True, (
+                "the JS call shape did not reach the play handler"
+            )
+            assert int(handles.get("generation", -1)) == baseline + 1, (
+                "the JS call shape reached no generation bump: "
+                f"{handles.get('generation')} vs {baseline + 1}"
+            )
+        finally:
+            await _press(kbd, " ")
+            await _drain(created)
+
+    asyncio.run(scenario())
+
+
+def test_unknown_key_is_a_silent_no_op(playback):
+    """A key that is nobody's shortcut changes nothing and does not raise.
+
+    An RPC that raises surfaces as a broken page on a keyboard layout the
+    developer never tried, so an unhandled key must be a no-op.
+    """
+    async def scenario() -> None:
+        kbd, handles, state = _kbd_binding(playback.server)
+
+        before = (
+            int(state.frame),
+            state.playing,
+            int(handles.get("generation", 0)),
+            state.play_label,
+        )
+
+        await _press(kbd, "KeyQ")  # not a shortcut, and no such physical key here
+
+        after = (
+            int(state.frame),
+            state.playing,
+            int(handles.get("generation", 0)),
+            state.play_label,
+        )
+        assert after == before, (
+            f"an unknown key changed the page: {before!r} -> {after!r}"
+        )
+
+    asyncio.run(scenario())
 
