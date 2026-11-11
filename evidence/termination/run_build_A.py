@@ -527,6 +527,73 @@ WAVEDUDE_VELOCITY_MIN_ADVANCE_COLS = 6
 #: do (2 % at the 800-step cadence) and rejects the 25-30 % a mixed fit produces.
 WAVEDUDE_VELOCITY_RELIABLE_TOL = 0.15
 
+# --- the two arms this one script runs ---------------------------------------
+# A and B are the SAME structure with a different termination: same line, same
+# mesh, same load POSITION.  The only number that moves is the series_r
+# resistance, which is what makes the two WaveDude dumps comparable frame for
+# frame (identical nx/ny/nz/cell_m/j_cut/port_x_mm/load_x_mm) -- and it is why
+# the arm is a table entry and not a second copy of this script (header: "line
+# length and load value are FLAGS").  A third arm (Run E, the second length
+# AC-7 needs) is still expressed the old way, by --n-line/--out; this table
+# names only the two arms whose load value is the whole difference.
+#
+# ``out``/``wavedude_dump`` are DEFAULTS, nothing more: an explicit --out /
+# --wavedude-dump is used verbatim, so a run that names its own file gets
+# exactly that file and the startup line says which numbers were resolved.
+STRUCTURES = {
+    "A": {
+        # 50 ohm: the matched load AC-3/AC-6/AC-7 are written for.
+        "load_ohm": LOAD_VALUE_OHM,
+        "out": str(OUT_DEFAULT),
+        "wavedude_dump": WAVEDUDE_DEFAULT_OUT,
+    },
+    "B": {
+        # The exploratory 100 ohm arm (scope L520 Ruling 3).  The stem names
+        # this arm (build_B_100ohm -> "B"), and main() reads it back off a
+        # typed --out only to WARN when a filename disagrees with the arm run;
+        # it never selects the arm.  The dump gets its own name because the
+        # shared one
+        # (evidence/vis_dump.npz) belongs to A: one file, one arm.
+        "load_ohm": 100.0,
+        "out": str(REPO / "artifacts" / "build_B_100ohm.json"),
+        "wavedude_dump": "artifacts/vis_dump_B_100ohm.npz",
+    },
+}
+STRUCTURE_DEFAULT = "A"
+#: ``--wavedude-dump`` with NO argument means "this structure's own default".
+#: A sentinel string rather than ``const=WAVEDUDE_DEFAULT_OUT``, because the
+#: default has to be resolved after ``--structure`` is known.
+STRUCTURE_DUMP_SENTINEL = "@structure"
+
+# --- the arm an artefact's filename names ------------------------------------
+# The arm a run simulates is chosen by --structure and by nothing else; the
+# label is that arm's name.  The filename is still read, but ONLY to warn when
+# it disagrees with the arm actually run: a visualisation record prepends a
+# family prefix (``vis_run_B_100ohm.json``), so the arm is the first token AFTER
+# those prefixes and not the first token of the stem -- reading the latter gave
+# "VIS" for a 100 ohm artefact, i.e. a filename that names no arm at all and so
+# could not be checked against the run.  Stems that carry no prefix keep the
+# spelling they always had (``smoke_A.json`` -> SMOKE).
+LABEL_STEM_PREFIXES = ("build", "vis", "run", "wavedude", "dump")
+
+
+def label_from_stem(stem: str) -> str:
+    """The arm label a ``--out`` stem names, with its family prefix skipped.
+
+    ``build_B_100ohm`` -> ``B``, ``vis_run_B_100ohm`` -> ``B``,
+    ``vis_run_A_50ohm`` -> ``A``, ``build_E_50ohm`` -> ``E``;
+    ``smoke_A`` -> ``SMOKE`` (no prefix, legacy spelling kept).  The last token
+    is never consumed as a prefix, so a stem cannot resolve to nothing;
+    ``LABEL`` is the answer only for an empty stem.
+    """
+    tokens = [tok for tok in str(stem).split("_") if tok]
+    i = 0
+    while i < len(tokens) - 1 and tokens[i].lower() in LABEL_STEM_PREFIXES:
+        i += 1
+    if not tokens:
+        return LABEL
+    return tokens[i].upper()
+
 
 def _wavedude_estimate_mb(nt: int, nt_x: int, nx: int, ny: int, nz: int) -> float:
     """Price a dump of ``nt`` y-cut and ``nt_x`` x-cut frames [MB decimal].
@@ -2219,8 +2286,28 @@ def main(argv: list[str] | None = None) -> int:
         description=(f"Termination build: one load at p2, s21_plane='cut', one "
                      f"shot. Defaults are Run A ({LOAD_VALUE_OHM:g} ohm, "
                      f"n_line {N_LINE_DEFAULT}, load at 20 mm)."))
-    ap.add_argument("--out", default=str(OUT_DEFAULT),
-                    help="artefact path (default: %(default)s)")
+    ap.add_argument(
+        "--structure", default=STRUCTURE_DEFAULT, choices=sorted(STRUCTURES),
+        help="which arm of this one structure to run (default: "
+             f"{STRUCTURE_DEFAULT}). The arm is chosen by THIS FLAG and by "
+             "nothing else -- never by the --out filename -- because the "
+             "physics must not move when a path is edited. The choice sets "
+             "DEFAULTS "
+             "ONLY -- the load "
+             "resistance, the default --out and the default --wavedude-dump "
+             "-- so an explicit --load-ohm / --out / --wavedude-dump is used "
+             "verbatim. A is the graded 50 ohm load; B is the exploratory "
+             "100 ohm arm (scope L520 Ruling 3). The mesh, the line length and "
+             "the load POSITION are the same in both: only the series_r "
+             "resistance moves, so the two runs' geometry is identical. This "
+             "names a TERMINATION arm of this solver and is NOT the same "
+             "vocabulary as the structure registry in server/poc_app.py "
+             "(ids like build_A_50ohm, build_A_50ohm_100ohm), which is a "
+             "viewer, not a solver arm.")
+    ap.add_argument("--out", default=None,
+                    help="artefact path (default: the --structure's own: "
+                         f"A -> {STRUCTURES['A']['out']}, "
+                         f"B -> {STRUCTURES['B']['out']})")
     ap.add_argument("--load-at-mm", type=float, default=20.0,
                     help="load position along the line [mm] (default 20.0 = the "
                          "last measurement station, one station inside the far "
@@ -2231,15 +2318,18 @@ def main(argv: list[str] | None = None) -> int:
                          "the grid [cells]: nx = n_pml + n_ref + n_line, so 54 "
                          "gives 62 columns (Run A) and 79 gives 87 (Run E, the "
                          "second length AC-7 needs).")
-    ap.add_argument("--load-ohm", type=float, default=LOAD_VALUE_OHM,
-                    help="series_r load resistance [ohm] (default: %(default)s "
-                         "= the matched load AC-3/AC-6/AC-7 are written for). "
+    ap.add_argument("--load-ohm", type=float, default=None,
+                    help="series_r load resistance [ohm] (default: the "
+                         "--structure's own -- 50.0 for A "
+                         "= the matched load AC-3/AC-6/AC-7 are written for, "
+                         "100.0 for B). "
                          "100.0 is the exploratory 100 ohm arm (scope L520 "
                          "Ruling 3): graded against a band by grade_2b.py as "
                          "EXPLORATORY, not as an AC.")
     ap.add_argument("--label", default=None,
-                    help="run label written into the artefact (default: derived "
-                         "from the --out stem, build_E_50ohm.json -> E). Three "
+                    help="run label written into the artefact (default: the "
+                         "resolved --structure, i.e. the arm actually "
+                         "simulated -- never the --out filename). Three "
                          "runs share this script, so a hard-coded label would "
                          "make one artefact claim to be another -- exactly the "
                          "provenance defect AC-6 exists to prevent.")
@@ -2366,10 +2456,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # -- WaveDude: the time-series dump of the march, and its selftest ------
     ap.add_argument(
-        "--wavedude-dump", nargs="?", const=WAVEDUDE_DEFAULT_OUT, default=None,
-        metavar="PATH",
-        help="also write a WaveDude time-series .npz (no argument: "
-             f"{WAVEDUDE_DEFAULT_OUT}) holding Ez on the j=j_centre z-cut "
+        "--wavedude-dump", nargs="?", const=STRUCTURE_DUMP_SENTINEL,
+        default=None, metavar="PATH",
+        help="also write a WaveDude time-series .npz (no argument: the "
+             "--structure's own -- "
+             f"{STRUCTURES['A']['wavedude_dump']} for A, "
+             f"{STRUCTURES['B']['wavedude_dump']} for B) holding Ez on the "
+             "j=j_centre z-cut "
              "along the line and on two x-cuts through it, with the frame "
              "indices and the mm/ns axes. This is a SECOND, independent "
              "product: --dump-fields still writes its own snapshot, and both "
@@ -2401,17 +2494,51 @@ def main(argv: list[str] | None = None) -> int:
              "measured velocity, print the JSON summary and exit 0. No "
              f"argument: {WAVEDUDE_SELFTEST_DEFAULT}.")
     args = ap.parse_args(argv)
+    # The arm comes from --structure alone. It is never inferred from the --out
+    # filename: in a solver the physics is chosen by a flag, and a typo in a
+    # path must not change the simulated load.
+    structure = args.structure
+    # The filename is still READ, but only to report a disagreement with the
+    # arm actually run -- it never selects anything.  Read from the --out the
+    # caller TYPED, before any default fills it in.
+    stem_arm = (label_from_stem(Path(args.out).stem)
+                if args.out is not None else None)
+    if stem_arm is not None and stem_arm in STRUCTURES \
+            and stem_arm != structure:
+        sys.stderr.write(
+            f"WARNING: the --out filename names arm {stem_arm} but this run is "
+            f"arm {structure} ({STRUCTURES[structure]['load_ohm']:g} ohm); the "
+            f"label follows the run, not the filename.\n")
+    # The structure's numbers are DEFAULT VALUES, resolved here rather than in
+    # the parser so that an explicit flag always wins: --structure B --load-ohm
+    # 50 is B's paths with A's load, and the startup line below says so instead
+    # of hiding which number came from where.
+    if args.load_ohm is None:
+        args.load_ohm = STRUCTURES[structure]["load_ohm"]
+    if args.out is None:
+        args.out = STRUCTURES[structure]["out"]
+    if args.wavedude_dump == STRUCTURE_DUMP_SENTINEL:
+        args.wavedude_dump = STRUCTURES[structure]["wavedude_dump"]
     if args.selftest is not None:
         # The file format, not the physics: no mesh is built and no step is
         # taken, so this runs in a second and says nothing about the solve.
         print(json.dumps(wavedude_selftest(args.selftest), indent=2,
                          sort_keys=True, default=str))
         return 0
-    label = (args.label if args.label else
-             (Path(args.out).stem.replace("build_", "").split("_")[0].upper()
-              or LABEL))
+    # The label states the arm actually simulated -- always the resolved
+    # structure, whatever the artefact happens to be called.
+    label = args.label if args.label else structure
 
     out_path = Path(args.out).resolve()
+    # Both resolved paths, out loud, before the solve: the dump's default used
+    # to be structure-independent (evidence/vis_dump.npz for every arm), so a
+    # B run with a bare --wavedude-dump would have overwritten A's picture.
+    print(f"structure {structure}: series_r load {float(args.load_ohm):g} ohm, "
+          f"label {label}")
+    print(f"artefact: {out_path}")
+    print("wavedude: " + (str(Path(args.wavedude_dump).resolve())
+                          if args.wavedude_dump is not None
+                          else "(not requested)"))
     # The twin's record sits beside the loaded artefact: build_A_50ohm_v3.json ->
     # build_A_50ohm_v3_twin.json.  Computed unconditionally so the dry run can
     # name it; it is only written when --with-twin is passed.
