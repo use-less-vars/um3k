@@ -74,9 +74,26 @@ DEFAULT_INPUT = "evidence/termination/build_A_50ohm_p51_ghostwave_fields.npz"
 PLANE_KEY = "plane_ez"
 # The |S11|/|S21| vs frequency sweep the panel reads, when a dump ships one.
 # The record written beside the dump carries ONE frequency (geometry.f_hz), so a
-# curve cannot come from it; this is a different artefact of the same study. It
-# is looked for beside the dump first, then at this repo-relative path.
-DEFAULT_MULTIFREQ = "evidence/termination/build_A_50ohm_multifreq_summary.json"
+# curve cannot come from it; this is a different artefact of the same study.
+#
+# One sweep PER ARM, keyed by the dump's own structure id: the page names the
+# case it is showing, so the fallback is chosen BY STRUCTURE. A B dump must
+# never be drawn with A's rows, and an unnamed structure gets NO fallback rather
+# than A's. Looked for beside the dump first, then at the entry for this arm.
+MULTIFREQ_BY_STRUCTURE = {
+    "A": "evidence/termination/build_A_50ohm_multifreq_summary.json",
+    "B": "evidence/termination/build_B_100ohm_multifreq_summary.json",
+}
+DEFAULT_MULTIFREQ = MULTIFREQ_BY_STRUCTURE["A"]
+# When an arm ships no sweep at all, its OWN single run is still a measurement:
+# one frequency, one |S11|, one |S21|. It is offered as a ONE-POINT sweep and
+# flagged as such - never drawn as a curve, and never borrowed from the other
+# arm, because B's |S11| is not A's.
+SINGLE_RUN_BY_STRUCTURE = {
+    # Only arms whose single-run record is ON DISK belong here: A has none, so
+    # arm A's panel needs its sweep summary and gets no fallback below it.
+    "B": "artifacts/vis_run_B_100ohm.json",
+}
 # The structure registry: which artefacts belong to which physical case, and
 # which cell counts each of them is on. Read from the repo root. Every entry
 # point below defaults to the entry named here.
@@ -520,16 +537,33 @@ def load_record(npz_path: Path):
 # every failure path is a stderr note plus None, never an exception.
 
 
-def _multifreq_candidates(npz_path: Path) -> list[Path]:
+def _structure_key(structure_id):
+    """The arm key for a structure id, or None when no arm was recorded.
+
+    None is a REAL answer here, not a default: it means the caller named no arm,
+    and every lookup that takes this key must then find nothing. Substituting
+    another arm's artefact for it is the one thing this panel may not do.
+    """
+    if structure_id is None:
+        return None
+    return str(structure_id).strip().upper() or None
+
+
+def _multifreq_candidates(npz_path: Path, structure_id=None) -> list[Path]:
     """Candidate multi-frequency summary paths for a dump, best first."""
     candidates: list[Path] = []
     try:
         candidates.extend(sorted(npz_path.parent.glob("*multifreq*summary*.json")))
     except Exception as exc:  # noqa: BLE001 - a bad parent dir is not fatal
         print(f"[poc_app] sweep scan skipped: {exc}", file=sys.stderr)
-    fallback = _resolve(DEFAULT_MULTIFREQ)
-    if fallback not in candidates:
-        candidates.append(fallback)
+    # BY STRUCTURE, not by one constant: the fallback is the sweep registered for
+    # THIS arm. An absent or unregistered id adds nothing - see _structure_key -
+    # so the beside-dump glob is the only remaining source for it.
+    default = MULTIFREQ_BY_STRUCTURE.get(_structure_key(structure_id))
+    if default:
+        fallback = _resolve(default)
+        if fallback not in candidates:
+            candidates.append(fallback)
     return candidates
 
 
@@ -880,21 +914,29 @@ def _multifreq_points(summary):
     return points, skipped
 
 
-def load_multifreq(npz_path: Path):
-    """Read the multi-frequency |S11| / |S21| sweep beside the dump.
+def load_multifreq(npz_path: Path, structure_id=None):
+    """Read the multi-frequency |S11| / |S21| sweep for a dump and its arm.
 
-    Returns ``{"path", "points", "skipped", ...}`` or None; ``points`` are dicts
-    with keys ``f_ghz``, ``s11``, ``s21``, ``artefact``, ``k``,
-    ``beta_ambiguous``, ``beta``, ``beta_model``, sorted by frequency and
-    otherwise as recorded. Nothing here interpolates, smooths or re-orders into a
-    curve: a
+    ``structure_id`` is the dump's own recorded provenance, and it selects WHICH
+    arm's sweep is the fallback - it is never assumed. Returns ``{"path",
+    "points", "skipped", ...}`` or None; ``points`` are dicts with keys
+    ``f_ghz``, ``s11``, ``s21``, ``artefact``, ``k``, ``beta_ambiguous``,
+    ``beta``, ``beta_model``, sorted by frequency and otherwise as recorded.
+    Nothing here interpolates, smooths or re-orders into a curve: a
     row whose ``errors`` list is not empty, or which is missing a frequency or
     either magnitude, is DROPPED and counted, because drawing it as zero would
     invent a measurement.
+
+    When this arm has no sweep at all its own single run is offered instead, as
+    ONE point and flagged ``single_point``: the numbers are real, there is just
+    one of them.
     """
-    candidates = _multifreq_candidates(npz_path)
+    candidates = _multifreq_candidates(npz_path, structure_id)
     path = next((p for p in candidates if p.is_file()), None)
     if path is None:
+        single = _single_point_multifreq(structure_id)
+        if single is not None:
+            return single
         print(
             "[poc_app] no multi-frequency sweep beside the dump (tried "
             + ", ".join(str(p) for p in candidates)
@@ -946,6 +988,94 @@ def load_multifreq(npz_path: Path):
         "dossier": summary.get("dossier"),
         "generated_utc": summary.get("generated_utc"),
         "bin_spacing_mhz": _as_float(summary.get("bin_spacing_mhz")),
+        # Not every summary carries a title or a status, and older ones carry
+        # neither: absent stays absent here, and the caller derives what it can
+        # rather than being handed an invented string. A sweep that exists is
+        # never a single point - that flag belongs to the one-point fallback.
+        "single_point": False,
+        "title": summary.get("title"),
+        "status": summary.get("status"),
+    }
+
+
+def _single_point_from_record(record, name: str):
+    """The run record's own |S11| / |S21| as ONE sweep point, or None.
+
+    Same keys as a sweep row, so the rows table, the chart and the "nearest
+    recorded point" line read it without a second code path. The values are the
+    record's ``s11.magnitude`` / ``s21.magnitude`` at the frequency that run was
+    driven at - read off the file, not derived from anything else.
+    """
+    if not isinstance(record, dict):
+        return None
+    f_ghz = _own_frequency_ghz(record)
+    s11_record = record.get("s11")
+    s21_record = record.get("s21")
+    s11 = (
+        _as_float(s11_record.get("magnitude"))
+        if isinstance(s11_record, dict)
+        else None
+    )
+    s21 = (
+        _as_float(s21_record.get("magnitude"))
+        if isinstance(s21_record, dict)
+        else None
+    )
+    if f_ghz is None or s11 is None or s21 is None:
+        return None
+    line = record.get("line") if isinstance(record.get("line"), dict) else {}
+    return {
+        "f_ghz": f_ghz,
+        "s11": s11,
+        "s21": s21,
+        "artefact": name,
+        "k": None,
+        "beta_ambiguous": None,
+        "beta": _as_float(line.get("beta")),
+        "beta_model": _as_float(line.get("beta_model")),
+    }
+
+
+def _single_point_multifreq(structure_id):
+    """The arm's own single run as a ONE-POINT sweep, or None.
+
+    Called only when NO sweep was found. A single-frequency run is still a
+    measurement, so the panel shows it rather than saying "nothing" - but as one
+    point, flagged ``single_point``, because a curve through one point is drawn
+    from the eye, not from the run. Chosen BY STRUCTURE for the same reason the
+    sweep is: B's record is not A's, and an unnamed arm gets neither.
+    """
+    rel = SINGLE_RUN_BY_STRUCTURE.get(_structure_key(structure_id))
+    if not rel:
+        # No record registered for this arm is NOT an error - arm A has none on
+        # disk - so this says nothing and simply offers no fallback.
+        return None
+    path = _resolve(rel)
+    if not path.is_file():
+        print(
+            f"[poc_app] single-run record for {structure_id!r} not on disk: {path}",
+            file=sys.stderr,
+        )
+        return None
+    point = _single_point_from_record(_read_json(path), path.name)
+    if point is None:
+        print(
+            f"[poc_app] single-run record {path} carries no usable "
+            "|S11|/|S21|; the panel will say so",
+            file=sys.stderr,
+        )
+        return None
+    print(f"[poc_app] single-run S-parameter record: {path} (ONE point, no sweep)")
+    return {
+        "path": path,
+        "points": [point],
+        "skipped": [],
+        "single_point": True,
+        "title": None,
+        "status": None,
+        "dossier": None,
+        "generated_utc": None,
+        "bin_spacing_mhz": None,
     }
 
 
@@ -985,20 +1115,34 @@ def _frequency_rows(mf: dict) -> list[str]:
 
 def _frequency_caption(mf: dict, record) -> str:
     """One line naming the source file, the row count, and what was NOT done."""
-    caption = (
-        f"{len(mf['points'])} recorded frequencies from {mf['path'].name} - "
-        "markers only, no line and no interpolation: nothing was solved "
-        "between these bins"
-    )
-    if mf.get("bin_spacing_mhz"):
-        caption += f" (bin spacing {mf['bin_spacing_mhz']:.1f} MHz)"
-    own_f = _own_frequency_ghz(record)
-    if own_f is not None:
-        caption += (
-            f"; the dump beside this panel is a single-frequency run at "
-            f"{own_f:.4f} GHz (record.geometry.f_hz) and its own numbers are "
-            "not among these rows"
+    if mf.get("single_point"):
+        # ONE point is this arm's own single run, not a sweep. Said first, before
+        # any number: a one-point "curve" is the easiest thing on this page to
+        # misread as a trend.
+        caption = (
+            f"ONE recorded point from {mf['path'].name} - this arm's own single "
+            "run, not a frequency sweep - marker only, no line and no "
+            "interpolation: a point is not a curve"
         )
+    else:
+        caption = (
+            f"{len(mf['points'])} recorded frequencies from {mf['path'].name} - "
+            "markers only, no line and no interpolation: nothing was solved "
+            "between these bins"
+        )
+        if mf.get("bin_spacing_mhz"):
+            caption += f" (bin spacing {mf['bin_spacing_mhz']:.1f} MHz)"
+        own_f = _own_frequency_ghz(record)
+        if own_f is not None:
+            caption += (
+                f"; the dump beside this panel is a single-frequency run at "
+                f"{own_f:.4f} GHz (record.geometry.f_hz) and its own numbers are "
+                "not among these rows"
+            )
+    # Only when the summary actually declares one: the summaries on disk today
+    # carry no status, and an absent key must not become an empty clause.
+    if mf.get("status"):
+        caption += f"; summary status: {mf['status']}"
     return caption
 
 
@@ -2827,11 +2971,13 @@ def run_web(
     # at every step: no file, no matplotlib, an unusable row - the 3-D view
     # still comes up, and the caption says what is missing rather than going
     # quiet.
-    multifreq = load_multifreq(info["path"])
+    multifreq = load_multifreq(info["path"], info.get("structure_id"))
     frequency_panel = (
         None
         if multifreq is None
-        else build_frequency_chart(multifreq, _chart_title(structure))
+        else build_frequency_chart(
+            multifreq, multifreq.get("title") or _chart_title(structure)
+        )
     )
     if multifreq is None:
         frequency_caption = (
@@ -4252,27 +4398,45 @@ def run_web_vis(
         animation beside it (the dump is one run at one frequency), which is why
         the caption names the file it came from.
         """
-        multifreq = load_multifreq(info["path"])
+        # The dump's OWN provenance picks the arm, so a B dump can only ever be
+        # drawn from B's sweep - or from B's single run, or from nothing.
+        structure_id = info.get("structure_id")
+        arm = _structure_key(structure_id)
+        multifreq = load_multifreq(info["path"], structure_id)
         if multifreq is None:
+            looked = f"*multifreq*summary*.json beside {info['path']}"
+            if MULTIFREQ_BY_STRUCTURE.get(arm):
+                looked += f", {MULTIFREQ_BY_STRUCTURE[arm]}"
+            if SINGLE_RUN_BY_STRUCTURE.get(arm):
+                looked += f", {SINGLE_RUN_BY_STRUCTURE[arm]}"
             return {
                 "path": None,
                 "points": [],
                 "chart": None,
                 "image": None,
                 "rows": [],
-                "reason": "no sweep on disk",
+                "reason": "no S-parameter data",
                 "caption": (
-                    "no multi-frequency |S11|/|S21| sweep on disk: looked for "
-                    "*multifreq*summary*.json beside "
-                    f"{info['path']} and at {DEFAULT_MULTIFREQ}"
+                    "no S-parameter data for structure "
+                    f"{structure_id or 'unknown'}: looked for {looked}"
                 ),
+                "single_point": False,
                 "number": "",
             }
         # The RESOLVED path is printed rather than assumed: load_multifreq falls
-        # back to DEFAULT_MULTIFREQ when no summary sits beside the dump, and a
+        # back to this arm's own sweep (or, with no sweep, its single run), and a
         # reader has to be able to tell which file these rows came from.
-        print(f"[poc_app] s-params panel: sweep {multifreq['path']}")
-        chart = build_frequency_chart(multifreq, _chart_title(structure))
+        print(
+            f"[poc_app] s-params panel: "
+            f"{'single-run record' if multifreq.get('single_point') else 'sweep'} "
+            f"{multifreq['path']}"
+        )
+        # The summary's own title wins when it has one: it is the file that knows
+        # which runs these rows came from. Older summaries carry none, and then
+        # the registry entry names the chart exactly as it did before.
+        chart = build_frequency_chart(
+            multifreq, multifreq.get("title") or _chart_title(structure)
+        )
         # The dump records f_ref_hz in HZ while the sweep rows are in GHz, and the
         # nearest-point comparison happens in GHz: convert here, once, so the
         # scale never has to be guessed from the printed text.
@@ -4286,6 +4450,7 @@ def run_web_vis(
             "rows": chart.get("rows") or [],
             "reason": chart.get("reason"),
             "caption": _frequency_caption(multifreq, _field_record(info["path"])),
+            "single_point": bool(multifreq.get("single_point")),
             "number": _s_params_number_text(multifreq, f_ref_ghz),
         }
 
@@ -4311,6 +4476,9 @@ def run_web_vis(
                 handles["s_params"] = _build_s_params()
             panel = handles["s_params"]
             caption = panel["caption"]
+            # No data is still an ANSWER, and the panel opens to show it: the
+            # caption names the arm and every path that was looked for. A press
+            # that silently did nothing would be the worse outcome.
             image = panel.get("image")
             if image:
                 state.s_params_image = image

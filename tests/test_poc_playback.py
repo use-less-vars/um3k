@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -381,4 +382,184 @@ def test_page_publishes_the_structure_readout(playback) -> None:
         "the page never published state.structure_readout (got "
         f"{getattr(playback.state, 'structure_readout', '<absent>')!r}); the "
         "readout line is emitted from state and would render blank"
+    )
+
+
+# --- which arm's S-parameters the panel reads --------------------------------
+#
+# The sweep is chosen by the dump's OWN structure id, never by a constant, and
+# never borrowed across arms.  Each test below points the two maps at files it
+# writes itself under tmp_path, so nothing here needs evidence/ or artifacts/ to
+# be present: what is asserted is WHICH path was resolved and reported.
+#
+# The dump and the other arm's artefacts deliberately live in DIFFERENT
+# directories: the beside-dump glob is (by design) not arm-filtered, so putting
+# A's summary next to a B dump would make the glob - not the per-arm fallback -
+# the thing under test.
+
+
+def _write_sweep(path: Path, rows) -> Path:
+    """A sweep summary with one synthetic row per ``(f_ghz, s11, s21)``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "dossier": "poc-playback-test",
+        "generated_utc": "2026-01-01T00:00:00Z",
+        "bin_spacing_mhz": 500.0,
+        "rows": [
+            {
+                "artefact": f"{path.stem}_k{k}.json",
+                "f_ghz_used": f_ghz,
+                "s11.magnitude": s11,
+                "s21.magnitude": s21,
+                "k": k,
+                "beta_ambiguous": False,
+                "errors": [],
+            }
+            for k, (f_ghz, s11, s21) in enumerate(rows)
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _press_s_params(app, info, monkeypatch, *, sweeps, runs):
+    """Boot the page with these per-arm maps, then press the S-parameters button.
+
+    The maps are patched on the module BEFORE the boot: ``run_web_vis`` reads the
+    frequency panel while it builds the layout as well, from the same maps.
+    """
+    monkeypatch.setattr(app, "MULTIFREQ_BY_STRUCTURE", dict(sweeps))
+    monkeypatch.setattr(app, "SINGLE_RUN_BY_STRUCTURE", dict(runs))
+    app, srv = _boot_app(info)
+    trigger = _registered_trigger(srv.controller, "s_params_toggle")
+    cells = _closure_cells(trigger)
+    assert "handles" in cells and "state" in cells, (
+        "the S-parameters trigger is not closed over the page's `handles` and "
+        f"`state` (freevars: {sorted(cells)}), so the live panel cannot be "
+        "asserted on and a stand-in would prove nothing"
+    )
+    handles, state = cells["handles"], cells["state"]
+    trigger()  # first press: reads this arm's artefact off disk
+    assert "s_params" in handles, (
+        "the S-parameters press never cached handles['s_params']: the handler "
+        "raised before building the panel"
+    )
+    return handles["s_params"], state
+
+
+def test_s_params_panel_dispatches_on_structure(tmp_path: Path, monkeypatch) -> None:
+    """A B dump is drawn from B's sweep - A's sweep has four rows and is unused."""
+    import poc_app as app
+
+    dump = tmp_path / "dumps" / "b.npz"
+    dump.parent.mkdir(parents=True)
+    b_summary = _write_sweep(
+        tmp_path / "sweeps" / "build_B_100ohm_multifreq_summary.json",
+        [(4.0, 0.48, 0.53), (6.0, 0.47, 0.52)],
+    )
+    a_summary = _write_sweep(
+        tmp_path / "sweeps" / "build_A_50ohm_multifreq_summary.json",
+        [(3.0, 0.11, 0.99), (4.0, 0.12, 0.98),
+         (5.0, 0.13, 0.97), (6.0, 0.14, 0.96)],
+    )
+    info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
+
+    panel, state = _press_s_params(
+        app, info, monkeypatch,
+        sweeps={"A": str(a_summary), "B": str(b_summary)},
+        runs={},
+    )
+
+    assert panel["path"] == b_summary, (
+        f"the B dump did not resolve to B's sweep: the panel read {panel['path']} "
+        f"instead of {b_summary}, so the |S11| beside a B field picture would be "
+        "A's number"
+    )
+    assert len(panel["points"]) == 2, (
+        f"the panel kept {len(panel['points'])} rows, expected B's 2: A's sweep "
+        "has 4, so a count of 4 means A's rows were drawn beside a B dump"
+    )
+    assert panel["single_point"] is False, (
+        "a real sweep was present but the panel flagged it as a single point"
+    )
+    caption = panel["caption"]
+    assert b_summary.name in caption, (
+        f"the caption does not name B's sweep ({b_summary.name}): {caption!r}"
+    )
+    assert a_summary.name not in caption, (
+        f"the caption names A's sweep on a B dump: {caption!r}"
+    )
+    assert state.s_params_style != "display: none;", (
+        "the panel was built from a real sweep but was left closed (style "
+        f"{state.s_params_style!r})"
+    )
+
+
+def test_s_params_panel_never_borrows_the_other_arm(tmp_path: Path,
+                                                   monkeypatch) -> None:
+    """B has neither a sweep nor a single run: the panel reports nothing, not A's rows."""
+    import poc_app as app
+
+    dump = tmp_path / "dumps" / "b.npz"
+    dump.parent.mkdir(parents=True)
+    a_summary = _write_sweep(
+        tmp_path / "sweeps" / "build_A_50ohm_multifreq_summary.json",
+        [(3.0, 0.11, 0.99), (4.0, 0.12, 0.98),
+         (5.0, 0.13, 0.97), (6.0, 0.14, 0.96)],
+    )
+    info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
+
+    panel, _state = _press_s_params(
+        app, info, monkeypatch,
+        sweeps={"A": str(a_summary),
+                "B": str(tmp_path / "sweeps" / "missing_B_multifreq_summary.json")},
+        runs={"B": str(tmp_path / "runs" / "missing_B_run.json")},
+    )
+
+    assert panel["points"] == [], (
+        f"the B panel kept {len(panel['points'])} rows while B has no sweep and no "
+        "single run: those rows are A's, i.e. the panel borrowed the other arm"
+    )
+    assert panel["path"] is None, (
+        f"the B panel resolved {panel['path']!r} although only A's sweep exists"
+    )
+    caption = panel["caption"]
+    assert "no S-parameter data" in caption, (
+        f"the panel did not say it had no data for B: {caption!r}"
+    )
+    assert a_summary.name not in caption, (
+        f"the caption names A's sweep while reporting no data for B: {caption!r}"
+    )
+
+
+def test_s_params_panel_reports_no_data(tmp_path: Path, monkeypatch) -> None:
+    """Neither arm has an artefact: the press opens and says so, and does not raise."""
+    import poc_app as app
+
+    dump = tmp_path / "dumps" / "b.npz"
+    dump.parent.mkdir(parents=True)
+    info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
+
+    panel, state = _press_s_params(app, info, monkeypatch, sweeps={}, runs={})
+
+    assert panel["reason"] == "no S-parameter data", (
+        "the empty panel did not report the reason it had nothing to show: "
+        f"{panel['reason']!r}"
+    )
+    assert "no S-parameter data" in panel["caption"], (
+        f"the caption says nothing about the missing data: {panel['caption']!r}"
+    )
+    assert "structure B" in panel["caption"], (
+        "the empty caption does not name the arm it was empty FOR, so a reader "
+        f"cannot tell which case looked: {panel['caption']!r}"
+    )
+    assert panel["points"] == [] and panel["image"] is None and panel["rows"] == [], (
+        "the empty panel carried rows, a point or a picture it could not have read"
+    )
+    assert state.s_params_style != "display: none;", (
+        "the press left the panel closed instead of opening it onto the honest "
+        f"'no S-parameter data' caption (style {state.s_params_style!r})"
+    )
+    assert state.s_params_open is True, (
+        "state.s_params_open stayed False: the caption would never be visible"
     )
