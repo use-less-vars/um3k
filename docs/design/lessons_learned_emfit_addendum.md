@@ -117,3 +117,13 @@ caught by an assertion on the **physical observable** — total energy in the
 box, field amplitude in the gap, the trace itself — and never inferred from the
 absence of an exception. Silence is not success; for a silent-drop mode,
 silence is the symptom.
+
+## L13 — A Trame `@ctrl.set` handler is a callback, not a coroutine host
+
+**What happened.** The WaveDude play trigger in `server/poc_app.py` (`ctrl.play_toggle`) was written as an `async` handler that ran the animation loop inline and did not return until playback stopped. An async trigger that never returns blocks the client RPC: every subsequent button click and camera drag stops reaching the server. The animation still renders (the loop is inside the pending RPC and flushes per tick), which makes the symptom look like "the controls are dead but the picture is fine." That inversion is what makes the bug expensive: a live picture is read as proof that the server is healthy, so the investigation starts in the client's button state and event wiring instead of in the handler's return.
+
+**The rule.** Long-running work belongs in `asyncio.create_task`, and the trigger must return. Corollary: any handler that clears `state.playing` must also set `state.play_label = "play"` — otherwise the button sticks on "pause" the next time the task exits from a path other than the play-toggle trigger.
+
+**Amendment 2026-11-11 — the logic layer was testable all along.** Only `Plotter.render()` segfaults headless; the plotter, mesh add, view setup, and `plotter_ui(mode='server')` all run. Double `render()` and the Trame handler logic is CI-testable — the visualizer is no longer an untested surface. The fix landed as `5e0758e` and the test as `7d53f65` (`tests/test_poc_playback.py`), and the test doubles `pyvista.Plotter.render` rather than skipping: a skipped test proves nothing in CI, while a crash is the container telling you the test is wrong. This is the same error as the E7 ledger row's "no pyvista/vtk/trame in this container" claim — an environment limitation generalised by one level too far, hiding a surface that could have been tested all along. Test the layer below the one that fails, and state the limitation as narrowly as the observation supports.
+
+**Numbering note.** This entry is L13 as assigned. The addendum previously ended at L11 and no L12 entry exists in this file; the gap is recorded rather than closed by renumbering, because numbers in this sequence are never reused.
