@@ -31,6 +31,8 @@ invocation the operator actually typed (``run_multifreq_B.py ...``), while
 ``run_multifreq_B.py`` for this wrapper, read from ``sys.argv[0]`` by
 ``run_multifreq._script_name()`` -- so the artefact says which command produced
 it, while ``main_argv`` still says what that command asked the driver for.
+Each per-bin artefact also carries the run label at its TOP level (``"dossier"``),
+so a single file quoted out of the sweep still names the run it came from.
 
 Exit codes are the driver's: 0 = every asked bin extracted, 5 = BLOCKED (the F4
 falsifier fired: more than half the bins gave no station fit).

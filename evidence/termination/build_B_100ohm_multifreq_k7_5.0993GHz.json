@@ -66,6 +66,7 @@
     "z0_model",
     "z_eff"
   ],
+  "dossier": "multifreq-B-test-2026-11-11",
   "meta": {
     "argv": [
       "--k",

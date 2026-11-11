@@ -51,7 +51,8 @@ solves it is: same mesh, same stations, same load, one frequency each.
 Outputs (all under evidence/termination/, named from the arm's
 ``artefact_prefix`` -- A: build_A_50ohm_multifreq, B: build_B_100ohm_multifreq)
 -------------------------------------------------------------------------------
-{artefact_prefix}_k{K}_{f:.4f}GHz.json   one per frequency
+{artefact_prefix}_k{K}_{f:.4f}GHz.json   one per frequency, each carrying
+                                        its own top-level ``dossier`` run label
 {artefact_prefix}_summary.json
 {artefact_prefix}_summary.md
 
@@ -125,9 +126,13 @@ LOAD_OHM = 50.0
 LOAD_KIND = "series_r"
 
 
-def _utc_date():
-    """UTC calendar date: the B arm's default dossier is date-stamped."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+#: The B arm's dossier: the run label every B artefact carries.  ONE definition --
+#: resolve_structure() hands this same string to the summary and to each per-bin
+#: record, so a lone per-k file says which run it belongs to and the two can never
+#: drift apart.  Pinned to the dispatch date rather than date-stamped per run: the
+#: label names the sweep the evidence belongs to, so regenerating that evidence
+#: reproduces the same label instead of stamping today's date on it.
+DOSSIER = "multifreq-B-test-2026-11-11"
 
 
 def _script_name() -> str:
@@ -165,7 +170,7 @@ STRUCTURES = {
         "load_ohm": 100.0,
         "artefact_prefix": "build_B_100ohm_multifreq",
         "arm_title": "B-arm",
-        "dossier_default": f"multifreq-B-test-{_utc_date()}",
+        "dossier_default": DOSSIER,
     },
 }
 
@@ -733,6 +738,11 @@ def main(argv=None):
             meta_kwargs = {kk: vv for kk, vv in kwargs.items()
                            if kk not in ("loads", "reference")}
             meta_kwargs.update(load_provenance(prov, args.unloaded))
+            # ``dossier`` is a TOP-level key, not another entry in ``meta``: a
+            # single per-bin file handed to a reader has to say which sweep it
+            # belongs to, and it is prov["dossier"] -- the very string the
+            # summary is stamped with -- so the two cannot disagree.  The dump
+            # sorts its keys, so on disk it lands after "artefact_keys".
             out.write_text(_json.dumps(
                 {"meta": {"script": _script_name(), "k": k,
                           "started_utc": start_utc,
@@ -743,6 +753,7 @@ def main(argv=None):
                           "main_argv": (list(sys.argv[1:]) if argv is None
                                         else list(argv)),
                           "kwargs": meta_kwargs},
+                 "dossier": prov["dossier"],
                  "row": row,
                  "artefact_keys": sorted(k2 for k2 in dir(result)
                                          if not k2.startswith("_"))},

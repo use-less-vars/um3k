@@ -136,6 +136,10 @@ convention ``emfit/terminations.py`` pins and the only one used here.  A branch
 current is positive from ``branch.nodes[0]`` to ``branch.nodes[1]``, and an
 ``I`` branch drives ``value`` amperes through itself from ``nodes[0]`` to
 ``nodes[1]`` (so it injects into ``nodes[1]``).
+
+The field energy functional ``U_f = (1/2) sum_k w_k m_k e_k^2`` is exported as
+:func:`U_f`, so a caller that needs it (a balance check, say) reads the module's
+statement instead of re-deriving it.
 """
 
 from __future__ import annotations
@@ -146,7 +150,7 @@ import numpy as np
 
 from .terminations import TerminalPort
 
-__all__ = ["Branch", "CircuitNetwork", "SpiceState", "MNASolver", "SpicePort"]
+__all__ = ["Branch", "CircuitNetwork", "SpiceState", "MNASolver", "SpicePort", "U_f"]
 
 _GROUND = 0
 _KINDS = ("R", "L", "C", "V", "I")
@@ -260,6 +264,41 @@ def _as_vector(x, n, name):
     if x.shape != (n,):
         raise ValueError(f"{name} must have shape ({n},); got shape {x.shape}")
     return x
+
+
+def U_f(w, m_eps, e):
+    """Field (fluid) energy ``U_f = (1/2) sum_k w_k m_eps_k e_k^2``.
+
+    Parameters
+    ----------
+    w : array_like, shape (n_edges,)
+        ``diag(W_E)``: the diagonal of the edge metric this coupling uses.
+    m_eps : array_like, shape (n_edges,)
+        Edge capacitances (the ``m_eps`` diagonal of the Ampere law), in farads.
+    e : array_like, shape (n_edges,)
+        The field/edge state the energy is evaluated at.
+
+    Returns
+    -------
+    float
+        The scalar energy, in joules for SI inputs.
+
+    Notes
+    -----
+    ``Q = diag(w * m_eps)`` is the quadratic form this closes, so it equals the
+    familiar ``(1/2) m_eps . e^2`` only when ``W_E = I``.  Its companion identity
+    ``dU_f = -(dt/4) * s . (v' + v)`` pairs a step's *change* with ``v = L.T @ e``
+    from the PREVIOUS step; that pairing, not the formula, is why the solver
+    carries it.  For a non-diagonal ``W_E`` no symmetric quadratic energy closes
+    the balance and ``U_f`` is bookkeeping only.
+
+    The arithmetic is the elementwise ``w * m_eps * e * e`` then ``sum``, in that
+    order: it stays that way so no caller's bit-level result changes.
+    """
+    w = np.asarray(w, dtype=float)
+    m_eps = np.asarray(m_eps, dtype=float)
+    e = np.asarray(e, dtype=float)
+    return 0.5 * float(np.sum(w * m_eps * e * e))
 
 
 class SpiceState:

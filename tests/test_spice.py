@@ -32,18 +32,24 @@ R-L), i.e. at roundoff for O(1e-12) energies or below, so the bound is a
 roundoff gate with several orders of margin rather than a tuned number.  The
 ``step_rlc`` cross-check uses ``1e-14`` on fields of order one.
 
-Note on ``U_f``: ``emfit.spice`` states the field energy
-``U_f = (1/2) sum_k w_k m_k e_k^2`` with ``w = diag(W_E)`` only in its module
-docstring -- the module exports no ``U_f`` callable.  ``_u_f`` below is that one
-formula, taken from the docstring, so the balance in this file is the module's
-own statement and not a re-derivation.
+Note on ``U_f``: the field energy ``U_f = (1/2) sum_k w_k m_k e_k^2`` with
+``w = diag(W_E)`` is ``emfit.spice.U_f``, which the module exports, so the
+balance checked in this file is the module's own statement and not a
+re-derivation.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from emfit.spice import Branch, CircuitNetwork, MNASolver, SpicePort, SpiceState
+from emfit.spice import (
+    Branch,
+    CircuitNetwork,
+    MNASolver,
+    SpicePort,
+    SpiceState,
+    U_f,
+)
 from emfit.terminations import RLCState, TerminalPort, step_rlc
 
 RTOL = 1e-14
@@ -260,17 +266,6 @@ def _dc_init(net, port, e0):
     return SpiceState(net, u=u, i_branch=cur, i=ip, v=port.voltage(np.asarray(e0, float)))
 
 
-def _u_f(w, m_eps, e):
-    """``U_f = (1/2) sum_k w_k m_k e_k^2`` with ``w = diag(W_E)``.
-
-    ``emfit.spice`` carries this formula in its module docstring but exports no
-    callable for it, so the test file spells it once here.  It is the module's
-    own statement of the coupled field energy, not a new derivation.
-    """
-    e = np.asarray(e, float)
-    return 0.5 * float(np.sum(w * m_eps * e * e))
-
-
 def _coupled(net, port, e0, dt, nsteps):
     """Step the coupled port+network and return per-step balance rows.
 
@@ -287,7 +282,7 @@ def _coupled(net, port, e0, dt, nsteps):
     for _ in range(nsteps):
         eo, so = e.copy(), st
         e, _, st = sp.step(e, None, dt, st)
-        dUf = _u_f(w, M_EPS, e) - _u_f(w, M_EPS, eo)
+        dUf = U_f(w, M_EPS, e) - U_f(w, M_EPS, eo)
         jo = 0.0
         for k, br in enumerate(net.branches):
             if br.kind == "R":
