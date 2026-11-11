@@ -3862,43 +3862,48 @@ def run_web_wavedude(
         state.play_label = "play"
         _show((int(state.frame) + 1) % frames, state.mode)
 
+    async def _play_loop(gen: int) -> None:
+        """Advance one frame per wall-clock step until the trigger bumps the
+        generation or state.playing is cleared.
+
+        Runs as a background task. It must NOT be awaited from a trigger
+        handler: see _on_play_toggle.
+        """
+        while int(handles.get("generation", 0)) == gen and state.playing:
+            frames = nt if state.mode == "ycut" else nt_x
+            handles["suppress_frame_listener"] = True
+            try:
+                _show((int(state.frame) + 1) % frames, state.mode)
+                state.flush()
+            finally:
+                handles["suppress_frame_listener"] = False
+            await asyncio.sleep(1.0 / fps)
+
     @ctrl.set("play_toggle")
     async def _on_play_toggle(**_kwargs) -> None:
-        """Advance one frame per wall-clock step until the button is pressed again.
+        """Start or stop playback. Returns immediately.
 
-        The generation counter is what actually stops a running loop: a second
-        press bumps it, the older coroutine sees its generation superseded and
-        returns, so two loops can never interleave frames into the same sheet.
+        The trigger handler MUST return. An async trigger that awaits
+        forever - which is what the previous while-loop-in-handler was -
+        leaves the client RPC unresolved: the pause button never reaches
+        the server, no other button reaches the server, and camera drags
+        stop being processed. The animation still runs (the loop is inside
+        the pending RPC and flushes per tick), which is what makes this
+        bug look like "the controls are dead but the picture is fine".
+        The play loop is scheduled with asyncio.create_task instead; the
+        generation counter stops it on the second press.
         """
         generation = int(handles.get("generation", 0)) + 1
         handles["generation"] = generation
         if state.playing:
             state.playing = False
             state.play_label = "play"
-            state.flush()  # publish the label change before returning
+            state.flush()
             return
         state.playing = True
         state.play_label = "pause"
-        state.flush()  # publish "pause" before entering the loop
-        while int(handles.get("generation", 0)) == generation and state.playing:
-            frames = nt if state.mode == "ycut" else nt_x
-            # The trigger RPC awaits this coroutine INSIDE `with server.state:`,
-            # and State pushes nothing until flush() (the with-block's own exit
-            # flush only runs when the loop returns). Per tick that flush never
-            # came, so the browser stayed on frame 1 forever - hence one flush
-            # per tick. The frame listener is muted meanwhile: _show() already IS
-            # this tick's redraw and must not be run a second time.
-            handles["suppress_frame_listener"] = True
-            try:
-                _show((int(state.frame) + 1) % frames, state.mode)
-                state.flush()  # publish frame / labels / scene for THIS tick
-            finally:
-                handles["suppress_frame_listener"] = False
-            await asyncio.sleep(1.0 / fps)
-        if int(handles.get("generation", 0)) == generation:
-            state.playing = False
-            state.play_label = "play"
-            state.flush()
+        state.flush()
+        asyncio.create_task(_play_loop(generation))
 
     with SinglePageLayout(server) as layout:
         layout.title.set_text(f"{structure_label} - |Ez| animation")
