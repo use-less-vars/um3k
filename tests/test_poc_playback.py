@@ -393,9 +393,9 @@ def test_page_publishes_the_structure_readout(playback) -> None:
 # be present: what is asserted is WHICH path was resolved and reported.
 #
 # The dump and the other arm's artefacts deliberately live in DIFFERENT
-# directories: the beside-dump glob is (by design) not arm-filtered, so putting
-# A's summary next to a B dump would make the glob - not the per-arm fallback -
-# the thing under test.
+# directories so these tests exercise the per-arm fallback and the scan as
+# separate things - ``test_sweep_beside_the_dump_ignores_the_other_arm`` is the
+# one that puts both arms' summaries beside the same dump on purpose.
 
 
 def _write_sweep(path: Path, rows) -> Path:
@@ -563,3 +563,134 @@ def test_s_params_panel_reports_no_data(tmp_path: Path, monkeypatch) -> None:
     assert state.s_params_open is True, (
         "state.s_params_open stayed False: the caption would never be visible"
     )
+
+
+def test_sweep_beside_the_dump_wins_over_the_registry(tmp_path: Path,
+                                                      monkeypatch) -> None:
+    """The scan for a sweep BESIDE the dump actually runs, and wins.
+
+    This is the regression gate for a scan that had never executed once:
+    ``_multifreq_candidates`` did ``npz_path.parent`` while every caller passed
+    a ``str`` (``load_multifreq(info["path"], ...)``), so the glob raised
+    ``'str' object has no attribute 'parent'``, the exception was swallowed
+    with a message that named no directory, and every press fell through to the
+    registry constant.  Two arms then looked identical for a reason that had
+    nothing to do with the physics.
+
+    The two files are deliberately DIFFERENT files in DIFFERENT directories, so
+    the assertion cannot pass by both paths coinciding:
+
+    * the dump's own directory carries a correctly-named summary - the one the
+      glob is supposed to find, with 3 rows;
+    * the registry for arm B points somewhere else entirely, at a file with 1
+      row that also must NOT match the glob pattern.
+
+    Before the coercion this test FAILED: ``panel["path"]`` was the registry
+    file and the panel kept its 1 row, because the beside-dump glob never ran.
+    It passes only once the scan is alive and preferred - which is also the
+    precedence the module documents ("looked for beside the dump first, then at
+    the entry for this arm").
+    """
+    import poc_app as app
+
+    dump = tmp_path / "dumps" / "b.npz"
+    dump.parent.mkdir(parents=True)
+    beside = _write_sweep(
+        dump.parent / "build_B_100ohm_multifreq_summary.json",
+        [(4.0, 0.48, 0.53), (5.0, 0.47, 0.52), (6.0, 0.46, 0.51)],
+    )
+    # Not "multifreq"/"summary" in the name, and a different directory, so it
+    # cannot be reached by the glob - only by the registry entry.
+    registry = _write_sweep(
+        tmp_path / "elsewhere" / "registry_B_fallback.json",
+        [(9.0, 0.99, 0.01)],
+    )
+    info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
+    # The REAL page hands the sweep loader a STRING: `info["path"]` arrives from
+    # JSON / a trame value, not from ``load_vis``.  That is the shape that made
+    # the beside-dump glob raise, so the gate has to use it too - with a Path
+    # here the old code would pass this test without ever scanning.
+    info["path"] = str(info["path"])
+
+    panel, _state = _press_s_params(
+        app, info, monkeypatch,
+        sweeps={"B": str(registry)},
+        runs={},
+    )
+
+    assert panel["path"] == beside, (
+        f"the panel resolved {panel['path']!r} for a dump that has "
+        f"{beside.name!r} sitting beside it: the beside-dump scan did not run "
+        "or did not win, so the registry fallback was used instead"
+    )
+    assert len(panel["points"]) == 3, (
+        f"the panel kept {len(panel['points'])} rows, expected the beside-dump "
+        "sweep's 3: a count of 1 is the registry file's single row"
+    )
+    caption = panel["caption"]
+    assert beside.name in caption, (
+        f"the caption does not name the beside-dump sweep ({beside.name}): "
+        f"{caption!r}"
+    )
+    assert registry.name not in caption, (
+        f"the caption names the registry fallback while a sweep sits beside "
+        f"the dump: {caption!r}"
+    )
+
+
+def test_sweep_beside_the_dump_ignores_the_other_arm(tmp_path: Path,
+                                                     monkeypatch) -> None:
+    """Both arms' sweeps sit beside one B dump: B's is read, not the first name.
+
+    ``evidence/termination/`` is exactly this shape - A's and B's summaries lie in
+    the same directory as the dumps - so an unfiltered ``sorted()`` over the glob
+    resolved a B dump to A's sweep, and nothing failed: ``build_A_50ohm_...``
+    simply sorts first.  The arm is the only thing that may decide this; the
+    first letter of a filename is not a statement about the physics.
+
+    The other arm's file is a complete, readable, VALID summary (1 row) and does
+    sort first, so the unfiltered scan really did resolve to it - these
+    assertions (B's path, 3 rows) fail before the filter rather than passing by
+    luck.
+    """
+    import poc_app as app
+
+    dump = tmp_path / "dumps" / "b.npz"
+    dump.parent.mkdir(parents=True)
+    other_arm = _write_sweep(
+        dump.parent / "build_A_50ohm_multifreq_summary.json",
+        [(4.0, 0.11, 0.99)],
+    )
+    beside = _write_sweep(
+        dump.parent / "build_B_100ohm_multifreq_summary.json",
+        [(4.0, 0.48, 0.53), (5.0, 0.47, 0.52), (6.0, 0.46, 0.51)],
+    )
+    info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
+    info["path"] = str(info["path"])
+
+    panel, _state = _press_s_params(
+        app, info, monkeypatch,
+        # A registry entry that cannot match: it is not "multifreq"/"summary"
+        # named and does not exist, so only the beside-dump scan can supply a
+        # sweep - and it has two arms to choose between.
+        sweeps={"B": str(tmp_path / "elsewhere" / "missing_B_fallback.json")},
+        runs={},
+    )
+
+    assert panel["path"] == beside, (
+        f"the panel resolved {panel['path']!r} for a dump that records structure "
+        f"B while {other_arm.name!r} and {beside.name!r} both sit beside it: the "
+        "beside-dump scan chose by filename order instead of by arm"
+    )
+    assert len(panel["points"]) == 3, (
+        f"the panel kept {len(panel['points'])} rows, expected B's 3: a count of "
+        f"1 is {other_arm.name!r}, the OTHER arm's single row"
+    )
+    caption = panel["caption"]
+    assert beside.name in caption, (
+        f"the caption does not name B's own sweep ({beside.name}): {caption!r}"
+    )
+    assert other_arm.name not in caption, (
+        f"the caption names the other arm's sweep while drawing B: {caption!r}"
+    )
+

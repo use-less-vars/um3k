@@ -479,13 +479,20 @@ def _record_candidates(npz_path: Path) -> list[Path]:
     field dump is ``..._ghostwave_fields.npz`` while the study that produced it
     wrote ``..._ghostwave.json``. Both spellings are tried instead of guessing
     one and silently reporting "no record".
+
+    ``npz_path`` is coerced for the same reason ``_multifreq_candidates``
+    coerces it: the caller passes ``info["path"]``, which is a ``str`` off disk
+    / out of trame.  Read as a str, ``.with_suffix`` raised
+    ``'str' object has no attribute 'with_suffix'`` and took the whole panel
+    down with it.
     """
-    candidates = [npz_path.with_suffix(".json")]
-    stem = npz_path.stem
+    npz = Path(npz_path)
+    candidates = [npz.with_suffix(".json")]
+    stem = npz.stem
     for suffix in ("_fields", "_planes", "_dump"):
         if stem.endswith(suffix):
             candidates.append(
-                npz_path.with_name(stem[: -len(suffix)] + ".json")
+                npz.with_name(stem[: -len(suffix)] + ".json")
             )
             break
     return candidates
@@ -550,19 +557,44 @@ def _structure_key(structure_id):
 
 
 def _multifreq_candidates(npz_path: Path, structure_id=None) -> list[Path]:
-    """Candidate multi-frequency summary paths for a dump, best first."""
-    candidates: list[Path] = []
+    """Candidate multi-frequency summary paths for a dump, best first.
+
+    ``npz_path`` is coerced ONCE, here, because every caller in this module
+    passes a ``str``: ``load_multifreq(info["path"], ...)`` and
+    ``_page_multifreq(...)`` both hand over a path that came out of JSON / a
+    trame value, not a ``Path``.  While this read ``npz_path.parent`` directly
+    the beside-dump glob raised ``'str' object has no attribute 'parent'``,
+    the message did not name a directory, and the silently-swallowed failure
+    meant the scan NEVER ran: every press fell through to the registry entry.
+    The scan is the fix; the complaint was only ever a symptom.
+    """
+    scanned = Path(npz_path).parent
+    sid = _structure_key(structure_id)
+    beside: list[Path] = []
     try:
-        candidates.extend(sorted(npz_path.parent.glob("*multifreq*summary*.json")))
+        beside = sorted(scanned.glob("*multifreq*summary*.json"))
     except Exception as exc:  # noqa: BLE001 - a bad parent dir is not fatal
-        print(f"[poc_app] sweep scan skipped: {exc}", file=sys.stderr)
+        print(f"[poc_app] sweep scan skipped in {scanned}: {exc}", file=sys.stderr)
+    # By ARM before ordering. BOTH arms' summaries can sit beside one dump, and
+    # ``sorted`` would then hand a B dump A's sweep purely because "A" sorts
+    # first - correctness decided by a filename's first letter. A candidate
+    # whose name does not carry THIS structure's arm is not this dump's sweep; a
+    # candidate list with no arm recorded cannot be matched at all, so it is
+    # dropped rather than guessed at - the registry fallback below handles that
+    # case, and it is the only thing that may.
+    candidates: list[Path] = [p for p in beside if sid and f"_{sid}_" in p.name]
     # BY STRUCTURE, not by one constant: the fallback is the sweep registered for
     # THIS arm. An absent or unregistered id adds nothing - see _structure_key -
-    # so the beside-dump glob is the only remaining source for it.
-    default = MULTIFREQ_BY_STRUCTURE.get(_structure_key(structure_id))
+    # so the arm-filtered scan above is the only remaining source for it.
+    default = MULTIFREQ_BY_STRUCTURE.get(sid)
     if default:
         fallback = _resolve(default)
-        if fallback not in candidates:
+        # Compared RESOLVED: the scan yields paths spelled the way the caller
+        # spelled its dump (relative, when info["path"] is relative) while
+        # ``_resolve`` yields absolute ones, so ``Path(...) != Path(...)`` for
+        # the same file. Only the dedupe changes - the ORDER contract stands:
+        # beside-the-dump first, registry fallback last.
+        if fallback.resolve() not in {c.resolve() for c in candidates}:
             candidates.append(fallback)
     return candidates
 
@@ -937,10 +969,18 @@ def load_multifreq(npz_path: Path, structure_id=None):
         single = _single_point_multifreq(structure_id)
         if single is not None:
             return single
+        # The directory is named unconditionally: the old message ended
+        # "(tried )" whenever the glob had died, which is exactly how a scan
+        # that never ran survived unnoticed. A candidate list can now never be
+        # printed without the directory it came from.
+        # An arm-filtered scan can legitimately find NOTHING while other arms'
+        # files sit right there, so the list is named as what it is: the
+        # candidates for THIS structure's arm (empty when no arm was recorded).
+        looked = ", ".join(str(p) for p in candidates) or "no candidate for this arm"
         print(
-            "[poc_app] no multi-frequency sweep beside the dump (tried "
-            + ", ".join(str(p) for p in candidates)
-            + "); the |S11|/|S21| panel will say so",
+            f"[poc_app] no multi-frequency sweep in {Path(npz_path).parent} "
+            f"(tried {looked}, none of which is a readable file); the "
+            "|S11|/|S21| panel will say so",
             file=sys.stderr,
         )
         return None
@@ -1546,12 +1586,17 @@ def _sparams_path(npz_path: Path, structure):
     return None
 
 
-def _multifreq_path(npz_path: Path, structure):
-    """The sweep file for this page: the entry's, else the one beside the dump."""
+def _multifreq_path(npz_path: Path, structure, structure_id=None):
+    """The sweep file for this page: the entry's, else the one beside the dump.
+
+    ``structure_id`` is the dump's own recorded provenance (``info["structure_id"]``,
+    an arm key like ``"A"``/``"B"`` - NOT a registry id such as ``build_A_50ohm``);
+    the beside-dump scan is arm-filtered, so it cannot contribute without it.
+    """
     declared = _structure_artifact_path(structure, "multifreq")
     if declared is not None:
         return declared
-    for candidate in _multifreq_candidates(npz_path):
+    for candidate in _multifreq_candidates(npz_path, structure_id):
         if candidate.is_file():
             return candidate
     return None
@@ -1945,7 +1990,8 @@ def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_
     mismatch = _mismatch_block(
         field_text, sparams_text, _n_line(record), sparams["n_line"]
     )
-    multifreq = _multifreq_block(_multifreq_path(path, entry))
+    multifreq = _multifreq_block(
+        _multifreq_path(path, entry, info.get("structure_id")))
     port_waves, port_reason = _port_waves_block(sparams_path)
     return {
         "schema": STATE_SCHEMA_VIS if _is_vis(info) else STATE_SCHEMA,
