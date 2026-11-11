@@ -87,18 +87,23 @@ DEFAULT_HOST = "127.0.0.1"
 # the operator's machine.
 DEFAULT_PORT = 8080
 
-# The wave-animation dumps (``emfit.wavedude/2``) are a different artefact from
+# The wave-animation dumps (``emfit.vis/2``) are a different artefact from
 # the legacy single-plane dump: they carry a TIME axis, so the loader and the
 # viewer built for them are their own path. The npz ``schema`` key is what tells
 # the two apart - never the file name, because a dump may be copied anywhere.
-WAVEDUDE_SCHEMA = "emfit.wavedude/2"
+VIS_SCHEMA = "emfit.vis/2"
 # Version 2 added the dump's own provenance (``structure_id``, ``load_ohm``).
 # Version 1 is still READ - the fields are the same and the two extra keys were
 # never required to draw the picture - so a dump written before the bump opens
 # and reads as "structure: unknown" instead of being refused.
-WAVEDUDE_LEGACY_SCHEMAS = ("emfit.wavedude/1",)
-WAVEDUDE_SCHEMAS = (WAVEDUDE_SCHEMA,) + WAVEDUDE_LEGACY_SCHEMAS
-STATE_SCHEMA_WAVEDUDE = "emfit.poc-state/2"
+# These two strings are the ONLY permitted "wavedude" survivors in the
+# codebase: they are schema literals written into dumps by earlier builds, so
+# they are stored data rather than identifiers and must never be renamed.
+# "emfit.wavedude/2" is the schema every current build wrote until the rename,
+# "emfit.wavedude/1" the one before the provenance bump; both still open.
+VIS_LEGACY_SCHEMAS = ("emfit.wavedude/1", "emfit.wavedude/2")
+VIS_SCHEMAS = (VIS_SCHEMA,) + VIS_LEGACY_SCHEMAS
+STATE_SCHEMA_VIS = "emfit.poc-state/2"
 # Frames per second for the animation. The dump stores no wall-clock rate: t_ns
 # is SIMULATION time, so this number is a viewing choice, and the page prints
 # both times rather than implying the animation runs at the solver's rate.
@@ -111,7 +116,7 @@ COLOR_PERCENTILE = 99.5
 # grid the field is sampled on, so a coarse dump reads as a continuous picture
 # and the eye cannot tell one cell from the interpolation between two of them.
 # Only the field sheets get this: the overlay boxes are decoration, not data.
-WAVEDUDE_SHOW_EDGES = True
+VIS_SHOW_EDGES = True
 
 
 def _resolve(path_str: str) -> Path:
@@ -153,7 +158,7 @@ def load_dump(path: Path) -> dict:
 # --- the wave-animation dump ------------------------------------------------
 #
 # Two artefacts share this viewer, and they are not versions of each other: the
-# legacy dump stores ONE vector field of captured x-planes, the wavedude dump
+# legacy dump stores ONE vector field of captured x-planes, the vis dump
 # stores a SEQUENCE of them plus the geometry that produced it. The functions
 # below read the second; everything above reads the first, untouched.
 
@@ -165,7 +170,7 @@ def _npz_scalar(data, key: str, default=float("nan")) -> float:
     say "not recorded" for a velocity or a substrate height, and an overlay that
     is skipped is visible as a skip. It is a reason to refuse a number the
     picture cannot be drawn without, which is why the mandatory keys are
-    checked separately in load_wavedude.
+    checked separately in load_vis.
     """
     try:
         return float(data[key])
@@ -181,7 +186,7 @@ def _npz_text(data, key: str):
         return None
 
 
-def _wavedude_colour_limit(arrays, percentile: float = COLOR_PERCENTILE):
+def _vis_colour_limit(arrays, percentile: float = COLOR_PERCENTILE):
     """One |Ez| ceiling for EVERY frame, plus a flag for an all-zero cube.
 
     WHY one ceiling: a frame's own maximum travels with the pulse, so a clim
@@ -210,13 +215,16 @@ def _wavedude_colour_limit(arrays, percentile: float = COLOR_PERCENTILE):
     return 0.0, ceiling, False
 
 
-def _is_wavedude(info: dict) -> bool:
-    """True when ``info`` came from load_wavedude, not from load_dump."""
+def _is_vis(info: dict) -> bool:
+    """True when ``info`` came from load_vis, not from load_dump."""
+    # "wavedude" is a serialized poc-state value (written by load_vis and read
+    # by the state document), so it is data rather than an identifier and keeps
+    # its spelling.
     return info.get("format") == "wavedude"
 
 
-def load_wavedude(path: Path) -> dict:
-    """Load an ``emfit.wavedude/2`` animation dump. numpy only, no pyvista.
+def load_vis(path: Path) -> dict:
+    """Load an ``emfit.vis/2`` animation dump. numpy only, no pyvista.
 
     Three planes are stored and they are NOT interchangeable: ``ez_ycut`` is an
     x-z sheet at one fixed y (``nt`` frames), while the two x-cuts are y-z sheets
@@ -255,10 +263,10 @@ def load_wavedude(path: Path) -> dict:
     with np.load(path) as data:
         names = set(data.files)
         schema = str(data["schema"]) if "schema" in names else ""
-        if schema not in WAVEDUDE_SCHEMAS:
+        if schema not in VIS_SCHEMAS:
             print(
                 f"[poc_app] {path} declares schema {schema or 'none'!r}; this "
-                f"loader reads {', '.join(repr(s) for s in WAVEDUDE_SCHEMAS)}.",
+                f"loader reads {', '.join(repr(s) for s in VIS_SCHEMAS)}.",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -361,7 +369,7 @@ def load_wavedude(path: Path) -> dict:
     # Computed once, here, from every stored frame of every plane: the viewer
     # then has no way to rescale between frames because it is never given a
     # per-frame number to rescale with.
-    vmin, vmax, empty = _wavedude_colour_limit((ycut, near, far))
+    vmin, vmax, empty = _vis_colour_limit((ycut, near, far))
     info["color_range"] = (vmin, vmax)
     info["color_range_empty"] = empty
     return info
@@ -380,13 +388,13 @@ def load_any_dump(path: Path) -> dict:
         with np.load(path) as data:
             if "schema" in data.files:
                 schema = str(data["schema"])
-    if schema in WAVEDUDE_SCHEMAS:
-        return load_wavedude(path)
+    if schema in VIS_SCHEMAS:
+        return load_vis(path)
     if schema:
         print(
             f"[poc_app] {path} declares schema {schema!r}, which this viewer does "
             "not read; it reads "
-            f"{', '.join(repr(s) for s in WAVEDUDE_SCHEMAS)} or a legacy plane "
+            f"{', '.join(repr(s) for s in VIS_SCHEMAS)} or a legacy plane "
             "dump.",
             file=sys.stderr,
         )
@@ -1639,15 +1647,15 @@ def _finite(value):
     return number if np.isfinite(number) else None
 
 
-WAVEDUDE_EXTENT_BASIS = (
+VIS_EXTENT_BASIS = (
     "extent_domain_mm is cells x cell (the simulated box); extent_sampled_mm is "
-    "the span of the stored node coordinates x_mm / y_mm / z_mm. A wavedude dump "
+    "the span of the stored node coordinates x_mm / y_mm / z_mm. A vis dump "
     "is a dense cube, so the two differ by one cell per axis and never by a "
     "factor; there is no captured-plane quantisation in this artefact."
 )
 
 
-def _wavedude_field_block(info: dict, path: Path) -> dict:
+def _vis_field_block(info: dict, path: Path) -> dict:
     """The animation's own field block: a dense cube, so the extents agree.
 
     Same keys as _field_dump_block so one reader can read both documents, but the
@@ -1677,7 +1685,7 @@ def _wavedude_field_block(info: dict, path: Path) -> dict:
             "y": round(_span(y_mm), 9),
             "z": round(_span(z_mm), 9),
         },
-        "extent_basis": WAVEDUDE_EXTENT_BASIS,
+        "extent_basis": VIS_EXTENT_BASIS,
         "stations_x_mm": [float(value) for value in x_mm],
         "n_stations": nx,
         "nstep": int(info["nstep"]),
@@ -1781,8 +1789,8 @@ def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_
     path = Path(info["path"])
     entry = structure if isinstance(structure, dict) else {}
     field_block = (
-        _wavedude_field_block(info, path)
-        if _is_wavedude(info)
+        _vis_field_block(info, path)
+        if _is_vis(info)
         else _field_dump_block(info, path)
     )
     sparams_path = _sparams_path(path, entry)
@@ -1796,7 +1804,7 @@ def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_
     multifreq = _multifreq_block(_multifreq_path(path, entry))
     port_waves, port_reason = _port_waves_block(sparams_path)
     return {
-        "schema": STATE_SCHEMA_WAVEDUDE if _is_wavedude(info) else STATE_SCHEMA,
+        "schema": STATE_SCHEMA_VIS if _is_vis(info) else STATE_SCHEMA,
         "generated_utc": _utc_now(),
         "head_commit": _git_head_short(),
         "structure": {
@@ -1818,10 +1826,10 @@ def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_
         "port_waves_reason": port_reason,
         "chart": _chart_block(multifreq, entry),
         # Which artefact this document describes. The legacy dump keeps
-        # emfit.poc-state/1 byte-for-byte; a wavedude dump is /2, because it adds
+        # emfit.poc-state/1 byte-for-byte; a vis dump is /2, because it adds
         # the two keys below and reads field_dump's extents off stored nodes.
-        "format": "wavedude" if _is_wavedude(info) else "legacy",
-        "animation": _animation_block(info, fps) if _is_wavedude(info) else None,
+        "format": "wavedude" if _is_vis(info) else "legacy",
+        "animation": _animation_block(info, fps) if _is_vis(info) else None,
     }
 
 
@@ -2166,7 +2174,7 @@ def _marker_cut_lines(
     return _marker_cut_relation(planes, layout)
 
 
-def _print_wavedude_keys(info: dict) -> None:
+def _print_vis_keys(info: dict) -> None:
     """Print the wave-animation metadata. numpy only - no pyvista, no trame."""
     ycut = info["ez_ycut"]
     near = info["ez_xcut_near"]
@@ -2289,8 +2297,8 @@ def _print_wavedude_keys(info: dict) -> None:
 
 def print_keys(info: dict) -> None:
     """Print dump metadata. numpy only - no pyvista, no trame."""
-    if _is_wavedude(info):
-        _print_wavedude_keys(info)
+    if _is_vis(info):
+        _print_vis_keys(info)
         return
     plane = info[PLANE_KEY]
     cell_mm = _cell_mm(info)
@@ -3337,11 +3345,11 @@ def run_web(
 #
 # The legacy page below draws ONE snapshot of nine captured planes. This one
 # animates a recorded sequence: a frame slider, a play/pause button and a plane
-# switch. Everything it draws comes out of load_wavedude, and the colour limit
+# switch. Everything it draws comes out of load_vis, and the colour limit
 # is the ONE ceiling computed there, so no frame can renormalise itself.
 
 
-def _wavedude_frame_time_ns(info: dict, mode: str, frame) -> float:
+def _vis_frame_time_ns(info: dict, mode: str, frame) -> float:
     """Simulation time of ``frame`` on the plane family ``mode``, in ns.
 
     ``mode`` is "ycut" or "xcut", and the two families do NOT share a clock:
@@ -3368,7 +3376,7 @@ def _wavedude_frame_time_ns(info: dict, mode: str, frame) -> float:
     return float(t_ns[frame])
 
 
-def _wavedude_phase_text(t_ns: float, t_traverse_ns: float) -> str:
+def _vis_phase_text(t_ns: float, t_traverse_ns: float) -> str:
     """Where the frame sits relative to one trip along the line.
 
     t_traverse_ns is the recorded time for the wave to cross the line once, so
@@ -3390,7 +3398,7 @@ def _wavedude_phase_text(t_ns: float, t_traverse_ns: float) -> str:
     return f"phase: past the load ({ratio:.2f} x t_traverse)"
 
 
-def _wavedude_grid(info: dict, plane_key: str, frame) -> "pyvista.ImageData":
+def _vis_grid(info: dict, plane_key: str, frame) -> "pyvista.ImageData":
     """One frame of one plane as a single-sample-thick ImageData.
 
     Deferred import: --help / --list-keys / --dump-state stay numpy-only. The
@@ -3426,7 +3434,7 @@ def _wavedude_grid(info: dict, plane_key: str, frame) -> "pyvista.ImageData":
     return image
 
 
-def _wavedude_geometry(plotter, info: dict) -> None:
+def _vis_geometry(plotter, info: dict) -> None:
     """The ground plane, the substrate, the strip and the two port markers.
 
     Three of these are ASSUMPTIONS about SHAPE, not about position, and the
@@ -3688,13 +3696,13 @@ def _probe_trame_ui():
     )
     print("[poc_app] fix: python3 -m pip install trame-vuetify", file=sys.stderr)
     print(
-        "[poc_app] then re-run: python3 server/poc_app.py --input <wavedude.npz>",
+        "[poc_app] then re-run: python3 server/poc_app.py --input <vis.npz>",
         file=sys.stderr,
     )
     return None
 
 
-def run_web_wavedude(
+def run_web_vis(
     info: dict,
     host: str,
     port: int,
@@ -3702,7 +3710,7 @@ def run_web_wavedude(
     structure=None,
     structures=None,
 ) -> int:
-    """Serve the animation page for an ``emfit.wavedude/1`` dump.
+    """Serve the animation page for an ``emfit.vis/2`` dump.
 
     The page is ONE plotter with three flat sheets in it; a frame only swaps the
     scalar array inside those sheets, so nothing is rebuilt between frames and no
@@ -3711,7 +3719,7 @@ def run_web_wavedude(
     its own maximum as brightly as the first one.
 
     Only one plane family is animated at a time, because the two families do not
-    share a clock (see _wavedude_frame_time_ns): advancing both from one slider
+    share a clock (see _vis_frame_time_ns): advancing both from one slider
     would put two different instants under one frame number.
 
     The two x-cut planes are FIXED at the x positions the dump records, because
@@ -3835,14 +3843,14 @@ def run_web_wavedude(
         ("ez_xcut_far", "xcut"),
     ):
         try:
-            grid = _wavedude_grid(info, key, 0)
+            grid = _vis_grid(info, key, 0)
             actor = plotter.add_mesh(
                 grid,
                 scalars="ez_abs",
                 cmap="turbo",
                 clim=(vmin, vmax),
                 smooth_shading=False,
-                show_edges=WAVEDUDE_SHOW_EDGES,
+                show_edges=VIS_SHOW_EDGES,
                 show_scalar_bar=(family == "ycut"),
                 scalar_bar_args={"title": scalar_bar_title},
             )
@@ -3860,12 +3868,12 @@ def run_web_wavedude(
     # The substrate box, the strip and the load marker are 3-D objects wrapped
     # around a plane that the camera now looks at SQUARE ON, so they are recorded
     # here - with the opacity they were drawn at - for _show() to dim in y-cut and
-    # restore in x-cut. Only what _wavedude_geometry adds is recorded, so a later
+    # restore in x-cut. Only what _vis_geometry adds is recorded, so a later
     # decoration cannot be mistaken for the structure.
     overlay: list = []
     try:
         _already_drawn = set(plotter.actors)
-        _wavedude_geometry(plotter, info)
+        _vis_geometry(plotter, info)
         for _name, _actor in plotter.actors.items():
             if _name in _already_drawn:
                 continue
@@ -4105,14 +4113,14 @@ def run_web_wavedude(
                     file=sys.stderr,
                 )
 
-        t_ns = _wavedude_frame_time_ns(info, mode, index)
+        t_ns = _vis_frame_time_ns(info, mode, index)
         state.t_label = (
             "sim time: not recorded"
             if not np.isfinite(t_ns)
             else f"sim time: t = {t_ns:.6f} ns"
         )
         state.frame_label = f"frame {index + 1} / {frames}"
-        state.phase_label = _wavedude_phase_text(t_ns, info["t_traverse_ns"])
+        state.phase_label = _vis_phase_text(t_ns, info["t_traverse_ns"])
         if mode == "ycut":
             state.mode_label = (
                 f"x-z sheet at y = {j_mm:.4f} mm (one recorded y sample)"
@@ -4611,7 +4619,7 @@ def main(argv=None) -> int:
         default=DEFAULT_FPS,
         help=(
             "frames per second for the wave animation (default: "
-            f"{DEFAULT_FPS}); applies to a {WAVEDUDE_SCHEMA} dump only - "
+            f"{DEFAULT_FPS}); applies to a {VIS_SCHEMA} dump only - "
             "a legacy station dump has no time axis and ignores it"
         ),
     )
@@ -4656,11 +4664,11 @@ def main(argv=None) -> int:
 
     # The animation dump has no station axis (its planes carry TIME instead), so
     # it forks BEFORE the legacy station clamp and station-driven viewer.
-    if _is_wavedude(info):
+    if _is_vis(info):
         if args.list_keys:
             print_keys(info)
             return 0
-        return run_web_wavedude(
+        return run_web_vis(
             info, args.host, args.port, args.fps, structure, structures
         )
 

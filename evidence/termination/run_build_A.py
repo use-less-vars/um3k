@@ -421,10 +421,10 @@ def check_mesh(kwargs: dict) -> None:
 
 
 # ----------------------------------------------------------------------
-# WaveDude: a time-series field dump, and its numpy-only self test
+# emfit-vis: a time-series field dump, and its numpy-only self test
 # ----------------------------------------------------------------------
 # Everything below is additive.  Nothing here is on any existing path: a run
-# without --wavedude-dump and without --selftest imports none of it, allocates
+# without --vis-dump and without --selftest imports none of it, allocates
 # none of it and returns what it always returned.  The one place the solver is
 # touched is the ``frame_callback`` kwarg of ``emfit.studies.microstrip_wave``,
 # which is ``None`` unless this file passes a recorder.
@@ -445,15 +445,15 @@ def check_mesh(kwargs: dict) -> None:
 # VISUAL dump's wavelet is struck at, chosen to be short compared with the
 # line; it overrides ``f_pulse`` only, never ``f_target``, and the reference
 # frequency recorded in the file is unconditionally
-# ``WAVEDUDE_F_REF_HZ`` 5827786408.327286 so a reader can always say what the
+# ``VIS_F_REF_HZ`` 5827786408.327286 so a reader can always say what the
 # measurement frequency of this geometry is, whatever the picture was struck
 # at.  A wavelet run is a VISUAL run: its s21/AC numbers are not a
 # measurement and are not claimed to be.
 #
 # THE BUDGET.  The file is meant to be openable, so its size is planned BEFORE
-# the solve starts and never discovered afterwards: ``_wavedude_plan_stride``
+# the solve starts and never discovered afterwards: ``_vis_plan_stride``
 # prices ``--nsteps`` and the mesh, and if the answer is over
-# ``WAVEDUDE_BUDGET_MB`` it raises the effective stride and says so, loudly.
+# ``VIS_BUDGET_MB`` it raises the effective stride and says so, loudly.
 # It never fails for size -- a dump that refuses to exist is worse than a dump
 # with fewer frames -- and the stride it settled on is recorded in the file as
 # ``dump_stride``, so the cadence of a file is read from the file.
@@ -463,23 +463,23 @@ def check_mesh(kwargs: dict) -> None:
 #: records of the choice, not numbers the geometry implies -- a 50 ohm and a
 #: 100 ohm run can share a mesh -- so a viewer cannot derive them and must be
 #: told. Version 1 files load without them and read as "unknown".
-WAVEDUDE_SCHEMA = "emfit.wavedude/2"
-WAVEDUDE_ENGINE = "emfit.fdtd.fit-leapfrog/microstrip_wave"
-WAVEDUDE_DEFAULT_OUT = "evidence/vis_dump.npz"
-WAVEDUDE_SELFTEST_DEFAULT = "artifacts/vis_dump_selftest.npz"
+VIS_SCHEMA = "emfit.vis/2"
+VIS_ENGINE = "emfit.fdtd.fit-leapfrog/microstrip_wave"
+VIS_DEFAULT_OUT = "evidence/vis_dump.npz"
+VIS_SELFTEST_DEFAULT = "artifacts/vis_dump_selftest.npz"
 #: Hard size ceiling for the whole file [MB decimal].  Chosen so the artefact
 #: is small enough to hand to a browser-side viewer without a download step.
-WAVEDUDE_BUDGET_MB = 45.0
+VIS_BUDGET_MB = 45.0
 #: One x-cut pair every Nth KEPT y-cut frame.  Stated as a constant because it
 #: is a relationship and not a knob: ``ez_xcut_*`` has one frame for every
-#: ``WAVEDUDE_XCUT_STRIDE`` frames of ``ez_ycut``, so ``nt_x == ceil(nt / 10)``
+#: ``VIS_XCUT_STRIDE`` frames of ``ez_ycut``, so ``nt_x == ceil(nt / 10)``
 #: and the two arrays share a time base without a second time array to say so.
-WAVEDUDE_XCUT_STRIDE = 10
+VIS_XCUT_STRIDE = 10
 #: The measurement frequency of this geometry, recorded unconditionally.  This
 #: is ``geometry.f`` of every banked Run A artefact (k = 8 of the 0.4 mm-cell
 #: ladder: c0 * k / (2 pi ... )) and is NOT moved by --pulse-freq-ghz.
-WAVEDUDE_F_PULSE_HZ = 15.0e9
-WAVEDUDE_F_REF_HZ = 5827786408.327286
+VIS_F_PULSE_HZ = 15.0e9
+VIS_F_REF_HZ = 5827786408.327286
 #: Phase velocity the line was measured at (parent briefing, 1.5814e8 m/s,
 #: lambda_g 27.14 mm at 5.828 GHz): the SAME parent measurement the banked beta
 #: below comes from, rounded to five figures.  It is the speed the self test's
@@ -487,7 +487,7 @@ WAVEDUDE_F_REF_HZ = 5827786408.327286
 #: derivation is visible as a disagreement with this number rather than as a
 #: plausible number nothing can check.  It is NOT a fallback and is never
 #: written into ``v_measured_m_s`` under any circumstances.
-WAVEDUDE_V_FALLBACK_M_S = 1.5814e8
+VIS_V_FALLBACK_M_S = 1.5814e8
 
 #: The BANKED (frozen) phase constant of this line: Run A's own line fit on the
 #: 0.4 mm-cell geometry, i.e. lambda_g = 2*pi/beta = 27.1366 mm at f_ref.  Every
@@ -497,32 +497,32 @@ WAVEDUDE_V_FALLBACK_M_S = 1.5814e8
 #: which is a property of the window that record kept and not of the line, and
 #: following it would make ``v_analytic_m_s`` and ``t_traverse_ns`` move with
 #: the step count instead of recording the line.
-WAVEDUDE_BETA_BANKED_RAD_PER_M = 231.55331672912826
+VIS_BETA_BANKED_RAD_PER_M = 231.55331672912826
 
 #: Fixed geometry facts this file records verbatim: the port plane is the
 #: ``n_pml + n_ref`` node layer, the load sits at 20.0 mm, the substrate is
 #: 1.6 mm of eps_r 4.4 and the strip is 3.2 mm (8 cells) wide.
-WAVEDUDE_PORT_X_MM = 3.2
-WAVEDUDE_LOAD_X_MM = 20.0
-WAVEDUDE_SUBSTRATE_H_MM = 1.6
-WAVEDUDE_STRIP_W_MM = 3.2
-WAVEDUDE_EPS_R = 4.4
+VIS_PORT_X_MM = 3.2
+VIS_LOAD_X_MM = 20.0
+VIS_SUBSTRATE_H_MM = 1.6
+VIS_STRIP_W_MM = 3.2
+VIS_EPS_R = 4.4
 #: Highest node column the velocity fit may use.  The far absorber starts at
 #: column 56 on the default 62-column mesh, and a packet inside an absorber is
 #: not a travelling packet; 48 keeps a whole PML thickness (and then some)
 #: between the last fitted frame and the far wall.
-WAVEDUDE_VELOCITY_COLUMN_CAP = 48
+VIS_VELOCITY_COLUMN_CAP = 48
 #: How many columns past the port column the reduced-profile argmax must have
 #: travelled before a frame enters the fit window.  A frame whose peak still sits
 #: on the port column is the SOURCE, not a packet: its column is constant, so it
 #: carries no slope, and fitting it drags the result toward "stationary".
-WAVEDUDE_VELOCITY_DETACH_COLS = 2
+VIS_VELOCITY_DETACH_COLS = 2
 #: Smallest number of windowed frames, and smallest net column advance, a fit
 #: may have and still be called a velocity.  These are floors on the
 #: measurement's information content, not tolerances: five samples spanning one
 #: column are a direction, not a speed.
-WAVEDUDE_VELOCITY_MIN_FRAMES = 8
-WAVEDUDE_VELOCITY_MIN_ADVANCE_COLS = 6
+VIS_VELOCITY_MIN_FRAMES = 8
+VIS_VELOCITY_MIN_ADVANCE_COLS = 6
 #: How far the windowed fit may disagree with the analytic phase velocity before
 #: the measurement is called UNRELIABLE, as a fraction.  On a 50 ohm load at the
 #: far end of a line whose |s11| is ~1 the argmax of a 1-D |Ez| profile hops
@@ -530,27 +530,27 @@ WAVEDUDE_VELOCITY_MIN_ADVANCE_COLS = 6
 #: clean and physically wrong, so "a different number" has to be scored, not
 #: quoted.  0.15 admits what an argmax that can only move in whole columns can
 #: do (2 % at the 800-step cadence) and rejects the 25-30 % a mixed fit produces.
-WAVEDUDE_VELOCITY_RELIABLE_TOL = 0.15
+VIS_VELOCITY_RELIABLE_TOL = 0.15
 
 # --- the two arms this one script runs ---------------------------------------
 # A and B are the SAME structure with a different termination: same line, same
 # mesh, same load POSITION.  The only number that moves is the series_r
-# resistance, which is what makes the two WaveDude dumps comparable frame for
+# resistance, which is what makes the two emfit-vis dumps comparable frame for
 # frame (identical nx/ny/nz/cell_m/j_cut/port_x_mm/load_x_mm) -- and it is why
 # the arm is a table entry and not a second copy of this script (header: "line
 # length and load value are FLAGS").  A third arm (Run E, the second length
 # AC-7 needs) is still expressed the old way, by --n-line/--out; this table
 # names only the two arms whose load value is the whole difference.
 #
-# ``out``/``wavedude_dump`` are DEFAULTS, nothing more: an explicit --out /
-# --wavedude-dump is used verbatim, so a run that names its own file gets
+# ``out``/``vis_dump`` are DEFAULTS, nothing more: an explicit --out /
+# --vis-dump is used verbatim, so a run that names its own file gets
 # exactly that file and the startup line says which numbers were resolved.
 STRUCTURES = {
     "A": {
         # 50 ohm: the matched load AC-3/AC-6/AC-7 are written for.
         "load_ohm": LOAD_VALUE_OHM,
         "out": str(OUT_DEFAULT),
-        "wavedude_dump": WAVEDUDE_DEFAULT_OUT,
+        "vis_dump": VIS_DEFAULT_OUT,
     },
     "B": {
         # The exploratory 100 ohm arm (scope L520 Ruling 3).  The stem names
@@ -561,12 +561,12 @@ STRUCTURES = {
         # (evidence/vis_dump.npz) belongs to A: one file, one arm.
         "load_ohm": 100.0,
         "out": str(REPO / "artifacts" / "build_B_100ohm.json"),
-        "wavedude_dump": "artifacts/vis_dump_B_100ohm.npz",
+        "vis_dump": "artifacts/vis_dump_B_100ohm.npz",
     },
 }
 STRUCTURE_DEFAULT = "A"
-#: ``--wavedude-dump`` with NO argument means "this structure's own default".
-#: A sentinel string rather than ``const=WAVEDUDE_DEFAULT_OUT``, because the
+#: ``--vis-dump`` with NO argument means "this structure's own default".
+#: A sentinel string rather than ``const=VIS_DEFAULT_OUT``, because the
 #: default has to be resolved after ``--structure`` is known.
 STRUCTURE_DUMP_SENTINEL = "@structure"
 
@@ -579,7 +579,7 @@ STRUCTURE_DUMP_SENTINEL = "@structure"
 # "VIS" for a 100 ohm artefact, i.e. a filename that names no arm at all and so
 # could not be checked against the run.  Stems that carry no prefix keep the
 # spelling they always had (``smoke_A.json`` -> SMOKE).
-LABEL_STEM_PREFIXES = ("build", "vis", "run", "wavedude", "dump")
+LABEL_STEM_PREFIXES = ("build", "vis", "run", "dump")
 
 
 def label_from_stem(stem: str) -> str:
@@ -600,7 +600,7 @@ def label_from_stem(stem: str) -> str:
     return tokens[i].upper()
 
 
-def _wavedude_estimate_mb(nt: int, nt_x: int, nx: int, ny: int, nz: int) -> float:
+def _vis_estimate_mb(nt: int, nt_x: int, nx: int, ny: int, nz: int) -> float:
     """Price a dump of ``nt`` y-cut and ``nt_x`` x-cut frames [MB decimal].
 
     Only the arrays are counted, and every one of them is float32 or int32, so
@@ -614,9 +614,9 @@ def _wavedude_estimate_mb(nt: int, nt_x: int, nx: int, ny: int, nz: int) -> floa
     return (n_ycut + n_xcut + n_axes) / 1e6
 
 
-def _wavedude_plan_stride(nsteps: int, stride: int, nx: int, ny: int, nz: int,
-                          budget_mb: float = WAVEDUDE_BUDGET_MB,
-                          xcut_stride: int = WAVEDUDE_XCUT_STRIDE):
+def _vis_plan_stride(nsteps: int, stride: int, nx: int, ny: int, nz: int,
+                     budget_mb: float = VIS_BUDGET_MB,
+                     xcut_stride: int = VIS_XCUT_STRIDE):
     """Settle the effective stride from the step count and the mesh, and SAY SO.
 
     Returns ``(stride, nt, nt_x, est_mb)``.  The first stride that fits the
@@ -635,7 +635,7 @@ def _wavedude_plan_stride(nsteps: int, stride: int, nx: int, ny: int, nz: int,
     while True:
         nt = (nsteps + stride - 1) // stride
         nt_x = (nt + xcut_stride - 1) // xcut_stride
-        est_mb = _wavedude_estimate_mb(nt, nt_x, nx, ny, nz)
+        est_mb = _vis_estimate_mb(nt, nt_x, nx, ny, nz)
         if est_mb <= float(budget_mb):
             if stride != max(1, int(stride)):
                 pass
@@ -645,7 +645,7 @@ def _wavedude_plan_stride(nsteps: int, stride: int, nx: int, ny: int, nz: int,
             # no stride can fix: give the single frame and warn instead of
             # looping forever.
             _sys.stderr.write(
-                "WAVEDUDE WARNING: a single frame of this mesh is "
+                "VIS WARNING: a single frame of this mesh is "
                 f"{est_mb:.1f} MB, above the {float(budget_mb):.0f} MB budget; "
                 "stride cannot reduce it further. Writing one frame. "
                 "Lower --nsteps is not the answer; a coarser x-cut is.\n")
@@ -654,15 +654,15 @@ def _wavedude_plan_stride(nsteps: int, stride: int, nx: int, ny: int, nz: int,
         while stride == old:
             stride += 1
         _sys.stderr.write(
-            f"WAVEDUDE WARNING: --dump-stride {old} would write "
-            f"{_wavedude_estimate_mb((nsteps + old - 1) // old, (((nsteps + old - 1) // old) + xcut_stride - 1) // xcut_stride, nx, ny, nz):.1f} MB "
+            f"VIS WARNING: --dump-stride {old} would write "
+            f"{_vis_estimate_mb((nsteps + old - 1) // old, (((nsteps + old - 1) // old) + xcut_stride - 1) // xcut_stride, nx, ny, nz):.1f} MB "
             f"for {nsteps} steps, over the {float(budget_mb):.0f} MB budget. "
             f"RAISED the stride {old} -> {stride}: "
             f"{nt} y-cut frames + {nt_x} x-cut frames = {est_mb:.1f} MB. "
             f"The stride actually used is recorded in the file as dump_stride.\n")
 
 
-def wavedude_geometry(kwargs: dict) -> dict:
+def vis_geometry(kwargs: dict) -> dict:
     """The mesh integers the dump needs, derived from the call's own kwargs.
 
     Nothing is typed twice: ``nx = n_pml + n_ref + n_line`` and
@@ -690,8 +690,8 @@ def wavedude_geometry(kwargs: dict) -> dict:
             "j_cut": j_cut, "n_sub": n_sub, "n_strip": n_strip}
 
 
-def wavedude_xcut_column(xcut_mm: float, nx: int, cell_m: float,
-                         which: str) -> int:
+def vis_xcut_column(xcut_mm: float, nx: int, cell_m: float,
+                    which: str) -> int:
     """The node column an x-cut sits on, clamped with a WARNING if it must be.
 
     An x-cut outside the mesh does not exist and cannot be interpolated into
@@ -700,7 +700,7 @@ def wavedude_xcut_column(xcut_mm: float, nx: int, cell_m: float,
     than a refusal -- but a clamped column is a different column from the one
     asked for, so it is announced on stderr and NOT passed off as what was
     requested.  The clamp ceiling is ``nx - 1 - n_pml_like``: on the default
-    mesh the far PML opens at column 56, and ``WAVEDUDE_VCUT_CEIL`` below is
+    mesh the far PML opens at column 56, and ``VIS_VCUT_CEIL`` below is
     the last column on the line proper.
     """
     import sys as _sys
@@ -714,7 +714,7 @@ def wavedude_xcut_column(xcut_mm: float, nx: int, cell_m: float,
         return col
     clamped = 0 if col < 0 else ceil
     _sys.stderr.write(
-        f"WAVEDUDE WARNING: --xcut-{'near' if which == 'near' else 'far'}-mm "
+        f"VIS WARNING: --xcut-{'near' if which == 'near' else 'far'}-mm "
         f"{float(xcut_mm):g} mm lands on node column {col}, outside the usable "
         f"range 0..{ceil} on this {int(nx)}-column mesh "
         f"(cell {float(cell_m) * 1e3:g} mm; past column {ceil} is the far "
@@ -725,7 +725,7 @@ def wavedude_xcut_column(xcut_mm: float, nx: int, cell_m: float,
     return clamped
 
 
-class _WaveDudeRecorder:
+class _VisRecorder:
     """Collect ``ez`` slices inside the solve, one call per completed step.
 
     Installed as ``microstrip_wave(frame_callback=...)``; the loop calls it
@@ -749,7 +749,7 @@ class _WaveDudeRecorder:
 
     def __init__(self, *, nx: int, ny: int, nz: int, nt: int, nt_x: int,
                  stride: int, j_cut: int, ix_near: int, ix_far: int,
-                 xcut_stride: int = WAVEDUDE_XCUT_STRIDE):
+                 xcut_stride: int = VIS_XCUT_STRIDE):
         import numpy as np
 
         self.nx, self.ny, self.nz = int(nx), int(ny), int(nz)
@@ -777,7 +777,7 @@ class _WaveDudeRecorder:
         nx, ny, nz = self.nx, self.ny, self.nz
         if (cc.nxn, cc.nyn, cc.nz) != (nx + 1, ny + 1, nz):
             raise SystemExit(
-                "WAVEDUDE REFUSED: the mesh the solver built is "
+                "VIS REFUSED: the mesh the solver built is "
                 f"(nxn, nyn, nz) = {(cc.nxn, cc.nyn, cc.nz)}, but the dump was "
                 f"planned for (nx + 1, ny + 1, nz) = {(nx + 1, ny + 1, nz)}. "
                 "The dump's geometry was derived from the call's kwargs and the "
@@ -797,7 +797,7 @@ class _WaveDudeRecorder:
                         ("far x-cut", self._map_far)):
             if m.max() >= cc.n_edges or m.min() < cc.off_ez:
                 raise SystemExit(
-                    f"WAVEDUDE REFUSED: the {name} gather index reaches "
+                    f"VIS REFUSED: the {name} gather index reaches "
                     f"{int(m.max())}, outside the E_z block "
                     f"[{cc.off_ez}, {cc.off_ez + cc.n_ez}) of {cc.n_edges} "
                     "edges. The flat-index formula and this mesh disagree.")
@@ -817,7 +817,7 @@ class _WaveDudeRecorder:
         fi = slot // self.stride
         if fi >= self.nt:
             raise SystemExit(
-                f"WAVEDUDE REFUSED: step {n} wants frame {fi} but only "
+                f"VIS REFUSED: step {n} wants frame {fi} but only "
                 f"{self.nt} were planned. The plan and the march disagree; a "
                 "dump that silently drops its tail is worse than none.")
         e = stepper.e
@@ -848,13 +848,13 @@ class _WaveDudeRecorder:
         }
 
 
-def wavedude_analytic_velocity(
-        f_ref_hz: float = WAVEDUDE_F_REF_HZ,
-        beta_rad_per_m: float = WAVEDUDE_BETA_BANKED_RAD_PER_M):
+def vis_analytic_velocity(
+                          f_ref_hz: float = VIS_F_REF_HZ,
+                          beta_rad_per_m: float = VIS_BETA_BANKED_RAD_PER_M):
     """The line's phase velocity from its guide wavelength [m/s], and its basis.
 
     ``lambda_g = 2*pi/beta`` and ``v = f_ref * lambda_g``.  ``beta`` is the
-    BANKED parent figure ``WAVEDUDE_BETA_BANKED_RAD_PER_M``, not the run's own
+    BANKED parent figure ``VIS_BETA_BANKED_RAD_PER_M``, not the run's own
     fitted ``res.beta``: a pulse-excited march fits its beta out of the record it
     kept, and that fit moves with the step count (261.6 rad/m at 800 steps on
     the default mesh, i.e. 1.3995e8 m/s -- 11 % under the parent figure), so a
@@ -870,9 +870,9 @@ def wavedude_analytic_velocity(
     if not (math.isfinite(beta) and beta > 0.0):
         # Unreachable with the module constant; kept so an override that is not
         # a phase constant is loud and still yields a usable number, not a nan.
-        return (float(WAVEDUDE_V_FALLBACK_M_S),
+        return (float(VIS_V_FALLBACK_M_S),
                 f"unusable beta {float(beta_rad_per_m)!r}; frozen parent "
-                f"figure {float(WAVEDUDE_V_FALLBACK_M_S):.6g} m/s")
+                f"figure {float(VIS_V_FALLBACK_M_S):.6g} m/s")
     lambda_g = 2.0 * math.pi / beta
     v = float(f_ref_hz) * lambda_g
     return v, (f"beta={beta:.8g} rad/m (frozen parent figure, NOT this run's "
@@ -881,9 +881,9 @@ def wavedude_analytic_velocity(
 
 
 def measure_wave_velocity(ez_ycut, frame_index, dt_s, cell_m,
-                          port_x_mm: float = WAVEDUDE_PORT_X_MM,
-                          load_x_mm: float = WAVEDUDE_LOAD_X_MM,
-                          column_cap: int = WAVEDUDE_VELOCITY_COLUMN_CAP,
+                          port_x_mm: float = VIS_PORT_X_MM,
+                          load_x_mm: float = VIS_LOAD_X_MM,
+                          column_cap: int = VIS_VELOCITY_COLUMN_CAP,
                           min_points: int = 5,
                           v_analytic_m_s: float | None = None) -> dict:
     """Two numbers, and only one of them is measured.
@@ -904,7 +904,7 @@ def measure_wave_velocity(ez_ycut, frame_index, dt_s, cell_m,
     * BEFORE DETACHMENT the profile max sits on the source column (column 8 at
       x = 3.2 mm) frame after frame while the pulse ramps up, so those frames
       are a flat line -- no slope, and fitting them only dilutes one.  A frame
-      is admitted once its peak is at least ``WAVEDUDE_VELOCITY_DETACH_COLS``
+      is admitted once its peak is at least ``VIS_VELOCITY_DETACH_COLS``
       columns past the port column.
     * AFTER THE PACKET REACHES THE LOAD the global max is the load-plane
       standing-wave pile-up at column 50 (x = 20.0 mm, |Ez| 149.6 against a
@@ -920,9 +920,9 @@ def measure_wave_velocity(ez_ycut, frame_index, dt_s, cell_m,
     overwritten with this one -- when the fit is rejected ``v_measured_m_s`` is
     NaN and ``reason`` says what was missing -- and what a substitution would
     hide is scored in ``v_measured_reliable`` instead: 1 only when the windowed
-    fit has at least ``WAVEDUDE_VELOCITY_MIN_FRAMES`` frames, advances
-    monotonically by at least ``WAVEDUDE_VELOCITY_MIN_ADVANCE_COLS`` columns,
-    and lands within ``WAVEDUDE_VELOCITY_RELIABLE_TOL`` of the analytic speed.
+    fit has at least ``VIS_VELOCITY_MIN_FRAMES`` frames, advances
+    monotonically by at least ``VIS_VELOCITY_MIN_ADVANCE_COLS`` columns,
+    and lands within ``VIS_VELOCITY_RELIABLE_TOL`` of the analytic speed.
     ``velocity_note`` says the same thing in words.
     """
     import numpy as np
@@ -932,7 +932,7 @@ def measure_wave_velocity(ez_ycut, frame_index, dt_s, cell_m,
     # The traverse time is analytic in EVERY branch, so it is computed once here
     # from the analytic phase velocity and never from whatever the peak fit did.
     v_an = (float(v_analytic_m_s) if v_analytic_m_s is not None
-            else float(wavedude_analytic_velocity()[0]))
+            else float(vis_analytic_velocity()[0]))
     t_traverse_ns = (float(load_x_mm) - float(port_x_mm)) * 1e-3 / v_an * 1e9
     out = {"v_measured_m_s": float("nan"), "measured": False,
            "points": 0, "t_traverse_ns": t_traverse_ns, "reason": "",
@@ -958,7 +958,7 @@ def measure_wave_velocity(ez_ycut, frame_index, dt_s, cell_m,
     # The port column is where the drive sits, so "detached" is a statement
     # about columns and not about amplitudes.
     port_col = int(round(float(port_x_mm) * 1e-3 / float(cell_m)))
-    detach_col = port_col + int(WAVEDUDE_VELOCITY_DETACH_COLS)
+    detach_col = port_col + int(VIS_VELOCITY_DETACH_COLS)
     cols, ts = [], []
     if peak > 0.0:
         floor = 1e-3 * peak
@@ -997,19 +997,19 @@ def measure_wave_velocity(ez_ycut, frame_index, dt_s, cell_m,
     why = []
     if not (np.isfinite(v) and v > 0.0):
         why.append(f"fit slope {float(slope):.4g} col/ns is not a speed")
-    if n_frames < int(WAVEDUDE_VELOCITY_MIN_FRAMES):
+    if n_frames < int(VIS_VELOCITY_MIN_FRAMES):
         why.append(f"{n_frames} detached frames "
-                   f"(< {int(WAVEDUDE_VELOCITY_MIN_FRAMES)})")
+                   f"(< {int(VIS_VELOCITY_MIN_FRAMES)})")
     if not monotone:
         why.append(f"argmax non-monotone ({drops} backwards steps in "
                    f"{steps.size}: a standing wave, not a travelling packet)")
-    if advance < float(WAVEDUDE_VELOCITY_MIN_ADVANCE_COLS):
+    if advance < float(VIS_VELOCITY_MIN_ADVANCE_COLS):
         why.append(f"peak advances only {int(advance)} columns "
-                   f"(< {int(WAVEDUDE_VELOCITY_MIN_ADVANCE_COLS)})")
-    if not rel <= float(WAVEDUDE_VELOCITY_RELIABLE_TOL):
+                   f"(< {int(VIS_VELOCITY_MIN_ADVANCE_COLS)})")
+    if not rel <= float(VIS_VELOCITY_RELIABLE_TOL):
         why.append(f"fit {v:.6g} m/s is {100.0 * rel:.1f} % off the analytic "
                    f"{v_an:.6g} m/s (tol "
-                   f"{100.0 * float(WAVEDUDE_VELOCITY_RELIABLE_TOL):.0f} %)")
+                   f"{100.0 * float(VIS_VELOCITY_RELIABLE_TOL):.0f} %)")
     span = (f"{n_frames} frames, columns {int(cols_a[0])}..{int(cols_a[-1])}, "
             f"{100.0 * rel:.1f} % from analytic {v_an:.6g} m/s")
     if why:
@@ -1029,29 +1029,28 @@ def measure_wave_velocity(ez_ycut, frame_index, dt_s, cell_m,
         f"windowed peak tracker: {n_frames} frames, {int(advance)} columns, "
         f"{100.0 * rel:.2f} % from the analytic {v_an:.6g} m/s -- this is a "
         f"measured GROUP (packet) velocity of the "
-        f"{WAVEDUDE_F_PULSE_HZ / 1e9:.0f} GHz pulse, whereas v_analytic_m_s is "
+        f"{VIS_F_PULSE_HZ / 1e9:.0f} GHz pulse, whereas v_analytic_m_s is "
         f"the PHASE velocity of the line at "
-        f"{WAVEDUDE_F_REF_HZ / 1e9:.2f} GHz from the frozen parent beta, quoted "
+        f"{VIS_F_REF_HZ / 1e9:.2f} GHz from the frozen parent beta, quoted "
         f"as a SANITY BAND only and not as a prediction of v_g; on a dispersive "
         f"line v_g < v_p is expected, so landing within ~15 % of it means no "
         f"gross error, NOT that the phase velocity is verified")
     return out
 
 
-def write_wavedude_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
-                        frame_index, frame_index_xcut, frame_time_s, dt_s,
-                        nx: int, ny: int, nz: int, cell_m: float, j_cut: int,
-                        dump_stride: int, nsteps: int, f_pulse_hz: float,
-                        xcut_near_mm: float, xcut_far_mm: float,
-                        structure_id: str, load_ohm: float,
-                        f_ref_hz: float = WAVEDUDE_F_REF_HZ,
-                        beta_rad_per_m: float =
-                        WAVEDUDE_BETA_BANKED_RAD_PER_M,
-                        port_x_mm: float = WAVEDUDE_PORT_X_MM,
-                        load_x_mm: float = WAVEDUDE_LOAD_X_MM,
-                        substrate_h_mm: float = WAVEDUDE_SUBSTRATE_H_MM,
-                        strip_w_mm: float = WAVEDUDE_STRIP_W_MM,
-                        eps_r: float = WAVEDUDE_EPS_R) -> dict:
+def write_vis_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
+                   frame_index, frame_index_xcut, frame_time_s, dt_s,
+                   nx: int, ny: int, nz: int, cell_m: float, j_cut: int,
+                   dump_stride: int, nsteps: int, f_pulse_hz: float,
+                   xcut_near_mm: float, xcut_far_mm: float,
+                   structure_id: str, load_ohm: float,
+                   f_ref_hz: float = VIS_F_REF_HZ,
+                   beta_rad_per_m: float = VIS_BETA_BANKED_RAD_PER_M,
+                   port_x_mm: float = VIS_PORT_X_MM,
+                   load_x_mm: float = VIS_LOAD_X_MM,
+                   substrate_h_mm: float = VIS_SUBSTRATE_H_MM,
+                   strip_w_mm: float = VIS_STRIP_W_MM,
+                   eps_r: float = VIS_EPS_R) -> dict:
     """Write the one ``.npz`` this script's animation reads, and describe it.
 
     Units are the file's own: millimetres and nanoseconds everywhere, ``Ez`` in
@@ -1078,7 +1077,7 @@ def write_wavedude_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
     overwritten with an analytic value -- when the fit is rejected it is NaN,
     not the assumption; ``v_analytic_m_s`` is ``f_ref * lambda_g`` with
     ``lambda_g = 2*pi/beta`` from the BANKED parent constant
-    ``WAVEDUDE_BETA_BANKED_RAD_PER_M`` (``beta_rad_per_m``), never from the
+    ``VIS_BETA_BANKED_RAD_PER_M`` (``beta_rad_per_m``), never from the
     run's own fitted ``res.beta``; ``t_traverse_ns`` is the ANALYTIC crossing
     time; and ``v_measured_reliable`` / ``velocity_note`` say out loud whether
     the measurement earned the name, the frozen provenance of the analytic
@@ -1096,9 +1095,9 @@ def write_wavedude_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
     nt_x = int(ez_near.shape[0])
     if time_s.size != nt:
         raise SystemExit(
-            f"WAVEDUDE REFUSED: {nt} field frames but {time_s.size} frame "
+            f"VIS REFUSED: {nt} field frames but {time_s.size} frame "
             "times; the file would carry a time axis of the wrong length.")
-    v_analytic, v_analytic_basis = wavedude_analytic_velocity(
+    v_analytic, v_analytic_basis = vis_analytic_velocity(
         f_ref_hz=float(f_ref_hz), beta_rad_per_m=beta_rad_per_m)
     velocity = measure_wave_velocity(ez_ycut, fi, dt_s, cell_m,
                                      port_x_mm=port_x_mm, load_x_mm=load_x_mm,
@@ -1109,8 +1108,8 @@ def write_wavedude_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
     y_mm = (np.arange(ny, dtype=np.float32) * np.float32(cell_m) * 1e3)
     z_mm = (np.arange(nz, dtype=np.float32) * np.float32(cell_m) * 1e3)
     arrays = {
-        "schema": np.str_(WAVEDUDE_SCHEMA),
-        "engine": np.str_(WAVEDUDE_ENGINE),
+        "schema": np.str_(VIS_SCHEMA),
+        "engine": np.str_(VIS_ENGINE),
         "created_utc": np.str_(datetime.now(timezone.utc)
                                .isoformat(timespec="seconds")),
         "structure_id": np.str_(structure_id),
@@ -1148,20 +1147,20 @@ def write_wavedude_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, **arrays)
     size_mb = path.stat().st_size / 1e6
-    if size_mb > WAVEDUDE_BUDGET_MB:
+    if size_mb > VIS_BUDGET_MB:
         sys.stderr.write(
-            f"WAVEDUDE WARNING: {path} is {size_mb:.1f} MB, above the "
-            f"{WAVEDUDE_BUDGET_MB:.0f} MB budget the stride was planned "
+            f"VIS WARNING: {path} is {size_mb:.1f} MB, above the "
+            f"{VIS_BUDGET_MB:.0f} MB budget the stride was planned "
             "against (the plan prices payload, and this is the archive).\n")
     return {"path": str(path), "size_mb": float(size_mb), "nt": nt,
             "nt_x": nt_x, "velocity": velocity}
 
 
-def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
+def vis_selftest(path=VIS_SELFTEST_DEFAULT) -> dict:
     """Write a synthetic dump of the real geometry, then check it with numpy alone.
 
     No mesh, no solve, no FDTD: a Gaussian packet is drawn travelling at
-    ``WAVEDUDE_V_FALLBACK_M_S`` with a 0.345 echo off the load, into arrays of
+    ``VIS_V_FALLBACK_M_S`` with a 0.345 echo off the load, into arrays of
     exactly the shape and dtype a real run produces, and the file is then
     re-opened and checked key by key.  This is what runs when the 1400 s solve
     is not available; it proves the writer, the reader contract and
@@ -1178,12 +1177,12 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
     j_cut = 106
     ix_near, ix_far = 51, 55
     nt = 300
-    xcut_stride = WAVEDUDE_XCUT_STRIDE
-    v_mm_ns = float(WAVEDUDE_V_FALLBACK_M_S) * 1e-6
+    xcut_stride = VIS_XCUT_STRIDE
+    v_mm_ns = float(VIS_V_FALLBACK_M_S) * 1e-6
     sigma_mm = 1.2
     gamma = 0.345
-    port_mm = float(WAVEDUDE_PORT_X_MM)
-    load_mm = float(WAVEDUDE_LOAD_X_MM)
+    port_mm = float(VIS_PORT_X_MM)
+    load_mm = float(VIS_LOAD_X_MM)
 
     x_mm = np.arange(nx) * cell_m * 1e3
     y_mm = np.arange(ny) * cell_m * 1e3
@@ -1218,9 +1217,9 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
     # (loose, 1e-3).  The two differ by ~2e-5 -- 1.5814e8 is the parent figure
     # rounded, 2*pi*f_ref/beta is its unrounded value -- so a 1e-6 test against
     # the rounded number would fail for a CORRECT file.
-    beta_sel = float(WAVEDUDE_BETA_BANKED_RAD_PER_M)
+    beta_sel = float(VIS_BETA_BANKED_RAD_PER_M)
 
-    summary = write_wavedude_dump(
+    summary = write_vis_dump(
         path, ez_ycut=ez_ycut, ez_xcut_near=near[sel], ez_xcut_far=far[sel],
         frame_index=fi, frame_index_xcut=fi[sel], frame_time_s=time_s,
         dt_s=dt_s, nx=nx, ny=ny, nz=nz, cell_m=cell_m, j_cut=j_cut,
@@ -1254,8 +1253,8 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
         extra = [k for k in keys if k not in req]
         check("keys", not missing and not extra,
               f"{len(keys)} keys; missing {missing}; unexpected {extra}")
-        check("schema", str(d["schema"]) == WAVEDUDE_SCHEMA, str(d["schema"]))
-        check("engine", str(d["engine"]) == WAVEDUDE_ENGINE, str(d["engine"]))
+        check("schema", str(d["schema"]) == VIS_SCHEMA, str(d["schema"]))
+        check("engine", str(d["engine"]) == VIS_ENGINE, str(d["engine"]))
         check("structure_id", str(d["structure_id"]) == STRUCTURE_DEFAULT,
               str(d["structure_id"]))
         check("load_ohm",
@@ -1298,7 +1297,7 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
         # Only the stretch where the packet is still on the line: once it
         # reaches the cut column the echo is what is left in the window, and
         # that travels the other way on purpose.
-        off = peak_all >= int(WAVEDUDE_VELOCITY_COLUMN_CAP)
+        off = peak_all >= int(VIS_VELOCITY_COLUMN_CAP)
         first_off = int(np.argmax(off)) if bool(off.any()) else int(peak_all.size)
         seg = peak_all[:first_off]
         check("argmax_monotone",
@@ -1307,13 +1306,13 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
               f"{int(seg[0])}..{int(seg[-1])}")
         vel = summary["velocity"]
         v = float(d["v_measured_m_s"])
-        rel = abs(v - float(WAVEDUDE_V_FALLBACK_M_S)) / float(WAVEDUDE_V_FALLBACK_M_S)
+        rel = abs(v - float(VIS_V_FALLBACK_M_S)) / float(VIS_V_FALLBACK_M_S)
         check("velocity_measured", vel["measured"] and rel < 0.05,
-              f"v_measured={v:.6g} m/s vs {float(WAVEDUDE_V_FALLBACK_M_S):.6g} "
+              f"v_measured={v:.6g} m/s vs {float(VIS_V_FALLBACK_M_S):.6g} "
               f"({100.0 * rel:.2f} %), {vel['points']} frames: {vel['reason']}")
         t_tr = float(d["t_traverse_ns"])
         t_want = ((load_mm - port_mm) * 1e-3
-                  / float(WAVEDUDE_V_FALLBACK_M_S) * 1e9)
+                  / float(VIS_V_FALLBACK_M_S) * 1e9)
         check("t_traverse", abs(t_tr - t_want) <= 0.05 * t_want,
               f"{t_tr:.6f} ns vs {t_want:.6f} ns (analytic)")
         # The synthetic packet IS a clean travelling wave, so the peak fit has
@@ -1323,17 +1322,17 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
         v_an = float(d["v_analytic_m_s"])
         # Tight against the same derivation (no tolerance on arithmetic), then
         # loose against the rounded parent figure the packet travels at.
-        v_bank = (2.0 * np.pi * float(WAVEDUDE_F_REF_HZ)
-                  / float(WAVEDUDE_BETA_BANKED_RAD_PER_M))
+        v_bank = (2.0 * np.pi * float(VIS_F_REF_HZ)
+                  / float(VIS_BETA_BANKED_RAD_PER_M))
         check("v_analytic_banked",
               abs(v_an - v_bank) <= 1e-9 * v_bank,
               f"{v_an:.10g} m/s vs 2*pi*f_ref/beta_banked {v_bank:.10g} m/s "
               f"(beta={beta_sel:.8g} rad/m, run beta NOT followed)")
         check("v_analytic",
-              abs(v_an - float(WAVEDUDE_V_FALLBACK_M_S))
-              <= 1e-3 * float(WAVEDUDE_V_FALLBACK_M_S),
+              abs(v_an - float(VIS_V_FALLBACK_M_S))
+              <= 1e-3 * float(VIS_V_FALLBACK_M_S),
               f"{v_an:.6g} m/s vs the frozen parent "
-              f"{float(WAVEDUDE_V_FALLBACK_M_S):.6g} m/s "
+              f"{float(VIS_V_FALLBACK_M_S):.6g} m/s "
               f"(lambda_g={2.0 * np.pi / beta_sel * 1e3:.5f} mm)")
         check("v_measured_reliable", int(d["v_measured_reliable"]) == 1,
               f"v_measured_reliable={int(d['v_measured_reliable'])}; "
@@ -1346,7 +1345,7 @@ def wavedude_selftest(path=WAVEDUDE_SELFTEST_DEFAULT) -> dict:
                "checks": checks}
     if bad:
         raise SystemExit(
-            "WAVEDUDE SELFTEST FAILED:\n" +
+            "VIS SELFTEST FAILED:\n" +
             "\n".join(f"  {c['check']}: {c['detail']}" for c in bad))
     return summary
 
@@ -2321,8 +2320,8 @@ def main(argv: list[str] | None = None) -> int:
              "physics must not move when a path is edited. The choice sets "
              "DEFAULTS "
              "ONLY -- the load "
-             "resistance, the default --out and the default --wavedude-dump "
-             "-- so an explicit --load-ohm / --out / --wavedude-dump is used "
+             "resistance, the default --out and the default --vis-dump "
+             "-- so an explicit --load-ohm / --out / --vis-dump is used "
              "verbatim. A is the graded 50 ohm load; B is the exploratory "
              "100 ohm arm (scope L520 Ruling 3). The mesh, the line length and "
              "the load POSITION are the same in both: only the series_r "
@@ -2481,14 +2480,14 @@ def main(argv: list[str] | None = None) -> int:
                          "Off by default; no number changes when it is off and "
                          "no file is written.")
 
-    # -- WaveDude: the time-series dump of the march, and its selftest ------
+    # -- emfit-vis: the time-series dump of the march, and its selftest ------
     ap.add_argument(
-        "--wavedude-dump", nargs="?", const=STRUCTURE_DUMP_SENTINEL,
+        "--vis-dump", nargs="?", const=STRUCTURE_DUMP_SENTINEL,
         default=None, metavar="PATH",
-        help="also write a WaveDude time-series .npz (no argument: the "
+        help="also write an emfit-vis time-series .npz (no argument: the "
              "--structure's own -- "
-             f"{STRUCTURES['A']['wavedude_dump']} for A, "
-             f"{STRUCTURES['B']['wavedude_dump']} for B) holding Ez on the "
+             f"{STRUCTURES['A']['vis_dump']} for A, "
+             f"{STRUCTURES['B']['vis_dump']} for B) holding Ez on the "
              "j=j_centre z-cut "
              "along the line and on two x-cuts through it, with the frame "
              "indices and the mm/ns axes. This is a SECOND, independent "
@@ -2496,30 +2495,30 @@ def main(argv: list[str] | None = None) -> int:
              "can be asked for in the same run.")
     ap.add_argument(
         "--dump-stride", type=int, default=1, metavar="N",
-        help="keep every Nth step in the WaveDude dump (default 1: every "
+        help="keep every Nth step in the emfit-vis dump (default 1: every "
              "step). Raised automatically, with a warning, if the planned "
-             f"arrays would exceed the {WAVEDUDE_BUDGET_MB:.0f} MB budget.")
+             f"arrays would exceed the {VIS_BUDGET_MB:.0f} MB budget.")
     ap.add_argument(
         "--pulse-freq-ghz", type=float, default=None, metavar="GHZ",
-        help="centre frequency of the pulse the WaveDude dump records "
-             f"(default {WAVEDUDE_F_PULSE_HZ / 1e9:.1f} GHz). Only used "
-             "together with --wavedude-dump, which excites the line with a "
+        help="centre frequency of the pulse the emfit-vis dump records "
+             f"(default {VIS_F_PULSE_HZ / 1e9:.1f} GHz). Only used "
+             "together with --vis-dump, which excites the line with a "
              "pulse at this frequency instead of the default drive.")
     ap.add_argument(
         "--xcut-near-mm", type=float, default=20.4, metavar="MM",
-        help="x position of the near x-cut frame of the WaveDude dump "
+        help="x position of the near x-cut frame of the emfit-vis dump "
              "(default 20.4 mm: on the line, just before the load).")
     ap.add_argument(
         "--xcut-far-mm", type=float, default=22.0, metavar="MM",
-        help="x position of the far x-cut frame of the WaveDude dump "
+        help="x position of the far x-cut frame of the emfit-vis dump "
              "(default 22.0 mm: past the load).")
     ap.add_argument(
-        "--selftest", nargs="?", const=WAVEDUDE_SELFTEST_DEFAULT, default=None,
+        "--selftest", nargs="?", const=VIS_SELFTEST_DEFAULT, default=None,
         metavar="PATH",
-        help="write a synthetic WaveDude .npz (numpy only: no grid, no "
+        help="write a synthetic emfit-vis .npz (numpy only: no grid, no "
              "solve), re-open it, check every key/dtype/shape and the "
              "measured velocity, print the JSON summary and exit 0. No "
-             f"argument: {WAVEDUDE_SELFTEST_DEFAULT}.")
+             f"argument: {VIS_SELFTEST_DEFAULT}.")
     args = ap.parse_args(argv)
     # The arm comes from --structure alone. It is never inferred from the --out
     # filename: in a solver the physics is chosen by a flag, and a typo in a
@@ -2544,12 +2543,12 @@ def main(argv: list[str] | None = None) -> int:
         args.load_ohm = STRUCTURES[structure]["load_ohm"]
     if args.out is None:
         args.out = STRUCTURES[structure]["out"]
-    if args.wavedude_dump == STRUCTURE_DUMP_SENTINEL:
-        args.wavedude_dump = STRUCTURES[structure]["wavedude_dump"]
+    if args.vis_dump == STRUCTURE_DUMP_SENTINEL:
+        args.vis_dump = STRUCTURES[structure]["vis_dump"]
     if args.selftest is not None:
         # The file format, not the physics: no mesh is built and no step is
         # taken, so this runs in a second and says nothing about the solve.
-        print(json.dumps(wavedude_selftest(args.selftest), indent=2,
+        print(json.dumps(vis_selftest(args.selftest), indent=2,
                          sort_keys=True, default=str))
         return 0
     # The label states the arm actually simulated -- always the resolved
@@ -2559,12 +2558,12 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.out).resolve()
     # Both resolved paths, out loud, before the solve: the dump's default used
     # to be structure-independent (evidence/vis_dump.npz for every arm), so a
-    # B run with a bare --wavedude-dump would have overwritten A's picture.
+    # B run with a bare --vis-dump would have overwritten A's picture.
     print(f"structure {structure}: series_r load {float(args.load_ohm):g} ohm, "
           f"label {label}")
     print(f"artefact: {out_path}")
-    print("wavedude: " + (str(Path(args.wavedude_dump).resolve())
-                          if args.wavedude_dump is not None
+    print("vis: " + (str(Path(args.vis_dump).resolve())
+                          if args.vis_dump is not None
                           else "(not requested)"))
     # The twin's record sits beside the loaded artefact: build_A_50ohm_v3.json ->
     # build_A_50ohm_v3_twin.json.  Computed unconditionally so the dry run can
@@ -2691,33 +2690,33 @@ def main(argv: list[str] | None = None) -> int:
         # keyword argument (TypeError) rather than an override.
         loaded_kwargs = (dict(kwargs, reference=reference)
                          if args.with_twin else kwargs)
-        # -- WaveDude: the time-series dump, when this run was asked for one --
-        wavedude = None
+        # -- emfit-vis: the time-series dump, when this run was asked for one --
+        vis = None
         recorder = None
         dump_meta = None
-        if args.wavedude_dump is not None:
-            geo = wavedude_geometry(dict(kwargs))
+        if args.vis_dump is not None:
+            geo = vis_geometry(dict(kwargs))
             f_pulse_hz = (float(args.pulse_freq_ghz)
-                          if args.pulse_freq_ghz else WAVEDUDE_F_PULSE_HZ)
-            stride, nt, nt_x, est_mb = _wavedude_plan_stride(
+                          if args.pulse_freq_ghz else VIS_F_PULSE_HZ)
+            stride, nt, nt_x, est_mb = _vis_plan_stride(
                 int(kwargs["nsteps"]), int(args.dump_stride),
                 geo["nx"], geo["ny"], geo["nz"])
-            ix_near = wavedude_xcut_column(float(args.xcut_near_mm),
+            ix_near = vis_xcut_column(float(args.xcut_near_mm),
                                           geo["nx"], geo["cell_m"], "near")
-            ix_far = wavedude_xcut_column(float(args.xcut_far_mm),
+            ix_far = vis_xcut_column(float(args.xcut_far_mm),
                                          geo["nx"], geo["cell_m"], "far")
             sys.stderr.write(
-                f"WAVEDUDE: {args.wavedude_dump}: {nt} frames of Ez on the "
+                f"VIS: {args.vis_dump}: {nt} frames of Ez on the "
                 f"j={geo['j_cut']} z-cut ({geo['nx']}x{geo['nz']}) plus "
                 f"{nt_x} frames of two x-cuts ({geo['ny']}x{geo['nz']}), "
                 f"stride {stride}, ~{est_mb:.1f} MB\n"
-                f"WAVEDUDE: x-cuts at columns {ix_near} "
+                f"VIS: x-cuts at columns {ix_near} "
                 f"({ix_near * geo['cell_m'] * 1e3:.2f} mm) and {ix_far} "
                 f"({ix_far * geo['cell_m'] * 1e3:.2f} mm)\n"
-                f"WAVEDUDE: excite='pulse' at {f_pulse_hz / 1e9:.3f} GHz: the "
+                f"VIS: excite='pulse' at {f_pulse_hz / 1e9:.3f} GHz: the "
                 "dump is the march of one packet, so the excitation is "
                 "overridden for this run\n")
-            recorder = _WaveDudeRecorder(
+            recorder = _VisRecorder(
                 nx=geo["nx"], ny=geo["ny"], nz=geo["nz"], nt=nt, nt_x=nt_x,
                 stride=stride, j_cut=geo["j_cut"], ix_near=ix_near,
                 ix_far=ix_far)
@@ -2764,17 +2763,17 @@ def main(argv: list[str] | None = None) -> int:
             # default mesh -> 1.3995e8 m/s, 11 % under the parent figure),
             # which would make `v_analytic_m_s` and `t_traverse_ns` move with
             # the march length instead of recording the line.
-            # `write_wavedude_dump` defaults `beta_rad_per_m` to
-            # `WAVEDUDE_BETA_BANKED_RAD_PER_M`, so `res.beta` is not passed.
-            wavedude = write_wavedude_dump(args.wavedude_dump,
+            # `write_vis_dump` defaults `beta_rad_per_m` to
+            # `VIS_BETA_BANKED_RAD_PER_M`, so `res.beta` is not passed.
+            vis = write_vis_dump(args.vis_dump,
                                            **recorder.payload(), **dump_meta)
-            vel = wavedude["velocity"]
+            vel = vis["velocity"]
             tt = vel["t_traverse_ns"]
             tt_txt = f"{tt:.4f}" if isinstance(tt, float) else "n/a"
             sys.stdout.write(
-                f"WAVEDUDE: wrote {wavedude['path']} "
-                f"({wavedude['size_mb']:.1f} MB): {wavedude['nt']} Ez frames, "
-                f"{wavedude['nt_x']} x-cut frames, v_measured="
+                f"VIS: wrote {vis['path']} "
+                f"({vis['size_mb']:.1f} MB): {vis['nt']} Ez frames, "
+                f"{vis['nt_x']} x-cut frames, v_measured="
                 f"{vel['v_measured_m_s']:.6g} m/s"
                 + (f" [NO MEASUREMENT: {vel['reason']}]" if not vel["measured"] else "")
                 + ("" if vel["v_measured_reliable"] else

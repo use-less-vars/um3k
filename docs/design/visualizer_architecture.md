@@ -1,4 +1,4 @@
-# The time-domain visualiser: the WaveDude dump and its player
+# The time-domain visualiser: the emfit-vis dump and its player
 
 **Scope, one line:** this document is the record of the **time-domain animation pipeline** — the writer that emits a frame series and the player that reads it — and it specialises `docs/design/visual_engine_arch.md` (436 lines, the slice/isosurface design, **not edited by this pass**); where the two disagree on the time-domain path, **this document is the newer record**.
 
@@ -10,28 +10,28 @@
 
 ## 1. What the pipeline is, in two commits
 
-- **`f667e42` — "feat(fdtd): WaveDude time-series field dump for the visualiser"** (2026-11-10): the writer, in `evidence/termination/run_build_A.py` (with `emfit/studies.py`).
-- **`3848d46` — "feat(vis): WaveDude time-series player in the PoC web app"** (same day, ~15 minutes later): the player, in `server/poc_app.py` only.
+- **`f667e42` — "feat(fdtd): emfit-vis time-series field dump for the visualiser"** (2026-11-10): the writer, in `evidence/termination/run_build_A.py` (with `emfit/studies.py`).
+- **`3848d46` — "feat(vis): emfit-vis time-series player in the PoC web app"** (same day, ~15 minutes later): the player, in `server/poc_app.py` only.
 
 Two products, one direction: the solver writes an `.npz` frame series, the app reads it and animates it. No new solver quantity, no new physics — the same field the solve already computed, kept over time instead of at one instant.
 
-## 2. The writer: `--wavedude-dump`
+## 2. The writer: `--vis-dump`
 
 Declared at `evidence/termination/run_build_A.py`:2368-2376 [L], with
 
 ```python
 ap.add_argument(
-    "--wavedude-dump", nargs="?", const=WAVEDUDE_DEFAULT_OUT, default=None,
+    "--vis-dump", nargs="?", const=VIS_DEFAULT_OUT, default=None,
     metavar="PATH", ...)
 ```
 
-- **Bare flag** (`--wavedude-dump`) writes the default path, `WAVEDUDE_DEFAULT_OUT = "evidence/vis_dump.npz"` (`:463`).
-- **With an argument** (`--wavedude-dump PATH`) writes there instead.
+- **Bare flag** (`--vis-dump`) writes the default path, `VIS_DEFAULT_OUT = "evidence/vis_dump.npz"` (`:463`).
+- **With an argument** (`--vis-dump PATH`) writes there instead.
 - **Absent** (`default=None`) — no dump is written; the run is the ordinary solve.
 
 The help text is explicit that this is **not** a replacement for the existing field dump: *"This is a SECOND, independent product: `--dump-fields` still writes its own snapshot, and both can be asked for in the same run."* (`:2374-2376`) [L]. The sibling is real — `--dump-fields` is a `store_true` flag at `:2356` that keeps **one** timestep, the last (`:432`) [L]. Asking for both is legal and neither changes the other's output.
 
-There is also a **third** entry point worth knowing about, because it needs no solve at all: `--selftest` (`:2396-2400`) writes a *synthetic* WaveDude `.npz` (numpy only — no grid, no march) and re-opens it, checking every key, dtype and shape; its default path is `artifacts/vis_dump_selftest.npz` (`:464`) [L]. That is the only part of the writer that can be exercised without a host run.
+There is also a **third** entry point worth knowing about, because it needs no solve at all: `--selftest` (`:2396-2400`) writes a *synthetic* emfit-vis `.npz` (numpy only — no grid, no march) and re-opens it, checking every key, dtype and shape; its default path is `artifacts/vis_dump_selftest.npz` (`:464`) [L]. That is the only part of the writer that can be exercised without a host run.
 
 ## 3. What is written: three surfaces, not one
 
@@ -67,35 +67,35 @@ if fi % self.xcut_stride == 0:
 ```
 
 - `ez_ycut` takes **every kept step**.
-- The two x-cuts take **only every `WAVEDUDE_XCUT_STRIDE` = 10th** y-cut frame (`:472`), so `nt_x == ceil(nt / 10)` (`:470-471`) — **one time base, two cadences**, with no second time array to say so.
+- The two x-cuts take **only every `VIS_XCUT_STRIDE` = 10th** y-cut frame (`:472`), so `nt_x == ceil(nt / 10)` (`:470-471`) — **one time base, two cadences**, with no second time array to say so.
 - `--dump-stride N` keeps every Nth step (`:2377-2381`, default 1) [L].
-- The stride is **planned before the solve**, never discovered afterwards: `_wavedude_plan_stride` prices `--nsteps` and the mesh against `WAVEDUDE_BUDGET_MB = 45.0` (`:467`) and **raises the effective stride with a warning** if the arrays would exceed it (`:453-459`). It never fails for size — "a dump that refuses to exist is worse than a dump with fewer frames" — and the stride it settled on is written into the file as `dump_stride`, so **the cadence of a file is read from the file**, not assumed.
-- One hard refusal exists and is the right one: if the plan and the march disagree, the writer raises `WAVEDUDE REFUSED … a dump that silently drops its tail is worse than none` (`:746-750`) [L].
+- The stride is **planned before the solve**, never discovered afterwards: `_vis_plan_stride` prices `--nsteps` and the mesh against `VIS_BUDGET_MB = 45.0` (`:467`) and **raises the effective stride with a warning** if the arrays would exceed it (`:453-459`). It never fails for size — "a dump that refuses to exist is worse than a dump with fewer frames" — and the stride it settled on is written into the file as `dump_stride`, so **the cadence of a file is read from the file**, not assumed.
+- One hard refusal exists and is the right one: if the plan and the march disagree, the writer raises `VIS REFUSED … a dump that silently drops its tail is worse than none` (`:746-750`) [L].
 
 The one recorded real invocation (`artifacts/vis_run_1500.json`:205) [L]:
 
 ```
 evidence/termination/run_build_A.py --nsteps 1500 --out artifacts/vis_run_1500.json \
-  --wavedude-dump artifacts/vis_dump_1500.npz --dump-stride 1
+  --vis-dump artifacts/vis_dump_1500.npz --dump-stride 1
 ```
 
 1500 steps at stride 1, producing `artifacts/vis_dump_1500.npz` (**10,178,360 B**, ~10.2 MB) and, from the selftest path, `artifacts/vis_dump_selftest.npz` (**1,297,685 B**, ~1.3 MB) [L, directory listing].
 
 ### The 15 GHz choice, in one paragraph
 
-The dump's wavelet is struck at `WAVEDUDE_F_PULSE_HZ = 15.0e9` (`:476`) so the packet is short compared with the line — at 5.828 GHz the guided wavelength is 27.14 mm on a 24.8 mm line, which is not a travelling packet but the whole line sloshing (`:440-448`) [L]. The frequency recorded in the file is **unconditionally** `WAVEDUDE_F_REF_HZ` 5.8278 GHz (`:477`), and `--pulse-freq-ghz` "overrides `f_pulse` only, never `f_target`" (`:446`). **Extraction math stays at 5.827 GHz; this is a viewing choice, not a physics change.** Reasoning in full: `docs/design/session_open_gen11.md` §3.
+The dump's wavelet is struck at `VIS_F_PULSE_HZ = 15.0e9` (`:476`) so the packet is short compared with the line — at 5.828 GHz the guided wavelength is 27.14 mm on a 24.8 mm line, which is not a travelling packet but the whole line sloshing (`:440-448`) [L]. The frequency recorded in the file is **unconditionally** `VIS_F_REF_HZ` 5.8278 GHz (`:477`), and `--pulse-freq-ghz` "overrides `f_pulse` only, never `f_target`" (`:446`). **Extraction math stays at 5.827 GHz; this is a viewing choice, not a physics change.** Reasoning in full: `docs/design/session_open_gen11.md` §3.
 
 ## 5. The file and state contract
 
 | tag / symbol | value | defined at |
 |---|---|---|
-| `WAVEDUDE_SCHEMA` | `"emfit.wavedude/1"` | `evidence/termination/run_build_A.py`:461 (writer) and `server/poc_app.py`:94 (reader) — same literal on both sides [L] |
-| `WAVEDUDE_ENGINE` | `"emfit.fdtd.fit-leapfrog/microstrip_wave"` | `run_build_A.py`:462 |
-| `STATE_SCHEMA_WAVEDUDE` | `"emfit.poc-state/2"` | `server/poc_app.py`:95 |
-| loader | `load_wavedude(path)`, "numpy only, no pyvista" | `server/poc_app.py`:207-208 |
-| format discriminator | `_is_wavedude(info)` — `info["format"] == "wavedude"` | `server/poc_app.py`:202-204 |
+| `VIS_SCHEMA` | `"emfit.vis/2"` | `evidence/termination/run_build_A.py`:461 (writer) and `server/poc_app.py`:94 (reader) — same literal on both sides [L] |
+| `VIS_ENGINE` | `"emfit.fdtd.fit-leapfrog/microstrip_wave"` | `run_build_A.py`:462 |
+| `STATE_SCHEMA_VIS` | `"emfit.poc-state/2"` | `server/poc_app.py`:95 |
+| loader | `load_vis(path)`, "numpy only, no pyvista" | `server/poc_app.py`:207-208 |
+| format discriminator | `_is_vis(info)` — `info["format"] == "wavedude"` (the stored-data spelling is kept deliberately: `poc_app.py`:220-222) | `server/poc_app.py`:202-204 |
 
-The reader **validates** rather than assumes: a file whose schema is not `emfit.wavedude/1` is refused with a message naming the schema it wanted (`:247-257`), and one that declares the schema but is missing keys is refused too (`:257`) [L]. A legacy plane dump is handled on a separate branch (`:366`) — the two are not silently mixed.
+The reader **validates** rather than assumes: a file whose schema is not `emfit.vis/2` is refused with a message naming the schema it wanted (`:247-257`), and one that declares the schema but is missing keys is refused too (`:257`) [L]. A legacy plane dump is handled on a separate branch (`:366`) — the two are not silently mixed.
 
 ## 6. Dependencies, and how to stand them up
 
@@ -118,7 +118,7 @@ with the file's own note that the launcher needs only numpy and "everything here
 
 **(a) The entire GUI layer is unverified by default.** trame, pyvista and vtk are *declared but were never installed in the build container*, so the server, layout, slider callbacks and panel placement have **never rendered** — the module docstring says so at `server/poc_app.py`:49-55 [L]. This is not "untested edge cases"; it is "never executed once". Verify before debugging.
 
-**(b) The dumps are not in git; the run records are.** `.gitignore` has **no** `artifacts/` rule, but it does have a blanket `*.npz` with only `!tests/data/*.npz` exempted [L]. Consequence: `artifacts/vis_dump_1500.npz` and `artifacts/vis_dump_selftest.npz` are **local, uncommitted** files; what is committed beside them is the JSON/text run record (`artifacts/vis_run_1500.json`) and the scripts. A fresh clone therefore has the *record* of the dump and not the dump. Regenerate with `--wavedude-dump` (or `--selftest` for the synthetic one); do not assume the file travels.
+**(b) The dumps are not in git; the run records are.** `.gitignore` has **no** `artifacts/` rule, but it does have a blanket `*.npz` with only `!tests/data/*.npz` exempted [L]. Consequence: `artifacts/vis_dump_1500.npz` and `artifacts/vis_dump_selftest.npz` are **local, uncommitted** files; what is committed beside them is the JSON/text run record (`artifacts/vis_run_1500.json`) and the scripts. A fresh clone therefore has the *record* of the dump and not the dump. Regenerate with `--vis-dump` (or `--selftest` for the synthetic one); do not assume the file travels.
 
 **(c) Where the browserless debugging fallback actually is — a corrected statement.** An earlier note in circulation claimed there is **no** `--dump-state` flag and that the fallback is only the run-record JSON. That is **half wrong and should not be repeated** [L]:
 

@@ -1,6 +1,6 @@
-"""Headless proof that the wave-dude play trigger RETURNS while playback runs.
+"""Headless proof that the emfit-vis play trigger RETURNS while playback runs.
 
-REAL, not simulated: ``run_web_wavedude`` boots for real (server, state,
+REAL, not simulated: ``run_web_vis`` boots for real (server, state,
 controller, every ``@ctrl.set(...)`` registration is the shipped decorator), and
 the handler exercised below is the object the page's ``{{ play_label }}`` button
 calls.  The handler's closure cells hand back the *live* ``handles`` dict and the
@@ -49,7 +49,7 @@ pytest.importorskip(
 )
 pytest.importorskip(
     "trame.ui.vuetify3",
-    reason="trame.ui.vuetify3 is what run_web_wavedude builds its layout with",
+    reason="trame.ui.vuetify3 is what run_web_vis builds its layout with",
 )
 
 FPS = 25
@@ -59,12 +59,12 @@ LOOP_EXIT_TIMEOUT_S = 2.0
 
 
 class _Stop(Exception):
-    """Unwinds ``run_web_wavedude`` just before it enters the event loop."""
+    """Unwinds ``run_web_vis`` just before it enters the event loop."""
 
 
 def _fixture_info(app, path: Path, *, structure_id="A", load_ohm=50.0,
                   schema=None) -> dict:
-    """Minimal ``emfit.wavedude/2`` dump, the same field set verify_wd.py uses.
+    """Minimal ``emfit.vis/2`` dump, the same field set verify_wd.py uses.
 
     ``structure_id`` / ``load_ohm`` are the dump's PROVENANCE keys; pass ``None``
     for either to write a version-1-shaped file that does not carry it.  The
@@ -75,7 +75,7 @@ def _fixture_info(app, path: Path, *, structure_id="A", load_ohm=50.0,
     nt_x, ny_x = 3, 6
     rng = np.random.default_rng(0)
     payload = {
-        "schema": app.WAVEDUDE_SCHEMA if schema is None else schema,
+        "schema": app.VIS_SCHEMA if schema is None else schema,
         "ez_ycut": rng.normal(size=(nt, nx, nz)),
         "ez_xcut_near": rng.normal(size=(nt_x, ny_x, nz)),
         "ez_xcut_far": rng.normal(size=(nt_x, ny_x, nz)),
@@ -117,15 +117,15 @@ def _fixture_info(app, path: Path, *, structure_id="A", load_ohm=50.0,
     if load_ohm is not None:
         payload["load_ohm"] = np.array(float(load_ohm))
     np.savez(path, **payload)
-    return app.load_wavedude(path)
+    return app.load_vis(path)
 
 
 def _boot_app(info):
-    """Run ``run_web_wavedude`` up to the point it would call ``server.start``.
+    """Run ``run_web_vis`` up to the point it would call ``server.start``.
 
     Same recipe as artifacts/verify_wd.py: wrap ``trame.app.get_server`` so the
     live server object escapes, and make ``start`` raise so the event loop is
-    never entered.  ``run_web_wavedude`` imports ``get_server`` inside the
+    never entered.  ``run_web_vis`` imports ``get_server`` inside the
     function, so patching the module attribute before the call is what it sees.
     """
     import trame.app as trame_app
@@ -147,12 +147,12 @@ def _boot_app(info):
     trame_app.get_server = fake_get_server
     try:
         with contextlib.suppress(_Stop):
-            app.run_web_wavedude(info, "127.0.0.1", 8999, fps=FPS)
+            app.run_web_vis(info, "127.0.0.1", 8999, fps=FPS)
     finally:
         trame_app.get_server = real_get_server
 
     assert "srv" in box, (
-        "run_web_wavedude never reached server.start(): it returned early "
+        "run_web_vis never reached server.start(): it returned early "
         "(missing web dependency) so no trigger was registered"
     )
     return app, box["srv"]

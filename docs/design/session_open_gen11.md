@@ -42,12 +42,12 @@ Two smaller things worth carrying: `Feed_R` was **refused** for port 1 because o
 
 **What the ledger does not say, and you should not either.** The 0.327 is MSLPort **probe** arithmetic: an independent *solver* on the same extraction method, not an independent *extraction*. No independent `CalcPort` cross-check exists (`session_close_gen10` §6) [R]. And every run record on disk carries `"git_rev": null` (e.g. `artifacts/vis_run_1500.json`:208) [L], so numbers are tied to files, not commits — the DR-28 shape, still open.
 
-## 3. The current task — the WaveDude visualiser
+## 3. The current task — the emfit-vis visualiser
 
 Two commits on 2026-11-10 [L, `git log`]:
 
-1. **`f667e42` — "feat(fdtd): WaveDude time-series field dump for the visualiser"** — the writer. Touches `emfit/studies.py` and `evidence/termination/run_build_A.py`.
-2. **`3848d46` — "feat(vis): WaveDude time-series player in the PoC web app"**, about 15 minutes later — the player. Touches `server/poc_app.py` **only**.
+1. **`f667e42` — "feat(fdtd): emfit-vis time-series field dump for the visualiser"** — the writer. Touches `emfit/studies.py` and `evidence/termination/run_build_A.py`.
+2. **`3848d46` — "feat(vis): emfit-vis time-series player in the PoC web app"**, about 15 minutes later — the player. Touches `server/poc_app.py` **only**.
 
 The pipeline itself (flag semantics, the three stored surfaces, cadence, schemas, dependencies) is documented in `docs/design/visualizer_architecture.md`; read that beside this file. This section is the **state of play**, which is worse than a feature list suggests.
 
@@ -59,20 +59,20 @@ The player lives in `server/poc_app.py` (4,031 lines) and is **unverified** — 
 
 Read that precisely: the GUI has **never once executed**. Nothing about it is known-good; there is no symptom list to triage, only a claim that has never been tested. Do not start by "fixing" a rendering bug you have not reproduced.
 
-The good news is structural: GUI imports are **deferred inside functions** (`:3309` says it outright for the numpy-only paths), so the data half is importable and testable with numpy alone — `load_wavedude` at `server/poc_app.py`:207 is documented "numpy only, no pyvista" [L]. **The first dispatch is therefore: stand up trame / pyvista / vtk, then verify the player renders and the numpy path still reads the same file** — before touching a single symptom.
+The good news is structural: GUI imports are **deferred inside functions** (`:3309` says it outright for the numpy-only paths), so the data half is importable and testable with numpy alone — `load_vis` at `server/poc_app.py`:207 is documented "numpy only, no pyvista" [L]. **The first dispatch is therefore: stand up trame / pyvista / vtk, then verify the player renders and the numpy path still reads the same file** — before touching a single symptom.
 
 ### The 15 GHz rule — a viewing choice, not a physics change
 
 `evidence/termination/run_build_A.py`:476-477 [L]:
 
 ```
-WAVEDUDE_F_PULSE_HZ = 15.0e9
-WAVEDUDE_F_REF_HZ   = 5827786408.327286
+VIS_F_PULSE_HZ = 15.0e9
+VIS_F_REF_HZ   = 5827786408.327286
 ```
 
-`--pulse-freq-ghz` (declared `default=None` at `:2383`, resolving to the 15.0 GHz constant — the help text prints "default 15.0 GHz") sets the centre the visual dump's wavelet is struck at, is **only used together with `--wavedude-dump`**, and "overrides `f_pulse` only, never `f_target`" (`:446`) [L]. The reference frequency recorded in the file is **unconditionally** `WAVEDUDE_F_REF_HZ` 5.8278 GHz, *whatever the picture was struck at* (`:447-450`).
+`--pulse-freq-ghz` (declared `default=None` at `:2383`, resolving to the 15.0 GHz constant — the help text prints "default 15.0 GHz") sets the centre the visual dump's wavelet is struck at, is **only used together with `--vis-dump`**, and "overrides `f_pulse` only, never `f_target`" (`:446`) [L]. The reference frequency recorded in the file is **unconditionally** `VIS_F_REF_HZ` 5.8278 GHz, *whatever the picture was struck at* (`:447-450`).
 
-The reason is geometric, and it is the whole rule. At 5.828 GHz the guided wavelength is **27.14 mm** at the measured phase velocity 1.5814e8 m/s (`WAVEDUDE_V_FALLBACK_M_S`, `:478-482`) — on a **24.8 mm** line (`:443`), i.e. a Ricker wavelet one wavelength long is *not a travelling packet, it is the whole line sloshing* (`:440-444`). At 15 GHz the wavelength is **~10.5 mm** (*derived*, 1.5814e8 / 15e9) and the motion is visible.
+The reason is geometric, and it is the whole rule. At 5.828 GHz the guided wavelength is **27.14 mm** at the measured phase velocity 1.5814e8 m/s (`VIS_V_FALLBACK_M_S`, `:478-482`) — on a **24.8 mm** line (`:443`), i.e. a Ricker wavelet one wavelength long is *not a travelling packet, it is the whole line sloshing* (`:440-444`). At 15 GHz the wavelength is **~10.5 mm** (*derived*, 1.5814e8 / 15e9) and the motion is visible.
 
 **So: extraction math stays at 5.827 GHz. The 15 GHz pulse is a viewing choice.** A wavelet run is a VISUAL run — its `s21`/AC numbers are not a measurement and are not claimed to be (`:450-451`) [L]. Do not let a pretty picture become a quoted number.
 
@@ -86,8 +86,8 @@ The reason is geometric, and it is the whole rule. At 5.828 GHz the guided wavel
 
 ## 5. Next dispatches, in priority order
 
-1. **Stand up the GUI and verify the player renders.** Install `requirements-web.txt` (six packages, unpinned) and run the player against a WaveDude dump. Success = a rendered animated sheet with a time scrubber. Until this is done, every visualiser claim in the tree is unverified.
-2. **Fix the camera / playback bindings** — only after (1) has produced a symptom, and with the numpy-only path (`load_wavedude`:207) kept working, since that is the only part of the player anyone has exercised.
+1. **Stand up the GUI and verify the player renders.** Install `requirements-web.txt` (six packages, unpinned) and run the player against an emfit-vis dump. Success = a rendered animated sheet with a time scrubber. Until this is done, every visualiser claim in the tree is unverified.
+2. **Fix the camera / playback bindings** — only after (1) has produced a symptom, and with the numpy-only path (`load_vis`:207) kept working, since that is the only part of the player anyone has exercised.
 3. **`emfit/spice.py` for Volume Parts / E5.** Confirmed the **E5** label: it is a ledger row, `E5 | Co-simulation | UNVERIFIED`, at `docs/design/EM_SOLVER_LEDGER.md`:30, with the proposal analysed at `docs/design/roadmap-next-2026-11-08.md`:136-218 [L]. Decide the boundary **first** — the export side is the cheap part; the ledger says so in as many words.
 
 ## 6. Honest state of knowledge
@@ -96,6 +96,6 @@ The reason is geometric, and it is the whole rule. At 5.828 GHz the guided wavel
 
 **(2) The 0.49 % is derived, not printed.** No field in `s11_extraction.json` carries it (`:90`, `:99`, `:101` carry the inputs) [L]. Quote it as arithmetic, and name the two fields it came from.
 
-**(3) Nothing visual has been seen.** The player has never executed; the dumps are not committed (blanket `*.npz` in `.gitignore` with only `!tests/data/*.npz` exempted) [L], so the ~10.2 MB `artifacts/vis_dump_1500.npz` on this disk is a **local** artefact, regenerable only by re-running `--wavedude-dump` on the host [L]. A reader who assumes the dump ships with the repo will be wrong.
+**(3) Nothing visual has been seen.** The player has never executed; the dumps are not committed (blanket `*.npz` in `.gitignore` with only `!tests/data/*.npz` exempted) [L], so the ~10.2 MB `artifacts/vis_dump_1500.npz` on this disk is a **local** artefact, regenerable only by re-running `--vis-dump` on the host [L]. A reader who assumes the dump ships with the repo will be wrong.
 
 **(4) The engineer's role, one sentence:** mission keeper and scope defender who does not run tools or read code and who asks "why" until the answer is real — the habit that carried generation 10 through the referee dig.

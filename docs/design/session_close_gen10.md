@@ -83,7 +83,7 @@ The current web UI is a **debug tool**, not a visualizer: it draws marker
 spheres at the field dump's sample points. That is enough for "is there data in
 this file" and not enough for "does this wave look right".
 
-What is wanted next is a **WaveDude-style visualizer** — animated, drawing the
+What is wanted next is an **emfit-vis-style visualizer** — animated, drawing the
 real geometry (strip, substrate, ground, port planes) with the field on it, so
 a standing wave or a reflection can be judged the way a solution is judged in
 the lab: by looking at it.
