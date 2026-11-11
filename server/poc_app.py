@@ -5335,6 +5335,38 @@ def apply_page(holder: dict, page: dict) -> dict:
     }
 
 
+def VRow(*, style: str = "", **kw):
+    """A flex-row ``html.div``; trame is imported lazily, never at module load.
+
+    ``style`` is appended AFTER the row base style, so a caller can adjust
+    flex/size hints without dropping ``display: flex; flex-direction: row``.
+    """
+    try:
+        from trame.widgets import html as html_widgets
+    except Exception as exc:  # noqa: BLE001 - trame is optional at import time
+        raise RuntimeError(
+            f"VRow needs trame.widgets.html, which is unavailable: {exc}"
+        ) from exc
+    base = "display: flex; flex-direction: row"
+    return html_widgets.Div(style=f"{base}; {style}" if style else base, **kw)
+
+
+def VCol(*, style: str = "", **kw):
+    """A flex-column ``html.div``; trame is imported lazily, never at module load.
+
+    ``style`` is appended AFTER the column base style, so a caller can adjust
+    flex/size hints without dropping ``display: flex; flex-direction: column``.
+    """
+    try:
+        from trame.widgets import html as html_widgets
+    except Exception as exc:  # noqa: BLE001 - trame is optional at import time
+        raise RuntimeError(
+            f"VCol needs trame.widgets.html, which is unavailable: {exc}"
+        ) from exc
+    base = "display: flex; flex-direction: column"
+    return html_widgets.Div(style=f"{base}; {style}" if style else base, **kw)
+
+
 def run_web_vis(
     info: dict,
     host: str,
@@ -6262,6 +6294,66 @@ def run_web_vis(
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
+    def _emit_solve_controls() -> None:
+        """Emit the SOLVE controls; the caller decides which column they land in.
+
+        Hoisted out of the toolbar so the SETUP column and the no-container
+        fallback can emit the same controls without the code being written
+        twice. The try/except guard, the labels and the bindings are verbatim.
+        """
+        # The SOLVE controls, in their OWN guarded block: a binding failure
+        # here costs the solve button, never play/pause or the S-Parameters
+        # panel.
+        try:
+            if "VBtn" in widgets:
+                widgets["VBtn"]("{{ solve_label }}", click=ctrl.solve_start)
+                # The Mode control, in the SAME guarded block: its label is
+                # bound, so the button itself says whether the panel is
+                # unsolved, solved or refused. A binding failure here costs
+                # the mode panel, never play/pause or the solve button.
+                widgets["VBtn"](
+                    "{{ mode_view_label }}",
+                    click=ctrl.mode_view_toggle,
+                )
+                # The Confidence & Accuracy control, in the SAME guarded
+                # block: its label is bound, so the button says what the
+                # next press will do. A binding failure here costs this
+                # panel, never the solve button or the animation.
+                if html_div is not None:
+                    widgets["VBtn"](
+                        "{{ confidence_label }}",
+                        click=ctrl.confidence_toggle,
+                    )
+            solve_xcut_field = getattr(widgets_module, "VTextField", None)
+            if solve_xcut_field is not None:
+                solve_xcut_field(
+                    v_model=("solve_xcut_mm", SOLVE_DEFAULT_XCUT_MM),
+                    label="x_cut [mm]",
+                    type="number",
+                    density="compact",
+                    hide_details=True,
+                    style="max-width: 120px; margin: 0 8px;",
+                )
+            solve_arm_field = getattr(widgets_module, "VSelect", None)
+            if solve_arm_field is not None:
+                solve_arm_field(
+                    v_model=("solve_structure", default_arm),
+                    items=list(MULTIFREQ_BY_STRUCTURE),
+                    label="arm",
+                    density="compact",
+                    hide_details=True,
+                    style="max-width: 110px; margin: 0 8px;",
+                )
+            if "VLabel" in widgets:
+                widgets["VLabel"]("{{ solve_status }}")
+        except Exception as exc:  # noqa: BLE001 - solve UI is optional
+            print(
+                f"[poc_app] solve controls unavailable: {exc}",
+                file=sys.stderr,
+            )
+            if "VLabel" in widgets:
+                widgets["VLabel"]("solve unavailable (binding failed)")
+
     def _emit_s_params_panel() -> None:
         """Emit the |S11| / |S21| panel BESIDE the 3-D view, caption first.
 
@@ -6551,64 +6643,13 @@ def run_web_vis(
                         widgets["VLabel"](
                             "playback unavailable (button binding failed)"
                         )
-            # The SOLVE controls, in their OWN guarded block: a binding failure
-            # here costs the solve button, never play/pause or the S-Parameters
-            # panel.
-            try:
-                if "VBtn" in widgets:
-                    widgets["VBtn"]("{{ solve_label }}", click=ctrl.solve_start)
-                    # The Mode control, in the SAME guarded block: its label is
-                    # bound, so the button itself says whether the panel is
-                    # unsolved, solved or refused. A binding failure here costs
-                    # the mode panel, never play/pause or the solve button.
-                    widgets["VBtn"](
-                        "{{ mode_view_label }}",
-                        click=ctrl.mode_view_toggle,
-                    )
-                    # The Confidence & Accuracy control, in the SAME guarded
-                    # block: its label is bound, so the button says what the
-                    # next press will do. A binding failure here costs this
-                    # panel, never the solve button or the animation.
-                    if html_div is not None:
-                        widgets["VBtn"](
-                            "{{ confidence_label }}",
-                            click=ctrl.confidence_toggle,
-                        )
-                solve_xcut_field = getattr(widgets_module, "VTextField", None)
-                if solve_xcut_field is not None:
-                    solve_xcut_field(
-                        v_model=("solve_xcut_mm", SOLVE_DEFAULT_XCUT_MM),
-                        label="x_cut [mm]",
-                        type="number",
-                        density="compact",
-                        hide_details=True,
-                        style="max-width: 120px; margin: 0 8px;",
-                    )
-                solve_arm_field = getattr(widgets_module, "VSelect", None)
-                if solve_arm_field is not None:
-                    solve_arm_field(
-                        v_model=("solve_structure", default_arm),
-                        items=list(MULTIFREQ_BY_STRUCTURE),
-                        label="arm",
-                        density="compact",
-                        hide_details=True,
-                        style="max-width: 110px; margin: 0 8px;",
-                    )
-                if "VLabel" in widgets:
-                    widgets["VLabel"]("{{ solve_status }}")
-            except Exception as exc:  # noqa: BLE001 - solve UI is optional
-                print(
-                    f"[poc_app] solve controls unavailable: {exc}",
-                    file=sys.stderr,
-                )
-                if "VLabel" in widgets:
-                    widgets["VLabel"]("solve unavailable (binding failed)")
         with layout.content:
             container = widgets.get("VContainer")
             if container is None or html_div is None:
                 # No container or no html widgets: the plotter keeps the whole
                 # content area. The toolbar labels still carry the numbers.
                 view = plotter_ui(plotter, mode="server", add_menu=False)
+                _emit_solve_controls()
             else:
                 with container(fluid=True, classes="pa-0 fill-height"):
                     with html_div(
@@ -6617,68 +6658,95 @@ def run_web_vis(
                             "height: 100%; width: 100%; overflow: hidden;"
                         )
                     ):
-                        with html_div(
+                        # Three columns, left to right: SETUP (solve controls),
+                        # VIEW (the 3-D picture) and DATA (readout, confidence,
+                        # S-parameters). The row replaces the old single vertical
+                        # stack; everything inside it is reparented verbatim.
+                        with VRow(
                             style=(
-                                "flex: 0 0 auto; padding: 4px 12px; "
-                                "font-size: 13px; line-height: 1.4;"
+                                "align-items: stretch; min-height: 0; "
+                                "width: 100%; overflow: hidden;"
                             )
                         ):
-                            html_div("{{ structure_readout }}")
-                            html_div("{{ t_label }}")
-                            html_div("{{ mode_label }}")
-                            html_div("{{ phase_label }}")
-                            html_div("{{ scale_label }}")
-                            html_div("{{ velocity_label }}")
-                            html_div("{{ velocity_note }}")
-                            # The Mode panel's ONE line: the hint before the
-                            # first press, the solve's own caption after one, or
-                            # the reason the solve refused.
-                            html_div(
-                                "{{ mode_view_caption }}",
-                                style="padding: 2px 0;",
-                            )
-                            _emit_confidence_panel()
-                            # Two things the button does NOT tell you: where it
-                            # runs, and what it cannot produce.
-                            html_div(
-                                "solve runs on the HOST machine running this "
-                                "app (a child process, not in the browser). A "
-                                "vis-dump solve forces the PULSE excitation, "
-                                "so it writes NO cut-plane S21 - the "
-                                "S-Parameters panel keeps whatever sweep file "
-                                "it already finds."
-                            )
-                        # The 3-D view and the S-parameters panel share ONE
-                        # horizontal row: the panel is a fixed 420 px column
-                        # beside the picture, so opening it never shortens the
-                        # height the animation is drawn in. Closed, its own
-                        # display:none takes it out of the row entirely and the
-                        # plotter is full width - exactly today's layout.
-                        with html_div(
-                            style=(
-                                "display: flex; flex-direction: row; "
-                                "flex: 1 1 auto; min-height: 320px; "
-                                "overflow: hidden;"
-                            )
-                        ):
-                            with html_div(
+                            with VCol(
                                 style=(
-                                    "flex: 1 1 auto; min-height: 320px; "
-                                    "height: 100%;"
+                                    "flex: 0 0 260px; max-width: 260px; "
+                                    "min-height: 0; overflow-y: auto; "
+                                    "padding: 8px; "
+                                    "border-right: 1px solid #dcdcdc"
                                 )
                             ):
-                                # mode="server" (PyVistaRemoteView): the server
-                                # renders and streams the image, so the view
-                                # does not depend on the client's WebGL context
-                                # surviving inside a flexed container. "remote"
-                                # is not a valid mode (valid:
-                                # trame/client/server/wasm) and
-                                # default_server_rendering only applies to
-                                # mode="trame", so both are left alone.
-                                view = plotter_ui(
-                                    plotter, mode="server", add_menu=False
+                                # SETUP: the solve controls, unchanged, out of
+                                # the toolbar and into their own column.
+                                _emit_solve_controls()
+                            with VCol(
+                                style=(
+                                    "flex: 1 1 0; min-width: 0; "
+                                    "min-height: 0; display: flex; "
+                                    "flex-direction: column"
                                 )
-                            _emit_s_params_panel()
+                            ):
+                                # VIEW: the 3-D picture in the same wrapper div
+                                # as before, now this column's only child.
+                                with html_div(
+                                    style=(
+                                        "flex: 1 1 auto; min-height: 320px; "
+                                        "height: 100%;"
+                                    )
+                                ):
+                                    # mode="server" (PyVistaRemoteView): the server
+                                    # renders and streams the image, so the view
+                                    # does not depend on the client's WebGL context
+                                    # surviving inside a flexed container. "remote"
+                                    # is not a valid mode (valid:
+                                    # trame/client/server/wasm) and
+                                    # default_server_rendering only applies to
+                                    # mode="trame", so both are left alone.
+                                    view = plotter_ui(
+                                        plotter, mode="server", add_menu=False
+                                    )
+                            with VCol(
+                                style=(
+                                    "flex: 0 0 380px; max-width: 380px; "
+                                    "min-height: 0; overflow-y: auto; "
+                                    "padding: 8px; "
+                                    "border-left: 1px solid #dcdcdc"
+                                )
+                            ):
+                                with html_div(
+                                    style=(
+                                        "flex: 0 0 auto; padding: 4px 12px; "
+                                        "font-size: 13px; line-height: 1.4;"
+                                    )
+                                ):
+                                    html_div("{{ structure_readout }}")
+                                    html_div("{{ t_label }}")
+                                    html_div("{{ mode_label }}")
+                                    html_div("{{ phase_label }}")
+                                    html_div("{{ scale_label }}")
+                                    html_div("{{ velocity_label }}")
+                                    html_div("{{ velocity_note }}")
+                                    # The Mode panel's ONE line: the hint before the
+                                    # first press, the solve's own caption after one, or
+                                    # the reason the solve refused.
+                                    html_div(
+                                        "{{ mode_view_caption }}",
+                                        style="padding: 2px 0;",
+                                    )
+                                    # Two things the button does NOT tell you: where it
+                                    # runs, and what it cannot produce.
+                                    html_div(
+                                        "solve runs on the HOST machine running this "
+                                        "app (a child process, not in the browser). A "
+                                        "vis-dump solve forces the PULSE excitation, "
+                                        "so it writes NO cut-plane S21 - the "
+                                        "S-Parameters panel keeps whatever sweep file "
+                                        "it already finds."
+                                    )
+                                # DATA: the two folding panels, each keeping its
+                                # own html_div(style=(...)) state binding.
+                                _emit_confidence_panel()
+                                _emit_s_params_panel()
 
     handles["view"] = view
 
