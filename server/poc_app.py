@@ -3345,18 +3345,20 @@ def _wavedude_grid(info: dict, plane_key: str, frame) -> "pyvista.ImageData":
 
 
 def _wavedude_geometry(plotter, info: dict) -> None:
-    """The substrate, the strip and the load, at their recorded positions.
+    """The ground plane, the substrate, the strip and the two port markers.
 
-    Two of these are ASSUMPTIONS about SHAPE, not about position, and the
+    Three of these are ASSUMPTIONS about SHAPE, not about position, and the
     comments beside them say so:
 
     * the strip is drawn as a zero-thickness foil on top of the substrate: the
       dump records its width and no thickness;
     * the strip's y offset is NOT recorded anywhere. The overlay centres it on
-      the grid, which is the only choice the dump supports.
+      the grid, which is the only choice the dump supports;
+    * the ground plane is one flat sheet at z = 0 over the whole domain: the
+      dump records no conductor thickness.
 
-    Every part is added in its own try/except: a pyvista that refuses one Box
-    must cost that box, not the animation.
+    Every part is added in its own try/except: a pyvista that refuses one part
+    must cost that part, not the animation.
     """
     import pyvista as pv
 
@@ -3369,12 +3371,47 @@ def _wavedude_geometry(plotter, info: dict) -> None:
     port_x = float(info["port_x_mm"])
     load_x = float(info["load_x_mm"])
 
+    # Two surfaces that share a plane make the depth buffer flicker, and the
+    # correction is below the grid the dump records. One epsilon for every
+    # surface that would otherwise be coplanar: a thousandth of the substrate
+    # height (0.0016 mm on the real dump, a four-hundredth of one cell).
+    eps = 0.001 * substrate_h if np.isfinite(substrate_h) else 0.0
+
+    # THE GROUND PLANE, first so it reads as the floor rather than as a lid.
+    # One flat sheet just under z = 0, spanning the domain the dump recorded:
+    # the return conductor the strip is measured against, whose absence is what
+    # made the strip look like a foil hanging in the air. pv.Plane, not a Box:
+    # a conductor has no thickness at this scale, and a box would add a second
+    # surface the field sheets could be hidden behind.
+    if (
+        np.isfinite(x_span)
+        and np.isfinite(y_span)
+        and x_span > 0.0
+        and y_span > 0.0
+    ):
+        try:
+            plotter.add_mesh(
+                pv.Plane(
+                    center=(0.5 * x_span, y_mid, -eps),
+                    direction=(0.0, 0.0, 1.0),
+                    i_size=x_span,
+                    j_size=y_span,
+                ),
+                color="dimgray",
+                name="ground_plane",
+            )
+        except Exception as exc:  # noqa: BLE001 - losing the sheet is survivable
+            print(f"[poc_app] ground plane not drawn: {exc}", file=sys.stderr)
+
     if np.isfinite(substrate_h) and substrate_h > 0.0:
         try:
+            # 0.3, not a solid: the ground plane under it and whatever field is
+            # inside the dielectric have to stay visible THROUGH it.
             plotter.add_mesh(
                 pv.Box(bounds=(0.0, x_span, 0.0, y_span, 0.0, substrate_h)),
                 color="steelblue",
-                opacity=0.25,
+                opacity=0.3,
+                name="substrate",
             )
         except Exception as exc:  # noqa: BLE001 - losing one box is survivable
             print(f"[poc_app] substrate not drawn: {exc}", file=sys.stderr)
@@ -3385,36 +3422,76 @@ def _wavedude_geometry(plotter, info: dict) -> None:
         and np.isfinite(substrate_h)
         and np.isfinite(port_x)
         and np.isfinite(load_x)
+        and load_x > port_x
     ):
         try:
             # ASSUMPTION: zero-thickness foil, centred on y, on the substrate
-            # top. The dump records neither a thickness nor a y offset.
+            # top. The dump records neither a thickness nor a y offset. The x
+            # range is the one the old Box already used (port_x .. load_x); the
+            # 0.05 mm of thickness that Box invented is what is gone - a Plane
+            # has no z extent at all.
             plotter.add_mesh(
-                pv.Box(
-                    bounds=(
-                        port_x,
-                        load_x,
-                        y_mid - 0.5 * strip_w,
-                        y_mid + 0.5 * strip_w,
-                        substrate_h,
-                        substrate_h + 0.05,
-                    )
+                pv.Plane(
+                    center=(0.5 * (port_x + load_x), y_mid, substrate_h + eps),
+                    direction=(0.0, 0.0, 1.0),
+                    i_size=load_x - port_x,
+                    j_size=strip_w,
                 ),
                 color="gold",
                 opacity=0.9,
+                name="strip",
             )
         except Exception as exc:  # noqa: BLE001
             print(f"[poc_app] strip not drawn: {exc}", file=sys.stderr)
 
-    if np.isfinite(load_x) and np.isfinite(substrate_h):
+    # THE TWO VIRTUAL PORTS. Each is the gap the port bridges: a wire from the
+    # ground plane up to the strip, at the recorded x and on the strip's own
+    # centre line (no y offset is recorded). Without them the strip and the
+    # ground plane are two unconnected sheets and the picture never says where
+    # the wave enters or leaves.
+    wire_tops = []
+    if np.isfinite(substrate_h) and substrate_h > 0.0:
+        for port_label, port_name, port_x_mm in (
+            ("Source", "port_source", port_x),
+            ("Load (50 Ohm)", "port_load", load_x),
+        ):
+            if not np.isfinite(port_x_mm):
+                continue
+            try:
+                plotter.add_mesh(
+                    pv.Line(
+                        (port_x_mm, y_mid, -eps),
+                        (port_x_mm, y_mid, substrate_h + eps),
+                    ),
+                    color="red",
+                    line_width=4,
+                    name=port_name,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[poc_app] {port_label} marker not drawn: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            wire_tops.append((port_label, port_x_mm))
+
+    # The labels are a BONUS: the wires carry the meaning, so a pyvista without
+    # a usable labelling actor costs the text and keeps both wires.
+    if wire_tops:
         try:
-            plotter.add_mesh(
-                pv.Line((load_x, y_mid, 0.0), (load_x, y_mid, substrate_h)),
-                color="red",
-                line_width=4,
+            plotter.add_point_labels(
+                [(x_mm, y_mid, substrate_h) for _label, x_mm in wire_tops],
+                [label for label, _x_mm in wire_tops],
+                font_size=11,
+                text_color="black",
+                shape_color="white",
+                shape_opacity=0.6,
+                show_points=False,
+                always_visible=True,
+                name="port_labels",
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"[poc_app] load marker not drawn: {exc}", file=sys.stderr)
+            print(f"[poc_app] port labels not drawn: {exc}", file=sys.stderr)
 
 
 def _probe_trame_ui():
@@ -3591,6 +3668,9 @@ def run_web_wavedude(
     cell_mm = _cell_mm(info)
     vmin, vmax = info["color_range"]
     j_mm = float(int(info["j_cut"])) * cell_mm
+    # The domain's full y width, computed once for the whole page: the x-cut
+    # readout quotes it so the transverse section can be read against it.
+    y_span_mm = float(int(info["ny"])) * cell_mm
 
     plotter = pv.Plotter(off_screen=True)
     plotter.set_background("white")
@@ -3650,7 +3730,12 @@ def run_web_wavedude(
         for _name, _actor in plotter.actors.items():
             if _name in _already_drawn:
                 continue
-            overlay.append((_actor, float(_actor.prop.opacity)))
+            # A 2-D labels actor has no prop, and no opacity to dim: skip it
+            # rather than let it abort the recording of everything after it.
+            _prop = getattr(_actor, "prop", None)
+            if _prop is None:
+                continue
+            overlay.append((_actor, float(_prop.opacity)))
     except Exception as exc:  # noqa: BLE001 - the overlay is decoration only
         print(
             f"[poc_app] overlay bookkeeping skipped: {exc}", file=sys.stderr
@@ -3890,9 +3975,20 @@ def run_web_wavedude(
                 "not recorded" if near_mm is None else f"{near_mm:.4f}"
             )
             far_text = "not recorded" if far_mm is None else f"{far_mm:.4f}"
+            strip_mm = _finite(info["strip_w_mm"])
+            width_mm = _finite(y_span_mm)
+            strip_text = (
+                "not recorded" if strip_mm is None else f"{strip_mm:.1f}"
+            )
+            width_text = (
+                "not recorded" if width_mm is None else f"{width_mm:.1f}"
+            )
             state.mode_label = (
-                f"y-z planes FIXED at x = {near_text} / {far_text} mm "
-                f"({near_side} / {far_side}; the dump stores only these two)"
+                "Transverse cross-section (y-z) looking down the line. "
+                f"Strip width = {strip_text} mm, "
+                f"domain width = {width_text} mm."
+                f" Planes FIXED at x = {near_text} / {far_text} mm "
+                f"({near_side} / {far_side}; the dump stores only these two)."
             )
         try:
             plotter.render()
@@ -3942,6 +4038,37 @@ def run_web_wavedude(
         state.playing = False
         state.play_label = "play"
         _show((int(state.frame) + 1) % frames, state.mode)
+
+    @ctrl.set("top_view")
+    def _on_top_view(**_kwargs) -> None:
+        """Look straight down the z axis: the layout, not an animation frame.
+
+        The view method is called without rendering - render() is the one call
+        that can fail on this build, so it gets its own guard. A build without
+        view_xy keeps the camera it had.
+        """
+        try:
+            plotter.view_xy(render=False)
+        except Exception as exc:  # noqa: BLE001 - keep the current view
+            print(f"[poc_app] top view unavailable: {exc}", file=sys.stderr)
+            return
+        try:
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - never take the server down
+            print(f"[poc_app] top view render skipped: {exc}", file=sys.stderr)
+
+    @ctrl.set("side_view")
+    def _on_side_view(**_kwargs) -> None:
+        """Look along -y at the x-z section: the line seen from the side."""
+        try:
+            plotter.view_xz(render=False)
+        except Exception as exc:  # noqa: BLE001 - keep the current view
+            print(f"[poc_app] side view unavailable: {exc}", file=sys.stderr)
+            return
+        try:
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - never take the server down
+            print(f"[poc_app] side view render skipped: {exc}", file=sys.stderr)
 
     async def _play_loop(gen: int) -> None:
         """Advance one frame per wall-clock step until the trigger bumps the
@@ -4014,6 +4141,8 @@ def run_web_wavedude(
                     widgets["VBtn"]("prev", click=ctrl.step_back)
                     widgets["VBtn"]("next", click=ctrl.step_fwd)
                     widgets["VBtn"]("Switch plane", click=ctrl.mode_toggle)
+                    widgets["VBtn"]("Top View", click=ctrl.top_view)
+                    widgets["VBtn"]("Side View", click=ctrl.side_view)
                 except Exception as exc:  # noqa: BLE001 - button bindings differ
                     print(
                         f"[poc_app] playback buttons unavailable: {exc}",
