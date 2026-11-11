@@ -6596,58 +6596,14 @@ def run_web_vis(
 
     with SinglePageLayout(server) as layout:
         layout.title.set_text(f"{structure_label} - |Ez| animation")
-        with layout.toolbar:
-            if "VSpacer" in widgets:
-                widgets["VSpacer"]()
-            if "VSlider" in widgets and "VLabel" in widgets:
-                try:
-                    widgets["VSlider"](
-                        v_model=("frame", 0),
-                        min=0,
-                        max=("frame_max", nt - 1),
-                        step=1,
-                        thumb_label=True,
-                        hide_details=True,
-                        style="max-width: 420px; margin-right: 16px;",
-                    )
-                    widgets["VLabel"]("{{ frame_label }}")
-                except Exception as exc:  # noqa: BLE001 - label only
-                    print(
-                        f"[poc_app] frame slider unavailable: {exc}",
-                        file=sys.stderr,
-                    )
-            if "VBtn" in widgets:
-                try:
-                    widgets["VBtn"]("{{ play_label }}", click=ctrl.play_toggle)
-                    widgets["VBtn"]("prev", click=ctrl.step_back)
-                    widgets["VBtn"]("next", click=ctrl.step_fwd)
-                    widgets["VBtn"]("Switch plane", click=ctrl.mode_toggle)
-                    widgets["VBtn"]("Top View", click=ctrl.top_view)
-                    widgets["VBtn"]("Side View", click=ctrl.side_view)
-                    # The S-parameters panel's one control, in the SAME guarded
-                    # block as the six above: a binding failure here costs the
-                    # panel, never play/pause/prev/next. Its label is bound, so
-                    # the button says what the next press will do. Added only
-                    # when there are html widgets to emit the panel into.
-                    if html_div is not None:
-                        widgets["VBtn"](
-                            "{{ s_params_label }}",
-                            click=ctrl.s_params_toggle,
-                        )
-                except Exception as exc:  # noqa: BLE001 - button bindings differ
-                    print(
-                        f"[poc_app] playback buttons unavailable: {exc}",
-                        file=sys.stderr,
-                    )
-                    if "VLabel" in widgets:
-                        widgets["VLabel"](
-                            "playback unavailable (button binding failed)"
-                        )
         with layout.content:
             container = widgets.get("VContainer")
             if container is None or html_div is None:
                 # No container or no html widgets: the plotter keeps the whole
-                # content area. The toolbar labels still carry the numbers.
+                # content area. The player bar needs VRow, which is html
+                # widgets, so on this degraded path the picture and the solve
+                # controls are all there is - the toolbar that used to hold
+                # the buttons is gone.
                 view = plotter_ui(plotter, mode="server", add_menu=False)
                 _emit_solve_controls()
             else:
@@ -6659,20 +6615,23 @@ def run_web_vis(
                         )
                     ):
                         # Three columns, left to right: SETUP (solve controls),
-                        # VIEW (the 3-D picture) and DATA (readout, confidence,
-                        # S-parameters). The row replaces the old single vertical
-                        # stack; everything inside it is reparented verbatim.
+                        # VIEW (the 3-D picture with its player bar underneath)
+                        # and DATA (readout strip, then the tabbed panels).
+                        # The row claims the height the parent column leaves
+                        # over: without flex here it took only its min-height
+                        # and the picture never filled the page.
                         with VRow(
                             style=(
-                                "align-items: stretch; min-height: 0; "
-                                "width: 100%; overflow: hidden;"
+                                "flex: 1 1 auto; align-items: stretch; "
+                                "min-height: 0; width: 100%; "
+                                "overflow: hidden;"
                             )
                         ):
                             with VCol(
                                 style=(
-                                    "flex: 0 0 260px; max-width: 260px; "
-                                    "min-height: 0; overflow-y: auto; "
-                                    "padding: 8px; "
+                                    "flex: 0 0 230px; min-width: 200px; "
+                                    "max-width: 280px; min-height: 0; "
+                                    "overflow-y: auto; padding: 8px; "
                                     "border-right: 1px solid #dcdcdc"
                                 )
                             ):
@@ -6681,13 +6640,15 @@ def run_web_vis(
                                 _emit_solve_controls()
                             with VCol(
                                 style=(
-                                    "flex: 1 1 0; min-width: 0; "
-                                    "min-height: 0; display: flex; "
-                                    "flex-direction: column"
+                                    "flex: 1 1 0; min-width: 240px; "
+                                    "min-height: 0;"
                                 )
                             ):
-                                # VIEW: the 3-D picture in the same wrapper div
-                                # as before, now this column's only child.
+                                # VIEW: the 3-D picture keeps the wrapper div it
+                                # has always had, and now shares the column with
+                                # the player bar beneath it - VCol is already a
+                                # flex column, so the picture takes the height and
+                                # the bar takes its own.
                                 with html_div(
                                     style=(
                                         "flex: 1 1 auto; min-height: 320px; "
@@ -6705,11 +6666,92 @@ def run_web_vis(
                                     view = plotter_ui(
                                         plotter, mode="server", add_menu=False
                                     )
+                                # PLAYER BAR: the frame scrubber and the playback
+                                # buttons, out of the toolbar and under the
+                                # picture, where the eye already is. The guards are
+                                # the toolbar's own, kept one for one; the spacer
+                                # rides along at the end so no widget is lost.
+                                with VRow(
+                                    style=(
+                                        "flex: 0 0 auto; align-items: center; "
+                                        "gap: 4px; width: 100%; padding: 4px 0;"
+                                    )
+                                ):
+                                    if "VBtn" in widgets:
+                                        try:
+                                            widgets["VBtn"](
+                                                "<< PREV", click=ctrl.step_back
+                                            )
+                                            widgets["VBtn"](
+                                                "{{ play_label }}",
+                                                click=ctrl.play_toggle,
+                                            )
+                                            widgets["VBtn"](
+                                                "NEXT >>", click=ctrl.step_fwd
+                                            )
+                                        except Exception as exc:  # noqa: BLE001
+                                            print(
+                                                f"[poc_app] playback buttons "
+                                                f"unavailable: {exc}",
+                                                file=sys.stderr,
+                                            )
+                                            if "VLabel" in widgets:
+                                                widgets["VLabel"](
+                                                    "playback unavailable "
+                                                    "(button binding failed)"
+                                                )
+                                    if "VSlider" in widgets and "VLabel" in widgets:
+                                        try:
+                                            widgets["VSlider"](
+                                                v_model=("frame", 0),
+                                                min=0,
+                                                max=("frame_max", nt - 1),
+                                                step=1,
+                                                thumb_label=True,
+                                                hide_details=True,
+                                                style=(
+                                                    "flex: 1 1 auto; "
+                                                    "min-width: 120px; "
+                                                    "margin-right: 16px;"
+                                                ),
+                                            )
+                                            widgets["VLabel"]("{{ frame_label }}")
+                                        except Exception as exc:  # noqa: BLE001
+                                            print(
+                                                f"[poc_app] frame slider "
+                                                f"unavailable: {exc}",
+                                                file=sys.stderr,
+                                            )
+                                    if "VBtn" in widgets:
+                                        try:
+                                            widgets["VBtn"](
+                                                "Switch plane",
+                                                click=ctrl.mode_toggle,
+                                            )
+                                            widgets["VBtn"](
+                                                "Top View", click=ctrl.top_view
+                                            )
+                                            widgets["VBtn"](
+                                                "Side View", click=ctrl.side_view
+                                            )
+                                        except Exception as exc:  # noqa: BLE001
+                                            print(
+                                                f"[poc_app] view buttons "
+                                                f"unavailable: {exc}",
+                                                file=sys.stderr,
+                                            )
+                                            if "VLabel" in widgets:
+                                                widgets["VLabel"](
+                                                    "view buttons unavailable "
+                                                    "(button binding failed)"
+                                                )
+                                    if "VSpacer" in widgets:
+                                        widgets["VSpacer"]()
                             with VCol(
                                 style=(
-                                    "flex: 0 0 380px; max-width: 380px; "
-                                    "min-height: 0; overflow-y: auto; "
-                                    "padding: 8px; "
+                                    "flex: 0 1 380px; min-width: 300px; "
+                                    "max-width: 460px; min-height: 0; "
+                                    "overflow-y: auto; padding: 8px; "
                                     "border-left: 1px solid #dcdcdc"
                                 )
                             ):
@@ -6726,13 +6768,6 @@ def run_web_vis(
                                     html_div("{{ scale_label }}")
                                     html_div("{{ velocity_label }}")
                                     html_div("{{ velocity_note }}")
-                                    # The Mode panel's ONE line: the hint before the
-                                    # first press, the solve's own caption after one, or
-                                    # the reason the solve refused.
-                                    html_div(
-                                        "{{ mode_view_caption }}",
-                                        style="padding: 2px 0;",
-                                    )
                                     # Two things the button does NOT tell you: where it
                                     # runs, and what it cannot produce.
                                     html_div(
@@ -6743,10 +6778,82 @@ def run_web_vis(
                                         "S-Parameters panel keeps whatever sweep file "
                                         "it already finds."
                                     )
-                                # DATA: the two folding panels, each keeping its
-                                # own html_div(style=(...)) state binding.
-                                _emit_confidence_panel()
-                                _emit_s_params_panel()
+                                # The S-parameters control is NOT a playback
+                                # button: it belongs beside the panel it opens, so
+                                # it sits in this column's header, above the tabs.
+                                # Both guards are the ones it had inside the
+                                # playback block: no html widgets means no panel to
+                                # open, so no button.
+                                if "VBtn" in widgets:
+                                    try:
+                                        if html_div is not None:
+                                            widgets["VBtn"](
+                                                "{{ s_params_label }}",
+                                                click=ctrl.s_params_toggle,
+                                            )
+                                    except Exception as exc:  # noqa: BLE001
+                                        print(
+                                            f"[poc_app] S-parameters button "
+                                            f"unavailable: {exc}",
+                                            file=sys.stderr,
+                                        )
+                                # DATA: one tab per panel, so the column holds the
+                                # readout plus ONE open panel instead of three
+                                # stacked ones. Every panel keeps its own
+                                # html_div(style=...) visibility wrapper INSIDE its
+                                # tab, so the existing toggle still hides a panel
+                                # by CSS - no widget is created or destroyed, and
+                                # the state names and defaults are unchanged.
+                                tabs_cls = getattr(widgets_module, "VTabs", None)
+                                tab_cls = getattr(widgets_module, "VTab", None)
+                                tabs_window_cls = getattr(
+                                    widgets_module, "VTabsWindow", None
+                                )
+                                tabs_item_cls = getattr(
+                                    widgets_module, "VTabsWindowItem", None
+                                )
+                                if None not in (
+                                    tabs_cls,
+                                    tab_cls,
+                                    tabs_window_cls,
+                                    tabs_item_cls,
+                                ):
+                                    with tabs_cls(v_model=("tab", "s_params")):
+                                        tab_cls("S-Parameters")
+                                        tab_cls("Confidence N-lambda")
+                                        tab_cls("Modes")
+                                    with tabs_window_cls(
+                                        v_model=("tab", "s_params")
+                                    ):
+                                        with tabs_item_cls(value="s_params"):
+                                            _emit_s_params_panel()
+                                        with tabs_item_cls(value="confidence"):
+                                            _emit_confidence_panel()
+                                        with tabs_item_cls(value="modes"):
+                                            # The Mode panel's ONE line: the
+                                            # hint before the first press, the
+                                            # solve's own caption after one, or
+                                            # the reason the solve refused.
+                                            html_div(
+                                                "{{ mode_view_caption }}",
+                                                style="padding: 2px 0;",
+                                            )
+                                else:
+                                    # FALLBACK, and here is why it exists: the tab
+                                    # widgets come from trame-vuetify, an optional
+                                    # install. Without them the page still has to
+                                    # show all three panels, so they are stacked in
+                                    # the flat order they had before the tabs -
+                                    # Confidence, then S-Parameters, then the Mode
+                                    # caption that used to sit in the readout. Same
+                                    # emitters, same wrappers, same state names; only
+                                    # the container around them is missing.
+                                    _emit_confidence_panel()
+                                    _emit_s_params_panel()
+                                    html_div(
+                                        "{{ mode_view_caption }}",
+                                        style="padding: 2px 0;",
+                                    )
 
     handles["view"] = view
 
