@@ -67,6 +67,7 @@ import sys
 import threading
 from collections import deque
 from pathlib import Path
+import time
 
 import numpy as np
 
@@ -4057,6 +4058,376 @@ def reload_page(npz_path, structure_id=None) -> dict:
         # every caller that has to know.
         "is_vis": _is_vis(info),
     }
+
+
+# --- the 2D cross-section mode viewer (COMPUTE layer) ------------------------
+#
+# Nothing below draws anything: no pyvista, no trame, no matplotlib. These are
+# only the numbers a mode panel would print, so they can be checked (and were
+# measured) with no OpenGL context, and a test can call them in a 512 MB image.
+#
+# WHAT IS SOLVED: one eigenmode of the cross-section (y, z) of the microstrip,
+# z = 0 on the ground plane and the strip at z = h. emfit.mode2d expands the
+# transverse field on first-order Nedelec (Whitney) edge elements, and the
+# eigenvalue of that pencil is beta^2 [rad^2/m^2]. So the spectral shift handed
+# to the solver is k0^2 * eps_eff, NOT a beta: mixing the two units is the one
+# mistake this layer can make that still returns a plausible-looking number.
+#
+# NO PML: emfit.mode2d has none, so the open top and sides are closed with PEC
+# walls. That is a modelling CHOICE with a cost: a PEC wall is a symmetry plane,
+# so the box behaves like an enclosure and truncates the fringing field instead
+# of absorbing it. At the default count the walls are 8.8 mm from the centre
+# against a 1.6 mm strip half-width, which keeps the effect small - but it is
+# not zero, and it is part of every number reported below.
+
+#: Run A's banked two-wave beta [rad/m]. COPIED, not re-derived: the canonical
+#: number lives in ``evidence/termination/run_build_A.py`` as
+#: ``VIS_BETA_BANKED_RAD_PER_M``, and this module must never re-fit it.
+VIS_BETA_BANKED_RAD_PER_M = 231.55331672912826
+#: Cells per side of the |E| sampling grid. A PICTURE resolution, not a solver
+#: one: the mode is solved on the mesh, this only sets how finely it is sampled.
+MODE_GRID_CELLS = 48
+#: The memo behind ``mode_view``'s "a second press is instant" promise. Keyed by
+#: the record path, its mtime, the cell count and k, so an edited geometry or a
+#: changed request is a miss rather than a stale answer.
+_MODE_VIEW_MEMO: dict = {}
+
+
+def _mode2d():
+    """``emfit.mode2d``, imported ON USE so --list-keys never needs scipy.
+
+    The viewer's CLI path (--help, --list-keys) is documented as numpy-only and
+    has to stay that way; the mode solver needs scipy, so it is imported here
+    and the ImportError is reported by ``mode_view`` as a reason, not a crash.
+    """
+    from emfit import mode2d
+
+    return mode2d
+
+
+def cross_section_mesh(
+    geometry, *, lateral_cells=44, vertical_cells=22, node_cap=2500
+):
+    """The (y, z) cross-section of the microstrip as a rectilinear mesh.
+
+    Returns ``(mesh, boundaries, extent)``.
+
+    ``mesh`` is an :class:`emfit.mode2d.Mesh2D` on a structured grid. ``extent``
+    is ``(y_max_m, z_max_m)``: the box spans ``-y_max .. y_max`` laterally and
+    ``0 .. z_max`` vertically. The cell count actually used is recoverable from
+    the mesh itself - ``len(mesh.grid_axes[0]) - 1`` lateral cells,
+    ``len(mesh.grid_axes[1]) - 1`` vertical ones - and ``mode_view``'s caption
+    prints both, because a node cap silently changes the picture's resolution.
+
+    ``boundaries`` is the PEC predicate tuple ``(ground, strip, wall)``, in that
+    order, ready to hand to ``solve_modes`` / ``eps_eff_laplace``. The first two
+    are the CONDUCTORS - pass exactly those two to ``eps_eff_laplace``; the third
+    fences the open top and sides. An edge is PEC only when both endpoints
+    satisfy the SAME predicate, so the vertical gap between ground and strip is
+    left free: the two conductors are never joined by their own predicates.
+
+    Geometry (metres, ohms of nothing - measured lengths only): ``eps_r`` the
+    substrate permittivity, ``h`` its thickness, ``w`` the strip width, and
+    ``height`` the top of the box. The substrate fills ``0 <= z < h`` and air
+    fills ``h < z <= height``; the strip is the node row at ``z == h`` within
+    ``|y| <= w/2``.
+
+    The vertical pitch is chosen so ``z == h`` lands EXACTLY on a node row (the
+    strip predicate is an equality test, so a pitch that misses h would mark no
+    strip at all and silently solve a bare slab); ``vertical_cells`` is a target
+    that the h-alignment is allowed to round. The lateral half-extent is
+    ``lateral_cells / 2`` of that same pitch, which at the default 44 x 22 is
+    +/-8.8 mm against the run's own 0.4 mm cell - the calibrated box.
+
+    ``node_cap`` is honoured by HALVING ``lateral_cells`` (kept even, so the
+    grid keeps a node row at ``y == 0`` and the strip stays centred) until
+    ``(lateral + 1) * (vertical + 1) <= node_cap``. A halved count therefore
+    narrows the box at a FIXED pitch rather than coarsening it: the strip is
+    always resolved by the same cell size, and the only thing that moves is how
+    far away the PEC fence sits.
+    """
+    mode2d = _mode2d()
+    eps_r = float(geometry["eps_r"])
+    h = float(geometry["h"])
+    w = float(geometry["w"])
+    height = float(geometry["height"])
+    if not (h > 0.0 and w > 0.0 and height > h):
+        raise ValueError(
+            f"cross section needs 0 < h < height and w > 0, got h={h!r}, "
+            f"w={w!r}, height={height!r}"
+        )
+
+    # z axis, h-aligned so the strip predicate can be an equality test.
+    pitch = height / max(1, int(vertical_cells))
+    n_h = max(1, int(round(h / pitch)))
+    pitch = h / n_h
+    n_top = max(1, int(np.ceil((height - h) / pitch - 1e-9)))
+    z_max = pitch * (n_h + n_top)
+    zs = np.arange(n_h + n_top + 1) * pitch
+
+    # y axis, node cap by halving.
+    lateral = max(2, int(lateral_cells))
+    lateral -= lateral % 2
+    while (lateral + 1) * zs.size > node_cap and lateral > 2:
+        lateral = max(2, lateral // 2)
+        lateral -= lateral % 2
+    y_max = 0.5 * lateral * pitch
+    ys = (np.arange(lateral + 1) - lateral // 2) * pitch
+
+    mesh = mode2d.structured_mesh(ys, zs)
+
+    tol = 1e-12
+
+    def ground(points):
+        """The ground plane: the z = 0 node row."""
+        return np.isclose(points[:, 1], 0.0, atol=tol)
+
+    def strip(points):
+        """The strip: the z = h node row within |y| <= w/2."""
+        return np.isclose(points[:, 1], h, atol=tol) & (
+            np.abs(points[:, 0]) <= 0.5 * w + tol
+        )
+
+    def wall(points):
+        """The PEC fence: the top row and both side columns (no PML here)."""
+        return np.isclose(points[:, 1], z_max, atol=tol) | np.isclose(
+            np.abs(points[:, 0]), y_max, atol=tol
+        )
+
+    return mesh, (ground, strip, wall), (y_max, z_max)
+
+
+def _mode_pct(value):
+    """``+1.07 %``-style delta, or ``n/a`` when the reference is not recorded."""
+    if value is None:
+        return "n/a"
+    return f"{value:+.2f} %"
+
+
+def _mode_delta_pct(beta, reference):
+    """``100 * (beta - reference) / reference``, or None for no reference."""
+    try:
+        reference = float(reference)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(reference) or reference == 0.0:
+        return None
+    return 100.0 * (float(beta) - reference) / reference
+
+
+def _mode_field_grid(result, extent, cells=MODE_GRID_CELLS):
+    """|E| of the solved mode on a ``(cells, cells)`` (z, y) sampling of the box.
+
+    Sampled through ``Mode2D.e_at`` - the same Whitney interpolation the field
+    is defined by - at the mesh's own axis endpoints, so the sampling never
+    lands outside the triangulation (``e_at`` raises there, and the tolerance is
+    tight enough that a re-derived extent would trip it).
+    """
+    y_max, z_max = (float(extent[0]), float(extent[1]))
+    axes = result.mesh.grid_axes
+    if axes:
+        y_axis, z_axis = np.asarray(axes[0], dtype=float), np.asarray(
+            axes[1], dtype=float
+        )
+        y_lo, y_hi = float(y_axis[0]), float(y_axis[-1])
+        z_lo, z_hi = float(z_axis[0]), float(z_axis[-1])
+    else:
+        y_lo, y_hi, z_lo, z_hi = -y_max, y_max, 0.0, z_max
+    gy = np.linspace(y_lo, y_hi, int(cells))
+    gz = np.linspace(z_lo, z_hi, int(cells))
+    yy, zz = np.meshgrid(gy, gz, indexing="xy")
+    points = np.stack([yy.ravel(), zz.ravel()], axis=1)
+    field = np.asarray(result.e_at(points), dtype=float)
+    return np.hypot(field[:, 0], field[:, 1]).reshape(int(cells), int(cells))
+
+
+def _mode_caption(result, mesh) -> str:
+    """The one sentence set a mode panel may print, from the numbers beside it.
+
+    Says the three betas TOGETHER, states that the banked fit carries a
+    systematic (~4 % above the run's own model) so it is never quoted alone, and
+    names the mesh and the wall clock - the last unflattering facts a reader
+    needs in order to distrust the number appropriately.
+    """
+    beta_model = result["beta_model"]
+    beta_banked = result["beta_banked"]
+    model_text = (
+        f"{beta_model:.4f} rad/m from the run's own record "
+        f"({_mode_pct(result['delta_vs_model_pct'])} from this solve)"
+        if beta_model is not None
+        else "not recorded in the run's own record"
+    )
+    if beta_model is not None and beta_banked is not None:
+        gap = (float(beta_banked) / float(beta_model) - 1.0) * 100.0
+        gap_text = f"{gap:+.1f} %"
+    else:
+        gap_text = "not measurable here"
+    axes = mesh.grid_axes
+    lateral = int(np.asarray(axes[0]).size - 1) if axes else 0
+    vertical = int(np.asarray(axes[1]).size - 1) if axes else 0
+    y_max, z_max = result["extent"]
+    return (
+        "2D cross-section mode (fundamental, quasi-TEM): beta = "
+        f"{result['beta_rad_per_m']:.4f} rad/m, eps_eff = {result['eps_eff']:.6f}, "
+        f"residual = {result['residual']:.2e}, curl_ratio = "
+        f"{result['curl_ratio']:.3e}. Compare the three together: beta_model = "
+        f"{model_text}; beta_banked = "
+        + (
+            f"{beta_banked:.4f} rad/m, run A's two-wave fit "
+            f"({_mode_pct(result['delta_vs_banked_pct'])} from this solve)"
+            if beta_banked is not None
+            else "not recorded"
+        )
+        + f". That banked fit sits {gap_text} above the run's own beta_model, "
+        "i.e. the fit carries a systematic, so beta_banked is quoted beside the "
+        "model and never on its own. Mesh: "
+        f"{lateral} lateral x {vertical} vertical cells = {result['n_nodes']} "
+        f"nodes / {result['n_edges']} edges, box +/-{y_max * 1e3:.2f} mm x "
+        f"{z_max * 1e3:.2f} mm, solved in {result['seconds']:.2f} s. The open top "
+        "and sides are PEC walls (this solver has no PML), so the lateral "
+        "truncation is a conductor, not an absorber."
+    )
+
+
+def _mode_fail(reason: str) -> dict:
+    """The refusal shape: ``ok`` False and one short, honest cause."""
+    return {"ok": False, "reason": str(reason)}
+
+
+def _mode_view(page, *, lateral_cells, k, memo, started):
+    """``mode_view``'s body, raising; the wrapper turns a raise into a reason."""
+    if not isinstance(page, dict):
+        return _mode_fail(
+            f"page is {type(page).__name__}, not the dict reload_page returns"
+        )
+    path = page.get("path")
+    if not path:
+        return _mode_fail("page carries no dump path, so there is no sibling record")
+    dump = Path(path)
+    candidates = _record_candidates(dump)
+    record_path = next((p for p in candidates if p.is_file()), None)
+    if record_path is None:
+        return _mode_fail(
+            "no study record beside the dump (tried "
+            + ", ".join(p.name for p in candidates)
+            + "); the arm geometry lives in that record, not in the npz"
+        )
+    key = (
+        str(record_path),
+        record_path.stat().st_mtime,
+        int(lateral_cells),
+        int(k),
+    )
+    if key in memo:
+        # The stored dict itself, deliberately: identity is the observable proof
+        # that the memo answered, and it is treated as read-only by every caller.
+        return memo[key]
+
+    record = page.get("record")
+    if not isinstance(record, dict):
+        record = _read_json(record_path)
+    if not isinstance(record, dict):
+        return _mode_fail(f"study record {record_path.name} is unreadable")
+    geometry = record.get("geometry")
+    if not isinstance(geometry, dict):
+        return _mode_fail(
+            f"study record {record_path.name} has no geometry block"
+        )
+    missing = [
+        name
+        for name in ("eps_r", "h", "w", "height", "f_hz")
+        if _as_float(geometry.get(name)) is None
+    ]
+    if missing:
+        return _mode_fail(f"record geometry lacks {', '.join(missing)}")
+
+    mode2d = _mode2d()
+    mesh, boundaries, extent = cross_section_mesh(
+        geometry, lateral_cells=lateral_cells
+    )
+    ground, strip, _wall = boundaries
+    h = float(geometry["h"])
+    eps_t = np.where(mesh.centroid[:, 1] < h, float(geometry["eps_r"]), 1.0)
+    k0 = float(mode2d.k0_from_freq(float(geometry["f_hz"])))
+    # Conductors only: the Laplace problem needs the union to split into exactly
+    # two connected groups, and the fencing wall would join them into one.
+    laplace = mode2d.eps_eff_laplace(mesh, eps_t, boundaries=(ground, strip))
+    eps_eff = float(laplace["eps_eff"])
+    # BETA-SQUARED units: this is the pencil's shift, in rad^2/m^2.
+    sigma = k0 * k0 * eps_eff
+    solved = mode2d.solve_modes(
+        mesh, k0, sigma, eps_r=eps_t, boundaries=boundaries, k=int(k)
+    )
+
+    line = record.get("line")
+    line = line if isinstance(line, dict) else {}
+    beta = float(solved.beta)
+    ratios = tuple(solved.curl_ratio or ())
+    result = {
+        "ok": True,
+        "reason": "",
+        "beta_rad_per_m": beta,
+        "eps_eff": float(solved.eps_eff),
+        "residual": float(solved.residual),
+        "curl_ratio": (
+            float(ratios[int(solved.chosen)]) if ratios else float("nan")
+        ),
+        "beta_banked": VIS_BETA_BANKED_RAD_PER_M,
+        "beta_model": _as_float(line.get("beta_model")),
+        "delta_vs_banked_pct": _mode_delta_pct(
+            beta, VIS_BETA_BANKED_RAD_PER_M
+        ),
+        "delta_vs_model_pct": _mode_delta_pct(beta, line.get("beta_model")),
+        "grid": np.zeros((MODE_GRID_CELLS, MODE_GRID_CELLS)),
+        "extent": extent,
+        "n_nodes": int(mesh.n_nodes),
+        "n_edges": int(mesh.n_edges),
+        "seconds": 0.0,
+        "caption": "",
+    }
+    # The field needs the solved mode, so it is sampled after the dict exists and
+    # before the timing is closed: a caption that under-reports the wall clock is
+    # exactly the kind of flattery this panel must not print.
+    result["grid"] = _mode_field_grid(solved, extent)
+    result["seconds"] = time.perf_counter() - started
+    result["caption"] = _mode_caption(result, mesh)
+    memo[key] = result
+    return result
+
+
+def mode_view(page, *, lateral_cells=44, k=2, cache=None) -> dict:
+    """Solve the cross-section mode for the arm a page is showing. NEVER raises.
+
+    ``page`` is the dict :func:`reload_page` returns (or anything carrying a
+    ``path``); the geometry is read from the STUDY RECORD written beside that
+    dump, never from the npz, which stores no geometry at all.
+
+    Returns ``ok`` True plus ``beta_rad_per_m``, ``eps_eff``, ``residual``,
+    ``curl_ratio``, ``beta_banked``, ``beta_model``, ``delta_vs_banked_pct``,
+    ``delta_vs_model_pct``, ``grid`` (``|E|`` of the fundamental on a square
+    sampling of the box), ``extent``, ``n_nodes``, ``n_edges``, ``seconds`` and
+    ``caption``. On any bad input it returns ``{'ok': False, 'reason': ...}``
+    with a short cause - a missing record, an unreadable one, a missing geometry
+    key, a mesh that will not build, a solve that will not converge - because
+    the caller has a browser panel to update and no way to catch anything.
+
+    WHAT THIS IS NOT: it is not an impedance, and it never calls
+    ``solve_modes_mixed`` or ``mode_z0_from_power``. Z0 is out of scope, and the
+    mixed path is the one that once hung for over 300 s on this very geometry;
+    the transverse (``e_t``) pencil used here is the cheap, audited one.
+
+    ``cache`` is the memo dict, defaulting to the module-level one; a second
+    press with the same record file, mtime, cell count and ``k`` returns the
+    stored dict unchanged (identity, not a re-solve).
+    """
+    started = time.perf_counter()
+    memo = _MODE_VIEW_MEMO if cache is None else cache
+    try:
+        return _mode_view(
+            page, lateral_cells=lateral_cells, k=k, memo=memo, started=started
+        )
+    except Exception as exc:  # noqa: BLE001 - the panel needs a reason, not a raise
+        return _mode_fail(f"{type(exc).__name__}: {exc}")
 
 
 SOLVE_DEFAULT_XCUT_MM = 20.4

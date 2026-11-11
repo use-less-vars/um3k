@@ -1042,3 +1042,93 @@ def test_solve_button_reloads_the_page(tmp_path: Path, monkeypatch) -> None:
         f"the velocity note still reads {state.velocity_note!r}"
     )
 
+
+
+# --- the 2D cross-section mode panel -----------------------------------------
+# No solve is run against a real dump here: the geometry comes off a study
+# record this test writes beside the page's dump, so what is asserted is the
+# panel's plumbing - a refusal instead of a raise, the grid it hands to the
+# field view, the memo - not the physics, which emfit.mode2d's own tests own.
+
+MODE_GEOMETRY = {
+    "eps_r": 4.4,
+    "h": 1.6e-3,
+    "w": 3.2e-3,
+    "height": 8.8e-3,
+    "f_hz": 5.827786408327286e9,
+}
+
+MODE_BETA_MODEL = 223.35306683909533
+
+
+def _mode_page(tmp_path: Path) -> dict:
+    """A page whose SIBLING RECORD holds ``MODE_GEOMETRY``.
+
+    The dump itself is not written: ``mode_view`` reads the geometry out of the
+    record beside the dump, never out of the npz, so a record is the whole input.
+    """
+    page_path = tmp_path / "arm.npz"
+    page_path.with_suffix(".json").write_text(
+        json.dumps(
+            {"geometry": dict(MODE_GEOMETRY), "line": {"beta_model": MODE_BETA_MODEL}}
+        )
+    )
+    return {"path": str(page_path), "structure_id": "A"}
+
+
+def test_mode_view_solves_a_synthetic_cross_section(tmp_path: Path) -> None:
+    import poc_app as app
+
+    result = app.mode_view(_mode_page(tmp_path), cache={})
+
+    assert result["ok"], result["reason"]
+    assert result["grid"].shape == (app.MODE_GRID_CELLS,) * 2, (
+        f"the field view was handed {result['grid'].shape}: the panel draws a "
+        f"square {app.MODE_GRID_CELLS} x {app.MODE_GRID_CELLS} picture"
+    )
+    assert np.all(np.isfinite(result["grid"]))
+    assert result["beta_rad_per_m"] > 0.0
+    assert result["beta_model"] == pytest.approx(MODE_BETA_MODEL)
+    caption = result["caption"]
+    assert "beta_model" in caption and "beta_banked" in caption, (
+        "the caption quotes fewer than the three betas; the banked fit carries a "
+        "systematic and must never be printed on its own"
+    )
+
+
+def test_cross_section_mesh_honours_the_node_cap() -> None:
+    import poc_app as app
+
+    mesh, _boundaries, _extent = app.cross_section_mesh(MODE_GEOMETRY, node_cap=400)
+
+    assert 0 < mesh.n_nodes <= 400, (
+        f"the mesh has {mesh.n_nodes} nodes for a cap of 400: the cap is "
+        "silently ignored and the panel solves whatever it likes"
+    )
+
+
+def test_mode_view_refuses_without_a_record(tmp_path: Path) -> None:
+    import poc_app as app
+
+    page = {"path": str(tmp_path / "arm.npz"), "structure_id": "A"}
+    result = app.mode_view(page, cache={})
+
+    assert result["ok"] is False
+    assert result["reason"], "a refusal with no reason leaves the panel blank"
+    assert "record" in result["reason"]
+
+
+def test_mode_view_memo_hits_on_the_second_call(tmp_path: Path) -> None:
+    import poc_app as app
+
+    page = _mode_page(tmp_path)
+    cache = {}
+    first = app.mode_view(page, cache=cache)
+    second = app.mode_view(page, cache=cache)
+
+    assert first["ok"], first["reason"]
+    assert second is first, (
+        "the second press re-solved instead of answering from the memo: "
+        "identity is the proof, because a second solve returns the same numbers"
+    )
+
