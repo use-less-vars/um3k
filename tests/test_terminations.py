@@ -444,3 +444,162 @@ def test_step_rlc_returns_the_advanced_magnetic_field():
     _e_2, h_2, _moving = step_rlc(e, h_1, 1e-11, 0.0, 0.0, 0.0, moving)
     assert _close(h_2, h + 2.0), f"two steps gave h = {h_2!r}, wanted {h + 2.0!r}"
 
+
+
+def test_b4_field_branch_ledger_closes_to_roundoff():
+    """With a MOVING field every joule is accounted for -- to roundoff.
+
+    The module docstring pins the frozen-field identity
+
+        dU_field + dU_L + dU_C + (dt/4) R s^2 = 0,     s = i^{n+1} + i^n,
+
+    which ``test_lc_tank_...`` already gates.  The dissipation there is the
+    trapezoidal convention ``(dt/4) R s^2``: R times the *mean* branch current
+    squared times dt, not ``dt R (i^{n+1})^2`` -- the same second-order
+    reading of the step that the rest of the scheme uses.
+
+    That identity cannot hold once ``advance`` moves the field: the port then
+    does work on the field as well as on the branch, and the free advance
+    injects energy that neither reservoir accounts for.  What has to be true
+    instead is the pair of halves, measured against the field ``e*`` the free
+    advance produced *before* the back-reaction:
+
+        U_field(e* -> e^{n+1})   = -(dt/4) s . (v^{n+1} + v*)     (field side)
+        dU_L + dU_C + (dt/4) R s^2 = (dt/4) s . (v^{n+1} + v^n)  (branch side)
+
+    and their difference -- exactly the free advance's own trapezoidal port
+    power ``(dt/4) s . (v* - v^n)`` -- is the whole of the discrepancy between
+    the moving-field run and the frozen-field identity.  Nothing is left over.
+    That is the claim here: the moving-field residual of the docstring
+    identity is a *named quantity*, not an unexplained remainder, so a future
+    change that leaks energy somewhere else cannot hide behind "the field
+    moves, of course it does not balance".
+
+    The back-reaction line is asserted separately because it is not implied by
+    the two halves: it says the field is corrected from ``e*`` through the
+    port's own functional at the *mean* branch current, so a solver that
+    linearised from ``e^n`` (or divided by the wrong mass) is caught even
+    though its two energy halves could still each close.
+
+    Together with the frozen run below this pins the ``advance`` hook as
+    genuinely used: the same loop with ``advance=None`` must move the field to
+    a different trajectory, and ``v*`` must differ from ``v^n`` by a
+    macroscopic amount, or line (E) would be the frozen identity in disguise.
+    """
+    L = np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]])  # 3 edges, 2 terminals
+    m_eps = np.array([2.0, 3.0, 1.0]) * 1e-13  # per-edge field masses
+    R, L_s, C_s, dt, n_steps = 50.0, 1e-6, 1e-12, 1e-11, 200
+    W_E = np.eye(3)  # so that v = L.T @ e and j = L @ i: no hidden weighting
+    port = TerminalPort(L, W_E)
+
+    def advance(e_in, h_in, dt_step):
+        # A field that genuinely moves: a rotation of the edge values plus a
+        # slight decay.  h is threaded through so the hook cannot be a no-op.
+        return np.array([e_in[1], e_in[2], e_in[0]]) * 0.999, h_in + 1.0
+
+    def _run(hook):
+        e = np.array([1.0, 0.0, 0.0])
+        h = np.array([3.0])
+        state = RLCState(port, m_eps, advance=hook,
+                         i=[0.0, 0.0], v_c=[0.0, 0.0], v=port.voltage(e))
+
+        worst_a = worst_b = worst_c = worst_e = 0.0
+        biggest_scale = 0.0
+        biggest_v_shift = 0.0
+        trajectory = []
+
+        for _ in range(n_steps):
+            i_old, vc_old, v_old, e_old = (
+                state.i.copy(), state.v_c.copy(), state.v.copy(), e.copy())
+
+            # The hook is the test's own, so e* is known without reaching into
+            # private state: that is what lets the ledger be asserted at all.
+            e_star = (e_old.copy() if hook is None
+                      else np.asarray(hook(e_old, h, dt)[0], float))
+
+            e_new, h, state = step_rlc(e, h, dt, R, L_s, C_s, state)
+            i_new, vc_new, v_new = state.i, state.v_c, state.v
+            s = i_new + i_old
+            v_star = port.voltage(e_star)
+
+            # Back-reaction: e* -> e^{n+1} is -(dt/2) times the half-step field
+            # increment that the mean branch current induces.
+            worst_a = max(worst_a, float(np.max(np.abs(
+                (e_star - e_new) - 0.5 * dt * (port.current_density(s) / m_eps)))))
+
+            # Field side: the field's own energy drop pays the trapezoidal port
+            # power evaluated at the post-reaction field.
+            duf = 0.5 * float(np.sum(m_eps * (e_new ** 2 - e_star ** 2)))
+            worst_b = max(worst_b, abs(
+                duf + 0.25 * dt * float(s @ (v_new + v_star))))
+
+            # Branch side: stores plus ohmic burn pays the trapezoidal port
+            # power evaluated at the pre-reaction field.
+            dub = (0.5 * L_s * float(i_new @ i_new - i_old @ i_old)
+                   + 0.5 * C_s * float(vc_new @ vc_new - vc_old @ vc_old))
+            worst_c = max(worst_c, abs(
+                dub + 0.25 * dt * R * float(s @ s)
+                - 0.25 * dt * float(s @ (v_new + v_old))))
+
+            # (E) The docstring identity's residual, split into the free
+            # advance's own port power plus nothing.
+            duf_tot = 0.5 * float(np.sum(m_eps * (e_new ** 2 - e_old ** 2)))
+            duf_free = 0.5 * float(np.sum(m_eps * (e_star ** 2 - e_old ** 2)))
+            worst_e = max(worst_e, abs(
+                duf_tot + dub + 0.25 * dt * R * float(s @ s) - duf_free
+                + 0.25 * dt * float(s @ (v_star - v_old))))
+
+            scale = (0.5 * float(np.sum(m_eps * (e_new ** 2 + e_star ** 2)))
+                     + 0.5 * L_s * float(i_new @ i_new + i_old @ i_old)
+                     + 0.5 * C_s * float(vc_new @ vc_new + vc_old @ vc_old)
+                     + 0.25 * dt * R * float(s @ s))
+            biggest_scale = max(biggest_scale, scale)
+            biggest_v_shift = max(biggest_v_shift, float(np.max(np.abs(v_star - v_old))))
+            trajectory.append(e_new.copy())
+
+        return dict(a=worst_a, b=worst_b, c=worst_c, e=worst_e,
+                    scale=biggest_scale, v_shift=biggest_v_shift,
+                    traj=np.array(trajectory))
+
+    moving = _run(advance)
+    frozen = _run(None)
+
+    assert moving["scale"] > 0.0, "an all-zero energy scale would make the gate vacuous"
+
+    # (A) is an energy-difference comparison, so it is scaled by the field
+    # magnitude; (B), (C) and (E) are energies, scaled by the per-step energy.
+    assert moving["a"] <= C_FIELD * 1.0, (
+        f"back-reaction residual {moving['a']!r} (e* -> e^{{n+1}} is not"
+        f" -(dt/2) j(s)/m_eps)"
+    )
+    for key, label in (("b", "field side: dU_field(e*->e^{n+1})"),
+                       ("c", "branch side: dU_L + dU_C + (dt/4) R s^2"),
+                       ("e", "free-advance port power (dt/4) s.(v*-v^n)")):
+        assert moving[key] <= C_FIELD * moving["scale"], (
+            f"{label} leaves a residual of {moving[key]!r}, i.e."
+            f" {moving[key] / moving['scale']!r} of the per-step energy"
+            f" {moving['scale']!r} -- not roundoff"
+        )
+
+    # Anti-vacuity: (E) must not be the frozen identity in disguise.  The
+    # helper run moves the field, so v* is nowhere near v^n, and the frozen
+    # loop must land on a different trajectory -- otherwise advance was never
+    # called and e* == e^n.
+    assert moving["v_shift"] > 0.5, (
+        f"the field barely moved: max|v* - v^n| = {moving['v_shift']!r},"
+        " so the moving-field ledger was never exercised"
+    )
+    # The frozen half of the same ledger must reduce to the identity the module
+    # docstring already states -- i.e. with e* == e^n line (E) has nothing left
+    # over, so the moving-field correction is the ONLY difference.
+    assert frozen["e"] <= C_FIELD * frozen["scale"], (
+        f"the frozen run no longer satisfies the docstring identity: {frozen['e']!r}"
+    )
+    separation = float(np.max(np.abs(moving["traj"] - frozen["traj"])))
+    assert separation > 0.1, (
+        f"moving and frozen runs agree to {separation!r}: the advance hook is"
+        " not being used, so e* == e^n and this test proves nothing"
+    )
+    assert np.all(np.isfinite(moving["traj"])), "the moving run blew up"
+    assert np.all(np.isfinite(frozen["traj"])), "the frozen run blew up"
+
