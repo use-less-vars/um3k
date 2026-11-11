@@ -50,6 +50,7 @@ from . import scatter
 from . import viz  # selects the Agg backend before pyplot is imported anywhere
 from .abc import Mur1Boundary
 from .board import Load, MicrostripBoard
+from .coupling import capacitive_port
 from .eigen import analytic_box_modes, resonances
 from .evolve import FITStepper, RickerSource, cfl_dt, ricker
 from .grid import Grid
@@ -57,6 +58,7 @@ from .kicad import load_board
 from .materials import C0, material_matrices
 from .microstrip import COPPER_T, Microstrip
 from .modal_harness import build_mode_plane
+from .netlist import parse_netlist
 from .operators import CellComplex
 from .plane_phasor import PLANE_CONVENTION
 from .pml import PML, AbsorbedWork, cells_for_wavelength
@@ -77,6 +79,7 @@ from .ports import (
     sigma_beta_from_curvature,
     station_poynting,
 )
+from .spice import SpicePort
 
 import matplotlib.pyplot as plt  # noqa: E402  (after the backend is fixed)
 
@@ -1670,6 +1673,10 @@ class MicrostripWave:
     plane_hy: np.ndarray | None = None
     plane_ey: np.ndarray | None = None
     plane_hz: np.ndarray | None = None
+    # Appended after every existing field: the per-step V(t)/I(t) trace of the
+    # element, ``None`` unless ``microstrip_wave(load_trace=True)``.
+    load_trace_v: np.ndarray | None = None
+    load_trace_i: np.ndarray | None = None
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -2522,6 +2529,7 @@ def microstrip_wave(
     plane: str = MS_ANIMATE_PLANE,
     audit: bool = False,
     loads: tuple[Load, ...] = (),
+    load_netlist: Any = None,
     reference: LineReference | None = None,
     sink: FigureSink = None,
     excite: str = MS_EXCITE,
@@ -2559,6 +2567,15 @@ def microstrip_wave(
     # per-edge voltage does not.  Off by default: no accumulator, no probe, no
     # array and no number in this function moves when it is off.
     load_edge_dump: bool = False,
+    # Per-step V(t)/I(t) trace of the element (default off, purely additive):
+    # the time-domain voltage across the cut and the current through the
+    # element, one sample per time step.  ``load_edge_dump`` bins the same
+    # voltage into a spectrum; this keeps the raw record instead, which is what
+    # a transient or a stability check has to look at.  The voltage is the
+    # ``capacitive_port`` projection in both paths (the quantity ``z_eff``
+    # divides), the current is the element's own.  Off by default: no array is
+    # allocated and no number in this function moves when it is off.
+    load_trace: bool = False,
     # Data-dump (default off, purely additive): a copy of the final-timestep
     # E and H field vectors, exactly as the stepper holds them.  Allocated only
     # when asked for, so a run without the flag pays nothing and returns None.
@@ -2696,6 +2713,25 @@ def microstrip_wave(
             ``k`` the accumulation is cut on.
         loads: Lumped loads placed on the strip's ``E_z`` edges; see
             :func:`emfit.evolve.add_load` for what each of them is.
+        load_netlist: A SPICE netlist to hang on the ``series_r`` cut instead
+            of that load's own ``value``: a netlist document (what
+            :func:`emfit.netlist.parse_netlist` reads), the
+            :class:`emfit.netlist.Netlist` it parses to, or a bare
+            :class:`emfit.spice.CircuitNetwork`.  The load then supplies the
+            cut's POSITION only -- its ``value`` is unused and no conductance
+            is written -- and the circuit takes its place across those edges,
+            node ``1`` on the cut and node ``0`` on the ground, through
+            :class:`emfit.spice.SpicePort`.  ``None`` (the default) is the
+            sigma-only path, and no number moves.
+        load_trace: Record the element's V(t) and I(t), one sample per time
+            step, into ``load_trace_v`` and ``load_trace_i``.  The voltage is
+            the cut's ``capacitive_port`` projection -- the same quantity
+            ``load_edge_dump`` bins and ``z_eff`` divides -- and the current is
+            the element's own: the MNA terminal current with a netlist, the
+            conductance sum ``sum(e_edge) / (n_edges * R)`` on the ``Load``
+            path.  Readings are taken on the step the field has just settled
+            on, warm-up included.  Off by default: nothing is allocated and no
+            number moves.
         reference: A :class:`LineReference` -- a load-free run of the same line
             -- to normalise ``s21`` against.  ``None`` (the default) reports the
             run's own ratio across the station span, one plane at each end and
@@ -2914,6 +2950,11 @@ def microstrip_wave(
     # With several loads the LAST series-R one wins; that is the one a
     # single-element record can describe.
     load_edges_used = None
+    # The resistance on that same stamp, kept for ``load_trace``: the
+    # conductance path has no MNA to ask for a current, so it rebuilds one from
+    # the recorded edge fields and this value.  ``None`` when no series-R load
+    # was stamped (netlist path, or no load at all).
+    load_resistance_used = None
     # The last load's node column, out of the same loop scope and for the same
     # reason: ``None`` when the record carries no load at all.  Read below to
     # decide whether a named extraction plane is still in front of the element.
@@ -2929,11 +2970,17 @@ def microstrip_wave(
                     f"{ix_load}, outside the strip ({ix_port} < ix < {nx})")
             if load.kind == "series_r":
                 edges = cc.idx_ex(np.array([ix_load]), j_points, k_strip).ravel()
-                if load_edge_dump:
+                if load_edge_dump or load_netlist is not None:
                     load_edges_used = np.array(edges, copy=True)
                 pec[edges] = False
                 # One element spread over the ``len(edges)`` parallel paths.
-                sigma[edges] += 1.0 / (edges.size * float(load.value))
+                # With ``load_netlist`` the element is the netlist's, so no
+                # conductance is written: a sigma here would be a second load
+                # in parallel with the circuit, and ``m_sigma`` stays ``None``
+                # so the field step this stepper runs is genuinely load-free.
+                if load_netlist is None:
+                    sigma[edges] += 1.0 / (edges.size * float(load.value))
+                    load_resistance_used = float(load.value)
             else:
                 # ``n_strip`` columns in parallel, each ``n_sub`` edges in
                 # series: C_edge = C * n_sub / n_strip reproduces C in total.
@@ -2946,6 +2993,13 @@ def microstrip_wave(
                                "n_edges": int(edges.size)})
         m_sigma = sigma if np.any(sigma) else None
         m_eps = eps
+
+    if load_netlist is not None and load_edges_used is None:
+        raise ValueError(
+            "load_netlist was given but loads names no series_r load: the "
+            "netlist hangs on the edges that load frees, so one has to be "
+            "there to give the cut its position (its ``value`` is unused; the "
+            "netlist supplies the element).")
 
     # --- where the transmission is measured ---------------------------------
     # A loaded record's S-parameters belong on the cut, the one plane the element
@@ -3226,6 +3280,73 @@ def microstrip_wave(
         # ``e_z`` is indexed [j, k], the pair ``column_path`` walks.  Only the
         # voltage channel is projected; see the current channel below.
         mode_edges_e = flux_plane.e_z[j_centre, :int(k_strip)]
+
+    # --- SPICE bridge: the cut above, driven by a netlist --------------------
+    # ``load_netlist`` hangs a circuit on the ``E_x`` edges the ``series_r``
+    # load frees, through :class:`emfit.spice.SpicePort` -- the same object
+    # :func:`emfit.coupling.run_network` drives, built the same way: a
+    # one-terminal :func:`emfit.coupling.capacitive_port` over the cut's edges,
+    # a load-free ``advance`` closure for the field half-step, and one
+    # ``spice_port.step`` per time step in place of ``stepper.step``.
+    #
+    # The cut itself is IDENTICAL in the two paths -- ``pec[edges] = False``
+    # above frees the same column and the ``E_y`` rails stay pinned -- so the
+    # only difference is where the element's current comes from: the per-edge
+    # conductance ``1 / (n_edges * R)`` for a ``Load``, an MNA solve for a
+    # netlist.  That is what makes the two comparable at all.
+    spice_edges = None
+    spice_port = None
+    spice_state = None
+    spice_e = None
+    spice_h = None
+    # The drive the closure reads, written once per step: a closure has no
+    # other way to see a per-step value.
+    spice_drive = [0.0]
+    if load_netlist is not None:
+        spice_edges = np.array(load_edges_used, copy=True)
+        m_eps_all = np.asarray(m_eps, dtype=float)
+        network = getattr(load_netlist, "network", None)
+        if network is None:
+            network = parse_netlist(load_netlist).network
+
+        def _advance(e_local, h, _dt):
+            """The load-free field step: the cut's edges go in and come out."""
+            stepper.e[spice_edges] = e_local
+            stepper.h[:] = h
+            current[:] = 0.0
+            current[port_edges] = spice_drive[0] * launch_profile
+            stepper.step(current)
+            return (np.array(stepper.e)[spice_edges].copy(),
+                    np.array(stepper.h).copy())
+
+        spice_port = SpicePort(
+            capacitive_port(m_eps_all, spice_edges), m_eps_all[spice_edges],
+            network=network, advance=_advance)
+        spice_e = np.array(stepper.e)[spice_edges].copy()
+        spice_h = np.array(stepper.h).copy()
+        spice_state = spice_port.initial_state(
+            v=spice_port.port.voltage(spice_e))
+
+    # --- per-step V(t) / I(t) trace of the element ---------------------------
+    # ``load_trace`` keeps the raw record the DFT throws away.  The port is the
+    # same ``capacitive_port`` the netlist path uses -- on the sigma path it is
+    # built here purely to project the cut -- so the traced voltage means one
+    # thing in both paths.
+    load_trace_v = None
+    load_trace_i = None
+    load_trace_port = None
+    if load_trace:
+        if load_edges_used is None:
+            raise ValueError(
+                "load_trace was asked for on a record with no series_r load: "
+                "there is no element whose V(t)/I(t) could be traced.  Give "
+                "loads=(...Load(kind='series_r'),) or leave the flag off.")
+        load_trace_v = np.zeros(int(nsteps), dtype=float)
+        load_trace_i = np.zeros(int(nsteps), dtype=float)
+        load_trace_port = (spice_port.port if spice_port is not None else
+                           capacitive_port(np.asarray(m_eps, dtype=float),
+                                           load_edges_used))
+
     for n in range(nsteps):
         if absorbed is not None and n == n_warm:
             # Warm-up work is not part of the settled record: bin only the
@@ -3239,11 +3360,36 @@ def microstrip_wave(
             # at step 0 and the record is the whole of a clean pulse.
             drive_now = float(drive) * float(
                 ricker(n * dt, 2.0 / f_pulse, f_pulse))
-            current[port_edges] = drive_now * launch_profile
         else:
             ramp = min(1.0, (n + 1) / max(n_warm, 1))
-            current[port_edges] = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt) * launch_profile
-        stepper.step(current)
+            drive_now = float(drive) * ramp * np.sin(2.0 * np.pi * f0 * n * dt)
+        current[port_edges] = drive_now * launch_profile
+        if spice_port is None:
+            stepper.step(current)
+        else:
+            # The coupled step: ``_advance`` runs the load-free field half-step
+            # (and advances ``stepper``), then the MNA solve puts the circuit's
+            # own current back on the cut's edges.  The corrected field is
+            # written back into ``stepper`` before anything reads it.
+            spice_drive[0] = drive_now
+            spice_e, spice_h, spice_state = spice_port.step(
+                spice_e, spice_h, dt, spice_state)
+            stepper.e[spice_edges] = spice_e
+            stepper.h[:] = spice_h
+        if load_trace_v is not None:
+            # Read after every write to ``stepper`` has landed -- including the
+            # netlist path's write-back -- and before the warm-up skip, so the
+            # record covers the whole run from step 0.
+            _e_load = stepper.e[load_edges_used]
+            load_trace_v[n] = float(
+                np.asarray(load_trace_port.voltage(_e_load)).ravel()[0])
+            if spice_state is not None:
+                # One terminal, so the element's current is the whole vector.
+                load_trace_i[n] = float(np.asarray(spice_state.i).ravel()[0])
+            else:
+                load_trace_i[n] = (float(np.sum(_e_load)) /
+                                   (int(load_edges_used.size) *
+                                    load_resistance_used))
         if frame_callback is not None:
             frame_callback(stepper)
         if n < n_warm:
@@ -4132,6 +4278,8 @@ def microstrip_wave(
         plane_hy=plane_hy,
         plane_ey=plane_ey,
         plane_hz=plane_hz,
+        load_trace_v=load_trace_v,
+        load_trace_i=load_trace_i,
     )
 
 
