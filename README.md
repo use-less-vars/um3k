@@ -52,7 +52,9 @@ and, from the parity tests, `3 passed`.
 **This is OPERATOR-REPORTED and not reproduced here.** It establishes that the
 build backend, the wheel and the extension work on that host. The three tests are
 the three v1 parity tests — the goldens predate the second, full-physics golden, so
-"3 passed" is what the suite reported then, not now; the current suite is 20 tests.
+"3 passed" is what the suite reported then, not now: the tree holds **783 collected
+tests across 64 test files** (`tests/test_*.py`), and the two-file command under
+Test below collects 20 of them.
 The exact command line and the full pip log are still not on record.
 
 ## Test
@@ -61,9 +63,57 @@ The exact command line and the full pip log are still not on record.
 PYTHONPATH=build/cpp python3 -m pytest tests/test_cpp_parity.py tests/test_step_extraction.py -q
 ```
 
-Expected, at the time of writing: 20 tests, all passing (13 parity — 3 on the v1
-golden and 10 on the v2 full-physics golden, the 10 being 7 functions one of which
-is parametrised over four single-branch ablations — plus 7 extraction tests).
+That command collects **20** tests today — 13 in `tests/test_cpp_parity.py` and 7 in
+`tests/test_step_extraction.py`. It is a two-file gate, not the suite.
+
+The whole tree is **783 collected tests across 64 test files** (`tests/test_*.py`).
+The collection has to be run with the kernel's `site-packages` on `PYTHONPATH`:
+from a bare interpreter 30 files die on `RuntimeError: emfit_core exists on disk but
+could not be imported` and `--collect-only` ends `Interrupted: 30 errors during
+collection`, so no count comes out at all.
+
+```
+PYTHONPATH=.venv/lib/python3.12/site-packages python3 -m pytest --collect-only -q
+```
+
+<!-- Trace, verbatim tail of the run that produced 783 (it prints one line per file
+     and no total line; 783 is the sum of the 64 per-file lines):
+tests/test_step_extraction.py: 7
+tests/test_studies.py: 62
+tests/test_terminations.py: 11
+tests/test_webapp.py: 11
+tests/test_writer_station_phasors.py: 13
+-->
+
+The **fast gate** is 23 tests over three files: 13 parity (`tests/test_cpp_parity.py`
+— 3 on the v1 golden and 10 on the v2 full-physics golden, the 10 being 7 functions
+one of which is parametrised over four single-branch ablations) + 3
+`tests/test_extraction_plane_default.py` (the DR-43 residual 1 plane default) + 7
+`tests/test_engine_provenance.py`. Measured with `--collect-only`, not added up on
+paper:
+
+```
+PYTHONPATH=.venv/lib/python3.12/site-packages python3 -m pytest --collect-only -q \
+  tests/test_cpp_parity.py tests/test_extraction_plane_default.py tests/test_engine_provenance.py
+```
+
+For the whole suite, one file per process — the canonical per-file invocation, as
+`docs/design/GEN12_HANDOFF_TRAPS.md:104-106` gives it:
+
+```sh
+for f in tests/test_*.py; do
+  echo "=== $f"; timeout 400 python3 -m pytest "$f" -o addopts="" -q 2>&1 | tail -20
+done
+```
+
+`scripts/test_all.sh` is the full-suite runner and does exactly that loop: one
+process per test file, `-o addopts=""` on every call so the `addopts = "-q"` in
+`pyproject.toml` cannot make the quiet flag double, a per-file `timeout`
+(`TEST_TIMEOUT`, default 300 s) and exit 124 reported as STALLED rather than
+FAILED. It also passes `-o timeout=0`, because `pyproject.toml`'s `timeout = 300`
+arms pytest-timeout's own `SIGALRM` clock, which cannot interrupt a blocked C or
+sparse-matvec call (DR-39): with it off, the per-file `timeout` is the only clock
+in the run and a stall has exactly one way to be reported.
 
 The parity tests compare the C++ kernel against the pure-Python reference at
 tolerance **zero** (`assert_array_equal`, not `allclose`), and the goldens are
