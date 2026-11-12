@@ -2785,6 +2785,103 @@ def test_page_is_capped_to_the_viewport_so_the_player_bar_stays_on_screen(
     )
 
 
+def _boot_web_recording_div_styles(monkeypatch, info) -> list:
+    """Boot ``run_web`` and return every ``Div`` style, in build order.
+
+    The legacy twin of ``_boot_vis_recording_div_styles``. It is a separate
+    helper rather than a flag on that one because the two pages are entered
+    through different helpers (``_boot_app`` / ``_boot_web``), and one helper
+    that switched between them would hide which page a failure came from.
+    ``_boot_web`` doubles ``pyvista.Plotter.render`` itself (this image has no
+    EGL) and restores it, so only the style strings are recorded here - nothing
+    renders, and the sizes asserted below are the ones the browser is asked
+    for, not their result.
+    """
+    pytest.importorskip("pyvista")
+    import trame.widgets.html as html_mod
+
+    styles = []
+    real_div = html_mod.Div
+
+    def _factory(*args, **kwargs):
+        style = kwargs.get("style")
+        styles.append("" if style is None else str(style))
+        return real_div(*args, **kwargs)
+
+    monkeypatch.setattr(html_mod, "Div", _factory)
+    _boot_web(info)
+    assert styles, (
+        "no trame Div was built at all: run_web never reached its layout, so "
+        "this test would prove nothing"
+    )
+    return styles
+
+
+def test_legacy_page_is_capped_to_the_viewport_so_the_panels_stay_on_screen(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``run_web``'s column is one viewport tall and nothing forces it taller.
+
+    The legacy page carries no player bar - playback lives in ``run_web_vis`` -
+    so the row that has to survive at the foot of the column is the panels
+    scroll box holding ``_emit_frequency_panel`` and ``_emit_port_wave_panel``.
+    It was lost the same way the modern bar was: a ``height: 100%`` flex column
+    inside a Vuetify ``fill-height`` container sizes against its own content,
+    and the 3-D wrapper's ``min-height: 320px`` made that content taller than
+    the window, so the column's ``overflow: hidden`` cut the panels off the
+    bottom instead of the plotter giving up height.
+    """
+    import poc_app as app
+
+    info = _fixture_legacy_info(app, tmp_path / "legacy.npz")
+    styles = _boot_web_recording_div_styles(monkeypatch, info)
+
+    columns = [s for s in styles if "flex-direction: column" in s]
+    assert columns, (
+        "run_web built no flex column at all, so the page column this test is "
+        f"about is not there. Div styles built: {styles!r}"
+    )
+    assert not any("height: 100%;" in s for s in columns), (
+        "a page column is sized height: 100% again; inside fill-height that "
+        "resolves against the column's own content, which is what let the "
+        f"column grow past the window. Div styles built: {styles!r}"
+    )
+    capped = [
+        s for s in columns if "height: 100vh" in s and "overflow: hidden" in s
+    ]
+    assert capped, (
+        "no Div asks for a column exactly one viewport tall (height: 100vh, "
+        "flex-direction: column, overflow: hidden); the legacy page column is "
+        "still sized against its content, which is what pushed the panels off "
+        f"the bottom of the window. Div styles built: {styles!r}"
+    )
+
+    assert any("flex: 1 1 auto; min-height: 0;" in s for s in styles), (
+        "the 3-D wrapper no longer takes the leftover height with no floor of "
+        f"its own (flex: 1 1 auto; min-height: 0). Div styles built: {styles!r}"
+    )
+    assert not any("min-height: 320px" in s for s in styles), (
+        "a 320px floor is back on a child of the page column: on a window "
+        "shorter than that floor plus the rows around it the column cannot "
+        "shrink and the panels go off the bottom again"
+    )
+    assert not [
+        s for s in styles if "min-height:" in s and "min-height: 0" not in s
+    ], (
+        "a Div asks for a non-zero min-height; any positive floor on a child "
+        "of the page column is a height the column can never give back"
+    )
+
+    panels = [
+        s for s in styles if "flex: 0 0 auto" in s and "overflow-y: auto" in s
+    ]
+    assert panels, (
+        "the panels scroll box is no longer pinned to its own height and made "
+        "scrollable (flex: 0 0 auto ... overflow-y: auto), so the two panels "
+        "can be sliced by the column's overflow:hidden instead of scrolled to"
+    )
+
+
 # --- Task B: the mode picture has to be on the eye side of the sheets -------
 
 

@@ -4396,11 +4396,26 @@ def run_web(
                 # sliders are always reachable and the panel never floats over
                 # the 3-D view. The banner is FIRST in that column: a reader who
                 # never scrolls still meets the warning.
+                #
+                # height: 100vh, not 100%: the parent is a Vuetify
+                # ``fill-height`` container, and a percentage height there
+                # resolves against the CONTENT, so the column grew to whatever
+                # its children demanded - the sliders, the plotter's old 320px
+                # floor and both panels - and the overflow:hidden below then
+                # clipped the panel box off the bottom of the window instead of
+                # the plotter giving up height. A fixed pixel height was
+                # rejected for the mirror-image reason: it overflows any window
+                # shorter than the number chosen here. Letting the column scroll
+                # (overflow-y: auto) was rejected too - the 3-D view then slides
+                # out of sight while the sliders stay put, which is worse than
+                # the defect for a page whose whole point is the picture. One
+                # viewport is the only length that matches the space the page is
+                # actually allowed to occupy.
                 with container(fluid=True, classes="pa-0 fill-height"):
                     with html_div(
                         style=(
                             "display: flex; flex-direction: column; "
-                            "height: 100%; width: 100%; overflow: hidden;"
+                            "height: 100vh; width: 100%; overflow: hidden;"
                         )
                     ):
                         _emit_mismatch_banner()
@@ -4411,12 +4426,21 @@ def run_web(
                             )
                         ):
                             _emit_cut_sliders()
+                        # min-height: 0, not a pixel floor. A flex item's
+                        # default min-height is its content, so 320px was a
+                        # floor the column could not shrink below: on a window
+                        # shorter than that floor plus the rows above and below
+                        # it, the panels box was pushed past the bottom edge.
+                        # The plotter sizes itself from the box it is given, so
+                        # it needs no floor of its own to stay drawable - flex:
+                        # 1 1 auto is what keeps it taking every pixel the fixed
+                        # rows leave.
                         with html_div(
-                            style="flex: 1 1 auto; min-height: 320px;"
+                            style="flex: 1 1 auto; min-height: 0;"
                         ):
                             view = plotter_ui(plotter)
                         # The two panels share one scroll box: each is a fixed
-                        # height image while the plotter keeps its min-height, and
+                        # height image while the plotter takes the leftover height, and
                         # without this the second panel would be clipped by the
                         # column's overflow:hidden instead of shown.
                         with html_div(
