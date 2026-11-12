@@ -1922,6 +1922,77 @@ def _z_eff_block(res) -> dict | None:
     }
 
 
+# A passive two-port cannot deliver more power than it receives, so a pair of
+# PUBLISHED S-parameters that is physically coherent obeys
+# ``|S11|^2 + |S21|^2 <= 1``.  The gate below allows a few times 1e-9 above 1.0
+# and nothing more, because the arithmetic cannot excuse anything larger: the
+# sum is two O(1) squares added in float64, so its own roundoff is a few ulps
+# (eps = 2.2e-16), i.e. ~1e-15, and both magnitudes are published at full
+# precision, so a reader re-summing them from the file inherits exactly that and
+# no more.  1e-9 is the scale of the *decimal* copy a human or a grader reads
+# instead -- this file prints 9 decimals (%.9f / %.9e), whose rounding moves the
+# sum by at most ~1e-9 -- and 4e-9 clears both by orders of magnitude while
+# staying seven orders below any real violation: a 1% excess of |S21| raises the
+# sum by 2e-2.
+PASSIVITY_TOL = 4.0e-9
+
+
+def passivity_guard(s11_mag, s21_mag) -> dict:
+    """The passivity-coherence record for one PUBLISHED (|S11|, |S21|) pair.
+
+    Returns the dict the artefact carries as ``s11.passivity``: the sum, the
+    tolerance it was compared against, and ``status`` -- ``"FAIL_PASSIVITY"``
+    when the sum exceeds ``1 + PASSIVITY_TOL``, ``None`` when it does not.  The
+    two magnitudes are NOT touched: nothing here clips, rounds or re-derives
+    them, so a failing record still publishes the numbers that failed.
+
+    ``None`` in (a magnitude the writer could not read) gives ``None`` for the
+    sum and for the status: an absent input is not evidence of passivity, and a
+    ``None`` status is what tells the caller to leave the record's pre-existing
+    ``validation_status`` alone.  The key set is identical in both branches, so
+    a reader never has to guess which one wrote the file.
+    """
+    tol = PASSIVITY_TOL
+    if s11_mag is None or s21_mag is None:
+        return {
+            "status": None,
+            "power_sum": None,
+            "tolerance": tol,
+            "basis": (
+                "|S11|^2 + |S21|^2 on the two magnitudes this artefact "
+                "publishes (s11.magnitude, the two-wave |B/A|, and "
+                "s21.magnitude), compared against 1 + tolerance.  A passive "
+                "two-port cannot exceed 1; the tolerance is the float64 "
+                "sum's own roundoff plus the 9-decimal copy a reader may "
+                "re-sum, not a physical allowance (PASSIVITY_TOL).  Not "
+                "evaluated here: one of the two magnitudes is null, and an "
+                "absent number is not evidence of passivity."),
+            "verdict": "passivity not evaluated: a published magnitude is null",
+        }
+    power_sum = float(s11_mag) ** 2 + float(s21_mag) ** 2
+    failed = power_sum > 1.0 + tol
+    return {
+        "status": "FAIL_PASSIVITY" if failed else None,
+        "power_sum": power_sum,
+        "tolerance": tol,
+        "basis": (
+            "|S11|^2 + |S21|^2 on the two magnitudes this artefact publishes "
+            "(s11.magnitude, the two-wave |B/A|, and s21.magnitude), compared "
+            "against 1 + tolerance.  A passive two-port cannot exceed 1; the "
+            "tolerance is the float64 sum's own roundoff plus the 9-decimal "
+            "copy a reader may re-sum, not a physical allowance "
+            "(PASSIVITY_TOL).  The magnitudes are published unclipped and "
+            "unrounded, so a failing record keeps the numbers that failed."),
+        "verdict": (
+            f"|S11|^2 + |S21|^2 = {power_sum:.12f} exceeds 1 + {tol:.1e} = "
+            f"{1.0 + tol:.12f}: this pair of published S-parameters is not "
+            f"passive"
+            if failed else
+            f"|S11|^2 + |S21|^2 = {power_sum:.12f} is within 1 + {tol:.1e} = "
+            f"{1.0 + tol:.12f}: the published pair is passive-coherent"),
+    }
+
+
 def _station_phasor_block(res) -> dict:
     """The station phasors the impedance fit saw, so ``s11`` can be re-run.
 
@@ -3126,6 +3197,12 @@ def main(argv: list[str] | None = None) -> int:
         if s11_two_wave_mag is not None else
         f"On the R={args.load_ohm:g} record the magnitude could not be read.")
 
+    # The passivity-coherence gate, on the pair this artefact actually
+    # PUBLISHES: s11.magnitude (the two-wave |B/A| written at :3316) and |s21|
+    # (s21.magnitude).  Computed once, here, so the s11 block's status, its own
+    # numbers and the console line below all read one record.
+    passivity = passivity_guard(s11_two_wave_mag, finite_or_none(abs(s21)))
+
     # The bookkeeping keys in ``run`` below say what the numbers above were
     # divided by, so a reader can recompute them from the file alone: the
     # impedance the station fit produced, the forward ratio the reference
@@ -3326,9 +3403,20 @@ def main(argv: list[str] | None = None) -> int:
                 ":1527-1531).  Plane-independent: it does not move when the "
                 "extraction plane moves.  "
                 "modulus of B/A from fit_beta(n_wave=2), referred to z=0, plane-invariant at alpha=0, not de-embedded. phase_deg is unchanged and belongs to the one-wave station fit at the port plane, NOT to the magnitude beside it; no two-wave phase is reported because no two-wave beta is stored."),
-            "validation_status": "UNVALIDATED",
+            # The passivity-coherence gate: FAIL_PASSIVITY when the published
+            # pair's |S11|^2 + |S21|^2 exceeds 1 + PASSIVITY_TOL, and the status
+            # this writer has always published otherwise.  The status is the
+            # one key the gate moves; nothing about the magnitudes above
+            # changes because of it.
+            "validation_status": (passivity["status"]
+                                  if passivity["status"] is not None
+                                  else "UNVALIDATED"),
             "validation_reason": (
-                "the magnitude above is the modulus of the two-wave B/A, not "
+                # Only a fired gate prepends, so an honest record keeps the
+                # text it has always carried, character for character.
+                (passivity["verdict"] + "  "
+                 if passivity["status"] is not None else "")
+                + "the magnitude above is the modulus of the two-wave B/A, not "
                 "the one-wave station-fit reflection (that is kept beside it "
                 "as magnitude_one_wave_station_fit).  "
                 + s11_reason_clause +
@@ -3341,6 +3429,12 @@ def main(argv: list[str] | None = None) -> int:
                 "near-field extends to the last station and contaminates the fit. "
                 "Moving the extraction plane further from the load, or modal "
                 "projection, would reduce it."),
+            # The gate's own numbers, so its verdict is recomputable from the
+            # file: the sum it compared, the tolerance it compared against, and
+            # the identity in words.  Written on EVERY record with a null
+            # status when the gate did not fire -- an absent key could not be
+            # told apart from a writer that never ran the gate at all.
+            "passivity": passivity,
         },
         "s11_at_plane": {
             "magnitude": finite_or_none(abs(s11_at_plane)),
@@ -3445,12 +3539,23 @@ def main(argv: list[str] | None = None) -> int:
                         if s11_two_wave_mag is not None
                         else f"{abs(s11):.6e}(two-wave absent,"
                              f" one-wave value)")
+    # The gate's verdict on that same line: the sum, the tolerance and the
+    # status, so a run that publishes a non-passive pair says so in the console
+    # and not only in the JSON.  ``ok`` is the unfired status, which is NOT
+    # written into the artefact (that keeps its own UNVALIDATED).
+    passivity_txt = (
+        "passivity=not_evaluated(a published magnitude is absent)"
+        if passivity["power_sum"] is None else
+        f"passivity={passivity['power_sum']:.12f} "
+        f"(tol {PASSIVITY_TOL:.1e}) "
+        f"passivity_status={passivity['status'] or 'ok'}")
     print(f"label={label} cells={cells} wall={wall_s:.1f}s "
           f"peak_rss={peak_mb:.1f}MB "
           f"|s21|={abs(s21):.9f} arg={np.degrees(np.angle(s21)):.4f}deg "
           f"|s11|={s11_two_wave_txt} "
           f"(one-wave_station_fit |s11|={abs(s11):.6e}) "
-          f"cut_plane={res.s21_plane_index}")
+          f"cut_plane={res.s21_plane_index} "
+          f"{passivity_txt}")
     return 0
 
 

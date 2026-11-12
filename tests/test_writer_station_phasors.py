@@ -6,7 +6,10 @@ takes -- ``_station_phasor_block`` -> ``json.dumps``/``json.loads`` -> complex
 recombination -> ``emfit.ports.fit_station_impedance`` -- and the resulting
 ``gamma_v = amp_v[1] / amp_v[0]`` must come back as ``B / A`` to 1e-10 in
 magnitude and in phase.  A refit at a 2% different beta must NOT agree, which is
-what makes the first assertion evidence rather than a tautology.
+what makes the first assertion evidence rather than a tautology.  A second,
+separate group of tests pins the writer's passivity gate (``passivity_guard``):
+a published ``|S11|^2 + |S21|^2`` above ``1 + PASSIVITY_TOL`` is FLAGGED, and
+the magnitudes are never clipped to make the pair pass.
 """
 
 from __future__ import annotations
@@ -191,3 +194,49 @@ def test_a_record_without_the_cells_leaves_the_selection_null_not_guessed():
         assert block["fit_x"] is None
         assert block["fit_selected"] is None
         _through_the_file(block)
+
+
+# The passivity gate, in both directions.  A gate that only ever said "ok" would
+# be indistinguishable from no gate at all, so the failing case is pinned beside
+# the passing one -- and pinned as a FLAG, not a repair: the sum that failed has
+# to come back at its real value, because a gate that clipped |S11| or |S21| to
+# make the pair passive would destroy the very numbers it exists to report.
+
+
+def test_a_sum_over_one_is_flagged_not_clipped():
+    run_build_A = _load_run_build_a()
+    record = run_build_A.passivity_guard(0.8, 0.7)  # 0.64 + 0.49 = 1.13
+
+    assert record["status"] == "FAIL_PASSIVITY"
+    # The real sum, not 1.0: a clipping implementation could only report 1.0.
+    assert record["power_sum"] == pytest.approx(1.13)
+    assert record["power_sum"] > 1.0
+    assert record["tolerance"] == pytest.approx(4.0e-9)
+    # Nothing was silently repaired, and the failing pair is still quotable.
+    assert "unclipped" in record["basis"]
+    assert "not passive" in record["verdict"]
+    assert set(record) == {"status", "power_sum", "tolerance", "basis", "verdict"}
+
+
+def test_a_sum_of_exactly_one_is_not_flagged():
+    run_build_A = _load_run_build_a()
+    record = run_build_A.passivity_guard(0.6, 0.8)  # 0.36 + 0.64 = 1.00
+
+    assert record["status"] is None
+    assert record["power_sum"] == pytest.approx(1.0)
+    # A null status is the signal the caller uses to leave the record's own
+    # validation_status alone; the key set is identical to the fired branch's,
+    # so a reader never has to guess which one wrote the file.
+    assert set(record) == set(run_build_A.passivity_guard(0.8, 0.7))
+
+
+def test_an_absent_magnitude_is_not_evaluated_rather_than_flagged():
+    run_build_A = _load_run_build_a()
+    fired = set(run_build_A.passivity_guard(0.8, 0.7))
+    for s11_mag, s21_mag in ((None, 0.7), (0.8, None)):
+        record = run_build_A.passivity_guard(s11_mag, s21_mag)
+        # An absent number is not evidence of passivity, and it is not evidence
+        # of a violation either: the gate declines to rule.
+        assert record["status"] is None
+        assert record["power_sum"] is None
+        assert set(record) == fired
