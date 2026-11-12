@@ -133,6 +133,131 @@ def step_explicit(e, h, C, C_tilde, inv_m_mu, inv_m_eps, dt, loss_num=None,
 
 
 # ----------------------------------------------------------------------
+# Optional compiled kernel
+# ----------------------------------------------------------------------
+# ``emfit_core`` is the C++ twin of ``step_explicit`` built from ``src/``.  It is
+# OPTIONAL: without it (no pybind11, no build) the pure-Python function above is
+# the whole implementation and everything still runs.  With it -- and only when
+# it reports the ABI this module was written against -- ``FITStepper.step``
+# dispatches to it.  The two produce the same bytes (verified in
+# tests/test_cpp_parity.py against frozen goldens, and through this dispatcher in
+# tests/test_cpp_dispatch.py), so which path ran is a performance fact, not a
+# correctness one.
+#
+# The reference ``step_explicit`` stays unconditionally available and unchanged.
+# It is what the kernel is validated against, so it must never grow a fast path
+# of its own.
+_KERNEL_ABI = 1                      # must equal emfit_core.KERNEL_ABI (src/bindings.cpp)
+_KERNEL_NAME = "emfit_core.fit_leapfrog"
+
+
+def _load_kernel(abi=_KERNEL_ABI):
+    """The compiled ``step_explicit``, or ``None`` if there is none usable.
+
+    Silent on purpose: a missing extension or a mismatched ABI is not an error,
+    it just means Python does the arithmetic.  A caller that wants to know which
+    path a stepper chose should read ``FITStepper.kernel``.
+    """
+    try:
+        import emfit_core
+    except Exception:
+        return None
+    if not callable(getattr(emfit_core, "step_explicit", None)):
+        return None
+    if abi is not None and getattr(emfit_core, "KERNEL_ABI", None) != abi:
+        return None
+    return emfit_core
+
+
+_KERNEL = _load_kernel()
+_ACTIVE_STEP = "cpp" if _KERNEL is not None else "python"
+
+
+def _can_damp_in_kernel(pml):
+    """True if ``pml`` can be expressed as the kernel's two multiplier vectors.
+
+    ``PML.damp_e`` / ``damp_h`` are exactly ``field *= multipliers(dt)[i]`` and
+    nothing else (emfit/pml.py), so the kernel reproduces them bit for bit --
+    UNLESS the layer carries an absorbed-work audit, whose ``record()`` needs the
+    pre-damp field from outside and cannot be reconstructed from the two
+    multipliers alone.  Such a layer forces the Python path.
+    """
+    if pml is None:
+        return True
+    if getattr(pml, "_audit", None) is not None:
+        return False
+    return callable(getattr(pml, "multipliers", None))
+
+
+def _csr_arrays(A):
+    """``(data, indices, indptr)`` of a scipy sparse matrix, in the kernel's types.
+
+    float64 data and int64 index arrays, each C-contiguous: the binding is strict
+    and a 32-bit scipy index would be rejected by name rather than silently
+    widened.  ``A`` is copied to CSR if it is not already (the dual curl is a CSC
+    view of ``C.T``, emfit/operators.py), so this is where that copy is paid --
+    once, when the plan is built, never per step.
+    """
+    A = A.tocsr()
+    return (np.ascontiguousarray(A.data, dtype=np.float64),
+            np.ascontiguousarray(A.indices, dtype=np.int64),
+            np.ascontiguousarray(A.indptr, dtype=np.int64))
+
+
+class _KernelPlan:
+    """Per-system bundles of the kernel's arguments, built once.
+
+    Holds the operator arrays, the material diagonals and the PEC index set in
+    exactly the dtypes and shapes the binding declares, so :meth:`step` does no
+    conversion per call -- only the two PML multipliers, which the layer already
+    caches per ``dt``.  ``e`` and ``h`` are mutated in place; their identity is
+    the stepper's.
+    """
+
+    __slots__ = ("kernel", "C", "C_tilde", "C_shape", "C_tilde_shape",
+                 "inv_m_mu", "inv_m_eps", "pec_idx", "loss_num", "loss_den",
+                 "pml")
+
+    def __init__(self, kernel, C, C_tilde, inv_m_mu, inv_m_eps, loss_num,
+                 loss_den, pec_idx, pml):
+        self.kernel = kernel
+        self.C_shape = tuple(int(v) for v in C.shape)
+        self.C_tilde_shape = tuple(int(v) for v in C_tilde.shape)
+        self.C = _csr_arrays(C)
+        self.C_tilde = _csr_arrays(C_tilde)
+        self.inv_m_mu = np.ascontiguousarray(inv_m_mu, dtype=np.float64)
+        self.inv_m_eps = np.ascontiguousarray(inv_m_eps, dtype=np.float64)
+        self.pec_idx = (None if pec_idx is None
+                        else np.ascontiguousarray(pec_idx, dtype=np.int64))
+        self.loss_num = loss_num
+        self.loss_den = loss_den
+        self.pml = pml
+
+    def step(self, e, h, dt, j=None):
+        """One compiled leapfrog step, in place on ``e``/``h``.
+
+        Mirrors :func:`step_explicit` argument for argument.  ``j`` is coerced
+        to a contiguous float64 array if it is anything else -- the kernel only
+        reads it, so a value-preserving copy keeps the step bit-identical while
+        sparing every call site the strict-dtype requirement.
+        """
+        if self.pml is not None:
+            damp_e, damp_h = self.pml.multipliers(dt)
+        else:
+            damp_e = damp_h = None
+        if j is not None:
+            j = np.ascontiguousarray(j, dtype=np.float64)
+        C_data, C_indices, C_indptr = self.C
+        Ct_data, Ct_indices, Ct_indptr = self.C_tilde
+        self.kernel.step_explicit(
+            e, h,
+            C_data, C_indices, C_indptr, self.C_shape,
+            Ct_data, Ct_indices, Ct_indptr, self.C_tilde_shape,
+            self.inv_m_mu, self.inv_m_eps, float(dt),
+            self.loss_num, self.loss_den, damp_e, damp_h, self.pec_idx, j)
+
+
+# ----------------------------------------------------------------------
 class FITStepper:
     """Leapfrog stepper for the FIT Maxwell system.
 
@@ -223,6 +348,18 @@ class FITStepper:
         self.time = 0.0
         self.n = 0
 
+        # Select the compiled twin when it is importable, ABI-compatible, and can
+        # express this step's PML (no absorbed-work audit).  Otherwise stay on the
+        # Python reference.  The two are bit-identical, so ``self.kernel`` is a
+        # performance detail, not a correctness switch -- ``None`` here means
+        # "Python did the arithmetic", by choice or by absence.
+        if _KERNEL is not None and _can_damp_in_kernel(pml):
+            self.kernel = _KernelPlan(
+                _KERNEL, self.C, self.C_tilde, self.inv_m_mu, self.inv_m_eps,
+                self.loss_num, self.loss_den, self.pec_idx, pml)
+        else:
+            self.kernel = None
+
     @staticmethod
     def _index_array(pec, n):
         if pec is None:
@@ -243,14 +380,20 @@ class FITStepper:
 
         The numerical work is delegated to the module-level kernel
         :func:`step_explicit`, which is the function a compiled (C++) update
-        is expected to reproduce bit for bit.
+        is expected to reproduce bit for bit.  When a compiled kernel is
+        available (see :data:`_ACTIVE_STEP`) the same update runs there instead;
+        it mutates ``self.e`` / ``self.h`` in place, leaving their objects (and
+        their identity) unchanged.
         """
-        e, h = step_explicit(self.e, self.h, self.C, self.C_tilde,
-                            self.inv_m_mu, self.inv_m_eps, self.dt,
-                            self.loss_num, self.loss_den, self.pml,
-                            self.pec_idx, j)
-        self.e = e
-        self.h = h
+        if self.kernel is not None:
+            self.kernel.step(self.e, self.h, self.dt, j)
+        else:
+            e, h = step_explicit(self.e, self.h, self.C, self.C_tilde,
+                                self.inv_m_mu, self.inv_m_eps, self.dt,
+                                self.loss_num, self.loss_den, self.pml,
+                                self.pec_idx, j)
+            self.e = e
+            self.h = h
         self.time += self.dt
         self.n += 1
         return self

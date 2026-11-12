@@ -292,13 +292,24 @@ PYBIND11_MODULE(emfit_core, m) {
               "emfit.evolve.step_explicit).  Mirrors the Python statement order "
               "exactly: Faraday update, PML damping of h, dual curl minus the "
               "source, lossless or lossy Ampere update, PML damping of e, PEC "
-              "reset to zero.  The lossless, source-free path is verified "
-              "bit-identical (max|diff| 0.0) to the Python reference over the "
-              "frozen golden data: 3/3 tests in tests/test_cpp_parity.py pass.  "
-              "The lossy, PML, PEC and source branches have no committed parity "
-              "test yet; they were measured by hand only.  Build from source "
-              "(see BUILD_COMMANDS in that test); `pip install -e .` was not "
-              "exercised in this container.";
+              "reset to zero.  Every branch -- lossless, lossy, PML, PEC and "
+              "source -- is verified bit-identical (max|diff| 0.0) to the Python "
+              "reference: all 13 tests in tests/test_cpp_parity.py pass against "
+              "the two frozen golden files (v1 lossless, v2 full-physics).  Build "
+              "from source with the flags in src/CMakeLists.txt (see "
+              "BUILD_COMMANDS in that test); the bit-identity depends on "
+              "-ffp-contract=off, not on the algorithm alone.";
+
+    // The numerical contract the Python dispatcher (emfit.evolve._load_kernel)
+    // checks before it will hand a step to this module: import emfit_core, see
+    // KERNEL_ABI equal to the value the Python side expects, and only then
+    // trust the bit-identity.  Bump KERNEL_ABI on ANY change to the
+    // floating-point contract of step_explicit -- a different statement order,
+    // a different rounding, a new optional argument that changes the
+    // arithmetic -- so a stale .so can never be silently mixed with a newer
+    // Python reference and quietly disagree in the last bit.
+    m.attr("KERNEL_ABI") = 1;
+    m.attr("KERNEL_NAME") = "emfit_core.fit_leapfrog";
     m.def("step_explicit", &py_step_explicit,
           py::arg("e"), py::arg("h"),
           py::arg("C_data"), py::arg("C_indices"), py::arg("C_indptr"),

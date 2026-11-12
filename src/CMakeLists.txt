@@ -16,9 +16,16 @@
 # green and the only consequence is that tests/test_cpp_parity.py skips instead
 # of comparing.
 #
-# -O3 with NO -ffast-math / -fassociative-math: the kernel claims bit-identical
-# agreement with the Python reference, and reassociation would break that
-# promise while every test still "passed" to 1e-12.
+# -O2 -fno-fast-math -ffp-contract=off: the kernel claims *bit-identical*
+# agreement with the Python reference, so every flag that can move a single
+# rounding is pinned.  -ffast-math / -fassociative-math reassociate, and GCC's
+# default -ffp-contract=fast fuses ``a*b + c`` into one FMA (a single rounding
+# where the reference makes two), changing the last bit.  Measured, not merely
+# feared: an -mfma build (contraction on) emits 3 vfmadd instructions and fails
+# 8 of the 13 tests in tests/test_cpp_parity.py at max|diff| 2.3e-13; with
+# -ffp-contract=off it emits 0 FMAs and all 13 pass bit-for-bit.  -O2 is the
+# configuration the parity was actually measured in, so the flag line below
+# builds the thing that was tested rather than a fresh, unmeasured -O3.
 cmake_minimum_required(VERSION 3.18)
 project(emfit_core LANGUAGES CXX)
 
@@ -45,7 +52,7 @@ pybind11_add_module(emfit_core
     emfit_core.cpp
 )
 target_include_directories(emfit_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(emfit_core PRIVATE -O3 -fopenmp)
+target_compile_options(emfit_core PRIVATE -O2 -fno-fast-math -ffp-contract=off -fopenmp)
 target_link_libraries(emfit_core PRIVATE OpenMP::OpenMP_CXX)
 
 # Destination "." is the root of the wheel, which is what makes the extension

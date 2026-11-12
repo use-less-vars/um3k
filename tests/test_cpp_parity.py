@@ -1,9 +1,11 @@
 """Parity between the compiled FIT kernel and the Python reference.
 
-NOT RUN IN THIS CONTAINER -- no C++ toolchain, no network; this test exists to be
-run on a host that has one.  Here it skips, and a skip is the honest result: a
-pass would mean the comparison ran, so swallowing an ImportError into ``pass``
-(or ``return``) would be a lie about the state of the port.
+Skips when ``emfit_core`` is not importable; a skip is the honest result there
+(a pass would mean the comparison ran, so swallowing an ImportError into
+``pass`` (or ``return``) would be a lie about the state of the port).  Where it
+IS importable -- built with the flags in ``src/CMakeLists.txt`` -- all 13 tests
+here pass bit-for-bit (measured: g++ 14.2.0, ``-O2 -fno-fast-math
+-ffp-contract=off``).
 
 Two golden files, one per branch configuration, both produced by
 ``evidence/termination/make_cpp_golden.py`` from the Python reference, so there
@@ -78,7 +80,8 @@ GOLDEN_V2 = os.path.join(HERE, "data", "cpp_golden_step_v2.npz")
 # container -- scikit-build-core is not installed.  The output must live INSIDE
 # the workspace: /tmp is mounted noexec, so a .so left there will not import.
 BUILD_COMMANDS = (
-    "/usr/bin/g++ -O3 -fopenmp -std=c++17 -shared -fPIC -Wall -Wextra "
+    "/usr/bin/g++ -O2 -fno-fast-math -ffp-contract=off -fopenmp -std=c++17 "
+    "-shared -fPIC -Wall -Wextra "
     "-I/workspace/.venv/lib/python3.12/site-packages/pybind11/include "
     "-I/usr/local/include/python3.12 -Isrc src/bindings.cpp src/emfit_core.cpp "
     '-o "build/cpp/emfit_core$(python3 -c "import sysconfig;'
