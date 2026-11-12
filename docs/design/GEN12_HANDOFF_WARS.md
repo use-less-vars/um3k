@@ -180,7 +180,7 @@ Four truths had to be separated before any figure was quotable.
 
 **What the container readings do and do not support** (`n = 1` per arm): structure C, 289,168 cells — C++ 58.0408 s vs Python 50.1157 s, so the compiled kernel reads **1.16× slower**; ladder rung, 51,832 cells — Python/C++ 1.3877×. Resolution limit is ±34 % at structure C and ±16 % on the rung, so neither ratio separates from noise (Chapter 5). DR-42's ~33× stays `UNREPRODUCED`.
 
-**The ledger lag.** `EM_SOLVER_LEDGER.md:28` still says no speed figure exists and E3 stays `UNVERIFIED`; the operator is updating it. Do not write "E3 verified". The row's 2026-11-14 amendment withdrew the 5,926 ns ladder on this ground — 3.8 / 19.6 / 54.3 / 145.6 / 351.5 µs at 1/2/4/8/12 threads, "shape reproduces, magnitudes do not, so no ladder number may be carried forward" — and the 1.76× on a 560-edge toy is "a weak upper bound and must not be quoted as a board-size claim".
+**The ledger lag.** `EM_SOLVER_LEDGER.md:28` still says no speed figure exists and E3 stays `UNVERIFIED`; the operator is updating it. Do not write "E3 verified". The row's 2026-11-12 amendment (`EM_SOLVER_LEDGER.md`:28, re-dated from 2026-11-14 — DR-45) withdrew the 5,926 ns ladder on this ground — 3.8 / 19.6 / 54.3 / 145.6 / 351.5 µs at 1/2/4/8/12 threads, "shape reproduces, magnitudes do not, so no ladder number may be carried forward" — and the 1.76× on a 560-edge toy is "a weak upper bound and must not be quoted as a board-size claim".
 
 ### (c) WHAT IT COST
 
