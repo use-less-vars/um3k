@@ -1,0 +1,36 @@
+EXPECTED COST: a few seconds (2 sparse assemblies, 2 sparse LUs, no eigensolve)
+repo      : /home/jojo/PycharmProjects/EE
+emfit     : FOUND  (/home/jojo/PycharmProjects/EE/emfit)
+out dir   : /home/jojo/PycharmProjects/EE/tools/host/mode_plot/out
+outputs   : /home/jojo/PycharmProjects/EE/docs/design/c2b_shapes.pdf + .png
+log       : /home/jojo/PycharmProjects/EE/tools/host/mode_plot/out/run.log
+started   : 2026-10-27T03:17:02Z
+git HEAD  : 295f344
+python3   : /home/jojo/PycharmProjects/EE/.venv/bin/python3
+----------------------------------------------------------------------
+mode_plot.py -- analytic vs extracted e_z (C2b)
+repo     : /home/jojo/PycharmProjects/EE
+repo env : /home/jojo/PycharmProjects/EE
+design   : /home/jojo/PycharmProjects/EE/docs/design
+c1 out   : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out
+geometry : {'width': 0.02, 'height': 0.0076, 'h': 0.0016, 'strip': 0.003, 'eps_r': 4.4, 'strip_y': [0.0085, 0.0115]}
+--- PMC / open top  (c1_spectrum.npz, QZ col 738)
+  blocks   : h=[483, 483] nnz=3141 c_f=[1444, 483] nnz=5431 (0.00 s)
+  column   : QZ col 738  beta=312.782765  beta^2=9.7833058e+04  eps_eff=3.6295122080769704
+  corr     : corr_e_y=+0.920770784811142  corr_e_z banked=+0.119160432391342  reconstructed=+0.119160432391342  delta=0.00e+00
+  gauge    : extracted field multiplied by sign(corr_e_z) = +1
+  fields   : A_ez (201, 76) rms=1.409797e-01  e_z (201, 76) rms=3.999873e+00
+--- PEC / closed box  (pecbox_spectrum.npz, QZ col 699)
+  blocks   : h=[422, 422] nnz=2726 c_f=[1382, 422] nnz=4952 (0.00 s)
+  column   : QZ col 699  beta=311.772112  beta^2=9.7201850e+04  eps_eff=3.606094999644309
+  corr     : corr_e_y=+0.912343044811209  corr_e_z banked=+0.147291446944630  reconstructed=+0.147291446944630  delta=0.00e+00
+  gauge    : extracted field multiplied by sign(corr_e_z) = +1
+  fields   : A_ez (201, 76) rms=1.409797e-01  e_z (201, 76) rms=3.049101e+00
+analytic : max|A_ez(PMC) - A_ez(PEC)| = 0.000e+00 (both come from M.plane_mode; the PEC mask cannot change it)
+cross    : |corr(e_z PMC, e_z PEC)| = 0.932705   rel_rms = 0.366866   max|delta| = 0.926972
+|corr_e_z|: PMC 0.119160432391342  PEC 0.147291446944630  rel_delta = +0.236077  (+23.61 %)
+eps_eff  : PMC 3.6295122080769704  PEC 3.606094999644309  rel_delta = -0.006452
+wrote    : /home/jojo/PycharmProjects/EE/docs/design/c2b_shapes.pdf  (100568 bytes)
+wrote    : /home/jojo/PycharmProjects/EE/docs/design/c2b_shapes.png  (472872 bytes)
+DONE mode_plot.py elapsed=1.6 s
+DONE run.sh elapsed=3s exit=0 log=/home/jojo/PycharmProjects/EE/tools/host/mode_plot/out/run.log

@@ -1,0 +1,178 @@
+EXPECTED COST: dense QZ ~95-100 s (pencil slightly smaller than run.sh's
+               1444 x 1444 because the closed box makes ~104 instead of
+               ~42 edges PEC; still the 31x17 node mesh, ~1382 free),
+               ~1-2 GB RAM peak, per-eigenvalue loop ~10-20 s,
+               TOTAL ~2-4 min wall clock (~4-8 min with --self-test-anchor).
+               A PROGRESS line is printed at least every 30 s.
+variant  : PEC-closed 20 x 7.6 mm box (+ walls y=0, y=20mm, z=7.6mm)
+repo     : /home/jojo/PycharmProjects/EE
+emfit    : /home/jojo/PycharmProjects/EE/emfit (FOUND)
+out dir  : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out
+log      : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_run.log
+invoke   : python3 -u "/home/jojo/PycharmProjects/EE/tools/host/c1-audit/pecbox_variant.py" "--self-test-anchor"
+started  : 2026-10-27T02:10:08+01:00
+git HEAD : a9dbe2c
+python3  : Python 3.12.3
+------------------------------------------------------------------------
+====================================================================================================
+pecbox_variant.py -- the c1 audit's mixed solve in a CLOSED 20 x 7.6 mm PEC box
+====================================================================================================
+repo       : /home/jojo/PycharmProjects/EE
+emfit      : /home/jojo/PycharmProjects/EE/emfit (FOUND)
+python     : 3.12.3
+numpy      : 2.5.4
+out dir    : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out
+started    : 2026-10-27T02:10:09+0100
+
+SEAM       : c1_audit.py is a flat script (no main(), no boundary argument),
+             so the override is applied one level down at the emfit API:
+             emfit/mode2d.py:539 pec_edge_mask and :571 pec_node_mask are
+             wrapped while c1_audit.py imports.  solve_modes_mixed reaches
+             its masks through those same two functions (mode2d.py:1083-1084),
+             so step-1 masks and solver masks cannot disagree.
+
+c1_audit.py output is imported unmodified; its own two output files are
+redirected so the open-top audit's results survive:
+  /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_table.txt  ->  /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_table.txt
+  /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_spectrum.npz  ->  /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_spectrum.npz
+GUARD pre  : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_table.txt sha256=5f0ab90e87d28c756356cd3ac3b7c16b...
+GUARD pre  : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_spectrum.npz sha256=575547856cbaf2cbc93b2c1689609b24...
+====================================================================================================
+c1_audit.py -- full-spectrum audit of the mixed 2-D pencil vs the analytic basis
+====================================================================================================
+EXPECTED COST: dense QZ ~111 s on the 31x17 node mesh (1486 edges, 1444 free),
+               ~1-2 GB RAM peak, per-mode loop ~10-20 s, TOTAL ~2-4 min.
+repo       : /home/jojo/PycharmProjects/EE (from C1_REPO)
+emfit      : /home/jojo/PycharmProjects/EE/emfit (FOUND)
+python     : 3.12.3
+numpy      : 2.5.4
+scipy      : 1.18.1
+out dir    : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out
+geometry   : {'W': 0.02, 'H': 0.0076, 'h': 0.0016, 'w': 0.003, 'eps_r': 4.4, 'ny': 200, 'nz': 76, 'cell': 0.0001, 'strip': [0.0085, 0.0115], 'n_sub': 16, 'k_strip': 16, 'j_centre': 100}
+mesh       : {'nodes': 527, 'tris': 960, 'edges': 1486, 'xs': 31, 'ys': 17}
+bin        : {'f0': 7833566197.718491, 'k0': 164.17940719617263}
+
+BOUNDARIES (pec_edge_mask / pec_node_mask seam)
+  c1_audit.py passes        : (ground, strip)
+  override appends         : (wall_y=0mm, wall_y=20mm, wall_z=7.6mm)
+  effective set reaching the assembler (the PEC masks that eliminate
+    DOFs before assembly) : (ground, strip, wall_y=0mm, wall_y=20mm, wall_z=7.6mm)
+  walls found in the mesh  :
+    wall_y=0mm       nodes=   17  edges PEC by this wall alone=   16
+    wall_y=20mm      nodes=   17  edges PEC by this wall alone=   16
+    wall_z=7.6mm     nodes=   31  edges PEC by this wall alone=   30
+  SAFEGUARD (b) PEC edges  : 42 before -> 104 after  (+62)  OK
+  SAFEGUARD (c) ground+strip PEC edges : 42 before -> 42 still PEC  (UNCHANGED, OK)
+  SAFEGUARD (b) PEC nodes  : 44 before -> 105 after  (+61)  OK
+  SAFEGUARD (c) ground+strip PEC nodes : 44 before -> 44 still PEC  (UNCHANGED, OK)
+
+dof        : {'free_edges': 1382, 'free_nodes': 422, 'n_edges': 1486, 'n_nodes': 527, 'mixed_dense_max': 3000}
+node order : OK (4 probe nodes, layout j*nx+i)
+banked     : mesh reproduced (n_edges + xs/zs identical); identified column = 738 {'beta': 312.7827646322591, 'beta_sq': 97833.0578509992, 'eps_eff': 3.6295122080769704, 'residual': 4.849473685711963e-18, 'n_dof': 1927, 'n_pec': 42}
+solve_modes_mixed done in 17.52 s {'chosen': 0, 'beta': 311.7721120634655, 'eps_eff': 3.606094999644309, 'residual': 2.7178648432174223e-17, 'n_dof': 1804, 'n_pec': 104}
+spectrum   : {'QZ_columns': 1382, 'pencil': [1382, 1382], 'hook_restored': True}
+blocks     : {'h': [422, 422], 'c_f': [1382, 422], 'nnz_h': 2726, 'nnz_c': 4952}
+analytic   : 1.84 s e_y/h_z, y: 115 below, 115 beyond; e_y/h_z, z: 0 below, 140 beyond; e_z/h_y, y: 115 below, 115 beyond; e_z/h_y, z: 0 below, 140 beyond
+analytic   : {'e_z': [201, 76], 'e_y': [200, 77], 'profile_cell': 0.0001, 'eps_eff': 3.3500085193372118}
+ez layout  : OK (4 probe nodes, (nz, nx) grid, (ZS, XS)-ordered interpolator)
+loop done in 0.05 s for 2 propagating columns
+REDIRECT   : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_table.txt
+           -> /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_table.txt  (original left untouched)
+wrote /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_table.txt
+REDIRECT   : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_spectrum.npz
+           -> /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_spectrum.npz  (original left untouched)
+wrote /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_spectrum.npz
+
+======================================================================================================================
+  rank     col        beta_sq         beta    eps_eff     corr_e_y     corr_e_z  |corr_e_y|  |corr_e_z|  shape_pair_ok
+----------------------------------------------------------------------------------------------------------------------
+     1     699   9.7201850e+04  3.11772e+02   3.606095   +0.9123430   +0.1472914   0.9123430   0.1472914   True
+     2     704   7.5584447e+03  8.69393e+01   0.280411   -0.4264190   +0.1209233   0.4264190   0.1209233  False
+======================================================================================================================
+
+----------------------------------------------------------------------------------------------------
+VERDICT
+  propagating modes considered (real lambda, beta^2 > 0) : 2
+  shape_pair_ok (|corr_e_y| >= 0.9 and |corr_e_z| <= 0.3) : 1
+  their QZ columns                                      : [699]
+  best |corr_e_y| mode                                  : col 699  |corr_e_y| = 0.912343044811209  |corr_e_z| = 0.147291446944630  beta^2 = 97201.8498605  eps_eff = 3.606095000  residual = 1.833e-15  shape_pair_ok = True
+  banked / identified column                            : 738
+  best-|corr_e_y| column == banked column               : NO
+
+REPRODUCTION CHECK (best-|corr_e_y| column 699 (banked column unavailable))
+  |corr_e_y| = 0.91234304481120942   anchor 0.9207707848111418   delta = -8.428e-03
+  |corr_e_z| = 0.14729144694462959   anchor 0.11916043239134175   delta = +2.813e-02
+  signed     = (+0.912343044811209, +0.147291446944630)  (signs are LAPACK-arbitrary; the anchors are magnitudes)
+  REPRO e_y  banked = 0.9207707848111418  measured = 0.91234304481120942  rel_delta = 9.153e-03  tol = 1e-06 (relative)  FAIL
+  REPRO e_z  banked = 0.11916043239134175  measured = 0.14729144694462959  rel_delta = 2.361e-01  tol = 1e-06 (relative)  FAIL
+  REPRO overall: FAIL
+----------------------------------------------------------------------------------------------------
+DONE c1_audit.py elapsed=19.5s modes_kept=2 shape_pair_ok=1 best_col=699 best_abs_corr_ey=0.912343044811209 bank_col=738 repro=FAIL repro_rtol=1e-06 npz=/home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_spectrum.npz table=/home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/c1_table.txt
+
+SAFEGUARD (d) existing output untouched: c1_table.txt sha256=5f0ab90e87d28c756356cd3ac3b7c16b...  OK
+SAFEGUARD (d) existing output untouched: c1_spectrum.npz sha256=575547856cbaf2cbc93b2c1689609b24...  OK
+             box outputs : /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_table.txt
+                           /home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_spectrum.npz
+
+####################################################################################################
+#  N_PROPAGATING = 2
+#  eigenvalues with |Im(lambda)| <= 1e-6 max(1,|lambda|) and beta^2 = +Re(lambda) > 0
+#  (of 1382 QZ columns of the mixed pencil, 104 PEC edges)
+####################################################################################################
+
+REPORT -- one row per propagating eigenvalue (dominant field component on the
+          audit's own planes: e_y (NYN-1)xNZN=200x77 vs e_z NYNx(NZN-1)=201x76,
+          compared by Frobenius norm)
+----------------------------------------------------------------------------------------------------------------------------------------------------
+  idx    col        Re(lambda)        Im(lambda)          beta      beta^2/k0^2         eps_eff        corr_e_y        corr_e_z   dominant
+----------------------------------------------------------------------------------------------------------------------------------------------------
+     1     699 +9.720184986e+04 +0.000000000e+00  3.117721e+02      3.606095000     3.606095000    +0.912343045    +0.147291447   e_z
+     2     704 +7.558444718e+03 +0.000000000e+00  8.693932e+01      0.280411018     0.280411018    -0.426418989    +0.120923310   e_z
+----------------------------------------------------------------------------------------------------------------------------------------------------
+
+####################################################################################################
+#  N_PROPAGATING = 2
+#  N_PASSING_CORRELATION_SCREEN = 1   (|corr_e_y| >= 0.9 and |corr_e_z| <= 0.3; applied AFTER the count above, not folded into it)
+#  (c1_audit.py's own ok_arr also requires shape_pair_ok and gives 1 of 2)
+#  dominant-field tally: e_y 0, e_z 2, unavailable 0
+#  re-derivation cross-check: max |corr(re-derived) - corr(c1_audit row)| = 0.000e+00
+####################################################################################################
+
+NOTE: the single mode that c1_audit.py's own step-2 / step-6 lines call the
+      'chosen' mode is emfit's own pick (largest positive beta^2 below the
+      residual tolerance, emfit/mode2d.py:1156-1167), not the quasi-TEM mode;
+      the per-eigenvalue table above is the audit's actual product.
+NOTE: c1_audit.py's own REPRODUCTION CHECK / REPRO lines will read FAIL here.
+      Its anchors (corr_e_y 0.9207707848111418 / corr_e_z 0.11916043239134175)
+      belong to the open-top geometry; closing the box moves every eigenvalue,
+      so those anchors are not a gate for this variant.
+
+PEC_TE10_PREDICTION = 0.084618
+    1 - (c/(2W)/f0)^2 with W = 20.000 mm
+    f0            = 7833565854.364256 Hz = 7.833565854 GHz   (k0 = 164.1794 rad/m)
+    c/(2W)        = 7494811450.000000 Hz = 7.494811450 GHz
+    ratio         = 0.956756   ratio^2 = 0.915382
+    documentation only -- this is the TE10 of a 20 mm vacuum PEC box at this
+    f0; the geometry solved here has a 1.6 mm eps_r = 4.4 substrate and a strip,
+    so no measured eps_eff is expected to equal it.
+    for reference, the audit's own k0 : 164.17940719617263 rad/m (f = 7.833566198 GHz) -> prediction 0.084618
+
+ANCHOR_NOTE: beta^2/k0^2 = 0.4383 is docstring-only prose at emfit/mode2d.py:1020-1022, no executable counterpart in the repo, arithmetically consistent with a 20 mm vacuum PEC box at 10 GHz rather than this geometry -- its absence here is expected, not a failure.
+
+====================================================================================================
+SELF-TEST ANCHOR (--self-test-anchor): plain 20 x 7.6 mm VACUUM PEC box at 10 GHz
+====================================================================================================
+  mesh      : 31 x 17 nodes, 1486 edges, 1394 free after PEC
+PROGRESS [heartbeat] 40.0 s phase=step6 verdict
+  solve     : 20.61 s, 1394 QZ columns
+  f0        : 10.000000 GHz, k0 = 209.584502195 rad/m, c/(2W) = 7.494811450 GHz
+  TE10 target: 1 - (c/(2W)/f0)^2 = 0.438278
+  N_PROPAGATING = 1
+    beta^2/k0^2 = 0.438322827
+  closest   : beta^2/k0^2 = 0.438322827   target 0.438278   rel_delta = 1.022e-04   tol = 0.02 (relative)
+  SELF_TEST_ANCHOR = PASS
+  (the self-test writes nothing and ran after the report above)
+
+====================================================================================================
+DONE pecbox_variant.py elapsed=40.2s N_PROPAGATING=2 screen_passed=1 pec_edges=42->104 self_test_anchor=PASS table=/home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_table.txt npz=/home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_spectrum.npz
+DONE pecbox_run.sh elapsed=41s exit=0 log=/home/jojo/PycharmProjects/EE/tools/host/c1-audit/out/pecbox_run.log

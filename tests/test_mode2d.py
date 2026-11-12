@@ -1,12 +1,12 @@
 """Tests for :mod:`emfit.mode2d`, the 2-D cross-section eigenmode solver.
 
 Provenance: **none of these tests has been executed.**  They were written by
-reading ``emfit/mode2d.py`` and the recorded anchor run in ``pecbox.log``, with
+reading ``emfit/mode2d.py`` and the recorded anchor run in ``evidence/logs/pecbox.log``, with
 no interpreter available, so every expectation below is traced to a line of
 code or to a logged measurement rather than to a run of this file.  The one
 recorded prototype of the anchor is ``tools/host/c1-audit/pecbox_variant.py
 --self-test-anchor`` (its ``_self_test_anchor`` at ``pecbox_variant.py:544-603``
-and the run it left in ``pecbox.log:163-174``); that script is *not* imported
+and the run it left in ``evidence/logs/pecbox.log:163-174``); that script is *not* imported
 here, because it is a driver, not a module -- importing it would execute its
 whole audit report (top-level ``say`` calls from ``pecbox_variant.py:528`` on).
 
@@ -16,10 +16,10 @@ Three numbers carry the weight:
   PEC guide at 10 GHz, formed the way the recorded anchor forms it
   (``pecbox_variant.py:587``);
 * ``0.438322827`` -- what the same 30 x 16 mesh actually produced, one value out
-  of 1394 QZ columns (``pecbox.log:167``, ``pecbox.log:170-171``);
+  of 1394 QZ columns (``evidence/logs/pecbox.log:167``, ``evidence/logs/pecbox.log:170-171``);
 * ``0.02`` -- the 2 per cent gate the recorded anchor compares them with
   (``SELF_TEST_BETA_TOL``, ``pecbox_variant.py:102``), which is ~200x the
-  recorded 1.022e-4 deviation (``pecbox.log:172``).  It is a regression gate,
+  recorded 1.022e-4 deviation (``evidence/logs/pecbox.log:172``).  It is a regression gate,
   not a precision claim.
 
 The API is two solvers and one shared result type: :func:`emfit.mode2d.solve_modes`
@@ -64,12 +64,12 @@ WALL_TOL = 1e-12          # m, pecbox_variant.py:161 (_WALL_TOL)
 
 #: ``beta^2/k0^2`` of TE10 in a vacuum PEC guide: ``1 - (f_c/f_0)^2`` with
 #: ``f_c = C0/(2*W_BOX)`` -- the arithmetic of ``pecbox_variant.py:587``.
-#: Evaluates to 0.438278, the value ``pecbox.log:169`` prints.  The ``1.0``,
+#: Evaluates to 0.438278, the value ``evidence/logs/pecbox.log:169`` prints.  The ``1.0``,
 #: ``2.0`` and the square are that line's; nothing here is an independent figure.
 TE10_BETA_OVER_K0_SQ = 1.0 - (C0 / (2.0 * W_BOX) / F_TEST) ** 2
 
 #: Where the sparse path is asked to look, as a fraction of ``k0^2``.  The
-#: eigenvalue it shifts towards is TE10's, 0.4383 ``k0^2`` (``pecbox.log:171``);
+#: eigenvalue it shifts towards is TE10's, 0.4383 ``k0^2`` (``evidence/logs/pecbox.log:171``);
 #: 0.40 sits off it because a shift that lands on an eigenvalue makes the
 #: factorisation inside ``eigsh`` singular (``emfit/mode2d.py:841-844``) and
 #: near it so that the requested modes bracket it (``emfit/mode2d.py:868``).
@@ -151,12 +151,12 @@ def test_anchor_te10() -> None:
     way.  The 30 x 16 mesh puts 30 cells across the broad wall, so the half-sine
     of TE10 is resolved by 30 cells of ``W_BOX/30 = 0.667 mm`` at
     ``lambda_0 = C0/F_TEST = 29.98 mm``; that is the resolution behind the
-    recorded 1.022e-4 agreement (``pecbox.log:172``) and the reason a 2 per cent
+    recorded 1.022e-4 agreement (``evidence/logs/pecbox.log:172``) and the reason a 2 per cent
     gate is a regression gate rather than a wish.
 
     The assertion is on the *spectrum*, not on ``res.eps_eff``: the recorded run
-    found exactly one positive-real eigenvalue in this box (``pecbox.log:170``,
-    the single value ``pecbox.log:171``), so on this mesh "nearest candidate"
+    found exactly one positive-real eigenvalue in this box (``evidence/logs/pecbox.log:170``,
+    the single value ``evidence/logs/pecbox.log:171``), so on this mesh "nearest candidate"
     and "the mode the solver chose" are the same mode -- but the choice also
     requires a pencil residual below ``_MIXED_RESIDUAL_TOL``
     (``emfit/mode2d.py:150``, ``emfit/mode2d.py:1156-1160``), which nothing here
@@ -172,7 +172,7 @@ def test_anchor_te10() -> None:
     assert rel <= BETA_TOL, (
         f"TE10 in the vacuum PEC box: beta^2/k0^2 = {got:.9f}, analytic "
         f"{TE10_BETA_OVER_K0_SQ:.6f}, relative {rel:.3e} > {BETA_TOL:g} "
-        f"(recorded: 0.438322827, rel 1.022e-04, pecbox.log:171-172); "
+        f"(recorded: 0.438322827, rel 1.022e-04, evidence/logs/pecbox.log:171-172); "
         f"{len(_propagating(res))} positive-real candidates, "
         f"{len(res.candidates)} QZ columns, {res.n_pec} PEC edges"
     )
@@ -195,7 +195,7 @@ def test_sparse_dense_agree() -> None:
 
     Tolerance: 2 per cent on the shared quotient, the anchor's own gate
     (``pecbox_variant.py:102``).  The dense path is recorded 1.022e-4 from the
-    analytic value (``pecbox.log:172``); the nearest *different* mode is TE20 at
+    analytic value (``evidence/logs/pecbox.log:172``); the nearest *different* mode is TE20 at
     ``1 - (14.99/10)^2 = -1.247``, a whole unit away in the same quotient.  So
     2 per cent tolerates a formulation's dispersion error by a factor of ~200
     over the recorded deviation while still separating "same mode" from
@@ -232,8 +232,8 @@ def test_sparse_dense_agree() -> None:
     reason=(
         "expected the closed (PEC) box to support one propagating mode at 10 GHz "
         "and the open (PMC) box two. The closed half is recorded on this very "
-        "mesh and I expect it to hold (pecbox.log:170, 'N_PROPAGATING = 1', the "
-        "single value at pecbox.log:171). The open half I expect to come out as "
+        "mesh and I expect it to hold (evidence/logs/pecbox.log:170, 'N_PROPAGATING = 1', the "
+        "single value at evidence/logs/pecbox.log:171). The open half I expect to come out as "
         "1, not 2. Two reasons. (a) The mixed reduction eliminates the "
         "longitudinal field into B = m1 - c D c^T (emfit/mode2d.py:1105-1116, "
         "with h = k_zz - k0^2 m_zz factored once at emfit/mode2d.py:1107), so a "

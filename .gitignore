@@ -66,3 +66,6 @@ tools/host/*/out/
 *.npz
 # frozen test fixtures under tests/data/ are exempt from the *.npz dump rule
 !tests/data/*.npz
+
+# Cited evidence logs are exempt from the *.log rule (committed docs cite them by line)
+!evidence/logs/*.log

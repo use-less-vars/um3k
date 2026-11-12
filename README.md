@@ -128,4 +128,4 @@ Design documents live in `docs/design/`; the current-session roadmap is
 
 ## License
 
-See `Intro.txt` and `attribution.log` for provenance and terms.
+See `Intro.txt` and `evidence/logs/attribution.log` for provenance and terms.

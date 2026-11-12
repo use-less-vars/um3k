@@ -129,7 +129,7 @@ now `H4`, old `H4` is now `H5`, `H2` has gained a half it did not have, and `H3`
 ### H2 — boundary attribution: interface ε, graded cell size, and the two boundaries (`C2`, rank 2)
 
 **The walls half of this hypothesis is already dead, by numbers in the record.** A wall-set change is a *level*
-term: the two `corr_e_z` values that make it are printed at `mode_plot.log:20` (`banked=+0.119160432391342`, PMC)
+term: the two `corr_e_z` values that make it are printed at `evidence/logs/mode_plot.log:20` (`banked=+0.119160432391342`, PMC)
 > **[VOID 2026-10-27]** class (b) — the conclusion that a wall-set change is a level term and cannot be the shape cause stands, but the `0.028131014553288` / 23.6 % / `179.7x` figures it was argued from are the mis-paired difference; corrected it is `+0.0016429867310159274` (`+0.1757 %`, `~10.5x` the floor, `134x` smaller), so the bound holds for a different reason and at a different size. See `decisions.md` §4 row `:7678`.
 and `:26` (`banked=+0.147291446944630`, PEC); their difference `0.147291446944630 - 0.119160432391342` =
 `0.028131014553288` is written out at `c2b_preregistration.md:33` as 23.6 % relative and `179.7`, i.e. `~180x`, the
@@ -140,7 +140,7 @@ measures — §4's census runs on banked arrays from one wall set — and it lea
 > **[VOID 2026-10-27]** class (b) — this `0.9123` panel and the mode identification it carries stand on their real evidence and get stronger under the correction, but the contrast with `corr_e_z` that the next line sets up is void: the extraction's vertical field reads `0.935`, not `0.12`. See `decisions.md` §4 row `:7672`.
 `corr_e_z` is `0.119160432391342` / `0.147291446944630` (`:1109`). Those two panels also agree with each other
 (`|corr| = 0.932705`, `:1119-1123`) and disagree with the reference *together*. The analytic array itself is not a
-function of the walls at all: `mode_plot.log:29` records `max|A_ez(PMC) - A_ez(PEC)| = 0.000e+00`. Because the banked
+function of the walls at all: `evidence/logs/mode_plot.log:29` records `max|A_ez(PMC) - A_ez(PEC)| = 0.000e+00`. Because the banked
 `A_ez` is bit-identical under a wall-set change, the whole `0.028131` shift is a change in the *extraction*, and a
 change of that size in the extraction cannot be what creates a nodal structure the extraction lacks — the
 reference's node is wall-independent by construction, since it is cropped from a box that does not have these
