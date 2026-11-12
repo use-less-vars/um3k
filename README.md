@@ -52,8 +52,8 @@ and, from the parity tests, `3 passed`.
 **This is OPERATOR-REPORTED and not reproduced here.** It establishes that the
 build backend, the wheel and the extension work on that host. The three tests are
 the three v1 parity tests — the goldens predate the second, full-physics golden, so
-"3 passed" is what the suite reported then, not now: the tree holds **783 collected
-tests across 64 test files** (`tests/test_*.py`), and the two-file command under
+"3 passed" is what the suite reported then, not now: the tree holds **784 collected
+tests across 65 test files** (`tests/test_*.py`), and the two-file command under
 Test below collects 20 of them.
 The exact command line and the full pip log are still not on record.
 
@@ -66,7 +66,7 @@ PYTHONPATH=build/cpp python3 -m pytest tests/test_cpp_parity.py tests/test_step_
 That command collects **20** tests today — 13 in `tests/test_cpp_parity.py` and 7 in
 `tests/test_step_extraction.py`. It is a two-file gate, not the suite.
 
-The whole tree is **783 collected tests across 64 test files** (`tests/test_*.py`).
+The whole tree is **784 collected tests across 65 test files** (`tests/test_*.py`).
 The collection has to be run with the kernel's `site-packages` on `PYTHONPATH`:
 from a bare interpreter 30 files die on `RuntimeError: emfit_core exists on disk but
 could not be imported` and `--collect-only` ends `Interrupted: 30 errors during
@@ -76,8 +76,14 @@ collection`, so no count comes out at all.
 PYTHONPATH=.venv/lib/python3.12/site-packages python3 -m pytest --collect-only -q
 ```
 
-<!-- Trace, verbatim tail of the run that produced 783 (it prints one line per file
-     and no total line; 783 is the sum of the 64 per-file lines):
+<!-- Trace, verbatim tail of the per-file-summing run that produced 783: it prints
+     one line per file and no total line, 783 being the sum of the 64 per-file
+     lines. Re-measured on 2026-11-12 with `tests/test_dr43_pulse_writer.py` added
+     - one test, `slow` - the same collection is 784 over 65 files (per-file lines
+     summed: 784), and the tail below is unchanged. No total line appears there
+     because `pyproject.toml` sets `addopts="-q"`, so the command above runs as
+     `-qq` and the `N tests collected in ...` line is suppressed; a single `-q`
+     (`--collect-only -o addopts="" -q`) prints `784 tests collected in 1.12s`.
 tests/test_step_extraction.py: 7
 tests/test_studies.py: 62
 tests/test_terminations.py: 11
@@ -96,6 +102,13 @@ paper:
 PYTHONPATH=.venv/lib/python3.12/site-packages python3 -m pytest --collect-only -q \
   tests/test_cpp_parity.py tests/test_extraction_plane_default.py tests/test_engine_provenance.py
 ```
+
+The one file this tree does **not** put in that gate is the new DR-43 pulse test:
+`tests/test_dr43_pulse_writer.py` (1 test, marked `slow`) drives
+`evidence/termination/run_build_A.py` through a real 2400-step 3-D solve — ~42 s
+here, 378 MB peak — and reads the record it writes, so it is the one test that
+fails if the plane-less pulse path ever publishes an |S21| again. `-m 'not slow'`
+deselects it, and the fast gate stays at **23**.
 
 For the whole suite, one file per process — the canonical per-file invocation, as
 `docs/design/GEN12_HANDOFF_TRAPS.md:104-106` gives it:
