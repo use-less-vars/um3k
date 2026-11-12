@@ -5645,15 +5645,16 @@ def _mode_caption_text(result) -> str:
         return MODE_PANEL_HINT
 
 
-def _mode_picture_grid(result, *, x_mm: float):
+def _mode_picture_grid(result, *, x_mm: float, y_centre_mm: float = 0.0):
     """A ``mode_view`` result as ONE y-z sheet standing at ``x_mm``. NEVER raises.
 
     The compute layer hands back ``grid`` (a ``(z, y)`` sampled ``|E|`` of the
     fundamental) and ``extent`` = ``(y_max_m, z_max_m)``. This maps them onto a
     single-sample-thick ``pyvista.ImageData`` in MILLIMETRES - the unit the
     plotter, the cell size and the cut-plane stations are all in - spanning y in
-    [-y_max, +y_max] and z in [0, z_max] at one fixed x, which is the plane the
-    two x-cut sheets already stand in.
+    [y_centre_mm - y_max, y_centre_mm + y_max] and z in [0, z_max] at one fixed
+    x, which is the plane the two x-cut sheets already stand in. ``y_centre_mm``
+    defaults to 0, the grid-centred default this sheet has always had.
 
     Returns None when there is nothing drawable: a refusal, a grid that is not a
     usable 2-D array, a non-finite or empty extent. The caller keeps its caption
@@ -5692,7 +5693,7 @@ def _mode_picture_grid(result, *, x_mm: float):
         # axis the spacing cannot move the sheet, and a zero spacing would be a
         # singular transform.
         image.spacing = (1.0, 2.0 * y_max_mm / float(n_y - 1), z_max_mm / float(n_z - 1))
-        image.origin = (float(x_mm), -y_max_mm, 0.0)
+        image.origin = (float(x_mm), float(y_centre_mm) - y_max_mm, 0.0)
         image.point_data["mode_e_abs"] = values
         image.point_data.active_scalars_name = "mode_e_abs"
         return image
@@ -6207,26 +6208,104 @@ def run_web_vis(
         """Draw a solve's 48 x 48 |E| on the cross-section plane. NEVER raises.
 
         Placed in the y-z plane of the x-cut family (that is the plane the mode
-        describes), one cell toward the viewer from the recorded near plane, so
-        the still picture and the opaque sheet at the same x never fight for the
-        same pixels. A refusal or an unusable grid CLEARS any old picture and
-        draws nothing: a stale mode beside an error caption would be a lie about
-        what was actually solved.
+        describes), one cell toward the viewer from the sheet NEAREST the eye.
+        WHICH sheet that is comes off the live camera, not from a constant.
+
+        The installed pyvista settles the direction: ``plotting/helpers.py::
+        view_vectors('yz')`` is ``[1, 0, 0]`` and ``renderer.view_vector`` -
+        which every ``view_*`` helper goes through - sets ``camera_position =
+        (vector + center, center, viewup)``, so ``view_yz`` - the framing
+        ``_show`` gives this family - puts the eye on +x. Measured, not assumed
+        (pyvista 0.49.2, headless ``Plotter``, ``render()`` stubbed): a fresh
+        plotter sits at ``position = (1, 1, 1)``, ``focal_point = (0, 0, 0)``;
+        ``view_yz()`` leaves ``position = (1, 0, 0)``, ``focal_point = (0, 0,
+        0)``, ``direction = (-1, 0, 0)``; ``view_zy()`` leaves ``position =
+        (-1, 0, 0)``, ``direction = (1, 0, 0)``; and an explicit
+        ``camera_position = [(5, 0, 0), (0, 0, 0), (0, 0, 1)]`` reads back
+        ``position = (5, 0, 0)``, ``focal_point = (0, 0, 0)``, ``direction =
+        (-1, 0, 0)``, ``focal_point - position = (-5, 0, 0)``. So ``direction``
+        is ``normalize(focal_point - position)``: it points FROM the eye TOWARD
+        the scene, and the eye's x is simply ``camera.position[0]``.
+
+        The first version of this placement offset from the SMALLEST recorded x
+        - the far sheet's side - which hid the picture behind both sheets. The
+        second read ``camera.direction`` and negated it: correct, but only
+        because it baked in the convention above. This version compares
+        ``camera.position[0]`` with the sheet x values THEMSELVES, so there is
+        no convention left to get backwards - the picture is put past whichever
+        sheet is nearer that eye, on that eye's side, and a sign slip would have
+        to be a slip in a comparison against a measured position. Standing the
+        picture between the two opaque sheets, or behind the near one, is the
+        bug.
+
+        A y band centred on the grid origin would also hang half of the picture
+        outside the framed strip, so it is centred on the band the x-cut sheets
+        occupy. A refusal or an unusable grid CLEARS any old picture and draws
+        nothing: a stale mode beside an error caption would be a lie about what
+        was actually solved.
         """
         _clear_mode_picture()
         live = page["info"]
         cell_mm_now = _cell_mm(live)
-        x0_mm = _finite(live["xcut_near_mm"])
-        if x0_mm is None:
-            station = _finite(live["j_cut"])
-            x0_mm = None if station is None else station * cell_mm_now
-        if x0_mm is None:
+        planes_mm = [
+            value
+            for value in (
+                _finite(live.get("xcut_near_mm")),
+                _finite(live.get("xcut_far_mm")),
+            )
+            if value is not None
+        ]
+        if not planes_mm:
+            station = _finite(live.get("j_cut"))
+            if station is not None:
+                planes_mm = [station * cell_mm_now]
+        if not planes_mm:
             print(
                 "[poc_app] mode picture skipped: no cut-plane x recorded",
                 file=sys.stderr,
             )
             return
-        grid = _mode_picture_grid(result, x_mm=x0_mm + cell_mm_now)
+        # The eye's x is read straight off ``plotter.camera.position`` - the
+        # quantity VTK stores, measured above: view_yz leaves it at (1, 0, 0),
+        # view_zy at (-1, 0, 0), and ``direction`` is nothing but
+        # normalize(focal_point - position). Comparing a POSITION with the two
+        # sheet x values needs no sign convention at all, which is exactly what
+        # the previous ``direction``-and-negate version did need: an eye beyond
+        # the larger sheet is on the +x side, one beyond the smaller sheet is on
+        # the -x side, and the picture then sits one cell further out than the
+        # sheet nearest that eye - never wedged between the sheets, never behind
+        # the near one.
+        #
+        # Degenerate: an unreadable camera, or an eye x that falls BETWEEN the
+        # sheets (a framing whose slab straddles the eye, where "in front" has
+        # no meaning) falls back to the +x side. That is a documented constant,
+        # not a guess - the installed pyvista's ``view_vectors('yz')`` is
+        # [1, 0, 0], so ``view_yz``, the framing _show gives this family, puts
+        # the eye on +x.
+        EYE_SIDE_DEFAULT = 1.0  # view_vectors('yz') == [1, 0, 0] -> view_yz eye on +x
+        try:
+            eye_x_mm = float(np.asarray(plotter.camera.position, dtype=float)[0])
+        except Exception as exc:  # noqa: BLE001 - an unreadable camera is not a failure
+            print(f"[poc_app] mode picture eye-side fallback: {exc}", file=sys.stderr)
+            eye_x_mm = None
+        lo_x_mm = min(planes_mm)
+        hi_x_mm = max(planes_mm)
+        if eye_x_mm is None or lo_x_mm <= eye_x_mm <= hi_x_mm:
+            eye_side = EYE_SIDE_DEFAULT
+        else:
+            eye_side = 1.0 if eye_x_mm > hi_x_mm else -1.0
+        near_x_mm = hi_x_mm if eye_side > 0.0 else lo_x_mm
+        x_mm_now = near_x_mm + eye_side * cell_mm_now
+        # The x-cut sheets span y in [0, (ny - 1) * cell], so their centre is half
+        # of that: the picture keeps its own y half-width (the solve's extent)
+        # but rides on the framed band instead of straddling the origin.
+        ny_now = _finite(live.get("ny"))
+        y_mid_mm = (
+            0.0 if ny_now is None or ny_now <= 1.0 else 0.5 * (ny_now - 1.0) * cell_mm_now
+        )
+        grid = _mode_picture_grid(
+            result, x_mm=x_mm_now, y_centre_mm=y_mid_mm
+        )
         if grid is None:
             print(
                 "[poc_app] mode picture skipped: no drawable grid",
@@ -7483,7 +7562,7 @@ def run_web_vis(
                     with html_div(
                         style=(
                             "display: flex; flex-direction: column; "
-                            "height: 100%; width: 100%; overflow: hidden;"
+                            "height: 100vh; width: 100%; overflow: hidden;"
                         )
                     ):
                         # Three columns, left to right: SETUP (solve controls),
@@ -7495,7 +7574,8 @@ def run_web_vis(
                         with VRow(
                             style=(
                                 "flex: 1 1 auto; align-items: stretch; "
-                                "min-height: 0; width: 100%; "
+                                "min-height: 0; height: 100%; margin: 0; "
+                                "width: 100%; "
                                 "overflow: hidden;"
                             )
                         ):
@@ -7513,7 +7593,7 @@ def run_web_vis(
                             with VCol(
                                 style=(
                                     "flex: 1 1 0; min-width: 240px; "
-                                    "min-height: 0;"
+                                    "min-height: 0; height: 100%;"
                                 )
                             ):
                                 # VIEW: the 3-D picture keeps the wrapper div it
@@ -7523,8 +7603,7 @@ def run_web_vis(
                                 # the bar takes its own.
                                 with html_div(
                                     style=(
-                                        "flex: 1 1 auto; min-height: 320px; "
-                                        "height: 100%;"
+                                        "flex: 1 1 auto; min-height: 0;"
                                     )
                                 ):
                                     # mode="server" (PyVistaRemoteView): the server

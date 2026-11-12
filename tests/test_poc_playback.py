@@ -2701,3 +2701,232 @@ def test_selecting_a_solver_arm_with_no_sweep_registry_says_so(
         f"({state.s_params_caption!r})"
     )
 
+
+
+# --- Task A: the page has to fit the viewport -------------------------------
+#
+# ``_capture_html_widgets`` records kind/text/src only, so these two tests bring
+# their own recorder: what has to be read back is the STYLE string of every Div
+# the layout builds, because that is the whole of the fix - the player bar was
+# not missing, it was pushed below the bottom of the window by a flex column
+# that sized itself ``height: 100%`` inside a ``fill-height`` container and a
+# plotter wrapper that demanded ``min-height: 320px``. Nothing here renders, so
+# what is asserted is the sizes the browser is asked for, not their result.
+
+
+def _boot_vis_recording_div_styles(monkeypatch, info) -> list:
+    """Boot ``run_web_vis`` and return every ``Div`` style, in build order."""
+    pyvista = pytest.importorskip("pyvista")
+    import trame.widgets.html as html_mod
+
+    styles = []
+    real_div = html_mod.Div
+
+    def _factory(*args, **kwargs):
+        style = kwargs.get("style")
+        styles.append("" if style is None else str(style))
+        return real_div(*args, **kwargs)
+
+    monkeypatch.setattr(html_mod, "Div", _factory)
+    real_render = pyvista.Plotter.render
+    pyvista.Plotter.render = lambda self, *a, **k: None  # no OpenGL in this image
+    try:
+        _boot_app(info)
+    finally:
+        pyvista.Plotter.render = real_render
+    assert styles, (
+        "no trame Div was built at all: the boot never reached the layout, so "
+        "this test would prove nothing"
+    )
+    return styles
+
+
+def test_page_is_capped_to_the_viewport_so_the_player_bar_stays_on_screen(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The page column is one viewport tall and nothing forces it taller.
+
+    The bar at the foot of the column is ``flex: 0 0 auto``, so it keeps its own
+    height - but only if the column that holds it is not allowed to grow past
+    the window. It was: ``height: 100%`` on a flex column whose parent is
+    ``fill-height`` resolved against content, and the 3-D wrapper's
+    ``min-height: 320px`` then made that content taller than the window, which
+    put the bar off the bottom of a page with ``overflow: hidden``.
+    """
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "dump.npz")
+    styles = _boot_vis_recording_div_styles(monkeypatch, info)
+
+    capped = [
+        s
+        for s in styles
+        if "height: 100vh" in s and "flex-direction: column" in s
+        and "overflow: hidden" in s
+    ]
+    assert capped, (
+        "no Div asks for a column exactly one viewport tall (height: 100vh, "
+        "flex-direction: column, overflow: hidden); the page column is still "
+        "sized against its own content, which is what let it overflow the "
+        f"window and hide the player bar. Div styles built: {styles!r}"
+    )
+    assert any("flex: 1 1 auto; min-height: 0;" in s for s in styles), (
+        "the 3-D wrapper no longer takes the leftover height with no floor of "
+        f"its own (flex: 1 1 auto; min-height: 0). Div styles built: {styles!r}"
+    )
+    assert not any("min-height: 320px" in s for s in styles), (
+        "a 320px floor is back on a child of the page column: on a viewport "
+        "shorter than that floor plus the bar the column cannot shrink and the "
+        "player bar goes off the bottom again"
+    )
+    assert any("flex: 0 0 auto" in s for s in styles), (
+        "the player bar is no longer pinned to its own height (flex: 0 0 auto), "
+        "so it can be squeezed out of view instead of staying on screen"
+    )
+
+
+# --- Task B: the mode picture has to be on the eye side of the sheets -------
+
+
+def test_mode_picture_reaches_the_plotter_in_front_of_the_xcut_sheets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The still lands outside the sheet slab, on the camera's side of it.
+
+    Both halves of the original defect are geometry, so both are checkable with
+    ``render()`` doubled (this image has no EGL/OSMesa; a real render segfaults
+    the interpreter) and neither is checkable as pixels:
+
+    * the picture was drawn at ``xcut_near_mm + cell`` - BETWEEN the near and the
+      far opaque sheet, where the near one hides it;
+    * its y band was centred on the grid origin while the x-cut sheets occupy
+      ``y in [0, (ny - 1) * cell]``, so half of it hung outside the framed strip.
+
+    The eye side is NOT re-derived here with the production formula. The test
+    measures ``plotter.camera.position[0]``, REQUIRES the eye to sit outside the
+    sheet slab (so "which side" is a fact about the camera and not a sign
+    convention), and then checks an independent geometric relation: the picture
+    is on that same side of BOTH sheets and nearer the eye than the near sheet.
+    Recomputing ``near + side * cell`` and comparing against it would only
+    restate whichever formula the fix happened to ship - which is how an earlier
+    ``camera.direction`` version of this placement passed its own test while
+    being one convention-change away from hiding the picture again.
+
+    Both sides are exercised, and the camera is pushed far enough out that the
+    slab cannot straddle it: pyvista's own framing leaves the eye about one
+    world unit from the origin, which in this millimetre scene lands inside the
+    slab, where "in front" is not defined at all.
+    """
+    pyvista = pytest.importorskip("pyvista")
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "dump.npz")
+    cell_mm = float(np.asarray(info["cell_m"]) * 1e3)
+    planes_mm = (float(info["xcut_near_mm"]), float(info["xcut_far_mm"]))
+    ny = int(info["ny"])
+    band_mm = (0.0, (ny - 1) * cell_mm)
+    solved = {
+        "ok": True,
+        "grid": np.ones((app.MODE_GRID_CELLS, app.MODE_GRID_CELLS), dtype=float),
+        # y_max, z_max in METRES. 0.02 mm of half-width fits inside the 0.05 mm
+        # band the fixture's six y samples span, so the picture can be required
+        # to land WHOLE in the framed strip.
+        "extent": (0.02e-3, 0.04e-3),
+        "caption": "mode picture from the solve",
+        "beta_rad_per_m": 223.180967,
+    }
+
+    real_render = pyvista.Plotter.render
+    pyvista.Plotter.render = lambda self, *a, **k: None  # no OpenGL in this image
+    try:
+        monkeypatch.setattr(app, "mode_view", lambda *a, **k: solved)
+        _app, srv = _boot_app(info)
+        trigger = _registered_trigger(srv.controller, "mode_view_toggle")
+        cells = _closure_cells(trigger)
+        assert {"state", "handles", "plotter"} <= set(cells), (
+            "the Mode trigger does not close over state/handles/plotter "
+            f"(freevars: {sorted(cells)}), so where the picture landed cannot "
+            "be read back"
+        )
+        state = cells["state"]
+        handles = cells["handles"]
+        plotter = cells["plotter"]
+        # The page boots on the y-cut family, where this picture is drawn hidden;
+        # switching to the x-cut family is what the user does to see it.
+        state.mode = "xcut"
+
+        band_mid_mm = 0.5 * band_mm[1]
+        for frame, expect_side in ((plotter.view_yz, 1.0), (plotter.view_zy, -1.0)):
+            frame(render=False)
+            framed_x = float(np.asarray(plotter.camera.position, dtype=float)[0])
+            eye_side = 1.0 if framed_x > 0.0 else -1.0
+            assert eye_side == expect_side, (
+                f"{frame.__name__} did not put the camera on the x-side this "
+                f"test needs: position {plotter.camera.position!r}"
+            )
+            # Slide the eye out along the axis that framing chose, keeping the
+            # view along x and the sheets centred, until it is unambiguously
+            # clear of the slab on that side.
+            eye_x_mm = eye_side * 10.0 * max(abs(value) for value in planes_mm)
+            plotter.camera_position = [
+                (eye_x_mm, band_mid_mm, 0.0),
+                (0.0, band_mid_mm, 0.0),
+                (0.0, 0.0, 1.0),
+            ]
+            eye_x_now = float(np.asarray(plotter.camera.position, dtype=float)[0])
+            assert eye_x_now == pytest.approx(eye_x_mm), (
+                "the camera did not keep the eye x this test set, so nothing "
+                f"below is about a known eye: {eye_x_now!r} != {eye_x_mm!r} mm"
+            )
+            assert eye_x_now > max(planes_mm) or eye_x_now < min(planes_mm), (
+                "the eye has to be outside the sheet slab for 'in front' to "
+                f"mean anything: eye x {eye_x_now!r} mm, sheets {planes_mm} mm"
+            )
+            asyncio.run(trigger())
+
+            entry = handles.get("mode_actor")
+            assert entry is not None, (
+                "the solve returned a drawable grid but no picture reached the "
+                f"plotter (handles: {sorted(handles)})"
+            )
+            actor = entry["actor"]
+            assert actor is plotter.actors.get("mode_picture"), (
+                "the handle does not point at the actor registered as "
+                f"'mode_picture' (plotter actors: {sorted(plotter.actors)})"
+            )
+            assert actor.visibility, (
+                "the picture is in the plotter but hidden, so the x-cut family "
+                "shows nothing extra after a solve"
+            )
+
+            grid = entry["grid"]
+            bounds = grid.bounds
+            near_x_mm = max(planes_mm) if eye_side > 0.0 else min(planes_mm)
+            # Independent geometry, not the production formula restated: every
+            # sheet x has to be behind the picture as seen from the eye, i.e.
+            # the picture is clear of BOTH sheets on the eye's side of them.
+            for sheet_x_mm in planes_mm:
+                assert (bounds[0] - sheet_x_mm) * eye_side > 0.0, (
+                    "the picture is not clear of both x-cut sheets on the eye's "
+                    f"side: picture x {bounds[0]!r} mm, sheets {planes_mm} mm, "
+                    f"eye x {eye_x_now!r} mm (side {eye_side}) - between the two "
+                    "sheets, or behind the near one, it is hidden by opaque "
+                    "geometry"
+                )
+            assert abs(eye_x_now - bounds[0]) < abs(eye_x_now - near_x_mm), (
+                "the picture did not land in front of the sheet nearest the eye, "
+                f"so the near sheet hides it: picture x {bounds[0]!r} mm, near "
+                f"sheet {near_x_mm!r} mm, eye x {eye_x_now!r} mm"
+            )
+            assert bounds[1] == pytest.approx(bounds[0]), (
+                "the picture is a single y-z sheet: its two x bounds must agree, "
+                f"got {bounds[0]!r} and {bounds[1]!r}"
+            )
+            assert bounds[2] >= band_mm[0] and bounds[3] <= band_mm[1], (
+                "the picture hangs outside the y band the x-cut sheets occupy "
+                f"({band_mm} mm): its y span is {(bounds[2], bounds[3])!r} mm, "
+                "so the framing _show gives this family crops it"
+            )
+    finally:
+        pyvista.Plotter.render = real_render
+
