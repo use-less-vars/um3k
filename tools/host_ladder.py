@@ -102,6 +102,7 @@ for _p in (_HERE, _ROOT):
 
 import d585_modal as dm                                          # noqa: E402
 from emfit import mode2d, studies                                # noqa: E402
+from emfit.evolve import engine_report                           # noqa: E402
 
 C0 = 299792458.0
 H_SUB = 1.6e-3                      # substrate thickness, studies.MS_H
@@ -1292,6 +1293,11 @@ def main(argv=None):
         argv=list(sys.argv), git_rev=rev, git_rev_source=rev_source,
         cwd=os.getcwd(), python=platform.python_version(),
         platform=platform.platform(), cpu_count=os.cpu_count(),
+        # WHICH ARITHMETIC, not just which host: engine_report() names the step
+        # engine this very process dispatched to (emfit.evolve.engine_report),
+        # so a ladder taken with the .so importable is distinguishable from one
+        # taken without it -- the two agree in value and not in cost.
+        **engine_report(),
         rungs_mm=[float(r["h_mm"]) for r in rows],
         rungs_requested=[float(h) for h in rungs],
         max_rungs=int(args.max_rungs), clearance_h=float(args.clearance),

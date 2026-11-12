@@ -173,6 +173,31 @@ _KERNEL = _load_kernel()
 _ACTIVE_STEP = "cpp" if _KERNEL is not None else "python"
 
 
+def engine_report():
+    """Which step engine *this process* is running, for artefact provenance.
+
+    Returns ``{"step_engine": "cpp" | "python", "kernel_abi": int | None,
+    "kernel_name": str | None}`` -- the identity of the arithmetic that produced
+    a number, so a banked artefact says which path generated it rather than
+    leaving a reader to infer it from the machine it was graded on.
+
+    The module globals are re-read on every call (never captured in a default
+    argument), so a test that swaps ``_KERNEL`` gets the swapped answer, and a
+    process that fails to load the kernel reports ``"python"`` even though a
+    ``.so`` exists on disk.  ``kernel_abi``/``kernel_name`` are ``None`` on the
+    Python path: there is no ABI to name.
+    """
+    kernel = _KERNEL
+    if kernel is None:
+        return {"step_engine": "python", "kernel_abi": None, "kernel_name": None}
+    abi = getattr(kernel, "KERNEL_ABI", _KERNEL_ABI)
+    return {
+        "step_engine": "cpp",
+        "kernel_abi": int(abi) if abi is not None else None,
+        "kernel_name": _KERNEL_NAME,
+    }
+
+
 def _can_damp_in_kernel(pml):
     """True if ``pml`` can be expressed as the kernel's two multiplier vectors.
 

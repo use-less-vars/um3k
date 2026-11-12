@@ -98,6 +98,32 @@ def label_of(doc: dict) -> str:
     return str(doc.get("meta", {}).get("label") or doc.get("run", {}).get("label"))
 
 
+#: What an artefact written before engine provenance existed says about its step
+#: engine.  NEVER ``"python"``: a document banked before
+#: ``emfit.evolve.engine_report()`` was added carries no ``meta.step_engine``, and
+#: a missing key means nobody recorded which path ran -- it does not mean the
+#: Python path ran.  Those are different claims and only one is readable off the
+#: file, so the grader reports the fact it has.
+STEP_ENGINE_UNKNOWN = "unknown (pre-6cbb89d)"
+
+
+def step_engine_of(doc: dict) -> str:
+    """``meta.step_engine`` as written by the artefact, else the unknown marker.
+
+    Absence is REPORTED, never inferred.  A falsy-but-present value is treated
+    as absence too (\"\" or None is not a claim about the arithmetic); anything
+    else is passed through verbatim, because the reader's job here is to carry
+    the writer's word into the graded document, not to second-guess it.
+    """
+    meta = doc.get("meta")
+    if not isinstance(meta, dict):
+        return STEP_ENGINE_UNKNOWN
+    value = meta.get("step_engine")
+    if not isinstance(value, str) or not value.strip():
+        return STEP_ENGINE_UNKNOWN
+    return value
+
+
 REQUIRED_NUMERIC = (
     "run.kwargs.h_m",
     "run.kwargs.n_strip",
@@ -593,6 +619,10 @@ def main(argv: list[str] | None = None) -> int:
         cut = finite_number(dig(doc, "s21.planes_m[1]"))
         inputs[label_of(doc) or Path(path).name] = {
             "path": path,
+            # Which arithmetic produced the graded numbers.  Absent on every
+            # artefact banked before 6cbb89d -> "unknown (pre-6cbb89d)", which a
+            # reader must not read as "python".
+            "step_engine": step_engine_of(doc),
             "load_ohm": finite_number(dig(doc, "run.kwargs.loads[0].value")),
             "cut_mm": None if cut is None else cut * 1e3,
             "n_line": json_safe(dig(doc, "run.kwargs.n_line")),

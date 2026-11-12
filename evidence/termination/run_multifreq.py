@@ -667,6 +667,7 @@ def main(argv=None):
 
     import emfit.studies as studies
     from emfit.board import Load
+    from emfit.evolve import engine_report
 
     # Drop anything the library does not take (nothing here, today: the three
     # driver-only keys left AARM_KWARGS when it was corrected to the p51 call)
@@ -745,6 +746,12 @@ def main(argv=None):
             # sorts its keys, so on disk it lands after "artefact_keys".
             out.write_text(_json.dumps(
                 {"meta": {"script": _script_name(), "k": k,
+                          # Which arithmetic produced THIS bin, from the same
+                          # helper the A arm uses (emfit.evolve.engine_report), so
+                          # every per-bin file says whether the .so ran and which
+                          # kernel ABI it reported -- not just which host it ran
+                          # on.  See evidence/termination/grade_2b.py.
+                          **engine_report(),
                           "started_utc": start_utc,
                           "structure_id": prov["structure_id"],
                           "arm": prov["arm_title"],

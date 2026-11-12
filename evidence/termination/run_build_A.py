@@ -3229,7 +3229,17 @@ def main(argv: list[str] | None = None) -> int:
     started_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
     kwargs = build_kwargs(args)
 
+    # Which arithmetic produced these numbers, alongside which host did.  The
+    # helper is emfit.evolve.engine_report() -- imported here, in the same
+    # function-local style as every other emfit import in this script, so the
+    # module still imports (and the flag surface still parses) without numpy.
+    # ONE injection covers all three documents built from this dict: the twin
+    # record (twin_artefact), the loaded artefact (payload["meta"]) and the dry
+    # run's printed meta.
+    from emfit.evolve import engine_report
+
     meta = {
+        **engine_report(),
         "schema_version": 1,
         "study": f"termination-build-{label}",
         "label": label,
