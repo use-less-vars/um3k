@@ -8,24 +8,36 @@ statements disagree, both recorded. **Nothing was executed** (§6).
 
 | item | value |
 | --- | --- |
-| HEAD | `af635b6f7c8ea79b2c00ab7419f5a3a4f5ceeab0` `[MEASURED]` — `docs(design): DR-43 is closed, not pending -- correct the scope doc's framing` |
+| HEAD | **not stated as a bare claim.** HEAD **was** `5317ce5` (`docs(handoff): correct the log citation counts and record the final tree state`) when this line was written; the commit carrying this line is `5317ce5`'s child. The reading this row first recorded — `af635b6f7c8ea79b2c00ab7419f5a3a4f5ceeab0` `[MEASURED]`, `docs(design): DR-43 is closed, not pending -- correct the scope doc's framing` — is twelve commits stale and is kept only as the measurement taken then, not as a description of the tree now. |
 | HEAD author / date | `ThoughtMachine Agent <agent@thoughtmachine.local>` / Thu Nov 12 17:37:15 2026 +0000 `[MEASURED]` |
 | branches | `master` checked out; `wip/animate`, `wip/fixes`, `wip/m2`, `wip/m3b`, `wip/ports`, `wip/seam`, `wip/seam2` (8) `[MEASURED]` |
 | tracked modifications | none modified, staged or deleted |
-| untracked entries | 44 `[MEASURED]` |
+| untracked entries | 44 `[MEASURED]` (as first read; `scripts/`, created in this pass, is not counted) |
 | read at | this session, at HEAD above |
 
-Lineage, newest first; no per-commit dates read, so **none below HEAD is stated**.
+Lineage, newest first; no per-commit dates read, so **none below HEAD is stated**. Rows 1–12 were added in the pass that found the drift: the table had stopped at `af635b6` with **twelve** commits above it, and none of the twelve was present, so twelve rows were missing; the seven rows that were already here renumber 13–19. Hashes and subjects are as `git log` recorded them.
 
 | # | commit | subject |
 | --- | --- | --- |
-| 1 | `af635b6` | docs(design): DR-43 is closed, not pending |
-| 2 | `95ca1c1` | docs(design): scope for DR-43 S21 extraction repair |
-| 3 | `1f93518` | fix(artifacts): the third thread-labelled ratio also compared two pinned runs |
-| 4 | `af42368` | fix(docs): withdraw 42d319d's thread-effect claim; record the spread it really shows |
-| 5 | `14093c7` | fix(evolve): a kernel on disk that cannot be imported is an error, not a fallback |
-| 6 | `42d319d` | evidence(e3): second speedup data point, OpenMP thread probe, scaling summary |
-| 7 | `b8b2b6a` | evidence(e3): C-arm re-run carries engine provenance; physics bit-identical |
+| 1 | `5317ce5` | docs(handoff): correct the log citation counts and record the final tree state |
+| 2 | `d4daf26` | evidence: commit the remaining control runs and the extended-plane B run |
+| 3 | `b0956a8` | docs(evidence): relocate cited logs to a resolvable path |
+| 4 | `7c72553` | docs(handoff): record validated timing, test coverage of the plane default, and the reversed log decision |
+| 5 | `f254970` | test(solver): pin the ix_load + 1 extraction plane default (DR-43 residual 1) |
+| 6 | `4c5c683` | evidence(vis): commit the visualiser run records instead of ignoring them |
+| 7 | `c79e38e` | evidence: bank the row-10 decisions (showcase, board_poc, diode and stub artefacts) |
+| 8 | `69c91a5` | chore(gitignore): ignore the root state.json (visualiser player state) |
+| 9 | `a0ffd5c` | docs(handoff): close known-unknowns, record DR-43 as FIXED-TESTED |
+| 10 | `8a3eb6e` | evidence(e3): bank host timing artefact (1.81x speedup) |
+| 11 | `b5cf134` | fix(register): DR-44 (untracked file overwrite) and date reconciliation |
+| 12 | `bd2d9b9` | docs(handoff): GEN12 onboarding package (main + wars + traps + state) |
+| 13 | `af635b6` | docs(design): DR-43 is closed, not pending |
+| 14 | `95ca1c1` | docs(design): scope for DR-43 S21 extraction repair |
+| 15 | `1f93518` | fix(artifacts): the third thread-labelled ratio also compared two pinned runs |
+| 16 | `af42368` | fix(docs): withdraw 42d319d's thread-effect claim; record the spread it really shows |
+| 17 | `14093c7` | fix(evolve): a kernel on disk that cannot be imported is an error, not a fallback |
+| 18 | `42d319d` | evidence(e3): second speedup data point, OpenMP thread probe, scaling summary |
+| 19 | `b8b2b6a` | evidence(e3): C-arm re-run carries engine provenance; physics bit-identical |
 
 Earlier, newest first: `c1c8276` fix(e3) engine provenance, stale-claim corrections, DR-42
 cross-ref; `6cbb89d` perf(e3) FITStepper.step on the C++ kernel (Phase 1); `1921a5d`
@@ -174,6 +186,8 @@ Counts from listings `[MEASURED]`; tracked = absent from the untracked list.
 Status: `evidence/{box_sweep,h_refine,matrix_audit,referee,referee_run2,rung_c,strip_width,
 t4,termination}` tracked; `artifacts/` mostly untracked (32 of 55);
 `evidence/board_poc/`, `evidence/showcase/`, `evidence/termination/figures/` untracked.
+
+**Correction — the 0.49 % figure belongs to the p51 phasors comparison, not to `build_A_50ohm.json`.** Prose in this package attributed the certified 0.49 % to `build_A_50ohm.json`, and that prose named the wrong artefact: **the prose was wrong, not the data.** Re-read from the files with `json.load` in this pass — `evidence/termination/build_A_50ohm_p51_phasors.json` `s11.magnitude` = 0.32556486641109117, i.e. −0.4890 % against the referee `0.327164553`; that is the 0.49 % being certified, and it is the Run B / p51 phasors artefact. `evidence/termination/build_A_50ohm.json` `s11.magnitude` = 0.32586326001662264, i.e. −0.3977 % (≈0.40 %), not 0.49 %. No figure in either artefact changed; only the citation was wrong, and it is corrected here so it cannot be repeated.
 
 ## 6. Environment
 
