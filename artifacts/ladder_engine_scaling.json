@@ -261,7 +261,7 @@
   ],
   "ratios": [
     {
-      "name": "ladder_cpp_omp_default_over_omp_t1_fdtd",
+      "name": "ladder_omp_env_set_vs_unset_both_pinned_fdtd",
       "formula": "numerator.value / denominator.value",
       "numerator": {
         "run": "ladder_cpp_omp_default",
@@ -277,8 +277,9 @@
       },
       "value": 1.1587628821732412,
       "units": "dimensionless (seconds / seconds)",
-      "compares": "the same ladder rung, cpp engine, default (inherited) threads vs OMP_NUM_THREADS=1; FDTD phase only",
-      "caveat": "n=1 per arm. This ratio is the whole of the 'default threads are slower' observation on the ladder, and it is the SAME magnitude as the same-configuration repeat in ladder_cpp_same_configuration_run_to_run_spread_fdtd below, so it does not establish a thread effect."
+      "compares": "the same ladder rung, cpp engine, OMP_NUM_THREADS unset on the launch line vs set to 1 on the launch line; FDTD phase only. The thread count was 1 in both arms, so what varied was the environment variable, not the thread count.",
+      "caveat": "n=1 per arm. This ratio is the whole of the 'default threads are slower' observation on the ladder, and it is the SAME magnitude as the same-configuration repeat in ladder_cpp_same_configuration_run_to_run_spread_fdtd below, so it does not establish a thread effect.",
+      "correction": "thread count was 1 in BOTH arms: emfit/_env.py:44-70 pin_threads sets OMP_NUM_THREADS=1 when the variable is unset, and emfit/__init__.py:33-37 runs it at package import, so the 'default (inherited)' arm never inherited a team. What varied between the arms was the launch-line environment variable, not the thread count; the ratio is repeated-identical-run spread, NOT a thread effect. This withdraws the mechanism sentence in commit 42d319d."
     },
     {
       "name": "ladder_python_over_cpp_fdtd",
@@ -361,7 +362,7 @@
       "caveat": "wall_total_s, which includes process start, geometry assembly and the eigen solve; the build_C artefacts record no per-phase timing, so no FDTD-only comparison exists at this mesh. n=1 per arm, and the cpp arm is the default-thread one."
     },
     {
-      "name": "carm_cpp_default_over_cpp_omp_t1_wall_total",
+      "name": "carm_omp_env_set_vs_unset_both_pinned_wall_total",
       "formula": "numerator.value / denominator.value",
       "numerator": {
         "run": "carm_cpp_default_threads",
@@ -377,8 +378,9 @@
       },
       "value": 1.3435185029689969,
       "units": "dimensionless (seconds / seconds)",
-      "compares": "structure C, cpp engine, default (inherited) threads vs OMP_NUM_THREADS=1, whole-process wall",
-      "caveat": "wall_total_s (no per-phase timing exists at this mesh). Same shape as the ladder anomaly: the default-thread arm is the slow one. n=1 per arm, so this is not a thread effect measurement either."
+      "compares": "structure C, cpp engine, OMP_NUM_THREADS unset on the launch line vs set to 1 on the launch line, whole-process wall. The thread count was 1 in both arms, so what varied was the environment variable, not the thread count.",
+      "caveat": "wall_total_s (no per-phase timing exists at this mesh). Same shape as the ladder anomaly: the default-thread arm is the slow one. n=1 per arm, so this is not a thread effect measurement either.",
+      "correction": "thread count was 1 in BOTH arms: emfit/_env.py:44-70 pin_threads sets OMP_NUM_THREADS=1 when the variable is unset, and emfit/__init__.py:33-37 runs it at package import, so the 'default (inherited)' arm never inherited a team. What varied between the arms was the launch-line environment variable, not the thread count; the ratio is repeated-identical-run spread, NOT a thread effect. This withdraws the mechanism sentence in commit 42d319d."
     },
     {
       "name": "carm_cpp_omp_t1_over_python_wall_total",
@@ -427,10 +429,26 @@
   },
   "what_this_file_does_not_say": [
     "No headline speedup. No ratio here is extrapolated to another mesh, another structure (A/B/D/E), another machine or a larger board; nothing outside these seven runs is claimed.",
-    "No thread effect is established. n=1 per arm, and on the ladder the same-configuration run-to-run spread (1.16) is the same magnitude as the default-vs-1-thread ratio, while OMP_NUM_THREADS=1 against the faster default run differs by 0.06 percent.",
+    "No thread effect is established, and none is measured. No measurement in this file varied the thread count: every process that reached the kernel did so with OMP_NUM_THREADS pinned to '1' by emfit/_env.py pin_threads at package import, because the package does not permit a thread team to be inherited. See corrections[0].",
     "'cpp is about 1.16x slower at board scale' is NOT supported once threads are pinned: at OMP_NUM_THREADS=1 the cpp engine beats the python engine on structure C (ratio 0.862), and the 1.16 default-thread ratio sits inside the same-configuration spread.",
-    "DR-42's 33x figure is not reproduced anywhere here. No ratio in this file exceeds 1.3877, and no thread-related ratio here exceeds 1.3435.",
+    "DR-42's 33x figure is not reproduced anywhere here. No ratio in this file exceeds 1.3877, and no ratio here varies the thread count at all, so nothing here either reproduces or bounds DR-42's mechanism.",
     "The ladder ratios are FDTD-phase only; the structure-C ratios are whole-process wall totals (process start + assembly + eigen solve + FDTD), because no per-phase timing exists in those artefacts. The two families are therefore not directly comparable in kind.",
-    "Peak RSS differences between arms are reported as recorded and are not attributed to any cause here."
+    "Peak RSS differences between arms are reported as recorded and are not attributed to any cause here.",
+    "No entry in this file isolates a thread effect, and none can: the thread count was 1 in every run recorded here, because emfit/_env.py pin_threads pins it at package import and the package does not permit a team to be inherited. The two entries now named ladder_omp_env_set_vs_unset_both_pinned_fdtd and carm_omp_env_set_vs_unset_both_pinned_wall_total carry a correction field saying so; their values are unchanged."
+  ],
+  "corrections": [
+    {
+      "id": "C1",
+      "date": "2026-11-12",
+      "withdraws_claim_committed_in": "42d319d",
+      "claimed": "The OpenMP default (inherited) thread team explains the slow arm: 58.0408 s at structure C against 43.2006 s with OMP_NUM_THREADS=1 (ratio 1.3435), and 7.2474 s against 6.2544 s on the ladder rung (ratio 1.1588).",
+      "true": "Both compared arms ran with a thread count of 1. emfit/_env.py:44-70 (pin_threads) sets OMP_NUM_THREADS to '1' when the variable is unset, and emfit/__init__.py:33-37 calls it at package import, so the arm recorded as 'default (inherited) threads' had no team to inherit and was pinned like the other arm. No measurement in this file varies the thread count; the differences recorded are unexplained variance between repeated identical runs. The ratios remain as measured; only what they are ratios OF has changed.",
+      "how_found": "emfit/_env.py:44-70 and emfit/__init__.py:33-37 (read in the tree; the pin runs before any numpy/BLAS load, under the comment 'Thread pinning must run before anything imports numpy').",
+      "standing_consequence": "Timing resolution on this host at these sizes is no better than about +/-34 % at structure C (1.3435 repeated-run spread, n=1 per arm) and about +/-16 % on the 51832-cell ladder rung (1.1595). A single timing from this file cannot support a claim smaller than that. The 33x of DR-42 stays unreproduced for a new reason: no run here ever reached the kernel with an inherited thread team, because the package does not permit a team to be inherited. It does permit one to be chosen (pin_threads leaves a non-empty OMP_NUM_THREADS alone), so the correct experiment is OMP_NUM_THREADS>1 with the value confirmed to have reached libgomp, or a bare .so probe that never imports emfit.",
+      "entries_corrected": [
+        "ladder_omp_env_set_vs_unset_both_pinned_fdtd",
+        "carm_omp_env_set_vs_unset_both_pinned_wall_total"
+      ]
+    }
   ]
 }
