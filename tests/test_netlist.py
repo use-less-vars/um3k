@@ -10,6 +10,8 @@ halved.  Every tolerance below is argued where it is used.
 """
 
 import json
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -673,4 +675,73 @@ def test_a_moved_tone_is_warned_about_and_recorded_never_raised(capsys):
     err = capsys.readouterr().err
     assert "tau/dt" not in err
     assert "QUARTER-WAVE TONE MISMATCH" in err
+
+
+def _load_run_build_a():
+    """Import ``evidence/termination/run_build_A.py`` as a module.
+
+    The runner, not the library: the record above is built by
+    ``emfit.studies`` and then has to survive the writer that puts it in the
+    artefact.  ``tests/test_writer_station_phasors.py`` loads the same file the
+    same way.
+    """
+    evidence = Path(__file__).resolve().parents[1] / "evidence" / "termination"
+    if str(evidence) not in sys.path:
+        sys.path.insert(0, str(evidence))
+    import run_build_A
+
+    return run_build_A
+
+
+def test_the_writer_carries_a_declared_tone_into_the_artefact():
+    """A declared tone reaches ``geometry[QW_KEY]`` -- matching tone or not.
+
+    ``microstrip_wave`` writes the key only when a ``T`` element declared a
+    tone, and the runner rebuilds ``geometry`` from scalars, so a list of dicts
+    is dropped unless it is carried across by hand -- the same reason
+    ``load_records`` exists for ``loads``.  Both halves are pinned here:
+
+    1. a declared tone is PRESENT, and the record says whether it moved,
+       because the MATCHED case is the one a reader has to be able to tell
+       apart from a document that declared no tone at all;
+    2. nothing declared (and no netlist at all) is EMPTY, so the writer's
+       ``if qw:`` leaves the key out and a netlist-free geometry is unchanged.
+    """
+    runner = _load_run_build_a()
+    doc = _stub_doc()
+
+    # -- declared, and the run's tone: present, labelled NOT moved -----------
+    matched = runner.quarter_wave_records(
+        _quarter_wave_retune(parse_netlist(doc, f_hz=F_CW).quarter_wave, F_CW))
+    assert len(matched) == 1
+    (entry,) = matched
+    assert set(entry) == {"name", "declared_hz", "tau_document_s", "tau_s",
+                          "f_hz", "declared_tone_retuned"}
+    assert entry["name"] == "stub"
+    assert entry["declared_hz"] == F_CW
+    assert entry["tau_document_s"] == TAU_CW
+    assert entry["tau_s"] == TAU_CW
+    assert entry["f_hz"] == F_CW
+    assert entry["declared_tone_retuned"] is False
+    # plain JSON, because that is what the writer puts in the artefact
+    assert json.loads(json.dumps(matched)) == matched
+
+    # -- declared, and the run's tone MOVED: present, and it says so ---------
+    (entry,) = runner.quarter_wave_records(
+        _quarter_wave_retune(parse_netlist(doc, f_hz=F_PULSE).quarter_wave,
+                            F_PULSE))
+    assert entry["declared_hz"] == F_CW
+    assert entry["tau_document_s"] == TAU_CW
+    assert entry["tau_s"] == TAU_PULSE
+    assert entry["f_hz"] == F_PULSE
+    assert entry["declared_tone_retuned"] is True
+
+    # -- nothing declared: EMPTY, so the key is never added ------------------
+    assert runner.quarter_wave_records(_quarter_wave_retune(
+        parse_netlist(_stub_doc(declared_hz=None), f_hz=F_CW).quarter_wave,
+        F_CW)) == []
+    # ... including the geometry of a run with no netlist at all, where the
+    #     read is a miss on a dict that never had the key
+    assert runner.quarter_wave_records({}.get(QW_KEY)) == []
+    assert runner.quarter_wave_records(None) == []
 

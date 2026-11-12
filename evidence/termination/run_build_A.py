@@ -320,6 +320,28 @@ def load_records(entries):
             for entry in (entries or ())]
 
 
+def quarter_wave_records(entries):
+    """``geometry["load_netlist_quarter_wave"]`` as plain JSON records.
+
+    ``emfit.studies`` builds one record per ``T`` element that declared
+    ``quarter_wave_hz`` (``emfit/studies.py:2561-2660``) and hangs them on the
+    geometry whenever there is at least one.  The scalar filter at each writer
+    below drops a list of dicts for the same reason it drops ``loads``, so
+    without this a declared tone would serialise exactly like a document that
+    declared none.  ``[]`` and not a missing entry: the caller adds the key
+    ONLY when this returns something, because a geometry with no declared tone
+    -- and every run with no ``--netlist`` -- must keep the keys it always had.
+    """
+    return [{"name": str(entry["name"]),
+             "declared_hz": float(entry["declared_hz"]),
+             "tau_document_s": float(entry["tau_document_s"]),
+             "tau_s": float(entry["tau_s"]),
+             "f_hz": (None if entry.get("f_hz") is None
+                      else float(entry["f_hz"])),
+             "declared_tone_retuned": bool(entry["declared_tone_retuned"])}
+            for entry in (entries or ())]
+
+
 class Trip:
     """Hard resource trip: kills the process, leaves a marker, never retries.
 
@@ -1884,15 +1906,31 @@ def describe_kwargs(kwargs: dict) -> dict:
             "elements": doc.get("elements"),
             "json": _netlist_json(netlist_doc),
             "tau_note": (
-                "A T element's 'tau' IN THIS DOCUMENT is the quarter-wave "
-                "delay of its 'quarter_wave_hz', not necessarily the delay "
-                "that was simulated: emfit.studies.microstrip_wave parses the "
-                "document with the tone the run is actually analysed at "
-                "(parse_netlist(..., f_hz=geometry.f)), so a declared line is "
-                "re-derived for that tone.  The delay actually used, beside "
-                "the declared one and the declared tone, is in "
-                "geometry.load_netlist_quarter_wave; when that key is absent "
-                "the document declared no tone and its tau was taken verbatim."),
+                "Only a T element that DECLARES 'quarter_wave_hz' has its "
+                "'tau' tied to that tone: the parser refuses the document "
+                "unless tau is quarter_wave_tau(quarter_wave_hz) to 1e-6 "
+                "relative, so a declared tau IS the quarter-wave delay of "
+                "the tone it names, while a T element without the field "
+                "carries whatever tau the file gives.  "
+                "emfit.studies.microstrip_wave parses the document with the "
+                "tone this run is ANALYSED at (parse_netlist(..., "
+                "f_hz=geometry.f)), so every declared line is re-derived for "
+                "that tone and the document's own tau is not necessarily the "
+                "delay simulated.  One record per declared element -- name, "
+                "declared_hz, tau_document_s (the file's), tau_s (the delay "
+                "the branch was built with: this runner passes the DOCUMENT, "
+                "never an already-parsed Netlist, so the branch is built in "
+                "that parse and tau_s IS the delay simulated), f_hz (the "
+                "analysed tone) and declared_tone_retuned (declared_hz != "
+                "f_hz, to 1e-9 relative) -- is in "
+                "geometry.load_netlist_quarter_wave.  That key is PRESENT "
+                "whenever the document declared a tone, whether or not it "
+                "moved: declared_tone_retuned False means geometry.f WAS "
+                "declared_hz, True means it was not (excite='pulse' sets "
+                "n_warm = 0 and so moves every tone -- that is what "
+                "--vis-dump forces).  It is ABSENT when the document "
+                "declared no tone at all, i.e. when every tau was taken "
+                "verbatim, and on any run with no --netlist."),
             "note": ("the SPICE document the cut was terminated in, hung on "
                      "the E_x edges the series_r load in `loads` frees "
                      "(emfit.studies.microstrip_wave(load_netlist=...)). Its "
@@ -2252,6 +2290,12 @@ def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
             for k, v in g.items()
             if isinstance(v, (int, float, str, np.floating, np.integer))}
     geom["loads"] = load_records(g.get("loads"))
+    # Inert on a load-free twin by construction (``twin_kwargs_from`` drops
+    # ``load_netlist``), and written anyway so this block stays the same shape
+    # as the loaded one -- same reason ``loads`` above is emitted as ``[]``.
+    qw = quarter_wave_records(g.get("load_netlist_quarter_wave"))
+    if qw:
+        geom["load_netlist_quarter_wave"] = qw
     cells = int(g.get("nx", 0)) * int(g.get("ny", 0)) * int(g.get("nz", 0))
     rb = reference_block(twin, reference, artefact=artefact_path, wall_s=wall_s)
     s21 = complex(twin.s21)
@@ -3175,6 +3219,12 @@ def main(argv: list[str] | None = None) -> int:
             for k, v in g.items()
             if isinstance(v, (int, float, str, np.floating, np.integer))}
     geom["loads"] = load_records(g.get("loads"))
+    # The declared tone, when the netlist declared one -- CONDITIONALLY, so a
+    # run whose document named no tone (and every run with no --netlist) keeps
+    # exactly the geometry it had before this key existed.
+    qw = quarter_wave_records(g.get("load_netlist_quarter_wave"))
+    if qw:
+        geom["load_netlist_quarter_wave"] = qw
     cells = int(g.get("nx", 0)) * int(g.get("ny", 0)) * int(g.get("nz", 0))
 
     # AC-7's beta_modal is deliberately NOT computed here: a hand-rolled call to
