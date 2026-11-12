@@ -563,6 +563,30 @@ STRUCTURES = {
         "out": str(REPO / "artifacts" / "build_B_100ohm.json"),
         "vis_dump": "artifacts/vis_dump_B_100ohm.npz",
     },
+    "D": {
+        # The diode-terminated arm: the cut is closed by a CIRCUIT, not by a
+        # lumped resistance, so this row names a netlist file instead of a
+        # number.  A row that carried only ``load_ohm`` would have to claim the
+        # termination IS 50 ohm, and the startup line would then print
+        # "series_r load 50 ohm" over a run whose load is a junction - the
+        # provenance lie the NETLIST branch of that line exists to avoid.
+        #
+        # ``load_ohm`` is still here, and still 50: it is not the termination,
+        # it is the number the cut is FREED with (the same resistance that
+        # makes A's cut the matched one), and the solver needs a finite value
+        # there before the netlist replaces it.
+        #
+        # The netlist is a PATH, and a real file in the tree rather than a
+        # string built here: --netlist takes a path, the document is evidence a
+        # reader can open and edit, and inlining the JSON would have made the
+        # model coefficients unreadable and unreviewable.
+        "netlist": str(REPO / "evidence" / "termination" / "netlists" /
+                       "load_diode.json"),
+        "load_ohm": LOAD_VALUE_OHM,
+        "out": str(REPO / "artifacts" / "build_D_diode.json"),
+        # Its own dump, for the same reason B has one: one file, one arm.
+        "vis_dump": "artifacts/vis_dump_D_diode.npz",
+    },
 }
 STRUCTURE_DEFAULT = "A"
 #: ``--vis-dump`` with NO argument means "this structure's own default".
@@ -2713,6 +2737,20 @@ def main(argv: list[str] | None = None) -> int:
         args.out = STRUCTURES[structure]["out"]
     if args.vis_dump == STRUCTURE_DUMP_SENTINEL:
         args.vis_dump = STRUCTURES[structure]["vis_dump"]
+    # The netlist is a default VALUE on the same footing as --load-ohm and
+    # --out, resolved HERE and not in the parser - which is why it comes after
+    # the refusal above: an explicit --netlist with no --out still refuses
+    # (that guard is about a caller pointing the solver at an arbitrary
+    # circuit and then letting it write wherever the arm's default artefact
+    # lives).  An ARM's own netlist is different: it ships with the arm, so
+    # ``--structure D`` alone may use it AND D's own default --out, and cannot
+    # clobber A's certified reference.  The other two options were considered
+    # and rejected: making --netlist required for D (a bare ``--structure D``
+    # would then have no defined load), and putting the netlist in the row as
+    # parsed JSON (the file is the interface; parsing it here would validate it
+    # twice and drift).
+    if args.netlist is None and STRUCTURES[structure].get("netlist"):
+        args.netlist = STRUCTURES[structure]["netlist"]
     if args.selftest is not None:
         # The file format, not the physics: no mesh is built and no step is
         # taken, so this runs in a second and says nothing about the solve.

@@ -1,0 +1,20 @@
+{
+  "name": "load_diode",
+  "nodes": [
+    "1",
+    "0"
+  ],
+  "elements": [
+    {
+      "kind": "D",
+      "name": "d1",
+      "nodes": [
+        "1",
+        "0"
+      ],
+      "isat": 1e-14,
+      "n": 1.0,
+      "vt": 0.02585
+    }
+  ]
+}
