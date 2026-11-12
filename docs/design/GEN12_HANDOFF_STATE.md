@@ -189,6 +189,38 @@ t4,termination}` tracked; `artifacts/` mostly untracked (32 of 55);
 
 **Correction — the 0.49 % figure belongs to the p51 phasors comparison, not to `build_A_50ohm.json`.** Prose in this package attributed the certified 0.49 % to `build_A_50ohm.json`, and that prose named the wrong artefact: **the prose was wrong, not the data.** Re-read from the files with `json.load` in this pass — `evidence/termination/build_A_50ohm_p51_phasors.json` `s11.magnitude` = 0.32556486641109117, i.e. −0.4890 % against the referee `0.327164553`; that is the 0.49 % being certified, and it is the Run B / p51 phasors artefact. `evidence/termination/build_A_50ohm.json` `s11.magnitude` = 0.32586326001662264, i.e. −0.3977 % (≈0.40 %), not 0.49 %. No figure in either artefact changed; only the citation was wrong, and it is corrected here so it cannot be repeated.
 
+**Correction — three items in the Gen 12 dispatch do not survive checking, and one is withdrawn.**
+
+*Sibling to the 0.49 % correction above. Every percentage below names its base; a bare percentage in this document is a defect.*
+
+1. **"Torch Check 1b" is withdrawn.** The Gen 12 dispatch listed "Torch Check 1b" among the checks it was acting on. It is withdrawn as unreproducible: there is no Gen 11 §13 (`docs/design/session_open_gen11.md` is 103 lines and stops at §6), none of the eight `## 13` headings under `docs/` is a Gen 11 handoff section, and the nearest same-genre one — `docs/design/GEN12_HANDOFF_TRAPS.md:502` — is already-fixed UI traps, not arrival checks. The words "on arrival" occur in no file under `docs/`, so no arrival-check list exists there. Nothing else in this document depends on it. The §13/Q8 material reaches this file as testimony of the same class as the quote in item 2: dated, attributed, and not vouched for. No sentence vouching that Gen 11 §13 prescribes "three checks on arrival" has been written, because no file in the tree contains that section or that prescription.
+
+2. **Chat-only evidence, recorded as such.** The Q8 sentence and the `emfit:` error it describes are not on disk: the only `Q8` in the tree is `docs/design/TE_query_s2p_convolution.md:273`, an unrelated passivity question, and the string `emfit:` occurs in three prose files under `docs/` — `docs/report/main.tex:28`, `docs/design/cross_check_script_2026-11-05.md:11`, `docs/design/job_schema.md:30` — in every case as a word followed by a colon (a LaTeX title, a sentence, and the `$id` `urn:emfit:job:v1`), never as the error token that sentence describes. Recorded, not reproduced:
+
+   ```
+   [ENGINEER-SUPPLIED — 2026-11-12 session transcript, NOT PRESENT IN TREE]
+   The Q8 / `emfit:` sentence is not reproduced here. Its text exists only in
+   the session transcript; it was not available to the verifying worker in
+   machine-readable form. It is therefore testimony, not evidence, and nothing
+   in this tree may be cited in support of it.
+   What *is* on disk and does check out:
+   - GEN12_HANDOFF_WARS.md:37 already attributes 0.3255648664110912 to
+     build_A_50ohm_p51_phasors.json:286 — the claim predates the dispatch, and
+     the dispatch's attribution adds nothing to the tree.
+   ```
+
+3. **Arithmetic: "0.0049136 on both bases" is right on one base only.** 0.0049136 is the in-house-base figure for run B (0.4914 %). On the referee base the same run is 0.0048895 (0.4890 %). Both bases are already named verbatim at `EM_SOLVER_LEDGER.md:37` — "That difference on the two denominators is +0.4914 percent in-house and +0.4890 percent on a referee basis (the referee-basis figure is derived, not printed in the JSON, per `session_open_gen11.md` section 2)" — so that line is quoted here rather than the bases being re-derived.
+
+   | value | source | vs in-house base | vs referee base |
+   |---|---|---|---|
+   | run B 0.32556486641109117 | `build_A_50ohm_p51_phasors.json:286` | −0.4914 % | −0.4890 % |
+   | run A 0.32586326001662264 | `build_A_50ohm.json` | −0.3993 % | −0.3977 % |
+   | referee 0.3271645531273824 | referee strip (see ledger) | — | — |
+
+4. **Three corrections to the Gen 12 dispatch, credited to the verifying worker.** (a) `tests/test_cpp_parity.py` holds 10 `def test_` functions and collects 13 tests (the four-arm `ABLATIONS` parametrisation at `:495`, arms listed at `:303-308`) — not the larger count the dispatch carried. (b) The dispatch's "four pre-fix artefacts" count is withdrawn; DR-46 in `defect_register.md` carries the correct count and the file list. (c) The DR-43 pulse row in `defect_register.md` is `:838`; `:839` is the cw row.
+
+5. **The rule, as a rule.** A check cited at dispatch must be `[READ]` at dispatch — quoted from a file in the tree, with a path and a line — not `[RECALLED]`. A figure recalled from an earlier session is a claim, not a reading. If it cannot be produced from a file, it is entered as testimony with a date, and testimony never becomes a target, a count, or an acceptance criterion.
+
 ## 6. Environment
 
 Execution `[MEASURED]`: **UNAVAILABLE** — "Workspace container limit reached (6/6 consuming
