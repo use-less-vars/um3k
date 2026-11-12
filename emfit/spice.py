@@ -181,6 +181,7 @@ __all__ = [
     "CircuitNetwork",
     "Diode",
     "DiodeConvergenceError",
+    "TransmissionLine",
     "SpiceState",
     "MNASolver",
     "SpicePort",
@@ -408,10 +409,102 @@ def _clamped_exp(x):
         return np.exp(np.minimum(np.asarray(x, dtype=float), _EXP_CLAMP))
 
 
-# What a ``CircuitNetwork`` may hold: a linear ``Branch`` or a nonlinear
-# ``Diode``.  Both answer ``.kind`` and ``.nodes``, which is all the assembly
-# and the recovery need to treat them as one ordered list of elements.
-_ELEMENT_TYPES = (Branch, Diode)
+@dataclass(frozen=True)
+class TransmissionLine:
+    """A lossless distributed line, discretised by the method of characteristics.
+
+    Parameters
+    ----------
+    nodes : (int, int)
+        ``(a, b)``, the two terminals; ``nodes[0]`` is the end a positive
+        ``i_branch`` enters.  Neither end is ground unless the circuit says so,
+        the two nodes must be distinct, and a line adds **no** node of its own:
+        the whole delay is carried in the history, not in a chain of interior
+        nodes.
+    z0 : float, optional
+        Characteristic impedance (ohm), finite and positive, default ``50.0``.
+    tau : float, optional
+        One-way delay (s), finite and positive, default ``1e-9`` -- i.e.
+        ``length * sqrt(LC)``.  Not ``length``: the solver never needs the
+        geometry, only the delay.
+
+    The line is **lossless**: no series resistance, no shunt conductance, and
+    therefore no attenuation and no dispersion.  That is a model, not an
+    approximation of one: a lossy line needs a distributed R and G, which the
+    method of characteristics cannot carry as a pure delay, so it is a
+    different element rather than a parameter of this one.
+
+    Discretisation.  With ``i_k`` the current *entering* the line at end ``k``
+    and ``Z = z0``, a lossless line is exactly the two terminal relations
+
+    ``v_a(t) = Z i_a(t) + H1(t)``,   ``H1(t) = v_b(t - tau) + Z i_b(t - tau)``
+    ``v_b(t) = Z i_b(t) + H2(t)``,   ``H2(t) = v_a(t - tau) + Z i_a(t - tau)``
+
+    i.e. each end is a resistor ``Z`` to ground in parallel with a current
+    source of ``H_k / Z`` into the node, and each ``H`` is the *other* end's
+    terminal relation read ``tau`` ago.  So one step reads two numbers out of a
+    history buffer and writes two back, and the delay is exactly ``tau`` rather
+    than a lumped ladder's approximation to it.  The rejected alternative is
+    the lumped ladder (n segments of L and C): its phase velocity is wrong by
+    ``O((omega dt)^2)`` per segment, it needs n interior nodes and n capacitors'
+    worth of state, and reaching a given accuracy costs a quadratically growing
+    MNA matrix.  The method of characteristics is exact in ``tau`` for any
+    number of steps, so a stub of one electrical degree is as cheap as one of
+    ninety.
+
+    Two consequences worth stating because they differ from every other kind
+    here.  First, the two ends do **not** carry the same current: a distributed
+    line stores charge, so ``i_a`` and ``i_b`` differ during a transient, and
+    ``i_branch`` reports ``i_a`` only (the current into ``nodes[0]``).  Second,
+    the line needs a sample of history per step of its delay, so it has state
+    that is neither a node voltage nor an element current: it lives in
+    :class:`SpiceState` as a buffer of ``v + Z i`` samples, one pair per end
+    (see ``_LineSamples``).
+
+    The buffer is indexed by *time*, so the step must be uniform: ``MNASolver``
+    refuses a ``dt`` that changes mid-run and a ``tau`` shorter than one step.
+    """
+
+    nodes: tuple
+    z0: float = 50.0
+    tau: float = 1e-9
+
+    def __post_init__(self):
+        nodes = tuple(int(node) for node in self.nodes)
+        if len(nodes) != 2:
+            raise ValueError(f"nodes must be a pair (a, b); got {self.nodes!r}")
+        if min(nodes) < 0:
+            raise ValueError(f"node indices are non-negative; got {nodes}")
+        if nodes[0] == nodes[1]:
+            raise ValueError(
+                f"nodes must be distinct; got {nodes}, and a line from a node "
+                "to itself is shorted at both ends at once, so every wave it "
+                "launched would return with nothing to do"
+            )
+        for field_name in ("z0", "tau"):
+            value = float(getattr(self, field_name))
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(
+                    f"{field_name} must be finite and positive; got "
+                    f"{getattr(self, field_name)!r}.  A zero {field_name} is "
+                    "not an absent line: ``z0 = 0`` would be a pair of solid "
+                    "shorts and ``tau = 0`` a through wire, so omit the "
+                    "branch (and use a Branch) instead"
+                )
+            object.__setattr__(self, field_name, value)
+        object.__setattr__(self, "nodes", nodes)
+
+    @property
+    def kind(self):
+        """``"T"``: the branch kind this element occupies in a network."""
+        return "T"
+
+
+# What a ``CircuitNetwork`` may hold: a linear ``Branch``, a nonlinear
+# ``Diode``, or a lossless ``TransmissionLine``.  All three answer ``.kind``
+# and ``.nodes``, which is all the assembly and the recovery need to treat
+# them as one ordered list of elements.
+_ELEMENT_TYPES = (Branch, Diode, TransmissionLine)
 
 
 @dataclass(frozen=True)
@@ -450,7 +543,8 @@ class CircuitNetwork:
         for branch in branches:
             if not isinstance(branch, _ELEMENT_TYPES):
                 raise TypeError(
-                    "branches must be Branch or Diode instances, not "
+                    "branches must be Branch, Diode or TransmissionLine "
+                    "instances, not "
                     f"{type(branch).__name__}"
                 )
             for node in branch.nodes:
@@ -533,6 +627,14 @@ class SpiceState:
         Port-terminal current and voltage at ``t^n``, the two history vectors
         ``emfit.terminations.RLCState`` also carries.  Default empty: a
         standalone network has no port; :class:`SpicePort` fills them.
+    tline : _LineSamples, optional
+        Travelling-wave history of every :class:`TransmissionLine` in the
+        network, one row per line, or ``None`` for a network without a line.
+        ``None`` on a network *with* a line is not an error: the first step
+        creates the buffer, all zeros, which is the line at rest -- a line has
+        nothing in flight until a step has put it there, so there is no
+        initial condition to invent.  The buffer length depends on
+        ``tau / dt``, which is why it can only be built at the first step.
 
     Notes
     -----
@@ -546,14 +648,20 @@ class SpiceState:
     copy of the same number is how the two drift apart.
     """
 
-    def __init__(self, network, *, u=None, i_branch=None, i=None, v=None):
+    def __init__(self, network, *, u=None, i_branch=None, i=None, v=None,
+                 tline=None):
         if not isinstance(network, CircuitNetwork):
             raise TypeError(
                 f"network must be a CircuitNetwork, not {type(network).__name__}"
             )
+        if tline is not None and not isinstance(tline, _LineSamples):
+            raise TypeError(
+                f"tline must be _LineSamples, not {type(tline).__name__}"
+            )
         self.network = network
         self.u = _as_vector(u, network.n_nodes, "u")
         self.i_branch = _as_vector(i_branch, network.n_branches, "i_branch")
+        self.tline = tline
         self.i = np.zeros(0) if i is None else np.asarray(i, dtype=float).ravel()
         self.v = np.zeros(0) if v is None else np.asarray(v, dtype=float).ravel()
 
@@ -600,13 +708,17 @@ def _source_values(network, sources):
     length-``n_branches`` vector here, so the level can move between steps
     without making a branch mutable: ``Branch`` stays frozen and a step still
     depends only on ``(dt, state, sources)``.  Entries for ``R``/``L``/``C`` and
-    ``D`` branches are carried for indexing convenience and never read -- a
-    diode has no ``value`` at all, so its slot is a literal ``0.0`` rather than
-    a number that means anything.
+    ``D``/``T`` branches are carried for indexing convenience and never read --
+    a diode and a line have no ``value`` at all, so their slot is a literal
+    ``0.0`` rather than a number that means anything.
     """
     if sources is None:
+        # ``D`` (a model) and ``T`` (a delay and an impedance) have no
+        # ``value`` attribute at all, so their slot is a literal 0.0 rather
+        # than a number that would mean something.
         return np.array(
-            [0.0 if br.kind == "D" else br.value for br in network.branches],
+            [0.0 if br.kind in ("D", "T") else br.value
+             for br in network.branches],
             dtype=float,
         )
     src = np.asarray(sources, dtype=float).ravel()
@@ -620,8 +732,179 @@ def _source_values(network, sources):
     return src
 
 
+class _LineSamples:
+    """The travelling-wave samples every line still has in flight.
+
+    ``values`` has shape ``(n_lines, capacity, 2)``: one row per line, one
+    column per sample, and the last axis is ``(S1, S2)`` with
+
+    ``S1 = v_a + z0 * i_a``   (the wave launched at ``nodes[0]``)
+    ``S2 = v_b + z0 * i_b``   (the wave launched at ``nodes[1]``),
+
+    ``i_k`` being the current *entering* the line at end ``k``.  Those are the
+    two quantities the next step needs read back: ``H1`` is ``S2`` delayed by
+    ``tau`` and ``H2`` is ``S1`` delayed by ``tau``, which is the whole
+    physics of a lossless line -- a wave leaving one end arrives at the other
+    unchanged, and nothing else happens.
+
+    **Oldest sample first, newest last**, so walking backwards from ``-1``
+    walks into the past and the delay lookup is plain negative indexing.  A
+    ring buffer with a write pointer would avoid the shift in
+    :func:`_line_advance`, but the shift is one ``memcpy`` of
+    ``n_lines * capacity`` doubles (a few thousand at most) and buying O(1)
+    with an index arithmetic that every reader has to re-derive is the wrong
+    trade in a file whose whole job is to be checkable by hand.
+
+    Rows before ``t = 0`` are zero, and they are *really there* rather than
+    special-cased: a line at rest carries no travelling wave, so padding the
+    buffer with zeros is exactly the initial condition, and the first ``tau``
+    of a run then needs no branch in the lookup path.
+    """
+
+    __slots__ = ("values", "dt")
+
+    def __init__(self, values, dt):
+        values = np.asarray(values, dtype=float)
+        if values.ndim != 3 or values.shape[2] != 2:
+            raise ValueError(
+                "a line buffer must have shape (n_lines, capacity, 2); got "
+                f"{values.shape}"
+            )
+        if not np.all(np.isfinite(values)):
+            raise ValueError("line history must be finite")
+        self.values = values
+        self.dt = float(dt)
+
+
+def _line_slots(network):
+    """Branch indices of the transmission lines, in branch order."""
+    return tuple(k for k, br in enumerate(network.branches) if br.kind == "T")
+
+
+def _line_capacity(network, dt):
+    """Rows of history the longest delay in the network needs.
+
+    The step at ``t^{n+1}`` reads the sample at ``t^{n+1} - tau``, which is
+    ``tau/dt - 1`` samples back from the newest one (``t^n``).  That offset is
+    not generally an integer, so the lookup needs the two samples that bracket
+    it: ``floor(tau/dt - 1) + 2`` rows.  A ``tau`` shorter than one step has no
+    bracket at all -- the answer would be in the future -- and is refused here
+    rather than silently clamped to one step, because a line whose delay the
+    grid cannot resolve is a line whose delay is not being modelled.
+    """
+    capacity = 1
+    for k in _line_slots(network):
+        br = network.branches[k]
+        ratio = br.tau / dt
+        if ratio < 1.0:
+            raise ValueError(
+                f"branch {k} is a transmission line with tau = {br.tau!r} s, "
+                f"shorter than one step of dt = {dt!r} s: the method of "
+                "characteristics reads the wave it launched tau ago, and a "
+                "sample that old does not exist until one full step has "
+                "passed.  Refused rather than rounded up to one step, which "
+                "would model a different, slower line -- shrink dt or "
+                "shorten tau"
+            )
+        capacity = max(capacity, int(np.floor(ratio - 1.0)) + 2)
+    return capacity
+
+
+def _line_buffers(network, dt, tline):
+    """The history buffer to read this step from; ``None`` without a line.
+
+    An existing buffer is reused as-is and a missing one is created all-zero
+    (the line at rest).  A ``dt`` that differs from the one the buffer was
+    built with is refused: every row is one step of history, so a change of
+    step silently changes what the stored samples *mean*, and the delay would
+    come out as the wrong multiple of a wrong step.  Re-gridding an in-flight
+    history is a real algorithm and not this one.
+    """
+    if not _line_slots(network):
+        if tline is not None:
+            raise ValueError(
+                "state carries line history but this network has no "
+                "transmission line; the buffer would be advanced by nothing "
+                "and would disagree with the netlist in silence"
+            )
+        return None
+    capacity = _line_capacity(network, dt)
+    if tline is None:
+        return _LineSamples(
+            np.zeros((len(_line_slots(network)), capacity, 2)), dt
+        )
+    if tline.dt != dt:
+        raise ValueError(
+            f"the line history was built with dt = {tline.dt!r} s but this "
+            f"step is dt = {dt!r} s; every stored sample is one step of "
+            "history and every delay is a count of steps, so a changed step "
+            "would reinterpret the whole buffer as a different time axis.  "
+            "Use one dt for a run, or start a fresh state"
+        )
+    if tline.values.shape != (len(_line_slots(network)), capacity, 2):
+        raise ValueError(
+            "the line history has shape "
+            f"{tline.values.shape} but this network and step need "
+            f"{(len(_line_slots(network)), capacity, 2)}"
+        )
+    return tline
+
+
+def _line_history(network, lines, dt):
+    """Per-line ``(H1, H2)`` for the step being solved.
+
+    ``H1 = v_b + z0 i_b`` and ``H2 = v_a + z0 i_a``, both evaluated ``tau``
+    ago -- see :class:`TransmissionLine`.  When ``tau/dt`` is not an integer the
+    sample is taken by **linear interpolation** between the two that bracket
+    it.  The rejected alternatives were to refuse a non-integer ``tau/dt``
+    (which makes any real geometry unusable: ``tau`` comes from a length and a
+    phase velocity, and nothing makes that a multiple of the step) and to round
+    to the nearest step (which is cheap but silently shifts the phase velocity
+    by up to half a step per pass -- an error that compounds every round trip
+    and is invisible in a single-ended test).  Interpolation errs by
+    ``O((dS/dt * dt)^2)`` inside one sample and, unlike rounding, is
+    unbiased: a delay that *is* a whole number of steps still lands on the
+    exact sample, so the exact case stays exact.
+    """
+    history = {}
+    for row, k in enumerate(_line_slots(network)):
+        br = network.branches[k]
+        back = br.tau / dt - 1.0
+        whole = int(np.floor(back))
+        weight = back - whole
+        samples = lines.values[row]
+        s1, s2 = samples[:, 0], samples[:, 1]
+        # row -1 is t^n, so offset ``whole`` back is row -(whole+1) and the
+        # sample one step older than that is row -(whole+2), which exists
+        # because capacity = floor(tau/dt - 1) + 2.
+        newer, older = -(whole + 1), -(whole + 2)
+        h2 = (1.0 - weight) * s1[newer] + weight * s1[older]
+        h1 = (1.0 - weight) * s2[newer] + weight * s2[older]
+        history[k] = (float(h1), float(h2))
+    return history
+
+
+def _line_advance(network, lines, dt, u, history):
+    """The next buffer: one row shifted, one row appended at ``t^{n+1}``.
+
+    ``S1 = 2 v_a - H1`` and ``S2 = 2 v_b - H2``, which is ``v + z0 i`` with
+    ``z0 i_a = v_a - H1`` substituted.  Written that way the *same two
+    numbers* the step read out are what it writes back, so the buffer is a
+    delay line and nothing else: no gain, no loss, which is exactly why the
+    discrete scheme conserves energy to the last bit (see the tests).
+    """
+    values = np.empty_like(lines.values)
+    values[:, :-1, :] = lines.values[:, 1:, :]
+    for row, k in enumerate(_line_slots(network)):
+        a, b = network.branches[k].nodes
+        h1, h2 = history[k]
+        values[row, -1, 0] = 2.0 * u[a] - h1
+        values[row, -1, 1] = 2.0 * u[b] - h2
+    return _LineSamples(values, dt)
+
+
 def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None,
-              diode_bias=None):
+              diode_bias=None, line_history=None):
     """Assemble ``A x = b`` for one step; returns ``(A, b, info)``.
 
     ``coupling`` is ``None`` for the standalone network, or
@@ -642,6 +925,16 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None,
     is the diode's conductance at ``v^k`` -- exactly the shape of the ``R``
     stamp -- plus the companion current ``I(v^k) - g(v^k) v^k`` injected from
     ``nodes[0]`` to ``nodes[1]`` with the same sign an ``I`` branch uses.
+
+    ``line_history`` maps a transmission line's branch index to the pair
+    ``(H1, H2)`` that :func:`_line_history` read out of the buffer, and is
+    required on exactly the same terms: a line has no linear companion either,
+    so an assembly that reached one without its history would stamp a line at
+    rest and quietly solve a different circuit.  The stamp is a conductance
+    ``1/z0`` from **each end to ground** -- not end to end, which would force
+    both ends to the same voltage and make the line a wire -- plus a current
+    ``H_k/z0`` injected into end ``k``, which is the whole of the method of
+    characteristics seen from the circuit's side.
     """
     n_rows = network.n_nodes - 1
     v_cols = {}
@@ -702,6 +995,21 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None,
             # the first node, +i_eq at the second.
             inject(c, i_eq)
             inject(a, -i_eq)
+        elif br.kind == "T":
+            if line_history is None or k not in line_history:
+                raise ValueError(
+                    f"branch {k} is a transmission line: the waves it launched "
+                    "tau ago are the only thing that ties the two ends "
+                    "together, so _assemble needs line_history[k] -- without "
+                    "it the line would be stamped at rest, i.e. a different "
+                    "circuit"
+                )
+            h1, h2 = line_history[k]
+            g = 1.0 / br.z0
+            add_conductance(ra, None, g)
+            add_conductance(rc, None, g)
+            inject(a, h1 * g)
+            inject(c, h2 * g)
         elif br.kind == "I":
             inject(c, src[k])
             inject(a, -src[k])
@@ -738,6 +1046,7 @@ def _assemble(network, dt, u_prev, i_prev, scheme, coupling=None, sources=None,
         "dt": dt,
         "scheme": scheme,
         "sources": src,
+        "line_history": line_history,
     }
     return A, b, info
 
@@ -757,6 +1066,15 @@ def _recover(network, x, info):
             currents[k] = g * (u[a] - u[c]) + hist
         elif br.kind == "V":
             currents[k] = x[info["v_cols"][k]]
+        elif br.kind == "T":
+            # The current *into* the line at nodes[0], from v_a = z0 i_a + H1.
+            # Deliberately not the current at the other end: a distributed line
+            # stores charge, so the two differ during a transient, and one
+            # number per branch cannot say both.  ``nodes[0]`` is the one every
+            # other kind here reports at, so the branch-current vector keeps
+            # one meaning.
+            h1, _ = info["line_history"][k]
+            currents[k] = (u[a] - h1) / br.z0
         elif br.kind == "D":
             # A diode carries its conduction current at the *solved* junction
             # voltage.  There is no diode current in ``x`` to read -- the diode
@@ -801,7 +1119,7 @@ def _diode_slots(network):
 
 
 def _solve_step(network, dt, u_prev, i_prev, scheme, *, coupling=None,
-                sources=None, max_iter=_MAX_ITER):
+                sources=None, max_iter=_MAX_ITER, line_history=None):
     """Solve one step's ``A x = b``, Newton-iterating if there are diodes.
 
     Returns ``(x, info, iterations)``; ``iterations`` is ``0`` exactly when the
@@ -830,8 +1148,10 @@ def _solve_step(network, dt, u_prev, i_prev, scheme, *, coupling=None,
     if not slots:
         # No diode: one assembly, one solve, no iteration.  The linear path is
         # this branch, untouched by the loop below.
-        A, b, info = _assemble(network, dt, u_prev, i_prev, scheme,
-                               coupling=coupling, sources=sources)
+        A, b, info = _assemble(
+            network, dt, u_prev, i_prev, scheme, coupling=coupling,
+            sources=sources, line_history=line_history,
+        )
         return np.linalg.solve(A, b), info, 0
 
     max_iter = int(max_iter)
@@ -852,6 +1172,7 @@ def _solve_step(network, dt, u_prev, i_prev, scheme, *, coupling=None,
             network, dt, u_prev, i_prev, scheme, coupling=coupling,
             sources=sources,
             diode_bias={k: bias[j] for j, k in enumerate(slots)},
+            line_history=line_history,
         )
         x = np.linalg.solve(A, b)
         u = np.zeros(network.n_nodes)
@@ -952,13 +1273,24 @@ class MNASolver:
                 "its state must agree on the netlist, or branch order and node "
                 "count silently disagree"
             )
+        lines = _line_buffers(self.network, dt, state.tline)
+        history = None if lines is None else _line_history(
+            self.network, lines, dt
+        )
         x, info, _ = _solve_step(
             self.network, dt, state.u, state.i_branch, self.scheme,
-            sources=sources, max_iter=max_iter,
+            sources=sources, max_iter=max_iter, line_history=history,
         )
         u, currents = _recover(self.network, x, info)
+        tline = (
+            None if lines is None
+            else _line_advance(self.network, lines, dt, u, history)
+        )
         return (
-            SpiceState(self.network, u=u, i_branch=currents, i=state.i, v=state.v),
+            SpiceState(
+                self.network, u=u, i_branch=currents, i=state.i, v=state.v,
+                tline=tline,
+            ),
             u,
             currents,
         )
@@ -1095,11 +1427,20 @@ class SpicePort:
         v_star = self.port.voltage(e_star)
 
         M = self._field_reactance(dt)
+        lines = _line_buffers(self.network, dt, state.tline)
+        history = None if lines is None else _line_history(
+            self.network, lines, dt
+        )
         x, info, _ = _solve_step(
             self.network, dt, state.u, state.i_branch, "trapezoidal",
             coupling=(M, v_star, state.i), sources=sources, max_iter=max_iter,
+            line_history=history,
         )
         u, currents = _recover(self.network, x, info)
+        tline = (
+            None if lines is None
+            else _line_advance(self.network, lines, dt, u, history)
+        )
 
         n_t = self.port.n_terminals
         i_new = x[info["base_port"]:info["base_port"] + n_t]
@@ -1108,5 +1449,5 @@ class SpicePort:
         )
         return e_new, h_new, SpiceState(
             self.network, u=u, i_branch=currents, i=i_new,
-            v=self.port.voltage(e_new),
+            v=self.port.voltage(e_new), tline=tline,
         )

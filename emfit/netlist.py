@@ -130,7 +130,7 @@ from typing import Mapping
 
 import numpy as np
 
-from .spice import Branch, CircuitNetwork, Diode, MNASolver
+from .spice import Branch, CircuitNetwork, Diode, MNASolver, TransmissionLine
 
 __all__ = [
     "Element",
@@ -141,7 +141,7 @@ __all__ = [
     "parse_netlist",
 ]
 
-_KINDS = ("R", "L", "C", "V", "I", "D")
+_KINDS = ("R", "L", "C", "V", "I", "D", "T")
 _SOURCE_KINDS = ("V", "I")
 _GROUND_NAMES = frozenset({"0", "gnd", "ground"})
 
@@ -155,6 +155,12 @@ _ELEMENT_FIELDS = {
     # a diode has a model, not a value: 'value' is deliberately absent, so a
     # netlist that tries to set one is rejected rather than silently ignored
     "D": frozenset({"kind", "name", "nodes", "isat", "n", "vt", "gmin"}),
+    # a transmission line is described by its delay and its impedance, and by
+    # nothing else: 'len_mm'/'eps_eff' are deliberately absent, because tau
+    # derived from geometry here would be a second source of truth for the one
+    # number the line is actually made of.  Whoever lays the line out can
+    # compute tau = len_mm * sqrt(eps_eff) / c and write it down.
+    "T": frozenset({"kind", "name", "nodes", "z0", "tau"}),
 }
 _WAVEFORM_FIELDS = {
     "step": frozenset({"type", "amplitude", "delay"}),
@@ -259,16 +265,16 @@ class Element:
     Parameters
     ----------
     kind, name : str
-        ``kind`` in ``("R", "L", "C", "V", "I", "D")``; ``name`` unique in
-        the document.
+        ``kind`` in ``("R", "L", "C", "V", "I", "D", "T")``; ``name`` unique
+        in the document.
     nodes : (int, int)
         Resolved node indices, ``0`` ground.  ``nodes[0] -> nodes[1]`` is the
         positive branch-current direction.
     value : float
         The ``Branch`` value: ohm, henry, farad, or for a source its **DC
         level**, which is what a source with no waveform carries.  A diode
-        carries its model parameters on the ``Diode`` branch instead and
-        reports ``0.0`` here.
+        and a transmission line carry their model parameters on the ``Diode``
+        / ``TransmissionLine`` branch instead and report ``0.0`` here.
     waveform : Waveform or None
         ``None`` for an element with a constant level.
     index : int
@@ -751,7 +757,7 @@ def parse_netlist(source):
                 f"{label}: a {kind} source needs a 'value' (a DC level) or a "
                 "'waveform'; got neither"
             )
-        if kind not in _SOURCE_KINDS + ("D",) and "value" not in entry:
+        if kind not in _SOURCE_KINDS + ("D", "T") and "value" not in entry:
             raise NetlistError(f"{label}: field 'value' is required for a {kind}")
         value = entry.get("value", 0.0)
         waveform = _waveform(entry["waveform"], label) if has_waveform else None
@@ -763,6 +769,17 @@ def parse_netlist(source):
                 ("isat", 1e-14), ("n", 1.0), ("vt", 0.02585), ("gmin", 1e-12),
             ):
                 model[field] = entry.get(field, default)
+        elif kind == "T":
+            # No defaults, on purpose: TransmissionLine would fall back to
+            # z0 = 50 ohm / tau = 1 ns, so a netlist that simply forgot its
+            # delay would simulate a line nobody asked for.  Both are required.
+            for field in ("z0", "tau"):
+                if field not in entry:
+                    raise NetlistError(
+                        f"{label}: a T element needs '{field}' (SI: ohm, s); "
+                        "the parser carries no default for it"
+                    )
+                model[field] = entry[field]
         staged.append(
             {
                 "kind": kind,
@@ -860,6 +877,12 @@ def parse_netlist(source):
                 branch = Diode(nodes, **element["model"])
             except (TypeError, ValueError) as exc:
                 raise NetlistError(f"{label}: field 'model': {exc}") from None
+            branch_value = 0.0
+        elif element["kind"] == "T":
+            try:
+                branch = TransmissionLine(nodes, **element["model"])
+            except (TypeError, ValueError) as exc:
+                raise NetlistError(f"{label}: {exc}") from None
             branch_value = 0.0
         else:
             try:

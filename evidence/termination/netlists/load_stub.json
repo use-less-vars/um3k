@@ -1,0 +1,29 @@
+{
+  "name": "load_stub",
+  "nodes": [
+    "1",
+    "0",
+    "2"
+  ],
+  "elements": [
+    {
+      "kind": "T",
+      "name": "stub",
+      "nodes": [
+        "1",
+        "2"
+      ],
+      "z0": 50.0,
+      "tau": 4.289793456444743e-11
+    },
+    {
+      "kind": "V",
+      "name": "short",
+      "nodes": [
+        "2",
+        "0"
+      ],
+      "value": 0.0
+    }
+  ]
+}

@@ -587,6 +587,45 @@ STRUCTURES = {
         # Its own dump, for the same reason B has one: one file, one arm.
         "vis_dump": "artifacts/vis_dump_D_diode.npz",
     },
+    "C": {
+        # The quarter-wave stub arm: the cut is closed by a SHORT-CIRCUITED
+        # length of line, and therefore -- counter-intuitively, and by design --
+        # presents an OPEN at the tone this arm reports.  Zin(f) of a lossless
+        # line shorted at its far end is j z0 tan(2 pi f tau), so at
+        # 2 pi f tau = pi/2 it is infinite: a short at one end is an open at the
+        # other.  The far end being shorted is the point, not a defect, and a
+        # run whose |s21| does NOT collapse (|s11| -> 1, a notch at f0) is a
+        # finding to be reported rather than a number to be repaired.
+        #
+        # WHY C is not a mere variation on A: A's cut is the matched 50 ohm
+        # resistor (|s21| ~ 1, |s11| ~ 0).  C replaces that resistance with a
+        # REACTANCE that is an open at f0, so the cut BLOCKS the wave with no
+        # dissipative element anywhere in the circuit -- the arm is the one that
+        # falsifies "no loss, therefore full transmission", and it is the only
+        # arm whose termination transforms impedance rather than absorbing it.
+        #
+        # tau = 1/(4 f0), with f0 the frequency every banked artefact of this
+        # geometry reports (VIS_F_REF_HZ = 5827786408.327286 Hz above):
+        #   1/(4 * 5.827786408327286e9) = 4.289793456444743e-11 s
+        #                               = 42.89793456444743 ps
+        # Against this mesh's step (cell 0.4 mm -> dt = 7.626299478123987e-13 s,
+        # 0.7626299478123987 ps) that is tau/dt = 56.25 samples: NOT an integer,
+        # so the line's history lookup takes its linear-INTERPOLATION path
+        # (emfit.spice._line_history, weight = 0.25) instead of landing on one
+        # sample.  That is deliberate: 56 dt = 42.707 ps is 0.44 % short of tau
+        # and would pull the notch off the tone, and the interpolation errs by
+        # O((dS/dt * dt)^2) inside a sample without biasing the delay.
+        #
+        # ``load_ohm`` is the same 50 ohm D carries and for the same reason: it
+        # is not the termination (the stub is), it is the number that FREES the
+        # cut before the netlist replaces it.
+        "netlist": str(REPO / "evidence" / "termination" / "netlists" /
+                       "load_stub.json"),
+        "load_ohm": LOAD_VALUE_OHM,
+        "out": str(REPO / "artifacts" / "build_C_stub.json"),
+        # Its own dump, for the same reason B and D have one: one arm, one file.
+        "vis_dump": "artifacts/vis_dump_C_stub.npz",
+    },
 }
 STRUCTURE_DEFAULT = "A"
 #: ``--vis-dump`` with NO argument means "this structure's own default".
