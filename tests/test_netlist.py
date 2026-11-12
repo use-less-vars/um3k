@@ -745,3 +745,140 @@ def test_the_writer_carries_a_declared_tone_into_the_artefact():
     assert runner.quarter_wave_records({}.get(QW_KEY)) == []
     assert runner.quarter_wave_records(None) == []
 
+
+
+# --------------------------------------------------------------------------
+# a DEVIATING run may not write over a tracked evidence document
+# --------------------------------------------------------------------------
+# ``--structure A --vis-dump <path>`` forces ``excite='pulse'`` inside the solve
+# and a ``--netlist`` replaces the ``series_r`` termination, but neither used to
+# move the artefact path -- and arm A's default IS
+# ``evidence/termination/build_A_50ohm.json``, the certified CW 50 ohm reference.
+# That overwrite happened once, silently.  ``run_build_A.resolve_artefact_out``
+# is now the ONE home for "may this run write here", and it decides BEFORE the
+# first byte is written: an mtime comparison or a lock file would only report
+# the loss (or leave a half-written document behind a stale lock).
+#
+# Rule functions only: no mesh is built, no step is taken, no file is written.
+
+
+def test_a_visualisation_dump_on_arm_a_is_redirected_off_the_evidence_document():
+    """A deviating run gets its own name under ``artifacts/``, and it says which.
+
+    Three deviations, three names: ``pulse`` (a dump), ``netlist`` (a document
+    arm A does not own -- A owns none), and both at once.  The kind is in the
+    FILENAME so a file a deviating run wrote can never be mistaken for the arm's
+    own record, and NONE of the three resolves inside ``evidence/``.
+    """
+    runner = _load_run_build_a()
+    canonical = runner.STRUCTURES["A"]["out"]
+    # the failure this exists for: arm A's own default IS an evidence document
+    assert Path(canonical).resolve().is_relative_to(runner.EVIDENCE_DIR)
+    stub = runner.STRUCTURES["C"]["netlist"]      # a document arm A does not own
+    dump = "artifacts/vis_dump_A_plain.npz"
+
+    expected = {
+        "pulse": (dump, None, "build_A_pulse.json"),
+        "netlist": (None, stub, "build_A_netlist.json"),
+        "pulse_netlist": (dump, stub, "build_A_pulse_netlist.json"),
+    }
+    for kind, (vis_dump, netlist, name) in expected.items():
+        out = runner.resolve_artefact_out(
+            "A", out=None, vis_dump=vis_dump, netlist=netlist,
+            default_out=canonical)
+        resolved = Path(out).resolve()
+        assert resolved == (runner.REPO / "artifacts" / name).resolve(), kind
+        assert not resolved.is_relative_to(runner.EVIDENCE_DIR), kind
+
+
+def test_an_evidence_path_that_is_not_the_canonical_record_is_refused():
+    """The refusal NAMES the path and tells the caller to use ``--out artifacts/``.
+
+    The guard is on the RESOLVED path, so typing the evidence document while
+    deviating refuses exactly like the implicit default would have -- and so
+    does a path that merely climbs out of ``evidence/`` again.  An explicit
+    ``--out`` under ``artifacts/`` is always allowed, deviating or not.
+    """
+    runner = _load_run_build_a()
+    canonical = runner.STRUCTURES["A"]["out"]
+    named = str(Path(canonical).resolve())
+
+    for typed in (canonical,
+                  "evidence/termination/build_A_50ohm.json",
+                  "evidence/../evidence/termination/build_A_50ohm.json"):
+        with pytest.raises(SystemExit) as excinfo:
+            runner.resolve_artefact_out(
+                "A", out=typed, netlist=None,
+                vis_dump="artifacts/vis_dump_A_plain.npz", default_out=canonical)
+        message = str(excinfo.value)
+        assert named in message, typed
+        assert "REFUSED" in message
+        assert "--out artifacts/" in message
+
+    # explicit, under artifacts/: fine, and used verbatim (not renamed)
+    ok = runner.resolve_artefact_out(
+        "A", out="artifacts/build_A_50ohm_pulse.json", netlist=None,
+        vis_dump="artifacts/vis_dump_A_plain.npz", default_out=canonical)
+    assert ok == "artifacts/build_A_50ohm_pulse.json"
+
+    # another arm's default document is not this run's to write either, even
+    # with no deviation at all -- the path is not what arm B's run produces
+    with pytest.raises(SystemExit) as excinfo:
+        runner.resolve_artefact_out(
+            "B", out=canonical, netlist=None, vis_dump=None,
+            default_out=runner.STRUCTURES["B"]["out"])
+    assert named in str(excinfo.value)
+
+
+def test_the_canonical_cw_run_still_owns_the_evidence_document():
+    """``--structure A`` bare -- no dump, no netlist -- is arm A's CW run.
+
+    Its artefact is the tracked document and it must stay that: ``excite`` is
+    ``cw`` because ``build_kwargs`` sets it and only a ``--vis-dump`` overrides
+    it to ``pulse`` inside the solve.  An arm's OWN netlist is not a deviation
+    either, which is what keeps a bare ``--structure D`` writing D's artefact.
+    """
+    runner = _load_run_build_a()
+    out = runner.resolve_artefact_out(
+        "A", out=None, netlist=None, vis_dump=None,
+        default_out=runner.STRUCTURES["A"]["out"])
+    assert Path(out) == Path(runner.OUT_DEFAULT)
+    assert Path(out).resolve() == (runner.REPO / "evidence" / "termination" /
+                                   "build_A_50ohm.json")
+
+    out_d = runner.resolve_artefact_out(
+        "D", out=None, netlist=runner.STRUCTURES["D"]["netlist"], vis_dump=None,
+        default_out=runner.STRUCTURES["D"]["out"])
+    assert Path(out_d) == Path(runner.STRUCTURES["D"]["out"])
+
+
+def test_the_geometry_names_the_netlist_it_applied_and_no_key_without_one():
+    """The circuit reaches ``geometry``, and a netlist-free geometry keeps its keys.
+
+    ``run.kwargs.load_netlist`` carries the document, but the geometry is what a
+    reader asks "what was on this mesh" of -- and until this key existed a diode
+    and a stub cut had identical geometry sections.  Both halves are pinned, in
+    the style of the tone test above: a document PRESENT is named (path, own
+    name, element kinds, element count) and NO document leaves the key out, so a
+    netlist-free artefact is byte-for-byte what it always was.
+    """
+    runner = _load_run_build_a()
+    path = (Path(__file__).resolve().parents[1] / "evidence" / "termination" /
+            "netlists" / "load_stub.json")
+    record = runner.netlist_geometry_record(json.loads(path.read_text()),
+                                           path)
+    assert set(record) == {"path", "name", "kinds", "n_elements"}
+    assert record["path"] == str(path.resolve())
+    # the document's OWN name, not the filename's reading of it
+    assert record["name"] == "load_stub"
+    # a stub cut: one transmission line and one short -- not a diode cut ["D"]
+    assert record["kinds"] == ["T", "V"]
+    assert record["n_elements"] == 2
+    # plain JSON, because that is what the writer puts in the artefact
+    assert json.loads(json.dumps(record)) == record
+
+    # no netlist at all: None, so the caller's ``if nl:`` never adds the key --
+    # including the read on a geometry that never had one
+    assert runner.netlist_geometry_record(None, None) is None
+    assert runner.netlist_geometry_record({}.get("load_netlist"), None) is None
+

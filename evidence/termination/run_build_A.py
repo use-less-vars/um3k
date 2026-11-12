@@ -112,6 +112,10 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 OUT_DEFAULT = REPO / "evidence" / "termination" / "build_A_50ohm.json"
+#: Everything under here is EVIDENCE -- a document a reader opens as the record
+#: of ONE certified run.  A run that does not reproduce a document may not write
+#: to it; the one home for that decision is ``resolve_artefact_out`` below.
+EVIDENCE_DIR = (REPO / "evidence").resolve()
 TRIP_SUFFIX = ".trip.json"
 
 # --- the trip clause, re-implemented (see module docstring) -------------------
@@ -340,6 +344,38 @@ def quarter_wave_records(entries):
                       else float(entry["f_hz"])),
              "declared_tone_retuned": bool(entry["declared_tone_retuned"])}
             for entry in (entries or ())]
+
+
+def netlist_geometry_record(doc, path):
+    """``geometry["load_netlist"]``: which document terminated the cut, or ``None``.
+
+    ``run.kwargs.load_netlist`` already carries the whole document, but the
+    GEOMETRY is what a reader (and anything that plots a record against a mesh)
+    reaches for when asking what was on this mesh -- and until this key existed a
+    diode-terminated and a stub-terminated artefact had the SAME ``geometry``
+    section, with the circuit recoverable only from ``run``.  So the provenance
+    is written where the geometry is: the file the run was pointed at
+    (``path``, resolved), the document's OWN ``name``, the element ``kinds`` it
+    carries and how many elements there are -- enough to tell a diode cut
+    (``["D"]``) from a stub cut (``["T", "V"]``) without re-parsing anything.
+    It names the document; it does not restate its values (those are in
+    ``run.kwargs.load_netlist``, the parse of the same file).
+
+    ``None`` in, ``None`` out: the caller adds the key ONLY when this returns
+    something, because a netlist-free run's geometry must stay byte-identical to
+    the geometry it had before this key existed.
+    """
+    if doc is None:
+        return None
+    elements = [el for el in (doc.get("elements") or ())
+                if isinstance(el, dict)]
+    return {
+        "path": None if path is None else str(Path(path).resolve()),
+        "name": None if doc.get("name") is None else str(doc.get("name")),
+        "kinds": sorted({str(el["kind"]) for el in elements
+                         if el.get("kind") is not None}),
+        "n_elements": len(elements),
+    }
 
 
 class Trip:
@@ -709,6 +745,85 @@ def label_from_stem(stem: str) -> str:
     if not tokens:
         return LABEL
     return tokens[i].upper()
+
+
+def resolve_artefact_out(structure: str, *, out, netlist, vis_dump,
+                         default_out: str) -> str:
+    """Where this run may write its artefact: redirect a deviating run, or refuse.
+
+    WHY THIS EXISTS.  ``--vis-dump`` makes the solve pulse-excited (a Ricker
+    wavelet is only a travelling packet on a pulse, never on a CW tone) and
+    ``--netlist`` replaces the ``series_r`` termination with a circuit, but
+    NEITHER moves the artefact path: arm A's default ``out`` IS
+    ``evidence/termination/build_A_50ohm.json``, the certified CW 50 ohm
+    reference.  So ``--structure A --vis-dump ...`` used to write a pulse record
+    straight over a tracked CW document -- it happened once, silently, and the
+    file's own contents then contradicted everything the document is cited for.
+    A DEVIATION is ``pulse`` (a dump was asked for), ``netlist`` (a document the
+    arm does not own was named) or both; an arm's OWN netlist -- the one its row
+    ships -- is not a deviation, which is why a bare ``--structure D`` still
+    writes D's own artefact.
+
+    Two rules, in this order:
+
+    1. IMPLICIT path (no ``--out``), a deviation, and the default would land
+       inside ``evidence/`` -> redirect to
+       ``artifacts/build_<structure>_<kind>.json``, where ``<kind>`` NAMES the
+       deviation (``pulse``, ``netlist``, ``pulse_netlist``).  Only arm A's
+       default is inside ``evidence/``, so B/C/D keep the filenames they always
+       had -- and a deviating run never reaches evidence either way.
+    2. ANY path -- typed or default -- that RESOLVES inside ``evidence/`` and is
+       not this arm's own canonical CW document -> ``SystemExit`` naming that
+       path and telling the caller to pass ``--out artifacts/...``.  On the
+       RESOLVED path, so ``--out evidence/../evidence/termination/build_A_50ohm
+       .json`` from a pulse run is refused exactly like the default would be.
+
+    REJECTED ALTERNATIVES, and why they are not this.  (a) Comparing mtimes or
+    hashes AFTER the write: by then the evidence document is already the wrong
+    bytes and the comparison buys nothing -- it reports the loss instead of
+    preventing it.  (b) A lock file / "writing" marker: this script's trip calls
+    ``os._exit``, so a killed run leaves the marker behind and the document
+    half-written, and every later run then has to decide what a stale lock
+    means.  A fail-closed decision taken BEFORE the first byte is written has
+    neither failure mode, which is why this is a path rule and not a detector.
+
+    Pure and cheap: no I/O beyond ``Path.resolve()``, no directory created, no
+    process state read -- so it is called at argument-resolution time, ahead of
+    the banner, the trip thread and the first timestep.
+    """
+    owned_netlist = STRUCTURES[structure].get("netlist")
+    foreign_netlist = netlist is not None and (
+        owned_netlist is None
+        or Path(netlist).resolve() != Path(owned_netlist).resolve())
+    deviations = []
+    if vis_dump is not None:
+        deviations.append("pulse")
+    if foreign_netlist:
+        deviations.append("netlist")
+    canonical = Path(default_out).resolve()
+    if out is None:
+        path = canonical
+        if deviations and path.is_relative_to(EVIDENCE_DIR):
+            # Never the evidence document, and never a name that could be
+            # mistaken for one: the deviation is in the filename.
+            path = (REPO / "artifacts" /
+                    f"build_{structure}_{'_'.join(deviations)}.json")
+    else:
+        path = Path(out)
+    resolved = path.resolve()
+    if resolved.is_relative_to(EVIDENCE_DIR) and not (
+            not deviations and resolved == canonical):
+        why = (" + ".join(deviations) if deviations
+               else "a typed path that is not this arm's canonical document")
+        raise SystemExit(
+            f"REFUSED: this run would write {resolved}, inside evidence/, but "
+            f"that document is not the canonical CW record of arm {structure} "
+            f"this run produces ({why}). An evidence document is the record of "
+            "ONE certified run and cannot be recovered once overwritten: this "
+            "tree keeps no history. Pass --out artifacts/<name>.json to write "
+            "this run's record outside evidence/, or drop the flag that makes "
+            "it deviate from the canonical run.")
+    return str(path)
 
 
 def _vis_estimate_mb(nt: int, nt_x: int, nx: int, ny: int, nz: int) -> float:
@@ -2888,20 +3003,11 @@ def main(argv: list[str] | None = None) -> int:
              "measured velocity, print the JSON summary and exit 0. No "
              f"argument: {VIS_SELFTEST_DEFAULT}.")
     args = ap.parse_args(argv)
-    # A netlist changes WHAT terminates the cut, but the artefact path does not
-    # follow it: with no --out, a netlist run would land on the structure's own
-    # default artefact (A -> evidence/termination/build_A_50ohm.json), the
-    # certified series_r reference whose own `loads` record says 50 ohm.  Writing
-    # netlist numbers there would clobber the reference with a file whose
-    # provenance contradicts its contents, so this fails closed instead.
-    if args.netlist is not None and args.out is None:
-        raise SystemExit(
-            f"REFUSED: --netlist {args.netlist}: a netlist run needs an explicit "
-            "--out. Without one it would be written over the structure's default "
-            f"artefact ({STRUCTURES[args.structure]['out']}), which is the "
-            "certified series_r reference whose `loads` record names a "
-            f"{STRUCTURES[args.structure]['load_ohm']:g} ohm resistor, not this "
-            "netlist. Give the run its own --out.")
+    # What terminates the cut (a --netlist) and how the line is driven (a
+    # --vis-dump forces excite='pulse') both leave the artefact path alone, and
+    # arm A's default path IS a tracked evidence document.  That is the whole
+    # failure this file was repaired for, and it has ONE home below:
+    # resolve_artefact_out, called before anything is written.
     # The arm comes from --structure alone. It is never inferred from the --out
     # filename: in a solver the physics is chosen by a flag, and a typo in a
     # path must not change the simulated load.
@@ -2923,16 +3029,25 @@ def main(argv: list[str] | None = None) -> int:
     # of hiding which number came from where.
     if args.load_ohm is None:
         args.load_ohm = STRUCTURES[structure]["load_ohm"]
-    if args.out is None:
-        args.out = STRUCTURES[structure]["out"]
+    # --vis-dump resolves BEFORE --out, because a dump IS a deviation -- it
+    # forces excite='pulse' inside the solve -- and the rule below has to see
+    # the RESOLVED value: a bare ``--vis-dump`` means "this arm's own dump",
+    # which is a pulse run and must not be handed arm A's evidence artefact.
     if args.vis_dump == STRUCTURE_DUMP_SENTINEL:
         args.vis_dump = STRUCTURES[structure]["vis_dump"]
+    # ONE home for "may this run write here".  A deviation (a dump, or a netlist
+    # the arm does not own) with an implicit --out is redirected off an evidence
+    # default, and ANY resolved path inside evidence/ that is not this arm's own
+    # canonical CW document is refused -- here, at argument resolution, so the
+    # refusal lands before the banner, before the trip thread and before the
+    # first timestep, never mid-write.
+    args.out = resolve_artefact_out(
+        structure, out=args.out, netlist=args.netlist,
+        vis_dump=args.vis_dump, default_out=STRUCTURES[structure]["out"])
     # The netlist is a default VALUE on the same footing as --load-ohm and
-    # --out, resolved HERE and not in the parser - which is why it comes after
-    # the refusal above: an explicit --netlist with no --out still refuses
-    # (that guard is about a caller pointing the solver at an arbitrary
-    # circuit and then letting it write wherever the arm's default artefact
-    # lives).  An ARM's own netlist is different: it ships with the arm, so
+    # --out, resolved HERE and not in the parser -- and AFTER the path rule
+    # above, so that "an explicit --netlist" there means one the CALLER typed.
+    # An ARM's own netlist is different: it ships with the arm, so
     # ``--structure D`` alone may use it AND D's own default --out, and cannot
     # clobber A's certified reference.  The other two options were considered
     # and rejected: making --netlist required for D (a bare ``--structure D``
@@ -3225,6 +3340,13 @@ def main(argv: list[str] | None = None) -> int:
     qw = quarter_wave_records(g.get("load_netlist_quarter_wave"))
     if qw:
         geom["load_netlist_quarter_wave"] = qw
+    # The netlist's own provenance, when one was applied -- CONDITIONALLY, for
+    # the same reason as the tone above: a netlist-free run must keep exactly
+    # the geometry it had before this key existed (absent means "no netlist",
+    # never "the same netlist as last time").
+    nl = netlist_geometry_record(kwargs.get("load_netlist"), args.netlist)
+    if nl:
+        geom["load_netlist"] = nl
     cells = int(g.get("nx", 0)) * int(g.get("ny", 0)) * int(g.get("nz", 0))
 
     # AC-7's beta_modal is deliberately NOT computed here: a hand-rolled call to
