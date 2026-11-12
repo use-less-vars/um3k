@@ -36,6 +36,7 @@ more cell in any direction crosses the limit and raises
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import time
 import warnings
@@ -2492,6 +2493,154 @@ def _s11_settling_block(
     }
 
 
+def snapped_tone(dt, nsteps, n_warm, f_target):
+    """The tone a microstrip run is actually ANALYSED at, and the window it uses.
+
+    A run is never analysed at ``f_target``.  The DFT of the accepted window has
+    bins spaced ``1/span`` with ``span = n_acc * dt``, and the study reads the
+    bin NEAREST the request:
+
+        n_acc = nsteps - n_warm,  span = n_acc * dt
+        k     = max(1, round(f_target * span))
+        f0    = k / span
+
+    Every number the study reports belongs to ``f0``, not to ``f_target``: the
+    station phasors, ``s11``, ``s21`` -- and the delay a quarter-wave
+    termination has to carry, because a stub that is a quarter wave at
+    ``f_target`` is a quarter wave at ``f0`` only if ``f_target == f0``.
+
+    ONE home for that arithmetic, deliberately.  The SPICE bridge re-derives a
+    ``T`` element's ``tau`` from this ``f0`` (see ``_quarter_wave_retune``), so
+    a second copy of the rule -- e.g. "the tone is VIS_F_REF_HZ" -- is a second
+    source of truth for one number, and the two drift apart silently.  They did:
+    a stub cut for the CW default (5.827786408328 GHz, ``n_warm = nsteps//4``)
+    was launched in a ``--vis-dump`` run analysed at 6.009904734 GHz
+    (``excite='pulse'`` forces ``n_warm = 0``), a 3 % tone shift with the delay
+    left behind.
+
+    Parameters
+    ----------
+    dt : float
+        Step size (s); the run's own, after ``cfl_dt`` and ``dt_scale``.
+    nsteps : int
+        Total steps in the record.
+    n_warm : int or None
+        Steps discarded before the transform.  ``None`` means the default
+        quarter of the record.  A PULSE run passes ``0`` (the caller does that:
+        a wavelet is the whole record and has no tone to settle), and that is
+        the only reason this function cannot work the tone out by itself.
+    f_target : float
+        The requested tone (Hz).  The returned ``f0`` is the nearest bin to it
+        -- equal to ``f_target`` only when the request already lies on the
+        grid.
+
+    Returns
+    -------
+    f0 : float
+        The analysed tone (Hz), one of the window's own DFT bins.
+    n_warm : int
+        The resolved warm-up window.
+    n_acc : int
+        The number of steps transformed, ``nsteps - n_warm``.
+
+    Raises
+    ------
+    ValueError
+        ``n_warm`` leaves no steps to transform.
+    """
+    n_warm = nsteps // 4 if n_warm is None else int(n_warm)
+    n_acc = nsteps - n_warm
+    if n_acc < 1:
+        raise ValueError(
+            f"n_warm={n_warm} leaves no steps to transform out of nsteps={nsteps}")
+    span = n_acc * dt
+    f0 = max(1, int(round(float(f_target) * span))) / span
+    return f0, n_warm, n_acc
+
+
+def _quarter_wave_retune(records, f_hz, *, dt=None):
+    """Record -- and shout about -- a declared tone that is not the run's tone.
+
+    ``records`` is ``Netlist.quarter_wave`` from :func:`emfit.netlist.parse_netlist`:
+    one entry per ``T`` element that declared ``quarter_wave_hz``.  ``f_hz`` is
+    the tone the run will ACTUALLY be analysed at (``snapped_tone``'s ``f0``).
+
+    Returns the records with ``f_hz`` and ``declared_tone_retuned`` set, ready
+    for the artefact's ``geometry['load_netlist_quarter_wave']``.
+
+    A moved tone is WARNED about on stderr, never raised: the run that is about
+    to be launched is self-consistent -- ``tau`` is the quarter-wave delay of the
+    tone the run actually uses, which is the entire point of re-deriving it --
+    so raising would refuse a CORRECT run and destroy the forensic record of a
+    tone that moved, which is the one thing this check exists to keep.  The
+    rejected alternative is a hard ``ValueError`` here; it would also make a
+    second, differently-configured arm unrunnable rather than reportable.
+
+    A ``Netlist`` handed in already parsed keeps the delay it was parsed with
+    (the branch is frozen), and the warning says so instead of pretending the
+    delay moved.
+    """
+    f_hz = float(f_hz)
+    report = []
+    for record in records:
+        entry = dict(record)
+        entry["f_hz"] = f_hz
+        declared = float(entry["declared_hz"])
+        # Relative slack, for the same reason the parser's self-check is
+        # relative: the tones are ~1e10 Hz, so an absolute tolerance of even
+        # 1 Hz would hide nothing, but tau ~ 1e-11 s makes an absolute tau
+        # tolerance meaningless.  1e-9 of the tone is ~6 Hz here -- far below
+        # the bin spacing (~0.55 GHz) and far above float noise.
+        moved = abs(declared - f_hz) > 1e-9 * max(declared, f_hz)
+        entry["declared_tone_retuned"] = bool(moved)
+        report.append(entry)
+        if not moved:
+            continue
+        old_tau = float(entry["tau_document_s"])
+        new_tau = float(entry["tau_s"])
+        moved_delay = old_tau != new_tau
+        steps = (f" (tau/dt = {old_tau / dt!r} -> {new_tau / dt!r})"
+                 if dt else "")
+        lines = [
+            "=" * 78,
+            "emfit.studies.microstrip_wave: QUARTER-WAVE TONE MISMATCH",
+            f"  netlist element {entry['name']!r} declares a quarter-wave line",
+            f"  at {declared / 1e9:.6f} GHz, but this run is ANALYSED at",
+            f"  {f_hz / 1e9:.6f} GHz.",
+        ]
+        if moved_delay:
+            lines.append(
+                f"  Its tau has been re-derived for the tone in use: {old_tau!r} s"
+                f" -> {new_tau!r} s{steps}.")
+        else:
+            lines += [
+                f"  Its tau was NOT re-derived: {old_tau!r} s, unchanged.",
+                "  This Netlist arrived already parsed, so its delay is whatever",
+                "  tone it was parsed for -- the stub above is a quarter wave at",
+                "  the DECLARED tone, not at the tone this run analyses.",
+            ]
+        lines += [
+            "  Why the tone moved: the analysed tone is the DFT bin nearest",
+            "  f_target, f0 = k/(n_acc*dt), with n_acc = nsteps - n_warm and",
+            "  n_warm = nsteps//4 -- except on excite='pulse', where n_warm = 0",
+            "  and the same grid gives a different bin (span = nsteps*dt instead",
+            "  of (nsteps - nsteps//4)*dt).  Anything that forces excite='pulse'",
+            "  therefore moves every tone, and in this repository that is",
+            "  evidence/termination/run_build_A.py's --vis-dump, whose kwargs",
+            "  block sets excite='pulse' on ANY run it is handed -- so a banked",
+            "  CW tau does not describe a --vis-dump run of the same arm.",
+            "  This is NOT fatal: the launched run is self-consistent, because",
+            "  tau is now the quarter-wave delay of the tone the run actually",
+            "  uses.  Both numbers are recorded in the artefact as",
+            "  geometry['load_netlist_quarter_wave'].  Raising here was",
+            "  rejected: it would refuse a correct run and destroy the record",
+            "  of the tone that moved, which is what this check is for.",
+            "=" * 78,
+        ]
+        print("\n".join(lines), file=sys.stderr)
+    return tuple(report)
+
+
 def microstrip_wave(
     *,
     # Diagnostic-only settling block (see _s11_settling_block, defect DR-19):
@@ -3083,13 +3232,11 @@ def microstrip_wave(
     # a tone that has to settle first, so there is no warm-up window to open.
     if excite == "pulse":
         n_warm = 0
-    n_warm = nsteps // 4 if n_warm is None else int(n_warm)
-    n_acc = nsteps - n_warm
-    if n_acc < 1:
-        raise ValueError(
-            f"n_warm={n_warm} leaves no steps to transform out of nsteps={nsteps}")
-    span = n_acc * dt
-    f0 = max(1, int(round(float(f_target) * span))) / span
+    # The bin rule itself lives in ``snapped_tone`` -- one home, tested
+    # directly -- because the SPICE bridge below re-derives a quarter-wave
+    # stub's tau from this very ``f0``.  A second copy of the arithmetic here
+    # is how a termination ends up cut for a tone the run no longer uses.
+    f0, n_warm, n_acc = snapped_tone(dt, nsteps, n_warm, f_target)
 
     # --- probe stations, snapped to node layers ----------------------------
     wanted = np.linspace(float(x_first), float(x_last), n_stations)
@@ -3305,6 +3452,10 @@ def microstrip_wave(
     spice_state = None
     spice_e = None
     spice_h = None
+    # What the netlist declared about its lines' design tone, versus the tone
+    # this run is analysed at (``f0`` above).  Empty unless a ``T`` element
+    # carried ``quarter_wave_hz``; written to the artefact only when non-empty.
+    load_netlist_quarter_wave = ()
     # The drive the closure reads, written once per step: a closure has no
     # other way to see a per-step value.
     spice_drive = [0.0]
@@ -3313,7 +3464,23 @@ def microstrip_wave(
         m_eps_all = np.asarray(m_eps, dtype=float)
         network = getattr(load_netlist, "network", None)
         if network is None:
-            network = parse_netlist(load_netlist).network
+            # Parsed HERE, with the tone this run is ACTUALLY analysed at: a
+            # ``T`` element that declares ``quarter_wave_hz`` is delivered the
+            # quarter-wave delay of ``f0``, not the delay written in the file.
+            # Without this the stub is cut for the document's tone and the run
+            # reads a different bin -- a silent 3 % shift of the one number the
+            # arm exists to place (5827786408.327286 Hz vs 6009904733.587513 Hz
+            # at the defaults, :func:`snapped_tone`).
+            parsed_netlist = parse_netlist(load_netlist, f_hz=f0)
+            load_netlist_quarter_wave = _quarter_wave_retune(
+                parsed_netlist.quarter_wave, f0, dt=dt)
+            network = parsed_netlist.network
+        else:
+            # An already-parsed Netlist carries the delay it was parsed with
+            # (the branch is frozen); report that pair honestly rather than
+            # pretending this call retuned it.
+            load_netlist_quarter_wave = _quarter_wave_retune(
+                getattr(load_netlist, "quarter_wave", ()), f0, dt=dt)
 
         def _advance(e_local, h, _dt):
             """The load-free field step: the cut's edges go in and come out."""
@@ -4096,6 +4263,14 @@ def microstrip_wave(
         "n_bins": n_bins, "f_pulse": f_pulse,
         "poynting": bool(poynting),
     }
+    # The netlist's declared design tone beside the tone this run analyses, and
+    # the tau each implies.  ABSENT unless a ``T`` element declared one, so the
+    # geometry of every run without such a netlist is exactly what it was: a
+    # diff in that block means something happened, and its absence means nothing
+    # was declared (same convention as ``load_netlist`` in the artefact view).
+    if load_netlist_quarter_wave:
+        geometry["load_netlist_quarter_wave"] = [
+            dict(record) for record in load_netlist_quarter_wave]
 
     if sink is not None:
         drove = (f"driven at {f0 / 1e9:.3f} GHz" if excite != "pulse"

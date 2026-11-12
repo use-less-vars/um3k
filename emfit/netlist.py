@@ -139,6 +139,7 @@ __all__ = [
     "TransientResult",
     "Waveform",
     "parse_netlist",
+    "quarter_wave_tau",
 ]
 
 _KINDS = ("R", "L", "C", "V", "I", "D", "T")
@@ -160,13 +161,32 @@ _ELEMENT_FIELDS = {
     # derived from geometry here would be a second source of truth for the one
     # number the line is actually made of.  Whoever lays the line out can
     # compute tau = len_mm * sqrt(eps_eff) / c and write it down.
-    "T": frozenset({"kind", "name", "nodes", "z0", "tau"}),
+    #
+    # 'quarter_wave_hz' is the one thing a document may say about a line BESIDE
+    # z0/tau, and it does not compete with tau: it names the tone the delay was
+    # cut for, and tau must equal quarter_wave_tau(that tone) -- checked at
+    # staging, so a file cannot claim one tone and carry another's delay.  It is
+    # a declaration, not geometry: len_mm/eps_eff would let a *different* tau be
+    # derived, whereas a tone names the tau already written down.  What it buys
+    # is that the parser can RE-DERIVE tau for the tone a run is actually
+    # analysed at (``parse_netlist(..., f_hz=...)``) instead of simulating a
+    # line nobody asked for -- and can say so out loud when the two differ.
+    "T": frozenset({"kind", "name", "nodes", "z0", "tau", "quarter_wave_hz"}),
 }
 _WAVEFORM_FIELDS = {
     "step": frozenset({"type", "amplitude", "delay"}),
     "sine": frozenset({"type", "amplitude", "frequency", "phase", "delay"}),
 }
 _RESERVED_WAVEFORMS = ("pulse",)
+# Relative tolerance on the ONE consistency check a document gets against itself:
+# a T element's ``tau`` versus ``quarter_wave_tau(quarter_wave_hz)``.  1e-6 is
+# loose enough that a delay written down as a rounded float (and re-read on a
+# different machine) still agrees with its own tone, and tight enough that an
+# actual retune -- the smallest one in the tree is 3 % (5827786408.327286 Hz vs
+# 6009904733.587513 Hz, evidence/termination/netlists/load_stub.json) -- cannot
+# pass.  An absolute tolerance would be meaningless here: tau is ~1e-11 s, so
+# 1e-6 s would accept every tone in the band.
+_QUARTER_WAVE_RTOL = 1e-6
 
 
 class NetlistError(ValueError):
@@ -416,6 +436,18 @@ class Netlist:
         Index -> name, ``node_names[0] == "0"``.
     element_index : dict
         Element name -> branch index.
+    quarter_wave : tuple of dict
+        One record per ``T`` element that declared ``quarter_wave_hz``, in
+        element order: ``{"name", "declared_hz", "tau_document_s", "tau_s",
+        "f_hz"}``.  ``declared_hz`` is the tone the document's own ``tau`` was
+        cut for; ``tau_s`` is the delay this parse actually DELIVERED (the
+        document's, unless :func:`parse_netlist` was told the run's tone with
+        ``f_hz``, in which case it is ``quarter_wave_tau(f_hz)``);
+        ``tau_document_s`` is what the file itself said, kept so a retune is
+        written down rather than inferred; ``f_hz`` is the tone the parse was
+        asked for (``None`` when the caller did not say).  Empty for every
+        document that declares no tone -- which is every document written
+        before the field existed, and every document that has no ``T``.
     """
 
     name: str
@@ -424,6 +456,11 @@ class Netlist:
     node_index: Mapping
     node_names: tuple
     element_index: Mapping
+    # Trailing and DEFAULTED on purpose: ``()`` is the honest value for a
+    # netlist that never said which tone its delays were cut for, and a caller
+    # that builds a Netlist by hand (or reads only ``network``) keeps working
+    # untouched.
+    quarter_wave: tuple = ()
 
     def element(self, name):
         """The :class:`Element` called ``name``."""
@@ -638,7 +675,53 @@ def _waveform(spec, where):
         raise NetlistError(f"{where}: field 'waveform': {exc}") from None
 
 
-def parse_netlist(source):
+def quarter_wave_tau(f_hz):
+    """The delay of a line that is a quarter wave long at ``f_hz``.
+
+    ``tau = 1 / (4 f)``.  At that tone a lossless line of delay ``tau``,
+    shorted at its far end, presents ``Zin = j z0 tan(2 pi f tau) =
+    j z0 tan(pi/2)``, i.e. it looks like an OPEN -- which is exactly what a
+    quarter-wave stub termination is for (see
+    ``evidence/termination/netlists/load_stub.md``).
+
+    This is the single definition of the number a ``T`` element's ``tau`` and a
+    document's ``quarter_wave_hz`` are tied together by: the parser checks a
+    document against it, and re-derives the DELIVERED ``tau`` from it when it is
+    told the tone the run will actually be analysed at.  One expression, one
+    home -- a second copy of ``1/(4f)`` in a caller is how the two drift apart.
+
+    Parameters
+    ----------
+    f_hz : float
+        Hertz, finite and strictly positive.
+
+    Returns
+    -------
+    float
+        Seconds.
+
+    Raises
+    ------
+    ValueError
+        ``f_hz`` is not a finite, strictly positive number.  (A ``ValueError``
+        because :class:`NetlistError` is one; the parser re-raises it as a
+        ``NetlistError`` naming the element and the field.)
+    """
+    try:
+        f_hz = float(f_hz)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"a quarter-wave tone must be a number in hertz; got {f_hz!r}"
+        ) from None
+    if not np.isfinite(f_hz) or f_hz <= 0.0:
+        raise ValueError(
+            f"a quarter-wave tone must be finite and strictly positive; got "
+            f"{f_hz!r}"
+        )
+    return 1.0 / (4.0 * f_hz)
+
+
+def parse_netlist(source, *, f_hz=None):
     """Parse a JSON netlist into a :class:`Netlist`.
 
     Parameters
@@ -648,6 +731,17 @@ def parse_netlist(source):
         or a path to a file holding that text.  A string that starts with
         ``{`` is always read as text; anything else is treated as a path and
         reported as such if no such file exists.
+    f_hz : float, keyword-only, optional
+        The tone the circuit will actually be ANALYSED at, in hertz.  When
+        given, every ``T`` element that declares ``quarter_wave_hz`` is
+        delivered ``tau = quarter_wave_tau(f_hz)`` -- the delay of a quarter
+        wave at THIS tone -- instead of the ``tau`` written in the document,
+        and the substitution is recorded in :attr:`Netlist.quarter_wave`.  A
+        ``T`` element that declares no tone is never touched: nothing here can
+        know what its delay was cut for.  ``None`` (the default) delivers every
+        ``tau`` exactly as written, so a caller that does not know its tone gets
+        the document verbatim and byte-identical behaviour to before the
+        parameter existed.
 
     Returns
     -------
@@ -664,7 +758,12 @@ def parse_netlist(source):
         ``C`` -- that check is ``Branch``'s, reused here and only re-worded to
         name the element); a ``waveform`` on a non-source; a source with
         neither ``value`` nor ``waveform``; an unknown, malformed or reserved
-        waveform.  Nothing is repaired, defaulted away or dropped.
+        waveform; a ``quarter_wave_hz`` that is not a finite positive frequency,
+        or that disagrees with the element's own ``tau`` (relative tolerance
+        ``1e-6`` -- a document may not declare one tone and carry another's
+        delay).  Nothing is repaired, defaulted away or dropped; the one thing
+        that is DERIVED rather than copied is a declared ``tau`` for the tone
+        given as ``f_hz``, and that derivation is recorded in the Netlist.
     """
     document = _load_document(source)
     if not isinstance(document, Mapping):
@@ -762,6 +861,12 @@ def parse_netlist(source):
         value = entry.get("value", 0.0)
         waveform = _waveform(entry["waveform"], label) if has_waveform else None
         model = {}
+        # A T element's tone declaration, carried from here to the build pass,
+        # where the delay is actually decided.  ``None`` on every other kind,
+        # and on a T that declares no tone -- which is then taken exactly as
+        # written, for ever, because nothing here can know what its delay was
+        # cut for.
+        quarter_wave = None
         if kind == "D":
             # defaults mirror the Diode dataclass; validation of the numbers
             # themselves is Diode's job, so it happens in one place only
@@ -780,6 +885,44 @@ def parse_netlist(source):
                         "the parser carries no default for it"
                     )
                 model[field] = entry[field]
+            # The optional tone declaration, checked against the document's
+            # OWN tau.  This is the one place the file is held to the single
+            # number it is made of: without it a document could say "cut for
+            # 5.83 GHz" while carrying 4.16e-11 s, and a reader (or a later
+            # re-derivation from the declared tone) would be reading a lie.
+            # The check is RELATIVE (1e-6): tau is ~1e-11 s here, so an
+            # absolute tolerance would accept every tone in the band, and an
+            # actual retune in this tree is a 3 % move, not a rounding noise.
+            declared_hz = entry.get("quarter_wave_hz")
+            if declared_hz is not None:
+                try:
+                    declared_tau = quarter_wave_tau(declared_hz)
+                except ValueError as exc:
+                    raise NetlistError(
+                        f"{label}: field 'quarter_wave_hz': {exc}"
+                    ) from None
+                try:
+                    stated_tau = float(entry["tau"])
+                except (TypeError, ValueError):
+                    stated_tau = float("nan")
+                if not (
+                    np.isfinite(stated_tau)
+                    and abs(stated_tau - declared_tau)
+                    <= _QUARTER_WAVE_RTOL * declared_tau
+                ):
+                    raise NetlistError(
+                        f"{label}: field 'tau' ({entry['tau']!r} s) is not the "
+                        f"quarter-wave delay of field 'quarter_wave_hz' "
+                        f"({declared_hz!r} Hz), which is "
+                        f"quarter_wave_tau = {declared_tau!r} s; a T element "
+                        "may not declare one tone and carry another's delay "
+                        "-- write the tau that belongs to the tone, or drop "
+                        "the declaration"
+                    )
+                quarter_wave = {
+                    "declared_hz": float(declared_hz),
+                    "tau_document_s": stated_tau,
+                }
         staged.append(
             {
                 "kind": kind,
@@ -788,6 +931,7 @@ def parse_netlist(source):
                 "value": value,
                 "model": model,
                 "waveform": waveform,
+                "quarter_wave": quarter_wave,
                 "label": label,
             }
         )
@@ -870,6 +1014,10 @@ def parse_netlist(source):
     branches = []
     elements = []
     element_index = {}
+    # One record per T element that declared the tone its delay was cut for;
+    # empty for every other document, so :attr:`Netlist.quarter_wave` says
+    # "nothing was declared" rather than "nothing was needed".
+    quarter_wave_records = []
     for k, (element, nodes) in enumerate(zip(staged, resolved)):
         label = element["label"]
         if element["kind"] == "D":
@@ -879,8 +1027,39 @@ def parse_netlist(source):
                 raise NetlistError(f"{label}: field 'model': {exc}") from None
             branch_value = 0.0
         elif element["kind"] == "T":
+            model = dict(element["model"])
+            # The delay, decided HERE, once: if the document declared the tone
+            # its tau was cut for, then tau belongs to that tone and is
+            # re-derived for the tone this parse was asked about (``f_hz``,
+            # the tone the run will actually be analysed at).  With no ``f_hz``
+            # the document's own number is delivered unchanged, which is what
+            # keeps every existing caller byte-identical.
+            #
+            # Why derive it here rather than in the caller: the caller would
+            # have to reach into the branch list and poke ``tau`` on a frozen
+            # TransmissionLine, i.e. two sources of truth for one number.  The
+            # record below is what the caller gets to warn about; the number
+            # itself is decided in the one place that builds branches.
+            declared = element["quarter_wave"]
+            if declared is not None:
+                delivered_tau = declared["tau_document_s"]
+                if f_hz is not None:
+                    # f_hz is validated by quarter_wave_tau itself; a bad tone
+                    # is a caller error, so it propagates as the ValueError it
+                    # is rather than being re-worded as a document error.
+                    delivered_tau = quarter_wave_tau(f_hz)
+                model["tau"] = delivered_tau
+                quarter_wave_records.append(
+                    {
+                        "name": element["name"],
+                        "declared_hz": declared["declared_hz"],
+                        "tau_document_s": declared["tau_document_s"],
+                        "tau_s": delivered_tau,
+                        "f_hz": None if f_hz is None else float(f_hz),
+                    }
+                )
             try:
-                branch = TransmissionLine(nodes, **element["model"])
+                branch = TransmissionLine(nodes, **model)
             except (TypeError, ValueError) as exc:
                 raise NetlistError(f"{label}: {exc}") from None
             branch_value = 0.0
@@ -911,4 +1090,5 @@ def parse_netlist(source):
         node_index=dict(node_index),
         node_names=tuple(node_names[index] for index in range(n_nodes)),
         element_index=element_index,
+        quarter_wave=tuple(quarter_wave_records),
     )

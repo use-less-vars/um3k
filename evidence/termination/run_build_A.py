@@ -604,17 +604,43 @@ STRUCTURES = {
         # falsifies "no loss, therefore full transmission", and it is the only
         # arm whose termination transforms impedance rather than absorbing it.
         #
-        # tau = 1/(4 f0), with f0 the frequency every banked artefact of this
-        # geometry reports (VIS_F_REF_HZ = 5827786408.327286 Hz above):
-        #   1/(4 * 5.827786408327286e9) = 4.289793456444743e-11 s
-        #                               = 42.89793456444743 ps
+        # tau = 1/(4 f) AT THE TONE THE RUN IS ANALYSED AT -- not at a constant.
+        # The document declares that tone (load_stub.json: quarter_wave_hz =
+        # 5827786408.327286 Hz, i.e. 1/(4 * 5.827786408327286e9) =
+        # 4.289793456444743e-11 s = 42.89793456444743 ps), and emfit.netlist
+        # RE-DERIVES tau from the run's own geometry.f when microstrip_wave
+        # parses it (parse_netlist(..., f_hz=geometry.f)).  The declaration is
+        # kept self-consistent with the tau written beside it; the DELIVERED
+        # delay is the quarter-wave delay of the tone in use.
+        #
+        # Why it cannot be a constant: the analysed tone is the DFT bin nearest
+        # f_target, f0 = k/(n_acc*dt) (emfit.studies.snapped_tone), and n_acc
+        # depends on n_warm AND on excite.  At nsteps = 2400, f_target = 6 GHz,
+        # n_warm = nsteps//4 = 600 (the CW default) that is
+        #   1800 * dt = 1.3727339060623177e-9 s -> k = 8
+        #   -> f0 = 5.827786408328 GHz   (== VIS_F_REF_HZ, what every banked A
+        #                                   artefact reports) -> tau = 42.898 ps
+        # but on the PULSE path (excite='pulse' -> n_warm = 0) it is
+        #   2400 * dt = 1.8303118747497569e-9 s -> k = 11
+        #   -> f0 = 6.009904733588 GHz   -> tau = 4.1597997153410e-11 s = 41.598 ps
+        # -- 3 % apart, and a stub cut for the first is NOT a quarter wave at
+        # the second.  evidence/termination/run_build_A.py forces
+        # excite='pulse' on any run it is given a --vis-dump for, so a banked
+        # CW tau would silently describe a tone the --vis-dump run does not use.
+        # emfit.studies therefore re-derives it and WARNS (stderr, naming both
+        # tones) when they differ; the pair is recorded in
+        # geometry.load_netlist_quarter_wave.  Hard-coding 1/(4 VIS_F_REF_HZ)
+        # here is the rejected alternative: it is a second source of truth for
+        # the tone, and it already drifted once.
+        #
         # Against this mesh's step (cell 0.4 mm -> dt = 7.626299478123987e-13 s,
-        # 0.7626299478123987 ps) that is tau/dt = 56.25 samples: NOT an integer,
-        # so the line's history lookup takes its linear-INTERPOLATION path
-        # (emfit.spice._line_history, weight = 0.25) instead of landing on one
-        # sample.  That is deliberate: 56 dt = 42.707 ps is 0.44 % short of tau
-        # and would pull the notch off the tone, and the interpolation errs by
-        # O((dS/dt * dt)^2) inside a sample without biasing the delay.
+        # 0.7626299478123987 ps) the CW tau is 56.25 samples and the pulse tau
+        # 54.5454... samples: NEITHER is an integer, so the line's history
+        # lookup takes its linear-INTERPOLATION path (emfit.spice._line_history,
+        # weight = 0.25 and 0.5454... respectively) instead of landing on one
+        # sample.  That is deliberate: 56 dt = 42.707 ps is 0.44 % short of the
+        # CW tau and would pull the notch off the tone, and the interpolation
+        # errs by O((dS/dt * dt)^2) inside a sample without biasing the delay.
         #
         # ``load_ohm`` is the same 50 ohm D carries and for the same reason: it
         # is not the termination (the stub is), it is the number that FREES the
@@ -1857,6 +1883,16 @@ def describe_kwargs(kwargs: dict) -> dict:
             "nodes": doc.get("nodes"),
             "elements": doc.get("elements"),
             "json": _netlist_json(netlist_doc),
+            "tau_note": (
+                "A T element's 'tau' IN THIS DOCUMENT is the quarter-wave "
+                "delay of its 'quarter_wave_hz', not necessarily the delay "
+                "that was simulated: emfit.studies.microstrip_wave parses the "
+                "document with the tone the run is actually analysed at "
+                "(parse_netlist(..., f_hz=geometry.f)), so a declared line is "
+                "re-derived for that tone.  The delay actually used, beside "
+                "the declared one and the declared tone, is in "
+                "geometry.load_netlist_quarter_wave; when that key is absent "
+                "the document declared no tone and its tau was taken verbatim."),
             "note": ("the SPICE document the cut was terminated in, hung on "
                      "the E_x edges the series_r load in `loads` frees "
                      "(emfit.studies.microstrip_wave(load_netlist=...)). Its "

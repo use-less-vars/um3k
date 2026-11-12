@@ -15,7 +15,8 @@ import numpy as np
 import pytest
 
 from emfit.netlist import NetlistError, parse_netlist
-from emfit.spice import Branch, CircuitNetwork
+from emfit.spice import Branch, CircuitNetwork, TransmissionLine
+from emfit.studies import _quarter_wave_retune
 
 # The document from the module docstring: 1 kOhm / 100 nF low pass, so
 # RC = 1e-4 s, driven by a 1 V step through "vin".
@@ -437,3 +438,239 @@ def test_netlist_errors(doc, match):
 
 def test_netlist_error_is_a_value_error():
     assert issubclass(NetlistError, ValueError)
+
+
+# --------------------------------------------------------------------------
+# a line's delay is DECLARED as a tone and DERIVED from the tone in use
+# --------------------------------------------------------------------------
+# ``load_stub.json`` (evidence/termination/netlists/) — the C arm's
+# termination, a shorted stub hung on the cut — cut for the tone every banked A
+# artefact reports, and for the tone the SAME 6 GHz request is analysed at once
+# ``excite='pulse'`` sets ``n_warm = 0``.  Both are ``emfit.studies.snapped_tone``
+# bins at ``nsteps = 2400`` on the default mesh, and they are 3 % apart:
+# ``round(6e9 * 1800 dt) / (1800 dt)`` versus ``round(6e9 * 2400 dt) / (2400 dt)``.
+F_CW = 5827786408.327286
+F_PULSE = 6009904733.587513
+TAU_CW = 4.289793456444743e-11       # 1/(4 F_CW)    = 42.89793456444743 ps
+TAU_PULSE = 4.159799715340357e-11    # 1/(4 F_PULSE) = 41.59799715340357 ps
+#: The default mesh's step (cell 0.4 mm): ``TAU_CW / dt = 56.25`` and
+#: ``TAU_PULSE / dt = 54.5454...``, so neither delay lands on a sample.
+MS_DT = 7.626299478123987e-13
+#: Where ``emfit.studies.microstrip_wave`` records the pair it actually used.
+QW_KEY = "load_netlist_quarter_wave"
+
+
+def _stub_doc(*, tau=TAU_CW, declared_hz=F_CW):
+    """The C arm's termination: a 50 ohm stub shorted at its far end.
+
+    The document says two things about its line -- ``tau`` and, optionally, the
+    tone that delay was cut for -- and the parser holds it to both: ``tau``
+    must BE ``quarter_wave_tau(quarter_wave_hz)``, so a file cannot claim one
+    tone and carry another's delay.
+    """
+    stub = {"kind": "T", "name": "stub", "nodes": ["1", "2"],
+            "z0": 50.0, "tau": tau}
+    if declared_hz is not None:
+        stub["quarter_wave_hz"] = declared_hz
+    return {
+        "name": "load_stub",
+        "nodes": ["1", "0", "2"],
+        "elements": [
+            stub,
+            {"kind": "V", "name": "short", "nodes": ["2", "0"], "value": 0.0},
+        ],
+    }
+
+
+def _stub_tau(netlist):
+    """The delay the built branch actually carries, in seconds."""
+    branch = netlist.network.branches[netlist.element_index["stub"]]
+    assert isinstance(branch, TransmissionLine), (
+        "a 'T' element must build a TransmissionLine branch, not "
+        f"{type(branch).__name__}"
+    )
+    return branch.tau
+
+
+def test_a_declared_tone_is_rederived_for_the_tone_in_use():
+    """``f_hz`` replaces the declared line's delay; without it, nothing moves.
+
+    The delay a quarter-wave stub has to carry is ``1 / (4 f)`` at the tone the
+    run is ANALYSED at, and that tone is not the one a document was written
+    for: it is the DFT bin nearest the request, and the bin grid moves with the
+    warm-up window (``excite='pulse'`` passes ``n_warm = 0``).  So
+    ``parse_netlist(..., f_hz=...)`` delivers ``quarter_wave_tau(f_hz)`` to
+    every ``T`` element that declared a tone, and records BOTH delays — the one
+    in the file and the one the branch got — in ``Netlist.quarter_wave``.
+
+    Three cases, in the order a caller meets them:
+
+    1. ``f_hz`` given: the branch carries the run's quarter-wave delay, and the
+       record says which document number it replaced (a 3 % move here, not a
+       rounding).
+    2. ``f_hz`` omitted: the document's own delay is delivered unchanged and
+       the record keeps ``f_hz = None``.  This is what keeps every existing
+       caller byte-identical.
+    3. no ``quarter_wave_hz`` declared: there is nothing to re-derive, ``f_hz``
+       is a no-op for that element, and the record tuple stays EMPTY — absent
+       means "no declaration", never "the tone we used last time".
+    """
+    # -- 1. the run's tone wins over the document's tau -----------------------
+    parsed = parse_netlist(_stub_doc(), f_hz=F_PULSE)
+    assert _stub_tau(parsed) == TAU_PULSE, (
+        "f_hz= must deliver quarter_wave_tau(f_hz); got "
+        f"{_stub_tau(parsed)!r} s for {F_PULSE!r} Hz"
+    )
+    assert _stub_tau(parsed) != TAU_CW
+    assert isinstance(parsed.quarter_wave, tuple) and len(parsed.quarter_wave) == 1
+    (record,) = parsed.quarter_wave
+    assert set(record) == {"name", "declared_hz", "tau_document_s", "tau_s",
+                           "f_hz"}
+    assert record["name"] == "stub"
+    assert record["declared_hz"] == F_CW
+    assert record["tau_document_s"] == TAU_CW
+    assert record["tau_s"] == TAU_PULSE
+    assert record["f_hz"] == F_PULSE
+    # The delivered delay is a quarter wave at the RUN's tone ...
+    assert np.isclose(2.0 * np.pi * F_PULSE * _stub_tau(parsed), 0.5 * np.pi,
+                      rtol=1e-15, atol=0.0)
+    # ... and NOT at the declared one, which is why the substitution matters.
+    assert abs(2.0 * np.pi * F_CW * _stub_tau(parsed) - 0.5 * np.pi) > 0.04
+
+    # -- 2. no tone given: the document's own delay, verbatim ------------------
+    verbatim = parse_netlist(_stub_doc())
+    assert _stub_tau(verbatim) == TAU_CW
+    (record,) = verbatim.quarter_wave
+    assert record["tau_s"] == record["tau_document_s"] == TAU_CW
+    assert record["f_hz"] is None
+    # The delay is a quarter wave at the tone the document names, and that is
+    # the only tone it could be one at.
+    assert np.isclose(2.0 * np.pi * F_CW * _stub_tau(verbatim), 0.5 * np.pi,
+                      rtol=1e-15, atol=0.0)
+
+    # -- 3. an undeclared line has no tone to re-derive -----------------------
+    plain = parse_netlist(_stub_doc(declared_hz=None), f_hz=F_PULSE)
+    assert _stub_tau(plain) == TAU_CW, (
+        "f_hz must only move a line that DECLARED a tone: a document with no "
+        "'quarter_wave_hz' cannot be re-derived from a tone it never named"
+    )
+    assert plain.quarter_wave == ()
+
+
+def test_a_line_may_not_declare_one_tone_and_carry_anothers_delay():
+    """The self-check is relative (1e-6), and a bad tone is a document error.
+
+    ``tau ~ 1e-11 s`` makes an absolute delay tolerance meaningless (1e-6 s
+    would accept every tone in the band), so the slack is ``1e-6 * tau``: a
+    delay written down as a rounded float still agrees with its own tone, while
+    the smallest real retune in this tree -- 3 % -- cannot pass.  Both
+    directions are pinned below, because a tolerance nobody ever straddles is a
+    tolerance nobody has checked.
+
+    A ``quarter_wave_hz`` that is not a finite, positive number is re-raised as
+    a :class:`NetlistError` naming the element and the field (``quarter_wave_tau``
+    raises the ``ValueError``; the parser owns the wording), so a malformed
+    declaration never escapes as a bare ``ValueError`` from inside the build.
+    """
+    # -- inside the slack: the same tone, written down as a rounded float -----
+    parse_netlist(_stub_doc(tau=TAU_CW * (1.0 + 1e-9)))
+    parse_netlist(_stub_doc(tau=TAU_CW))
+
+    # -- outside it: a declared tone and a delay that belongs to a different one
+    message = (
+        r"element 'stub': field 'tau' \(.*\) is not the quarter-wave delay of "
+        r"field 'quarter_wave_hz' \(5827786408\.327286 Hz\), which is "
+        r"quarter_wave_tau = .* s; a T element may not declare one tone and "
+        r"carry another's delay"
+    )
+    for tau in (TAU_PULSE, TAU_CW * (1.0 + 2e-6), 0.0, float("inf")):
+        with pytest.raises(NetlistError, match=message):
+            parse_netlist(_stub_doc(tau=tau))
+
+    # -- a tone that is not a tone at all -------------------------------------
+    for bad, why in (
+        (0.0, r"a quarter-wave tone must be finite and strictly positive"),
+        (-F_CW, r"a quarter-wave tone must be finite and strictly positive"),
+        (float("nan"), r"a quarter-wave tone must be finite and strictly positive"),
+        ("fast", r"a quarter-wave tone must be a number in hertz"),
+        ("", r"a quarter-wave tone must be a number in hertz"),
+    ):
+        with pytest.raises(
+            NetlistError,
+            match=r"element 'stub': field 'quarter_wave_hz': " + why,
+        ):
+            parse_netlist(_stub_doc(declared_hz=bad))
+
+
+def test_a_moved_tone_is_warned_about_and_recorded_never_raised(capsys):
+    """A tone that moved is REPORTED, not refused -- and the pair is recorded.
+
+    ``_quarter_wave_retune`` is what ``microstrip_wave`` calls with the parsed
+    records and the tone the run is actually analysed at.  A moved tone is
+    warned about on stderr and kept: the run about to be launched is
+    self-consistent (``tau`` is now the quarter-wave delay of its OWN tone), so
+    raising would refuse a correct run and destroy the forensic record of a
+    tone that moved, which is the one thing this check exists to keep.
+
+    The warning has to carry everything a reader needs to reproduce the pair:
+    both tones, both delays, the step they are counted in, and where the pair is
+    written in the artefact.
+    """
+    doc = _stub_doc()
+
+    # -- the CW-document / pulse-run case that actually happened -------------
+    # These are the records of a parse at the RUN's tone: ``tau_s`` is already
+    # the pulse delay, so this call only labels the pair and shouts about it.
+    records = parse_netlist(doc, f_hz=F_PULSE).quarter_wave
+    report = _quarter_wave_retune(records, F_PULSE, dt=MS_DT)
+    assert isinstance(report, tuple) and len(report) == 1
+    (entry,) = report
+    assert entry["name"] == "stub"
+    assert entry["declared_hz"] == F_CW
+    assert entry["f_hz"] == F_PULSE
+    assert entry["declared_tone_retuned"] is True
+    assert entry["tau_document_s"] == TAU_CW
+    assert entry["tau_s"] == TAU_PULSE
+    steps = (f"(tau/dt = {TAU_CW / MS_DT!r} -> {TAU_PULSE / MS_DT!r})")
+    err = capsys.readouterr().err
+    for needle in (
+        "=" * 78,
+        "QUARTER-WAVE TONE MISMATCH",
+        "netlist element 'stub' declares a quarter-wave line",
+        "at 5.827786 GHz, but this run is ANALYSED at",
+        "6.009905 GHz.",
+        f"Its tau has been re-derived for the tone in use: {TAU_CW!r} s -> "
+        f"{TAU_PULSE!r} s {steps}.",
+        "--vis-dump",
+        f"geometry['{QW_KEY}']",
+    ):
+        assert needle in err, (
+            f"the warning must contain {needle!r}; stderr was:\n{err}"
+        )
+
+    # -- a tone that did not move is silent, and says so in the record -------
+    still = _quarter_wave_retune(parse_netlist(doc, f_hz=F_CW).quarter_wave,
+                                 F_CW, dt=MS_DT)
+    assert [e["declared_tone_retuned"] for e in still] == [False]
+    assert capsys.readouterr().err == ""
+
+    # -- an ALREADY-PARSED Netlist keeps its frozen delay, and the warning
+    #    says so instead of claiming a re-derivation that did not happen ------
+    frozen = _quarter_wave_retune(parse_netlist(doc).quarter_wave, F_PULSE,
+                                 dt=MS_DT)
+    (entry,) = frozen
+    assert entry["declared_tone_retuned"] is True
+    assert entry["tau_s"] == entry["tau_document_s"] == TAU_CW
+    err = capsys.readouterr().err
+    assert "Its tau was NOT re-derived:" in err
+    assert "arrived already parsed" in err
+    assert "re-derived for the tone in use" not in err
+    assert "Raising here was" in err
+
+    # -- and the step is optional: without it the warning drops the tau/dt pair
+    #    rather than inventing one ---------------------------------------------
+    _quarter_wave_retune(parse_netlist(doc, f_hz=F_PULSE).quarter_wave, F_PULSE)
+    err = capsys.readouterr().err
+    assert "tau/dt" not in err
+    assert "QUARTER-WAVE TONE MISMATCH" in err
+

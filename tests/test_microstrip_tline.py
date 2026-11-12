@@ -62,7 +62,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from emfit.netlist import NetlistError, parse_netlist
+from emfit.netlist import NetlistError, parse_netlist, quarter_wave_tau
 from emfit.spice import (
     Branch,
     CircuitNetwork,
@@ -72,6 +72,7 @@ from emfit.spice import (
     _line_history,
     _solve_step,
 )
+from emfit.studies import snapped_tone
 
 RTOL = 1e-12
 # Gate-level floor for a quantity that should be *exactly* zero.  The measured
@@ -270,3 +271,107 @@ def test_a_line_rejects_a_short_circuited_pair():
         TransmissionLine((2, 2), z0=Z0, tau=TAU)
     with pytest.raises(ValueError):
         TransmissionLine((2,), z0=Z0, tau=TAU)
+
+
+# --------------------------------------------------------------------------
+# the quarter-wave delay is DERIVED from a tone, never written down beside it
+# --------------------------------------------------------------------------
+# The default microstrip mesh's step (cell 0.4 mm -> 0.7626299478123987 ps).  A
+# run is never analysed at the tone it asks for: it is analysed at the DFT bin
+# nearest the request, and that bin grid is ``k / (n_acc * dt)`` -- so the delay
+# a quarter-wave stub has to carry is a function of this number *and* of the
+# warm-up window, which is why it cannot be a constant in a document.
+MS_DT = 7.626299478123987e-13
+#: The same 6 GHz request at ``nsteps = 2400``, on the CW default
+#: (``n_warm = nsteps // 4 = 600``, ``span = 1800 dt``) and on the pulse path
+#: (``n_warm = 0``, ``span = 2400 dt``): the two bins the study can read.
+F_CW = 5827786408.327286
+F_PULSE = 6009904733.587513
+
+
+def test_quarter_wave_tau_is_the_delay_a_quarter_wave_line_needs():
+    """``quarter_wave_tau(f) = 1/(4 f)``, and it is the only home of that rule.
+
+    This is the number a ``T`` element's ``tau`` and a document's
+    ``quarter_wave_hz`` are tied together by (the parser checks one against the
+    other at staging, and re-derives the *delivered* delay from it when it is
+    told the run's tone).  It is also the number this file's quarter-wave gate
+    relies on: at ``tau = T/4`` a shorted line presents ``tan(2 pi f tau) =
+    tan(pi/2) -> inf``, i.e. an OPEN, which is what makes the impedance gate a
+    statement no lumped ladder reproduces.  A second copy of ``1/(4f)`` in a
+    caller is how the two drift apart, so the closed form is pinned here, in
+    one place, with the exponent ranges the tree actually uses (a 1 Hz tone to
+    a 1 THz one).
+    """
+    for f_hz in (1.0, 1e6, F_CW, F_PULSE, 1e12):
+        tau = quarter_wave_tau(f_hz)
+        # A quarter PERIOD of the tone: 2 pi f tau == pi/2 exactly.
+        assert np.isclose(2.0 * np.pi * f_hz * tau, 0.5 * np.pi,
+                          rtol=1e-15, atol=0.0), (
+            f"quarter_wave_tau({f_hz!r}) = {tau!r} s puts 2 pi f tau at "
+            f"{2.0 * np.pi * f_hz * tau!r} rad, not pi/2"
+        )
+        # That is the same statement as tau = 1/(4 f), in one division.
+        assert tau == 1.0 / (4.0 * f_hz)
+
+    # The two tones ``load_stub.json`` and a --vis-dump run of the same arm are
+    # cut for, at 17 digits: 42.89793456444743 ps and 41.59799715340357 ps.
+    assert quarter_wave_tau(F_CW) == 4.289793456444743e-11
+    assert quarter_wave_tau(F_PULSE) == 4.159799715340357e-11
+
+    # A tone that is not a finite, strictly positive number is REFUSED, not
+    # turned into an infinite or negative delay: the parser re-raises this as a
+    # NetlistError naming the element and the field, so the check has to happen
+    # here rather than at the far end of the build pass.
+    for f_hz in (0.0, -F_CW, float("nan"), float("inf"), "fast", None):
+        with pytest.raises(ValueError, match=r"a quarter-wave tone must be"):
+            quarter_wave_tau(f_hz)
+
+
+def test_the_tone_a_run_is_analysed_at_is_what_cuts_the_stub():
+    """The stub's delay follows the ANALYSIS tone, and the tone can move.
+
+    ``emfit.studies.snapped_tone`` is the one home of "which tone is this run
+    analysed at", and the answer depends on the warm-up window: a CW run
+    discards ``nsteps // 4`` steps, so its DFT spans ``1800 dt`` and the bin
+    nearest 6 GHz is 5.827786408328 GHz, while ``excite='pulse'`` passes
+    ``n_warm = 0``, spans ``2400 dt``, and reads 6.009904733588 GHz.  A stub cut
+    as a quarter wave for the first is 3 % off being one at the second, so the
+    delay has to be re-derived per run -- and ``--vis-dump`` in
+    ``evidence/termination/run_build_A.py`` sets ``excite='pulse'`` on any run
+    it is handed, which is exactly how the two got mixed up once.
+    """
+    f_cw, n_warm_cw, n_acc_cw = snapped_tone(MS_DT, 2400, 600, 6e9)
+    f_pulse, n_warm_pulse, n_acc_pulse = snapped_tone(MS_DT, 2400, 0, 6e9)
+    assert (f_cw, n_warm_cw, n_acc_cw) == (F_CW, 600, 1800)
+    assert (f_pulse, n_warm_pulse, n_acc_pulse) == (F_PULSE, 0, 2400)
+    # ``None`` IS the CW default (a quarter of the record), not a third window.
+    assert snapped_tone(MS_DT, 2400, None, 6e9) == (F_CW, 600, 1800)
+
+    tau_cw = quarter_wave_tau(f_cw)
+    tau_pulse = quarter_wave_tau(f_pulse)
+    # Each delay is exactly a quarter wave at its OWN tone ...
+    for f_hz, tau in ((f_cw, tau_cw), (f_pulse, tau_pulse)):
+        assert np.isclose(2.0 * np.pi * f_hz * tau, 0.5 * np.pi,
+                          rtol=1e-15, atol=0.0)
+    # ... and the CW one is NOT a quarter wave at the pulse tone: tan(2 pi f tau)
+    # is tan(pi/2) at its own tone and tan(1.54) at the other's, which is a
+    # reactance, not an open.  That gap is the whole reason for re-deriving.
+    assert abs(f_pulse / f_cw - 1.0) > 0.02
+    assert abs(2.0 * np.pi * f_pulse * tau_cw - 0.5 * np.pi) > 0.04
+
+    # Against the mesh's own step NEITHER delay is a whole number of samples,
+    # so ``emfit.spice._line_history`` takes its linear-interpolation path
+    # (weights 0.25 and 0.5454...) instead of landing on a sample -- and
+    # snapping to 56 dt, the nearby sample, would be 0.44 % short.
+    assert tau_cw / MS_DT == 56.25
+    assert np.isclose(tau_pulse / MS_DT, 54.545454545454545, rtol=0.0, atol=1e-9)
+    for tau in (tau_cw, tau_pulse):
+        samples = tau / MS_DT
+        assert samples != round(samples), (
+            f"tau = {tau!r} s is exactly {samples!r} steps: the line would stop "
+            "interpolating and the notch would move onto the sample grid"
+        )
+        assert 0.2 < samples - np.floor(samples) < 0.6
+    assert abs((56.0 * MS_DT) / tau_cw - 1.0) > 4e-3
+
