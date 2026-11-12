@@ -1,6 +1,8 @@
 # Session open — Generation 11
 
-**Written 2026-11-14, at HEAD `3848d46`. Reader: the incoming engineer; read this FIRST, then `session_close_gen10` (the session this one inherits), then `docs/design/EM_SOLVER_LEDGER.md`:30 and `:37` (E5 and E12), then the active scope.**
+**Written 2026-11-12, at HEAD `3848d46`. Reader: the incoming engineer; read this FIRST, then `session_close_gen10` (the session this one inherits), then `docs/design/EM_SOLVER_LEDGER.md`:30 and `:37` (E5 and E12), then the active scope.**
+
+Written-date correction (DR-45): the line above previously read 2026-11-14 and now reads 2026-11-12; the commit and the reading order it names are unchanged. The direction is settled by two independent checks, either of which a reader can repeat: no commit in this repository is dated 2026-11-13 or later, so text dated 2026-11-14 cannot have existed when the 2026-11-12 commit record was made; and commit be803fd already made this same correction once, re-dating DR-41 and DR-42 from 2026-11-14 to 2026-11-12. `artifacts/ladder_engine_scaling.json` independently records assembled_utc 2026-11-12T14:53:20Z.
 
 ## How this document was written
 
