@@ -1,0 +1,414 @@
+{
+  "ac": {
+    "AC-1": {
+      "achieved": null,
+      "bar": "bit-for-bit losslessness when no load is specified: the ``loss_den is None`` branch still taken, existing numbers identical to the last stored digit",
+      "closable_in_run_a": false,
+      "pass": null,
+      "status": "not applicable to Run A: this run is loaded by construction. Closed outside the run -- E7 guard probe (np.array_equal True, max|diff| 0.0) plus the 45-test default-path suite (test_studies 26, test_poynting 9, test_plane_capture 10)."
+    },
+    "AC-2": {
+      "achieved": "0 tolerances changed: this script compares against the pre-registered bars of scope section 5 and writes no other bound",
+      "bar": "no existing tolerance anywhere is loosened",
+      "closable_in_run_a": true,
+      "pass": true,
+      "status": "process criterion, satisfied by inspection of this file"
+    },
+    "AC-3": {
+      "achieved": {
+        "s11_abs": 0.47435471872369017,
+        "s11_bar": 0.001,
+        "s21_abs": 1.0376004072138165,
+        "s21_abs_minus_one": 0.03760040721381652,
+        "s21_bar": 0.001
+      },
+      "bar": "|S11| <= 1.0e-3 and | |S21| - 1 | <= 1.0e-3",
+      "closable_in_run_a": true,
+      "pass": false,
+      "status": "scored"
+    },
+    "AC-4": {
+      "achieved": null,
+      "bar": "for at least two unmatched loads, |Gamma| within 3 %% of |R - Zc| / (R + Zc)",
+      "closable_in_run_a": false,
+      "pass": null,
+      "status": "not closable in Run A: Run A carries exactly one load and it is matched (50 ohm). AC-4 needs at least two unmatched loads and is a separate batch."
+    },
+    "AC-5": {
+      "achieved": {
+        "headroom_below_tripwire": -0.03759040721381646,
+        "s21_abs": 1.0376004072138165,
+        "tripwire": 1.00001
+      },
+      "bar": "no |s21| above 1 + 1e-5 anywhere in the batch; and the beta standard error on the open control at least 3x smaller than the 57 on record, against a PML-terminated reference run",
+      "closable_in_run_a": false,
+      "pass": false,
+      "pass_scope": "magnitude half only",
+      "status": "magnitude half scored on this run; the seam half needs an open-control run against a PML-terminated reference run in the same batch, and Run A is a single loaded run with reference=None. `pass` here must not be read as AC-5 closed."
+    },
+    "AC-6": {
+      "achieved": {
+        "gamma_plane_recorded": false,
+        "indices_agree": false,
+        "inside_xmax_pml": null,
+        "last_clean_plane": 55,
+        "load_column": 50,
+        "load_kind": "series_r",
+        "load_plane_index": 50,
+        "load_position_mm": 20.0,
+        "load_units": "ohm",
+        "load_value": 100.0,
+        "plane_offset_from_load": null,
+        "plane_sweep_diagnostic": false,
+        "s21_plane_index": null
+      },
+      "bar": "the run JSON carries the load specification (value, units, plane index) and the index of the plane the S-parameters were extracted from",
+      "closable_in_run_a": true,
+      "pass": false,
+      "status": "scored"
+    },
+    "AC-7": {
+      "ac7_status": "not closable in one run: AC-7 is a slope across two line lengths, and this artefact is one length",
+      "achieved": null,
+      "bar": "|beta_FDTD - beta_modal| / beta_modal <= 1.0e-3, with beta_FDTD = -d(arg S21)/dL from TWO line lengths",
+      "beta_modal_recorded": null,
+      "closable_in_run_a": false,
+      "pass": null,
+      "phase_degeneracy": {
+        "dL_m": 0.0096,
+        "deembedded_phase_deg": 3.6655887770387054,
+        "deembedded_slope_rad_per_m": -6.664228456612264,
+        "expected_deembedded_slope_rad_per_m": 0.0,
+        "note": "The de-embedded slope should read ~0 only if this run's own measured beta were exact: what the de-embedding leaves is arg t + (beta_meas - beta_true)*dL, so a non-zero value here is the de-embedding's own residual and not a property of the line -- it must never be quoted as a beta. The raw slope is the AC-7 quantity, but from ONE run it equals beta - arg(t)/dL: that assumes arg t = 0, and it is only defined modulo the branch spacing above. Neither number is an AC-7 verdict, and neither is the field of the same name in graded.json's AC-7 block: that one is taken across TWO runs, between their `s21.planes_m[1]`, over the 10.0 mm between them.",
+        "raw_phase_deg": -129.13438312220188,
+        "raw_slope_rad_per_m": 234.77293364731437,
+        "single_run_beta_resolved_only_modulo_branch": true,
+        "single_run_branch_spacing_rad_per_m": 654.4984694978737
+      },
+      "reason": "docs/design/absorbing_termination_scope.md:266 says `beta_FDTD = -d(arg S21)/dL` **from two line lengths** -- a slope in L, i.e. two runs at two lengths. This run is one length, so dL is undefined here and no proxy is substituted. grade_2b.py takes the slope across the two artefacts' own `s21.planes_m`, not a typed-in 10 mm.",
+      "which_phase": "s21.raw_phase_deg -> s21.raw_phase_rad. NOT s21.phase_deg: that one is de-embedded with this run's own measured beta, so it is flat in L only to the extent that beta is exact -- what survives is (beta_meas - beta_true)*dL, not 0 by construction (see phase_degeneracy below)."
+    }
+  },
+  "gamma_plane": {
+    "abs": NaN,
+    "arg_deg": NaN,
+    "im": NaN,
+    "re": NaN
+  },
+  "geometry": {
+    "audit": 0.0,
+    "band_hi": 12000000000.0,
+    "band_lo": 2000000000.0,
+    "beta_ambiguous": 0.0,
+    "cell": 0.0004,
+    "cell_m": 0.0004,
+    "cells": 289168,
+    "dt": 7.626299478123987e-13,
+    "dt_s": 7.626299478123987e-13,
+    "eps_r": 4.4,
+    "excite": "pulse",
+    "f": 6009904733.587513,
+    "f_hz": 6009904733.587513,
+    "f_pulse": 15000000000.0,
+    "f_target": 6000000000.0,
+    "grid": [
+      62,
+      212,
+      22
+    ],
+    "h": 0.0016,
+    "height": 0.0088,
+    "ix_far": 62.0,
+    "ix_port": 8.0,
+    "j_centre": 106.0,
+    "k_mid": 2.0,
+    "k_slice": 2.0,
+    "k_strip": 4.0,
+    "keep_slice": 0.0,
+    "length": 0.024800000000000003,
+    "load_station_excluded": 1.0,
+    "loads": [
+      {
+        "column": 50,
+        "kind": "series_r",
+        "n_edges": 9,
+        "value": 100.0,
+        "x": 0.02
+      }
+    ],
+    "n_acc": 2400.0,
+    "n_air": 12.0,
+    "n_bins": 25.0,
+    "n_clean": 96.0,
+    "n_clean_hi": 96.0,
+    "n_clean_lo": 96.0,
+    "n_edges": 906144.0,
+    "n_faces": 886676.0,
+    "n_line": 54.0,
+    "n_pml": 6.0,
+    "n_ref": 2.0,
+    "n_strip": 8.0,
+    "n_sub": 4.0,
+    "n_top": 6.0,
+    "n_warm": 0.0,
+    "nsteps": 2400.0,
+    "nx": 62.0,
+    "ny": 212.0,
+    "nz": 22.0,
+    "poynting": 0.0,
+    "s21_plane_index": null,
+    "station_fit_n": 8.0,
+    "station_fit_span_m": 0.0084,
+    "w": 0.0032,
+    "width": 0.0848,
+    "y_extent": 0.04,
+    "z_mid": 0.0008,
+    "z_slice": 0.0008
+  },
+  "line": {
+    "beta": 241.43716210392665,
+    "beta_model": 230.33285017781705,
+    "beta_two_wave": 241.43716210392665,
+    "eps_eff": null,
+    "gamma_im": 0.2514948272858056,
+    "gamma_re": -0.40203171464425397,
+    "load_station_excluded": true,
+    "sigma_beta_from_curvature": "ABSENT",
+    "station_fit_cells": [
+      26,
+      29,
+      32,
+      35,
+      38,
+      41,
+      44,
+      47
+    ],
+    "station_fit_n": 8,
+    "station_fit_span_m": 0.0084,
+    "z0_im": -15.163586947142424,
+    "z0_re": 26.084451665794127
+  },
+  "meta": {
+    "argv": [
+      "/home/jojo/PycharmProjects/EE/evidence/termination/run_build_A.py",
+      "--structure",
+      "B",
+      "--xcut-near-mm",
+      "20.4",
+      "--vis-dump",
+      "/home/jojo/PycharmProjects/EE/artifacts/live_run.npz"
+    ],
+    "cgroup_limit_mb": null,
+    "command_line": "/home/jojo/PycharmProjects/EE/evidence/termination/run_build_A.py --structure B --xcut-near-mm 20.4 --vis-dump /home/jojo/PycharmProjects/EE/artifacts/live_run.npz",
+    "cwd": "/home/jojo/PycharmProjects/EE/evidence/termination",
+    "finished_utc": "2026-11-11T15:49:58+00:00",
+    "git_rev": null,
+    "label": "B",
+    "peak_rss_mb": 387.8828125,
+    "pid": 805633,
+    "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "schema_version": 1,
+    "started_utc": "2026-11-11T15:49:17+00:00",
+    "status": "ok",
+    "study": "termination-build-B",
+    "trip_clause": {
+      "mem_ceiling_mb": 2000.0,
+      "on_memory_trip": "write .trip.json, exit 3",
+      "on_wall_trip": "write .trip.json, exit 4",
+      "one_shot": "A trip is not a licence to relaunch: an interrupted FDTD run cannot be resumed, only repeated, and a repeat is a new decision, not a resumption.",
+      "reimplemented_not_inherited": "The trip below is RE-IMPLEMENTED in this script. tools/host_ladder.py owns the frozen --mem-ceiling-mb machinery and is out of fence for this dispatch, so its thresholds were copied and its code was not. Do not mistake this for the frozen machinery.",
+      "retries": 0,
+      "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss / 1024 (process-wide high-water mark; Linux KiB)",
+      "rss_poll_s": 0.5,
+      "wall_limit_s": 1400.0
+    },
+    "tripped": false,
+    "wall_call_s": 40.52622294600587,
+    "wall_total_s": 41.57531117799226
+  },
+  "run": {
+    "function": "emfit.studies.microstrip_wave",
+    "kwargs": {
+      "cell": "h / n_sub",
+      "excite": "pulse",
+      "flux_projection": false,
+      "h_m": 0.0016,
+      "launch": "lumped",
+      "loads": [
+        {
+          "kind": "series_r",
+          "port": "p2 (far end of the line)",
+          "position_m": 0.02,
+          "position_mm": 20.0,
+          "units": "ohm",
+          "value": 100.0
+        }
+      ],
+      "n_air": 12,
+      "n_clean": 96,
+      "n_line": 54,
+      "n_pml": 6,
+      "n_strip": 8,
+      "n_sub": 4,
+      "n_top": 6,
+      "nsteps": 2400,
+      "reference": null,
+      "s21_plane": null
+    },
+    "label": "B",
+    "load_port": "p2",
+    "loaded_without_reference": true,
+    "loaded_without_reference_note": "True means no LineReference was supplied, so the cut branch degraded to zc_split = zc and line_s21(...): the line constant used to transport the port plane to the cut is the run's own zc/beta, not a load-free measurement. Stated, not hidden.",
+    "reference": null,
+    "reference_exponent": null,
+    "reference_in_play": null,
+    "reference_note": "the reference's own record -- gamma, zc, station span, the twin's artefact path -- is under run.twin in this artefact when a twin was run, and under run.reference_produced in the twin's own file.  This field is the spec of the object the solver was called with, not a second copy of it.",
+    "reference_residual": null,
+    "source_port": "p1",
+    "station_fit": {
+      "span_m": 0.0084,
+      "z0_im": 1.7348831794828263,
+      "z0_re": 46.88886110850414
+    }
+  },
+  "s11": {
+    "basis": "gamma_port, the reflection moved to the port plane (emfit/studies.py:3266, declared at :1607; docstring :1527-1531).  Plane-independent: it does not move when the extraction plane moves.  modulus of B/A from fit_beta(n_wave=2), referred to z=0, plane-invariant at alpha=0, not de-embedded. phase_deg is unchanged and belongs to the one-wave station fit at the port plane, NOT to the magnitude beside it; no two-wave phase is reported because no two-wave beta is stored.",
+    "deembed_distance_m": 0.0072000000000000015,
+    "magnitude": 0.4742142424382845,
+    "magnitude_one_wave_station_fit": 0.47435471872369017,
+    "phase_deg": -123.48225276410466,
+    "station_phasors": {
+      "beta_one": null,
+      "beta_two": 241.43716210392665,
+      "beta_used": 241.43716210392665,
+      "deembed_distance_m": 0.0072000000000000015,
+      "fit_selected": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "fit_x": [
+        0.010400000000000001,
+        0.011600000000000001,
+        0.0128,
+        0.014,
+        0.0152,
+        0.0164,
+        0.0176,
+        0.0188
+      ],
+      "i_im": [
+        84.54755111111592,
+        106.9020563859402,
+        120.61902230202858,
+        124.5714155981559,
+        118.45194477512428,
+        102.81285880411369,
+        79.08552935221533,
+        49.79533330634783,
+        20.082085306524025
+      ],
+      "i_re": [
+        -16.037236625972557,
+        -1.8932066151378024,
+        12.685641254939817,
+        26.51253247707475,
+        38.470509808171585,
+        47.60822010945821,
+        53.23818147852829,
+        55.10421737243172,
+        53.996220988552686
+      ],
+      "js": [
+        26,
+        29,
+        32,
+        35,
+        38,
+        41,
+        44,
+        47,
+        50
+      ],
+      "n": 9,
+      "note": "x_m, v and i are MicrostripWave.station_x and the complex v_stations/i_stations -- metres, volts, amperes -- split into re/im so the JSON stays real.  They are the fit's inputs with one exception: the impedance fit drops any station sitting on a load column (emfit/studies.py:2326 _station_fit_selection), so when line.station_fit_n is smaller than n the same selection has to be applied before the refit.  gamma_v = amp_v[1]/amp_v[0] from fit_station_impedance(x_m, v, i, beta_used) is s11's one-wave reflection at the first station, before the deembed_distance_m shift to the port plane.  beta_one is null: the n_wave=1 phase constant is not stored on the record.  beta_used equals beta_two on this HEAD because beta is repointed to the two-wave fit (emfit/studies.py:3387) before the station fit is called.  js, fit_x and fit_selected state which of the n rows the impedance fit used: js is geometry.station_cells, one station column per row of x_m; fit_selected is the mask _station_fit_selection applied (emfit/studies.py:2326, all true when no load column was dropped); fit_x is the x_m of the selected stations in order, i.e. the x fit_station_impedance was handed.  They are read off geometry.station_fit_cells (emfit/studies.py:3820), not recomputed, so that rule keeps one home; a record without those cells writes all three as null.",
+      "status": "ok",
+      "v_im": [
+        2142.4681823295955,
+        2338.984836116826,
+        2341.2091397817344,
+        2150.387658037484,
+        1783.0113688279014,
+        1269.5123135394533,
+        651.5657611802056,
+        -22.447748316267937,
+        -707.0035278451345
+      ],
+      "v_re": [
+        -4455.578754503057,
+        -3137.84707359021,
+        -1563.2810819934627,
+        138.24844364430166,
+        1827.040181159661,
+        3364.2461868387486,
+        4622.430287205556,
+        5494.765562793893,
+        5901.923095692155
+      ],
+      "x_m": [
+        0.010400000000000001,
+        0.011600000000000001,
+        0.0128,
+        0.014,
+        0.0152,
+        0.0164,
+        0.0176,
+        0.0188,
+        0.02
+      ]
+    },
+    "validation_reason": "the magnitude above is the modulus of the two-wave B/A, not the one-wave station-fit reflection (that is kept beside it as magnitude_one_wave_station_fit).  On the R=100 record it reads 0.4742 against the series-R anchor 0.51263, i.e. 7.49 percent low.  The residual disagreement is unexplained: no read of station_fit.gamma_v or of the reference construction has been done, so the status stays. Residual is configuration-dependent: 5.5% (n=64, load 20mm), 7.6% (n=54, 100 ohm), 13.8% (n=79, load 30mm). The two-wave modulus is better than one-wave but not converged -- the load's near-field extends to the last station and contaminates the fit. Moving the extraction plane further from the load, or modal projection, would reduce it.",
+    "validation_status": "UNVALIDATED"
+  },
+  "s11_at_plane": {
+    "basis": "gamma_plane, the reflection at the extraction plane itself (b_cut/a_cut).  A different quantity from s11, not interchangeable; null when the record was extracted over the station span.  A plane strictly beyond the load column reports no reflection coefficient, because past the load there is nothing left to reflect from: the element is behind the probe, so magnitude stays null and valid says so, with the reason beside it.  At the load's own column the ratio is still the element's reflection and the plane stays valid.",
+    "invalid_reason": null,
+    "magnitude": null,
+    "phase_deg": null,
+    "plane_index": null,
+    "valid": null
+  },
+  "s21": {
+    "deembed_distance_m": 0.0072000000000000015,
+    "imag": 0.06633686467365509,
+    "magnitude": 1.0376004072138165,
+    "phase_deg": 3.6655887770387054,
+    "phase_deg_basis": "s21 de-embedded on the cut branch, and WHICH de-embedding it is depends on the branch.  With a twin reference -- the path these loaded runs take -- reference is not None, so s21 = raw_s21 / reference.forward_ratio(x_port, x_cut) (emfit/studies.py:3352) and line_s21 is NOT called; the delay is taken out by the reference's own measured forward amplitude ratio, rescaled to the run's span, not by this run's beta.  Only on the no-reference branch does line_s21 (emfit/studies.py:1242, called at :3354) multiply by exp(+1j*beta*distance) (emfit/ports.py:1707-1731) with this run's own measured beta. Flat in L only to the extent that beta is exact -- what the de-embedding leaves is arg t + (beta_meas - beta_true)*d, so the slope recorded in phase_degeneracy.deembedded_slope_rad_per_m is this run's de-embedding residual, NOT ~0 by construction. Not the AC-7 quantity, and not the same number as the field of that name in graded.json's AC-7 block, which differences two runs over 10.0 mm.",
+    "phase_rad": 0.06397659318347773,
+    "plane_from_default_policy": true,
+    "plane_policy": "default",
+    "plane_sweep_diagnostic": false,
+    "planes_m": [
+      0.010400000000000001,
+      0.02
+    ],
+    "raw_basis": "operands use reference.gamma and reference.zc; raw_magnitude differs from noref raw 0.762847 by 5.8% and is not a reference-independent measurement",
+    "raw_magnitude": 1.0376004072138165,
+    "raw_phase_deg": -129.13438312220188,
+    "raw_phase_deg_basis": "s21_raw, no de-embedding applied: this is the AC-7 quantity, and it carries -beta*L.",
+    "raw_phase_rad": -2.253820163014218,
+    "raw_reference_independent": true,
+    "real": 1.035477679834552,
+    "s21_plane_index": null,
+    "s21_plane_requested": null
+  },
+  "summary_line": "microstrip f=broadband band=2.0000-12.0000GHz n_bins=25 f_pulse=15.0000GHz f_target=6.0000GHz cells=62x212x22 cell=0.4000mm nsteps=2400 n_warm=0 beta=241.4372rad/m beta_model=230.3329rad/m eps_eff=n/a eps_eff_model=3.34394 |z0|=n/a arg_z0=n/a Re_z0=n/a z0_model=48.0987ohm i_ground_full=1.002269e+02A i_ground_truncated=1.002278e+02A y_extent=40.0000mm"
+}
