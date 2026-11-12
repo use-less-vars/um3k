@@ -1,0 +1,436 @@
+{
+  "_note": "HAND-ASSEMBLED. No repo script writes this file; it was put together at the engineer's explicit instruction from artefacts that already exist. Every measured number is read at assembly time from the named artefact at the named key path (json.load + key walk), never transcribed from a console or a log. The only computed quantities are the entries of the ratios block, and each of those names its numerator and denominator source, key and formula. It carries NO headline speedup: see what_this_file_does_not_say.",
+  "_scope": "seven measured runs: four on the host ladder rung (51832 cells, 2400 steps, h=0.4 mm) and three on structure C (289168 cells, 2400 steps, 62x212x22, cell 0.4 mm)",
+  "assembled_by": "worker sub-agent, from named artefacts only",
+  "assembled_utc": "2026-11-12T14:53:20Z",
+  "units": "all times are seconds; peak_rss_mb is MiB per the rss_basis string each artefact records; mesh_cells is a count; nsteps is a step count",
+  "commit_context": {
+    "git_binary_in_execution_container": false,
+    "how_verified": "read-only git tool against /workspace (the python execution container has no git binary)",
+    "head": "b8b2b6a evidence(e3): C-arm re-run carries engine provenance; physics bit-identical",
+    "artefacts_tracked_in_HEAD_artifacts_tree": [
+      "artifacts/build_C_stub_cpp.json -- added by b8b2b6a",
+      "artifacts/ladder_engine_provenance.json -- added by c1c8276 fix(e3): engine provenance in artefacts, stale claim corrections, DR-42 cross-ref; unmodified since",
+      "artifacts/ladder_engine_provenance_cpp.json -- added by c1c8276; unmodified since"
+    ],
+    "artefacts_in_no_commit": [
+      "artifacts/build_C_stub.json -- 'git log -- <path>' returns nothing and 'git status' lists it untracked",
+      "artifacts/build_C_stub_pyengine.json -- untracked working-tree file",
+      "artifacts/build_C_stub_cpp_t1.json -- untracked working-tree file",
+      "artifacts/omp_default.json -- untracked working-tree file",
+      "artifacts/omp_t1.json -- untracked working-tree file"
+    ],
+    "deviation_from_the_brief": "the brief said commit b8b2b6a committed both artifacts/build_C_stub.json and artifacts/build_C_stub_cpp.json. Verified otherwise: b8b2b6a added build_C_stub_cpp.json only; artifacts/build_C_stub.json appears in no commit at all."
+  },
+  "field_sources": {
+    "ladder_and_omp_artefacts": {
+      "engine": "meta.step_engine",
+      "kernel_name": "meta.kernel_name",
+      "kernel_abi": "meta.kernel_abi",
+      "mesh_cells": "rungs[0].n_cells",
+      "nsteps": "rungs[0].nsteps",
+      "h_mm": "rungs[0].h_mm",
+      "wall_total_s": "meta.timings.wall_total_s",
+      "wall_fdtd_s": "rungs[0].wall_fdtd_s (equal to meta.timings.fdtd_s in all four artefacts)",
+      "wall_eig_s": "rungs[0].wall_eig_s",
+      "peak_rss_mb": "meta.peak_rss_mb",
+      "rss_basis": "meta.rss_basis",
+      "cpu_count": "meta.cpu_count",
+      "command_line": "meta.command_line"
+    },
+    "build_C_artefacts": {
+      "engine": "meta.step_engine",
+      "kernel_name": "meta.kernel_name",
+      "kernel_abi": "meta.kernel_abi",
+      "mesh_cells": "geometry.cells",
+      "nsteps": "geometry.nsteps",
+      "cell_m": "geometry.cell",
+      "wall_total_s": "meta.wall_total_s",
+      "wall_call_s": "meta.wall_call_s",
+      "wall_fdtd_s": "ABSENT -- no such key exists in these artefacts (see the per-run unavailable_reason)",
+      "peak_rss_mb": "meta.peak_rss_mb",
+      "rss_basis": "meta.trip_clause.rss_basis",
+      "s21": "s21.magnitude / s21.imag / s21.phase_deg",
+      "passivity": "s11.passivity.status",
+      "command_line": "meta.command_line"
+    },
+    "threads": "NO key in any of the seven artefacts records a thread count; a recursive search for thread/omp/openmp keys returns [] in all seven. The launch_omp_num_threads field is operator launch-environment knowledge, marked as such, not an artefact value."
+  },
+  "environment_facts": {
+    "nproc_from_shell_on_this_host": 12,
+    "nproc_recording": "meta.cpu_count = 12 in all four ladder/omp artefacts; the three build_C artefacts record no cpu count",
+    "warning": "nproc / cpu_count is how many CPUs the machine has, NOT how many threads a run used. No artefact records the latter."
+  },
+  "runs": [
+    {
+      "label": "ladder_python_pythonengine",
+      "artefact": "artifacts/ladder_engine_provenance.json",
+      "command_line_recorded_in_artefact": "host_ladder.py --max-rungs 1 --mem-ceiling-mb 400 --json artifacts/ladder_engine_provenance.json",
+      "engine": "python",
+      "kernel_name": null,
+      "kernel_abi": null,
+      "mesh_cells": 51832,
+      "nsteps": 2400,
+      "h_mm": 0.4,
+      "threads": {
+        "launch_omp_num_threads": "unset (inherited)",
+        "launch_env_source": "operator shell command for this run; the artefact does not record it",
+        "recorded_in_artefact": false,
+        "artefact_keys_matching_thread_or_omp": [],
+        "cpu_count_recorded_in_artefact": 12
+      },
+      "wall_total_s": 8.768726428010268,
+      "wall_fdtd_s": 8.673766763997264,
+      "wall_eig_s": 0.07455742699676193,
+      "peak_rss_mb": 143.62890625,
+      "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss, a process-wide high-water mark, so per-rung peak_rss_MB is cumulative",
+      "s_parameters_recorded_in_artefact": false,
+      "physics_identical_to_the_other_ladder_runs": "beta_fdtd / beta_eig / alpha_fdtd_db_per_mm / eps_eff_* are equal across the four ladder/omp artefacts: beta_fdtd=389.08610297986763"
+    },
+    {
+      "label": "ladder_cpp_default_threads",
+      "artefact": "artifacts/ladder_engine_provenance_cpp.json",
+      "command_line_recorded_in_artefact": "host_ladder.py --max-rungs 1 --mem-ceiling-mb 400 --json artifacts/ladder_engine_provenance_cpp.json",
+      "engine": "cpp",
+      "kernel_name": "emfit_core.fit_leapfrog",
+      "kernel_abi": 1,
+      "mesh_cells": 51832,
+      "nsteps": 2400,
+      "h_mm": 0.4,
+      "threads": {
+        "launch_omp_num_threads": "unset (inherited)",
+        "launch_env_source": "operator shell command for this run; the artefact does not record it",
+        "recorded_in_artefact": false,
+        "artefact_keys_matching_thread_or_omp": [],
+        "cpu_count_recorded_in_artefact": 12
+      },
+      "wall_total_s": 6.328306358016562,
+      "wall_fdtd_s": 6.2506325879949145,
+      "wall_eig_s": 0.06403153398423456,
+      "peak_rss_mb": 168.50390625,
+      "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss, a process-wide high-water mark, so per-rung peak_rss_MB is cumulative",
+      "s_parameters_recorded_in_artefact": false,
+      "physics_identical_to_the_other_ladder_runs": "beta_fdtd / beta_eig / alpha_fdtd_db_per_mm / eps_eff_* are equal across the four ladder/omp artefacts: beta_fdtd=389.08610297986763"
+    },
+    {
+      "label": "ladder_cpp_omp_default",
+      "artefact": "artifacts/omp_default.json",
+      "command_line_recorded_in_artefact": "host_ladder.py --max-rungs 1 --mem-ceiling-mb 400 --json artifacts/omp_default.json",
+      "engine": "cpp",
+      "kernel_name": "emfit_core.fit_leapfrog",
+      "kernel_abi": 1,
+      "mesh_cells": 51832,
+      "nsteps": 2400,
+      "h_mm": 0.4,
+      "threads": {
+        "launch_omp_num_threads": "unset (inherited)",
+        "launch_env_source": "operator shell command for this run; the artefact does not record it",
+        "recorded_in_artefact": false,
+        "artefact_keys_matching_thread_or_omp": [],
+        "cpu_count_recorded_in_artefact": 12
+      },
+      "wall_total_s": 7.342949537996901,
+      "wall_fdtd_s": 7.2474024560069665,
+      "wall_eig_s": 0.08386169400182553,
+      "peak_rss_mb": 164.00390625,
+      "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss, a process-wide high-water mark, so per-rung peak_rss_MB is cumulative",
+      "s_parameters_recorded_in_artefact": false,
+      "physics_identical_to_the_other_ladder_runs": "beta_fdtd / beta_eig / alpha_fdtd_db_per_mm / eps_eff_* are equal across the four ladder/omp artefacts: beta_fdtd=389.08610297986763"
+    },
+    {
+      "label": "ladder_cpp_omp_t1",
+      "artefact": "artifacts/omp_t1.json",
+      "command_line_recorded_in_artefact": "host_ladder.py --max-rungs 1 --mem-ceiling-mb 400 --json artifacts/omp_t1.json",
+      "engine": "cpp",
+      "kernel_name": "emfit_core.fit_leapfrog",
+      "kernel_abi": 1,
+      "mesh_cells": 51832,
+      "nsteps": 2400,
+      "h_mm": 0.4,
+      "threads": {
+        "launch_omp_num_threads": "1",
+        "launch_env_source": "operator shell command for this run; the artefact does not record it",
+        "recorded_in_artefact": false,
+        "artefact_keys_matching_thread_or_omp": [],
+        "cpu_count_recorded_in_artefact": 12
+      },
+      "wall_total_s": 6.33287727899733,
+      "wall_fdtd_s": 6.254430969012901,
+      "wall_eig_s": 0.06277500398573466,
+      "peak_rss_mb": 170.10546875,
+      "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss, a process-wide high-water mark, so per-rung peak_rss_MB is cumulative",
+      "s_parameters_recorded_in_artefact": false,
+      "physics_identical_to_the_other_ladder_runs": "beta_fdtd / beta_eig / alpha_fdtd_db_per_mm / eps_eff_* are equal across the four ladder/omp artefacts: beta_fdtd=389.08610297986763"
+    },
+    {
+      "label": "carm_cpp_default_threads",
+      "artefact": "artifacts/build_C_stub_cpp.json",
+      "command_line_recorded_in_artefact": "evidence/termination/run_build_A.py --structure C --mem-ceiling-mb 400 --out artifacts/build_C_stub_cpp.json",
+      "engine": "cpp",
+      "kernel_name": "emfit_core.fit_leapfrog",
+      "kernel_abi": 1,
+      "mesh_cells": 289168,
+      "nsteps": 2400.0,
+      "cell_m": 0.0004,
+      "threads": {
+        "launch_omp_num_threads": "unset (inherited)",
+        "launch_env_source": "operator shell command for this run; the artefact does not record it",
+        "recorded_in_artefact": false,
+        "artefact_keys_matching_thread_or_omp": [],
+        "cpu_count_recorded_in_artefact": null
+      },
+      "wall_total_s": 58.04084487300133,
+      "wall_call_s": 57.02377132800757,
+      "wall_fdtd_s": null,
+      "wall_fdtd_s_unavailable_reason": "this artefact records no per-phase FDTD timing: it has no meta.timings block and a recursive key search for 'fdtd' returns []; only meta.wall_total_s (whole process) and meta.wall_call_s (the study call) exist",
+      "wall_eig_s": null,
+      "peak_rss_mb": 357.29296875,
+      "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss / 1024 (process-wide high-water mark; Linux KiB)",
+      "s21": {
+        "magnitude": 0.6361234402945529,
+        "imag": 0.4691348197414471,
+        "phase_deg": 47.518057913970644,
+        "keys": "s21.magnitude / s21.imag / s21.phase_deg"
+      },
+      "passivity_status_recorded": "FAIL_PASSIVITY"
+    },
+    {
+      "label": "carm_python_pythonengine",
+      "artefact": "artifacts/build_C_stub_pyengine.json",
+      "command_line_recorded_in_artefact": "evidence/termination/run_build_A.py --structure C --mem-ceiling-mb 400 --out artifacts/build_C_stub_pyengine.json",
+      "engine": "python",
+      "kernel_name": null,
+      "kernel_abi": null,
+      "mesh_cells": 289168,
+      "nsteps": 2400.0,
+      "cell_m": 0.0004,
+      "threads": {
+        "launch_omp_num_threads": "unset (inherited)",
+        "launch_env_source": "operator shell command for this run; the artefact does not record it",
+        "recorded_in_artefact": false,
+        "artefact_keys_matching_thread_or_omp": [],
+        "cpu_count_recorded_in_artefact": null
+      },
+      "wall_total_s": 50.11570404301165,
+      "wall_call_s": 49.43478592898464,
+      "wall_fdtd_s": null,
+      "wall_fdtd_s_unavailable_reason": "this artefact records no per-phase FDTD timing: it has no meta.timings block and a recursive key search for 'fdtd' returns []; only meta.wall_total_s (whole process) and meta.wall_call_s (the study call) exist",
+      "wall_eig_s": null,
+      "peak_rss_mb": 312.9921875,
+      "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss / 1024 (process-wide high-water mark; Linux KiB)",
+      "s21": {
+        "magnitude": 0.6361234402945529,
+        "imag": 0.4691348197414471,
+        "phase_deg": 47.518057913970644,
+        "keys": "s21.magnitude / s21.imag / s21.phase_deg"
+      },
+      "passivity_status_recorded": "FAIL_PASSIVITY"
+    },
+    {
+      "label": "carm_cpp_omp_t1",
+      "artefact": "artifacts/build_C_stub_cpp_t1.json",
+      "command_line_recorded_in_artefact": "evidence/termination/run_build_A.py --structure C --mem-ceiling-mb 400 --out artifacts/build_C_stub_cpp_t1.json",
+      "engine": "cpp",
+      "kernel_name": "emfit_core.fit_leapfrog",
+      "kernel_abi": 1,
+      "mesh_cells": 289168,
+      "nsteps": 2400.0,
+      "cell_m": 0.0004,
+      "threads": {
+        "launch_omp_num_threads": "1",
+        "launch_env_source": "operator shell command for this run; the artefact does not record it",
+        "recorded_in_artefact": false,
+        "artefact_keys_matching_thread_or_omp": [],
+        "cpu_count_recorded_in_artefact": null
+      },
+      "wall_total_s": 43.200629351020325,
+      "wall_call_s": 42.560866825981066,
+      "wall_fdtd_s": null,
+      "wall_fdtd_s_unavailable_reason": "this artefact records no per-phase FDTD timing: it has no meta.timings block and a recursive key search for 'fdtd' returns []; only meta.wall_total_s (whole process) and meta.wall_call_s (the study call) exist",
+      "wall_eig_s": null,
+      "peak_rss_mb": 358.59765625,
+      "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss / 1024 (process-wide high-water mark; Linux KiB)",
+      "s21": {
+        "magnitude": 0.6361234402945529,
+        "imag": 0.4691348197414471,
+        "phase_deg": 47.518057913970644,
+        "keys": "s21.magnitude / s21.imag / s21.phase_deg"
+      },
+      "passivity_status_recorded": "FAIL_PASSIVITY"
+    }
+  ],
+  "ratios": [
+    {
+      "name": "ladder_cpp_omp_default_over_omp_t1_fdtd",
+      "formula": "numerator.value / denominator.value",
+      "numerator": {
+        "run": "ladder_cpp_omp_default",
+        "artefact": "artifacts/omp_default.json",
+        "key": "meta.timings.fdtd_s",
+        "value": 7.2474024560069665
+      },
+      "denominator": {
+        "run": "ladder_cpp_omp_t1",
+        "artefact": "artifacts/omp_t1.json",
+        "key": "meta.timings.fdtd_s",
+        "value": 6.254430969012901
+      },
+      "value": 1.1587628821732412,
+      "units": "dimensionless (seconds / seconds)",
+      "compares": "the same ladder rung, cpp engine, default (inherited) threads vs OMP_NUM_THREADS=1; FDTD phase only",
+      "caveat": "n=1 per arm. This ratio is the whole of the 'default threads are slower' observation on the ladder, and it is the SAME magnitude as the same-configuration repeat in ladder_cpp_same_configuration_run_to_run_spread_fdtd below, so it does not establish a thread effect."
+    },
+    {
+      "name": "ladder_python_over_cpp_fdtd",
+      "formula": "numerator.value / denominator.value",
+      "numerator": {
+        "run": "ladder_python_pythonengine",
+        "artefact": "artifacts/ladder_engine_provenance.json",
+        "key": "meta.timings.fdtd_s",
+        "value": 8.673766763997264
+      },
+      "denominator": {
+        "run": "ladder_cpp_default_threads",
+        "artefact": "artifacts/ladder_engine_provenance_cpp.json",
+        "key": "meta.timings.fdtd_s",
+        "value": 6.2506325879949145
+      },
+      "value": 1.3876622312846012,
+      "units": "dimensionless (seconds / seconds)",
+      "compares": "the same ladder rung, python engine (no omp) vs cpp engine at default threads; FDTD phase only",
+      "caveat": "n=1 per arm; the cpp arm is the default-thread one, so this ratio carries the same launch-environment difference the thread ratios above leave unresolved."
+    },
+    {
+      "name": "ladder_cpp_same_configuration_run_to_run_spread_fdtd",
+      "formula": "numerator.value / denominator.value",
+      "numerator": {
+        "run": "ladder_cpp_omp_default",
+        "artefact": "artifacts/omp_default.json",
+        "key": "meta.timings.fdtd_s",
+        "value": 7.2474024560069665
+      },
+      "denominator": {
+        "run": "ladder_cpp_default_threads",
+        "artefact": "artifacts/ladder_engine_provenance_cpp.json",
+        "key": "meta.timings.fdtd_s",
+        "value": 6.2506325879949145
+      },
+      "value": 1.1594670385724586,
+      "units": "dimensionless (seconds / seconds)",
+      "compares": "two cpp runs of the SAME configuration: identical command apart from the --json output path, both at inherited (default) threads, same rung (51832 cells, 2400 steps, h=0.4 mm)",
+      "caveat": "This is the run-to-run spread of repeated identical runs, not a comparison of two conditions. Any ratio at the 1.16 level anywhere in this file is inside it."
+    },
+    {
+      "name": "ladder_cpp_omp_t1_over_cpp_default_threads_fdtd",
+      "formula": "numerator.value / denominator.value",
+      "numerator": {
+        "run": "ladder_cpp_omp_t1",
+        "artefact": "artifacts/omp_t1.json",
+        "key": "meta.timings.fdtd_s",
+        "value": 6.254430969012901
+      },
+      "denominator": {
+        "run": "ladder_cpp_default_threads",
+        "artefact": "artifacts/ladder_engine_provenance_cpp.json",
+        "key": "meta.timings.fdtd_s",
+        "value": 6.2506325879949145
+      },
+      "value": 1.0006076794571612,
+      "units": "dimensionless (seconds / seconds)",
+      "compares": "OMP_NUM_THREADS=1 against the FASTER of the two default-thread runs, same ladder rung",
+      "caveat": "Pinning to one thread costs essentially nothing against the faster default run (0.06 percent), which is the other half of the reason the 1.16 ratios above cannot be read as a thread effect. n=1 per arm."
+    },
+    {
+      "name": "carm_cpp_default_over_python_wall_total",
+      "formula": "numerator.value / denominator.value",
+      "numerator": {
+        "run": "carm_cpp_default_threads",
+        "artefact": "artifacts/build_C_stub_cpp.json",
+        "key": "meta.wall_total_s",
+        "value": 58.04084487300133
+      },
+      "denominator": {
+        "run": "carm_python_pythonengine",
+        "artefact": "artifacts/build_C_stub_pyengine.json",
+        "key": "meta.wall_total_s",
+        "value": 50.11570404301165
+      },
+      "value": 1.1581368750838652,
+      "units": "dimensionless (seconds / seconds)",
+      "compares": "structure C (289168 cells, 2400 steps): cpp at default threads vs the python engine, whole-process wall",
+      "caveat": "wall_total_s, which includes process start, geometry assembly and the eigen solve; the build_C artefacts record no per-phase timing, so no FDTD-only comparison exists at this mesh. n=1 per arm, and the cpp arm is the default-thread one."
+    },
+    {
+      "name": "carm_cpp_default_over_cpp_omp_t1_wall_total",
+      "formula": "numerator.value / denominator.value",
+      "numerator": {
+        "run": "carm_cpp_default_threads",
+        "artefact": "artifacts/build_C_stub_cpp.json",
+        "key": "meta.wall_total_s",
+        "value": 58.04084487300133
+      },
+      "denominator": {
+        "run": "carm_cpp_omp_t1",
+        "artefact": "artifacts/build_C_stub_cpp_t1.json",
+        "key": "meta.wall_total_s",
+        "value": 43.200629351020325
+      },
+      "value": 1.3435185029689969,
+      "units": "dimensionless (seconds / seconds)",
+      "compares": "structure C, cpp engine, default (inherited) threads vs OMP_NUM_THREADS=1, whole-process wall",
+      "caveat": "wall_total_s (no per-phase timing exists at this mesh). Same shape as the ladder anomaly: the default-thread arm is the slow one. n=1 per arm, so this is not a thread effect measurement either."
+    },
+    {
+      "name": "carm_cpp_omp_t1_over_python_wall_total",
+      "formula": "numerator.value / denominator.value",
+      "numerator": {
+        "run": "carm_cpp_omp_t1",
+        "artefact": "artifacts/build_C_stub_cpp_t1.json",
+        "key": "meta.wall_total_s",
+        "value": 43.200629351020325
+      },
+      "denominator": {
+        "run": "carm_python_pythonengine",
+        "artefact": "artifacts/build_C_stub_pyengine.json",
+        "key": "meta.wall_total_s",
+        "value": 50.11570404301165
+      },
+      "value": 0.8620178081094804,
+      "units": "dimensionless (seconds / seconds)",
+      "compares": "structure C, cpp engine pinned to OMP_NUM_THREADS=1 vs the python engine, whole-process wall",
+      "caveat": "wall_total_s (no per-phase timing exists at this mesh). The ratio is BELOW 1: once threads are pinned, the cpp engine is faster than the python engine on this mesh, so the default-thread ratio above must not be reported as 'cpp is slower at board scale'. n=1 per arm."
+    }
+  ],
+  "s21_identity_across_the_three_C_arm_runs": {
+    "claim": "the three structure-C runs return bit-identical S21 despite different engines and different thread settings",
+    "keys": "s21.magnitude / s21.imag / s21.phase_deg",
+    "values_per_run": {
+      "artifacts/build_C_stub_cpp.json": {
+        "magnitude": 0.6361234402945529,
+        "imag": 0.4691348197414471,
+        "phase_deg": 47.518057913970644
+      },
+      "artifacts/build_C_stub_pyengine.json": {
+        "magnitude": 0.6361234402945529,
+        "imag": 0.4691348197414471,
+        "phase_deg": 47.518057913970644
+      },
+      "artifacts/build_C_stub_cpp_t1.json": {
+        "magnitude": 0.6361234402945529,
+        "imag": 0.4691348197414471,
+        "phase_deg": 47.518057913970644
+      }
+    },
+    "identical_across_all_three": true,
+    "method": "python == on the floats parsed from each artefact (exact, no tolerance)",
+    "why_it_matters": "the cpp kernel is not changing the answer, only who computes it: all timing differences above are timing differences at fixed physics"
+  },
+  "what_this_file_does_not_say": [
+    "No headline speedup. No ratio here is extrapolated to another mesh, another structure (A/B/D/E), another machine or a larger board; nothing outside these seven runs is claimed.",
+    "No thread effect is established. n=1 per arm, and on the ladder the same-configuration run-to-run spread (1.16) is the same magnitude as the default-vs-1-thread ratio, while OMP_NUM_THREADS=1 against the faster default run differs by 0.06 percent.",
+    "'cpp is about 1.16x slower at board scale' is NOT supported once threads are pinned: at OMP_NUM_THREADS=1 the cpp engine beats the python engine on structure C (ratio 0.862), and the 1.16 default-thread ratio sits inside the same-configuration spread.",
+    "DR-42's 33x figure is not reproduced anywhere here. No ratio in this file exceeds 1.3877, and no thread-related ratio here exceeds 1.3435.",
+    "The ladder ratios are FDTD-phase only; the structure-C ratios are whole-process wall totals (process start + assembly + eigen solve + FDTD), because no per-phase timing exists in those artefacts. The two families are therefore not directly comparable in kind.",
+    "Peak RSS differences between arms are reported as recorded and are not attributed to any cause here."
+  ]
+}

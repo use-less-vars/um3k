@@ -1,0 +1,189 @@
+{
+  "meta": {
+    "abort_reason": null,
+    "alpha_floor_db_per_mm": 0.0139,
+    "alpha_floor_enforced": false,
+    "alpha_floor_note": "DIAGNOSTIC ONLY: labels the ALPHA DIAGNOSTIC line, never changes exit status.  decisions.md, clearance+1: 0.0139 +- 0.0026 dB/mm over 14.4 mm; the most permissive of the three measured floors (0.02145 / 0.0278 / 0.01388)",
+    "argv": [
+      "tools/host_ladder.py",
+      "--max-rungs",
+      "1",
+      "--mem-ceiling-mb",
+      "400",
+      "--json",
+      "artifacts/omp_default.json"
+    ],
+    "box_lateral_mult": 1.0,
+    "box_lid_mult": 1.0,
+    "box_note": "clearance_h * box_lateral_mult is the side-wall padding in units of H (FDTD n_clean, modal clearance_lateral); clearance_h * box_lid_mult is the top padding (FDTD n_air, modal clearance)",
+    "cgroup_limit_mb": 512.0,
+    "clearance_h": 3.0,
+    "command_line": "host_ladder.py --max-rungs 1 --mem-ceiling-mb 400 --json artifacts/omp_default.json",
+    "complete": true,
+    "cpu_count": 12,
+    "cwd": "/workspace",
+    "eigs": {
+      "OPinv": "one splu of (KC - sigma*MC), reused",
+      "k": 16,
+      "maxiter": 5000,
+      "pencil": "K=[[A,0],[0,0]], M=[[m,-c],[-c^T,h]], A=0.5*((k0^2*m_eps-k_q)+(.)^T), h=k_zz-k0^2*m_zz",
+      "solver": "scipy.sparse.linalg.eigs (NOT eigsh: M is indefinite)",
+      "tol": 0.0,
+      "which": "LM"
+    },
+    "eps_r": 4.4,
+    "f0_requested_ghz": 10.0096,
+    "git_rev": "unavailable:env EMFIT_GIT_REV unset or empty;head: /workspace/.git/HEAD unreadable;file: /workspace/.git/emfit_git_rev unreadable: FileNotFoundError",
+    "git_rev_source": "unavailable",
+    "h_substrate_m": 0.0016,
+    "kernel_abi": 1,
+    "kernel_name": "emfit_core.fit_leapfrog",
+    "max_abs_rel_gap_pct": 0.8780543093157896,
+    "max_rungs": 1,
+    "mem_ceiling_mb": 400.0,
+    "npml": 6,
+    "npml_note": "--pml-mm holds the absorber's physical thickness fixed, so npml is re-derived per rung and varies across the ladder; npml_per_rung is the count actually used",
+    "npml_per_rung": [
+      6
+    ],
+    "peak_rss_mb": 164.00390625,
+    "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.41",
+    "pml_mm": null,
+    "python": "3.12.15",
+    "residual_limit": 1e-08,
+    "rss_basis": "resource.getrusage(RUSAGE_SELF).ru_maxrss, a process-wide high-water mark, so per-rung peak_rss_MB is cumulative",
+    "rss_branch": "linux: ru_maxrss is KiB, divided by 1024",
+    "rungs_mm": [
+      0.4
+    ],
+    "rungs_requested": [
+      0.4
+    ],
+    "sigma_attempts": [
+      [
+        {
+          "accepted": true,
+          "best_residual": 3.877673340429207e-14,
+          "n_converged": 16,
+          "n_physical": 1,
+          "sigma": 152780.50791726727,
+          "sigma_mult": 0.76
+        }
+      ]
+    ],
+    "sigma_ladder": [
+      0.76,
+      0.775,
+      0.79,
+      0.805,
+      0.82,
+      0.85
+    ],
+    "sigma_ladder_note": "the shift is searched ASCENDING over sigma_ladder (multipliers of k0^2*eps_r): a rung takes the first multiplier whose picked pair passes every guard and whose pencil residual is < residual_limit, so sigma_mult_used and sigma_used_per_rung can differ from the constant sigma_mult on a wider strip.  sigma_retries is the number of shifts rejected before the accepted one; sigma_attempts is the full trace.  sigma_per_rung keeps the old expression (k0^2*eps_r*sigma_mult) and therefore its old value bit for bit when 0.76 is accepted, but the multiplier in it is the ACCEPTED one.",
+    "sigma_mult": 0.76,
+    "sigma_note": "sigma = sigma_mult * k0^2 * eps_r, k0 from the FDTD's DFT-snapped tone for that rung",
+    "sigma_per_rung": [
+      152780.50791726727
+    ],
+    "sigma_retries": [
+      0
+    ],
+    "sigma_used_per_rung": [
+      152780.50791726727
+    ],
+    "status": "ok",
+    "step_engine": "cpp",
+    "strip_cells": null,
+    "strip_pinned": "metres: n_strip = max(round(W/cell), 1) per rung",
+    "strip_width_mm": 0.8,
+    "timings": {
+      "assembly_s": 0.002887932991143316,
+      "eig_s": 0.08386169400182553,
+      "fdtd_s": 7.2474024560069665,
+      "wall_total_s": 7.342949537996901
+    },
+    "tone_detune_pct": 1.8884492344622454,
+    "tone_f_actual_ghz": 10.198626214572734,
+    "tone_f_requested_ghz": 10.0096,
+    "tone_warn": true
+  },
+  "rungs": [
+    {
+      "alpha_fdtd_db_per_mm": 0.04280716969151203,
+      "alpha_floor_db_per_mm": 0.0139,
+      "alpha_floor_exceeded": true,
+      "alpha_scaled_L_over_H": 0.6635111302184366,
+      "b_over_a": 0.00907796882190245,
+      "beta_eig": 392.50249027403123,
+      "beta_fdtd": 389.08610297986763,
+      "beta_fit_one": 389.08610297986763,
+      "beta_fit_two": 389.08610297986763,
+      "beta_hj_kj_graded": 384.74897567707745,
+      "beta_model_basis": "quasistatic emfit.microstrip.Microstrip.beta; superseded per decisions.md 146/148(b); retained for continuity, not graded",
+      "beta_quasistatic_retired": 373.2885327644749,
+      "beta_two_station": -265.2043054798314,
+      "box_lateral_mult": 1.0,
+      "box_lid_mult": 1.0,
+      "cavity_shift_pct": 23.364415200397918,
+      "cell_m": 0.0004,
+      "curl_ratio": 3219.8968449435743,
+      "dt_s": 7.626299478123999e-13,
+      "eps_eff_eig": 3.3719657311824918,
+      "eps_eff_fdtd": 3.313521233568263,
+      "f_hz": 10198626214.572733,
+      "f_target_hz": 10009600000.0,
+      "factor_memory_gb_measured": 0.001167084,
+      "factor_nnz": 97257,
+      "fit_residual_one": 0.017069997616520102,
+      "free_e": 1262,
+      "free_n": 429,
+      "grid": [
+        62,
+        38,
+        22
+      ],
+      "h_mm": 0.4,
+      "k0": 213.74739982558185,
+      "n_acc": 1800,
+      "n_air": 12,
+      "n_cells": 51832,
+      "n_clean": 12,
+      "n_converged": 16,
+      "n_dof": 1691,
+      "n_physical": 1,
+      "n_stations": 9,
+      "n_strip": 2,
+      "n_sub": 4,
+      "n_top": 6,
+      "npml": 6,
+      "nsteps": 2400,
+      "opinv_calls": 133,
+      "peak_rss_mb": 164.00390625,
+      "pml_mm": null,
+      "rel_gap_pct": 0.8780543093157896,
+      "residual": 3.877673340429207e-14,
+      "rss_branch": "linux: ru_maxrss is KiB, divided by 1024",
+      "runners_up": [],
+      "sigma": 152780.50791726727,
+      "sigma_attempts": [
+        {
+          "accepted": true,
+          "best_residual": 3.877673340429207e-14,
+          "n_converged": 16,
+          "n_physical": 1,
+          "sigma": 152780.50791726727,
+          "sigma_mult": 0.76
+        }
+      ],
+      "sigma_mult_used": 0.76,
+      "sigma_retries": 0,
+      "strip_width_m": 0.0008,
+      "strip_width_mm": 0.8,
+      "t_assembly_s": 0.002887932991143316,
+      "t_eigs_s": 0.07830329000717029,
+      "t_splu_s": 0.004464221012312919,
+      "wall_eig_s": 0.08386169400182553,
+      "wall_fdtd_s": 7.2474024560069665
+    }
+  ]
+}
