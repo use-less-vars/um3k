@@ -10,6 +10,17 @@ what makes the first assertion evidence rather than a tautology.  A second,
 separate group of tests pins the writer's passivity gate (``passivity_guard``):
 a published ``|S11|^2 + |S21|^2`` above ``1 + PASSIVITY_TOL`` is FLAGGED, and
 the magnitudes are never clipped to make the pair pass.
+
+A third group pins DR-43 (``docs/design/defect_register.md``): what |S21| the
+writer may PUBLISH at all.  A record that names no extraction plane has only
+the station-span ratio, which is a de-embedding residual -- 1.021737 on the
+2400-step smoke, against 0.761705 on the same run's cut plane -- so
+``published_s21_magnitude`` returns ``None`` for it, ``published_s21_block``
+writes eight nulls rather than eight numbers, and ``passivity_record`` records
+``NOT_ASSESSABLE`` instead of summing a number nobody may publish.  Those
+tests hold the refusal and the cut-plane path beside each other, because a
+refusal that also refused the good case would be indistinguishable from a
+writer that published nothing.
 """
 
 from __future__ import annotations
@@ -240,3 +251,114 @@ def test_an_absent_magnitude_is_not_evaluated_rather_than_flagged():
         assert record["status"] is None
         assert record["power_sum"] is None
         assert set(record) == fired
+
+
+# DR-43: what |S21| the writer may publish at all.  A record with no cut plane
+# has only the station-span fallback -- a ratio of forward_wave_amplitude at the
+# first and last probe over 9.6 mm -- which on the 2400-step smoke came to
+# 1.021737 against 0.761705 on the same run's cut plane.  Two different
+# quantities, one of them not an S21, so the refusal is pinned here: no plane, no
+# number.  `_s21_only_record` is the smallest record the DR-43 branch reads --
+# the two provenance fields plus the magnitudes the block would have published.
+SPAN_REASON = (
+    "station span: forward_wave_amplitude[last] / forward_wave_amplitude[first] "
+    "over 9.6 mm -- not an S21")
+
+
+def _s21_only_record(s21, *, provenance, reason) -> SimpleNamespace:
+    """A ``MicrostripWave``-shaped stand-in carrying only S21 fields."""
+    return SimpleNamespace(
+        s21=complex(s21),
+        s21_raw=complex(s21),
+        s21_provenance=provenance,
+        s21_unmeasured_reason=reason,
+    )
+
+
+def test_a_station_span_ratio_is_never_published_as_s21():
+    run_build_A = _load_run_build_a()
+    record = _s21_only_record(1.021737, provenance=None, reason=SPAN_REASON)
+    decision = run_build_A.s21_measurement(record)
+
+    assert decision["measured"] is False
+    assert decision["provenance"] is None
+    assert decision["unmeasured_reason"] == SPAN_REASON
+    # The ratio is still there at its real value -- nothing was deleted, zeroed
+    # or clipped away.  What changed is only whether it may be CALLED an S21.
+    assert abs(record.s21) == pytest.approx(1.021737)
+    assert run_build_A.published_s21_magnitude(record) is None
+
+    block = run_build_A.published_s21_block(record)
+    assert set(block) == set(run_build_A._S21_NUMERIC_KEYS)
+    assert all(block[key] is None for key in block)
+    # Eight nulls, not eight NaNs and not dropped keys: the block still writes.
+    text = json.dumps(block)
+    assert "NaN" not in text and "Infinity" not in text
+    assert all(value is None for value in json.loads(text).values())
+
+
+def test_an_unmeasured_s21_makes_passivity_not_assessable_not_ok():
+    run_build_A = _load_run_build_a()
+    record = _s21_only_record(1.021737, provenance=None, reason=SPAN_REASON)
+    decision = run_build_A.s21_measurement(record)
+    passivity = run_build_A.passivity_record(0.327238, None, decision)
+
+    assert passivity["status"] == run_build_A.PASSIVITY_NOT_ASSESSABLE
+    assert passivity["power_sum"] is None
+    assert passivity["tolerance"] == pytest.approx(4.0e-9)
+    # Not a null status and not the pre-existing "UNVALIDATED": the check was
+    # SKIPPED, and the record says so instead of letting an unmeasured |S21|
+    # borrow the word "passive".
+    assert passivity["status"] not in (
+        None, "ok", run_build_A.S11_STATUS_UNVALIDATED)
+    assert "NOT ASSESSED" in passivity["verdict"]
+    assert "station span" in passivity["basis"]
+    # Same key set as the evaluated branch, so a reader never has to guess
+    # which one wrote the file.
+    assert set(passivity) == set(run_build_A.passivity_guard(0.8, 0.7))
+
+
+def test_a_cut_plane_s21_is_published_and_summed_unclipped():
+    run_build_A = _load_run_build_a()
+    record = _s21_only_record(0.761705, provenance="cut_plane@20.400mm",
+                              reason=None)
+    decision = run_build_A.s21_measurement(record)
+
+    assert decision["measured"] is True
+    assert decision["provenance"] == "cut_plane@20.400mm"
+    assert decision["unmeasured_reason"] is None
+    assert run_build_A.published_s21_magnitude(record) == pytest.approx(0.761705)
+
+    block = run_build_A.published_s21_block(record)
+    assert set(block) == set(run_build_A._S21_NUMERIC_KEYS)
+    assert block["magnitude"] == pytest.approx(0.761705)
+    assert block["raw_magnitude"] == pytest.approx(0.761705)
+
+    # A measured S21 goes into the sum at its real value:
+    # 0.325863^2 + 0.761705^2 = 0.6863812, well inside 1 -- so this branch has
+    # to reach the guard rather than the refusal.  A refusal that also refused
+    # the good case would be indistinguishable from a writer publishing nothing.
+    passivity = run_build_A.passivity_record(
+        0.325863, block["magnitude"], decision)
+    assert passivity["status"] is None
+    assert passivity["power_sum"] == pytest.approx(0.686382, abs=2e-6)
+    assert passivity["power_sum"] < 1.0
+    assert set(passivity) == set(run_build_A.passivity_guard(0.8, 0.7))
+
+
+def test_a_passing_record_keeps_a_null_status_and_the_guard_key_set():
+    run_build_A = _load_run_build_a()
+    record = _s21_only_record(0.761705, provenance="cut_plane@20.400mm",
+                              reason=None)
+    decision = run_build_A.s21_measurement(record)
+    passivity = run_build_A.passivity_record(0.325863, 0.761705, decision)
+
+    assert passivity["status"] is None
+    assert set(passivity) == set(
+        run_build_A.passivity_guard(0.325863, 0.761705))
+    # Two different silences: "there was nothing to check" (NOT_ASSESSABLE) is
+    # not "the check ran and had no verdict" (None), and neither is the
+    # pre-existing UNVALIDATED.  A reader must be able to tell them apart.
+    assert run_build_A.PASSIVITY_NOT_ASSESSABLE != run_build_A.S11_STATUS_UNVALIDATED
+    assert passivity["status"] != run_build_A.PASSIVITY_NOT_ASSESSABLE
+

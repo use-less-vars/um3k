@@ -749,7 +749,7 @@ def label_from_stem(stem: str) -> str:
 
 def resolve_artefact_out(structure: str, *, out, netlist, vis_dump,
                          default_out: str) -> str:
-    """Where this run may write its artefact: redirect a deviating run, or refuse.
+    """Where this run may write its artefact: this arm's own record, or refuse.
 
     WHY THIS EXISTS.  ``--vis-dump`` makes the solve pulse-excited (a Ricker
     wavelet is only a travelling packet on a pulse, never on a CW tone) and
@@ -766,12 +766,12 @@ def resolve_artefact_out(structure: str, *, out, netlist, vis_dump,
 
     Two rules, in this order:
 
-    1. IMPLICIT path (no ``--out``), a deviation, and the default would land
-       inside ``evidence/`` -> redirect to
-       ``artifacts/build_<structure>_<kind>.json``, where ``<kind>`` NAMES the
-       deviation (``pulse``, ``netlist``, ``pulse_netlist``).  Only arm A's
-       default is inside ``evidence/``, so B/C/D keep the filenames they always
-       had -- and a deviating run never reaches evidence either way.
+    1. IMPLICIT path (no ``--out``) AND a deviation -> ``SystemExit`` naming the
+       document this arm would have written and telling the caller to pass
+       ``--out artifacts/...``.  Uniform over the arms: the DEVIATION is what
+       makes the run not the certified one, so a deviating run inherits NO
+       arm's canonical name -- not arm A's evidence document, and not B/C/D's
+       ``artifacts/`` names either.
     2. ANY path -- typed or default -- that RESOLVES inside ``evidence/`` and is
        not this arm's own canonical CW document -> ``SystemExit`` naming that
        path and telling the caller to pass ``--out artifacts/...``.  On the
@@ -802,12 +802,34 @@ def resolve_artefact_out(structure: str, *, out, netlist, vis_dump,
         deviations.append("netlist")
     canonical = Path(default_out).resolve()
     if out is None:
+        if deviations:
+            # WHY A REFUSAL AND NOT AN AUTO-NAME.  The rejected alternative is to
+            # silently redirect a deviating run to artifacts/ (what this code
+            # did before, and why it was wrong: the redirect removed the one
+            # case the guard existed for, and the run proceeded without telling
+            # the user their artefact was not the document they asked for).  The
+            # redirect moved the path out of evidence/ BEFORE rule 2 looked at
+            # it, so a ``--netlist`` run with no ``--out`` -- the very incident
+            # this function was written for -- walked past the refusal and wrote
+            # a diode record under a name nobody typed.  A fail-closed guard its
+            # own redirect makes unreachable is not a guard.
+            why = " + ".join(deviations)
+            unrecoverable = (
+                "An evidence document is the record of ONE certified run and "
+                "cannot be recovered once overwritten: this tree keeps no "
+                "history. " if canonical.is_relative_to(EVIDENCE_DIR) else "")
+            raise SystemExit(
+                f"REFUSED: this run deviates from the certified configuration "
+                f"of arm {structure} ({why}) and names no artefact path, so it "
+                f"would write {canonical} -- arm {structure}'s canonical "
+                "record. A deviating run is NOT that record: its numbers come "
+                "from a different termination and/or excitation, so the "
+                "document would keep claiming the certified run while holding "
+                f"another run's numbers. {unrecoverable}Pass --out "
+                "artifacts/<name>.json to name where this run's record goes, "
+                "or drop the flag that makes it deviate from the canonical "
+                "run.")
         path = canonical
-        if deviations and path.is_relative_to(EVIDENCE_DIR):
-            # Never the evidence document, and never a name that could be
-            # mistaken for one: the deviation is in the filename.
-            path = (REPO / "artifacts" /
-                    f"build_{structure}_{'_'.join(deviations)}.json")
     else:
         path = Path(out)
     resolved = path.resolve()
@@ -2125,6 +2147,15 @@ def _z_eff_block(res) -> dict | None:
 # sum by 2e-2.
 PASSIVITY_TOL = 4.0e-9
 
+# The passivity check needs two published magnitudes from the SAME record.  When
+# the record has no |S21| to publish at all (DR-43), the honest answer is not
+# "passive" and not "failed" -- the check was not run, and that is a third
+# thing that has to be said out loud.
+PASSIVITY_NOT_ASSESSABLE = "NOT_ASSESSABLE"
+# The pre-existing status a record carries before any check runs; named so a
+# caller can tell "no verdict" from "verdict: not assessable".
+S11_STATUS_UNVALIDATED = "UNVALIDATED"
+
 
 def passivity_guard(s11_mag, s21_mag) -> dict:
     """The passivity-coherence record for one PUBLISHED (|S11|, |S21|) pair.
@@ -2179,6 +2210,107 @@ def passivity_guard(s11_mag, s21_mag) -> dict:
             if failed else
             f"|S11|^2 + |S21|^2 = {power_sum:.12f} is within 1 + {tol:.1e} = "
             f"{1.0 + tol:.12f}: the published pair is passive-coherent"),
+    }
+
+
+def s21_measurement(res) -> dict:
+    """Whether this record's S21 may be published at all (DR-43).
+
+    The only transmission a record with no cut plane can quote is the
+    station-span fallback (``emfit/studies.py``), a ratio of
+    ``forward_wave_amplitude`` at the first and last probe.  That is not an S21
+    on one cross-section, and it is not the estimator the published |S11| comes
+    from, so it is not published and nothing may be summed against it.  The
+    estimator that produced a published number says so in ``s21_provenance``
+    (e.g. ``cut_plane@20.400mm``); ``None`` there means unmeasured, and
+    ``s21_unmeasured_reason`` carries the refusal in words.
+    """
+    provenance = getattr(res, "s21_provenance", None)
+    reason = getattr(res, "s21_unmeasured_reason", None)
+    if provenance is None:
+        return {
+            "measured": False,
+            "provenance": None,
+            "unmeasured_reason": reason or (
+                "unmeasured: this record names no plane its transmission was "
+                "taken on, so the only ratio available is the station-span "
+                "fallback (emfit/studies.py:4137-4153), which is not an "
+                "S21 (DR-43).  No number is published from it."),
+        }
+    return {"measured": True, "provenance": str(provenance),
+            "unmeasured_reason": None}
+
+
+def published_s21_magnitude(res, decision: dict | None = None):
+    """|S21| as published, or ``None`` when this record has none to publish.
+
+    ``None`` is not zero and not a placeholder: it is the statement that no
+    admissible estimator produced a transmission for this record.
+    """
+    decision = s21_measurement(res) if decision is None else decision
+    if not decision["measured"]:
+        return None
+    return finite_or_none(abs(complex(res.s21)))
+
+
+def passivity_record(s11_mag, s21_mag, decision: dict) -> dict:
+    """``passivity_guard``, or the NOT_ASSESSABLE record when nothing is published.
+
+    Same key set either way, so no reader has to guess which branch wrote the
+    file.  Skipping a check an estimator cannot support is legitimate; the
+    record says it skipped it, and says why, because skipping it silently would
+    let a reader mistake an unmeasured |S21| for a passive one.
+    """
+    if not decision["measured"]:
+        return {
+            "status": PASSIVITY_NOT_ASSESSABLE,
+            "power_sum": None,
+            "tolerance": PASSIVITY_TOL,
+            "basis": (
+                "|S11|^2 + |S21|^2 needs a published |S21| from the SAME "
+                "record, on a single cross-section.  This record publishes "
+                "none: " + str(decision["unmeasured_reason"]) + "  The "
+                "station-span estimator cannot support the check, so no sum "
+                "is quoted and nothing is compared against 1 + tolerance."),
+            "verdict": (
+                "passivity NOT ASSESSED: no single-plane |S21| is published, "
+                "and the station-span estimator (emfit/studies.py:4137-4153) "
+                "cannot support the check.  Skipping the check is legitimate; "
+                "skipping it silently would not be."),
+        }
+    return passivity_guard(s11_mag, s21_mag)
+
+
+_S21_NUMERIC_KEYS = ("magnitude", "phase_rad", "phase_deg", "real", "imag",
+                     "raw_magnitude", "raw_phase_rad", "raw_phase_deg")
+
+
+def published_s21_block(res, decision: dict | None = None) -> dict:
+    """The numeric keys of the ``s21`` block: numbers only if one is admissible.
+
+    Called by both artefact writers (loaded and twin) so the two can never
+    disagree about what a published S21 is.  When nothing may be published the
+    eight keys are written as ``None`` rather than dropped: the key set is then
+    identical on every record, so a reader cannot mistake a missing key for a
+    measured zero, nor for a writer that changed shape (DR-43).
+    """
+    import numpy as np
+
+    decision = s21_measurement(res) if decision is None else decision
+    magnitude = published_s21_magnitude(res, decision)
+    if magnitude is None:
+        return {key: None for key in _S21_NUMERIC_KEYS}
+    s21 = complex(res.s21)
+    s21_raw = complex(res.s21_raw)
+    return {
+        "magnitude": magnitude,
+        "phase_rad": float(np.angle(s21)),
+        "phase_deg": float(np.degrees(np.angle(s21))),
+        "real": s21.real,
+        "imag": s21.imag,
+        "raw_magnitude": finite_or_none(abs(s21_raw)),
+        "raw_phase_rad": finite_or_none(float(np.angle(s21_raw))),
+        "raw_phase_deg": finite_or_none(float(np.degrees(np.angle(s21_raw)))),
     }
 
 
@@ -2467,14 +2599,14 @@ def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
             "s21_plane_index": g.get("s21_plane_index"),
         }),
         "s21": {
-            "magnitude": abs(s21),
-            "phase_rad": float(np.angle(s21)),
-            "phase_deg": float(np.degrees(np.angle(s21))),
-            "real": s21.real,
-            "imag": s21.imag,
-            "raw_magnitude": abs(s21_raw),
-            "raw_phase_rad": float(np.angle(s21_raw)),
-            "raw_phase_deg": float(np.degrees(np.angle(s21_raw))),
+            # DR-43: the twin is a station span with no cut plane, i.e. the same
+            # estimator the loaded run may no longer publish from.  Its numbers
+            # are withheld here too; the ratio the loaded run is normalised by
+            # is carried in `reference_produced` above and is unchanged.
+            **published_s21_block(twin),
+            "measured": s21_measurement(twin)["measured"],
+            "provenance": s21_measurement(twin)["provenance"],
+            "unmeasured_reason": s21_measurement(twin)["unmeasured_reason"],
             "planes_m": [float(twin.s21_planes[0]), float(twin.s21_planes[1])],
             "s21_plane_index": twin.s21_plane_index,
             "s21_plane_requested": g.get("s21_plane_requested"),
@@ -2482,8 +2614,10 @@ def twin_artefact(twin, reference, *, twin_kwargs: dict, meta: dict,
                 "the station span, not a cut plane: s21_plane is None on this "
                 "record and a load-free line has no cut for a plane to name.  "
                 "De-embedded with this run's own beta (emfit/studies.py:3261, "
-                "line_s21 at :1242).  What the loaded run is normalised by is "
-                "`reference_produced` above, not this number."),
+                "line_s21 at :1242).  A span ratio is not an S21 on one "
+                "cross-section, so no magnitude is published from it (DR-43); "
+                "what the loaded run is normalised by is `reference_produced` "
+                "above, not this number."),
         },
         "s11": {
             "magnitude": abs(s11),
@@ -3036,11 +3170,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.vis_dump == STRUCTURE_DUMP_SENTINEL:
         args.vis_dump = STRUCTURES[structure]["vis_dump"]
     # ONE home for "may this run write here".  A deviation (a dump, or a netlist
-    # the arm does not own) with an implicit --out is redirected off an evidence
-    # default, and ANY resolved path inside evidence/ that is not this arm's own
-    # canonical CW document is refused -- here, at argument resolution, so the
-    # refusal lands before the banner, before the trip thread and before the
-    # first timestep, never mid-write.
+    # the arm does not own) with an implicit --out is REFUSED, never renamed: a
+    # rename is exactly what made the evidence guard unreachable, because it
+    # moved the path out of evidence/ before the guard could see it.  So is ANY
+    # resolved path inside evidence/ that is not this arm's own canonical CW
+    # document -- here, at argument resolution, so the refusal lands before the
+    # banner, before the trip thread and before the first timestep, never
+    # mid-write.
     args.out = resolve_artefact_out(
         structure, out=args.out, netlist=args.netlist,
         vis_dump=args.vis_dump, default_out=STRUCTURES[structure]["out"])
@@ -3264,6 +3400,19 @@ def main(argv: list[str] | None = None) -> int:
             # studies refuses it under excite="pulse" (the pulse reads its
             # band off the kept record, whose columns are the stations), and
             # the dump run's science is the packet, not S21.
+            # DR-43, and the reason this line has to be read before anything
+            # downstream of it: with ``s21_plane=None`` the cut branch never
+            # runs, so ``res.s21_plane_x`` stays None and there is NO
+            # single-plane phasor pair to form |S21| from.  ``res.s21`` on
+            # such a run is the station-SPAN ratio -- a de-embedding residual,
+            # not a transmission (1.021737 against the cut plane's 0.761705 on
+            # the same 2400-step smoke) -- so it is not published as |S21| and
+            # passivity is recorded NOT_ASSESSABLE instead of being computed
+            # from a number that would call this run lossless-plus.  Only the
+            # CW path below (default policy S21_PLANE="cut", moved one
+            # column downstream of the load) requests a cut plane and
+            # therefore has an |S21| to publish.  See DR-43 in
+            # docs/design/defect_register.md.
             # ``load_trace=True`` is what fills the additive per-step trace
             # the dump carries (``load_t_ns`` / ``load_v`` / ``load_i``):
             # the element's own V(t) and I(t), one sample per step, read from
@@ -3409,7 +3558,14 @@ def main(argv: list[str] | None = None) -> int:
     # PUBLISHES: s11.magnitude (the two-wave |B/A| written at :3316) and |s21|
     # (s21.magnitude).  Computed once, here, so the s11 block's status, its own
     # numbers and the console line below all read one record.
-    passivity = passivity_guard(s11_two_wave_mag, finite_or_none(abs(s21)))
+    #
+    # DR-43: what S21 may be published at all is decided first.  With no cut
+    # plane there is no single-plane |S21|, so nothing is published and the gate
+    # reports NOT_ASSESSABLE -- a third status, distinct from "passive" (null)
+    # and from FAIL_PASSIVITY, because a check that could not run is neither.
+    s21_measure = s21_measurement(res)
+    s21_published = published_s21_magnitude(res, s21_measure)
+    passivity = passivity_record(s11_two_wave_mag, s21_published, s21_measure)
 
     # The bookkeeping keys in ``run`` below say what the numbers above were
     # divided by, so a reader can recompute them from the file alone: the
@@ -3528,14 +3684,13 @@ def main(argv: list[str] | None = None) -> int:
             "s21_plane_index": g.get("s21_plane_index"),
         }),
         "s21": {
-            "magnitude": abs(s21),
-            "phase_rad": float(np.angle(s21)),
-            "phase_deg": float(np.degrees(np.angle(s21))),
-            "real": s21.real,
-            "imag": s21.imag,
-            "raw_magnitude": abs(s21_raw),
-            "raw_phase_rad": float(np.angle(s21_raw)),
-            "raw_phase_deg": float(np.degrees(np.angle(s21_raw))),
+            # DR-43: numbers only when a single cut cross-section produced them.
+            # With no cut plane the eight numeric keys are null rather than
+            # absent, so the shape of this block never changes.
+            **published_s21_block(res, s21_measure),
+            "measured": s21_measure["measured"],
+            "provenance": s21_measure["provenance"],
+            "unmeasured_reason": s21_measure["unmeasured_reason"],
             # raw_s21 is NOT a reference-free measurement: the two travelling
             # waves it is split into use the reference's own gamma/zc
             # (emfit/studies.py:3334-3345), so it inherits that fit's error.
@@ -3618,7 +3773,7 @@ def main(argv: list[str] | None = None) -> int:
             # changes because of it.
             "validation_status": (passivity["status"]
                                   if passivity["status"] is not None
-                                  else "UNVALIDATED"),
+                                  else S11_STATUS_UNVALIDATED),
             "validation_reason": (
                 # Only a fired gate prepends, so an honest record keeps the
                 # text it has always carried, character for character.
@@ -3750,16 +3905,29 @@ def main(argv: list[str] | None = None) -> int:
     # The gate's verdict on that same line: the sum, the tolerance and the
     # status, so a run that publishes a non-passive pair says so in the console
     # and not only in the JSON.  ``ok`` is the unfired status, which is NOT
-    # written into the artefact (that keeps its own UNVALIDATED).
+    # written into the artefact (that keeps its own UNVALIDATED).  A record with
+    # no publishable |S21| (DR-43) prints NOT_ASSESSABLE and no sum: it did not
+    # pass the check, it did not fail it, it did not run it -- and the console
+    # says which of the three.
     passivity_txt = (
+        f"passivity=NOT_ASSESSABLE(no single-plane |S21|) "
+        f"passivity_status={PASSIVITY_NOT_ASSESSABLE}"
+        if passivity["status"] == PASSIVITY_NOT_ASSESSABLE else
         "passivity=not_evaluated(a published magnitude is absent)"
         if passivity["power_sum"] is None else
         f"passivity={passivity['power_sum']:.12f} "
         f"(tol {PASSIVITY_TOL:.1e}) "
         f"passivity_status={passivity['status'] or 'ok'}")
+    # DR-43: an unmeasured |S21| is printed as such.  Printing a number here
+    # would be the whole defect in one line: the console is where a reader
+    # takes the run's numbers from.
+    s21_txt = (f"|s21|={abs(s21):.9f} arg={np.degrees(np.angle(s21)):.4f}deg"
+               if s21_measure["measured"] else
+               "|s21|=unmeasured(no cut plane; station-span ratio not "
+               "published)")
     print(f"label={label} cells={cells} wall={wall_s:.1f}s "
           f"peak_rss={peak_mb:.1f}MB "
-          f"|s21|={abs(s21):.9f} arg={np.degrees(np.angle(s21)):.4f}deg "
+          f"{s21_txt} "
           f"|s11|={s11_two_wave_txt} "
           f"(one-wave_station_fit |s11|={abs(s11):.6e}) "
           f"cut_plane={res.s21_plane_index} "

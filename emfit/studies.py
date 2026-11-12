@@ -126,6 +126,18 @@ NO_LOADED_BETA = (
     "ratio; it does not supply a beta for this record")
 """Refusal printed in place of ``eps_eff`` on a loaded record."""
 
+SPAN_S21_UNMEASURED = (
+    "unmeasured: no cut plane was named, so the only transmission this record "
+    "could quote is the station-span fallback (emfit/studies.py:4137-4153) -- a "
+    "ratio of forward_wave_amplitude at the first and last probe, de-embedded "
+    "by line_s21 at the run's own beta.  That is a ratio across the whole "
+    "probe span, not a single-plane S21, and it is summed against an |S11| "
+    "from a different estimator; it was measured 1.02 on a span whose cut "
+    "plane gives 0.76 (DR-43).  No S-metric is published from it, and no "
+    "passivity verdict can rest on it.  This refusal is stated rather than "
+    "silent: skipping a check the estimator cannot support is legitimate, "
+    "skipping it without saying so is not.")
+"""Why a record with no admissible S21 estimator publishes no transmission."""
 
 # ---------------------------------------------------------------------------
 # declaration
@@ -1678,6 +1690,11 @@ class MicrostripWave:
     # element, ``None`` unless ``microstrip_wave(load_trace=True)``.
     load_trace_v: np.ndarray | None = None
     load_trace_i: np.ndarray | None = None
+    # Provenance of the published S21 (DR-43): the estimator that produced it
+    # and the plane it was taken on, e.g. ``"cut_plane@20.400mm"``; ``None``
+    # when no admissible estimator exists and no number may be published.
+    s21_provenance: str | None = None
+    s21_unmeasured_reason: str | None = None
 
     def summary(self) -> str:
         """One machine-readable line, the same fields the CLI prints."""
@@ -4024,6 +4041,11 @@ def microstrip_wave(
     # branch that does not take the cut, including the station-span fallbacks.
     s21_plane_x = s21_plane_v = s21_plane_i = None
     s21_plane_a = s21_plane_b = None
+    # DR-43: where the published S21 came from, and -- when nothing admissible
+    # exists -- why no number is published at all.  Set on the cut branch below;
+    # the station-span fallbacks leave both as they are here.
+    s21_provenance = None
+    s21_unmeasured_reason = SPAN_S21_UNMEASURED
     # A reflection coefficient belongs to a plane the wave still has something
     # to reflect FROM.  On the load's own column the pair ``v_cut``/``i_cut`` is
     # the element's boundary condition and ``b_cut/a_cut`` is the element's
@@ -4090,6 +4112,12 @@ def microstrip_wave(
                 s21 = raw_s21 / reference.forward_ratio(x_port, x_cut)
         elif a_port != 0.0:
             s21, raw_s21 = line_s21(a_port, x_port, a_cut, x_cut, beta)
+        # A single cross-section, de-embedded port->cut: the estimator a
+        # passivity check and any physics claim may rest on (DR-43).  Claimed
+        # only when a finite number actually came out of it.
+        if np.isfinite(s21.real) and np.isfinite(s21.imag):
+            s21_provenance = f"cut_plane@{x_cut * 1e3:.3f}mm"
+            s21_unmeasured_reason = None
     elif reference is not None:
         # Ratio of ratios, and the only thing here that needs no trust in
         # ``gamma``: the load-free run's wave crosses the same two planes
@@ -4112,7 +4140,12 @@ def microstrip_wave(
         # split is taken on each station's own phasors -- ``gamma = 0``, so
         # nothing is propagated yet -- which leaves the whole of the decay in
         # the ratio; :func:`line_s21` then takes the line's own delay out of it
-        # with the measured ``beta``.
+        # with the measured ``beta``.  This is a ratio across the whole probe
+        # span, not an S21 on one cross-section, so it is NOT publishable
+        # (DR-43): summed as a power against the two-wave |S11| it produced
+        # 1.021737 on a span whose cut plane gives 0.761705, i.e. a passivity
+        # failure invented by mixing two estimators.  ``s21_provenance`` stays
+        # ``None`` here and ``s21_unmeasured_reason`` says so.
         a1, a2 = forward_wave_amplitude(
             v_stations, i_stations, station_x, 0j, zc, indices=[0, -1])
         if a1 != 0.0:
@@ -4262,6 +4295,10 @@ def microstrip_wave(
         "excite": excite, "band_lo": band_lo, "band_hi": band_hi,
         "n_bins": n_bins, "f_pulse": f_pulse,
         "poynting": bool(poynting),
+        # DR-43: which estimator produced the published S21 and on which plane,
+        # or ``None`` plus the reason no number may be published.
+        "s21_provenance": s21_provenance,
+        "s21_unmeasured_reason": s21_unmeasured_reason,
     }
     # The netlist's declared design tone beside the tone this run analyses, and
     # the tau each implies.  ABSENT unless a ``T`` element declared one, so the
@@ -4405,6 +4442,8 @@ def microstrip_wave(
         s21=s21,
         s21_raw=raw_s21,
         s21_planes=s21_planes,
+        s21_provenance=s21_provenance,
+        s21_unmeasured_reason=s21_unmeasured_reason,
         power_z0=z0_power,
         power_ratio=power_ratio,
         power_z0_port=float(z0_power_port[0]),

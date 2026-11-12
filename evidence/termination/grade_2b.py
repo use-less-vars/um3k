@@ -150,11 +150,23 @@ def validate(doc: dict, src: str, problems: list, warnings: list) -> bool:
                             f"finite number ({value!r})")
             ok = False
 
+    # DR-43: an artefact whose |S21| was never measured (no cut plane -- a
+    # station-span record) publishes None on every s21 numeric key rather than
+    # a number nobody may publish.  The KEY must still be there; the value is
+    # allowed to be null exactly when the artefact says so, and the shortfall
+    # is reported as a WARNING naming the reason rather than as a problem.
+    unmeasured = (dig(doc, "s21.measured") is False)
+    unmeasured_reason = json_safe(dig(doc, "s21.unmeasured_reason"))
     for path in REQUIRED_NUMERIC:
         value = dig(doc, path)
         if value is _MISSING:
             problems.append(f"{src}: missing required key `{path}`")
             ok = False
+        elif value is None and unmeasured and path.startswith("s21."):
+            warnings.append(f"{src}: `{path}` is null because |S21| was not "
+                            f"measured (s21.measured=False; "
+                            f"s21.unmeasured_reason={unmeasured_reason!r}) "
+                            f"-- nothing may score it (DR-43)")
         elif finite_number(value) is None:
             problems.append(f"{src}: `{path}` is not a finite number "
                             f"({value!r})")
@@ -258,7 +270,15 @@ def wrap(rad: float) -> float:
 
 def grade_a(a: dict) -> dict:
     s11 = abs(complex(a["s11"]["magnitude"], 0.0))
-    s21 = float(a["s21"]["magnitude"])
+    # DR-43: |S21| is published only when the run had a single extraction
+    # plane to form it on (a cut plane).  A station-span record publishes
+    # magnitude=None and says why in s21.unmeasured_reason, because that ratio
+    # is a de-embedding residual and not a transmission -- grading it as
+    # |S21| is the defect DR-43 records.  None is therefore READ, not
+    # substituted: an unmeasured |S21| fails the bars that need it instead of
+    # passing on a number nobody may publish.
+    _s21_mag = a["s21"].get("magnitude")
+    s21 = None if _s21_mag is None else float(_s21_mag)
     out = {}
 
     out["AC-3"] = {
@@ -267,13 +287,23 @@ def grade_a(a: dict) -> dict:
         "achieved": {
             "s11_abs": s11,
             "s21_abs": s21,
-            "s21_abs_minus_one": abs(s21 - 1.0),
+            "s21_abs_minus_one": (None if s21 is None
+                                  else abs(s21 - 1.0)),
             "s11_margin": S11_BAR - s11,
-            "s21_margin": S21_BAR - abs(s21 - 1.0),
+            "s21_margin": (None if s21 is None
+                           else S21_BAR - abs(s21 - 1.0)),
         },
-        "pass": bool(s11 <= S11_BAR and abs(s21 - 1.0) <= S21_BAR),
+        "pass": bool(s11 <= S11_BAR and s21 is not None
+                     and abs(s21 - 1.0) <= S21_BAR),
         "source_artefact": label_of(a),
     }
+    if s21 is None:
+        # Stated on the criterion, not left to be inferred from a null.
+        out["AC-3"]["note"] = (
+            "unmeasured: no cut plane -- the artefact publishes "
+            "s21.magnitude=None with s21.unmeasured_reason set (DR-43), so "
+            "the | |S21| - 1 | half of this bar has no number to score and "
+            "the criterion fails rather than being skipped")
 
     ac6 = a["ac"]["AC-6"]
     got = ac6["achieved"]
@@ -314,9 +344,9 @@ def grade_a(a: dict) -> dict:
         "achieved": {
             "s21_abs": s21,
             "tripwire": S21_TRIPWIRE,
-            "headroom": S21_TRIPWIRE - s21,
+            "headroom": (None if s21 is None else S21_TRIPWIRE - s21),
         },
-        "pass": bool(s21 <= S21_TRIPWIRE),
+        "pass": bool(s21 is not None and s21 <= S21_TRIPWIRE),
         "pass_scope": "magnitude half only",
         "closable_in_run_a": False,
         "status": ("magnitude half scored; `pass` must NOT be read as AC-5 "
@@ -377,6 +407,24 @@ def grade_ac7(a: dict, e: dict) -> dict:
     WITHIN-RUN slope over that run's ``s21.planes_m[0..1]``, a different (also
     degenerate) number.
     """
+    # DR-43: an artefact with no measured |S21| publishes null on the phases
+    # too -- there is no single-plane phasor pair to take an angle of.  The
+    # cross-run slope needs two of them, so this is reported as unscored
+    # instead of crashing on float(None).
+    if any(dig(x, "s21." + k) is None for x in (a, e)
+           for k in ("phase_rad", "raw_phase_rad")):
+        return {
+            "bar": (f"scope:266-268 -- `beta_FDTD = -d(arg S21)/dL` from two "
+                    f"line lengths; compare against `beta_modal`; "
+                    f"|beta_FDTD - beta_modal| / beta_modal <= {BETA_REL_BAR:g}"),
+            "achieved": None,
+            "pass": None,
+            "source_artefact": f"{label_of(a)} vs {label_of(e)}",
+            "status": ("unscored: at least one artefact has no measured "
+                       "|S21| (s21.phase_rad / s21.raw_phase_rad is null, "
+                       "DR-43), so there is no phase to difference across "
+                       "the two runs"),
+        }
     d_l = float(e["s21"]["planes_m"][1]) - float(a["s21"]["planes_m"][1])
     raw_a = float(a["s21"]["raw_phase_rad"])
     raw_e = float(e["s21"]["raw_phase_rad"])
@@ -583,7 +631,12 @@ def main(argv: list[str] | None = None) -> int:
         ac7 = grade_ac7(a, e)
         criteria["AC-7"] = ac7
         graded["criteria"] = criteria
-        if not ac7["achieved"]["branch_unambiguous"]:
+        if ac7.get("achieved") is None:
+            # DR-43: one of the two runs has no measured |S21|, so there is no
+            # cross-run phase to difference.  Reported as a problem rather
+            # than crashing on a missing `achieved` block.
+            problems.append("AC-7: " + str(ac7.get("status")))
+        elif not ac7["achieved"]["branch_unambiguous"]:
             problems.append(
                 "AC-7: dL = "
                 f"{ac7['achieved']['dL_m'] * 1e3:.4f} mm is not below "
@@ -594,7 +647,7 @@ def main(argv: list[str] | None = None) -> int:
                 "of being scored against a wrapped beta")
             graded["status"] = ("scored except AC-7, which is unscored: see "
                                 "`problems`")
-        if hundred:
+        if hundred and ac7.get("achieved") is not None:
             graded["exploratory_100ohm"] = grade_b(
                 hundred[0], ac7["achieved"]["beta_modal"]["z0_ohm"])
         graded["verdict"] = {

@@ -762,13 +762,19 @@ def test_the_writer_carries_a_declared_tone_into_the_artefact():
 # Rule functions only: no mesh is built, no step is taken, no file is written.
 
 
-def test_a_visualisation_dump_on_arm_a_is_redirected_off_the_evidence_document():
-    """A deviating run gets its own name under ``artifacts/``, and it says which.
+def test_a_deviating_run_with_no_out_is_refused_and_never_renamed():
+    """A deviating run with no ``--out`` STOPS; it is never given a new name.
 
-    Three deviations, three names: ``pulse`` (a dump), ``netlist`` (a document
-    arm A does not own -- A owns none), and both at once.  The kind is in the
-    FILENAME so a file a deviating run wrote can never be mistaken for the arm's
-    own record, and NONE of the three resolves inside ``evidence/``.
+    Three deviations -- ``pulse`` (a dump), ``netlist`` (a document arm A does
+    not own: A owns none), and both at once -- and every one of them is refused,
+    naming the document that would have been written and the flag that moves the
+    record somewhere else.
+
+    The alternative this replaced, silently renaming the run to
+    ``artifacts/build_A_<kind>.json``, is exactly how the refusal became
+    unreachable: the rename moved the path out of ``evidence/`` BEFORE the guard
+    looked at it, so a ``--netlist`` run went ahead and wrote under a name
+    nobody had asked for.
     """
     runner = _load_run_build_a()
     canonical = runner.STRUCTURES["A"]["out"]
@@ -776,19 +782,22 @@ def test_a_visualisation_dump_on_arm_a_is_redirected_off_the_evidence_document()
     assert Path(canonical).resolve().is_relative_to(runner.EVIDENCE_DIR)
     stub = runner.STRUCTURES["C"]["netlist"]      # a document arm A does not own
     dump = "artifacts/vis_dump_A_plain.npz"
+    named = str(Path(canonical).resolve())
 
-    expected = {
-        "pulse": (dump, None, "build_A_pulse.json"),
-        "netlist": (None, stub, "build_A_netlist.json"),
-        "pulse_netlist": (dump, stub, "build_A_pulse_netlist.json"),
+    deviating = {
+        "pulse": (dump, None),
+        "netlist": (None, stub),
+        "pulse_netlist": (dump, stub),
     }
-    for kind, (vis_dump, netlist, name) in expected.items():
-        out = runner.resolve_artefact_out(
-            "A", out=None, vis_dump=vis_dump, netlist=netlist,
-            default_out=canonical)
-        resolved = Path(out).resolve()
-        assert resolved == (runner.REPO / "artifacts" / name).resolve(), kind
-        assert not resolved.is_relative_to(runner.EVIDENCE_DIR), kind
+    for kind, (vis_dump, netlist) in deviating.items():
+        with pytest.raises(SystemExit) as excinfo:
+            runner.resolve_artefact_out(
+                "A", out=None, vis_dump=vis_dump, netlist=netlist,
+                default_out=canonical)
+        message = str(excinfo.value)
+        assert "REFUSED" in message, kind
+        assert named in message, kind
+        assert "--out artifacts/" in message, kind
 
 
 def test_an_evidence_path_that_is_not_the_canonical_record_is_refused():
