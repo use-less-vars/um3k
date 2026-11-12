@@ -763,7 +763,7 @@ Two facts follow from `:2366-2368`, and they are separate defects:
 **title:** `FDTD.AddMSLPort` forwards `priority` into the launch metal's `AddBox` (`infra/openems/reference/ports.py:349`) and defaults it to **0** (`:107`), the CSXCAD default; at 0 the launch box is coplanar with the substrate's top face at `z_strip` and *ties* with it, so CSXCAD keeps one and discards the other — the launch — with no error, and the model solves with a port that excites nothing while the energy trace flattens at **-8.54 dB**. The same referee's extraction reader, written against the intuitive `port_1_utA` ordering, then finds no files at all, because openEMS builds the names as `port_ut_1A` / `port_it_1B`: the component token precedes the port number, because `_{}` in `lbl_temp` is bound to the number at construction time rather than at build time.
 **status:** FIXED-TESTED — both halves carry a code fix in `docker/openems/build_A_referee.py` and a host run that reads through it (`evidence/referee/s11_extraction.json`: `port1_api` `"mslport"`, `s11_abs` 0.3271645531273824), recorded as E12 VERIFIED at `docs/design/EM_SOLVER_LEDGER.md:37`. This is a resolved defect recorded for its landmine, not an open item, and the landmine is the whole reason it is filed.
 **severity:** HIGH — it produced a wrong number without raising, which is the shape DR-37 carries HIGH for: a correct solve of a *wrong model* whose output was believed. It is not MEDIUM-latent like DR-40, because it fired on every run rather than on a branch; and it is confined to the referee channel rather than the graded in-house artefacts only because the in-house FDTD builds no CSXCAD primitive to tie (see *Scope*). Nothing in the output marked the model as unattached — exit status zero, a plausible `|S11|` — so the only defence available was comparison against a second instrument.
-**opened:** 2026-11-14 (this entry)
+**opened:** 2026-11-12 (this entry)
 
 **What is wrong.** Two defects in one script, both silent, in the same direction: the model was not the model it was said to be, and the record could not say so.
 
@@ -786,11 +786,11 @@ Two facts follow from `:2366-2368`, and they are separate defects:
 - **title:** The compiled kernel is ~33x slower than the Python path it is meant to replace when it inherits the default OpenMP thread team, and ~78x slower than the same kernel at one thread — so a naive E3 wiring would deliver a large slowdown while looking like a speedup.
 - **status:** OPEN
 - **severity:** HIGH. It does not move any verdict today (the kernel is not on any call path — `emfit/` never imports it, see E3), but it would turn the E3 rewrite into a ~33x regression if the thread team were left unpinned, and it is why no kernel figure may be quoted without a thread count.
-- **opened:** 2026-11-14 (this entry)
+- **opened:** 2026-11-12 (this entry)
 
 **What is wrong.** The compiled kernel (`src/emfit_core.cpp`, authoritative `.so` `build/cpp/emfit_core.cpython-312-x86_64-linux-gnu.so`, 258720 bytes) is built with `-fopenmp` and its row-dot loops carry OpenMP pragmas. Run with the default thread team it is ~33x slower than the Python path it is meant to replace. At this grid size the parallelism is not merely unhelpful, it is the dominant cost: each row's dot product is a handful of flops, so a thread team's barrier and spin cost is paid per row and dwarfs the arithmetic it distributes.
 
-**Evidence** — re-measured in this container on 2026-11-14, golden grid (133 edges, 392 nonzeros), kernel step timed in isolation:
+**Evidence** — re-measured in this container on 2026-11-12, golden grid (133 edges, 392 nonzeros), kernel step timed in isolation:
 
 | configuration | per call |
 |---|---|
