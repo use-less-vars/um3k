@@ -83,6 +83,26 @@
     // Only now, once the key is definitely ours, stop the browser's default
     // (Space scrolls the page, the arrows scroll it too).
     event.preventDefault();
+
+    // WHY event.repeat AND NOT A TIME WINDOW
+    // -------------------------------------
+    // Holding an arrow down makes the OS repeat the keydown; each repeat is an
+    // RPC, and the ten-frame seek those now carry would run away. The browser
+    // already tells us which keydown is a repeat, so the guard is one flag on
+    // the event itself - no timer, no "last accepted press" variable on the
+    // server, nothing that can drift between the two halves.
+    //
+    // It is PER KEY, not global: `repeat` is true only for the key being held,
+    // so a fast double tap of a DIFFERENT key still arrives as two ordinary
+    // keydowns and both land. A global debounce would swallow the second one.
+    //
+    // AFTER preventDefault on purpose: a held Space repeats its default action
+    // too, and a repeat that skipped preventDefault would scroll the page
+    // while nothing else appeared to happen.
+    if (event.repeat) {
+      return;
+    }
+
     window.trame.trigger(SHORTCUT_TRIGGER, [event.key], {});
   }
 

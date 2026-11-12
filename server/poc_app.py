@@ -830,6 +830,48 @@ def _multifreq_candidates(npz_path: Path, structure_id=None) -> list[Path]:
     return candidates
 
 
+def _absent_multifreq_reason(arm, npz_path) -> str:
+    """WHY this arm has no sweep, in the page's own words. Never empty.
+
+    It exists because ``MULTIFREQ_BY_STRUCTURE`` is a LITERAL map that knows two
+    arms while the SETUP picker offers every arm the solver has: selecting an
+    arm the map does not name (D, whose termination is a netlist) left the
+    panels with ``load_multifreq -> None`` and a caption that listed lookups
+    without ever saying the missing thing was a REGISTRY entry, not a file.
+    "None" is a real answer, and this is its sentence: the arm exists, the sweep
+    for it does not exist YET, and the reader is told which of the two is
+    missing.
+
+    The three cases are kept apart because they need different actions - write
+    the sweep and register it, re-run the sweep, or fix the file - and one
+    message for all three (the old "no S-parameter data") named none of them.
+    """
+    registered = MULTIFREQ_BY_STRUCTURE.get(arm)
+    single = SINGLE_RUN_BY_STRUCTURE.get(arm)
+    looked = f"*multifreq*summary*.json beside {Path(npz_path)}"
+    if registered:
+        looked += f", {registered}"
+    if single:
+        looked += f", {single}"
+    if not arm:
+        head = (
+            "no structure arm is recorded for this dump, so no "
+            "multi-frequency summary can be chosen for it"
+        )
+    elif not registered:
+        head = (
+            f"no multi-frequency summary is registered for arm {arm} yet - the "
+            "picker offers the arm because the SOLVER has it, and its sweep is "
+            "a separate artefact that has not been written"
+        )
+    else:
+        head = (
+            f"the multi-frequency summary registered for arm {arm} "
+            f"({registered}) could not be read"
+        )
+    return f"{head}; looked for {looked}"
+
+
 # --- the structure registry ------------------------------------------------
 #
 # WHY a registry file: the viewer used to know ONE artefact path, typed in as a
@@ -944,6 +986,43 @@ def _run_letter(structure, key):
     words = text.split()
     head = words[0].rstrip(",") if words else ""
     return head or None
+
+
+def _structure_registry() -> dict:
+    """The SOLVE arms, read from the solver that dispatches on them. {} if not.
+
+    The Project picker in the SETUP column used to be bound to
+    ``MULTIFREQ_BY_STRUCTURE`` - a literal map in THIS file naming A and B - so
+    adding an arm over there (a ``STRUCTURES`` row, its netlist, its default
+    artefact) left the panel still offering two arms, with no line in either
+    file saying the two lists had drifted.  This is that missing line: the
+    items are the keys of the dict the solver itself dispatches on.
+
+    Loaded by PATH because the solver is not a module: it lives in
+    ``evidence/termination`` because it is evidence, not because it is a
+    package.  Importing it is safe and cheap - every one of its module-level
+    imports is stdlib and all its work (argument parsing, the mesh, the solve)
+    sits behind ``main()`` under an ``if __name__`` guard - so this costs one
+    parse of a source file per page render and executes nothing.
+
+    ANY failure returns ``{}``, never an exception: a panel that cannot read
+    the arm list must still render (the caller falls back to the two arms it
+    can name itself), and losing the whole SETUP column over a caption would be
+    a far worse trade than showing a stale list.
+    """
+    import importlib.util
+
+    path = REPO_ROOT / "evidence" / "termination" / "run_build_A.py"
+    try:
+        spec = importlib.util.spec_from_file_location("_poc_solver_arms", path)
+        if spec is None or spec.loader is None:
+            return {}
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception:
+        return {}
+    structures = getattr(module, "STRUCTURES", None)
+    return dict(structures) if isinstance(structures, dict) else {}
 
 
 def load_structures() -> list:
@@ -3883,10 +3962,13 @@ def run_web(
         )
     )
     if multifreq is None:
-        frequency_caption = (
-            "no multi-frequency |S11|/|S21| sweep on disk yet: looked for "
-            "*multifreq*summary*.json beside "
-            f"{info['path']} and at {DEFAULT_MULTIFREQ}"
+        # From the ARM, not from DEFAULT_MULTIFREQ: that constant is A's own
+        # summary, and naming it for a B dump - let alone a D one, which has no
+        # summary at all - claimed a candidate file that could never have been
+        # this dump's sweep.  Rejected alternative: keeping the constant and
+        # appending "or nothing", which still points a reader at A's numbers.
+        frequency_caption = _absent_multifreq_reason(
+            _structure_key(info.get("structure_id")), info["path"]
         )
     else:
         frequency_caption = _frequency_caption(multifreq, record)
@@ -5513,7 +5595,8 @@ MODE_PANEL_HINT = (
     "Mode (2D cross-section) has not been run for this page yet: press the "
     "Mode button to solve the quasi-TEM mode of the cross-section on screen. "
     "The solve reads the study record written beside the dump and reports "
-    "beta, eps_eff, the solver residual and the mesh size - it adds no picture."
+    "beta, eps_eff, the solver residual and the mesh size - it also draws the "
+    "mode's |E| as a turbo sheet at the near x-cut."
 )
 
 
@@ -6454,18 +6537,42 @@ def run_web_vis(
         state.frame_max = (nt if mode == "ycut" else nt_x) - 1
         _show(min(int(state.frame), int(state.frame_max)), mode)
 
+    # A step pressed while the animation RUNS is a SEEK, not a stop: ten frames
+    # per press, so crossing a 100-frame dump while it plays is 10 presses
+    # instead of 100. WHY not "always 10": on a stopped page the arrows mean
+    # "the next picture", and a 10-frame jump would skip the one being examined.
     @ctrl.set("step_back")
     def _on_step_back(**_kwargs) -> None:
-        """Move exactly one frame back, and stop playing."""
-        frames = nt if state.mode == "ycut" else nt_x
+        """Ten frames back while playing, exactly one while stopped.
+
+        A running animation is NOT stopped by a seek: ``state.playing`` and the
+        pause label are left alone (only the stopped branch has anything to
+        stop), so the play loop keeps advancing from wherever the seek landed.
+        """
+        # The SAME frame count the one-frame step has always used: the two
+        # clocks have different lengths (nt on ez_ycut, nt_x on each x-cut) and
+        # a seek has to wrap on the one on screen. ``max(1, ...)`` is the
+        # zero-frame guard - an empty axis would otherwise raise
+        # ZeroDivisionError in the modulo, and on a one-frame axis every step
+        # lands on frame 0, which is the only frame there is.
+        frames = max(1, nt if state.mode == "ycut" else nt_x)
+        if state.playing:
+            _show((int(state.frame) - 10) % frames, state.mode)
+            return
         state.playing = False
         state.play_label = "play"
         _show((int(state.frame) - 1) % frames, state.mode)
 
     @ctrl.set("step_fwd")
     def _on_step_fwd(**_kwargs) -> None:
-        """Move exactly one frame forward, and stop playing."""
-        frames = nt if state.mode == "ycut" else nt_x
+        """Ten frames forward while playing, exactly one while stopped.
+
+        See _on_step_back: same split, same reason, same frame count.
+        """
+        frames = max(1, nt if state.mode == "ycut" else nt_x)
+        if state.playing:
+            _show((int(state.frame) + 10) % frames, state.mode)
+            return
         state.playing = False
         state.play_label = "play"
         _show((int(state.frame) + 1) % frames, state.mode)
@@ -6518,11 +6625,10 @@ def run_web_vis(
         arm = _structure_key(structure_id)
         multifreq = load_multifreq(info["path"], structure_id)
         if multifreq is None:
-            looked = f"*multifreq*summary*.json beside {info['path']}"
-            if MULTIFREQ_BY_STRUCTURE.get(arm):
-                looked += f", {MULTIFREQ_BY_STRUCTURE[arm]}"
-            if SINGLE_RUN_BY_STRUCTURE.get(arm):
-                looked += f", {SINGLE_RUN_BY_STRUCTURE[arm]}"
+            # The caption carries the registry gap as well as the lookups:
+            # "no S-parameter data" alone is true of four different situations
+            # (no arm recorded, no summary registered for this arm, a sweep that
+            # will not parse, a sweep with no usable row) and names none of them.
             return {
                 "path": None,
                 "points": [],
@@ -6532,7 +6638,8 @@ def run_web_vis(
                 "reason": "no S-parameter data",
                 "caption": (
                     "no S-parameter data for structure "
-                    f"{structure_id or 'unknown'}: looked for {looked}"
+                    f"{structure_id or 'unknown'}: "
+                    f"{_absent_multifreq_reason(arm, info['path'])}"
                 ),
                 "single_point": False,
                 "number": "",
@@ -6694,6 +6801,13 @@ def run_web_vis(
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
+    # The fallback expander's handler. Only the VBtn path binds it: the panels
+    # path is opened and closed by Vuetify itself and never reaches the server.
+    @ctrl.set("netlist_toggle")
+    def _on_netlist_toggle(**_kwargs) -> None:
+        """Open/close the netlist box when the build has no expansion panels."""
+        state.netlist_open = not bool(state.netlist_open)
+
     def _emit_circuit_netlist() -> None:
         """Emit the CIRCUIT NETLIST editor: one optional multi-line box.
 
@@ -6725,8 +6839,74 @@ def run_web_vis(
         elif "VLabel" in widgets:
             widgets["VLabel"](note)
         textarea_cls = getattr(widgets_module, "VTextarea", None)
+        # The box starts COLLAPSED: it is optional, and six empty rows on every
+        # page load made the Circuit tab look like a form to fill in before a
+        # solve could run. THREE classes, all resolved the same getattr way the
+        # box is, because all three are trame-vuetify's and none is guaranteed:
+        # VExpansionPanelText is NOT optional here - Vuetify renders a panel's
+        # DEFAULT slot OUTSIDE the collapsible region (VExpansionPanel's own
+        # render builds VExpansionPanelTitle/VExpansionPanelText for
+        # props.title/props.text and then appends slots.default() as a plain
+        # child), so nesting the box straight under the panel would leave it
+        # permanently visible under the header. It is only collapsible inside
+        # VExpansionPanelText, which is what injects the panel's $p context.
+        #
+        # The TEXT SURVIVES a collapse: VExpansionPanelText wraps its body in
+        # ``v-show`` but gates the body on useLazy's ``hasContent``, which drops
+        # back to False once the leave transition finishes - the box is really
+        # UNMOUNTED, not merely hidden. That is safe here and is why the
+        # binding stays ``v_model=("solve_netlist_json", "")``: the text lives
+        # in SERVER state; the first element of that tuple is only the DEFAULT
+        # used when the key is absent, and the key exists from boot (set to ""
+        # beside the other solve state), so a remount re-reads the current value
+        # and re-typing is never required.
+        panels_cls = getattr(widgets_module, "VExpansionPanels", None)
+        panel_cls = getattr(widgets_module, "VExpansionPanel", None)
+        panel_text_cls = getattr(widgets_module, "VExpansionPanelText", None)
+        if (
+            textarea_cls is not None
+            and panels_cls is not None
+            and panel_cls is not None
+            and panel_text_cls is not None
+        ):
+            with panels_cls(classes="mb-1"):
+                # No v_model on the panels on purpose: an unselected group is
+                # collapsed, and passing a model would open the first panel.
+                with panel_cls(title="Add Circuit Netlist"):
+                    with panel_text_cls():
+                        textarea_cls(
+                            v_model=("solve_netlist_json", ""),
+                            label="Circuit Netlist (JSON)",
+                            placeholder=(
+                                "Leave empty for the built-in 50 ohm resistor "
+                                "study; fill it to terminate the load's cut in "
+                                "a circuit."
+                            ),
+                            rows=6,
+                            density="compact",
+                            hide_details=True,
+                            classes="mb-1",
+                        )
+            return
         if textarea_cls is not None:
+            # FALLBACK for a variant with no expansion panels (or no
+            # VExpansionPanelText to put the body in): a button and the same
+            # flag-driven v_if the panels express. ``state.netlist_open`` is
+            # (re)set to False here rather than at boot so a re-emitted page - a
+            # solve swaps the dump and rebuilds the layout - starts collapsed
+            # again, exactly like the panels' unselected group.
+            state.netlist_open = False
+            btn_cls = getattr(widgets_module, "VBtn", None)
+            if btn_cls is not None:
+                btn_cls(
+                    "Add Circuit Netlist",
+                    click=ctrl.netlist_toggle,
+                    size="small",
+                    variant="text",
+                    classes="mb-1",
+                )
             textarea_cls(
+                v_if=("netlist_open", False),
                 v_model=("solve_netlist_json", ""),
                 label="Circuit Netlist (JSON)",
                 placeholder=(
@@ -6874,7 +7054,19 @@ def run_web_vis(
                     # expression, so the array literal survives verbatim. Single
                     # quotes, not json.dumps: the string is re-wrapped in double
                     # quotes by trame, so a " inside it would end the attribute.
-                    v_bind_items=repr(list(MULTIFREQ_BY_STRUCTURE)),
+                    # The arms come from the SOLVER's own STRUCTURES, not from
+                    # the MULTIFREQ_BY_STRUCTURE literal below: that map is
+                    # this file's guess at which arms exist, and it silently
+                    # went stale the moment the solver grew an arm it did not
+                    # name.  Sorted, because the dict reads A, B (file order)
+                    # but a reader looking for an arm scans a list.
+                    #
+                    # The literal map stays as the FALLBACK, and it is a real
+                    # fallback and not a formality: _structure_registry()
+                    # returns {} whenever the solver file cannot be read, and a
+                    # picker with no items is a column with no way to choose.
+                    v_bind_items=repr(sorted(_structure_registry())
+                                      or list(MULTIFREQ_BY_STRUCTURE)),
                     label="Structure",
                     density="compact",
                     hide_details=True,
@@ -7488,11 +7680,33 @@ def run_web_vis(
                                     tabs_window_cls,
                                     tabs_item_cls,
                                 ):
+                                    # EVERY tab names its value, and the value is
+                                    # the SAME string as the window item below it.
+                                    # WHY (this is the whole fix): Vuetify's tab
+                                    # item registers whatever ``value`` prop it was
+                                    # handed - its group-item props default is
+                                    # ``value: null`` and ``useGroupItem`` takes
+                                    # ``toRef(() => props.value)`` as-is, with NO
+                                    # index fallback for VTab. So four bare
+                                    # ``VTab("label")`` calls all register ``null``,
+                                    # and ``VTabsWindow`` resolves its model to the
+                                    # selected TAB's value - null - which matches
+                                    # none of the four STRING window-item values.
+                                    # Result: a tab bar that highlights a tab and a
+                                    # window that renders nothing. Naming both
+                                    # sides is the contract; the alternative
+                                    # (indexes on the window items, so the tabs'
+                                    # implicit values line up) was rejected because
+                                    # the tab state would then be a number the
+                                    # reader cannot see in the code.
                                     with tabs_cls(v_model=("tab", "s_params")):
-                                        tab_cls("S-Parameters")
-                                        tab_cls("Confidence N-lambda")
-                                        tab_cls("Modes")
-                                        tab_cls("Circuit")
+                                        tab_cls("S-Parameters", value="s_params")
+                                        tab_cls(
+                                            "Confidence N-lambda",
+                                            value="confidence",
+                                        )
+                                        tab_cls("Modes", value="modes")
+                                        tab_cls("Circuit", value="circuit")
                                     with tabs_window_cls(
                                         v_model=("tab", "s_params")
                                     ):

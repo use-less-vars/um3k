@@ -1946,6 +1946,36 @@ def test_keyboard_script_is_registered_with_the_client(playback):
         "positional argument, which is the shape _on_kbd_shortcut reads"
     )
 
+    # THE DEBOUNCE, and WHY this is a SOURCE assertion rather than a behavioural
+    # one: ``event.repeat`` is set by the BROWSER and never reaches Python, and
+    # there is no server-side clock in the guard either (that is the whole point
+    # of using the flag). So nothing on this side can observe a held key - the
+    # only checkable contract is where the guard SITS in the listener: after
+    # ``preventDefault`` (so a held Space still does not scroll the page) and
+    # before the trigger (so a held key fires once, not once per repeat).
+    assert "event.repeat" in js, (
+        "keyboard.js carries no event.repeat guard: a held arrow or Space now "
+        "sends one RPC per OS key repeat, and the ten-frame seek those carry "
+        "runs away"
+    )
+    # Comments are dropped first: the file's own header and the WHY block above
+    # the guard both NAME these three tokens long before the statements they
+    # describe, so indexing the raw text would compare comment offsets. The
+    # call form carries its parenthesis because the readiness check earlier in
+    # the listener also reads ``window.trame.trigger`` (without one).
+    code = "\n".join(
+        line for line in js.splitlines() if not line.lstrip().startswith("//")
+    )
+    assert (
+        code.index("preventDefault")
+        < code.index("event.repeat")
+        < code.index("window.trame.trigger(")
+    ), (
+        "keyboard.js no longer guards in the order preventDefault -> "
+        "event.repeat -> trigger; a repeat that skipped preventDefault would "
+        "scroll the page, and a guard after the trigger would be too late"
+    )
+
 
 def test_keyboard_space_is_the_play_button(playback):
     """Space does exactly what the play button does - same handler, same effects.
@@ -2376,6 +2406,68 @@ def _texts(log) -> list:
     return [str(entry["text"]) for entry in log if isinstance(entry["text"], str)]
 
 
+def test_every_tab_value_matches_exactly_one_window_item(tmp_path: Path,
+                                                         monkeypatch) -> None:
+    """The tab bar and its window must name the SAME values, one for one.
+
+    WHY this test exists: a ``VTab`` given only a label registers Vuetify's
+    group-item default ``value: null`` - ``useGroupItem`` takes ``toRef(() =>
+    props.value)`` as-is, and the tab has no index fallback - while
+    ``VTabsWindowItem`` matches on the STRING its ``value`` names. ``VTabs``'
+    group is ``mandatory: "force"``, so on mount it coerces the bound ``tab``
+    state to the first tab's value, ``null``; ``VTabsWindow`` resolves its own
+    model to the SELECTED TAB's value, so it ends up with ``null`` too and no
+    window item matches. The page then draws a tab bar over four empty panels:
+    S-Parameters blank, Modes blank, and nothing raising anywhere. Comparing the
+    two value SETS here is what keeps the call sites paired; a per-widget
+    assertion on one side alone would pass while the pairing was broken.
+    """
+    vuetify3 = pytest.importorskip("trame.widgets.vuetify3")
+    import poc_app as app
+
+    log: dict = {"tabs": [], "window": []}
+    for name, key in (("VTab", "tabs"), ("VTabsWindowItem", "window")):
+        real = getattr(vuetify3, name)
+
+        def _factory(*args, _real=real, _key=key, **kwargs):
+            log[_key].append(
+                {
+                    "label": args[0] if args else None,
+                    "value": kwargs.get("value"),
+                }
+            )
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(vuetify3, name, _factory)
+
+    info = _fixture_info(app, tmp_path / "dump.npz")
+    _boot_app(info)
+
+    assert log["tabs"], "no VTab was built: the tab layout is gone entirely"
+    assert log["window"], "no VTabsWindowItem was built: nothing can be shown"
+    bare = [entry["label"] for entry in log["tabs"] if entry["value"] is None]
+    assert not bare, (
+        "these tabs carry no value, so Vuetify registers null for them and "
+        "VTabsWindow can never match a window item - the panel behind the tab "
+        f"stays empty with no error: {bare}"
+    )
+    tab_values = [entry["value"] for entry in log["tabs"]]
+    window_values = [entry["value"] for entry in log["window"]]
+    assert len(set(tab_values)) == len(tab_values), (
+        "two tabs share one value, so selecting either shows the same panel: "
+        f"{tab_values}"
+    )
+    assert len(set(window_values)) == len(window_values), (
+        "two window items share one value, so one of them is unreachable: "
+        f"{window_values}"
+    )
+    assert sorted(set(tab_values)) == sorted(set(window_values)), (
+        "the tab values and the window-item values are different sets, so at "
+        "least one tab selects a value no window item answers: tabs "
+        f"{sorted(set(tab_values))} vs window {sorted(set(window_values))}"
+    )
+
+
 def test_load_series_panel_draws_the_recorded_trace(tmp_path: Path,
                                                     monkeypatch) -> None:
     """A traced dump puts a picture, a caption and rows on the Circuit tab."""
@@ -2471,3 +2563,141 @@ def test_load_series_panel_states_the_reason_instead_of_drawing(
     assert not [text for text in texts if "t span [ns]:" in text], (
         f"rows from a trace that does not exist were printed: {texts}"
     )
+
+
+def _capture_v_selects(monkeypatch):
+    """Record every VSelect the layout builds, in construction order.
+
+    ``poc_app`` resolves the class with ``importlib.import_module`` on the
+    vuetify3 MODULE, so patching the attribute on that module is what the page
+    sees - the same trick ``_capture_html_widgets`` uses for Div/Pre/Img.  The
+    real class is still constructed, so the layout stays the shipped layout and
+    only the emitter is observed.
+    """
+    import trame.widgets.vuetify3 as vuetify3
+
+    log = []
+    real = vuetify3.VSelect
+
+    def _factory(*args, **kwargs):
+        log.append({"args": args, "kwargs": kwargs})
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(vuetify3, "VSelect", _factory)
+    return log
+
+
+def test_setup_project_picker_offers_the_solvers_own_arms(tmp_path: Path,
+                                                          monkeypatch) -> None:
+    """The SETUP picker's items ARE the solver's arm keys - not a literal list.
+
+    Asserted against ``_structure_registry()`` rather than against a hardcoded
+    ``["A", "B", "D"]``: the point of the change was that a new solver arm shows
+    up by itself, and a test that spells the three out would pass just as
+    happily after the arms had drifted apart again.
+
+    No solve runs here.  The netlist side is asserted where it is CHEAP: the D
+    row must carry a ``netlist`` that points at a file that exists, and
+    ``solve_argv`` must build the solver's own flags for the arm (the page, not
+    the argv builder, is what supplies netlist TEXT).
+    """
+    import ast
+
+    import poc_app as app
+
+    registry = app._structure_registry()
+    assert registry, (
+        "_structure_registry() returned nothing: the solver's STRUCTURES could "
+        "not be read, so the picker fell back to its literal map and this test "
+        "would be asserting on the fallback"
+    )
+
+    recorded = _capture_v_selects(monkeypatch)
+    info = _fixture_info(app, tmp_path / "arms.npz")
+    _boot_app(info)
+
+    pickers = [entry["kwargs"] for entry in recorded
+               if entry["kwargs"].get("label") == "Structure"]
+    assert len(pickers) == 1, (
+        f"expected exactly one 'Structure' VSelect in the SETUP column, found "
+        f"{len(pickers)} - the picker moved or gained a twin"
+    )
+    items = ast.literal_eval(pickers[0]["v_bind_items"])
+    assert items == sorted(registry), (
+        f"the picker offers {items} while the solver's STRUCTURES has "
+        f"{sorted(registry)}: the panel and the solver disagree about which "
+        "arms exist"
+    )
+    assert "D" in items, (
+        f"the diode arm is not offered ({items}); a solver arm the panel cannot "
+        "select is the drift this test exists to catch"
+    )
+
+    row = registry["D"]
+    netlist = row.get("netlist")
+    assert isinstance(netlist, str) and netlist, (
+        f"D is not a netlist row: its STRUCTURES entry is {row!r}, so the arm "
+        "would be solved with a lumped resistor and the startup line would say "
+        "so"
+    )
+    assert Path(netlist).is_file(), (
+        f"D's netlist row points at {netlist}, which is not on disk - the arm "
+        "would refuse at solve time, not at selection time"
+    )
+
+    argv = app.solve_argv("D", 20.4, tmp_path / "d.npz")
+    assert argv[argv.index("--structure") + 1] == "D", (
+        f"the argv built for the diode arm does not name it: {argv}"
+    )
+    assert "--netlist" not in argv, (
+        "solve_argv invented a --netlist of its own; the netlist text comes "
+        f"from the page (argv: {argv})"
+    )
+
+
+def test_selecting_a_solver_arm_with_no_sweep_registry_says_so(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A D dump has no multifreq summary REGISTERED: the panel says that, not nothing.
+
+    D is the arm the literal ``MULTIFREQ_BY_STRUCTURE`` map does not name (it
+    knows A and B), and no ``build_D_diode_multifreq_summary.json`` exists on
+    disk.  The regression this covers: the picker offers D, so a D dump can
+    reach the S-parameters panel, and the panel must neither raise nor render an
+    empty box - it must state that the SWEEP for the arm has not been written
+    and registered yet, which is a different fact from "no file beside the
+    dump".
+
+    The maps are patched to empty through the shipped ``_boot_s_params`` helper,
+    so this asserts the page's behaviour when the registry knows nothing about
+    the arm - the real D case - without depending on which summaries happen to
+    be checked in today.
+    """
+    import poc_app as app
+
+    dump = tmp_path / "dumps" / "d.npz"
+    dump.parent.mkdir(parents=True)
+    info = _fixture_info(app, dump, structure_id="D")
+
+    panel, state = _boot_s_params(app, info, monkeypatch, sweeps={}, runs={})
+
+    assert panel["reason"], (
+        "the panel for the diode arm carries no reason at all, so the tab would "
+        "open onto an empty box"
+    )
+    caption = panel["caption"]
+    assert "structure D" in caption, (
+        f"the caption does not name the arm it is empty for: {caption!r}"
+    )
+    assert "no multi-frequency summary is registered for arm D yet" in caption, (
+        "the caption does not say the ARM has no registered sweep - the reader "
+        f"cannot tell a missing registration from a missing file: {caption!r}"
+    )
+    assert panel["points"] == [] and panel["image"] is None, (
+        "the diode arm's panel carried rows or a picture it could not have read"
+    )
+    assert state.s_params_caption and panel["caption"] in state.s_params_caption, (
+        "the panel was built but its caption never reached the tab's state "
+        f"({state.s_params_caption!r})"
+    )
+
