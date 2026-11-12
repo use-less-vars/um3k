@@ -45,6 +45,11 @@ All quantities are SI: ``e`` in V, ``h`` in A, ``j`` in A, ``m_sigma`` in S,
 
 from __future__ import annotations
 
+import os
+import site
+import sysconfig
+from pathlib import Path
+
 import numpy as np
 
 from .materials import C0
@@ -151,22 +156,141 @@ _KERNEL_ABI = 1                      # must equal emfit_core.KERNEL_ABI (src/bin
 _KERNEL_NAME = "emfit_core.fit_leapfrog"
 
 
+_FORCE_PYTHON_ENV = "EMFIT_FORCE_PYTHON"
+"""Set to ``1``/``true``/``yes`` to choose the Python reference deliberately."""
+
+_FORCE_PYTHON_TRUE = frozenset({"1", "true", "yes"})
+
+
+def _python_forced():
+    """True if this process was asked, explicitly, to skip the kernel."""
+    value = os.environ.get(_FORCE_PYTHON_ENV, "")
+    return str(value).strip().lower() in _FORCE_PYTHON_TRUE
+
+
+def _extension_search_dirs():
+    """Directories a built ``emfit_core`` extension could plausibly sit in.
+
+    Nothing is hardcoded to one machine: the repository root comes from this
+    file's own location, the interpreter's directories from ``sysconfig`` and
+    ``site``, and any ``.venv*`` beside the sources from the filesystem.  Used
+    only on :func:`_load_kernel`'s error path, where the question is "is there
+    a build here that THIS interpreter failed to import?"
+    """
+    repo = Path(__file__).resolve().parent.parent
+    dirs = [repo / "build", repo / "src"]
+    try:
+        for venv in sorted(repo.glob(".venv*")):
+            if venv.is_dir():
+                dirs.extend(sorted(venv.glob("lib/python*/site-packages")))
+                dirs.append(venv / "Lib" / "site-packages")
+    except OSError:
+        pass
+    try:
+        paths = sysconfig.get_paths()
+    except Exception:
+        paths = {}
+    for key in ("purelib", "platlib"):
+        path = paths.get(key)
+        if path:
+            dirs.append(Path(path))
+    try:
+        dirs.extend(Path(p) for p in site.getsitepackages())
+    except Exception:
+        pass
+    return dirs
+
+
+def _probe_kernel_files():
+    """Paths of ``emfit_core`` extension files this machine actually has.
+
+    Sorted, deduplicated, ``.so`` and ``.pyd``.  A directory that cannot be
+    listed is skipped rather than fatal: this exists to make an error message
+    name a file, not to guard anything.
+    """
+    found = set()
+    for directory in _extension_search_dirs():
+        for pattern in ("emfit_core*.so", "emfit_core*.pyd"):
+            try:
+                found.update(str(p) for p in directory.rglob(pattern))
+            except OSError:
+                continue
+    return sorted(found)
+
+
+def _import_kernel():
+    """Import and return ``emfit_core`` -- a function so a test can replace it."""
+    import emfit_core
+
+    return emfit_core
+
+
 def _load_kernel(abi=_KERNEL_ABI):
     """The compiled ``step_explicit``, or ``None`` if there is none usable.
 
-    Silent on purpose: a missing extension or a mismatched ABI is not an error,
-    it just means Python does the arithmetic.  A caller that wants to know which
-    path a stepper chose should read ``FITStepper.kernel``.
+    ``None`` means Python does the arithmetic, and there are exactly three
+    honest reasons for it: no extension is importable anywhere (nothing built,
+    or this interpreter cannot see the build), the extension reports another
+    ABI (that is a rebuild, not a fault), or this process was asked for the
+    reference on purpose -- ``EMFIT_FORCE_PYTHON=1``, ``--force-python``, or
+    :func:`force_python`.  A caller that wants to know which path a stepper
+    chose should read ``FITStepper.kernel`` or :func:`engine_report`.
+
+    What is not silent any more: an extension file that is ON DISK and fails to
+    import.  That is not a missing option, it is a broken build or an
+    interpreter that cannot reach site-packages, and returning ``None`` for it
+    let a process record ``step_engine='python'`` while a perfectly good ``.so``
+    sat beside it -- provenance that is wrong rather than absent.  So it raises
+    ``RuntimeError`` naming every candidate file found, the original exception,
+    and both ways out.  Running the Python path stays supported; it stops being
+    something that can happen by accident.
     """
+    if _python_forced():
+        return None
     try:
-        import emfit_core
-    except Exception:
+        kernel = _import_kernel()
+    except Exception as exc:
+        candidates = _probe_kernel_files()
+        if not candidates:
+            return None
+        listed = "\n".join(f"    {path}" for path in candidates)
+        raise RuntimeError(
+            "emfit_core exists on disk but could not be imported, so this "
+            "process would have run the Python reference and recorded "
+            "step_engine='python' with a compiled kernel sitting beside it.\n"
+            f"  extension file(s) found:\n{listed}\n"
+            f"  import failed with {type(exc).__name__}: {exc}\n"
+            "  either put the venv site-packages on PYTHONPATH "
+            "(e.g. PYTHONPATH=.venv/lib/python3.12/site-packages) so this "
+            "interpreter can import the build, or rebuild it; or\n"
+            "  pass --force-python / set EMFIT_FORCE_PYTHON=1 to run the "
+            "Python reference deliberately."
+        ) from exc
+    if not callable(getattr(kernel, "step_explicit", None)):
         return None
-    if not callable(getattr(emfit_core, "step_explicit", None)):
+    if abi is not None and getattr(kernel, "KERNEL_ABI", None) != abi:
         return None
-    if abi is not None and getattr(emfit_core, "KERNEL_ABI", None) != abi:
-        return None
-    return emfit_core
+    return kernel
+
+
+def force_python():
+    """Run the Python reference in this process, on purpose.  Returns the kernel it dropped.
+
+    Sets ``EMFIT_FORCE_PYTHON`` in the environment -- which is what a later
+    :func:`_load_kernel` call, and every child process, reads -- and withdraws
+    the kernel this module may already hold.  Withdrawal is the part that
+    matters for a tool that imports ``emfit.evolve`` before it parses its own
+    command line (``tools/host_ladder.py`` does): a module already imported
+    cannot be un-imported, but the dispatch decision is a module global, and
+    ``_ACTIVE_STEP`` is updated with it because the artefact writers read
+    exactly that.  ``engine_report()`` needs no update: it reads ``_KERNEL``.
+    """
+    global _KERNEL, _ACTIVE_STEP
+    previous = _KERNEL
+    os.environ[_FORCE_PYTHON_ENV] = "1"
+    _KERNEL = None
+    _ACTIVE_STEP = "python"
+    return previous
 
 
 _KERNEL = _load_kernel()

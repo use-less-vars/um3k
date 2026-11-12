@@ -2906,7 +2906,58 @@ def ac_block(res, *, load_mm: float, load_ohm: float, peak_mb: float,
     }
 
 
+# ----------------------------------------------------------------------
+# --force-python: run the Python reference although a kernel is importable
+# ----------------------------------------------------------------------
+# ``emfit.evolve`` decides AT IMPORT TIME whether the compiled kernel is used,
+# and records the decision in ``_ACTIVE_STEP``; every ``meta.step_engine`` this
+# script writes comes from that one variable, via ``engine_report()``.  The
+# decision can be withdrawn but not re-taken, so the flag must be honoured
+# before the first emfit import -- and every emfit import in this file is
+# deliberately function-local (the module must import, and --help must print,
+# without numpy).  Setting the variable below is therefore enough for a normal
+# invocation: the first emfit import is the lazy ``from emfit.evolve import
+# engine_report`` late in ``main``, which runs long after this point.
+_FORCE_PYTHON_ENV = "EMFIT_FORCE_PYTHON"
+
+
+def _apply_force_python() -> None:
+    """Withdraw the kernel, whether or not it has been loaded yet.
+
+    The environment variable covers the case where ``emfit.evolve`` has not been
+    imported yet: ``_load_kernel`` reads it, returns ``None`` and never attempts
+    the import.  It does NOT cover the case where the module is already in
+    ``sys.modules`` -- the decision was taken then, and only
+    ``evolve.force_python()`` can undo it.  That case is real and not
+    hypothetical: the tests load this file by path in a process where
+    ``emfit.evolve`` is already imported, so ``--force-python`` there would
+    otherwise be silently ignored, which is the failure mode this repository
+    keeps paying for.
+    """
+    os.environ[_FORCE_PYTHON_ENV] = "1"
+    evolve = sys.modules.get("emfit.evolve")
+    if evolve is not None:
+        evolve.force_python()
+
+
+def _force_python_from_argv(argv: list[str] | None) -> bool:
+    """``--force-python`` on the command line?  Then withdraw the kernel.
+
+    Read from raw argv, BEFORE ``parse_args``, because the import decision has
+    to be undone before argparse gets a chance to fail on some other flag.
+    Applied a second time after ``parse_args`` for the abbreviated spelling
+    ("--force-pyth") that this literal scan cannot see; both applications are
+    idempotent.
+    """
+    seen = "--force-python" in (sys.argv[1:] if argv is None else list(argv))
+    if seen:
+        _apply_force_python()
+    return seen
+
+
 def main(argv: list[str] | None = None) -> int:
+    # First statement in main, on purpose: see _force_python_from_argv.
+    _force_python_from_argv(argv)
     ap = argparse.ArgumentParser(
         description=(f"Termination build: one load at p2, s21_plane='cut', one "
                      f"shot. Defaults are Run A ({LOAD_VALUE_OHM:g} ohm, "
@@ -3136,7 +3187,16 @@ def main(argv: list[str] | None = None) -> int:
              "solve), re-open it, check every key/dtype/shape and the "
              "measured velocity, print the JSON summary and exit 0. No "
              f"argument: {VIS_SELFTEST_DEFAULT}.")
+    ap.add_argument(
+        "--force-python", action="store_true",
+        help="run the Python reference step function even though a compiled "
+             "kernel is importable here: sets EMFIT_FORCE_PYTHON=1 and "
+             "withdraws any kernel this process already loaded, so "
+             "meta.step_engine reads 'python' because that is the arithmetic "
+             "that ran -- not because the build was missing")
     args = ap.parse_args(argv)
+    if args.force_python:
+        _apply_force_python()   # idempotent; catches an abbreviated spelling
     # What terminates the cut (a --netlist) and how the line is driven (a
     # --vis-dump forces excite='pulse') both leave the artefact path alone, and
     # arm A's default path IS a tracked evidence document.  That is the whole

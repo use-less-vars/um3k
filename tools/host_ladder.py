@@ -102,7 +102,7 @@ for _p in (_HERE, _ROOT):
 
 import d585_modal as dm                                          # noqa: E402
 from emfit import mode2d, studies                                # noqa: E402
-from emfit.evolve import engine_report                           # noqa: E402
+from emfit.evolve import engine_report, force_python             # noqa: E402
 
 C0 = 299792458.0
 H_SUB = 1.6e-3                      # substrate thickness, studies.MS_H
@@ -1108,6 +1108,17 @@ def write_payload(path, meta, rows):
 
 
 def main(argv=None):
+    # ``--force-python`` is honoured here, at the top, because it cannot be
+    # honoured later: this module imports ``emfit.evolve`` at import time (line
+    # 105), so the kernel decision HAS been taken by the time main() runs and an
+    # environment variable read now would change nothing.  ``force_python()`` is
+    # the public way to withdraw that decision -- it sets EMFIT_FORCE_PYTHON for
+    # this process and for anything it spawns, and clears ``_KERNEL`` /
+    # ``_ACTIVE_STEP``.  It is applied again after ``parse_args`` because
+    # argparse accepts an unambiguous abbreviation ("--force-pyth") that this
+    # literal scan cannot see.
+    if "--force-python" in (sys.argv[1:] if argv is None else list(argv)):
+        force_python()
     ap = argparse.ArgumentParser(
         prog="host_ladder.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1203,7 +1214,16 @@ def main(argv=None):
                          f"tone the FDTD actually accumulated at")
     ap.add_argument("--k", type=int, default=K_EIGS, metavar="K",
                     help=f"eigenpairs per rung (default {K_EIGS})")
+    ap.add_argument("--force-python", action="store_true",
+                    help="run the Python reference step function even though a "
+                         "compiled kernel is importable: sets "
+                         "EMFIT_FORCE_PYTHON=1 and withdraws the kernel this "
+                         "process already loaded, so meta.step_engine reads "
+                         "'python' because that is what ran, not because the "
+                         "build was missing")
     args = ap.parse_args(argv)
+    if args.force_python:
+        force_python()          # idempotent; catches an abbreviated spelling
     if args.npml is not None and args.pml_mm is not None:
         ap.error("--npml and --pml-mm are mutually exclusive: --npml fixes "
                  "the absorber's CELL COUNT while --pml-mm fixes its "
