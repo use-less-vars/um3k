@@ -322,7 +322,7 @@
       "caveat": "This is the run-to-run spread of repeated identical runs, not a comparison of two conditions. Any ratio at the 1.16 level anywhere in this file is inside it."
     },
     {
-      "name": "ladder_cpp_omp_t1_over_cpp_default_threads_fdtd",
+      "name": "ladder_omp_env_set_vs_faster_unset_run_both_pinned_fdtd",
       "formula": "numerator.value / denominator.value",
       "numerator": {
         "run": "ladder_cpp_omp_t1",
@@ -338,8 +338,9 @@
       },
       "value": 1.0006076794571612,
       "units": "dimensionless (seconds / seconds)",
-      "compares": "OMP_NUM_THREADS=1 against the FASTER of the two default-thread runs, same ladder rung",
-      "caveat": "Pinning to one thread costs essentially nothing against the faster default run (0.06 percent), which is the other half of the reason the 1.16 ratios above cannot be read as a thread effect. n=1 per arm."
+      "compares": "the same ladder rung, cpp engine, OMP_NUM_THREADS set to 1 on the launch line vs unset on the launch line (against the FASTER of the two unset runs), FDTD phase only. The thread count was 1 in both arms, so what varied was the environment variable, not the thread count.",
+      "caveat": "Pinning to one thread costs essentially nothing against the faster default run (0.06 percent), which is the other half of the reason the 1.16 ratios above cannot be read as a thread effect. n=1 per arm.",
+      "correction": "thread count was 1 in BOTH arms: emfit/_env.py:44-70 pin_threads sets OMP_NUM_THREADS=1 when the variable is unset, and emfit/__init__.py:33-37 runs it at package import, so the 'default (inherited)' run never inherited a team and 'cpp_default_threads' names a run that had the same one thread as the explicit OMP_NUM_THREADS=1 run. This ratio is therefore repeated-run agreement (0.06 percent) between two identically pinned runs, NOT a thread effect, and it cannot be the other half of a thread argument. This withdraws the mechanism sentence in commit 42d319d."
     },
     {
       "name": "carm_cpp_default_over_python_wall_total",
@@ -447,7 +448,8 @@
       "standing_consequence": "Timing resolution on this host at these sizes is no better than about +/-34 % at structure C (1.3435 repeated-run spread, n=1 per arm) and about +/-16 % on the 51832-cell ladder rung (1.1595). A single timing from this file cannot support a claim smaller than that. The 33x of DR-42 stays unreproduced for a new reason: no run here ever reached the kernel with an inherited thread team, because the package does not permit a team to be inherited. It does permit one to be chosen (pin_threads leaves a non-empty OMP_NUM_THREADS alone), so the correct experiment is OMP_NUM_THREADS>1 with the value confirmed to have reached libgomp, or a bare .so probe that never imports emfit.",
       "entries_corrected": [
         "ladder_omp_env_set_vs_unset_both_pinned_fdtd",
-        "carm_omp_env_set_vs_unset_both_pinned_wall_total"
+        "carm_omp_env_set_vs_unset_both_pinned_wall_total",
+        "ladder_omp_env_set_vs_faster_unset_run_both_pinned_fdtd"
       ]
     }
   ]
