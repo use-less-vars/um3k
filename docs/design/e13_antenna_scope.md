@@ -13,11 +13,14 @@ The work splits into two stages, deliberately separable:
 
 The seam between them is the point of this document. One team's data ends there and another's begins, so the seam must be a file contract with stated contents, not a shared mutable object.
 
+The solve this reads is an FDTD solve on a uniform grid, and that single fact shapes everything below. The field lives on a Yee cell, so E and H are staggered in space and half a time step apart in time. There is no stored "field at a point" to read: a sample is always an interpolation, and the two fields are always at different instants until something co-locates them. Sections 3.1 and 6 exist because of that, and section 2 says what this component may not assume about the grid.
+
 ## 2. What this does not do
 
 - No antenna geometry authoring. The surface description arrives fully formed. No CAD surface, no geometry import, no editing of the model.
 - No feed model. No ports, no coax, no baluns, no excitation definition. The source the solve used is the source; this component neither defines nor refines it.
 - No optimisation and no synthesis. It does not adjust geometry, currents or weights to reach a pattern, null or beamwidth. Any such loop is an outer loop and is somebody else's component.
+- No meshing, and no accuracy-by-refinement loop. The grid is the solver's, uniform by construction, and it is not this component's to change. If a pattern needs finer resolution, that is a finer solve — run by the solver and paid for by the solver. The extractor does not refine a mesh, does not iterate towards a converged answer, and does not claim the accuracy of the grid it is reading.
 - No near-to-near transformation and no material handling.
 - No change to the solver: not its discretisation, not its convergence criteria, not its outputs.
 - No user interface. If a pattern is displayed, it is displayed by whatever already owns display, reading the artifact. This document defines no widgets and no application state.
@@ -27,9 +30,15 @@ The seam between them is the point of this document. One team's data ends there 
 
 Extraction cannot begin until every item below is available. Each is stated with what "available" means, because the failure mode here is a plausible-looking array carrying the wrong convention.
 
-### 3.1 Field samples
+### 3.1 Field samples: E and H, co-located in space and in time
 
-Complex vector E, and preferably H, at caller-chosen points on the surface, in the solver's phasor convention. Available means: E can be obtained at an arbitrary interior point through the solver's existing interpolation entry point, without re-solving. The 3D entry point is `<to be named>`; it must be named by the owner of the 3D solver before this work is scheduled.
+Both E and H, at caller-chosen points on the surface. On a Yee grid neither is directly available: the six components sit at different offsets within a cell, and the leapfrog update puts E and H half a time step apart by construction. "Available" therefore means three things at once, and each of them is `<to be named>`:
+
+- the access path that returns both fields at an arbitrary interior point without re-solving;
+- the spatial co-location rule it applies — which averaging of the staggered components produces a value at the requested point;
+- the time-level convention — how the two fields are brought to the same instant before any product of them is formed, and which instant that was.
+
+An E-only sample is not sufficient, and section 5 says why. Sampling E and H a half step apart is not a detail either: the resulting pattern is smooth, plausible and wrong, which is the worst failure mode available to this component.
 
 ### 3.2 Frequency and wavenumber
 
@@ -45,7 +54,7 @@ Length unit, field unit, and the sign convention of the time-harmonic factor, st
 
 ### 3.5 Provenance
 
-Commit sha, the solver settings that affect the field (at least mesh size, element order and boundary condition), and the identity of the solve artifact consumed. Provenance is required, not optional. An artifact whose provenance is unrecorded is unusable and must be treated as absent.
+Commit sha, the solver settings that affect the field (at least the Yee cell size, the time step, and the boundary condition), and the identity of the solve artifact consumed. Provenance is required, not optional. An artifact whose provenance is unrecorded is unusable and must be treated as absent.
 
 Anything in 3.1 to 3.5 that is missing at run time is a hard error. No defaults, no guessing.
 
@@ -61,8 +70,8 @@ Anything in 3.1 to 3.5 that is missing at run time is a hard error. No defaults,
 One self-describing artifact, written by the extractor, read by TE.
 
 - Format: a single file holding the arrays plus a metadata block that parses as JSON. The container `<to be named>` — one file, no sidecars, no directory-of-numpys.
-- Required arrays: sample coordinates (N,3); outward normals (N,3); tangential E (N,3); tangential H (N,3). H is strongly preferred, because an exact field-equivalence formulation needs both and an E-only surface is an approximation that must be labelled as one.
-- Required metadata: frequency, length unit, field unit, phasor convention, surface descriptor, and the provenance block from 3.5.
+- Required arrays: sample coordinates (N,3); outward normals (N,3); tangential E (N,3); tangential H (N,3). Both fields are required, not preferred: the near-to-far transform forms equivalent currents from both, and an E-only surface would force a wave-impedance assumption that does not hold in the near field — which is exactly where the surface has to sit.
+- Required metadata: frequency, length unit, field unit, phasor convention, surface descriptor, the time level the two fields were co-located to (3.1), and the provenance block from 3.5.
 - The artifact carries a schema version integer. TE refuses unknown major versions rather than guessing.
 - Ownership is one-directional. This component writes, TE reads. Neither side mutates the other's file, and no live Python object crosses the boundary.
 - Failures are the writer's responsibility. A missing required array, a non-finite sample or an unrecorded provenance field fails at write time, loudly, before the artifact exists. It is not deferred to the reader.
@@ -78,6 +87,7 @@ Each criterion is written so that it can fail.
 - A5 Determinism. Two runs on identical inputs sample identical points and produce identical arrays. Machine-checked, not asserted in prose.
 - A6 No-solve guarantee. Extraction never invokes the solver. This is proven causally, by counting calls to the solver's entry point in a test, not by inspecting imports.
 - A7 Handoff. A small synthetic reference artifact is committed as a fixture, and a reader test on the TE side consumes it and asserts the section 5 contract. This is the mechanism that keeps the two sides from drifting apart.
+- A8 Co-location. For the same analytic plane wave, the extracted E and H are formed into the surface power flux and compared against the exact flux, to a stated tolerance, `TBD`. This is the criterion that fails when the two fields are sampled half a time step apart or interpolated by inconsistent rules: each field on its own stays plausible, and only their product is wrong.
 
 An accuracy criterion against a full-wave or analytic radiating element is out of scope for the first cut. It is listed as an open decision, not silently dropped.
 
@@ -85,12 +95,12 @@ An accuracy criterion against a full-wave or analytic radiating element is out o
 
 These need a ruling from the owner of the solver or of TE. They are recorded here so they are not rediscovered as surprises.
 
-- D1 The 3D solver's interpolation entry point, and the array and phasor conventions it returns. Everything in 3.1 depends on this. Without it the work cannot start.
-- D2 E only, or E and H on the surface. E only is cheaper and sufficient for a far-field-only first cut, but it forecloses near-field checks and exact-equivalence formulations later.
+- D1 The 3D solver's access and co-location API: the call that returns E and H at a sample point, the averaging it applies to the staggered components, the time-level convention it uses, and the array and phasor conventions of what it returns. Everything in 3.1 depends on this. Without it the work cannot start.
+- D2 RULED — both E and H are captured. The near field has no fixed wave impedance, so an integral over E alone cannot be justified where the Huygens surface has to sit, and the equivalent currents need both fields. TE is asked to confirm the exact formulation — the equivalent currents and the power-conjugate overlap integral — not whether both fields are needed.
 - D3 Whether TE consumes the artifact as a file or as a Python callable. A file is auditable and testable across the seam; a callable is quicker to integrate. The recommendation is the file, with one schema and no exceptions.
 - D4 The downstream pattern representation — angular grid, cut planes — which is TE's business, but which the metadata in section 5 must make possible.
-- D5 Who owns the reference case in A3, and what tolerance counts as passing it.
+- D5 Who owns the reference case in A3 and A8, and what tolerance counts as passing it.
 
 ## 8. Status
 
-Nothing is implemented and nothing is measured. This document fixes the seam (section 5), the refusals (sections 3 and 6, criterion A2), and the questions that block scheduling (section 7). Implementation starts only after D1 and D2 are answered.
+Nothing is implemented and nothing is measured. This document fixes the seam (section 5), the refusals (sections 3 and 6, criterion A2), the sampling obligation the Yee grid imposes (section 3.1, criterion A8), and the questions that block scheduling (section 7). D2 is ruled: both fields are captured, pending TE's confirmation of the formulation. Implementation starts only after D1 and D3 are answered.
