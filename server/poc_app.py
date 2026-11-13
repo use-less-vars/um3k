@@ -5235,7 +5235,15 @@ def _mode_pct(value):
 
 
 def _mode_delta_pct(beta, reference):
-    """``100 * (beta - reference) / reference``, or None for no reference."""
+    """``100 * (beta - reference) / reference``, or None for no reference.
+
+    ``None`` also when the solve has no propagation constant to compare (a
+    below-cutoff mode carries ``beta_rad_per_m = None``, see
+    :attr:`emfit.mode2d.Mode2D.beta`): a delta against a beta that does not
+    exist is not zero, it is not a number.
+    """
+    if beta is None:
+        return None
     try:
         reference = float(reference)
     except (TypeError, ValueError):
@@ -5534,7 +5542,7 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
 
     line = record.get("line") if isinstance(record, dict) else None
     line = line if isinstance(line, dict) else {}
-    beta = float(solved.beta)
+    beta = None if solved.beta is None else float(solved.beta)
     ratios = tuple(solved.curl_ratio or ())
     result = {
         "ok": True,

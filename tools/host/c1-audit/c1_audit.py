@@ -547,7 +547,9 @@ try:
 finally:
     m2._dense_eig = _real_eig
 say(f"solve_modes_mixed done in {time.time() - _t0:.2f} s",
-    dict(chosen=int(mode.chosen), beta=mode.beta, eps_eff=mode.eps_eff,
+    dict(chosen=int(mode.chosen),
+         beta=None if mode.beta is None else float(mode.beta),
+         eps_eff=mode.eps_eff,
          residual=mode.residual, n_dof=int(mode.n_dof), n_pec=int(mode.n_pec)))
 if "lam" not in captured:
     raise SystemExit("the dense-QZ capture hook never fired: no spectrum to audit")

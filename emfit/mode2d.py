@@ -643,8 +643,14 @@ class Mode2D:
 
         freq        float   frequency, Hz (``k0 c / 2 pi``)
         k0          float   vacuum wavenumber
-        beta        float   propagation constant, ``sqrt(beta_sq)``; NaN when
-                            ``beta_sq < 0`` (below cutoff, see ``beta_imag``)
+        beta        float | None
+                            propagation constant, the three cases kept apart:
+                            ``sqrt(beta_sq)`` when ``beta_sq > 0``
+                            (propagating), ``None`` when ``beta_sq == 0``
+                            (exactly at cutoff -- no real propagation
+                            constant and no decay either) and ``None`` when
+                            ``beta_sq < 0`` (evanescent, below cutoff, where
+                            ``beta_imag`` carries ``sqrt(-beta_sq)``)
         beta_sq     float   the eigenvalue
         eps_eff     float   ``beta_sq / k0^2``
         residual    float   ``||C e - beta_sq B e|| / ||B e||`` of the chosen mode
@@ -716,7 +722,7 @@ class Mode2D:
 
     freq: float
     k0: float
-    beta: float
+    beta: float | None
     beta_sq: float
     eps_eff: float
     residual: float
@@ -732,6 +738,35 @@ class Mode2D:
     deflation: dict | None = None
     candidate_residuals: tuple = ()
     e_t_candidates: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a ``beta``/``beta_sq`` pair that tells two different stories.
+
+        Validation only -- nothing is coerced, repaired or overwritten, so the
+        fields a caller reads back are the fields it passed in.  ``beta`` is
+        the three-case convention of :func:`candidate_records` (restated in the
+        class docstring): a number exactly when ``beta_sq > 0`` (propagating),
+        ``None`` when ``beta_sq == 0`` (exactly at cutoff) and ``None`` when
+        ``beta_sq < 0`` (evanescent, see ``beta_imag``).  A pair contradicting
+        it -- a non-propagating mode carrying a ``beta``, or a propagating one
+        without -- is a bug at the construction site, not something to patch
+        over downstream.
+        """
+        propagating = self.beta_sq > 0.0
+        if (self.beta is None) == propagating:
+            expected = (
+                f"sqrt(beta_sq) = {float(np.sqrt(self.beta_sq))!r}"
+                if propagating
+                else "None"
+            )
+            raise ValueError(
+                f"inconsistent beta = {self.beta!r} with beta_sq = "
+                f"{self.beta_sq!r}: beta must be {expected} for this "
+                "beta_sq -- a number exactly when beta_sq > 0 (propagating) "
+                "and None when beta_sq == 0 (exactly at cutoff) or beta_sq < "
+                "0 (evanescent, see beta_imag); a non-propagating mode cannot "
+                "carry a beta and a propagating one must"
+            )
 
     # -- geometry pass-throughs -------------------------------------------
     @property
@@ -1246,7 +1281,7 @@ def _select_and_pack(
     return Mode2D(
         freq=float(k0 * C0 / (2.0 * np.pi)),
         k0=k0,
-        beta=float(np.sqrt(beta_sq)) if beta_sq >= 0.0 else float("nan"),
+        beta=float(np.sqrt(beta_sq)) if beta_sq > 0.0 else None,
         beta_sq=beta_sq,
         eps_eff=float(beta_sq / (k0 * k0)),
         residual=float(residuals[chosen]),
@@ -2420,10 +2455,12 @@ def mode_z0_from_power(
     Returns
     -------
     ``(z0, beta, eps_eff, converged)``: the impedance [ohm], the propagation
-    constant [rad/m], ``beta**2 / k0**2``, and whether the numbers may be
-    trusted (finite positive ``z0``, positive ``beta``, and the block residual
-    of the solve below :data:`_MIXED_RESIDUAL_TOL`).  ``converged=False``
-    comes with the numbers still returned, for inspection, never raised away.
+    constant [rad/m] (``None`` for a mode that does not propagate, i.e. the
+    ``beta`` convention of :class:`Mode2D`), ``beta**2 / k0**2``, and whether
+    the numbers may be trusted (finite positive ``z0``, positive ``beta``, and
+    the block residual of the solve below :data:`_MIXED_RESIDUAL_TOL`).
+    ``converged=False`` comes with the numbers still returned, for inspection,
+    never raised away.
     """
     mode = solve_modes_mixed(
         mesh, k0, sigma=sigma, eps_r=eps_r, mu_r=mu_r,
@@ -2491,13 +2528,17 @@ def mode_z0_from_power(
     x = np.asarray(mode.e_t)
     p_avg = 0.5 * float(np.real(x @ (m_sqrt_eps @ x))) / eta0
 
+    # ``beta is None`` is the non-propagating case of the Mode2D convention:
+    # there is no propagation constant to report, so the caller gets None for
+    # the beta element rather than a number that is not one.
+    beta = None if mode.beta is None else float(mode.beta)
     converged = bool(
-        np.isfinite(p_avg) and p_avg > 0.0 and mode.beta > 0.0
+        np.isfinite(p_avg) and p_avg > 0.0 and beta is not None and beta > 0.0
         and np.isfinite(mode.residual) and mode.residual < _MIXED_RESIDUAL_TOL
     )
     if not (np.isfinite(p_avg) and p_avg > 0.0):
-        return float("nan"), float(mode.beta), float(mode.eps_eff), False
+        return float("nan"), beta, float(mode.eps_eff), False
 
     z0 = float(abs(v) ** 2 / (2.0 * p_avg))
-    return z0, float(mode.beta), float(mode.eps_eff), converged
+    return z0, beta, float(mode.eps_eff), converged
 

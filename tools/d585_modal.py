@@ -276,7 +276,7 @@ def solve_arpack(geo, closure, *, er=ER_DEF, k=6, max_dof=None,
         return rec
     rec["n_candidates"] = len(mode.candidates)
     rec["chosen"] = int(mode.chosen)
-    rec["beta_builtin_pick"] = float(mode.beta)
+    rec["beta_builtin_pick"] = None if mode.beta is None else float(mode.beta)
     rec["eps_eff_builtin_pick"] = float(mode.eps_eff)
     rec["residual_chosen"] = float(mode.residual)
     f_ch = f_sub_transverse(mesh, geo, np.real(mode.e_t), er=er)
@@ -324,7 +324,7 @@ def solve_deflated(geo, closure, *, er=ER_DEF, k=6, max_dof=None,
     rec["region_widen"] = bool(region_widen)
     rec["n_candidates"] = len(mode.candidates)
     rec["chosen"] = int(mode.chosen)
-    rec["beta_builtin_pick"] = float(mode.beta)
+    rec["beta_builtin_pick"] = None if mode.beta is None else float(mode.beta)
     rec["eps_eff_builtin_pick"] = float(mode.eps_eff)
     rec["residual_chosen"] = float(mode.residual)
     if mode.deflation:
@@ -355,7 +355,7 @@ def solve_dense(geo, closure, *, er=ER_DEF, max_dof=1400):
     rec["wall_s"] = time.perf_counter() - t0
     rec["n_candidates"] = len(mode.candidates)
     rec["chosen"] = int(mode.chosen)
-    rec["beta_builtin_pick"] = float(mode.beta)
+    rec["beta_builtin_pick"] = None if mode.beta is None else float(mode.beta)
     rec["eps_eff_builtin_pick"] = float(mode.eps_eff)
     rec["residual_chosen"] = float(mode.residual)
     f_ch = f_sub_transverse(mesh, geo, np.real(mode.e_t), er=er)

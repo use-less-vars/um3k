@@ -185,7 +185,8 @@ def eigen(f0):
         above = [c for c in pos if c["eps_eff"] > EPS_R]
         out[name] = dict(wall_s=wall, n_dof=int(mode.n_dof),
                          n_pec=int(mode.n_pec), chosen=int(mode.chosen),
-                         beta_builtin_pick=float(mode.beta),
+                         beta_builtin_pick=(None if mode.beta is None
+                                            else float(mode.beta)),
                          eps_eff_builtin_pick=float(mode.eps_eff),
                          n_candidates=len(cands),
                          n_positive=len(pos),
