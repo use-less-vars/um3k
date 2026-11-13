@@ -5683,6 +5683,33 @@ MODE_PANEL_HINT = (
 )
 
 
+def _animation_title_text(structure_label) -> str:
+    """The page TITLE while the field dump is what is on screen.
+
+    The 3D view draws |Ez| of the dump, so the title says |Ez|. It is a
+    function, and the only place this sentence is written, because the title
+    has to follow the picture: a solved mode cross-section on the same view is
+    |E_t| (see ``_mode_title_text``), and a title that keeps claiming |Ez|
+    over a mode picture is a false statement about what is on screen.
+    """
+    return f"{structure_label} - |Ez| animation"
+
+
+def _mode_title_text(structure_label, index=None) -> str:
+    """The page TITLE while a solved mode cross-section is on screen.
+
+    ``index`` is the candidate the picture shows, numbered exactly as the
+    picker's own rows are (``_mode_candidate_title``'s ``#index``), so the
+    title and the row a reader picked never disagree. Without an index - a
+    caller that does not know which candidate it drew - the title simply omits
+    the number rather than guessing one.
+    """
+    title = f"{structure_label} - Port Mode Profiles (|E_t|)"
+    if isinstance(index, int) and not isinstance(index, bool) and index >= 0:
+        title += f", candidate #{index}"
+    return title
+
+
 def _mode_button_label(result) -> str:
     """The Mode control's LABEL for a ``mode_view`` result. NEVER raises.
 
@@ -6322,7 +6349,10 @@ def run_web_vis(
         server = get_server()
 
     state, ctrl = server.state, server.controller
-    state.trame__title = f"{structure_label} |Ez| animation"
+    # The dump animation is what a freshly booted page shows, so that is the
+    # title it starts with. It is REPLACED, not assumed, the moment the view
+    # stops showing the dump - see _set_picture_title() below.
+    state.trame__title = _animation_title_text(structure_label)
     state.mode = "ycut"
     state.playing = False
     state.frame = 0
@@ -6397,6 +6427,55 @@ def run_web_vis(
     # handler reaches it through this dict instead of closing over it.
     handles: dict = {}
 
+    def _set_picture_title(text: str) -> None:
+        """Publish the page title for whatever the 3D view is showing. NEVER raises.
+
+        ONE string, written to the two places a page title lives: the browser
+        title (``state.trame__title``) and the header the layout builds below.
+        A title is a claim about the picture under it, and there are exactly
+        two pictures here - the |Ez| dump animation and a solved mode
+        cross-section's |E_t| - so this function is the only writer of either.
+        The header setter does not exist until the layout is built
+        (``_show(0, "ycut")`` runs first), so it is reached through ``handles``
+        and its absence means "no layout yet", not an error.
+        """
+        try:
+            if state.trame__title == text:
+                return  # unchanged: a per-frame caller must not churn state
+        except Exception:  # noqa: BLE001 - an unreadable title is not a failure
+            pass
+        try:
+            state.trame__title = text
+        except Exception as exc:  # noqa: BLE001 - a title is never the page
+            print(f"[poc_app] window title not set: {exc}", file=sys.stderr)
+        setter = handles.get("title_setter")
+        if setter is None:
+            return
+        try:
+            setter(text)
+        except Exception as exc:  # noqa: BLE001 - decoration only
+            print(f"[poc_app] header title not set: {exc}", file=sys.stderr)
+
+    def _sync_picture_title() -> None:
+        """Point the title at the field the 3D view is ACTUALLY showing.
+
+        Same rule _show applies to the mode picture's visibility - its own
+        family, and only the dump it was solved from - so a picture that
+        exists but is hidden (a family switch, a solve that swapped the page)
+        leaves the |Ez| title standing. Cheap enough to call on every draw:
+        _set_picture_title() writes nothing when the string has not changed.
+        """
+        entry = handles.get("mode_actor")
+        on_screen = (
+            entry is not None
+            and entry.get("family") == state.mode
+            and entry.get("page_path") == page.get("path")
+        )
+        if on_screen:
+            _set_picture_title(_mode_title_text(structure_label, entry.get("index")))
+        else:
+            _set_picture_title(_animation_title_text(structure_label))
+
     def _swap_scalar_bar(mode: str) -> None:
         """Leave exactly ONE bar standing, for the family now on screen.
 
@@ -6446,14 +6525,24 @@ def run_web_vis(
         so a stuck picture is invisible rather than wrong.
         """
         entry = handles.pop("mode_actor", None)
-        if entry is None:
-            return
-        try:
-            plotter.remove_actor(entry["actor"], render=False)
-        except Exception as exc:  # noqa: BLE001 - an orphan is not a failure
-            print(f"[poc_app] stale mode picture kept: {exc}", file=sys.stderr)
+        if entry is not None:
+            try:
+                plotter.remove_actor(entry["actor"], render=False)
+            except Exception as exc:  # noqa: BLE001 - an orphan is not a failure
+                print(f"[poc_app] stale mode picture kept: {exc}", file=sys.stderr)
+        # Nothing mode-shaped is on this view from here on, so the page title
+        # goes back to the animation's. The sync runs AFTER the pop, because
+        # that is what makes it observe a view with no picture left on it -
+        # run before it, it would read the handle it is about to drop and
+        # keep the |E_t| title standing over the empty view. It is also
+        # unconditional: a call that finds nothing to pop is still a call that
+        # leaves no picture on the view, so it still re-points the title. Said
+        # HERE, at the one place a picture is dropped, so every path that
+        # removes one - a fresh draw, a refusal, a finished solve replacing
+        # the page - resets it together.
+        _sync_picture_title()
 
-    def _draw_mode_picture(result) -> None:
+    def _draw_mode_picture(result, index=None) -> None:
         """Draw a solve's 48 x 48 |E| on the cross-section plane. NEVER raises.
 
         Placed in the y-z plane of the x-cut family (that is the plane the mode
@@ -6492,6 +6581,10 @@ def run_web_vis(
         occupy. A refusal or an unusable grid CLEARS any old picture and draws
         nothing: a stale mode beside an error caption would be a lie about what
         was actually solved.
+
+        ``index`` is the candidate this grid belongs to. It changes nothing in
+        the picture - that is whatever ``result`` carries - and only names the
+        candidate in the page title, which follows the picture.
         """
         _clear_mode_picture()
         live = page["info"]
@@ -6581,10 +6674,16 @@ def run_web_vis(
             "grid": grid,
             "page_path": page.get("path"),
             "family": "xcut",
+            # What the title must name if this picture is the one on screen.
+            "index": index,
         }
         # _show's rule, applied immediately: a press made from the y-cut view
         # leaves the picture hidden instead of letting it appear edge-on.
         actor.visibility = state.mode == "xcut"
+        # The picture just put on the view is |E_t| of the mode, so the title
+        # says so. A press that could not draw returned above, having already
+        # reset the title through _clear_mode_picture().
+        _sync_picture_title()
 
     def _show(frame, mode=None) -> None:
         """Draw ONE frame of the selected family. Never rescales.
@@ -6657,6 +6756,9 @@ def run_web_vis(
                     f"[poc_app] mode picture visibility skipped: {exc}",
                     file=sys.stderr,
                 )
+        # The family switch above is also a title switch: the picture just went
+        # hidden (or came back), and the title names the field now on screen.
+        _sync_picture_title()
 
         if mode_changed:
             _swap_scalar_bar(mode)
@@ -7134,7 +7236,7 @@ def run_web_vis(
         # strings above are published: every step here is guarded, so a press
         # that cannot draw still shows its numbers.
         try:
-            _draw_mode_picture(result)
+            _draw_mode_picture(result, index=int(result.get("chosen") or 0))
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - the caption is already on screen
             print(
@@ -7170,7 +7272,7 @@ def run_web_vis(
             # alone: swapping nothing and SAYING nothing is the honest answer.
             return
         try:
-            _draw_mode_picture(view)
+            _draw_mode_picture(view, index=index)
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - the caption is still owed
             print(
@@ -7918,7 +8020,13 @@ def run_web_vis(
             print(f"[poc_app] mode picker unavailable: {exc}", file=sys.stderr)
 
     with SinglePageLayout(server) as layout:
-        layout.title.set_text(f"{structure_label} - |Ez| animation")
+        # The header is the second place the page title lives, so it is written
+        # from the same helper as the browser title and re-pointed from now on
+        # by _set_picture_title(): the header must describe the picture on
+        # screen - the |Ez| animation, or a solved |E_t| mode cross-section -
+        # rather than assume the animation for the life of the server.
+        handles["title_setter"] = layout.title.set_text
+        layout.title.set_text(_animation_title_text(structure_label))
         with layout.content:
             container = widgets.get("VContainer")
             if container is None or html_div is None:

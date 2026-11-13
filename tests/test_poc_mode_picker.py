@@ -30,6 +30,7 @@ told to call, and ``v_model=("mode_choice", 0)`` is a plain state write.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -632,3 +633,230 @@ def test_a_pick_repaints_the_mode_picture_without_a_second_solve(
     finally:
         pyvista.Plotter.render = real_render
         pyvista.Plotter.add_mesh = real_add_mesh
+
+
+# --- the page TITLE ---------------------------------------------------------
+#
+# The title is a CLAIM about the picture under it, so it is asserted the way the
+# picture is: through the shipped handlers, on the state string the browser
+# reads.  Two pictures live on this view - the |Ez| dump animation and a solved
+# mode cross-section's |E_t| - and every test below asks the same question of
+# the same string: does it describe what is on screen?  The header half of
+# ``_set_picture_title`` (``handles["title_setter"]``, a Vuetify toolbar title)
+# is exercised only by a live layout, so nothing here reads it: the assertion
+# is on ``state.trame__title``, the string the browser tab carries.
+
+
+def _fake_press_result(cells: int, chosen: int = 1) -> dict:
+    """A ``mode_view`` result with three candidates: the press's only input."""
+    return {
+        "ok": True,
+        "reason": "",
+        "beta_rad_per_m": 223.180967,
+        "eps_eff": 3.338787,
+        "caption": "CAPTION from the solve: beta = 223.18 rad/m",
+        "grid": np.ones((cells, cells)),
+        "extent": (1.6e-3, 8.8e-3),
+        "chosen": chosen,
+        "candidates": [
+            _record(0, 190.0, 36100.0, 2.9),
+            _record(1, 223.180967, 49809.74, 3.338787),
+            _record(2, None, -12.5, 1.0),
+        ],
+        "candidate_grids": (
+            np.zeros((cells, cells)),
+            np.ones((cells, cells)),
+            np.full((cells, cells), 2.0),
+        ),
+    }
+
+
+@contextlib.contextmanager
+def _headless_draws():
+    """``Plotter.render`` doubled for the duration: this image has no EGL."""
+    pyvista = pytest.importorskip("pyvista")
+
+    real_render = pyvista.Plotter.render
+    pyvista.Plotter.render = lambda self, *args, **kwargs: None
+    try:
+        yield
+    finally:
+        pyvista.Plotter.render = real_render
+
+
+def _title_page(tmp_path: Path, monkeypatch, result: dict):
+    """The shipped page, booted with ``mode_view`` doubled, ready to be pressed.
+
+    The same harness the wiring test above uses - ``_boot_app``,
+    ``_registered_trigger``, ``_closure_cells``, ``_fixture_info`` - plus the
+    one framework step that boot double skips: ``srv.state.ready()``, without
+    which ``State.flush()`` runs no ``@state.change`` listener (see above).
+    Returns the two triggers the browser would call, so a family switch is
+    driven through the shipped handler rather than by writing ``state.mode``.
+    """
+    pytest.importorskip("trame.app")
+    pytest.importorskip("trame.ui.vuetify3")
+    from test_poc_playback import (
+        _boot_app,
+        _closure_cells,
+        _fixture_info,
+        _registered_trigger,
+    )
+
+    import poc_app as app
+
+    monkeypatch.setattr(app, "mode_view", lambda *_a, **_k: result)
+    info = _fixture_info(app, tmp_path / "dump.npz")
+    _app, srv = _boot_app(info)
+    press = _registered_trigger(srv.controller, "mode_view_toggle")
+    toggle = _registered_trigger(srv.controller, "mode_toggle")
+    page_cells = _closure_cells(press)
+    state = page_cells["state"]
+    handles = page_cells["handles"]
+    # ``trame.app.get_server`` hands back ONE server per process, so a boot
+    # earlier in this file may already have marked its state ready; only the
+    # first boot of the process needs the step the boot double skips.
+    if not state.is_ready:
+        srv.state.ready()
+    assert state.is_ready, (
+        "trame's state.ready() did not mark the page state ready, so no flush "
+        "can run a @state.change listener"
+    )
+    state.flush()  # push the boot writes; not part of any count
+    return app, state, handles, press, toggle
+
+
+def test_a_press_titles_the_page_with_the_mode_it_drew(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """One press, one title: the picture is |E_t| of the candidate it names."""
+    with _headless_draws():
+        _app, state, handles, press, toggle = _title_page(
+            tmp_path, monkeypatch, _fake_press_result(8)
+        )
+        assert "|Ez| animation" in state.trame__title, (
+            f"a freshly booted page shows the dump animation but titles itself "
+            f"{state.trame__title!r}"
+        )
+        # The shipped family switch: y-cut -> x-cut, the view the mode picture
+        # is drawn FOR.  Nothing is solved yet, so the picture does not exist
+        # and the title must still be the animation's.
+        with state:
+            toggle()
+        assert state.mode == "xcut", (
+            f"the family switch left the page on {state.mode!r}, so the press "
+            "below would be made from the wrong view"
+        )
+        assert "|Ez| animation" in state.trame__title, (
+            "a family switch with no mode picture on the view re-titled the "
+            f"page as {state.trame__title!r}"
+        )
+
+        with state:
+            asyncio.run(press())
+
+        assert handles.get("mode_actor") is not None, (
+            "no mode picture reached the plane, so there is nothing the title "
+            "could be describing"
+        )
+        title = state.trame__title
+        assert "|E_t|" in title, (
+            f"the mode picture is on screen but the title says {title!r}: the "
+            "mode cross-section is |E_t|, and |Ez| is a field only the dump has"
+        )
+        assert "candidate #1" in title, (
+            f"the title does not name the candidate on screen: {title!r} "
+            "(the solve's own pick is #1)"
+        )
+        assert "candidate #0" not in title, (
+            f"the title names the wrong candidate: {title!r} - the picture is "
+            "the solver's pick, #1"
+        )
+        assert "|Ez|" not in title, (
+            f"the title still claims the |Ez| dump while a mode cross-section "
+            f"is on screen: {title!r}"
+        )
+
+
+def test_a_refused_press_puts_the_animation_title_back(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The refusal path: picture gone, so the |E_t| title must go with it.
+
+    This is the case that a title sync placed BEFORE the actor is popped got
+    wrong: the sync then read the handle it was about to drop, concluded the
+    picture was still on screen, and left the mode title standing over an
+    error caption.
+    """
+    with _headless_draws():
+        app, state, handles, press, toggle = _title_page(
+            tmp_path, monkeypatch, _fake_press_result(8)
+        )
+        with state:
+            toggle()
+        with state:
+            asyncio.run(press())
+        assert "|E_t|" in state.trame__title, (
+            "the precondition of this test is not met: the first press left no "
+            f"|E_t| title to restore from ({state.trame__title!r})"
+        )
+
+        refused = {"ok": False, "reason": "no cross-section recorded in this dump"}
+        monkeypatch.setattr(app, "mode_view", lambda *_a, **_k: refused)
+        with state:
+            asyncio.run(press())
+
+        assert handles.get("mode_actor") is None, (
+            "a refused press left the mode picture on the plane: a stale mode "
+            "beside an error caption is a lie about what was solved"
+        )
+        title = state.trame__title
+        assert "|Ez| animation" in title, (
+            f"the picture is gone and the title still says {title!r}: the "
+            "animation is what this view is showing again"
+        )
+        assert "|E_t|" not in title, (
+            f"a refused press kept the |E_t| title over an error caption: {title!r}"
+        )
+
+
+def test_a_family_switch_titles_the_page_with_the_field_on_screen(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The picture hidden by a family switch is not what the title describes."""
+    with _headless_draws():
+        _app, state, handles, press, toggle = _title_page(
+            tmp_path, monkeypatch, _fake_press_result(8)
+        )
+        with state:
+            toggle()  # y-cut -> x-cut
+        with state:
+            asyncio.run(press())
+        assert "|E_t|" in state.trame__title, (
+            f"no |E_t| title to switch away from: {state.trame__title!r}"
+        )
+
+        with state:
+            toggle()  # x-cut -> y-cut: the mode picture is drawn for x-cut only
+        assert state.mode == "ycut", state.mode
+        title = state.trame__title
+        assert "|Ez| animation" in title, (
+            f"the mode picture is hidden on the y-cut view but the title says "
+            f"{title!r}: a title must describe the field on screen, not one "
+            "that exists off it"
+        )
+        assert "|E_t|" not in title, title
+
+        with state:
+            toggle()  # back to x-cut: the same picture is on screen again
+        assert state.mode == "xcut", state.mode
+        title = state.trame__title
+        assert "|E_t|" in title, (
+            f"the mode picture came back on screen but the title stayed on the "
+            f"animation: {title!r}"
+        )
+        assert "candidate #1" in title, (
+            f"the restored title does not name the candidate still on screen: "
+            f"{title!r}"
+        )
+
