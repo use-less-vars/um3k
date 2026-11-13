@@ -1146,10 +1146,16 @@ def _guarded_choice(
 ) -> int:
     """Index of the largest ``beta_sq`` among the *guard-passing* candidates.
 
-    ``eligible`` is the caller's own eligibility mask (curl-free filter, positive
-    ``beta^2``, residual tolerance); the guard is intersected with it.  On the
-    surviving set the historical rule is applied unchanged -- largest positive
-    ``beta^2`` -- so a pick that already satisfies the guard is not moved.
+    ``eligible`` is the caller's own eligibility mask, and which filters it
+    carries is the caller's business: the guard is intersected with it and
+    nothing else is applied.  A residual tolerance is not a property of this
+    function, only of one of its callers -- the mixed ``(e_t, e_z)`` pencil
+    puts ``residuals < _MIXED_RESIDUAL_TOL`` into its mask, while the
+    ``(k_q, m_eps)`` pencil masks on the curl ratio and ``beta_sq > 0`` alone
+    and reports its residuals as an output rather than selecting on them.  On
+    the surviving set the historical rule is applied unchanged -- largest
+    positive ``beta^2`` -- so a pick that already satisfies the guard is not
+    moved.
 
     Raises
     ------
