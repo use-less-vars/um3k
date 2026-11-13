@@ -3924,7 +3924,7 @@ def main(argv: list[str] | None = None) -> int:
             "arg_deg": float(np.degrees(np.angle(gp))),
         },
         "line": {
-            "beta": float(res.beta),
+            "beta": (None if res.beta is None else float(res.beta)),
             "beta_model": float(res.beta_model),
             # The two-wave fit's beta (computed emfit/studies.py:3640, field
             # declared :1599): two independent numbers for the same line

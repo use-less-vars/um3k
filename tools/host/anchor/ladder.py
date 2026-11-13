@@ -507,9 +507,10 @@ def run_control():
                              boundaries=boundaries, k=K_CAND)
     wall_b = time.time() - t_solve
     rec_b = classify(mesh, res, "geometry_B_level%d" % L, roots_b, eps_eff_ref_b)
-    print("  geometry B solve: wall %.3f s  solver beta %.17g  eps_eff %.17g"
+    print("  geometry B solve: wall %.3f s  solver beta %s  eps_eff %.17g"
           "  residual %.3e  (module %s)"
-          % (wall_b, res.beta, res.eps_eff, res.residual, mode2d.__file__))
+          % (wall_b, _fmt_beta(res.beta), res.eps_eff, res.residual,
+             mode2d.__file__))
     print("  retained geometry B candidates (beta^2 descending):")
     print("    %-4s %-22s %-22s %-20s %s"
           % ("idx", "beta", "beta^2", "eps_eff", "curl_ratio"))

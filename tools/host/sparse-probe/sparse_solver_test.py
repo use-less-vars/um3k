@@ -272,7 +272,10 @@ def mode2d_of(x_free, bsq, residual, sigma, mesh, ctx, n_e, free_e):
     x = x / nrm
     e_t = np.zeros(mesh.n_edges)
     e_t[free_e] = x
-    beta = math.sqrt(bsq) if (np.isfinite(bsq) and bsq > 0.0) else float("nan")
+    # Mode2D refuses a beta/beta_sq contradiction (emfit/mode2d.py __post_init__):
+    # beta is a number exactly when beta_sq > 0, else None -- the same rule
+    # solve_modes follows (emfit/mode2d.py:1290).  Nothing here reads mode.beta.
+    beta = math.sqrt(bsq) if (np.isfinite(bsq) and bsq > 0.0) else None
     mode = m2.Mode2D(
         freq=ctx["FREQ"], k0=ctx["k0"], beta=beta, beta_sq=float(bsq),
         eps_eff=float(bsq) / ctx["k0"] ** 2 if np.isfinite(bsq) else float("nan"),

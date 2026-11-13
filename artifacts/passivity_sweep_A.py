@@ -77,7 +77,8 @@ def one(nsteps, excite, s21_plane):
         power_sum=s11 * s11 + s21 * s21,
         passivity_status=("FAIL_PASSIVITY"
                           if s11 * s11 + s21 * s21 > 1.0 + 4.0e-9 else None),
-        beta=float(res.beta), beta_two_wave=float(res.beta_two_wave),
+        beta=(float(res.beta) if res.beta is not None else None),
+        beta_two_wave=float(res.beta_two_wave),
         beta_model=float(res.beta_model),
         gamma=complex(res.gamma), gamma_v=(complex(fit.gamma_v) if fit else None),
         zc=(complex(fit.z0) if fit else None),

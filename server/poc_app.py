@@ -5365,7 +5365,8 @@ def _mode_caption(result, mesh) -> str:
         )
     return (
         "2D cross-section mode (fundamental, quasi-TEM): beta = "
-        f"{result['beta_rad_per_m']:.4f} rad/m, eps_eff = {result['eps_eff']:.6f}, "
+        f"{_fmt(result['beta_rad_per_m'], 4)} rad/m, eps_eff = "
+        f"{result['eps_eff']:.6f}, "
         f"residual = {result['residual']:.2e}, curl_ratio = "
         f"{result['curl_ratio']:.3e}. Compare the three together: beta_model = "
         f"{model_text}; beta_banked = "
