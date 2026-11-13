@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import os
 
-__all__ = ["THREAD_VARS", "pin_threads"]
+__all__ = ["THREAD_VARS", "pin_threads", "requested_omp_threads"]
 
 THREAD_VARS = (
     "OPENBLAS_NUM_THREADS",
@@ -39,6 +39,26 @@ THREAD_VARS = (
     "NUMEXPR_NUM_THREADS",
 )
 """The thread-count variables pinned by :func:`pin_threads`."""
+
+# Captured HERE, in the module body, because :func:`pin_threads` overwrites the
+# variable in place: after it has run, an operator who asked for nothing and an
+# operator who asked for ``1`` are the same string in :data:`os.environ`, and
+# the difference is unrecoverable.  Read at import time, so the value below is
+# the request as the process received it -- ``None`` when it was absent.
+_REQUESTED_OMP_THREADS = os.environ.get("OMP_NUM_THREADS")
+
+
+def requested_omp_threads() -> str | None:
+    """``OMP_NUM_THREADS`` as the process received it, before :func:`pin_threads`.
+
+    Read-only by construction: the captured value is module-private and this
+    accessor returns it, so no caller can restate what was requested after the
+    fact.  ``None`` means the variable was ABSENT -- not that one thread was
+    requested.  That is precisely the distinction :func:`pin_threads` erases in
+    :data:`os.environ`, and the reason an artefact needs both this and the
+    effective value.
+    """
+    return _REQUESTED_OMP_THREADS
 
 
 def pin_threads(env=None) -> dict:

@@ -3308,6 +3308,12 @@ def main(argv: list[str] | None = None) -> int:
 
     _kernel_getter = getattr(evolve._KERNEL, "get_num_threads", None)
     n_threads_kernel = _kernel_getter() if callable(_kernel_getter) else None
+    # The REQUEST, from the capture emfit._env took in its own module body.  It
+    # cannot be read off os.environ here: importing emfit ran pin_threads(),
+    # which rewrote an unset OMP_NUM_THREADS to '1' in place.
+    from emfit._env import requested_omp_threads
+
+    n_threads_env_requested = requested_omp_threads()
 
     meta = {
         **engine_report(),
@@ -3344,7 +3350,12 @@ def main(argv: list[str] | None = None) -> int:
         },
         "cgroup_limit_mb": cgroup_limit_mb(),
         "n_threads_kernel": n_threads_kernel,
+        # Two thread facts, deliberately not one.  requested: what the operator
+        # asked for at process start (None if OMP_NUM_THREADS was unset).
+        # effective: what this process actually ran with after pin_threads()
+        # filled the unset ones in.  They differ exactly when nothing was asked.
         "n_threads_env": os.environ.get("OMP_NUM_THREADS"),
+        "n_threads_env_requested": n_threads_env_requested,
     }
 
     if args.dry_run:

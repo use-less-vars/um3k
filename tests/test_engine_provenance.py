@@ -29,6 +29,12 @@ What these tests pin
   ``"unknown (pre-6cbb89d)"`` and never as ``"python"`` -- a banked artefact
   predates the key, and "nobody recorded it" is not "the Python path ran".
 
+* ``meta.n_threads_env_requested`` and ``meta.n_threads_env`` are two facts,
+  not one: the REQUEST the operator made at process start and the EFFECT the
+  process ran with (``emfit/_env.py`` captures ``OMP_NUM_THREADS`` in its module
+  body, before ``pin_threads`` overwrites it in place).  The capture is taken
+  once per interpreter, so those cases are pinned in fresh child processes.
+
 No FDTD run and no modal solve happens anywhere in this file.  ``run_build_A``'s
 ``--dry-run`` is exercised because it builds the same ``meta`` dict that both of
 its artefacts then copy, and it is cheap by construction (no solve, no file).
@@ -36,6 +42,8 @@ its artefacts then copy, and it is cheap by construction (no solve, no file).
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -201,3 +209,122 @@ def test_the_grader_reports_a_missing_engine_as_unknown_not_python(tmp_path):
         "a present key must be carried through verbatim")
     assert inputs["without-key"]["step_engine"] == "unknown (pre-6cbb89d)"
     assert inputs["without-key"]["step_engine"] != "python"
+
+
+# ---------------------------------------------------------------------------
+# Thread provenance: what was REQUESTED and what was EFFECTIVE are two facts.
+# ---------------------------------------------------------------------------
+_CHILD_CAPTURE = """
+import json
+import os
+
+import emfit                       # emfit/__init__.py runs pin_threads() here
+from emfit._env import requested_omp_threads
+
+print(json.dumps({
+    "requested": requested_omp_threads(),
+    "effective": os.environ.get("OMP_NUM_THREADS"),
+}))
+"""
+
+
+def _child_provenance(omp):
+    """Run the capture/overwrite pair in a NEW interpreter; return both facts.
+
+    The capture happens once, in ``emfit._env``'s module body, so these cases
+    cannot be produced by monkeypatching ``os.environ`` in this already-imported
+    interpreter -- by then the capture has been taken and cannot be retaken.
+    Each case therefore gets its own process with a controlled environment, and
+    a crashed child is a failure with its output attached, never a skip.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "OMP_NUM_THREADS"}
+    if omp is not None:
+        env["OMP_NUM_THREADS"] = omp
+    proc = subprocess.run([sys.executable, "-c", _CHILD_CAPTURE], env=env,
+                          cwd=str(REPO), capture_output=True, text=True)
+    assert proc.returncode == 0, (
+        f"child interpreter failed (rc={proc.returncode}, "
+        f"OMP_NUM_THREADS={omp!r})\nstdout:\n{proc.stdout}\nstderr:\n"
+        f"{proc.stderr}")
+    data = json.loads(proc.stdout)
+    assert set(data) == {"requested", "effective"}, proc.stdout
+    return data
+
+
+def test_absent_omp_num_threads_is_requested_none_effective_one():
+    """The pair, in one process: nothing was asked for, one thread was used."""
+    data = _child_provenance(None)
+    assert data["requested"] is None, (
+        "an absent variable must read None, not '1': '1' would be an invented "
+        "request that the operator never made")
+    assert data["effective"] == "1", (
+        "pin_threads must have written '1' into the environment")
+
+
+def test_requested_twelve_survives_the_import_verbatim():
+    """An operator who asked for 12 is recorded as 12, and is not overridden."""
+    data = _child_provenance("12")
+    assert data["requested"] == "12"
+    assert data["effective"] == "12", (
+        "pin_threads must leave a variable the operator set alone")
+
+
+def test_explicit_one_is_the_case_that_used_to_be_ambiguous():
+    """``OMP_NUM_THREADS=1`` asked for, against the absent case.
+
+    Both read ``'1'`` out of ``os.environ`` once the import has run, which is
+    exactly the ambiguity the requested/effective pair removes.  What tells them
+    apart now is ``requested``: ``'1'`` here, ``None`` above.
+    """
+    data = _child_provenance("1")
+    assert data["requested"] == "1"
+    assert data["effective"] == "1"
+
+
+_DRY_RUN = [sys.executable, str(TERMINATION / "run_build_A.py"), "--dry-run"]
+"""The writer's cheap path, invoked the way its ``__main__`` guard invokes it."""
+
+
+def _writer_meta(omp):
+    """Run ``run_build_A --dry-run`` in a CHILD process; return its ``meta``.
+
+    In THIS process the check would prove nothing.  ``requested_omp_threads()``
+    here reads the capture taken when this interpreter imported ``emfit``, so it
+    is the same value the writer would have recorded whether or not the writer
+    ever asked for it: with nothing requested, both sides are ``None`` and an
+    unwired ``n_threads_env_requested = None`` would pass.  Only a child whose
+    ``OMP_NUM_THREADS`` this test owns separates "recorded what was asked" from
+    "recorded nothing".
+
+    Fail-closed: a child that crashes is a failure with its output attached.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "OMP_NUM_THREADS"}
+    if omp is not None:
+        env["OMP_NUM_THREADS"] = omp
+    proc = subprocess.run(_DRY_RUN, env=env, cwd=str(REPO),
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, (
+        f"child dry-run failed (rc={proc.returncode}, "
+        f"OMP_NUM_THREADS={omp!r})\nstdout:\n{proc.stdout}\nstderr:\n"
+        f"{proc.stderr}")
+    text = proc.stdout
+    return json.loads(text[text.index("{\n"):])["meta"]
+
+
+def test_the_writer_records_the_request_beside_the_effective_value():
+    """``meta`` carries both keys, and they differ when nothing was requested."""
+    absent = _writer_meta(None)
+    assert "n_threads_env" in absent, "the effective key must not be renamed"
+    assert "n_threads_env_requested" in absent
+    assert absent["n_threads_env_requested"] is None, (
+        "nothing was requested, so the request must record None -- never the "
+        "'1' that pin_threads wrote into the environment")
+    assert absent["n_threads_env"] == "1", (
+        "pin_threads must have made the EFFECTIVE value '1'")
+
+    twelve = _writer_meta("12")
+    assert twelve["n_threads_env_requested"] == "12", (
+        "a request the operator did make must be recorded verbatim")
+    assert twelve["n_threads_env"] == "12", (
+        "pin_threads must leave a variable the operator set alone")
+
