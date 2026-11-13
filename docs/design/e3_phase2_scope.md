@@ -106,11 +106,16 @@ unmentioned:
    test relaxed "to make a new build pass" would be the one thing that could
    hide a real regression.
 
-## 5. Contradictions on the record — recorded, not resolved here
+## 5. Contradictions on the record — four, all resolved 2026-11-12
 
-Four inconsistencies were found while collecting the citations above. Each is
-written down so phase 2 starts from the disputed pair rather than from whichever
-half it happened to read first. **None is resolved by this document.**
+Four inconsistencies were found while collecting the citations above. Each was
+written down so phase 2 would start from the disputed pair rather than from
+whichever half it happened to read first, and every original sentence is kept
+verbatim so the pair stays legible. All four were re-checked on 2026-11-12 and
+each now carries a `RESOLVED 2026-11-12` paragraph naming what was measured and
+what remains unsupported. One premise in the original text is now known to be
+false — §5.2's "`.git` in this container is 0 bytes" — and it is corrected in its
+resolution rather than edited out of the paragraph above it.
 
 1. **The build command contradicts the build file, in one sentence.**
    `docs/design/GEN12_HANDOFF.md:93` gives `g++ -O3 -fopenmp -std=c++17
@@ -120,11 +125,57 @@ half it happened to read first. **None is resolved by this document.**
    `-O3` with contraction at its default is exactly the configuration
    `src/CMakeLists.txt:24-26` measured as failing 8 of 13. Which command
    produced the "zero warnings" claim is not determinable from the line.
+
+   **RESOLVED 2026-11-12 — the binary settles it, and the answer is `-O2`.**
+   The question "which command produced this `.so`" is answerable from the build
+   tree that produced it. `artifacts/cpp_build_e3/CMakeFiles/emfit_core.dir/flags.make:9`
+   records the compile line that was used: `CXX_FLAGS = -O3 -DNDEBUG -std=c++17
+   -fPIC -fvisibility=hidden -O2 -fno-fast-math -ffp-contract=off -fopenmp
+   -flto=auto -fno-fat-lto-objects -fopenmp`. The `-O3` comes from
+   `CMAKE_CXX_FLAGS_RELEASE` (`artifacts/cpp_build_e3/CMakeCache.txt:51`; build
+   type `Release`, Unix Makefiles, CMake 4.4.4) and the `-O2` from
+   `src/CMakeLists.txt:55`. The later flag wins, so the effective optimisation
+   level is **`-O2`**, and the half of `docs/design/GEN12_HANDOFF.md:93` that
+   pins `-O2 -fno-fast-math -ffp-contract=off -fopenmp` is the half that
+   describes the binary; the `g++ -O3 -fopenmp -std=c++17 -shared -fPIC -Wall
+   -Wextra` half describes a command that was not used. This is also a
+   byte-identity question, not a provenance one: the extension that is actually
+   installed and dispatched, under `.venv/lib/python3.12/site-packages/`, is
+   188,416 bytes with sha256 `1365c7aa…` and is byte-identical to the `.so`
+   left in `artifacts/cpp_build_e3/`. That build used `g++` 14.2.0 with LTO on
+   (`-flto=auto`), and carries no `-mfma`, no `-march=`, no `-ffast-math` — none
+   of those three appears anywhere in this tree. The claim the original
+   sentence was asked to support is still unsupported, but now for a measured
+   reason: neither `-Wall` nor `-Wextra` is on the recorded compile line, so
+   "zero warnings" does not describe this build either.
 2. **Commit `6cbb89d` cannot be checked.** It is cited at
    `docs/design/defect_register.md:791` as the commit whose mechanism claim DR-42
    withdraws, and `.git` in this container is 0 bytes, so neither its diff nor
    its existence is verifiable here. The register's statement about it stands as
    the record's own; this scope document adds nothing to it.
+
+   **RESOLVED 2026-11-12 — it checks out, and checking it removes the "cannot be
+   checked" caveat.** The premise above is stale: the commit is readable now.
+   `6cbb89d` is `6cbb89dbcf323b70634d2cd64441ae38557b5e28`, Thu Nov 12 08:30:29
+   2026 +0000, "perf(e3): run FITStepper.step on the C++ kernel (Phase 1)".
+   `[MEASURED]` Its diff adds `_load_kernel`, `_KERNEL`, `_ACTIVE_STEP` and
+   `_KernelPlan` together with the dispatch inside `FITStepper.step`; adds
+   `KERNEL_ABI = 1` and `KERNEL_NAME` to `src/bindings.cpp`; changes
+   `src/CMakeLists.txt` from `-O3 -fopenmp` to `-O2 -fno-fast-math
+   -ffp-contract=off -fopenmp`; adds `tests/test_cpp_dispatch.py` (5 tests); and
+   moves `tests/test_cpp_parity.py`'s BUILD_COMMANDS from `-O3` to `-O2`. So it
+   is the commit that put the kernel on the call path, which is what its subject
+   says, and it is the origin of the flag line §5.1 is about. The message also
+   carries one claim that was true when it was written and false eleven minutes
+   later: it says the installed extension "predates the marker" and is therefore
+   refused. That was true at 08:30:29 — the `.so` in `build/` carries no
+   `KERNEL_ABI` and is a GCC 13.3 build — and stopped being true at 08:41:06,
+   when the installed extension was replaced by the ABI-1 build. What the
+   dispatcher does today is measured, not assumed: `emfit.engine_report()`
+   returns `{'step_engine': 'cpp', 'kernel_abi': 1, 'kernel_name':
+   'emfit_core.fit_leapfrog'}`, and the module-level `_ACTIVE_STEP` is `'cpp'`.
+   Both the commit's sentence and the pre-08:41 state are preserved in the
+   record; a reader only has to know which time each was true.
 3. **"2.15x slower" is an arithmetic mismatch, and it is also the wrong
    direction.** `artifacts/ladder_engine_host_timing.json` marks the claim
    `"status": "ARITHMETIC MISMATCH - 2.15 does not follow from any pair of the
@@ -134,6 +185,26 @@ half it happened to read first. **None is resolved by this document.**
    other, so "the container" is not one number at all; the second correction
    entry marks the same claim "NOT SUPPORTED for python" and recomputes
    50.11570404301165 / 49.6 = **1.01**.
+
+   **RESOLVED 2026-11-12 — the banked file's own standing consequence is
+   adopted, and this document quotes no single figure for the penalty.**
+   `artifacts/ladder_engine_host_timing.json` carries a `corrections` block
+   (lines 51-83) with two entries. The first reads, verbatim: `"claim":
+   "container is 2.15x slower for cpp"`, `"status": "ARITHMETIC MISMATCH - 2.15
+   does not follow from any pair of the published container figures"`, then
+   `"why_two_arms"`: "1.34x apart, so the container side of this comparison is
+   only resolved to roughly +/-34%", and `"standing_consequence"`: "The
+   container-vs-host cpp penalty is therefore somewhere between 1.57x and 2.12x
+   on the published numbers. Nobody should quote a single figure for it until
+   the same thread pinning is applied to both sides." The second entry marks the
+   general form of the claim `"NOT SUPPORTED for python"` and recomputes
+   50.11570404301165 / 49.6 = 1.01. Two consequences bind phase 2. First,
+   quoting one container-vs-host number is forbidden by the banked file itself,
+   not merely by this document's preference. Second, any future comparison must
+   pin threads identically on both sides, and it does not yet: the host arm's
+   thread count is OPERATOR-ATTESTED at 1, while the container arm is measured
+   under a `cpu.max 50000/100000` cgroup (`docs/design/defect_register.md:813`),
+   so the two arms are not the same experiment.
 4. **The ledger says no speed figure exists; DR-42 has three.** E3's row reads
    "No speed figure exists for the kernel" and "about 50x *slower* at the golden
    grid size" with 5,926 / 49,252 / 124,111 / 353,937 ns per call at 1 / 2 / 4 /
@@ -141,6 +212,24 @@ half it happened to read first. **None is resolved by this document.**
    `docs/design/defect_register.md:805-809` records 3.71 us / 291 us / 8.84 us on
    the same grid. Both cannot be the same grid and the same build; the ledger row
    predates DR-42's re-measurement, but neither page says so.
+
+   **RESOLVED 2026-11-12 — two different grids, therefore no contradiction; the
+   self-contradiction is inside the ledger row.** The sentence "Both cannot be
+   the same grid and the same build" is correct, and it is the whole answer:
+   they are not the same grid. `docs/design/defect_register.md:805-809` measures
+   the kernel step in isolation on the **golden grid** (133 edges, 392 nonzeros)
+   in a container on 2026-11-12; `docs/design/EM_SOLVER_LEDGER.md:28` speaks
+   about a **board-shaped mesh**, and says so itself four sentences later: "the
+   verdict stays UNVERIFIED — no speed figure at a board-shaped mesh exists. The
+   only figure measured is a bit-identity check plus a 1.76x wall clock on a
+   560-edge toy; that is a weak upper bound and must not be quoted as a
+   board-size claim." So "No speed figure exists for the kernel" is a statement
+   about board-shaped meshes, qualified inside the same cell, and a
+   microbenchmark on a 133-edge grid does not contradict it. What is genuinely
+   wrong is also inside that cell: it denies a speed figure exists while
+   printing 5,926 / 49,252 / 124,111 / 353,937 ns per call as one. That is the
+   ledger's defect to fix and `§6` keeps E3's verdict out of scope here; all this
+   document records is that the two pages are not in conflict.
 
 ## 6. Out of scope for phase 2
 
@@ -161,6 +250,8 @@ Each citation above is a `file:line` in this tree, readable without a compiler:
 `sed -n '20,30p;50,58p' src/CMakeLists.txt`, `sed -n '783,821p'
 docs/design/defect_register.md`, `sed -n '33,72p' emfit/_env.py`,
 `python3 -c "import json;d=json.load(open('artifacts/ladder_engine_host_timing.json'));print(d['corrections'])"`.
-The two claims that cannot be checked here are the commit identity
-(`6cbb89d`, §5.2) and the operator host's build (`README.md:50-52`); both are
-marked as cited rather than verified, and neither is load-bearing for the scope.
+The one claim that cannot be checked here is the operator host's build
+(`README.md:50-52`); it is marked as cited rather than verified and is not
+load-bearing for the scope. The commit identity `6cbb89d` (§5.2) was checked on
+2026-11-12 and is no longer on that list. The flag line can be re-read without a
+compiler: `sed -n '9p' artifacts/cpp_build_e3/CMakeFiles/emfit_core.dir/flags.make`.
