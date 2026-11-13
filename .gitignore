@@ -69,3 +69,7 @@ tools/host/*/out/
 
 # Cited evidence logs are exempt from the *.log rule (committed docs cite them by line)
 !evidence/logs/*.log
+# CMake build tree under artifacts/ (machine output; the importable .so is
+# reproducible from build/, and this tree is what makes artifacts/ look dirty)
+/artifacts/cpp_build_e3/
+*.so
