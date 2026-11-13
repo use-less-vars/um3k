@@ -3298,6 +3298,17 @@ def main(argv: list[str] | None = None) -> int:
     # run's printed meta.
     from emfit.evolve import engine_report
 
+    # DR-42: a kernel figure is only defensible with its thread count on the
+    # figure, so the record carries both numbers -- what the kernel itself says
+    # it will run, and the OMP_NUM_THREADS this process inherited.  The second is
+    # what the kernel deliberately ignores; writing both is what makes that
+    # visible instead of assumed.  None for the first means no kernel is loaded
+    # (the Python reference is doing the arithmetic).
+    import emfit.evolve as evolve
+
+    _kernel_getter = getattr(evolve._KERNEL, "get_num_threads", None)
+    n_threads_kernel = _kernel_getter() if callable(_kernel_getter) else None
+
     meta = {
         **engine_report(),
         "schema_version": 1,
@@ -3332,6 +3343,8 @@ def main(argv: list[str] | None = None) -> int:
             "retries": 0,
         },
         "cgroup_limit_mb": cgroup_limit_mb(),
+        "n_threads_kernel": n_threads_kernel,
+        "n_threads_env": os.environ.get("OMP_NUM_THREADS"),
     }
 
     if args.dry_run:

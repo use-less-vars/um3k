@@ -152,7 +152,7 @@ def step_explicit(e, h, C, C_tilde, inv_m_mu, inv_m_eps, dt, loss_num=None,
 # The reference ``step_explicit`` stays unconditionally available and unchanged.
 # It is what the kernel is validated against, so it must never grow a fast path
 # of its own.
-_KERNEL_ABI = 1                      # must equal emfit_core.KERNEL_ABI (src/bindings.cpp)
+_KERNEL_ABI = 2                      # must equal emfit_core.KERNEL_ABI (src/bindings.cpp)
 _KERNEL_NAME = "emfit_core.fit_leapfrog"
 
 
@@ -243,7 +243,9 @@ def _load_kernel(abi=_KERNEL_ABI):
     sat beside it -- provenance that is wrong rather than absent.  So it raises
     ``RuntimeError`` naming every candidate file found, the original exception,
     and both ways out.  Running the Python path stays supported; it stops being
-    something that can happen by accident.
+    something that can happen by accident.  The same loudness covers the thread
+    team (DR-42): a kernel that claims ABI 2 and cannot be pinned to one thread
+    raises rather than handing back a figure whose thread count is unknown.
     """
     if _python_forced():
         return None
@@ -270,6 +272,32 @@ def _load_kernel(abi=_KERNEL_ABI):
         return None
     if abi is not None and getattr(kernel, "KERNEL_ABI", None) != abi:
         return None
+    # ABI 2 pins the kernel's thread team, and a kernel announcing ABI 2 must be
+    # able to.  DR-42: the same call costs 3.71 us on one thread and 291 us on
+    # the team an inherited OMP_NUM_THREADS asks for, so a figure taken from a
+    # kernel nobody pinned is a measurement of the environment, not the kernel.
+    setter = getattr(kernel, "set_num_threads", None)
+    if not callable(setter):
+        raise RuntimeError(
+            "emfit_core reports ABI 2 but has no set_num_threads(), so its "
+            "thread team cannot be pinned and any timing taken from it would "
+            "measure the ambient OMP_NUM_THREADS rather than the kernel "
+            "(DR-42).\n"
+            f"  kernel file: {getattr(kernel, '__file__', 'unknown')}\n"
+            "  rebuild the extension from src/ (BUILD_COMMANDS in "
+            "tests/test_cpp_parity.py): ABI 2 exports get_num_threads and "
+            "set_num_threads."
+        )
+    try:
+        setter(1)
+    except Exception as exc:
+        raise RuntimeError(
+            "emfit_core has set_num_threads() but pinning its thread team to 1 "
+            "failed, so this process cannot state the thread count its kernel "
+            "figure was taken at (DR-42).\n"
+            f"  kernel file: {getattr(kernel, '__file__', 'unknown')}\n"
+            f"  set_num_threads(1) raised {type(exc).__name__}: {exc}"
+        ) from exc
     return kernel
 
 

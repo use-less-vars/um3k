@@ -307,9 +307,17 @@ PYBIND11_MODULE(emfit_core, m) {
     // floating-point contract of step_explicit -- a different statement order,
     // a different rounding, a new optional argument that changes the
     // arithmetic -- so a stale .so can never be silently mixed with a newer
-    // Python reference and quietly disagree in the last bit.
-    m.attr("KERNEL_ABI") = 1;
+    // Python reference and quietly disagree in the last bit.  ABI 2 added the
+    // pinned thread team below: the arithmetic of step_explicit is unchanged,
+    // but a module that pins its loops and one that inherits OMP_NUM_THREADS do
+    // not cost the same, so an ABI-1 module is rejected.
+    m.attr("KERNEL_ABI") = 2;
     m.attr("KERNEL_NAME") = "emfit_core.fit_leapfrog";
+    m.def("get_num_threads", &emfit::get_num_threads,
+          "The number of threads the kernel's parallel loops will use.");
+    m.def("set_num_threads", &emfit::set_num_threads, py::arg("n"),
+          "Pin the kernel's thread team: n is clamped to at least 1, the OpenMP "
+          "runtime is set to it, and the effective count is returned.");
     m.def("step_explicit", &py_step_explicit,
           py::arg("e"), py::arg("h"),
           py::arg("C_data"), py::arg("C_indices"), py::arg("C_indptr"),

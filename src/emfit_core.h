@@ -65,6 +65,13 @@ void step_explicit(double* e,
                    long n_pec,
                    const double* j);
 
+// The thread team step_explicit() runs its parallel loops on.  One thread by
+// default, so an inherited OMP_NUM_THREADS cannot silently change what a call
+// costs (DR-42).  set_num_threads() clamps n to at least 1, applies it to the
+// OpenMP runtime and returns the count now in force.
+int get_num_threads();
+int set_num_threads(int n);
+
 }  // namespace emfit
 
 #endif  // EMFIT_CORE_H

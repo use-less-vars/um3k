@@ -37,12 +37,17 @@ import emfit.evolve as evolve
 
 
 class _Kernel:
-    """Stand-in with the two attributes ``_load_kernel`` reads, and nothing else."""
+    """Stand-in with the three attributes ``_load_kernel`` reads, and nothing else."""
 
     KERNEL_ABI = evolve._KERNEL_ABI
+    pinned = None
 
     def step_explicit(self):                # callable, never called
         raise AssertionError("_load_kernel must not call the kernel")
+
+    def set_num_threads(self, n):           # the one method it must call (DR-42)
+        self.pinned = n
+        return n
 
 
 def _never_called(what):
@@ -60,6 +65,7 @@ def test_an_importable_extension_is_returned_without_probing_the_disk(monkeypatc
     monkeypatch.setattr(evolve, "_probe_kernel_files",
                         _never_called("the on-disk extension probe"))
     assert evolve._load_kernel() is kernel
+    assert kernel.pinned == 1, "the kernel must be pinned to one thread on load"
 
 
 def test_a_so_on_disk_that_cannot_be_imported_raises_naming_the_file(monkeypatch):

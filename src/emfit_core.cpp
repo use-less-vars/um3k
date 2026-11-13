@@ -41,6 +41,8 @@
 // that element only (PEC touches a zeroed list of distinct-or-not indices, each
 // store idempotent).
 
+#include <omp.h>
+
 #include "emfit_core.h"
 
 namespace emfit {
@@ -59,6 +61,23 @@ inline double row_dot(const Csr& A, long r, const double* x) {
 }
 
 }  // namespace
+
+// The team every parallel loop below is pinned to.  One by default: the loops
+// are memory-bound, and a call on an inherited team costs several times more
+// for the same arithmetic (DR-42).  Only set_num_threads() changes it, and it
+// tells the OpenMP runtime as well, so the clause and the runtime agree.
+static int g_num_threads = 1;
+
+int get_num_threads() { return g_num_threads; }
+
+int set_num_threads(int n) {
+    if (n < 1) {
+        n = 1;
+    }
+    omp_set_num_threads(n);
+    g_num_threads = n;
+    return g_num_threads;
+}
 
 void step_explicit(double* e,
                    double* h,
@@ -80,7 +99,7 @@ void step_explicit(double* e,
     // 1. Faraday: h -= dt * (inv_m_mu * (C e)).        [evolve.py:114]
     // Same operation order as Python: the mat-vec, then the elementwise
     // multiply by inv_m_mu, then by dt, then the subtraction.
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(get_num_threads())
     for (long r = 0; r < n_faces; ++r) {
         const double ce = row_dot(C, r, e);
         h[r] -= dt * (inv_m_mu[r] * ce);
@@ -89,7 +108,7 @@ void step_explicit(double* e,
     // 2. PML damping of h, BEFORE the dual curl is taken.  [evolve.py:115-116]
     // Python: pml.damp_h(h, dt) -> `h *= f` with f = multipliers(dt)[1].
     if (damp_h != nullptr) {
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(get_num_threads())
         for (long r = 0; r < n_faces; ++r) {
             h[r] *= damp_h[r];
         }
@@ -100,7 +119,7 @@ void step_explicit(double* e,
     // The branch is chosen per call, not per element, exactly as in Python:
     // `if loss_den is None: e += dt * (inv_m_eps * ce) else: ...`.
     if (loss_den == nullptr) {
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(get_num_threads())
         for (long r = 0; r < n_edges; ++r) {
             double ce = row_dot(Ct, r, h);
             if (j != nullptr) {
@@ -111,7 +130,7 @@ void step_explicit(double* e,
     } else {
         // loss_num must be non-null whenever loss_den is; the binding refuses
         // the one-sided call rather than letting this dereference run.
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(get_num_threads())
         for (long r = 0; r < n_edges; ++r) {
             double ce = row_dot(Ct, r, h);
             if (j != nullptr) {
@@ -127,7 +146,7 @@ void step_explicit(double* e,
     //                                           [evolve.py:128-129]
     // Python: pml.damp_e(e, dt) -> `e *= f` with f = multipliers(dt)[0].
     if (damp_e != nullptr) {
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(get_num_threads())
         for (long r = 0; r < n_edges; ++r) {
             e[r] *= damp_e[r];
         }

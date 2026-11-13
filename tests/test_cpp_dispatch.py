@@ -212,7 +212,11 @@ def test_load_kernel_rejects_a_mismatched_abi_silently():
     # ABI gate, not a missing extension -- and the real-ABI decision agrees with
     # whatever the module already settled on at import.
     if emfit_core is not None:
-        assert evolve._load_kernel(abi=None) is emfit_core
+        if callable(getattr(emfit_core, "set_num_threads", None)):
+            assert evolve._load_kernel(abi=None) is emfit_core
+        else:  # an ABI-1 module: importable, but no thread team to pin (DR-42)
+            with pytest.raises(RuntimeError):
+                evolve._load_kernel(abi=None)
     else:
         assert evolve._load_kernel(abi=None) is None
     assert evolve._load_kernel() is evolve._KERNEL
