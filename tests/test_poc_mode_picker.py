@@ -94,7 +94,15 @@ def test_candidate_title_says_when_there_is_no_beta_at_all() -> None:
 
     row = app._mode_candidate_title(_record(2, None, -12.5, 1.0))
     assert "#2" in row, row
-    assert "no beta" in row, row
+    assert "Evanescent" in row, f"a below-cutoff row is not named as one: {row!r}"
+    assert "rad/m" not in row, (
+        "a below-cutoff candidate does not propagate, yet the row prints a "
+        f"beta: {row!r}"
+    )
+    assert "alpha 3.54 Np/m" in row, (
+        "the row drops the decay constant that explains the missing beta "
+        f"(here from the ``beta_sq`` fallback): {row!r}"
+    )
     assert "beta_sq -12.5" in row, (
         f"the row drops the beta_sq that explains the missing beta: {row!r}"
     )
@@ -103,6 +111,21 @@ def test_candidate_title_says_when_there_is_no_beta_at_all() -> None:
         f"for a recording failure: {row!r}"
     )
     assert "eps_eff 1.000" in row, row
+
+
+def test_candidate_title_says_when_a_candidate_sits_exactly_at_cutoff() -> None:
+    import poc_app as app
+
+    row = app._mode_candidate_title(_record(1, None, 0.0, 1.234))
+    assert "#1" in row, row
+    assert "At cutoff" in row, (
+        f"a candidate exactly at cutoff is named as neither case: {row!r}"
+    )
+    assert "rad/m" not in row, (
+        "a candidate at cutoff does not propagate, yet the row prints a "
+        f"beta: {row!r}"
+    )
+    assert "eps_eff 1.234" in row, row
 
 
 def test_candidate_title_survives_a_record_it_cannot_read() -> None:

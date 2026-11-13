@@ -929,9 +929,17 @@ def candidate_records(res) -> tuple:
     ``res.candidates`` (``record["index"] == i`` describes
     ``res.candidates[i]``, and all of them are returned, including those that
     fail the solver's ``acceptable`` curl test).  The key names and the
-    ``beta``-from-``beta_sq`` convention match ``candidate_rows`` in
-    ``tools/host/anchor/ladder.py``: ``beta`` is ``sqrt(beta_sq)`` and is
-    ``None`` when ``beta_sq < 0`` (below cutoff).  ``residual`` is that
+    ``beta``/``None`` convention follow ``candidate_rows`` in
+    ``tools/host/anchor/ladder.py`` (the two agree on what a key holds, not on
+    what ``index`` means: ``candidate_rows`` sorts, this function does not).
+    ``beta`` states the three cases apart: ``sqrt(beta_sq)`` when
+    ``beta_sq > 0`` (propagating), ``None`` when ``beta_sq == 0`` (exactly at
+    cutoff -- no real propagation constant and no decay either) and ``None``
+    when ``beta_sq < 0`` (evanescent, below cutoff).  ``beta_imag`` carries that
+    third case's decay constant ``sqrt(-beta_sq)`` [1/m] and is ``0.0``
+    otherwise, matching :attr:`Mode2D.beta_imag`; ``propagating`` is the plain
+    ``bool`` of ``beta_sq > 0``, matching :attr:`Mode2D.is_propagating`.
+    ``residual`` is that
     candidate's own ``||C e - beta_sq B e|| / ||B e||`` -- the scalar the chosen
     mode reports as ``Mode2D.residual``, carried per candidate so a root paired
     to a candidate that was *not* chosen can still be scored; it is ``None``
@@ -960,10 +968,13 @@ def candidate_records(res) -> tuple:
     for i, ((beta_sq, eps_eff), curl_ratio) in enumerate(zip(pairs, ratios)):
         bsq = float(beta_sq)
         cr = float(curl_ratio)
+        propagating = bsq > 0.0
         records.append(
             {
                 "index": int(i),
-                "beta": float(np.sqrt(bsq)) if bsq >= 0.0 else None,
+                "beta": float(np.sqrt(bsq)) if propagating else None,
+                "beta_imag": float(np.sqrt(-bsq)) if bsq < 0.0 else 0.0,
+                "propagating": bool(propagating),
                 "beta_sq": bsq,
                 "eps_eff": float(eps_eff),
                 "curl_ratio": cr,

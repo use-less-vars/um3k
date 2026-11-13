@@ -5571,7 +5571,7 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
     # lookup and never a re-solve. ``chosen`` is carried as an INDEX into
     # ``candidates`` so a picker item and a picture cannot drift apart, and the
     # records are the compute layer's own dicts: beta is None exactly where
-    # ``beta_sq <= 0``, i.e. below cutoff, which ``_select_and_pack`` can never
+    # ``beta_sq <= 0``, i.e. at or below cutoff, which ``_select_and_pack`` can never
     # pick - the picker repeats that instead of inventing a beta for the row.
     result["chosen"] = int(solved.chosen)
     # Named `kept`/`grids`, not `candidates`: that name above is the list of
@@ -5725,12 +5725,15 @@ def _mode_candidate_title(record, *, chosen=None) -> str:
 
     The line repeats the compute layer's own numbers and nothing else: the
     candidate's index, its beta (or the fact that it has none) and its eps_eff.
-    A record whose ``beta`` is None has ``beta_sq <= 0`` - evanescent, below
-    cutoff - and ``_select_and_pack`` keeps such a candidate only to REJECT it
-    (``eligible = acceptable & (vals > 0.0)``), so the row says so in words
-    rather than printing a beta it was never computed with. The solver's own
-    pick is named, because the picker's first job is to say which row the
-    caption above the picture is describing.
+    A record whose ``beta`` is a number is propagating. One whose ``beta`` is
+    None is NOT, and its ``beta_sq`` says which of the two remaining cases it
+    is: exactly at cutoff (``0`` - no beta and no decay either) or evanescent
+    (``< 0`` - no beta, but an ``alpha = sqrt(-beta_sq)`` Np/m decay constant).
+    ``_select_and_pack`` keeps both cases only to REJECT them
+    (``eligible = acceptable & (vals > 0.0)``), so each row names its case and
+    says it is never pickable, rather than printing a beta it was never
+    computed with. The solver's own pick is named, because the picker's first
+    job is to say which row the caption above the picture is describing.
     """
     try:
         index = int(record["index"])
@@ -5750,6 +5753,28 @@ def _mode_candidate_title(record, *, chosen=None) -> str:
                 text += "  (the solver's pick)"
             return text
         beta_sq = record.get("beta_sq")
+        if isinstance(beta_sq, (int, float)) and beta_sq == beta_sq:
+            if beta_sq == 0.0:
+                return (
+                    f"#{index}  At cutoff  beta_sq 0  {eps_text}  "
+                    "(never pickable)"
+                )
+            if beta_sq < 0.0:
+                alpha = record.get("beta_imag")
+                if not (
+                    isinstance(alpha, (int, float)) and math.isfinite(alpha)
+                ):
+                    alpha = math.sqrt(-float(beta_sq))
+                if math.isfinite(alpha):
+                    return (
+                        f"#{index}  Evanescent  alpha {alpha:.2f} Np/m  "
+                        f"beta_sq {float(beta_sq):.3g}  {eps_text}  "
+                        "(below cutoff, never pickable)"
+                    )
+                return (
+                    f"#{index}  Evanescent  beta_sq {float(beta_sq):.3g}  "
+                    f"{eps_text}  (below cutoff, never pickable)"
+                )
         cutoff = (
             f"beta_sq {float(beta_sq):.3g}"
             if isinstance(beta_sq, (int, float)) and beta_sq == beta_sq
@@ -7842,9 +7867,10 @@ def run_web_vis(
         WHY a picker at all: the pencil keeps several transverse candidates and
         picks one by the curl/eps guard, so a panel that shows only the pick hides
         the fact that the others exist. The rows are the compute layer's own
-        records and their labels repeat its numbers verbatim - including "no
-        beta, below cutoff" for a candidate the guard can never choose - so the
-        picker extends the panel's honesty rather than softening it.
+        records and their labels repeat its numbers verbatim - including "At
+        cutoff" and "Evanescent ... Np/m" for the candidates the guard can never
+        choose - so the picker extends the panel's honesty rather than softening
+        it.
 
         The items live in ``mode_choice_items`` and are filled by a PRESS, not
         here: the layout is built once at boot, before anything is solved. A

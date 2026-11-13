@@ -19,7 +19,16 @@ import pytest
 from emfit import mode2d as m2
 
 #: Every key a record must carry (a superset is allowed).
-KEYS = {"index", "beta", "beta_sq", "eps_eff", "curl_ratio", "abs_curl_ratio"}
+KEYS = {
+    "index",
+    "beta",
+    "beta_imag",
+    "propagating",
+    "beta_sq",
+    "eps_eff",
+    "curl_ratio",
+    "abs_curl_ratio",
+}
 
 #: The walls sit exactly on coordinates, so the node predicates need far less
 #: slack than a cell edge.
@@ -43,7 +52,7 @@ def _stub_records():
 # (a) the diagnostic keys are present
 # ---------------------------------------------------------------------------
 def test_record_carries_diagnostic_keys():
-    """Each record exposes at least the six documented diagnostics."""
+    """Each record exposes at least the eight documented diagnostics."""
     records = m2.candidate_records(_stub_records())
     assert len(records) == 3
     for position, record in enumerate(records):
@@ -74,7 +83,7 @@ def test_record_is_json_serialisable():
                 continue
             assert isinstance(value, (int, float)), f"{key} is {type(value)!r}"
             assert not isinstance(value, np.generic), f"{key} is a numpy scalar"
-            assert type(value) in (int, float), f"{key} is {type(value)!r}"
+            assert type(value) in (int, float, bool), f"{key} is {type(value)!r}"
     # the below-cutoff candidate keeps the ``candidate_rows`` convention
     assert back[1]["beta"] is None
     assert back[1]["beta_sq"] == -1.0
@@ -96,10 +105,50 @@ def test_record_index_alignment_and_values():
         assert record["eps_eff"] == pytest.approx(eps_eff)
         assert record["curl_ratio"] == pytest.approx(curl_ratio)
         assert record["abs_curl_ratio"] == abs(record["curl_ratio"])
-        if beta_sq >= 0.0:
+        if beta_sq > 0.0:
             assert record["beta"] == pytest.approx(np.sqrt(beta_sq))
         else:
             assert record["beta"] is None
+
+
+# ---------------------------------------------------------------------------
+# (c2) the cutoff boundary: a non-propagating record never carries a beta
+# ---------------------------------------------------------------------------
+def test_non_propagating_record_never_carries_a_beta():
+    """``beta`` states the three cases; only ``beta_sq > 0`` gets one.
+
+    This is the ``beta 0.00 rad/m`` bug: ``beta_sq == 0.0`` (exactly at
+    cutoff) used to satisfy ``bsq >= 0.0`` and so produced ``beta = 0.0``,
+    which the picker printed as a propagating mode - one that
+    ``_select_and_pack`` can never pick, because its mask is
+    ``eligible = acceptable & (vals > 0.0)``.  So the causal assertion is
+    that no record with ``propagating`` False carries a beta at all.
+    """
+    above, cutoff, below = m2.candidate_records(
+        _stub(
+            [(4.0, 2.0), (0.0, 1.0), (-1.5, 0.5)],
+            [1.0e-3, 0.0, -2.0e-3],
+        )
+    )
+    # above cutoff: the one case with a real propagation constant
+    assert above["beta"] == pytest.approx(2.0)
+    assert above["propagating"] is True
+    assert above["beta_imag"] == 0.0
+    # exactly at cutoff: no beta, and no decay either
+    assert cutoff["beta"] is None
+    assert cutoff["propagating"] is False
+    assert cutoff["beta_imag"] == 0.0
+    # evanescent: no beta, but (1/m) of decay
+    assert below["beta"] is None
+    assert below["propagating"] is False
+    assert below["beta_imag"] == pytest.approx(np.sqrt(1.5))
+    for record in (above, cutoff, below):
+        assert isinstance(record["propagating"], bool), (
+            f"propagating is {type(record['propagating'])!r}, not a plain bool"
+        )
+        assert not (record["propagating"] is False and record["beta"] is not None), (
+            f"a record the guard can never pick carries a beta: {record!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
