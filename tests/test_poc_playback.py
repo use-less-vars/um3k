@@ -2633,6 +2633,32 @@ def test_setup_project_picker_offers_the_solvers_own_arms(tmp_path: Path,
         "select is the drift this test exists to catch"
     )
 
+    # The MODE picker, from the SAME recorded log and the SAME boot: this is
+    # the only thing in the suite that notices it vanishing from the layout.
+    # tests/test_poc_mode_picker.py never looks at widgets at all, so an
+    # `_emit_mode_picker` that returned early - or that was dropped from both
+    # builders - would leave that whole file green.
+    mode_pickers = [entry["kwargs"] for entry in recorded
+                    if entry["kwargs"].get("label") == "solved candidates"]
+    assert len(mode_pickers) == 1, (
+        "expected exactly one 'solved candidates' VSelect in the Mode panel, "
+        f"found {len(mode_pickers)} - the Mode picker is not in the layout, and "
+        "tests/test_poc_mode_picker.py never looks at widgets, so nothing else "
+        "would say so"
+    )
+    mode_kwargs = mode_pickers[0]
+    assert mode_kwargs["v_model"] == ("mode_choice", 0), (
+        f"the Mode picker no longer writes `mode_choice`: {mode_kwargs!r}"
+    )
+    assert mode_kwargs["v_bind_items"] == ("mode_choice_items", []), (
+        "the Mode picker no longer reads the items a press fills: "
+        f"{mode_kwargs!r}"
+    )
+    assert mode_kwargs["item_value"] == "value", (
+        "the Mode picker's option value is no longer the candidate index: "
+        f"{mode_kwargs!r}"
+    )
+
     row = registry["D"]
     netlist = row.get("netlist")
     assert isinstance(netlist, str) and netlist, (

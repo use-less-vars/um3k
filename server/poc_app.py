@@ -5245,13 +5245,18 @@ def _mode_delta_pct(beta, reference):
     return 100.0 * (float(beta) - reference) / reference
 
 
-def _mode_field_grid(result, extent, cells=MODE_GRID_CELLS):
+def _mode_field_grid(result, extent, cells=MODE_GRID_CELLS, index=None):
     """|E| of the solved mode on a ``(cells, cells)`` (z, y) sampling of the box.
 
     Sampled through ``Mode2D.e_at`` - the same Whitney interpolation the field
     is defined by - at the mesh's own axis endpoints, so the sampling never
     lands outside the triangulation (``e_at`` raises there, and the tolerance is
     tight enough that a re-derived extent would trip it).
+
+    ``index`` samples a CANDIDATE instead of the solver's pick: the same axes,
+    the same ``solved`` object, through ``Mode2D.e_at_candidate``. That is why
+    the picker below needs no second solve, and why a candidate's picture and
+    the fundamental's are drawn from one interpolation on one grid.
     """
     y_max, z_max = (float(extent[0]), float(extent[1]))
     axes = result.mesh.grid_axes
@@ -5267,7 +5272,10 @@ def _mode_field_grid(result, extent, cells=MODE_GRID_CELLS):
     gz = np.linspace(z_lo, z_hi, int(cells))
     yy, zz = np.meshgrid(gy, gz, indexing="xy")
     points = np.stack([yy.ravel(), zz.ravel()], axis=1)
-    field = np.asarray(result.e_at(points), dtype=float)
+    if index is None:
+        field = np.asarray(result.e_at(points), dtype=float)
+    else:
+        field = np.asarray(result.e_at_candidate(int(index), points), dtype=float)
     return np.hypot(field[:, 0], field[:, 1]).reshape(int(cells), int(cells))
 
 
@@ -5558,13 +5566,50 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
     # before the timing is closed: a caption that under-reports the wall clock is
     # exactly the kind of flattery this panel must not print.
     result["grid"] = _mode_field_grid(solved, extent)
+    # EVERY candidate the pencil kept, not only the one it picked, each with its
+    # own |E| sampled from the SAME solve above - so a pick in the browser is a
+    # lookup and never a re-solve. ``chosen`` is carried as an INDEX into
+    # ``candidates`` so a picker item and a picture cannot drift apart, and the
+    # records are the compute layer's own dicts: beta is None exactly where
+    # ``beta_sq <= 0``, i.e. below cutoff, which ``_select_and_pack`` can never
+    # pick - the picker repeats that instead of inventing a beta for the row.
+    result["chosen"] = int(solved.chosen)
+    # Named `kept`/`grids`, not `candidates`: that name above is the list of
+    # record PATHS this page was searched for, and a second meaning for it in
+    # the same function is how a later edit reads the wrong one.
+    kept = []
+    grids = []
+    try:
+        records = [dict(record) for record in mode2d.candidate_records(solved)]
+    except Exception as exc:  # noqa: BLE001 - the picker is an EXTRA, the panel is not
+        print(f"[poc_app] mode candidates unavailable: {exc}", file=sys.stderr)
+        records = []
+    for record in records:
+        try:
+            grid = _mode_field_grid(solved, extent, index=record["index"])
+        except Exception as exc:  # noqa: BLE001 - one row is not the panel
+            print(
+                f"[poc_app] mode candidate #{record.get('index')} grid skipped: "
+                f"{exc}",
+                file=sys.stderr,
+            )
+            continue
+        # Appended together and only on success, so the two lists stay aligned:
+        # a record whose field could not be sampled is not offered as a row the
+        # picker can point at, because there would be no picture behind it.
+        kept.append(record)
+        grids.append(grid)
+    result["candidates"] = kept
+    result["candidate_grids"] = tuple(grids)
+    # Closed AFTER the candidate sampling, so the wall clock this caption prints
+    # is what the press actually cost.
     result["seconds"] = time.perf_counter() - started
     result["caption"] = _mode_caption(result, mesh)
     memo[key] = result
     return result
 
 
-def mode_view(page, *, lateral_cells=44, k=2, cache=None) -> dict:
+def mode_view(page, *, lateral_cells=44, k=4, cache=None) -> dict:
     """Solve the cross-section mode for the arm a page is showing. NEVER raises.
 
     ``page`` is the dict :func:`reload_page` returns (or anything carrying a
@@ -5588,7 +5633,13 @@ def mode_view(page, *, lateral_cells=44, k=2, cache=None) -> dict:
     ``curl_ratio``, ``beta_banked``, ``beta_model``, ``delta_vs_banked_pct``,
     ``delta_vs_model_pct``, ``grid`` (``|E|`` of the fundamental on a square
     sampling of the box), ``extent``, ``n_nodes``, ``n_edges``, ``seconds`` and
-    ``caption``. On any bad input it returns ``{'ok': False, 'reason': ...}``
+    ``caption``, plus ``chosen`` (the picked candidate's index), ``candidates``
+    (the pencil's own records, every one it kept) and ``candidate_grids`` (the
+    ``|E|`` of each, aligned with ``candidates``). ``k`` defaults to 4 - the
+    same count ``solve_modes`` defaults to - because a panel that reports ONE
+    mode while the pencil extracted four is hiding the others.
+
+    On any bad input it returns ``{'ok': False, 'reason': ...}``
     with a short cause - a missing record, an unreadable one, a missing geometry
     key, a mesh that will not build, a solve that will not converge - because
     the caller has a browser panel to update and no way to catch anything.
@@ -5667,6 +5718,141 @@ def _mode_caption_text(result) -> str:
         return "mode refused: " + (text or "no reason given")
     except Exception:  # noqa: BLE001 - the hint is a safe floor
         return MODE_PANEL_HINT
+
+
+def _mode_candidate_title(record, *, chosen=None) -> str:
+    """One picker line for a ``mode2d.candidate_records`` record. NEVER raises.
+
+    The line repeats the compute layer's own numbers and nothing else: the
+    candidate's index, its beta (or the fact that it has none) and its eps_eff.
+    A record whose ``beta`` is None has ``beta_sq <= 0`` - evanescent, below
+    cutoff - and ``_select_and_pack`` keeps such a candidate only to REJECT it
+    (``eligible = acceptable & (vals > 0.0)``), so the row says so in words
+    rather than printing a beta it was never computed with. The solver's own
+    pick is named, because the picker's first job is to say which row the
+    caption above the picture is describing.
+    """
+    try:
+        index = int(record["index"])
+    except Exception:  # noqa: BLE001 - a row is not worth a traceback
+        return "candidate"
+    try:
+        eps = record.get("eps_eff")
+        eps_text = (
+            f"eps_eff {float(eps):.3f}"
+            if isinstance(eps, (int, float)) and eps == eps
+            else "eps_eff not recorded"
+        )
+        beta = record.get("beta")
+        if isinstance(beta, (int, float)) and beta == beta:
+            text = f"#{index}  beta {float(beta):.2f} rad/m  {eps_text}"
+            if chosen is not None and index == int(chosen):
+                text += "  (the solver's pick)"
+            return text
+        beta_sq = record.get("beta_sq")
+        cutoff = (
+            f"beta_sq {float(beta_sq):.3g}"
+            if isinstance(beta_sq, (int, float)) and beta_sq == beta_sq
+            else "beta_sq not recorded"
+        )
+        return (
+            f"#{index}  no beta ({cutoff}: below cutoff, never pickable)  "
+            f"{eps_text}"
+        )
+    except Exception:  # noqa: BLE001
+        return f"#{index}"
+
+
+def _mode_candidate_items(result):
+    """The Mode picker's items for a ``mode_view`` result. NEVER raises.
+
+    ``[]`` when the result carries no candidate list - a refusal, a fake result
+    from a proof, or an older cached dict - so a caller can emit the picker
+    unconditionally and have it simply offer nothing. ``value`` is the
+    candidate's own index, the same number ``result['chosen']`` and
+    ``candidate_grids`` are keyed by.
+    """
+    try:
+        if not isinstance(result, dict) or not result.get("ok"):
+            return []
+        chosen = result.get("chosen")
+        items = []
+        for record in result.get("candidates") or ():
+            if not isinstance(record, dict):
+                continue
+            index = record.get("index")
+            if not isinstance(index, int):
+                continue
+            items.append(
+                {
+                    "title": _mode_candidate_title(record, chosen=chosen),
+                    "value": int(index),
+                }
+            )
+        return items
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _mode_view_for_candidate(result, index):
+    """``result`` re-pointed at one candidate's grid, or None. NEVER raises.
+
+    None means "nothing to draw, and nothing to say": the result is a refusal,
+    it carries no candidates, or the pick names an index this solve did not
+    keep. The caller then leaves the picture and the caption exactly as they
+    are rather than drawing the fundamental under a candidate's label.
+    """
+    try:
+        if not isinstance(result, dict) or not result.get("ok"):
+            return None
+        picked = int(index)
+        for record, grid in zip(
+            result.get("candidates") or (), result.get("candidate_grids") or ()
+        ):
+            if not isinstance(record, dict) or grid is None:
+                continue
+            if int(record.get("index")) == picked:
+                view = dict(result)
+                view["grid"] = grid
+                return view
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _mode_choice_caption_text(result, index) -> str:
+    """The caption for a PICKED candidate. NEVER raises, never re-words.
+
+    The solve's own caption is returned UNCHANGED while the picker still points
+    at the solver's pick, so the text a press produces is byte-for-byte the text
+    a pick keeps. Only a pick that differs gets a sentence, and that sentence
+    says which row is on screen and that the numbers still above it are the
+    solver's - the caption's numbers are never silently turned into another
+    candidate's.
+    """
+    base = _mode_caption_text(result)
+    try:
+        if not isinstance(result, dict) or not result.get("ok"):
+            return base
+        items = _mode_candidate_items(result)
+        if not items:
+            return base
+        chosen = result.get("chosen")
+        try:
+            picked = int(index)
+        except (TypeError, ValueError):
+            return base
+        if chosen is not None and picked == int(chosen):
+            return base
+        title = next((item["title"] for item in items if item["value"] == picked), None)
+        if title is None:
+            return base
+        return (
+            f"{base}  [showing candidate {title} - the numbers above are the "
+            f"solver's pick, #{chosen}]"
+        )
+    except Exception:  # noqa: BLE001
+        return base
 
 
 def _mode_picture_grid(result, *, x_mm: float, y_centre_mm: float = 0.0):
@@ -6153,6 +6339,12 @@ def run_web_vis(
     # press produces are one rule, assertable headlessly.
     state.mode_view_label = _mode_button_label(None)
     state.mode_view_caption = _mode_caption_text(None)
+    # The Mode PICKER: which of the solve's own candidates the picture shows.
+    # Empty until a press fills `mode_choice_items` from that press's result, so
+    # the select sits there naming nothing rather than the picker inventing a
+    # candidate before the pencil has run.
+    state.mode_choice = 0
+    state.mode_choice_items = []
 
     # The Confidence & Accuracy pane: TEXT, prose rather than a picture. Its tab
     # owns its visibility, so (like the S-parameters pane) there is no style
@@ -6615,6 +6807,13 @@ def run_web_vis(
         # helpers that set it at boot, not by re-typing the sentence here.
         state.mode_view_label = _mode_button_label(None)
         state.mode_view_caption = _mode_caption_text(None)
+        # The candidates belonged to the mode solved for the PREVIOUS dump, so
+        # both the kept result and the picker's items go with it: a pick here
+        # must never repaint an old mode over this page's cross-section.
+        handles["mode_result"] = None
+        with state.suppress_change_listeners("mode_choice"):
+            state.mode_choice_items = []
+            state.mode_choice = 0
         handles["camera_framed"] = False
         _show(0, mode or state.mode)
 
@@ -6887,6 +7086,17 @@ def run_web_vis(
             result = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
         state.mode_view_label = _mode_button_label(result)
         state.mode_view_caption = _mode_caption_text(result)
+        # The solve's own result is KEPT so the picker can repaint the picture at
+        # another candidate without solving anything again. A refusal clears it:
+        # then there is nothing the picker could honestly draw.
+        handles["mode_result"] = result if result.get("ok") else None
+        # A press re-points the picker at the solver's pick. It does so under
+        # suppress_change_listeners because THIS handler draws the picture: the
+        # write to `mode_choice` would otherwise reach the state-change listener
+        # below and draw the same grid a second time.
+        with state.suppress_change_listeners("mode_choice"):
+            state.mode_choice_items = _mode_candidate_items(result)
+            state.mode_choice = int(result.get("chosen") or 0)
         # The picture is the EXTRA, and it is attempted only AFTER the two
         # strings above are published: every step here is guarded, so a press
         # that cannot draw still shows its numbers.
@@ -6897,6 +7107,43 @@ def run_web_vis(
             print(
                 f"[poc_app] mode picture skipped: {exc}", file=sys.stderr
             )
+        view_handle = handles.get("view")
+        if view_handle is not None:
+            try:
+                view_handle.update()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+
+    # The Mode picker's redraw. v_model=("mode_choice", ...) only WRITES
+    # state["mode_choice"]: trame turns a callable into a server call for EVENT
+    # kwargs (click=, change=), never for v_model, so an @ctrl.set("mode_choice")
+    # trigger would never be reached - the browser calls "trame.trigger" only for
+    # the triggers it was TOLD to call. Hang the repaint off the state change
+    # itself, exactly as the frame slider above does, and every writer of
+    # `mode_choice` - the select, a proof, a future button - takes one path.
+    @state.change("mode_choice")
+    def _on_mode_choice(mode_choice=None, **_kwargs) -> None:
+        """Repaint the Mode picture for the candidate the picker names."""
+        result = handles.get("mode_result")
+        if not isinstance(result, dict) or not result.get("ok"):
+            return
+        try:
+            index = int(state.mode_choice if mode_choice is None else mode_choice)
+        except (TypeError, ValueError):
+            return
+        view = _mode_view_for_candidate(result, index)
+        if view is None:
+            # A pick this solve cannot draw leaves the picture and the caption
+            # alone: swapping nothing and SAYING nothing is the honest answer.
+            return
+        try:
+            _draw_mode_picture(view)
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - the caption is still owed
+            print(
+                f"[poc_app] mode candidate picture skipped: {exc}", file=sys.stderr
+            )
+        state.mode_view_caption = _mode_choice_caption_text(result, index)
         view_handle = handles.get("view")
         if view_handle is not None:
             try:
@@ -7569,6 +7816,73 @@ def run_web_vis(
         )
         _start_watch()
 
+    def _emit_mode_caption() -> None:
+        """The Mode panel's ONE caption line - the hint, the numbers or a refusal.
+
+        Emitted from both places this panel has ever appeared (its Modes tab and
+        the flat fallback stack, which is what a build without the optional tab
+        widgets gets), because those two used to spell the same ``html_div`` call
+        out twice and a panel that changes in one place and not the other is two
+        panels. Nothing here decides the text: ``mode_view_caption`` is set by the
+        module helpers, so boot, press and refresh stay one rule.
+        """
+        if html_div is None:
+            # html_div is optional; VLabel is the same degraded row the rest of
+            # this page falls back to. Neither means the caption is simply
+            # absent - the press's own picture still carries the result.
+            label_cls = widgets.get("VLabel")
+            if label_cls is not None:
+                label_cls("{{ mode_view_caption }}")
+            return
+        html_div("{{ mode_view_caption }}", style="padding: 2px 0;")
+
+    def _emit_mode_picker() -> None:
+        """The candidate picker: ONE VSelect over the solve's OWN candidates.
+
+        WHY a picker at all: the pencil keeps several transverse candidates and
+        picks one by the curl/eps guard, so a panel that shows only the pick hides
+        the fact that the others exist. The rows are the compute layer's own
+        records and their labels repeat its numbers verbatim - including "no
+        beta, below cutoff" for a candidate the guard can never choose - so the
+        picker extends the panel's honesty rather than softening it.
+
+        The items live in ``mode_choice_items`` and are filled by a PRESS, not
+        here: the layout is built once at boot, before anything is solved. A
+        build with no VSelect simply gets the caption and the press's own
+        picture, which is the whole panel minus the picking.
+        """
+        # Probed HERE rather than borrowed: run_web has its own select_cls, but
+        # this entry point resolves its widgets from the probe above and never
+        # defined that name, so reaching for it would be a NameError at build
+        # time - on the page a VSelect-less variant is supposed to survive.
+        select_cls = getattr(widgets_module, "VSelect", None)
+        if select_cls is None:
+            # Loud, like every sibling probe: a variant without VSelect is
+            # supposed to survive the picker's absence, not hide it. Silence
+            # here is how a page loses the picker and nobody notices.
+            print(
+                "[poc_app] mode picker unavailable: this build has no VSelect",
+                file=sys.stderr,
+            )
+            return
+        try:
+            select_cls(
+                v_model=("mode_choice", 0),
+                # Same binding idiom as the structure picker: a
+                # (state_name, default) TUPLE is how trame is told to emit a
+                # state NAME where JavaScript belongs, so the value crosses as
+                # JSON and a dict's title/value need no quoting from Python.
+                v_bind_items=("mode_choice_items", []),
+                item_title="title",
+                item_text="title",
+                item_value="value",
+                label="solved candidates",
+                hide_details=True,
+                style="max-width: 460px; padding: 2px 0;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a picker is never the page
+            print(f"[poc_app] mode picker unavailable: {exc}", file=sys.stderr)
+
     with SinglePageLayout(server) as layout:
         layout.title.set_text(f"{structure_label} - |Ez| animation")
         with layout.content:
@@ -7822,10 +8136,8 @@ def run_web_vis(
                                             # hint before the first press, the
                                             # solve's own caption after one, or
                                             # the reason the solve refused.
-                                            html_div(
-                                                "{{ mode_view_caption }}",
-                                                style="padding: 2px 0;",
-                                            )
+                                            _emit_mode_caption()
+                                            _emit_mode_picker()
                                         with tabs_item_cls(value="circuit"):
                                             # The netlist's OWN home, so it is
                                             # reachable without scrolling the
@@ -7863,10 +8175,8 @@ def run_web_vis(
                                         info.get("load_series"),
                                         info.get("load_series_reason"),
                                     )
-                                    html_div(
-                                        "{{ mode_view_caption }}",
-                                        style="padding: 2px 0;",
-                                    )
+                                    _emit_mode_caption()
+                                    _emit_mode_picker()
 
     handles["view"] = view
 
