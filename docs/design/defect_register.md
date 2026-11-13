@@ -927,3 +927,21 @@ Everything below is measured, and each line is a reading a later reader needs:
 **What closes it.** Nothing closed; this entry fixes nothing. It requires a decision on the convention (omit the block / emit `null` / keep `NaN` and declare the file non-strict) plus a schema-version key so a reader can tell which convention a file follows.
 
 **Gates:** (1) a null-or-omission convention is chosen instead of bare `NaN`; (2) no reader may treat a bare-NaN record as strict JSON — every consumer either fails loudly or is fixed.
+
+## DR-47 — the shared UI boot fixture never lets a state change fire, so no listener is exercised by the suite
+
+- **id:** DR-47
+- **title:** The shared `_boot_app` fixture never lets a state change fire — every `@state.change` listener in the application is outside the reach of the test suite
+- **status:** OPEN — logged by the owner's instruction; deliberately not repaired in this pass
+- **severity:** HIGH — justified by failure class, not by magnitude: the defect class it permits is a press that silently stops applying its result while forty-five UI tests stay green, which is a failure that has already occurred once in this series rather than a hypothetical one
+- **opened:** 2026-11-13 (this entry)
+
+**What is wrong.** The shared `_boot_app` fixture in `tests/test_poc_playback.py` replaces `server.start`, so `protocol.port_callback` never runs and `state.is_ready` stays false. Trame's `State.flush()` refuses to dispatch while the state is not ready, so **no `@state.change` listener registered anywhere in the application is ever executed by the suite**. Every listener the UI depends on is therefore untested by construction, however many assertions surround it.
+
+**Evidence.** The workaround is visible in the tests that needed a listener to fire: `tests/test_poc_mode_picker.py` calls `srv.state.ready()` explicitly before triggering `mode_choice`, because without it the picker's listener never runs and the assertions would read untouched state. The structural alternative is what the playback suite settled for — `tests/test_poc_playback.py::test_solve_button_reloads_the_page` asserts that the string `_start_watch` occurs in the solve press's closure, which is a statement about source text rather than about behaviour. That assertion did catch a real regression in this series: an edit to the solve press deleted its `_start_watch()` call, so `_start_watch → _watch_solve → _poll_solve → apply_page` became unreachable and a solve would run and never apply its page. It was caught because someone had written a string test for that one call site, not because the suite can execute a listener.
+
+**Candidate causes.** The fixture is shared and old, and calling `state.ready()` on every test would change the verdict of tests that currently pass precisely because nothing fires. Repair is therefore not a one-line fixture change: it is a re-baseline of the whole UI suite whose end state is unknown until it is run.
+
+**What closes it.** `state.ready()` belongs in the shared fixture, with the listener registry driven afterwards; the change is a single commit whose body records the count of previously green tests that change verdict, and names each one and why. Until that is done, every listener in the application is verified only by explicit per-test `state.ready()` calls, and a listener with no such test carries no coverage at all.
+
+**Gates:** (1) the shared fixture produces a state in which `flush()` dispatches, and the re-baseline count is recorded in the commit that does it; (2) at least one test per interactive control asserts its listener fired by an observable effect — a draw or a recomputation that can only have happened inside the listener — rather than by inspecting source text for a call.
