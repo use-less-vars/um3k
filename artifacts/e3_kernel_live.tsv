@@ -1,0 +1,9 @@
+tests/test_cpp_dispatch.py	PASS	5	0	0	0	1
+tests/test_cpp_parity.py	PASS	13	0	0	0	1
+tests/test_energy.py	PASS	6	0	0	0	1
+tests/test_evolve_loads.py	PASS	6	0	0	0	2
+tests/test_pml.py	PASS	11	0	0	0	1
+tests/test_pml_audit.py	PASS	2	0	0	0	1
+tests/test_cfl_dt.py	PASS	4	0	0	0	1
+tests/test_step_extraction.py	PASS	7	0	0	0	1
+tests/test_studies.py	PASS	62	0	0	0	220

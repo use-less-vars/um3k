@@ -1,0 +1,72 @@
+{
+ "plan": [
+  [
+   1200,
+   "pulse",
+   null
+  ],
+  [
+   2400,
+   "pulse",
+   null
+  ],
+  [
+   4800,
+   "pulse",
+   null
+  ],
+  [
+   9600,
+   "pulse",
+   null
+  ],
+  [
+   2400,
+   "cw",
+   51
+  ],
+  [
+   2400,
+   "cw",
+   null
+  ]
+ ],
+ "runs": [
+  {
+   "nsteps": 1200,
+   "excite": "pulse",
+   "s21_plane": null,
+   "error": "TypeError: only 0-dimensional arrays can be converted to Python scalars"
+  },
+  {
+   "nsteps": 2400,
+   "excite": "pulse",
+   "s21_plane": null,
+   "error": "TypeError: only 0-dimensional arrays can be converted to Python scalars"
+  },
+  {
+   "nsteps": 4800,
+   "excite": "pulse",
+   "s21_plane": null,
+   "error": "TypeError: only 0-dimensional arrays can be converted to Python scalars"
+  },
+  {
+   "nsteps": 9600,
+   "excite": "pulse",
+   "s21_plane": null,
+   "error": "TypeError: only 0-dimensional arrays can be converted to Python scalars"
+  },
+  {
+   "nsteps": 2400,
+   "excite": "cw",
+   "s21_plane": 51,
+   "error": "TypeError: only 0-dimensional arrays can be converted to Python scalars"
+  },
+  {
+   "nsteps": 2400,
+   "excite": "cw",
+   "s21_plane": null,
+   "error": "TypeError: only 0-dimensional arrays can be converted to Python scalars"
+  }
+ ]
+}

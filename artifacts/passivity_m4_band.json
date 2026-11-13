@@ -1,0 +1,98 @@
+{
+ "dt": 7.626299478123987e-13,
+ "f_pulse_hz": 15000000000.0,
+ "band_lo_hz": 2000000000.0,
+ "band_hi_hz": 12000000000.0,
+ "f0_published_hz": 6009904733.588,
+ "f0_published_in_band": true,
+ "f0_published_over_fmax": 0.40066031557253334,
+ "analytic_envelope_ratio": {
+  "form": "|X(f)| ~ f^2 exp(-(f/fmax)^2), ratio to its own peak at fmax",
+  "value": 0.3716468154718061
+ },
+ "analytic_db": -8.597391683640513,
+ "per_nsteps": [
+  {
+   "nsteps": 1200,
+   "k": 5,
+   "f0": 5463549757.80683,
+   "f0_ghz": 5.46354975780683,
+   "n_warm": 0,
+   "drive_bin_amp": 11.46040867894856,
+   "drive_peak_freq_hz": 15297939321.859125,
+   "drive_peak_amp": 36.25893295505454,
+   "drive_bin_over_peak": 0.31607131663677285,
+   "drive_bin_over_peak_db": -10.004298288940156,
+   "band_peak_freq_hz": 10927099515.61366,
+   "band_peak_amp": 30.78993098202805,
+   "drive_bin_over_band_peak": 0.372212873281137,
+   "band_energy_fraction": 0.19921298254790237,
+   "f0_in_band": true,
+   "ricker_useful_top_hz": 37500000000.0
+  },
+  {
+   "nsteps": 2400,
+   "k": 11,
+   "f0": 6009904733.587513,
+   "f0_ghz": 6.009904733587513,
+   "n_warm": 0,
+   "drive_bin_amp": 13.486084562798915,
+   "drive_peak_freq_hz": 14751584346.078442,
+   "drive_peak_amp": 36.26735678669493,
+   "drive_bin_over_peak": 0.3718518733558887,
+   "drive_bin_over_peak_db": -8.59260052469839,
+   "band_peak_freq_hz": 11473454491.394344,
+   "band_peak_amp": 32.148764808168586,
+   "drive_bin_over_band_peak": 0.4194899755331276,
+   "band_energy_fraction": 0.21629457276998143,
+   "f0_in_band": true,
+   "ricker_useful_top_hz": 37500000000.0
+  },
+  {
+   "nsteps": 4800,
+   "k": 22,
+   "f0": 6009904733.587513,
+   "f0_ghz": 6.009904733587513,
+   "n_warm": 0,
+   "drive_bin_amp": 13.486084562798915,
+   "drive_peak_freq_hz": 15024761833.968784,
+   "drive_peak_amp": 36.28716980746135,
+   "drive_bin_over_peak": 0.37164883991657877,
+   "drive_bin_over_peak_db": -8.597344369752033,
+   "band_peak_freq_hz": 11746631979.284685,
+   "band_peak_amp": 32.761138246063275,
+   "drive_bin_over_band_peak": 0.4116488402053449,
+   "band_energy_fraction": 0.2249720039201787,
+   "f0_in_band": true,
+   "ricker_useful_top_hz": 37500000000.0
+  },
+  {
+   "nsteps": 9600,
+   "k": 44,
+   "f0": 6009904733.587513,
+   "f0_ghz": 6.009904733587513,
+   "n_warm": 0,
+   "drive_bin_amp": 13.486084562798915,
+   "drive_peak_freq_hz": 15024761833.968784,
+   "drive_peak_amp": 36.287169807461346,
+   "drive_bin_over_peak": 0.3716488399165788,
+   "drive_bin_over_peak_db": -8.597344369752033,
+   "band_peak_freq_hz": 11883220723.229856,
+   "band_peak_amp": 33.04994440599614,
+   "drive_bin_over_band_peak": 0.40805165652115827,
+   "band_energy_fraction": 0.2293706939453059,
+   "f0_in_band": true,
+   "ricker_useful_top_hz": 37500000000.0
+  }
+ ],
+ "cw": [
+  {
+   "nsteps": 2400,
+   "n_warm": 600,
+   "f0": 5827786408.327286,
+   "band_lo": 2000000000.0,
+   "band_hi": 12000000000.0,
+   "ricker_peak_hz": 15000000000.0
+  }
+ ]
+}

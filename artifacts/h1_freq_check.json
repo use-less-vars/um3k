@@ -1,0 +1,92 @@
+{
+  "c0": 299792458.0,
+  "call": "mode2d.mode_z0_from_power(mesh, k0, eps_r=eps, boundaries=bounds)  # sigma=1.0, k=8, guard=True",
+  "delta_z0": {
+    "control_delta_vs_expected_ohm": 4.876340327086837e-07,
+    "control_reproduced_to_6dp": true,
+    "delta_over_threshold": 1.0829301838357175,
+    "delta_z0_abs_ohm": 0.5198064882411444,
+    "delta_z0_ohm": -0.5198064882411444,
+    "delta_z0_pct_of_control": 1.0452156356604652,
+    "verdict": "H1 FIRES",
+    "z0_control_1e8_ohm": 49.731985487634034,
+    "z0_record_5p827786408GHz_ohm": 49.21217899939289
+  },
+  "delta_z0_abs_threshold_ohm": 0.48,
+  "expected_z0_control_ohm": 49.731985,
+  "finished_utc": "2026-11-09T15:03:33Z",
+  "geometry": {
+    "boundaries": "PEC (ground, strip) exactly as tests/test_mode2d_z0.py::_microstrip, LY=16e-3",
+    "cell_m": 0.0004,
+    "eps_r": 4.4,
+    "h_m": 0.0016,
+    "ly_m": 0.016,
+    "lz_m": 0.004,
+    "mesh_call": "mode2d.box_mesh(16e-3, 4e-3, 40, 10)",
+    "n_edges": 1250,
+    "n_nodes": 451,
+    "n_tris": 800,
+    "node_edge_assert_451_1250": true,
+    "nyc": 40,
+    "nzc": 10,
+    "w_m": 0.0032
+  },
+  "mode_identity_5p827GHz": {
+    "beta_expected_from_eps_eff_3p60": 231.6,
+    "beta_ratio_to_quasi_tem": 1.0079251057955843,
+    "beta_returned": 233.4354545022573,
+    "eps_eff_expected": 3.6,
+    "eps_eff_returned": 3.652649939747857
+  },
+  "peak_rss_kb_process": 176388,
+  "runs": {
+    "control_1e8": {
+      "beta_rad_per_m": 3.9765058325843925,
+      "converged": true,
+      "converged_raw_repr": "True",
+      "eps_eff": 3.5998542434847574,
+      "expected_beta_from_record_231p5533_rad_per_m": 231.5533,
+      "f_hz": 100000000.0,
+      "k0_rad_per_m": 2.0958450219516815,
+      "peak_rss_kb": 176388,
+      "predicted_beta_eps_eff_3p60_rad_per_m": 3.9765863352557456,
+      "predicted_beta_selfconsistent_rad_per_m": 3.9765058325843925,
+      "returned_tuple_len": 4,
+      "returned_tuple_repr": "(49.731985487634034, 3.9765058325843925, 3.5998542434847574, True)",
+      "returned_tuple_types": [
+        "float",
+        "float",
+        "float",
+        "bool"
+      ],
+      "status": "OK",
+      "wall_s": 27.124625205993652,
+      "z0_ohm": 49.731985487634034
+    },
+    "record_5p8277864083272855GHz": {
+      "beta_rad_per_m": 233.4354545022573,
+      "converged": true,
+      "converged_raw_repr": "True",
+      "eps_eff": 3.652649939747857,
+      "expected_beta_from_record_231p5533_rad_per_m": 231.5533,
+      "f_hz": 5827786408.327286,
+      "k0_rad_per_m": 122.14137132890411,
+      "peak_rss_kb": 176388,
+      "predicted_beta_eps_eff_3p60_rad_per_m": 231.74695796143445,
+      "predicted_beta_selfconsistent_rad_per_m": 233.4354545022573,
+      "returned_tuple_len": 4,
+      "returned_tuple_repr": "(49.21217899939289, 233.4354545022573, 3.652649939747857, True)",
+      "returned_tuple_types": [
+        "float",
+        "float",
+        "float",
+        "bool"
+      ],
+      "status": "OK",
+      "wall_s": 35.30880331993103,
+      "z0_ohm": 49.21217899939289
+    }
+  },
+  "started_utc": "2026-11-09T15:02:30Z",
+  "what": "H1 frequency check -- mode_z0_from_power at two frequencies, one fixed box"
+}
