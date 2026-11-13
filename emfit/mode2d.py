@@ -674,6 +674,15 @@ class Mode2D:
 
         e_t         (ne,)   the eigenvector on the *full* edge list, normalised
                             so that ``e^T B e = 1``, zero on every PEC edge
+        e_t_candidates
+                    (ne, nc) the *same* representation for **every** candidate
+                            the solve kept, one column per entry of
+                            ``candidates`` (``nc == len(candidates)``): each
+                            column is normalised so that ``e^T B e = 1`` and is
+                            zero on every PEC edge, and column ``chosen`` is
+                            ``e_t`` itself.  :meth:`candidate_e_t` hands one
+                            column out; :func:`solve_modes_mixed` does not fill
+                            it, so it is ``None`` on that path.
         e_z         (nn,)   nodal longitudinal field of the *mixed* formulation
                             (:func:`solve_modes_mixed`) as a complex phasor
                             ``-i beta (k_zz - k0^2 m_zz)^{-1} c^T e_t``; ``None``
@@ -694,6 +703,15 @@ class Mode2D:
     ``e_t`` is the *edge* representation: ``e_t[i]`` is ``INT_edge E . dl`` in
     volts at unit field amplitude, i.e. the edge length is already folded in.
     :meth:`e_at` is the continuous field.
+
+    Every column of ``e_t_candidates`` is an eigenvector, hence fixed only up to
+    a scalar.  The solver's normalisation pins the scale (``e^T B e = 1``) but
+    not the sign: a different LAPACK/ARPACK build, or a different shift, may
+    hand back the opposite sign for the same physical mode.  Compare two
+    candidates by ``abs(...)`` or by a normalised inner product
+    ``|<u, B v>| / (||u||_B ||v||_B)`` -- never by signed equality.  ``e_t`` is
+    the one exception, because it is packed from column ``chosen`` by the same
+    two statements, so ``candidate_e_t(chosen)`` reproduces ``e_t`` bit for bit.
     """
 
     freq: float
@@ -713,6 +731,7 @@ class Mode2D:
     e_z: np.ndarray | None = None
     deflation: dict | None = None
     candidate_residuals: tuple = ()
+    e_t_candidates: np.ndarray | None = None
 
     # -- geometry pass-throughs -------------------------------------------
     @property
@@ -828,6 +847,69 @@ class Mode2D:
         gb = g[:, _LOCAL_B, :]
         terms = w[:, :, None] * (lam_a[:, :, None] * gb - lam_b[:, :, None] * ga)
         return terms.sum(axis=1)
+
+    def _interp_t(self, vec: np.ndarray, points) -> np.ndarray:
+        """Whitney interpolation of an arbitrary edge vector.
+
+        The arithmetic of :meth:`e_at` with ``vec`` in place of ``self.e_t``,
+        split out so that a candidate other than the chosen one can be drawn;
+        :meth:`e_at` keeps its own copy and is unchanged.
+        """
+        pts = np.ascontiguousarray(points, dtype=float)
+        tri = self._locate(pts)
+        v = self.mesh.nodes[self.mesh.tris[tri]]          # (n, 3, 2)
+        g = self.mesh.grad[tri]                           # (n, 3, 2)
+        lam = 1.0 + np.einsum("nij,nij->ni", pts[:, None, :] - v, g)
+
+        sgn = self.mesh.tri_sign[tri]                      # (n, 3)
+        w = sgn * vec[self.mesh.tri_edges[tri]]            # (n, 3) oriented DOFs
+
+        n_idx = np.arange(pts.shape[0])[:, None]
+        lam_a = lam[n_idx, _LOCAL_A[None, :]]              # (n, 3)
+        lam_b = lam[n_idx, _LOCAL_B[None, :]]
+        ga = g[:, _LOCAL_A, :]                             # (n, 3, 2)
+        gb = g[:, _LOCAL_B, :]
+        terms = w[:, :, None] * (lam_a[:, :, None] * gb - lam_b[:, :, None] * ga)
+        return terms.sum(axis=1)
+
+    def candidate_e_t(self, index: int) -> np.ndarray:
+        """The ``index``-th candidate's eigenvector, in :attr:`e_t`'s layout.
+
+        The return is ``(ne,)`` -- the eigenvector on the *full* edge list, zero
+        on every PEC edge, normalised so that ``e^T B e = 1``: exactly the
+        representation :attr:`e_t` uses, so any candidate can be drawn with the
+        same code that draws the chosen one, and ``candidate_e_t(chosen)`` is
+        ``e_t`` bit for bit.  The vector is defined only up to sign (see the
+        class docstring), so callers compare ``abs(...)``, not signed values.
+
+        A fresh copy is returned.  An ``index`` outside
+        ``0 .. len(candidates) - 1`` raises :class:`IndexError` naming the valid
+        range; a result that carries no candidates (``e_t_candidates is None``,
+        i.e. :func:`solve_modes_mixed`) raises :class:`RuntimeError`.
+        """
+        if self.e_t_candidates is None:
+            raise RuntimeError(
+                "this Mode2D carries no candidate eigenvectors "
+                "(e_t_candidates is None): they are retained by solve_modes and "
+                "solve_modes_deflated, not by solve_modes_mixed"
+            )
+        n_cand = int(self.e_t_candidates.shape[1])
+        if not 0 <= int(index) < n_cand:
+            raise IndexError(
+                f"candidate index {index!r} out of range: this solve retained "
+                f"{n_cand} candidates, so the valid indices are 0..{n_cand - 1}"
+            )
+        return np.array(self.e_t_candidates[:, int(index)], dtype=float, copy=True)
+
+    def e_at_candidate(self, index: int, points) -> np.ndarray:
+        """Transverse field of candidate ``index`` at arbitrary interior points.
+
+        :meth:`e_at` with ``candidate_e_t(index)`` in place of ``e_t``: ``(n, 2)``
+        points in metres, ``(n, 2)`` out, transverse field only (``e_z`` is not
+        interpolated -- see :meth:`e_at`).  Raises what :meth:`candidate_e_t`
+        raises.
+        """
+        return self._interp_t(self.candidate_e_t(index), points)
 
 
 def candidate_records(res) -> tuple:
@@ -1128,8 +1210,25 @@ def _select_and_pack(
     else:
         chosen = int(np.flatnonzero(eligible)[np.argmax(vals[eligible])])
 
+    # --- retain every candidate's eigenvector -----------------------------
+    # ``normalised`` is exactly ``(n_free, n_k)``; a narrower one would mean the
+    # solver returned fewer columns than it was asked for, and the column
+    # indices would no longer line up with ``candidates``.
+    if normalised.shape[1] != n_k:
+        raise RuntimeError(
+            f"the eigensolver returned {normalised.shape[1]} columns for "
+            f"n_k = {n_k} candidates; candidate_e_t() indices would not match "
+            "the candidate list"
+        )
+
     e_t = np.zeros(mesh.n_edges)
     e_t[free] = normalised[:, chosen]
+
+    # Every candidate in ``e_t``'s own layout, so a UI can draw any of them.
+    # Built with the same two statements as ``e_t`` -- column ``chosen`` is
+    # therefore bit-identical to ``e_t`` and the chosen path is unchanged.
+    e_t_candidates = np.zeros((mesh.n_edges, n_k), dtype=normalised.dtype)
+    e_t_candidates[free, :] = normalised
 
     beta_sq = float(vals[chosen])
     fields = {} if extra is None else dict(extra)
@@ -1143,6 +1242,7 @@ def _select_and_pack(
         candidates=tuple((float(v), float(v / (k0 * k0))) for v in vals),
         curl_ratio=tuple(float(r) for r in ratios),
         candidate_residuals=tuple(float(r) for r in residuals),
+        e_t_candidates=e_t_candidates,
         chosen=chosen,
         sigma=sigma,
         n_dof=n_dof,
