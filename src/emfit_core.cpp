@@ -3,7 +3,7 @@
 //
 // WHEN, and only when, a parity test says this agrees with the Python kernel
 // *bit for bit*, this becomes the hot path.  Today that is true of the lossless,
-// source-free path (tests/test_cpp_parity.py, 3/3, max|diff| 0.0); the PML,
+// source-free path (tests/test_cpp_parity.py, 13/13, max|diff| 0.0); the PML,
 // lossy, PEC and source branches added here are measured by hand, not by any
 // committed test.
 //
@@ -17,9 +17,16 @@
 //
 //   * one scalar accumulator per output entry, never a tree/partial-sum split;
 //   * no `reduction` clause and no atomics anywhere in this file;
-//   * no compiler reassociation: built with -O3 only (see CMakeLists.txt),
-//     never -ffast-math / -fassociative-math, which would let the optimiser
-//     re-parent the additions and silently change the last bit.
+//   * no compiler reassociation: built with the flags in src/CMakeLists.txt:55,
+//     `-O2 -fno-fast-math -ffp-contract=off -fopenmp` -- never -O3, and never
+//     -ffast-math / -fassociative-math, which would let the optimiser
+//     re-parent the additions and silently change the last bit.  Do not read an
+//     optimisation level for a *banked* timing off this line: the artefact behind
+//     the 27.44 s ladder figure, artifacts/ladder_engine_host_timing.json, records
+//     no compiler flags, no argv and no revision, so that build is unidentified and
+//     a 26.6 % slower result on today's -O2 build stays an open question -- DR-42,
+//     docs/design/defect_register.md.  Build flags are the third fact a kernel
+//     timing must carry, beside its thread count and its grid.
 //
 // The same rule applies to the optional branches, and it is why they are spelled
 // out step by step instead of being folded into the loops that surround them:
