@@ -43,6 +43,20 @@ set -u
 TEST_TIMEOUT="${TEST_TIMEOUT:-300}"
 PYTEST="${PYTEST:-python3 -m pytest}"
 
+# The extension-dependent files (tests/test_cpp_parity.py and the dispatch tests)
+# do a top-level `import emfit_core` at import time and never touch sys.path, so
+# a run with no PYTHONPATH reports them as SKIPPED, not passed.  A skip is not a
+# pass (DR-42, docs/design/defect_register.md).  The wrapper, not the test, is the
+# right layer for this: put the in-tree build on the path when one exists, and
+# leave the environment untouched on a fresh checkout, where the skip is honest.
+for _so in build/cpp/emfit_core*.so; do
+	if [ -f "$_so" ]; then
+		PYTHONPATH="build/cpp${PYTHONPATH:+:$PYTHONPATH}"
+		export PYTHONPATH
+		break
+	fi
+done
+
 passed=0
 failed=0
 stalled=0
