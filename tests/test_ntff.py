@@ -31,13 +31,26 @@ applied to a copy of that real archive, one key at a time, so a failing test
 names the rule that broke rather than the fixture.
 """
 
+import math
+import warnings
+
 import numpy as np
 import pytest
 
 from emfit.grid import Grid
 from emfit.huygens import HuygensBounds
 from emfit.huygens_fields import SurfaceRecorder
-from emfit.ntff import SCHEMA_VERSION, SurfaceDump, load_surface_dump
+from emfit.materials import C0, ETA0
+from emfit.ntff import (
+    FarField,
+    SCHEMA_VERSION,
+    SurfaceDump,
+    far_field,
+    integration_angles,
+    load_surface_dump,
+    radiation_vectors,
+    total_radiated_power,
+)
 from emfit.operators import CellComplex
 
 NX, NY, NZ = 4, 3, 2
@@ -254,3 +267,397 @@ def test_a_shape_inconsistency_is_refused(tmp_path):
     assert (f"E_t: expected shape ({n_freq}, {n_surface}, 2) "
             f"(n_freq={n_freq}, n_surface={n_surface})") in message
     assert f"got ({n_freq}, {n_surface - 1}, 2)" in message
+
+
+# ---------------------------------------------------------------------------
+# The transform, graded against the one radiator whose far field is known in
+# closed form.  The fields below are written out from the source integral
+# (first principles) rather than imported from another test module, so the
+# fixture and the thing it grades cannot share a mistake: the surface record
+# is the *exact* dipole field sampled on a closed cube, the transform is asked
+# what that cube radiates, and the answer is compared with the dipole's own
+# pattern, its own radiated power, and its own near-field flux through the
+# same cube.
+#
+# The box half-width is ``LAM / 3`` (a third of a wavelength, side ``2 LAM/3``)
+# at ``f = 1 GHz``: close enough in that the 1/r, 1/r^2 and 1/r^3 terms all
+# matter on the record -- which is the point, a far-field-only fixture would
+# not exercise the equivalent currents -- and small enough that a modest
+# number of patches keeps the one-point rule accurate.
+# ---------------------------------------------------------------------------
+
+DIPOLE_FREQ = 1.0e9
+DIPOLE_MOMENT = 1.0e-3
+LAM = C0 / DIPOLE_FREQ
+HALF_WIDTH = LAM / 3.0
+
+
+def _frame(axis):
+    """An orthonormal frame whose third column is ``axis``."""
+    u3 = np.asarray(axis, dtype=float)
+    u3 = u3 / np.linalg.norm(u3)
+    if abs(u3[0]) < 0.9:
+        helper = np.array([1.0, 0.0, 0.0])
+    else:
+        helper = np.array([0.0, 1.0, 0.0])
+    u1 = np.cross(helper, u3)
+    u1 = u1 / np.linalg.norm(u1)
+    u2 = np.cross(u3, u1)
+    return np.stack((u1, u2, u3), axis=1)
+
+
+def _dipole_fields(pos, freq=DIPOLE_FREQ, moment=DIPOLE_MOMENT,
+                   axis=(0.0, 0.0, 1.0)):
+    """``E`` and ``H`` phasors of a Hertzian dipole (first principles).
+
+    A current element ``I dl = j omega m`` along ``+z`` has, at a point
+    ``r (cos phi sin theta, sin phi sin theta, cos theta)``::
+
+        E_r  = eta m cos(theta) / (2 pi r^2) (1 + 1/(jkr)) e^{-jkr}
+        E_th = eta m sin(theta) / (4 pi r) (jk) (1 + 1/(jkr) - 1/(kr)^2) e^{-jkr}
+        H_ph =     m sin(theta) / (4 pi r) (jk) (1 + 1/(jkr))      e^{-jkr}
+
+    with every other component zero -- the standard multipole expansion of the
+    retarded vector potential truncated at the electric dipole.  ``e^{+j omega
+    t}`` is the kernel's convention, hence the outgoing ``e^{-jkr}`` and the
+    ``+jk`` prefactors.  ``axis`` only rotates the frame: the field is built
+    along ``+z`` and rotated back, so an ``x``-directed dipole costs nothing.
+    """
+    pos = np.atleast_2d(np.asarray(pos, dtype=float))
+    rot = _frame(axis)
+    local = pos @ rot
+    x, y, z = local[:, 0], local[:, 1], local[:, 2]
+    r = np.sqrt(x * x + y * y + z * z)
+    rho = np.hypot(x, y)
+    k = 2.0 * math.pi * freq / C0
+    jkr = 1j * k * r
+    out = np.exp(-jkr)
+    cos_t = z / r
+    sin_t = rho / r
+    e_r = (ETA0 * moment * cos_t / (2.0 * math.pi * r ** 2)
+           * (1.0 + 1.0 / jkr) * out)
+    # 1/(jkr)**2 == -1/(k r)**2, so THIS sign is what makes the closed-surface
+    # flux equal P_rad at every radius; see
+    # test_dipole_fixture_conserves_power_on_a_sphere.
+    e_t = (ETA0 * moment * sin_t / (4.0 * math.pi * r) * (1j * k)
+           * (1.0 + 1.0 / jkr + 1.0 / jkr ** 2) * out)
+    h_p = (moment * sin_t / (4.0 * math.pi * r) * (1j * k)
+           * (1.0 + 1.0 / jkr) * out)
+    cos_p, sin_p = x / rho, y / rho
+    u_r = local / r[:, None]
+    u_th = np.stack((cos_t * cos_p, cos_t * sin_p, -sin_t), axis=-1)
+    u_ph = np.stack((-sin_p, cos_p, np.zeros_like(r)), axis=-1)
+    e_local = e_r[:, None] * u_r + e_t[:, None] * u_th
+    h_local = h_p[:, None] * u_ph
+    return e_local @ rot.T, h_local @ rot.T
+
+
+def _spherical(theta, phi):
+    """``rhat``, ``e_theta``, ``e_phi`` at flat angles, each ``(n, 3)``."""
+    sin_t, cos_t = np.sin(theta), np.cos(theta)
+    sin_p, cos_p = np.sin(phi), np.cos(phi)
+    zero = np.zeros_like(theta)
+    r_hat = np.stack((sin_t * cos_p, sin_t * sin_p, cos_t), axis=-1)
+    e_th = np.stack((cos_t * cos_p, cos_t * sin_p, -sin_t), axis=-1)
+    e_ph = np.stack((-sin_p, cos_p, zero), axis=-1)
+    return r_hat, e_th, e_ph
+
+
+def _cube_geometry(n_patch, half=HALF_WIDTH):
+    """Patch centres, outward normals, face ids and areas of a closed cube.
+
+    Face order is the writer's: ``0..5`` for ``xmin, xmax, ymin, ymax, zmin,
+    zmax``, one patch per primal face cell at its centre, so the areas are all
+    the same ``step^2``.
+    """
+    step = 2.0 * half / n_patch
+    centres = (np.arange(n_patch) + 0.5) * step - half
+    u, v = np.meshgrid(centres, centres, indexing="ij")
+    u, v = u.ravel(), v.ravel()
+    coords, normals, faces = [], [], []
+    planes = ((-half, 0), (half, 0), (-half, 1), (half, 1),
+              (-half, 2), (half, 2))
+    for face, (value, axis) in enumerate(planes):
+        a, b = [i for i in range(3) if i != axis]
+        pts = np.empty((u.size, 3))
+        pts[:, axis] = value
+        pts[:, a] = u
+        pts[:, b] = v
+        normal = np.zeros(3)
+        normal[axis] = -1.0 if value < 0.0 else 1.0
+        coords.append(pts)
+        normals.append(np.tile(normal, (u.size, 1)))
+        faces.append(np.full(u.size, face, dtype=np.int8))
+    return (np.concatenate(coords), np.concatenate(normals),
+            np.concatenate(faces), np.full(6 * u.size, step ** 2), step)
+
+
+def _slots(vec, normals):
+    """A full tangential 3-vector on the two non-normal axes, ``(n, 2)``.
+
+    Ascending axis order excluding the normal, the convention
+    :meth:`SurfaceRecorder.save_npz` writes.
+    """
+    axis_of = np.argmax(normals != 0.0, axis=1)
+    out = np.empty((vec.shape[0], 2), dtype=np.complex128)
+    for axis in range(3):
+        mask = axis_of == axis
+        if not mask.any():
+            continue
+        keep = [i for i in range(3) if i != axis]
+        out[mask] = vec[mask][:, keep]
+    return out
+
+
+def _assemble(freqs, coords, normals, face_id, dA, e_full, h_full, j_s, m_s,
+              step):
+    """A ``SurfaceDump`` from full 3-vectors, ready for the loader's rules."""
+    freqs = np.atleast_1d(np.asarray(freqs, dtype=float))
+    n_freq = freqs.size
+    n = coords.shape[0]
+    e_t = np.empty((n_freq, n, 2), dtype=np.complex128)
+    h_t = np.empty((n_freq, n, 2), dtype=np.complex128)
+    flux_face = np.empty((n_freq, n), dtype=np.complex128)
+    for i in range(n_freq):
+        e_t[i] = _slots(e_full[i], normals)
+        h_t[i] = _slots(h_full[i], normals)
+        flux_face[i] = np.einsum(
+            "qc,qc->q", np.cross(e_full[i], np.conj(h_full[i])), normals) * dA
+    return SurfaceDump(
+        schema_version=SCHEMA_VERSION,
+        stray=False,
+        dt=1.0 / (40.0 * float(freqs.max())),
+        dx=step,
+        dy=step,
+        dz=step,
+        colocation_rule="analytic fixture: E and H co-located at the patch "
+                        "centre",
+        freqs=freqs,
+        coordinates=coords,
+        normals=normals,
+        face_id=face_id,
+        dA=dA,
+        E_t=e_t,
+        H_t=h_t,
+        J_s=j_s,
+        M_s=m_s,
+        flux=0.5 * np.real(flux_face.sum(axis=1)),
+        flux_face=flux_face,
+    )
+
+
+def _cube_dump(n_patch, axis=(0.0, 0.0, 1.0), half=HALF_WIDTH,
+               freqs=(DIPOLE_FREQ,)):
+    """The exact dipole field on a closed cube, as the writer would record it.
+
+    ``J_s = n_hat x H`` and ``M_s = -n_hat x E`` are the writer's own
+    construction, applied to the analytic field; ``flux_face`` is the true
+    Poynting integrand, and ``cross(E, H*).n`` is unchanged by dropping the
+    normal components, so using the tangential parts costs nothing.
+    """
+    coords, normals, face_id, dA, step = _cube_geometry(n_patch, half)
+    freqs = np.atleast_1d(np.asarray(freqs, dtype=float))
+    e_full, h_full, j_s, m_s = [], [], [], []
+    for freq in freqs:
+        e, h = _dipole_fields(coords, freq, DIPOLE_MOMENT, axis)
+        e_t = e - normals * np.einsum("qc,qc->q", e, normals)[:, None]
+        h_t = h - normals * np.einsum("qc,qc->q", h, normals)[:, None]
+        e_full.append(e_t)
+        h_full.append(h_t)
+        j_s.append(np.cross(normals, h_t))
+        m_s.append(-np.cross(normals, e_t))
+    return _assemble(freqs, coords, normals, face_id, dA,
+                     np.array(e_full), np.array(h_full), np.array(j_s),
+                     np.array(m_s), step)
+
+
+def _currents_dump(coord, normal, area, j_s, m_s):
+    """A one-patch dump from stored currents (fields derived, not assumed)."""
+    coord = np.atleast_2d(np.asarray(coord, dtype=float))
+    normal = np.atleast_2d(np.asarray(normal, dtype=float))
+    j_s = np.atleast_2d(np.asarray(j_s, dtype=complex))
+    m_s = np.atleast_2d(np.asarray(m_s, dtype=complex))
+    e_t = np.cross(normal, m_s)
+    h_t = np.cross(j_s, normal)
+    axis_of = int(np.argmax(normal[0] != 0.0))
+    return _assemble([DIPOLE_FREQ], coord, normal,
+                     np.array([axis_of], dtype=np.int8),
+                     np.atleast_1d(np.asarray(area, dtype=float)),
+                     e_t[None], h_t[None], j_s[None], m_s[None],
+                     math.sqrt(float(np.atleast_1d(area)[0])))
+
+
+def _random_dump(n_patch, seed=20240607):
+    """Random *tangential* equivalent currents on the same cube."""
+    coords, normals, face_id, dA, step = _cube_geometry(n_patch)
+    rng = np.random.default_rng(seed)
+    shape = (coords.shape[0], 3)
+    raw_j = rng.normal(size=shape) + 1j * rng.normal(size=shape)
+    raw_m = rng.normal(size=shape) + 1j * rng.normal(size=shape)
+    j_s = raw_j - normals * np.einsum("qc,qc->q", raw_j, normals)[:, None]
+    m_s = raw_m - normals * np.einsum("qc,qc->q", raw_m, normals)[:, None]
+    e_t = np.cross(normals, m_s)
+    h_t = np.cross(j_s, normals)
+    return _assemble([DIPOLE_FREQ], coords, normals, face_id, dA,
+                     e_t[None], h_t[None], j_s[None], m_s[None], step)
+
+
+def _rebuild(dump, **overrides):
+    """The same archive with some arrays replaced, re-validated on the way in."""
+    fields = {
+        "schema_version": dump.schema_version,
+        "stray": dump.stray,
+        "dt": dump.dt,
+        "dx": dump.dx,
+        "dy": dump.dy,
+        "dz": dump.dz,
+        "colocation_rule": dump.colocation_rule,
+        "freqs": dump.freqs,
+        "coordinates": dump.coordinates,
+        "normals": dump.normals,
+        "face_id": dump.face_id,
+        "dA": dump.dA,
+        "E_t": dump.E_t,
+        "H_t": dump.H_t,
+        "J_s": dump.J_s,
+        "M_s": dump.M_s,
+        "flux": dump.flux,
+        "flux_face": dump.flux_face,
+    }
+    fields.update(overrides)
+    return SurfaceDump(**fields)
+
+
+def _analytic_prad(freq=DIPOLE_FREQ, moment=DIPOLE_MOMENT):
+    """``eta k^2 m^2 / (12 pi)``: the dipole's total radiated power, in W."""
+    k = 2.0 * math.pi * freq / C0
+    return ETA0 * k ** 2 * moment ** 2 / (12.0 * math.pi)
+
+
+# --- A6b: the fixture itself, before anything is graded against it ---------
+
+def test_fixture_flux_matches_analytic_prad():
+    """The fixture's own Poynting flux through the cube is the radiated power.
+
+    Nothing about the transform is asserted here: this is the analytic record
+    graded against the closed-form ``eta k^2 m^2 / (12 pi)``, so a broken
+    fixture is caught before it can make a broken transform look right.  The
+    only error left is the one-point rule on each face, ``O((kh)^2)``, whose
+    ratio is ``4`` per halving.
+    """
+    ratios = {n: float(_cube_dump(n).flux[0]) / _analytic_prad()
+              for n in (8, 16, 32)}
+    assert all(abs(r - 1.0) < 2.5e-2 for r in ratios.values())
+    assert abs(ratios[32] - 1.0) < abs(ratios[8] - 1.0)
+
+
+# --- A1: the radiation integrals, by hand ----------------------------------
+
+def test_radiation_vectors_of_a_single_patch():
+    """``J_tilde`` is one phase factor times ``J_s dA`` -- no more, no less."""
+    k = 2.0 * math.pi * DIPOLE_FREQ / C0
+    coord = np.array([[0.13, -0.07, 0.21]])
+    normal = np.array([[0.0, 0.0, 1.0]])
+    area = np.array([2.5e-3])
+    j_s = np.array([[0.3 - 0.2j, 0.11j, 0.0]])
+    m_s = np.array([[0.05 + 0.01j, -0.4j, 0.0]])
+    dump = _currents_dump(coord, normal, area, j_s, m_s)
+    theta = np.array([0.3, 1.1, math.pi / 2.0, 2.0])
+    phi = np.array([0.0, 0.7, 2.4, 5.0])
+    j_tilde, m_tilde = radiation_vectors(dump, theta, phi)
+    r_hat, _, _ = _spherical(theta, phi)
+    phase = np.exp(1j * k * (r_hat @ coord.T))[:, 0]
+    assert np.allclose(j_tilde, j_s * area[:, None] * phase[:, None],
+                       rtol=1e-13, atol=0.0)
+    assert np.allclose(m_tilde, m_s * area[:, None] * phase[:, None],
+                       rtol=1e-13, atol=0.0)
+
+
+# --- A2: the vector identity, against a literal cross product --------------
+
+def test_far_field_matches_literal_nested_cross_product():
+    """``rhat x (rhat x J)`` really is what the kernel's algebra computes."""
+    dump = _random_dump(3)
+    theta, phi = integration_angles(5, 7)
+    far = far_field(dump, theta, phi)
+    k = 2.0 * math.pi * DIPOLE_FREQ / C0
+    j_tilde, m_tilde = radiation_vectors(dump, theta, phi)
+    r_hat, e_th, e_ph = _spherical(theta, phi)
+    want_th = np.empty(theta.size, dtype=np.complex128)
+    want_ph = np.empty(theta.size, dtype=np.complex128)
+    for i in range(theta.size):
+        r = r_hat[i]
+        f = (1j * k / (4.0 * math.pi)) * (
+            ETA0 * np.cross(r, np.cross(r, j_tilde[i]))
+            + np.cross(r, m_tilde[i]))
+        want_th[i] = f @ e_th[i]
+        want_ph[i] = f @ e_ph[i]
+    for got, want in ((far.E_theta, want_th), (far.E_phi, want_ph)):
+        assert np.allclose(got, want, rtol=1e-13,
+                           atol=1e-13 * float(np.abs(want).max()))
+
+
+# --- A4: peak directivity of a Hertzian dipole is exactly 1.5 --------------
+
+def test_hertzian_directivity_is_one_point_five():
+    """``D = 4 pi U / P_rad`` at 90 degrees: 1.5, i.e. 1.7609 dBi.
+
+    The amplitude is checked too, because ``D`` alone cannot see an overall
+    scale: ``F_theta = j eta k m / (4 pi)`` at broadside is the far field of
+    the same moment, so the two together pin the absolute calibration of the
+    transform and not just its shape.
+    """
+    dump = _cube_dump(16)
+    k = 2.0 * math.pi * DIPOLE_FREQ / C0
+    theta = np.array([math.pi / 2.0])
+    phi = np.array([0.0])
+    far = far_field(dump, theta, phi)
+    amplitude = abs(1j * ETA0 * k * DIPOLE_MOMENT / (4.0 * math.pi))
+    assert abs(abs(far.E_theta[0]) - amplitude) <= 2.0e-2 * amplitude
+    assert abs(far.D[0] - 1.5) <= 2.0e-2 * 1.5
+
+
+# --- A5: the pattern is sin(theta) -----------------------------------------
+
+def test_hertzian_pattern_is_sin_theta():
+    dump = _cube_dump(16)
+    theta = np.array([0.2, 0.6, 1.0, 1.4, math.pi / 2.0])
+    phi = np.zeros_like(theta)
+    far = far_field(dump, theta, phi)
+    ratio = np.abs(far.E_theta) / np.abs(far.E_theta[-1])
+    assert np.allclose(ratio, np.sin(theta), rtol=1e-2, atol=0.0)
+
+
+# --- A6c: the fixture's own field conserves power on any closed surface ----
+
+def test_dipole_fixture_conserves_power_on_a_sphere():
+    """The closed-surface real Poynting flux is ``P_rad`` at every radius.
+
+    With ``A = 1 + 1/(jkr) - 1/(k r)^2`` and ``B = 1 + 1/(jkr)``,
+    ``A conj(B) = 1 - j/(k r)^3``, whose real part is 1, so the closed-surface
+    real Poynting flux equals ``eta k^2 m^2 / (12 pi)`` at any radius and
+    through any closed surface -- no far-field assumption anywhere.
+    """
+    n_theta, n_phi = 200, 400
+    d_theta = math.pi / n_theta
+    d_phi = 2.0 * math.pi / n_phi
+    theta = (np.arange(n_theta) + 0.5) * d_theta
+    phi = (np.arange(n_phi) + 0.5) * d_phi
+    theta, phi = np.meshgrid(theta, phi, indexing="ij")
+    theta = theta.ravel()
+    phi = phi.ravel()
+    sin_theta = np.sin(theta)
+    directions = np.stack((np.cos(phi) * sin_theta,
+                           np.sin(phi) * sin_theta,
+                           np.cos(theta)), axis=-1)
+    weight = sin_theta * d_theta * d_phi
+    analytic = _analytic_prad()
+    for radius in (LAM / 2.0, LAM, 2.0 * LAM):
+        e, h = _dipole_fields(radius * directions, DIPOLE_FREQ, DIPOLE_MOMENT)
+        radial = 0.5 * np.real(np.einsum(
+            "qc,qc->q", np.cross(e, np.conj(h)), directions))
+        flux = float(np.sum(radial * weight)) * radius ** 2
+        ratio = flux / analytic
+        assert abs(ratio - 1.0) < 1e-6, (
+            "closed-surface flux / P_rad = %.10f at R = %.6g lambda"
+            % (ratio, radius / LAM))
