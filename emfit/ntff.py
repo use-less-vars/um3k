@@ -208,7 +208,10 @@ def _require_finite(name, arr):
 
 def _row(arr, index):
     """A short printable form of one row, for an error message."""
-    return "(" + ", ".join(f"{float(x)!r}" for x in arr[index]) + ")"
+    row = arr[index]
+    if np.iscomplexobj(row):
+        return "(" + ", ".join(f"{complex(x)!r}" for x in row) + ")"
+    return "(" + ", ".join(f"{float(x)!r}" for x in row) + ")"
 
 
 @dataclass(frozen=True)
