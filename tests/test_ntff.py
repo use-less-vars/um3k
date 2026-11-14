@@ -43,11 +43,16 @@ from emfit.huygens_fields import SurfaceRecorder
 from emfit.materials import C0, ETA0
 from emfit.ntff import (
     FarField,
+    PlaneCut,
+    RadiationPattern,
     SCHEMA_VERSION,
     SurfaceDump,
+    compute_radiation_pattern,
+    dbi,
     far_field,
     integration_angles,
     load_surface_dump,
+    plane_cut,
     radiation_vectors,
     total_radiated_power,
 )
@@ -963,4 +968,253 @@ def test_a_non_tangential_current_is_refused_by_entry():
     assert abs(ratio - 1.0) <= 1e-12, (
         "a 1e-12 normal component moved P_rad by %.3e relative (%.17g vs "
         "%.17g)" % (ratio - 1.0, far.P_rad, base.P_rad))
+
+
+
+# ===========================================================================
+# M2: presentation -- decibels, a multi-frequency pattern, and plane cuts
+#
+# These three are shapes, not physics: ``dbi`` is a log scale,
+# ``compute_radiation_pattern`` stacks ``far_field`` over the frequency axis,
+# and ``plane_cut`` evaluates ``far_field`` on a great circle.  So what is
+# asserted below is not a new approximation but an *identity* wherever an
+# identity is owed -- a row of the pattern must be the ``far_field`` row, bit
+# for bit, and a cut must be the kernel at exactly ``(theta, phi)`` -- plus the
+# one thing the kernel's own grid cannot provide: a ``phi = 0`` cut, which no
+# midpoint ``phi`` grid ever contains and which therefore must be recomputed
+# rather than sliced.
+#
+# The tolerances that remain are the fixture's quadrature error, measured here
+# and quoted with the assertion that uses them.
+# ===========================================================================
+
+def _pattern_fields(pattern, **overrides):
+    """The field dict of a ``RadiationPattern``, with some entries replaced."""
+    fields = {name: getattr(pattern, name) for name in
+              ("frequencies", "freq_index", "theta", "phi", "U", "D", "G",
+               "E_theta", "E_phi", "P_rad", "p_in")}
+    fields.update(overrides)
+    return fields
+
+
+# --- B1: the decibel scale -------------------------------------------------
+
+def test_dbi_is_ten_log10_and_a_null_is_minus_infinity():
+    """``dbi`` is the 10-log form: ``D`` and ``G`` here are power ratios.
+
+    A zero direction is ``-inf`` dB and not a divide warning -- a null is a
+    measurement, and the only thing to plot for it is the null -- so the
+    ``simplefilter("error")`` below is the assertion that matters.
+    """
+    assert dbi(1.0) == 0.0
+    values = np.array([1.0, 0.5, 2.0, 1.5])
+    assert np.array_equal(dbi(values), 10.0 * np.log10(values))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        quiet = dbi(np.array([1.0, 0.0, 0.25]))
+    assert quiet[1] == -np.inf and np.isneginf(quiet[1])
+    assert quiet[0] == 0.0
+    assert quiet[2] == 10.0 * math.log10(0.25)
+
+
+# --- B2: the frequency axis ------------------------------------------------
+
+def test_pattern_covers_every_archive_frequency_in_order_by_default():
+    """``frequencies=None`` is every frequency of the archive, in its order.
+
+    Each row is compared with the ``far_field`` call for that index rather
+    than with a hand-built expectation, so a transposed or re-ordered axis
+    fails here and nowhere else.
+    """
+    dump = _cube_dump(8, freqs=(1.0e9, 1.25e9))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        pattern = compute_radiation_pattern(dump, n_theta=4, n_phi=6)
+    theta, phi = integration_angles(4, 6)
+    n_freq, n_angle = int(dump.freqs.shape[0]), int(theta.shape[0])
+    assert np.array_equal(pattern.theta, theta)
+    assert np.array_equal(pattern.phi, phi)
+    assert np.array_equal(pattern.frequencies,
+                          np.asarray(dump.freqs, dtype=float))
+    assert pattern.freq_index.tolist() == list(range(n_freq))
+    for name in ("U", "D", "E_theta", "E_phi"):
+        assert getattr(pattern, name).shape == (n_freq, n_angle), name
+    assert pattern.P_rad.shape == (n_freq,)
+    for row, index in enumerate(pattern.freq_index):
+        far = far_field(dump, theta, phi, freq_index=int(index), p_in_w=1.0)
+        assert np.array_equal(pattern.U[row], far.U), row
+        assert np.array_equal(pattern.D[row], far.D), row
+        assert pattern.P_rad[row] == far.P_rad, row
+
+
+def test_a_frequency_must_be_in_the_archive_and_not_merely_near_it():
+    """A near miss is named and refused; an exact hit reports its own index."""
+    dump = _cube_dump(8, freqs=(1.0e9, 1.25e9))
+    pattern = compute_radiation_pattern(dump, [1.25e9], n_theta=4, n_phi=6,
+                                        p_in_w=1.0)
+    assert pattern.freq_index.tolist() == [1]
+    assert pattern.frequencies.tolist() == [1.25e9]
+    with pytest.raises(ValueError) as excinfo:
+        compute_radiation_pattern(dump, [1.2e9], n_theta=4, n_phi=6,
+                                  p_in_w=1.0)
+    message = str(excinfo.value)
+    assert "1200000000.0" in message, (
+        "the refusal does not name the requested frequency: %s" % message)
+    assert "1250000000.0" in message, (
+        "the refusal does not name the nearest archive frequency: %s"
+        % message)
+    # Repeated requests keep one row each, in the order they were asked for.
+    deduped = compute_radiation_pattern(dump, [1.25e9, 1.0e9, 1.25e9],
+                                        n_theta=4, n_phi=6, p_in_w=1.0)
+    assert deduped.freq_index.tolist() == [1, 0]
+    assert deduped.frequencies.tolist() == [1.25e9, 1.0e9]
+
+
+# --- B3: gain is opt-in here too -------------------------------------------
+
+def test_pattern_gain_needs_an_input_power_and_uses_it_as_given():
+    """``G = 4 pi U / p_in`` exactly, with one power per frequency if asked."""
+    dump = _cube_dump(8, freqs=(1.0e9, 1.25e9))
+    with pytest.warns(RuntimeWarning, match="input power is absent"):
+        bare = compute_radiation_pattern(dump, n_theta=4, n_phi=6)
+    assert bare.G is None and bare.p_in is None
+    single = compute_radiation_pattern(dump, n_theta=4, n_phi=6, p_in_w=2.5)
+    # Measured: max|G - 4 pi U / p_in| = 0.0 (the same arithmetic, in the same
+    # order, as far_field's own normalisation).
+    assert np.array_equal(single.G, 4.0 * math.pi * single.U / 2.5)
+    assert np.array_equal(single.p_in, np.array([2.5, 2.5]))
+    per_freq = compute_radiation_pattern(dump, n_theta=4, n_phi=6,
+                                         p_in_w=[2.0, 5.0])
+    assert np.array_equal(per_freq.p_in, np.array([2.0, 5.0]))
+    assert np.array_equal(per_freq.G[0], 4.0 * math.pi * per_freq.U[0] / 2.0)
+    assert np.array_equal(per_freq.G[1], 4.0 * math.pi * per_freq.U[1] / 5.0)
+    with pytest.raises(ValueError, match="p_in_w=-1.0"):
+        compute_radiation_pattern(dump, n_theta=4, n_phi=6, p_in_w=-1.0)
+    with pytest.raises(ValueError, match="p_in_w holds 3 input powers"):
+        compute_radiation_pattern(dump, n_theta=4, n_phi=6,
+                                  p_in_w=[1.0, 2.0, 3.0])
+
+
+# --- B4: the plane cuts ----------------------------------------------------
+
+def test_e_plane_cut_is_phi_zero_and_the_sin_squared_pattern():
+    """The ``E`` plane is ``phi = 0``, theta over ``0..pi``, ``D = 1.5 sin^2``."""
+    dump = _cube_dump(16)
+    cut = plane_cut(dump, p_in_w=1.0)
+    assert cut.plane == "E" and cut.phi == 0.0
+    assert cut.label == "E-plane (phi = 0 deg, x-z)"
+    assert cut.label.isascii()
+    assert cut.theta.shape == (181,)
+    assert cut.theta[0] == 0.0 and cut.theta[-1] == math.pi
+    assert bool(np.all(np.diff(cut.theta) > 0.0))
+    assert np.array_equal(cut.theta_deg, np.degrees(cut.theta))
+    assert cut.theta_deg[-1] == 180.0
+    # The cut IS the kernel at those angles, not a renormalisation of it.
+    far = far_field(dump, cut.theta, np.zeros_like(cut.theta), p_in_w=1.0)
+    assert np.array_equal(cut.U, far.U)
+    assert np.array_equal(cut.D, far.D)
+    assert cut.P_rad == far.P_rad
+    assert cut.freq == far.freq == DIPOLE_FREQ
+    # A z-directed Hertzian dipole: D = 1.5 sin^2(theta).  Measured on the
+    # 90-degree band either side of the poles (indices 5..175, i.e. 5..175
+    # degrees), max|D / (1.5 sin^2) - 1| = 3.200081e-03 -- the cube fixture's
+    # own quadrature error, not the cut's.
+    middle = slice(5, -5)
+    residual = np.max(np.abs(cut.D[middle]
+                             / (1.5 * np.sin(cut.theta[middle]) ** 2) - 1.0))
+    assert residual <= 4.0e-3, (
+        "D/(1.5 sin^2) departs from 1 by %.6e, above the 4.0e-3 measured on "
+        "this fixture (3.200081e-3)" % residual)
+
+
+def test_h_plane_cut_is_phi_ninety_degrees_and_the_dipole_is_axisymmetric():
+    """``H`` is ``phi = pi/2``: a different azimuth, the same dipole pattern."""
+    dump = _cube_dump(16)
+    e_cut = plane_cut(dump, p_in_w=1.0)
+    h_cut = plane_cut(dump, plane="h", p_in_w=1.0)
+    assert h_cut.plane == "H" and h_cut.phi == 0.5 * math.pi
+    assert h_cut.label == "H-plane (phi = 90 deg, y-z)"
+    assert np.array_equal(h_cut.theta, e_cut.theta)
+    assert h_cut.phi != e_cut.phi
+    # Measured: max|U_E - U_H| / max U_E = 1.756769e-15 over all 181 angles,
+    # i.e. the azimuthal symmetry of the dipole to the last few bits.
+    worst = (float(np.max(np.abs(h_cut.U - e_cut.U)))
+             / float(np.max(e_cut.U)))
+    assert worst <= 1.0e-13, (
+        "the E and H cuts of an axisymmetric dipole differ by %.6e relative, "
+        "above the 1.756769e-15 measured" % worst)
+    assert np.array_equal(plane_cut(dump, plane="e", p_in_w=1.0).U, e_cut.U)
+
+
+def test_a_plane_cut_cannot_be_a_slice_of_the_pattern_grid():
+    """The trap: midpoint ``phi`` never reaches ``0``, so the cut is recomputed.
+
+    ``integration_angles`` samples ``phi_n = (n + 1/2) 2 pi / n_phi``, whose
+    every value is half a cell off the axes for any ``n_phi``; a cut taken as
+    a column of the pattern would therefore be a cut at the wrong azimuth.
+    """
+    _, phi = integration_angles(64, 128)
+    assert 0.0 not in phi
+    assert 0.5 * math.pi not in phi
+    dump = _cube_dump(8)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        pattern = compute_radiation_pattern(dump, n_theta=64, n_phi=128)
+    cut = plane_cut(dump, n_theta=5, p_in_w=1.0)
+    assert cut.phi == 0.0
+    assert not np.any(pattern.phi == cut.phi)
+    # Nothing in the pattern grid is at the cut's azimuth, so the cut's own
+    # angles had to be evaluated: the theta axis is the caller's, not the
+    # grid's.
+    assert cut.theta.tolist() == [0.0, 0.25 * math.pi, 0.5 * math.pi,
+                                  0.75 * math.pi, math.pi]
+    assert not np.array_equal(cut.theta, np.unique(pattern.theta))
+
+
+def test_plane_cut_mirrors_the_gain_opt_in_and_refuses_bad_arguments():
+    """``G`` appears only with ``p_in_w``; the plane and the count are checked."""
+    dump = _cube_dump(8)
+    with pytest.warns(RuntimeWarning, match="input power is absent"):
+        bare = plane_cut(dump, n_theta=5)
+    assert bare.G is None and bare.p_in is None
+    loud = plane_cut(dump, n_theta=5, p_in_w=3.0)
+    assert loud.p_in == 3.0 and loud.G is not None
+    assert np.array_equal(loud.G, 4.0 * math.pi * loud.U / 3.0)
+    with pytest.raises(ValueError, match="plane='Q'"):
+        plane_cut(dump, plane="Q")
+    with pytest.raises(ValueError, match="n_theta=1"):
+        plane_cut(dump, n_theta=1)
+
+
+def test_a_z_directed_dipole_is_null_on_the_polar_axis():
+    """``theta = 0`` and ``pi`` are ordinary points for this kernel.
+
+    There is no ``1 / sin(theta)`` anywhere in the transform -- the spherical
+    unit vectors are analytic in ``theta`` -- so the poles are evaluated
+    rather than avoided.  Measured: ``D[0] = 4.3593436e-32`` and
+    ``D[-1] = 9.8250804e-32``, a null of a pattern whose broadside ``D`` is
+    ``1.5``.
+    """
+    cut = plane_cut(_cube_dump(16), p_in_w=1.0)
+    assert np.isfinite(cut.U).all()
+    assert np.isfinite(cut.D).all()
+    assert np.isfinite(cut.E_theta).all() and np.isfinite(cut.E_phi).all()
+    assert abs(cut.D[0]) <= 1.0e-20
+    assert abs(cut.D[-1]) <= 1.0e-20
+
+
+def test_pattern_and_cut_refuse_mismatched_shapes():
+    """A frozen dataclass built by hand is still checked before it is a promise."""
+    dump = _cube_dump(8)
+    pattern = compute_radiation_pattern(dump, n_theta=4, n_phi=6, p_in_w=1.0)
+    with pytest.raises(ValueError, match="U of shape"):
+        RadiationPattern(**_pattern_fields(pattern, U=pattern.U[:, :5]))
+    with pytest.raises(ValueError, match="must arrive together"):
+        RadiationPattern(**_pattern_fields(pattern, G=None))
+    cut = plane_cut(dump, n_theta=5, p_in_w=1.0)
+    with pytest.raises(ValueError, match="E_theta holds 4 entries"):
+        PlaneCut(plane=cut.plane, label=cut.label, phi=cut.phi,
+                 theta=cut.theta, theta_deg=cut.theta_deg,
+                 E_theta=cut.E_theta[:-1], E_phi=cut.E_phi, U=cut.U, D=cut.D,
+                 G=cut.G, freq=cut.freq, P_rad=cut.P_rad, p_in=cut.p_in)
 

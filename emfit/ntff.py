@@ -112,6 +112,11 @@ __all__ = [
     "radiation_vectors",
     "far_field",
     "total_radiated_power",
+    "dbi",
+    "RadiationPattern",
+    "compute_radiation_pattern",
+    "PlaneCut",
+    "plane_cut",
 ]
 
 #: The only archive ``schema_version`` this reader understands.  A new writer
@@ -865,3 +870,404 @@ def total_radiated_power(far):
     whatever angles the caller asked to see.
     """
     return float(far.P_rad)
+
+
+
+# ---------------------------------------------------------------------------
+# Presentation: a decibel scale, a multi-frequency pattern, and plane cuts
+#
+# Everything above evaluates one archive at one set of angles.  The three
+# additions below are the shapes a caller wants to *look* at -- a log scale,
+# one array per frequency, one great-circle cut -- and each of them reuses the
+# kernel rather than reconstructing it, so nothing here has a normalisation,
+# a frequency match or an angle of its own invention.
+# ---------------------------------------------------------------------------
+
+
+def dbi(values):
+    """``10 log10(values)``: the 10-log form, because ``D`` and ``G`` are power ratios."""
+    values = np.asarray(values, dtype=float)
+    # A zero direction is -inf dB, not a warning: a pattern with a null in it
+    # is a measurement, and ``log10`` of the null is exactly what to plot.
+    with np.errstate(divide="ignore"):
+        return 10.0 * np.log10(values)
+
+
+def _pattern_frequencies(dump, frequencies):
+    """The archive indices ``frequencies`` names, in the order asked, deduped.
+
+    A requested frequency is matched to the archive entry nearest to it and
+    accepted only when the two are the same frequency to within
+    ``1e-9 * max(|f|, 1)`` Hz; a near miss raises instead of being snapped,
+    because a silently substituted frequency is a mislabelled axis, and an
+    interpolated one is a pattern nobody measured.
+    """
+    freqs = np.asarray(dump.freqs, dtype=float)
+    if freqs.size == 0:
+        raise ValueError(
+            "dump.freqs is empty: the archive holds no frequency to transform")
+    if frequencies is None:
+        return np.arange(freqs.size, dtype=int)
+    requested = np.atleast_1d(np.asarray(frequencies, dtype=float))
+    if requested.size == 0:
+        raise ValueError(
+            "frequencies=[]: a pattern needs at least one frequency")
+    picked = []
+    for want in requested:
+        want = float(want)
+        nearest = int(np.argmin(np.abs(freqs - want)))
+        nearest_hz = float(freqs[nearest])
+        tolerance = 1e-9 * max(abs(want), 1.0)
+        if abs(nearest_hz - want) > tolerance:
+            raise ValueError(
+                f"frequencies: {want!r} Hz is not a frequency of the archive; "
+                f"the nearest is {nearest_hz!r} Hz, "
+                f"{abs(nearest_hz - want)!r} Hz away, which is beyond the "
+                f"{tolerance!r} Hz this match allows")
+        if nearest not in picked:
+            picked.append(nearest)
+    return np.array(picked, dtype=int)
+
+
+def _pattern_input_powers(p_in_w, n_freq):
+    """``p_in_w`` as one entry per requested frequency, or ``None`` each."""
+    if p_in_w is None:
+        return [None] * n_freq
+    powers = np.ravel(np.asarray(p_in_w, dtype=float))
+    if powers.size == 1:
+        return [float(powers[0])] * n_freq
+    if powers.size != n_freq:
+        raise ValueError(
+            f"p_in_w holds {powers.size} input powers for {n_freq} requested "
+            f"frequenc{'y' if n_freq == 1 else 'ies'}: pass one per "
+            f"frequency, or a single power for all of them")
+    return [float(power) for power in powers]
+
+
+@dataclass(frozen=True)
+class RadiationPattern:
+    """One archive's far field over the sphere, one axis entry per frequency.
+
+    This is :class:`FarField` stacked over a frequency axis, with nothing
+    rescaled in between: each row is the evaluation :func:`far_field` returned
+    for that archive frequency, on the midpoint grid
+    :func:`integration_angles` produced.
+
+    Attributes
+    ----------
+    frequencies : (n_freq,) float64
+        The archive frequencies transformed, in Hz, in the order of the rows.
+    freq_index : (n_freq,) int
+        Which archive frequency each row is.
+    theta, phi : (n_angle,) float64
+        The angles of the grid, flat, in radians.
+    U : (n_freq, n_angle) float64
+        Radiation intensity, W per steradian.
+    D : (n_freq, n_angle) float64
+        Directivity ``4 pi U / P_rad``, dimensionless.
+    G : (n_freq, n_angle) float64 or None
+        Gain ``4 pi U / p_in``, dimensionless, or ``None`` when no input
+        power was supplied.
+    E_theta, E_phi : (n_freq, n_angle) complex128
+        The two spherical components of ``F = r E_far``, in V.
+    P_rad : (n_freq,) float64
+        Radiated power of each frequency, in W.
+    p_in : (n_freq,) float64 or None
+        The input power each row's gain was normalised by, in W.
+    """
+
+    frequencies: np.ndarray
+    freq_index: np.ndarray
+    theta: np.ndarray
+    phi: np.ndarray
+    U: np.ndarray
+    D: np.ndarray
+    G: np.ndarray | None
+    E_theta: np.ndarray
+    E_phi: np.ndarray
+    P_rad: np.ndarray
+    p_in: np.ndarray | None
+
+    def __post_init__(self):
+        frequencies = np.ravel(np.asarray(self.frequencies, dtype=float))
+        freq_index = np.ravel(np.asarray(self.freq_index, dtype=int))
+        theta = np.ravel(np.asarray(self.theta, dtype=float))
+        phi = np.ravel(np.asarray(self.phi, dtype=float))
+        if theta.shape != phi.shape:
+            raise ValueError(
+                f"theta of shape {theta.shape} and phi of shape {phi.shape}: "
+                f"a pattern holds one of each per angle")
+        n_freq = int(frequencies.shape[0])
+        n_angle = int(theta.shape[0])
+        for name, arr in (("freq_index", freq_index),
+                          ("P_rad", np.ravel(np.asarray(self.P_rad)))):
+            if arr.shape[0] != n_freq:
+                raise ValueError(
+                    f"{name} holds {arr.shape[0]} entries for {n_freq} "
+                    f"frequenc{'y' if n_freq == 1 else 'ies'}: one is "
+                    f"required per frequency")
+        for name in ("U", "D", "E_theta", "E_phi"):
+            shape = np.asarray(getattr(self, name)).shape
+            if shape != (n_freq, n_angle):
+                raise ValueError(
+                    f"{name} of shape {shape}: a pattern over {n_freq} "
+                    f"frequenc{'y' if n_freq == 1 else 'ies'} and {n_angle} "
+                    f"angles is ({n_freq}, {n_angle})")
+        if (self.G is None) != (self.p_in is None):
+            raise ValueError(
+                "G and p_in must arrive together: gain is 4 pi U / p_in, so "
+                "one of them without the other is not a pattern")
+        if self.G is not None and np.asarray(self.G).shape != (n_freq, n_angle):
+            raise ValueError(
+                f"G of shape {np.asarray(self.G).shape}: a pattern over "
+                f"{n_freq} frequenc{'y' if n_freq == 1 else 'ies'} and "
+                f"{n_angle} angles is ({n_freq}, {n_angle})")
+        if self.p_in is not None and np.ravel(np.asarray(self.p_in)).shape[0] != n_freq:
+            raise ValueError(
+                f"p_in holds {np.ravel(np.asarray(self.p_in)).shape[0]} input "
+                f"powers for {n_freq} "
+                f"frequenc{'y' if n_freq == 1 else 'ies'}: one is required "
+                f"per frequency")
+        object.__setattr__(self, "frequencies", frequencies)
+        object.__setattr__(self, "freq_index", freq_index)
+        object.__setattr__(self, "theta", theta)
+        object.__setattr__(self, "phi", phi)
+
+
+def compute_radiation_pattern(dump, frequencies=None, *, n_theta=64, n_phi=128,
+                              p_in_w=None, block=None):
+    """The far field of the archive over the sphere, one row per frequency.
+
+    One :func:`far_field` call per frequency index, on
+    :func:`integration_angles`' grid, stacked into a
+    :class:`RadiationPattern`.  Nothing is averaged, interpolated or snapped:
+    the frequencies and the angles are the ones the kernel was asked for, and
+    the normalisations are the ones it returned.
+
+    ``G`` needs an input power the archive does not hold (see the ``TODO(TE)``
+    note above), so it is computed only when ``p_in_w`` is passed;
+    :func:`far_field` warns once about that and the warning is not swallowed
+    here.
+
+    Parameters
+    ----------
+    dump : SurfaceDump
+        The archive.
+    frequencies : float or array_like, optional
+        The frequencies to transform, in Hz; ``None`` means every frequency
+        of the archive in its own order.  Each must be an archive frequency to
+        within ``1e-9 * max(|f|, 1)`` Hz -- a near miss raises rather than
+        being replaced by the nearest entry, and repetitions keep the first
+        position only.
+    n_theta, n_phi : int, optional
+        Cells of the midpoint angular grid; ``64`` x ``128`` by default, the
+        grid :func:`total_radiated_power` integrates on.
+    p_in_w : float or array_like, optional
+        Input power in W: one value for every frequency, or one per requested
+        frequency.  Must be positive and finite, as :func:`far_field`
+        requires.
+    block : int, optional
+        Angles per phase block; the result is invariant to it.
+
+    Returns
+    -------
+    RadiationPattern
+
+    Raises
+    ------
+    ValueError
+        If no frequency was requested, if a requested frequency is not in the
+        archive, or if ``p_in_w`` does not hold one power per frequency.
+    """
+    indices = _pattern_frequencies(dump, frequencies)
+    n_freq = int(indices.shape[0])
+    theta, phi = integration_angles(n_theta, n_phi)
+    n_angle = int(theta.shape[0])
+    powers = _pattern_input_powers(p_in_w, n_freq)
+    e_theta = np.empty((n_freq, n_angle), dtype=np.complex128)
+    e_phi = np.empty((n_freq, n_angle), dtype=np.complex128)
+    u = np.empty((n_freq, n_angle), dtype=float)
+    d = np.empty((n_freq, n_angle), dtype=float)
+    g = None if p_in_w is None else np.empty((n_freq, n_angle), dtype=float)
+    p_rad = np.empty(n_freq, dtype=float)
+    for row, (index, power) in enumerate(zip(indices, powers)):
+        far = far_field(dump, theta, phi, freq_index=int(index),
+                        p_in_w=power, block=block)
+        e_theta[row] = far.E_theta
+        e_phi[row] = far.E_phi
+        u[row] = far.U
+        d[row] = far.D
+        p_rad[row] = far.P_rad
+        if g is not None:
+            g[row] = far.G
+    freqs = np.array([float(dump.freqs[int(index)]) for index in indices],
+                     dtype=float)
+    for arr in (e_theta, e_phi, u, d, p_rad):
+        arr.flags.writeable = False
+    if g is not None:
+        g.flags.writeable = False
+    return RadiationPattern(
+        frequencies=freqs, freq_index=indices, theta=theta, phi=phi,
+        U=u, D=d, G=g, E_theta=e_theta, E_phi=e_phi, P_rad=p_rad,
+        p_in=None if powers[0] is None else np.array(powers, dtype=float))
+
+
+#: The two principal planes of the ``+Z`` frame of section 3, keyed by the
+#: lower-case letter a caller may pass: upper-case name, ``phi`` in radians,
+#: and an ASCII label -- ASCII because the label ends up in a figure filename
+#: and in an axis title, and neither has a font decision to make here.
+_PLANES = {
+    "e": ("E", 0.0, "E-plane (phi = 0 deg, x-z)"),
+    "h": ("H", 0.5 * math.pi, "H-plane (phi = 90 deg, y-z)"),
+}
+
+
+@dataclass(frozen=True)
+class PlaneCut:
+    """One principal-plane cut of the far field, as a linear plot wants it.
+
+    Attributes
+    ----------
+    plane : str
+        ``'E'`` or ``'H'``.
+    label : str
+        An ASCII label naming the plane and the constant ``phi`` it holds.
+    phi : float
+        The fixed azimuth of the cut, in radians (``0`` for ``E``,
+        ``pi/2`` for ``H``).
+    theta : (n_theta,) float64
+        Polar angle from ``0`` to ``pi``, ascending, in radians.
+    theta_deg : (n_theta,) float64
+        The same angles in degrees, for the axis.
+    E_theta, E_phi : (n_theta,) complex128
+        The two spherical components of ``F = r E_far``, in V.
+    U : (n_theta,) float64
+        Radiation intensity, W per steradian.
+    D : (n_theta,) float64
+        Directivity ``4 pi U / P_rad``, dimensionless.
+    G : (n_theta,) float64 or None
+        Gain ``4 pi U / p_in``, or ``None`` when no input power was supplied.
+    freq : float
+        The archive frequency of the cut, in Hz.
+    P_rad : float
+        Radiated power of that frequency, in W.
+    p_in : float or None
+        The input power ``G`` was normalised by, in W.
+    """
+
+    plane: str
+    label: str
+    phi: float
+    theta: np.ndarray
+    theta_deg: np.ndarray
+    E_theta: np.ndarray
+    E_phi: np.ndarray
+    U: np.ndarray
+    D: np.ndarray
+    G: np.ndarray | None
+    freq: float
+    P_rad: float
+    p_in: float | None
+
+    def __post_init__(self):
+        plane = str(self.plane)
+        if plane not in ("E", "H"):
+            raise ValueError(
+                f"plane={self.plane!r}: a plane cut is 'E' or 'H'")
+        label = str(self.label)
+        if not label.isascii():
+            raise ValueError(
+                f"label={self.label!r}: a plane-cut label must be ASCII")
+        theta = np.ravel(np.asarray(self.theta, dtype=float))
+        n_theta = int(theta.shape[0])
+        if n_theta < 2:
+            raise ValueError(
+                f"theta holds {n_theta} angle(s): a cut runs from theta = 0 "
+                f"to theta = pi, so it needs at least two")
+        for name in ("theta_deg", "E_theta", "E_phi", "U", "D"):
+            shape = np.ravel(np.asarray(getattr(self, name))).shape
+            if shape[0] != n_theta:
+                raise ValueError(
+                    f"{name} holds {shape[0]} entries for {n_theta} angles: "
+                    f"a cut is one value per angle")
+        if (self.G is None) != (self.p_in is None):
+            raise ValueError(
+                "G and p_in must arrive together: gain is 4 pi U / p_in, so "
+                "one of them without the other is not a cut")
+        if self.G is not None and np.ravel(np.asarray(self.G)).shape[0] != n_theta:
+            raise ValueError(
+                f"G holds {np.ravel(np.asarray(self.G)).shape[0]} entries for "
+                f"{n_theta} angles: a cut is one value per angle")
+        object.__setattr__(self, "plane", plane)
+        object.__setattr__(self, "label", label)
+        object.__setattr__(self, "theta", theta)
+
+
+def plane_cut(dump, *, plane="E", freq_index=0, n_theta=181, p_in_w=None,
+              block=None):
+    """The far field on one principal plane, ``theta`` from ``0`` to ``pi``.
+
+    The ``E`` plane is ``phi = 0`` (the x-z plane), the ``H`` plane is
+    ``phi = pi/2`` (the y-z plane); ``theta`` runs the whole half circle,
+    poles included, in ``n_theta`` ascending samples.
+
+    This is *not* a slice of a :class:`RadiationPattern`, and cannot be made
+    into one: :func:`integration_angles` samples ``phi`` at cell midpoints,
+    ``(i + 1/2) * 2 pi / n_phi``, so no grid it builds ever holds ``phi = 0``
+    or ``phi = pi/2``.  The cut therefore re-evaluates :func:`far_field` at
+    exactly ``(theta, phi)``.  (The poles are safe to ask for: the spherical
+    unit vectors are analytic in ``theta``, with no ``1 / sin(theta)``
+    anywhere in the kernel.)
+
+    Parameters
+    ----------
+    dump : SurfaceDump
+        The archive.
+    plane : str, optional
+        ``'E'`` or ``'H'``, in either case; ``'E'`` by default.
+    freq_index : int, optional
+        Which frequency of the archive to cut; ``0`` by default.
+    n_theta : int, optional
+        Angles along the cut, at least two; ``181`` by default, i.e. one every
+        degree.
+    p_in_w : float, optional
+        Input power in W, for the gain.  Must be positive and finite.
+    block : int, optional
+        Angles per phase block; the result is invariant to it.
+
+    Returns
+    -------
+    PlaneCut
+
+    Raises
+    ------
+    ValueError
+        If ``plane`` is not ``'E'`` or ``'H'``, or if ``n_theta`` is below
+        two.
+    """
+    key = str(plane).strip().lower()
+    if key not in _PLANES:
+        raise ValueError(
+            f"plane={plane!r}: a plane cut is 'E' (phi = 0, the x-z plane) or "
+            f"'H' (phi = 90 deg, the y-z plane)")
+    name, phi, label = _PLANES[key]
+    count = int(n_theta)
+    if count < 2:
+        raise ValueError(
+            f"n_theta={n_theta!r}: a plane cut runs from theta = 0 to "
+            f"theta = pi, so it needs at least two angles")
+    theta = np.linspace(0.0, math.pi, count)
+    # The trap: integration_angles() puts phi on cell MIDPOINTS, so phi = 0
+    # and phi = pi/2 are never sampled by any pattern grid, and a plane cut
+    # cannot be a slice of one.  It re-evaluates the kernel at the angles it
+    # means instead of interpolating a pattern that skipped them.
+    far = far_field(dump, theta, np.full(theta.shape, phi),
+                    freq_index=freq_index, p_in_w=p_in_w, block=block)
+    theta = np.array(far.theta, dtype=float)
+    theta_deg = np.degrees(theta)
+    theta_deg.flags.writeable = False
+    return PlaneCut(
+        plane=name, label=label, phi=phi, theta=theta, theta_deg=theta_deg,
+        E_theta=far.E_theta, E_phi=far.E_phi, U=far.U, D=far.D, G=far.G,
+        freq=far.freq, P_rad=float(far.P_rad), p_in=far.p_in)
+
