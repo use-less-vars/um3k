@@ -173,6 +173,8 @@ def test_shapes_and_dtypes_of_every_array():
     assert samples.edge_index.dtype == np.int64
     assert samples.face_index.shape == (n, 3)
     assert samples.face_index.dtype == np.int64
+    assert samples.h_face_index.shape == (n, 8)
+    assert samples.h_face_index.dtype == np.int64
     assert samples.snap_delta.shape == (6,)
     assert samples.snap_delta.dtype == np.float64
 

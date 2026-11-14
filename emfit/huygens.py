@@ -92,6 +92,74 @@ four flat indices rather than one per block -- the consumer can form both
 averages without knowing where on the box the sample is and without re-deriving
 the strides.
 
+``h_face_index``
+----------------
+``(N, 8)``, never ``-1``: the four primal *face* samples each tangential ``H``
+component at the point is averaged from.  Slots 0-3 carry the first tangential
+component, slots 4-7 the second (ascending axis order excluding the normal, so
+``H_y, H_z`` on an x-normal face, ``H_x, H_z`` on a y-normal face, ``H_x, H_y``
+on a z-normal face -- the same component order as ``edge_index``).  Within a
+component the slot is ``2 * t + n``:
+
+* ``n = 0, 1`` are the pair that straddles the sample's **node plane** in the
+  box-normal direction;
+* ``t = 0, 1`` are the two members of the pair across the direction in which
+  that ``H`` component sits on nodes (its ``H`` face is node-placed there, cell
+  centred in the normal direction and in its own component direction).
+
+Concretely, off the staggering ``FY`` at ``y[j]``, ``FZ`` at ``z[k]``, ``FX`` at
+``x[i]`` (and each of them cell centred elsewhere):
+
+    x-normal  FX(p, j, k) at (x[p], yc[j], zc[k])
+      H_y  FY  [FY(p-1, j,   k), FY(p,   j,   k), FY(p-1, j+1, k), FY(p, j+1, k)]
+      H_z  FZ  [FZ(p-1, j,   k), FZ(p,   j,   k), FZ(p-1, j,   k+1), FZ(p, j, k+1)]
+
+    y-normal  FY(i, q, k) at (xc[i], y[q], zc[k])
+      H_x  FX  [FX(i,   q-1, k), FX(i,   q,   k), FX(i+1, q-1, k), FX(i+1, q, k)]
+      H_z  FZ  [FZ(i,   q-1, k), FZ(i,   q,   k), FZ(i,   q-1, k+1), FZ(i, q, k+1)]
+
+    z-normal  FZ(i, j, r) at (xc[i], yc[j], z[r])
+      H_x  FX  [FX(i,   j,   r-1), FX(i,   j, r), FX(i+1, j,   r-1), FX(i+1, j, r)]
+      H_y  FY  [FY(i,   j,   r-1), FY(i,   j, r), FY(i,   j+1, r-1), FY(i, j+1, r)]
+
+so the ordinary average over each group of four (two successive 2-averages, the
+first over slots 0-1 and 2-3, the second over those two results) is the
+tangential ``H`` at the sample.  Eight flat indices rather than two are carried
+for the same reason as on the ``E`` side: the consumer can form the averages
+without knowing where on the box it is and without re-deriving strides.
+
+Why two averages, and where the accuracy goes
+---------------------------------------------
+The two factors behave differently, and the difference is worth stating in the
+type rather than discovering it in an RCS pattern:
+
+* the **transverse** pair (the two slots sharing ``t``) sits at two nodes one
+  cell apart, straddling the sample's cell centre.  Their midpoint *is* the
+  cell centre by definition, ``(a[j] + a[j+1]) / 2``, so this factor is
+  **position exact** on any grid, uniform or graded.
+* the **normal** pair straddles the sample's *node plane* and its two members
+  sit at cell centres half a cell to either side.  On a **uniform** grid those
+  two half cells are equal, the midpoint is exactly the plane, and the
+  averaging error is the curvature of ``H`` over one cell: **O(h^2)**.  On a
+  **graded** grid the half widths differ, the midpoint lands
+  ``(h_+ - h_-) / 4`` off the plane, and the error is **O(h)**.  Nothing here
+  corrects that: a Huygens surface on a graded mesh is a first-order surface,
+  and a caller who needs the second order has to refine the mesh (a weighted
+  average would trade this bias for a different one) rather than assume the
+  four-point average is centred.
+
+Where a stencil leaves the block
+--------------------------------
+An ``H`` stencil point of a sample on the box's own surface can fall one half
+cell *outside* the cell block the box spans, and on a box flush with the domain
+boundary there is no such face at all (the index would be ``-1`` or one past
+the block).  Such indices are **clamped** to the nearest face that exists, so
+the pair degenerates to the same face twice -- a one-sided value there -- and
+every entry still points inside its own block.  ``-1`` is never stored:
+``CellComplex.idx_*`` maps ``-1`` through ``%`` onto the *far* side of the
+domain, which looks like a valid sample and is silently wrong.  Clamping is only
+reachable for a surface touching the boundary of the domain.
+
 No gaps at the box edges
 ------------------------
 The enumerated set is exactly the set of primal faces bounding the cell block
@@ -273,7 +341,13 @@ class SurfaceSamples:
     face_index : (N, 3) int64
         Flat primal-face indices into a ``(n_faces,)`` ``h`` vector, one slot
         per block ``(FX, FY, FZ)``, ``-1`` where that block has no face at the
-        point.
+        point.  This is the *normal* ``H`` component only; the tangential ones
+        are in ``h_face_index``.
+    h_face_index : (N, 8) int64
+        Flat primal-face indices into the same ``(n_faces,)`` ``h`` vector: the
+        four faces per tangential ``H`` component that average onto the point,
+        in the order documented in the module docstring.  Every entry is a real
+        index -- this array carries no ``-1``.
     snap_delta : (6,) float64
         Signed displacement in metres applied to each box face to land it on
         the nearest node plane; ordered as ``FACE_NAMES``.
@@ -284,6 +358,7 @@ class SurfaceSamples:
     face_id: np.ndarray
     edge_index: np.ndarray
     face_index: np.ndarray
+    h_face_index: np.ndarray
     snap_delta: np.ndarray
 
     def __post_init__(self):
@@ -296,12 +371,14 @@ class SurfaceSamples:
         face_id = np.array(self.face_id, dtype=np.int8)
         edge_index = np.array(self.edge_index, dtype=np.int64)
         face_index = np.array(self.face_index, dtype=np.int64)
+        h_face_index = np.array(self.h_face_index, dtype=np.int64)
         snap_delta = np.array(self.snap_delta, dtype=float).reshape(-1)
         for name, arr, shape in (
             ("normals", normals, (n, 3)),
             ("face_id", face_id, (n,)),
             ("edge_index", edge_index, (n, 4)),
             ("face_index", face_index, (n, 3)),
+            ("h_face_index", h_face_index, (n, 8)),
             ("snap_delta", snap_delta, (6,)),
         ):
             if arr.shape != shape:
@@ -311,13 +388,20 @@ class SurfaceSamples:
             raise ValueError(
                 "edge_index: the four bounding edges of each face always "
                 "exist, so no entry may be -1")
-        for arr in (coords, normals, face_id, edge_index, face_index, snap_delta):
+        if np.any(h_face_index < 0):
+            raise ValueError(
+                "h_face_index: the eight faces of the two H stencils always "
+                "exist (a stencil that would leave its block is clamped, not "
+                "marked absent), so no entry may be -1")
+        for arr in (coords, normals, face_id, edge_index, face_index,
+                    h_face_index, snap_delta):
             arr.flags.writeable = False
         object.__setattr__(self, "coordinates", coords)
         object.__setattr__(self, "normals", normals)
         object.__setattr__(self, "face_id", face_id)
         object.__setattr__(self, "edge_index", edge_index)
         object.__setattr__(self, "face_index", face_index)
+        object.__setattr__(self, "h_face_index", h_face_index)
         object.__setattr__(self, "snap_delta", snap_delta)
 
     def face_counts(self):
@@ -338,14 +422,28 @@ def _build_samples(cc, planes, snap_delta):
     face_id = []
     edge_index = []
     face_index = []
+    h_face_index = []
 
-    def push(face, coords, edges, faces):
+    def push(face, coords, edges, faces, h_faces):
         n = coords.shape[0]
         coordinates.append(coords)
         normals.append(np.tile(_NORMALS[face], (n, 1)))
         face_id.append(np.full(n, face, dtype=np.int8))
         edge_index.append(np.stack(edges, axis=1))
         face_index.append(np.stack(faces, axis=1))
+        h_face_index.append(np.stack(h_faces, axis=1))
+
+    def h_index(block, triples):
+        """Flat face indices of one ``H`` stencil: four triples, clamped.
+
+        Clamping is done here rather than left to ``CellComplex.idx_*``, whose
+        ``%`` would map an out-of-block ``-1`` onto the far side of the domain
+        (module docstring, "Where a stencil leaves the block").
+        """
+        limit = grid.face_shape(block)
+        idx = getattr(cc, f"idx_f{block}")
+        return [idx(*(np.clip(t, 0, n - 1) for t, n in zip(triple, limit)))
+                for triple in triples]
 
     absent = np.int64(-1)
 
@@ -367,6 +465,12 @@ def _build_samples(cc, planes, snap_delta):
             [cc.idx_fx(i, j, k),
              np.full(i.size, absent, dtype=np.int64),
              np.full(i.size, absent, dtype=np.int64)],
+            # H_y = FY averaged over x (normal pair) then y (transverse pair),
+            # H_z = FZ over x (normal pair) then z (transverse pair)
+            h_index("y", [(i - 1, j, k), (i, j, k),
+                          (i - 1, j + 1, k), (i, j + 1, k)])
+            + h_index("z", [(i - 1, j, k), (i, j, k),
+                            (i - 1, j, k + 1), (i, j, k + 1)]),
         )
 
     # y-normal faces (face_id 2, 3): plane y = y[q], samples are FY(i, q, k)
@@ -387,6 +491,12 @@ def _build_samples(cc, planes, snap_delta):
             [np.full(i.size, absent, dtype=np.int64),
              cc.idx_fy(i, j, k),
              np.full(i.size, absent, dtype=np.int64)],
+            # H_x = FX over y (normal pair) then x (transverse pair),
+            # H_z = FZ over y (normal pair) then z (transverse pair)
+            h_index("x", [(i, j - 1, k), (i, j, k),
+                          (i + 1, j - 1, k), (i + 1, j, k)])
+            + h_index("z", [(i, j - 1, k), (i, j, k),
+                            (i, j - 1, k + 1), (i, j, k + 1)]),
         )
 
     # z-normal faces (face_id 4, 5): plane z = z[r], samples are FZ(i, j, r)
@@ -407,6 +517,12 @@ def _build_samples(cc, planes, snap_delta):
             [np.full(i.size, absent, dtype=np.int64),
              np.full(i.size, absent, dtype=np.int64),
              cc.idx_fz(i, j, k)],
+            # H_x = FX over z (normal pair) then x (transverse pair),
+            # H_y = FY over z (normal pair) then y (transverse pair)
+            h_index("x", [(i, j, k - 1), (i, j, k),
+                          (i + 1, j, k - 1), (i + 1, j, k)])
+            + h_index("y", [(i, j, k - 1), (i, j, k),
+                            (i, j + 1, k - 1), (i, j + 1, k)]),
         )
 
     return SurfaceSamples(
@@ -415,5 +531,6 @@ def _build_samples(cc, planes, snap_delta):
         face_id=np.concatenate(face_id),
         edge_index=np.concatenate(edge_index, axis=0).astype(np.int64),
         face_index=np.concatenate(face_index, axis=0).astype(np.int64),
+        h_face_index=np.concatenate(h_face_index, axis=0).astype(np.int64),
         snap_delta=snap_delta,
     )
