@@ -55,7 +55,7 @@ import numpy as np
 from .materials import C0
 
 __all__ = ["ricker", "cfl_dt", "step_explicit", "FITStepper", "RickerSource",
-           "Leapfrog"]
+           "PointSource", "Leapfrog"]
 
 
 # ----------------------------------------------------------------------
@@ -667,6 +667,151 @@ class RickerSource:
     def __repr__(self):  # pragma: no cover - cosmetic
         return (f"RickerSource(n_edges={self.n_edges}, n_idx={self.idx.size}, "
                 f"fmax={self.fmax:g}, t0={self.t0:g})")
+
+
+# ----------------------------------------------------------------------
+class PointSource:
+    """Soft-current drive on ONE primal edge: a point source at ``(i, j, k)``.
+
+    ``__call__(t)`` returns the length-``n_edges`` current vector that
+    :meth:`FITStepper.run` expects, carrying a ramped cosine on the single
+    edge ``cc.idx_<component>(i, j, k)`` and zero on every other edge::
+
+        j[index] = amplitude * ramp(t) * cos(omega t + phase)
+
+    with ``omega = 2 pi frequency`` and the raised-cosine switch-on::
+
+        ramp(t) = 0.5 (1 - cos(pi t / t_ramp))   for t <  t_ramp
+                  1.0                            for t >= t_ramp
+
+    The ramp is not cosmetic.  A sinusoid switched on at full amplitude
+    injects a step whose spectrum decays only as ``1/f``, which contaminates
+    every frequency the run is later analysed at; ``t_ramp`` defaults to four
+    periods.
+
+    The drive enters where :func:`step_explicit` documents it, through the
+    ``j`` slot of Ampere's law (``ce = ce - j``), so it is a *soft* current:
+    it adds to the field instead of overwriting it, and a PEC edge would
+    still be zeroed afterwards.
+
+    Parameters
+    ----------
+    cc : CellComplex
+        Supplies the edge numbering and the grid, hence the default ``dt``.
+    i, j, k : int
+        Cell index of the driven edge.  Wrapping is whatever ``cc.idx_*``
+        does (``%`` per axis, a no-op on a bounded axis).
+    component : {'ex', 'ey', 'ez'}, optional
+        Which edge block the point sits in; ``'ez'`` by default.
+    frequency : float
+        Drive frequency in Hz.  Must be finite and positive.
+    amplitude : float, optional
+        A *normalised drive knob*, NOT a current density in A/m^2.
+    dt : float, optional
+        Time step used only to size :attr:`steps_per_period` and
+        :attr:`ramp_steps`.  Defaults to :func:`cfl_dt`, the same default
+        :class:`FITStepper` takes, so the two agree with nothing passed.  A
+        time step above the CFL limit is refused here rather than left to
+        diverge.
+    t_ramp : float, optional
+        Switch-on duration in seconds; defaults to ``4 / frequency``.
+    phase : float, optional
+        Phase offset in radians, added inside the cosine.
+
+    Notes
+    -----
+    ``amplitude`` is deliberately dimensionless: this class attaches NO
+    radiated power and NO dipole moment to it.  Turning a drive amplitude
+    into a physical moment -- and hence into a power -- depends on the grid
+    and on the whole experiment, so it is the caller's job, not the source's.
+
+    The array returned by ``__call__`` is the *same object* on every call,
+    re-zeroed first, exactly as :class:`RickerSource` does.  Do not keep the
+    return value across steps; copy it if you need a history.
+    """
+
+    _COMPONENTS = ("ex", "ey", "ez")
+
+    def __init__(self, cc, i: int, j: int, k: int, *, component: str = "ez",
+                 frequency: float, amplitude: float = 1.0,
+                 dt: float | None = None, t_ramp: float | None = None,
+                 phase: float = 0.0) -> None:
+        if component not in self._COMPONENTS:
+            raise ValueError(
+                f"component={component!r}: must be one of {self._COMPONENTS}")
+        frequency = float(frequency)
+        if not np.isfinite(frequency) or frequency <= 0.0:
+            raise ValueError(
+                f"frequency={frequency!r}: must be finite and positive")
+        amplitude = float(amplitude)
+        if not np.isfinite(amplitude):
+            raise ValueError(f"amplitude={amplitude!r}: must be finite")
+
+        dt_max = cfl_dt(cc.grid)
+        if dt is None:
+            dt = dt_max
+        else:
+            dt = float(dt)
+            if not np.isfinite(dt) or dt <= 0.0:
+                raise ValueError(f"dt={dt!r}: must be finite and positive")
+            if dt > dt_max * (1.0 + 1e-9):
+                raise ValueError(
+                    f"dt={dt!r} s exceeds the Courant limit {dt_max!r} s of "
+                    f"this grid: the leapfrog scheme is unstable above it")
+
+        # The current vector has to span EVERY primal edge, because ``step``
+        # subtracts it from the whole curl vector.  ``cc.n_edges`` is that
+        # total (n_ex + n_ey + n_ez); summing the blocks is the same number
+        # spelled out, for a cell complex that predates the total.
+        n_edges = getattr(cc, "n_edges", None)
+        if n_edges is None:
+            n_edges = cc.n_ex + cc.n_ey + cc.n_ez
+
+        self.cc = cc
+        self.component = component
+        self.i, self.j, self.k = int(i), int(j), int(k)
+        self._index = int(getattr(cc, "idx_" + component)(self.i, self.j, self.k))
+        self.frequency = frequency
+        self.amplitude = amplitude
+        self.dt = float(dt)
+        self.omega = 2.0 * np.pi * frequency
+        self.t_ramp = float(4.0 / frequency if t_ramp is None else t_ramp)
+        self.phase = float(phase)
+        self.n_edges = int(n_edges)
+        self._j = np.zeros(self.n_edges, dtype=float)
+
+    @property
+    def index(self):
+        """Flat index of the driven edge in the global edge vector."""
+        return self._index
+
+    @property
+    def steps_per_period(self):
+        """``int(round(1 / (frequency * dt)))``, driver steps per period."""
+        return int(round(1.0 / (self.frequency * self.dt)))
+
+    @property
+    def ramp_steps(self):
+        """``int(round(t_ramp / dt))``, driver steps spent ramping up."""
+        return int(round(self.t_ramp / self.dt))
+
+    def __call__(self, t):
+        """Return the full current vector at ``t`` (the same buffer each call)."""
+        j = self._j
+        j[:] = 0.0
+        t = float(t)
+        if t < self.t_ramp:
+            ramp = 0.5 * (1.0 - np.cos(np.pi * t / self.t_ramp))
+        else:
+            ramp = 1.0
+        j[self._index] = (self.amplitude * ramp
+                          * np.cos(self.omega * t + self.phase))
+        return j
+
+    def __repr__(self):  # pragma: no cover - cosmetic
+        return (f"PointSource(component={self.component!r}, "
+                f"ijk=({self.i}, {self.j}, {self.k}), index={self._index}, "
+                f"frequency={self.frequency:g}, amplitude={self.amplitude:g})")
 
 
 # ----------------------------------------------------------------------
