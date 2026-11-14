@@ -661,3 +661,306 @@ def test_dipole_fixture_conserves_power_on_a_sphere():
         assert abs(ratio - 1.0) < 1e-6, (
             "closed-surface flux / P_rad = %.10f at R = %.6g lambda"
             % (ratio, radius / LAM))
+
+
+# --- A3: the spherical basis, orthonormal and right handed everywhere ------
+
+def test_the_spherical_basis_is_orthonormal_and_right_handed():
+    """Section 3's basis, at interior angles and at both poles.
+
+    ``rhat`` points along the polar axis ``+Z`` with ``phi`` measured from
+    ``+X``, so the triple is the closed form written out below and nothing
+    else.  What is pinned here is the whole triple at once: the closed forms
+    (a basis that is orthonormal but rotated in ``phi`` would pass every other
+    check and conjugate ``E_phi``), unit length, mutual orthogonality, and
+    ``rhat x e_theta = e_phi`` -- the handedness sign that decides the sign of
+    the far field's phase.  The poles are included because a basis is
+    evaluated at whatever angle the caller asks for, and ``theta = 0`` and
+    ``theta = pi`` are ordinary points of the closed form: only ``rhat`` stops
+    depending on ``phi`` there, ``e_theta`` and ``e_phi`` keep their full
+    meaning and stay orthonormal to it.
+
+    Tolerances: the three vectors are ``np.sin``/``np.cos`` of the same
+    angles, so an orthonormal triple can miss by a few ulps of 1 and no more
+    (measured here: 1.1e-16 on the norms, 5.6e-17 on the dot products, 1.1e-16
+    on the cross products, 2.2e-16 on the determinant), while the closed-form
+    comparison is the identical expression and is required bit for bit.
+
+    The helper is imported inside the test on purpose: the module's own basis
+    is what has to be pinned, and the copy in this file (:func:`_spherical`)
+    must not stand in for it.
+    """
+    from emfit.ntff import _unit_vectors
+
+    theta = np.array([0.0, 1e-12, 0.3, math.pi / 2.0, math.pi / 2.0, 2.0,
+                      math.pi - 1e-12, math.pi])
+    phi = np.array([0.0, 1.0, -2.5, 0.0, math.pi / 2.0, 3.0,
+                    2.0 * math.pi - 0.25, 0.0])
+    r_hat, e_th, e_ph = _unit_vectors(theta, phi)
+
+    sin_t, cos_t = np.sin(theta), np.cos(theta)
+    sin_p, cos_p = np.sin(phi), np.cos(phi)
+    closed = {
+        "r_hat": np.stack((sin_t * cos_p, sin_t * sin_p, cos_t), axis=-1),
+        "e_theta": np.stack((cos_t * cos_p, cos_t * sin_p, -sin_t), axis=-1),
+        "e_phi": np.stack((-sin_p, cos_p, np.zeros_like(theta)), axis=-1),
+    }
+    for name, got in (("r_hat", r_hat), ("e_theta", e_th), ("e_phi", e_ph)):
+        expected = closed[name]
+        difference = np.abs(got - expected)
+        assert np.array_equal(got, expected), (
+            "%s is not the closed form: max difference %.3e at theta=%.17g, "
+            "phi=%.17g" % (name, difference.max(),
+                           theta[int(difference.max(axis=1).argmax())],
+                           phi[int(difference.max(axis=1).argmax())]))
+
+    eps = np.finfo(float).eps
+    norms = np.stack([np.linalg.norm(v, axis=1) for v in (r_hat, e_th, e_ph)])
+    worst = float(np.abs(norms - 1.0).max())
+    assert worst <= 4.0 * eps, (
+        "max | |v| - 1 | = %.3e = %.2f eps" % (worst, worst / eps))
+
+    for label, first, second in (
+            ("rhat . e_theta", r_hat, e_th),
+            ("rhat . e_phi", r_hat, e_ph),
+            ("e_theta . e_phi", e_th, e_ph)):
+        worst = float(np.abs(np.einsum("qc,qc->q", first, second)).max())
+        assert worst <= 4.0 * eps, (
+            "max |%s| = %.3e = %.2f eps" % (label, worst, worst / eps))
+
+    for label, got, expected in (
+            ("rhat x e_theta", np.cross(r_hat, e_th), e_ph),
+            ("e_theta x e_phi", np.cross(e_th, e_ph), r_hat),
+            ("e_phi x rhat", np.cross(e_ph, r_hat), e_th)):
+        worst = float(np.abs(got - expected).max())
+        assert worst <= 4.0 * eps, (
+            "%s differs from the third unit vector by %.3e = %.2f eps"
+            % (label, worst, worst / eps))
+
+    det = np.linalg.det(np.stack((r_hat, e_th, e_ph), axis=1))
+    worst = float(np.abs(det - 1.0).max())
+    assert worst <= 4.0 * eps, (
+        "max |det[rhat, e_theta, e_phi] - 1| = %.3e = %.2f eps"
+        % (worst, worst / eps))
+
+
+# --- A7: the phase block is a memory decision, not a numerical one ---------
+
+def test_block_size_does_not_change_the_far_field():
+    """A block of angles changes the rounding, not the answer.
+
+    ``far_field`` never holds the ``(n_angle, n_surface)`` phase matrix whole,
+    so it multiplies it in ``block``-row slices.  What that must not do is
+    move the result: the radiated power is compared with ``==`` (measured
+    identical to the last bit for every block tried, including a ``block``
+    larger than the angle count, which is clamped to a single block), and the
+    pattern is required to agree to a few ulps.
+
+    A few ulps and not zero, because a slice of one row hands the matmul a
+    different shape than a slice of thirty-five, so the accumulator rounds
+    differently: measured 1.4e-14 V on ``E_theta`` (2.0 eps of its largest
+    entry) and 1.6e-15 on ``U`` (3.0 eps of its largest) at ``block=1``, with
+    ``block`` 4, 35 and 1000 bit for bit identical to the default.  The
+    16-eps allowance below is the room a 54-term accumulation re-associated
+    by the matmul needs; it is not a physical fudge, and the power -- which is
+    what every caller reads -- is pinned exactly instead.
+
+    The input power is passed so that the run is about the block: without it
+    each call would also emit the by-design "input power is absent" warning.
+    """
+    dump = _random_dump(3)
+    theta, phi = integration_angles(5, 7)
+    base = far_field(dump, theta, phi, p_in_w=1.0)
+    eps = np.finfo(float).eps
+    scale_e = float(max(np.abs(base.E_theta).max(), np.abs(base.E_phi).max()))
+    scale_u = float(base.U.max())
+    scale_d = float(base.D.max())
+    for block in (1, 2, 3, 7, 35, 1000):
+        far = far_field(dump, theta, phi, p_in_w=1.0, block=block)
+        diff_e = float(max(np.abs(far.E_theta - base.E_theta).max(),
+                           np.abs(far.E_phi - base.E_phi).max()))
+        diff_u = float(np.abs(far.U - base.U).max())
+        diff_d = float(np.abs(far.D - base.D).max())
+        assert far.P_rad == base.P_rad, (
+            "block=%r moved P_rad by %r W (%.17g vs %.17g)"
+            % (block, far.P_rad - base.P_rad, far.P_rad, base.P_rad))
+        assert diff_e <= 16.0 * eps * scale_e, (
+            "block=%r moved the pattern by %.3e V = %.2f eps of max|E|"
+            % (block, diff_e, diff_e / (eps * scale_e)))
+        assert diff_u <= 16.0 * eps * scale_u, (
+            "block=%r moved U by %.3e = %.2f eps of max|U|"
+            % (block, diff_u, diff_u / (eps * scale_u)))
+        assert diff_d <= 16.0 * eps * scale_d, (
+            "block=%r moved D by %.3e = %.2f eps of max|D|"
+            % (block, diff_d, diff_d / (eps * scale_d)))
+
+    for block in (0, -1, -7):
+        with pytest.raises(ValueError) as excinfo:
+            far_field(dump, theta, phi, p_in_w=1.0, block=block)
+        message = str(excinfo.value)
+        assert f"block={block}" in message, (
+            "the refusal does not name block=%r: %s" % (block, message))
+        assert "at least one angle" in message, message
+
+
+# --- A8: the gain is opt-in, and needs a positive input power --------------
+
+def test_gain_is_opt_in_and_needs_a_positive_input_power():
+    """``G = 4 pi U / p_in``, computed only when the caller supplies ``p_in``.
+
+    The archive records the power crossing the surface, not the power the
+    source delivered, so the reader must not invent one.  Four things are
+    pinned.  (a) Without ``p_in_w`` there is no gain at all: ``G`` and
+    ``p_in`` are ``None`` and a ``RuntimeWarning`` names the missing field.
+    (b) With it, ``G`` is ``4 pi U / p_in`` exactly (measured residual 0.0)
+    and therefore ``G = D P_rad / p_in`` to one rounding of ``D`` (measured
+    2.0e-16 of ``max|G|``) -- the two routes agreeing is what says the gain
+    was not normalised by something else.  (c) A zero, negative or ``nan``
+    input power is refused: a gain is a ratio, and each of those prints as a
+    plausible number instead of failing.  (d)
+    :func:`total_radiated_power` hands back the ``P_rad`` that was measured,
+    not a second quadrature that could disagree with ``D``'s denominator.
+    """
+    dump = _random_dump(3)
+    theta, phi = integration_angles(5, 7)
+    with pytest.warns(RuntimeWarning, match="input power is absent"):
+        bare = far_field(dump, theta, phi)
+    assert bare.G is None, "a gain was invented from an absent input power"
+    assert bare.p_in is None, (
+        "p_in was set to %r although no input power was passed" % (bare.p_in,))
+    assert total_radiated_power(bare) == bare.P_rad, (
+        "total_radiated_power = %.17g but P_rad = %.17g"
+        % (total_radiated_power(bare), bare.P_rad))
+
+    p_in = 2.0 * bare.P_rad + 0.37
+    far = far_field(dump, theta, phi, p_in_w=p_in)
+    assert far.p_in == p_in, (
+        "p_in = %r, the caller passed %r" % (far.p_in, p_in))
+    want = 4.0 * math.pi * far.U / p_in
+    scale = float(np.abs(want).max())
+    residual = float(np.abs(far.G - want).max()) / scale
+    assert residual <= 1e-12, (
+        "max |G - 4 pi U / p_in| / max|G| = %.3e" % residual)
+    residual = float(np.abs(far.G - far.D * far.P_rad / p_in).max()) / scale
+    assert residual <= 1e-12, (
+        "max |G - D P_rad / p_in| / max|G| = %.3e (P_rad = %.17g, p_in = %r)"
+        % (residual, far.P_rad, p_in))
+
+    for bad in (0.0, -1.0, float("nan")):
+        with pytest.raises(ValueError) as excinfo:
+            far_field(dump, theta, phi, p_in_w=bad)
+        message = str(excinfo.value)
+        assert "p_in_w=" in message, message
+        assert "positive and finite" in message, message
+        assert repr(bad) in message, (
+            "the refusal does not name p_in_w=%r: %s" % (bad, message))
+
+
+# --- A9: freq_index picks the frequency it names, and only the archive's ---
+
+def test_freq_index_selects_the_frequency_it_names():
+    """Index ``i`` of a two-frequency archive is the one-frequency archive.
+
+    ``freq_index=0`` reproduces the ``freqs=(f0,)`` record bit for bit and
+    ``freq_index=1`` reproduces ``freqs=(f1,)``; the two answers also differ,
+    which is the check that catches a kernel that ignores the index and
+    always transforms the first frequency.  Measured: identical ``E_theta``,
+    ``E_phi``, ``U``, ``G``, ``P_rad`` and ``freq`` against the single-
+    frequency archives, and a difference of 1.03 times ``max|E|`` between the
+    two frequencies of the twin.
+
+    The index is the archive's, not the caller's array: ``-1`` is out of
+    range here, not "the last one", and so is ``n_freq``, both refused with
+    the range spelled out.  ``p_in_w`` is supplied only to keep the run about
+    the frequency axis instead of the gain.
+    """
+    twin = _cube_dump(4, freqs=(DIPOLE_FREQ, 2.0 * DIPOLE_FREQ))
+    singles = [_cube_dump(4, freqs=(freq,))
+               for freq in (DIPOLE_FREQ, 2.0 * DIPOLE_FREQ)]
+    theta, phi = integration_angles(4, 6)
+    got = [far_field(twin, theta, phi, freq_index=index, p_in_w=1.0)
+           for index in (0, 1)]
+    for index, single in enumerate(singles):
+        want = far_field(single, theta, phi, p_in_w=1.0)
+        assert got[index].freq == want.freq, (
+            "freq_index=%d gave freq=%r, the single-frequency archive holds %r"
+            % (index, got[index].freq, want.freq))
+        for name in ("E_theta", "E_phi", "U", "G", "theta", "phi"):
+            assert np.array_equal(getattr(got[index], name),
+                                  getattr(want, name)), (
+                "freq_index=%d: %s differs from the one-frequency archive by "
+                "%.3e" % (index, name,
+                          float(np.abs(getattr(got[index], name)
+                                       - getattr(want, name)).max())))
+        assert got[index].P_rad == want.P_rad, (
+            "freq_index=%d: P_rad = %.17g, the one-frequency archive gives "
+            "%.17g" % (index, got[index].P_rad, want.P_rad))
+
+    scale = float(max(np.abs(got[0].E_theta).max(),
+                      np.abs(got[0].E_phi).max()))
+    apart = float(max(np.abs(got[0].E_theta - got[1].E_theta).max(),
+                      np.abs(got[0].E_phi - got[1].E_phi).max()))
+    assert apart > 1e-2 * scale, (
+        "freq_index 0 and 1 differ by only %.3e = %.2e of max|E| = %.6g: the "
+        "index is not being read" % (apart, apart / scale, scale))
+
+    for bad in (-1, 2):
+        with pytest.raises(IndexError) as excinfo:
+            far_field(twin, theta, phi, freq_index=bad)
+        message = str(excinfo.value)
+        assert f"freq_index={bad}" in message, message
+        assert "the archive holds 2 frequencies" in message, message
+        assert "0..1" in message, message
+
+
+# --- A10: a current with a normal component is refused, and named ----------
+
+def test_a_non_tangential_current_is_refused_by_entry():
+    """``J_s = n_hat x H_t`` has no normal component; a record that does is.
+
+    The writer forms the equivalent current by crossing the unit normal with a
+    tangential field, so ``J_s . n_hat`` is zero to rounding -- unless the
+    archive was built some other way, in which case that face's contribution
+    is silently wrong and the pattern still looks like a pattern.  The reader
+    therefore allows ``_NORMAL_TOL = 1e-9`` of ``max|J_s|`` and no more, and
+    the refusal names the entry: ``J_s[freq, sample]``, the offending
+    projection and the ratio to ``max|J_s|``.
+
+    Both sides of that tolerance are walked here, by adding a component along
+    the sample's own outward normal to sample 5 of the 54-sample cube
+    :func:`_random_dump` builds.  Measured: a component of 1e-3 of
+    ``max|J_s|`` is refused with ``J_s[0, 5]`` in the message, and one of
+    1e-12 is accepted and transforms, moving ``P_rad`` by 1e-13 relative --
+    which is why the tolerance is a relative one and not an absolute floor on
+    the projection.
+    """
+    dump = _random_dump(3)
+    theta, phi = integration_angles(4, 6)
+    scale = float(np.abs(dump.J_s).max())
+    sample = 5
+
+    refused = np.array(dump.J_s, copy=True)
+    refused[0, sample] += 1e-3 * scale * dump.normals[sample]
+    worst = float(np.abs(np.einsum("fqc,qc->fq", refused, dump.normals)).max())
+    with pytest.raises(ValueError) as excinfo:
+        _rebuild(dump, J_s=refused)
+    message = str(excinfo.value)
+    assert f"J_s[0, {sample}]" in message, (
+        "the refusal does not name the entry: %s" % message)
+    assert f"|J_s . n_hat|={worst!r}" in message, (
+        "the refusal does not report the measured projection %r: %s"
+        % (worst, message))
+    assert f"max|J_s|={scale!r}" in message, (
+        "the refusal does not report max|J_s| = %r: %s" % (scale, message))
+    assert "tangential to it" in message, message
+
+    accepted = np.array(dump.J_s, copy=True)
+    accepted[0, sample] += 1e-12 * scale * dump.normals[sample]
+    loose = _rebuild(dump, J_s=accepted)
+    far = far_field(loose, theta, phi, p_in_w=1.0)
+    base = far_field(dump, theta, phi, p_in_w=1.0)
+    ratio = far.P_rad / base.P_rad
+    assert abs(ratio - 1.0) <= 1e-12, (
+        "a 1e-12 normal component moved P_rad by %.3e relative (%.17g vs "
+        "%.17g)" % (ratio - 1.0, far.P_rad, base.P_rad))
+
