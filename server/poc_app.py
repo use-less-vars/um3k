@@ -5165,6 +5165,19 @@ VIS_BETA_BANKED_RAD_PER_M = 231.55331672912826
 #: Cells per side of the |E| sampling grid. A PICTURE resolution, not a solver
 #: one: the mode is solved on the mesh, this only sets how finely it is sampled.
 MODE_GRID_CELLS = 48
+#: Take every ``stride``-th SAMPLE of that same square grid for the arrow field:
+#: one arrow per lattice cell each way (10 x 10 = 100 arrows on the shipped 48),
+#: which is a density a reader can follow. The picture keeps every sample; only
+#: the arrows are strided, and a point the arrows do not sit on simply has none.
+MODE_QUIVER_STRIDE = 5
+#: Longest arrow, as a fraction of the shorter side of the sampled box. WHY this
+#: number: one stride of the arrow lattice is ``MODE_QUIVER_STRIDE / (cells - 1)``
+#: = 0.1064 of that side, and 80 % of it (0.0851) is the longest shaft that still
+#: leaves the head inside its OWN lattice cell - so two neighbouring arrows never
+#: overlap, and an arrow beside the peak cannot be read as part of it. The length
+#: below the peak is scaled LINEARLY by |E_t|, so the ratio between two arrows is
+#: the recorded ratio of the two fields and not a re-normalisation of it.
+MODE_QUIVER_MAX_LEN_FRACTION = 0.8 * MODE_QUIVER_STRIDE / float(MODE_GRID_CELLS - 1)
 #: The memo behind ``mode_view``'s "a second press is instant" promise. Keyed by
 #: the record path, its mtime, the cell count and k, so an edited geometry or a
 #: changed request is a miss rather than a stale answer.
@@ -5301,18 +5314,14 @@ def _mode_delta_pct(beta, reference):
     return 100.0 * (float(beta) - reference) / reference
 
 
-def _mode_field_grid(result, extent, cells=MODE_GRID_CELLS, index=None):
-    """|E| of the solved mode on a ``(cells, cells)`` (z, y) sampling of the box.
+def _mode_grid_axes(result, extent, cells=MODE_GRID_CELLS):
+    """The ``(y, z)`` sampling axes a mode is drawn on, in metres.
 
-    Sampled through ``Mode2D.e_at`` - the same Whitney interpolation the field
-    is defined by - at the mesh's own axis endpoints, so the sampling never
-    lands outside the triangulation (``e_at`` raises there, and the tolerance is
-    tight enough that a re-derived extent would trip it).
-
-    ``index`` samples a CANDIDATE instead of the solver's pick: the same axes,
-    the same ``solved`` object, through ``Mode2D.e_at_candidate``. That is why
-    the picker below needs no second solve, and why a candidate's picture and
-    the fundamental's are drawn from one interpolation on one grid.
+    The mode's OWN mesh axes when the mesh carries them (``grid_axes``), so the
+    sampling never lands outside the triangulation; the box extent otherwise.
+    Shared by the |E| picture grid and the arrow grid, so the two can never
+    sample different points - a coloured cell and an arrow over it disagreeing
+    about where the field is would be a bug no reader can see.
     """
     y_max, z_max = (float(extent[0]), float(extent[1]))
     axes = result.mesh.grid_axes
@@ -5326,6 +5335,23 @@ def _mode_field_grid(result, extent, cells=MODE_GRID_CELLS, index=None):
         y_lo, y_hi, z_lo, z_hi = -y_max, y_max, 0.0, z_max
     gy = np.linspace(y_lo, y_hi, int(cells))
     gz = np.linspace(z_lo, z_hi, int(cells))
+    return gy, gz
+
+
+def _mode_field_grid(result, extent, cells=MODE_GRID_CELLS, index=None):
+    """|E| of the solved mode on a ``(cells, cells)`` (z, y) sampling of the box.
+
+    Sampled through ``Mode2D.e_at`` - the same Whitney interpolation the field
+    is defined by - at the mesh's own axis endpoints, so the sampling never
+    lands outside the triangulation (``e_at`` raises there, and the tolerance is
+    tight enough that a re-derived extent would trip it).
+
+    ``index`` samples a CANDIDATE instead of the solver's pick: the same axes,
+    the same ``solved`` object, through ``Mode2D.e_at_candidate``. That is why
+    the picker below needs no second solve, and why a candidate's picture and
+    the fundamental's are drawn from one interpolation on one grid.
+    """
+    gy, gz = _mode_grid_axes(result, extent, cells)
     yy, zz = np.meshgrid(gy, gz, indexing="xy")
     points = np.stack([yy.ravel(), zz.ravel()], axis=1)
     if index is None:
@@ -5333,6 +5359,99 @@ def _mode_field_grid(result, extent, cells=MODE_GRID_CELLS, index=None):
     else:
         field = np.asarray(result.e_at_candidate(int(index), points), dtype=float)
     return np.hypot(field[:, 0], field[:, 1]).reshape(int(cells), int(cells))
+
+
+def _mode_vector_grid(
+    result, extent, cells=MODE_GRID_CELLS, stride=MODE_QUIVER_STRIDE, index=None
+):
+    """(E_y, E_z) of the mode on the STRIDED samples of the same box. NEVER raises.
+
+    Shaped like ``grid`` - ``(cells, cells, 2)``, indexed ``(z, y)`` - so the two
+    are one sampling of one mode and an arrow can be placed by the index its
+    cell already has. What ``_mode_field_grid`` keeps as ``hypot``, this keeps as
+    the two components it is made of: the transverse field in the cross-section
+    plane is a two-component vector at every point, and a magnitude cannot say
+    which way it points.
+
+    Only every ``stride``-th sample is asked for - a point the picture does not
+    resolve gets no arrow either - and every other entry is NaN, the one value
+    an arrow is never drawn on. A sampled point the interpolation cannot answer
+    for (outside the triangulation: ``Mode2D.e_at`` raises ``ValueError`` there)
+    is left NaN and COUNTED, because an arrow at a point the field was never
+    evaluated at would be an invented arrow.
+
+    ``index`` samples a CANDIDATE, through ``e_at_candidate``, exactly as
+    ``_mode_field_grid`` does, so a picker row and its arrows come from the same
+    eigenvector and the same grid.
+    """
+    cells = int(cells)
+    grid = np.full((cells, cells, 2), np.nan, dtype=float)
+    try:
+        gy, gz = _mode_grid_axes(result, extent, cells)
+    except Exception as exc:  # noqa: BLE001 - the arrows are an EXTRA, not the panel
+        print(f"[poc_app] mode vector field refused: {exc}", file=sys.stderr)
+        return grid
+    picks = np.arange(0, cells, max(1, int(stride)))
+    yy, zz = np.meshgrid(gy[picks], gz[picks], indexing="xy")
+    points = np.stack([yy.ravel(), zz.ravel()], axis=1)
+    total = int(points.shape[0])
+    try:
+        if index is None:
+            field = np.asarray(result.e_at(points), dtype=float)
+        else:
+            field = np.asarray(result.e_at_candidate(int(index), points), dtype=float)
+    except ValueError:
+        # ONE point outside is enough for _locate to refuse the WHOLE array, so
+        # the mask is recovered point by point: that is the only way to say how
+        # many were masked, and a count nobody can state is a count nobody can
+        # check.
+        field = None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[poc_app] mode vector field refused: {exc}", file=sys.stderr)
+        return grid
+    if field is not None and field.shape != (total, 2):
+        field = None
+    outside = 0
+    if field is None or not np.all(np.isfinite(field)):
+        field = np.full((total, 2), np.nan, dtype=float)
+        outside = 0
+        for k in range(total):
+            try:
+                one = (
+                    result.e_at(points[k : k + 1])
+                    if index is None
+                    else result.e_at_candidate(int(index), points[k : k + 1])
+                )
+            except ValueError:
+                outside += 1
+                continue
+            except Exception as exc:  # noqa: BLE001 - one point is not the field
+                print(
+                    f"[poc_app] mode vector field point {k} skipped: {exc}",
+                    file=sys.stderr,
+                )
+                outside += 1
+                continue
+            field[k] = np.asarray(one, dtype=float)[0]
+    sampled = total - outside
+    if sampled <= 0:
+        print(
+            "[poc_app] mode vector field refused: no sampled point is inside the "
+            "mesh",
+            file=sys.stderr,
+        )
+        return grid
+    if outside:
+        print(
+            f"[poc_app] mode vector field: {sampled} of {total} sampled points "
+            f"inside the mesh, {outside} masked (no arrow drawn on those)",
+            file=sys.stderr,
+        )
+    # Rows come back with y fastest (the meshgrid above), which is the (z, y)
+    # layout ``grid`` already uses - scattering them the other way round would
+    # mirror the arrows into the wrong axis without raising.
+    grid[np.ix_(picks, picks)] = field.reshape(picks.size, picks.size, 2)
+    return grid
 
 
 def _mode_caption(result, mesh) -> str:
@@ -5623,6 +5742,15 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
     # before the timing is closed: a caption that under-reports the wall clock is
     # exactly the kind of flattery this panel must not print.
     result["grid"] = _mode_field_grid(solved, extent)
+    # The SAME box and the SAME solve, sampled for the ARROW field: (E_y, E_z) on
+    # a strided lattice (MODE_QUIVER_STRIDE), so a point with no finite field
+    # carries NaN and gets no arrow instead of a zero-length one. Never raises: a
+    # refusal leaves an all-NaN grid and the |E| picture is what the panel shows.
+    result["grid_vec"] = _mode_vector_grid(solved, extent)
+    # The axes that sampling used, carried on the result so a view can place an
+    # arrow without re-deriving them from ``extent``: a candidate view is a COPY
+    # of this dict, so this one key covers the fundamental and every candidate.
+    result["grid_vec_axes"] = _mode_grid_axes(solved, extent)
     # EVERY candidate the pencil kept, not only the one it picked, each with its
     # own |E| sampled from the SAME solve above - so a pick in the browser is a
     # lookup and never a re-solve. ``chosen`` is carried as an INDEX into
@@ -5636,6 +5764,7 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
     # the same function is how a later edit reads the wrong one.
     kept = []
     grids = []
+    grid_vecs = []
     try:
         records = [dict(record) for record in mode2d.candidate_records(solved)]
     except Exception as exc:  # noqa: BLE001 - the picker is an EXTRA, the panel is not
@@ -5651,13 +5780,19 @@ def _mode_view(page, *, lateral_cells, k, memo, started):
                 file=sys.stderr,
             )
             continue
-        # Appended together and only on success, so the two lists stay aligned:
-        # a record whose field could not be sampled is not offered as a row the
+        # This candidate's OWN arrow field, on the axes the fundamental above
+        # used: a pick that shows a candidate's |E| must show that candidate's
+        # arrows, or the arrows and the picture would describe two modes.
+        grid_vec = _mode_vector_grid(solved, extent, index=record["index"])
+        # Appended together and only on success, so the lists stay aligned: a
+        # record whose field could not be sampled is not offered as a row the
         # picker can point at, because there would be no picture behind it.
         kept.append(record)
         grids.append(grid)
+        grid_vecs.append(grid_vec)
     result["candidates"] = kept
     result["candidate_grids"] = tuple(grids)
+    result["candidate_grid_vecs"] = tuple(grid_vecs)
     # Closed AFTER the candidate sampling, so the wall clock this caption prints
     # is what the press actually cost.
     result["seconds"] = time.perf_counter() - started
@@ -5692,7 +5827,14 @@ def mode_view(page, *, lateral_cells=44, k=4, cache=None) -> dict:
     sampling of the box), ``extent``, ``n_nodes``, ``n_edges``, ``seconds`` and
     ``caption``, plus ``chosen`` (the picked candidate's index), ``candidates``
     (the pencil's own records, every one it kept) and ``candidate_grids`` (the
-    ``|E|`` of each, aligned with ``candidates``). ``k`` defaults to 4 - the
+    ``|E|`` of each, aligned with ``candidates``). It also carries the ARROW
+    field those pictures can be overlaid with: ``grid_vec`` - ``(E_y, E_z)`` on
+    the strided lattice ``MODE_QUIVER_STRIDE`` takes out of the same square
+    sampling, NaN where the mesh has no field - ``grid_vec_axes`` (the ``(y, z)``
+    sampling axes in metres, so an arrow can be placed without re-deriving them)
+    and ``candidate_grid_vecs`` (one per candidate, aligned with
+    ``candidates``). A view copied for a pick carries that candidate's own
+    ``grid_vec``. ``k`` defaults to 4 - the
     same count ``solve_modes`` defaults to - because a panel that reports ONE
     mode while the pencil extracted four is hiding the others.
 
@@ -5935,14 +6077,26 @@ def _mode_view_for_candidate(result, index):
         if not isinstance(result, dict) or not result.get("ok"):
             return None
         picked = int(index)
-        for record, grid in zip(
-            result.get("candidates") or (), result.get("candidate_grids") or ()
+        # A view carries the candidate's OWN arrow field beside its ``|E|``, so
+        # an overlay drawn on top of a picked picture is that candidate's field
+        # and not the fundamental's. The vectors are indexed by the same
+        # position as the grid, and a result that carries no vectors at all (an
+        # older shape, or a test fixture) is answered without one rather than
+        # with the fundamental's - the STALE key is dropped so nothing can be
+        # drawn from it.
+        vecs = result.get("candidate_grid_vecs") or ()
+        for position, (record, grid) in enumerate(
+            zip(result.get("candidates") or (), result.get("candidate_grids") or ())
         ):
             if not isinstance(record, dict) or grid is None:
                 continue
             if int(record.get("index")) == picked:
                 view = dict(result)
                 view["grid"] = grid
+                if position < len(vecs) and vecs[position] is not None:
+                    view["grid_vec"] = vecs[position]
+                else:
+                    view.pop("grid_vec", None)
                 return view
         return None
     except Exception:  # noqa: BLE001
@@ -6038,6 +6192,87 @@ def _mode_picture_grid(result, *, x_mm: float, y_centre_mm: float = 0.0):
         return image
     except Exception:  # noqa: BLE001 - a picture is never worth a traceback
         return None
+
+
+def _mode_quiver_arrows(result, *, x_mm: float, y_centre_mm: float = 0.0):
+    """The mode's transverse field as arrow anchors and shafts, in MILLIMETRES.
+
+    Returns ``(points, vectors)``, both ``(n, 3)``: where each arrow starts on
+    the cross-section plane the picture stands in (``x`` fixed at ``x_mm``, y
+    mapped exactly as ``_mode_picture_grid`` maps it, z from the grid's own
+    axis) and the shaft lying IN that plane. The third component is ZERO, not
+    omitted: this mode's field has two components and neither points out of the
+    cross-section, so an arrow out of the plane would be a component nobody
+    solved for.
+
+    The shaft is the field's own DIRECTION - ``(E_y, E_z)`` normalised, so the
+    eigenvector's sign is visible and a sign reversal cannot hide - and a length
+    LINEAR in ``|E_t|``: ``MODE_QUIVER_MAX_LEN_FRACTION`` of the shorter side of
+    the sampled box at the peak, in proportion below it. Two arrows therefore
+    stand in the recorded ratio of the two fields, and the longest still fits
+    inside its own lattice cell (see the constant).
+
+    A NaN sample is skipped - a point with no field gets no arrow - and a result
+    with no vector grid, no axes, a non-finite extent or a field that is zero
+    everywhere returns EMPTY arrays. The caller then draws nothing, rather than
+    a lattice of zero-length glyphs that reads as a solved zero field.
+    """
+    empty = (np.empty((0, 3), dtype=float), np.empty((0, 3), dtype=float))
+    try:
+        if not isinstance(result, dict):
+            return empty
+        data = result.get("grid_vec")
+        axes = result.get("grid_vec_axes")
+        extent = result.get("extent")
+        if data is None or axes is None or extent is None:
+            return empty
+        data = np.asarray(data, dtype=float)
+        if data.ndim != 3 or data.shape[2] != 2 or min(data.shape[:2]) < 1:
+            return empty
+        gy = np.asarray(axes[0], dtype=float).ravel()
+        gz = np.asarray(axes[1], dtype=float).ravel()
+        if gy.size != int(data.shape[1]) or gz.size != int(data.shape[0]):
+            return empty
+        x_mm = float(x_mm)
+        y_centre_mm = float(y_centre_mm)
+        y_max_m, z_max_m = float(extent[0]), float(extent[1])
+        if not (np.isfinite(y_max_m) and np.isfinite(z_max_m)):
+            return empty
+        if y_max_m <= 0.0 or z_max_m <= 0.0:
+            return empty
+        # Sampled AND non-zero: a NaN is "no field here", and a literal zero is
+        # "no direction here", which an arrow cannot draw either.
+        usable = np.all(np.isfinite(data), axis=2) & np.any(data != 0.0, axis=2)
+        if not np.any(usable):
+            return empty
+        kz, ky = np.nonzero(usable)
+        ey = data[kz, ky, 0]
+        ez = data[kz, ky, 1]
+        mag = np.hypot(ey, ez)
+        peak = float(np.max(mag))
+        if not np.isfinite(peak) or peak <= 0.0:
+            return empty
+        y_span_mm = abs(float(gy[-1]) - float(gy[0])) * 1e3
+        z_span_mm = abs(float(gz[-1]) - float(gz[0])) * 1e3
+        max_len_mm = MODE_QUIVER_MAX_LEN_FRACTION * min(y_span_mm, z_span_mm)
+        if not np.isfinite(max_len_mm) or max_len_mm <= 0.0:
+            return empty
+        length = max_len_mm * mag / peak
+        points = np.stack(
+            [
+                np.full(kz.shape, x_mm, dtype=float),
+                y_centre_mm + 1e3 * gy[ky],
+                1e3 * gz[kz],
+            ],
+            axis=1,
+        )
+        vectors = np.stack(
+            [np.zeros(kz.shape, dtype=float), length * ey / mag, length * ez / mag],
+            axis=1,
+        )
+        return points, vectors
+    except Exception:  # noqa: BLE001 - an arrow is never worth a traceback
+        return empty
 
 
 SOLVE_DEFAULT_XCUT_MM = 20.4
@@ -6599,6 +6834,10 @@ def run_web_vis(
     # candidate before the pencil has run.
     state.mode_choice = 0
     state.mode_choice_items = []
+    # The arrow-field toggle. OFF at boot, and off is exactly the view this
+    # panel had before the overlay existed: nothing is drawn, nothing is
+    # cleared, and every other control keeps the meaning it always had.
+    state.show_quiver = False
 
     # The Confidence & Accuracy pane: TEXT, prose rather than a picture. Its tab
     # owns its visibility, so (like the S-parameters pane) there is no style
@@ -6706,6 +6945,25 @@ def run_web_vis(
                 file=sys.stderr,
             )
 
+    def _clear_mode_quiver() -> None:
+        """Drop the Mode ARROW overlay. Own handle, own actor, own removal.
+
+        The arrow field is a SECOND actor standing on the same plane as the
+        picture, so every path that drops the picture has to drop this with it:
+        arrows left standing over an empty view would be a field with no mode
+        under it. Best-effort, for the picture's own reason - once the handle is
+        gone the actor can only come back from a fresh draw, so a stuck overlay
+        is invisible rather than wrong.
+        """
+        entry = handles.pop("mode_quiver", None)
+        if entry is not None:
+            try:
+                plotter.remove_actor(entry["actor"], render=False)
+            except Exception as exc:  # noqa: BLE001 - an orphan is not a failure
+                print(
+                    f"[poc_app] stale mode vector field kept: {exc}", file=sys.stderr
+                )
+
     def _clear_mode_picture() -> None:
         """Drop the Mode picture. ONE actor, OUTSIDE ``sheets``, own handle.
 
@@ -6721,6 +6979,11 @@ def run_web_vis(
                 plotter.remove_actor(entry["actor"], render=False)
             except Exception as exc:  # noqa: BLE001 - an orphan is not a failure
                 print(f"[poc_app] stale mode picture kept: {exc}", file=sys.stderr)
+        # The arrow overlay annotates the picture, so it goes wherever the
+        # picture goes - dropped HERE, at the one place a picture is dropped, so
+        # no path can leave arrows standing over a cross-section they were not
+        # sampled on.
+        _clear_mode_quiver()
         # Nothing mode-shaped is on this view from here on, so the page title
         # goes back to the animation's. The sync runs AFTER the pop, because
         # that is what makes it observe a view with no picture left on it -
@@ -6776,6 +7039,13 @@ def run_web_vis(
         ``index`` is the candidate this grid belongs to. It changes nothing in
         the picture - that is whatever ``result`` carries - and only names the
         candidate in the page title, which follows the picture.
+
+        The transverse ARROW field is an OVERLAY on this picture, not part of
+        it: it is off by default (``show_quiver``), it is drawn from the same
+        result on the same plane, and a build that cannot draw it loses only the
+        overlay - the picture above is the panel. Its handle also carries what
+        the overlay needs to be redrawn later (the result, the plane and the y
+        centre), so toggling it needs no second solve.
         """
         _clear_mode_picture()
         live = page["info"]
@@ -6867,14 +7137,85 @@ def run_web_vis(
             "family": "xcut",
             # What the title must name if this picture is the one on screen.
             "index": index,
+            # What the OVERLAY is drawn from, kept beside the picture so the
+            # toggle redraws this cross-section instead of re-solving it: the
+            # result (or the candidate view) plus the plane it was placed on.
+            "result": result,
+            "x_mm": x_mm_now,
+            "y_centre_mm": y_mid_mm,
         }
         # _show's rule, applied immediately: a press made from the y-cut view
         # leaves the picture hidden instead of letting it appear edge-on.
         actor.visibility = state.mode == "xcut"
+        # The overlay follows the same rule and is drawn only when it was asked
+        # for: off (the default) leaves this view byte-for-byte what it was.
+        if state.show_quiver:
+            _draw_mode_quiver(
+                result, x_mm=x_mm_now, y_centre_mm=y_mid_mm, index=index
+            )
         # The picture just put on the view is |E_t| of the mode, so the title
         # says so. A press that could not draw returned above, having already
         # reset the title through _clear_mode_picture().
         _sync_picture_title()
+
+    def _draw_mode_quiver(
+        result, *, x_mm: float, y_centre_mm: float = 0.0, index=None
+    ) -> None:
+        """Overlay the mode's transverse arrow field on the cross-section. NEVER raises.
+
+        WHY an overlay rather than a second picture: the arrows describe the SAME
+        field the |E| picture already paints, from the SAME result - a second
+        solve would be a second answer standing next to the first. WHY off by
+        default: the picture alone is what the panel has always shown, so a
+        browser that never asks for the arrows sees exactly the view it saw
+        before and the toggle stays a pure addition.
+
+        The arrows are anchored ON the plane the picture stands in and carry no
+        x component: the field in this cross-section plane has no component out
+        of itself, so an arrow leaving the plane would be an invention rather
+        than a reading.
+
+        The glyph's scale is the ARRAY NAME and not ``False``: ``scale=False``
+        draws every arrow at unit length, which would throw the recorded
+        magnitudes away and paint a field of equal arrows. Every failure is a
+        print to stderr - the overlay is an extra, never the answer.
+        """
+        try:
+            _clear_mode_quiver()
+            points, vectors = _mode_quiver_arrows(
+                result, x_mm=x_mm, y_centre_mm=y_centre_mm
+            )
+            if points.size == 0 or vectors.size == 0:
+                print(
+                    "[poc_app] mode vector field skipped: no sample to draw",
+                    file=sys.stderr,
+                )
+                return
+            # The vectors ride as POINT data named by the glyph call below: this
+            # pyvista (0.49.2) has no ``vectors=`` keyword on PolyData.
+            cloud = pv.PolyData(points)
+            cloud.point_data["mode_e_arrows"] = vectors
+            arrows = cloud.glyph(
+                orient="mode_e_arrows", scale="mode_e_arrows", factor=1.0
+            )
+            actor = plotter.add_mesh(
+                arrows,
+                color="white",
+                lighting=False,
+                show_scalar_bar=False,
+                name="mode_quiver",
+            )
+            handles["mode_quiver"] = {
+                "actor": actor,
+                "page_path": page.get("path"),
+                "family": "xcut",
+                "index": index,
+            }
+            # The picture's own rule, applied to its overlay: arrows on a hidden
+            # picture are hidden too, so the y-cut view stays as clean as it was.
+            actor.visibility = state.mode == "xcut"
+        except Exception as exc:  # noqa: BLE001 - the overlay is an EXTRA
+            print(f"[poc_app] mode vector field skipped: {exc}", file=sys.stderr)
 
     def _show(frame, mode=None) -> None:
         """Draw ONE frame of the selected family. Never rescales.
@@ -6945,6 +7286,22 @@ def run_web_vis(
             except Exception as exc:  # noqa: BLE001 - a picture is not the page
                 print(
                     f"[poc_app] mode picture visibility skipped: {exc}",
+                    file=sys.stderr,
+                )
+        # The arrow OVERLAY follows the picture it annotates - the same family,
+        # the same page - and is hidden outright while the toggle is off, so a
+        # field can never outlive the cross-section it was sampled on.
+        quiver_entry = handles.get("mode_quiver")
+        if quiver_entry is not None:
+            try:
+                quiver_entry["actor"].visibility = (
+                    bool(state.show_quiver)
+                    and quiver_entry.get("family") == mode
+                    and quiver_entry.get("page_path") == page.get("path")
+                )
+            except Exception as exc:  # noqa: BLE001 - an overlay is not the page
+                print(
+                    f"[poc_app] mode vector field visibility skipped: {exc}",
                     file=sys.stderr,
                 )
         # The family switch above is also a title switch: the picture just went
@@ -7528,6 +7885,46 @@ def run_web_vis(
                 view_handle.update()
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+
+    # The arrow overlay's toggle. The checkbox only WRITES state["show_quiver"],
+    # so the redraw hangs off the state change itself - the rule the frame slider
+    # and the mode picker already follow, and every writer of the flag then takes
+    # one path. The field is the MODE EIGENVECTOR: it does not vary from frame to
+    # frame, so it is deliberately NOT wired to the scrubber - arrows that redrew
+    # per frame would imply the transverse profile was being animated when it is
+    # a property of the mode that was solved.
+    @state.change("show_quiver")
+    def _on_show_quiver(show_quiver=None, **_kwargs) -> None:
+        """Draw or drop the Mode arrow overlay. NEVER raises."""
+        try:
+            wanted = bool(state.show_quiver if show_quiver is None else show_quiver)
+            if not wanted:
+                _clear_mode_quiver()
+            else:
+                entry = handles.get("mode_actor")
+                if isinstance(entry, dict) and entry.get("actor") is not None:
+                    # The picture's own handle carries what the overlay is drawn
+                    # from, so the toggle repaints THIS cross-section and never
+                    # re-solves it.
+                    _draw_mode_quiver(
+                        entry.get("result"),
+                        x_mm=entry.get("x_mm", 0.0),
+                        y_centre_mm=entry.get("y_centre_mm", 0.0),
+                        index=entry.get("index"),
+                    )
+                else:
+                    # Nothing solved on screen: saying so is the honest answer,
+                    # rather than drawing a field with no mode under it.
+                    print(
+                        "[poc_app] mode vector field skipped: no mode picture to "
+                        "overlay",
+                        file=sys.stderr,
+                    )
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - the overlay is an EXTRA
+            print(
+                f"[poc_app] mode vector field toggle skipped: {exc}", file=sys.stderr
+            )
 
     # The fallback expander's handler. Only the VBtn path binds it: the panels
     # path is opened and closed by Vuetify itself and never reaches the server.
@@ -8305,6 +8702,47 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - a picker is never the page
             print(f"[poc_app] mode picker unavailable: {exc}", file=sys.stderr)
 
+    def _emit_vector_toggle() -> None:
+        """The arrow-field toggle: ONE VCheckbox over ``show_quiver``.
+
+        WHY a checkbox and not a second picture: the arrows are an OVERLAY on
+        the cross-section already on screen, so the control is a yes/no about
+        that overlay and not a third view to choose between. It is OFF at boot,
+        so a browser that never touches it sees precisely the picture the panel
+        had before the overlay existed.
+
+        Probed HERE, for the picker's own reason: this entry point resolves its
+        widgets from the probe above rather than borrowing run_web's names, and
+        a build without VCheckbox is supposed to lose the TOGGLE, not the panel.
+        So it says so loudly and returns instead of reaching for a class that is
+        not there.
+        """
+        checkbox_cls = getattr(widgets_module, "VCheckbox", None)
+        if checkbox_cls is None:
+            # Loud, like every sibling probe: a variant without VCheckbox is
+            # supposed to survive the toggle's absence, not hide it.
+            print(
+                "[poc_app] vector field toggle unavailable: this build has no "
+                "VCheckbox",
+                file=sys.stderr,
+            )
+            return
+        try:
+            checkbox_cls(
+                # A (state_name, default) tuple, the picker's own binding idiom:
+                # trame turns it into the state NAME, so the browser writes
+                # ``show_quiver`` and the @state.change handler above - not a
+                # v_model - decides what a change means.
+                v_model=("show_quiver", False),
+                label="Show Vector Field",
+                hide_details=True,
+                style="padding: 2px 0;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a toggle is never the page
+            print(
+                f"[poc_app] vector field toggle unavailable: {exc}", file=sys.stderr
+            )
+
     with SinglePageLayout(server) as layout:
         # The header is the second place the page title lives, so it is written
         # from the same helper as the browser title and re-pointed from now on
@@ -8574,6 +9012,10 @@ def run_web_vis(
                                             # the reason the solve refused.
                                             _emit_mode_caption()
                                             _emit_mode_picker()
+                                            # The arrow toggle sits with the
+                                            # picker it annotates: both are
+                                            # about the picture above them.
+                                            _emit_vector_toggle()
                                         with tabs_item_cls(value="circuit"):
                                             # The netlist's OWN home, so it is
                                             # reachable without scrolling the
@@ -8615,6 +9057,7 @@ def run_web_vis(
                                     )
                                     _emit_mode_caption()
                                     _emit_mode_picker()
+                                    _emit_vector_toggle()
 
     handles["view"] = view
 
