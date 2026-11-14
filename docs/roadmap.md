@@ -135,8 +135,11 @@ normal-incidence reflection criterion is met with room to spare; the PEC-sphere 
 structure.
 
 **Deliverables.**
-- `emfit/nearfield.py` -- **landed.** `HuygensBox`: closed axis-aligned surface given by index ranges, with
-  outward normals per face, plus the transform that turns the recorded tangential fields into far-field values.
+- `emfit/nearfield.py` -- **landed, 2-D TMz only.** A `Contour`: a node-index rectangle in the plane, plus the
+  transform that turns the recorded tangential fields into far-field values.
+  **Correction:** this entry previously claimed a `HuygensBox` -- "closed axis-aligned surface given by index
+  ranges, with outward normals per face" -- lived here. No such class exists, and `nearfield.py` has never held
+  3-D geometry. The 3-D closed surface is new work, started in `emfit/huygens.py`.
 - `emfit/mie.py` -- **landed.** The exact 2-D TM Mie series for a PEC circular cylinder: series coefficients,
   bistatic scattering width and total scattering width, used as the reference the transform is judged against.
 - Field accumulation: one transient run, DFT the tangential `E` and `H` on the box contour -> complex `(E_t, H_t)`
