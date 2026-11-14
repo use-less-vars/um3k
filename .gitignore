@@ -73,3 +73,5 @@ tools/host/*/out/
 # reproducible from build/, and this tree is what makes artifacts/ look dirty)
 /artifacts/cpp_build_e3/
 *.so
+.logs/
+.log_*
