@@ -37,7 +37,9 @@ TODO list at the end of this file used to hold, one per section of
 
 The schema is the writer's, not this reader's
 ---------------------------------------------
-An archive has eighteen keys, and the shapes below are transcribed from
+An archive has eighteen documented field keys, plus a ``schema`` discriminator
+(:data:`SURFACE_DUMP_SCHEMA`) naming which artefact those keys belong to.  The
+shapes below are transcribed from
 :meth:`emfit.huygens_fields.SurfaceRecorder.save_npz` rather than invented:
 ``schema_version``, ``stray``, ``dt``, ``dx``, ``dy``, ``dz``,
 ``colocation_rule``, ``freqs``, ``coordinates``, ``normals``, ``face_id``,
@@ -101,6 +103,8 @@ from .materials import C0, ETA0
 
 __all__ = [
     "SCHEMA_VERSION",
+    "SURFACE_DUMP_SCHEMA",
+    "SURFACE_DUMP_KEYS",
     "SurfaceDump",
     "load_surface_dump",
     "FarField",
@@ -114,7 +118,9 @@ __all__ = [
 #: version means a new shape rule, so the reader refuses rather than guesses.
 SCHEMA_VERSION = 1
 
-#: The eighteen keys :meth:`SurfaceRecorder.save_npz` writes, in its order.
+#: The eighteen documented field keys of a surface archive, in the order
+#: ``save_npz`` writes them.  That writer appends one more key after these,
+#: the ``schema`` discriminator below.
 _KEYS = (
     "schema_version",
     "stray",
@@ -135,6 +141,22 @@ _KEYS = (
     "flux",
     "flux_face",
 )
+
+#: The ``schema`` discriminator :meth:`SurfaceRecorder.save_npz` stamps into
+#: every archive it writes.  It is ONE string with two readers -- the writer
+#: (:mod:`emfit.huygens_fields`, which imports this name) and the viewer's
+#: dispatcher (``poc_app.load_any_dump``) -- so an archive cannot be written
+#: under one name and dispatched on another.  It is deliberately NOT one of the
+#: eighteen keys in ``_KEYS``: an archive written before this key existed has no
+#: ``schema`` at all, and that absence is what the dispatcher's key-signature
+#: fallback reads (see ``poc_app.load_any_dump``).
+SURFACE_DUMP_SCHEMA = "emfit.surface-dump/1"
+
+#: ``_KEYS`` under a public name, because the viewer has to recognise an archive
+#: that predates :data:`SURFACE_DUMP_SCHEMA` without re-typing the eighteen
+#: strings.  This is the SAME tuple object, not a copy: ``_KEYS`` stays the one
+#: list, and :func:`load_surface_dump` keeps reading it.
+SURFACE_DUMP_KEYS = _KEYS
 
 #: How far a normal may sit from unit length and still be one.
 _UNIT_TOL = 1e-9
@@ -422,7 +444,9 @@ def load_surface_dump(path):
     ------
     ValueError
         If the archive is not a Huygens surface dump: a key is missing, the
-        ``schema_version`` is not :data:`SCHEMA_VERSION`, the writer marked it
+        ``schema`` discriminator is present and is not
+        :data:`SURFACE_DUMP_SCHEMA`, the ``schema_version`` is not
+        :data:`SCHEMA_VERSION`, the writer marked it
         ``stray``, an array has a shape that does not agree with ``freqs`` and
         ``coordinates``, a normal is not a unit axis-aligned vector, a face
         area is not strictly positive, or a field array holds a non-finite
@@ -438,6 +462,17 @@ def load_surface_dump(path):
                 raise ValueError(
                     f"not a Huygens surface archive: missing key(s) "
                     f"{', '.join(missing)}")
+            # The discriminator is OPTIONAL -- an archive written before it
+            # existed has none, and that has to keep loading -- but one that IS
+            # present has to name this reader's artefact.  A different string is
+            # a different format that happens to carry the same keys, which is
+            # exactly what must not be accepted silently.
+            if "schema" in data.files:
+                found = str(data["schema"])
+                if found != SURFACE_DUMP_SCHEMA:
+                    raise ValueError(
+                        f"not a Huygens surface archive: schema {found!r}, "
+                        f"expected {SURFACE_DUMP_SCHEMA!r}")
             raw = {key: data[key] for key in _KEYS}
         return SurfaceDump(**raw)
     except ValueError as exc:

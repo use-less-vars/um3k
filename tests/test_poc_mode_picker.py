@@ -179,11 +179,38 @@ def test_candidate_items_offer_one_row_per_kept_candidate() -> None:
     )
 
 
+def test_candidate_items_offer_the_reason_when_the_solve_refused() -> None:
+    """A refusal is the ONE thing the picker must not swallow.
+
+    The caption line already says ``mode refused: ...``; the dropdown is the
+    other half of the same press, and an empty dropdown there tells the reader
+    that something failed and then hides what.  The row is keyed by a value no
+    candidate index can be, so it does not look like a selection.
+    """
+    import poc_app as app
+
+    items = app._mode_candidate_items({"ok": False, "reason": "no record"})
+
+    assert [item["value"] for item in items] == [app._MODE_REFUSED_VALUE], (
+        "the refusal's row is keyed like a candidate, so the closed picker would "
+        f"name one the solver never kept: {items!r}"
+    )
+    assert app._MODE_REFUSED_VALUE < 0, (
+        "a candidate index is never negative, so the refusal's value must be"
+    )
+    assert "no record" in items[0]["title"], (
+        f"the solver's own reason did not reach the row that offers it: {items!r}"
+    )
+
+
 def test_candidate_items_are_empty_when_there_is_nothing_to_offer() -> None:
     import poc_app as app
 
-    assert app._mode_candidate_items({"ok": False, "reason": "no record"}) == []
     assert app._mode_candidate_items({"ok": True}) == []
+    assert app._mode_candidate_items({"ok": False}) == [], (
+        "a refusal with no reason string has nothing to say, so it must offer "
+        "no row rather than an empty one"
+    )
     assert app._mode_candidate_items(None) == []
     assert app._mode_candidate_items("not a dict") == []
 
@@ -423,6 +450,102 @@ def test_mode_view_memo_keys_on_k(tmp_path: Path) -> None:
     )
     assert app.mode_view(page, cache=cache) is four, (
         "the identical request did not answer from the memo"
+    )
+
+
+# --- the refusal the dropdown has to SHOW -----------------------------------
+
+#: ``eps_r`` 1 next to a 1.6 mm substrate is not a microstrip: every candidate of
+#: the pencil then has ``eps_eff == 1.0``, so the mode-eligibility guard
+#: (``emfit.mode2d``, which requires ``|curl_ratio| >= 1e-06`` AND
+#: ``eps_eff < eps_max - 1e-06``) rejects all of them and ``mode_view`` returns a
+#: REFUSAL.  Deliberately invalid, and cheap (0.03 s): it is the shape of a page
+#: whose geometry record is wrong, which is exactly the press whose reason must
+#: not be lost.
+INVALID_MODE_GEOMETRY = dict(MODE_GEOMETRY, eps_r=1.0)
+
+
+def _invalid_mode_page(tmp_path: Path) -> dict:
+    """A page whose SIBLING RECORD holds ``INVALID_MODE_GEOMETRY``."""
+    page_path = tmp_path / "arm.npz"
+    page_path.with_suffix(".json").write_text(
+        json.dumps({"geometry": dict(INVALID_MODE_GEOMETRY)})
+    )
+    return {"path": str(page_path), "structure_id": "A"}
+
+
+def test_the_picker_carries_the_solver_s_own_refusal_reason(tmp_path: Path) -> None:
+    import poc_app as app
+
+    result = app.mode_view(_invalid_mode_page(tmp_path), cache={})
+
+    assert not result["ok"], (
+        "this geometry no longer refuses, so the test is not on the refusal "
+        f"path at all: {result.get('reason')!r}"
+    )
+    reason = result["reason"]
+    assert "mode-eligibility guard rejects every candidate" in reason, (
+        f"the refusal is not the eligibility guard's, so the reason asserted "
+        f"below is not the one this test was written for: {reason!r}"
+    )
+
+    items = app._mode_candidate_items(result)
+
+    assert len(items) == 1, (
+        "a refusal must offer exactly one row - its reason - and nothing that "
+        f"reads as a candidate: {items!r}"
+    )
+    assert items[0]["value"] == app._MODE_REFUSED_VALUE, (
+        f"the refusal's row is keyed like a candidate: {items!r}"
+    )
+    assert reason in items[0]["title"], (
+        "the solver's reason does not reach the dropdown a press offers, so a "
+        "failed press looks like a press that had nothing to offer: "
+        f"{items[0]['title']!r}"
+    )
+    # The two channels a press publishes must not disagree about what happened.
+    assert reason in app._mode_caption_text(result), app._mode_caption_text(result)
+
+
+def test_the_evidence_archive_still_offers_its_four_candidates() -> None:
+    """The shipped artefact, really solved: the refusal row must not replace it.
+
+    The positive control for the test above - on a page that DOES solve, the
+    picker is still one row per kept candidate, in the solver's own order, with
+    no ``Error: ...`` in sight.
+    """
+    import poc_app as app
+
+    dump = (
+        REPO_ROOT
+        / "evidence"
+        / "termination"
+        / "build_A_50ohm_p51_ghostwave_fields.npz"
+    )
+    if not dump.is_file():
+        pytest.skip(f"the evidence archive is not in this checkout: {dump}")
+
+    result = app.mode_view(app.reload_page(dump), cache={})
+
+    assert result["ok"], result["reason"]
+    items = app._mode_candidate_items(result)
+
+    assert [item["value"] for item in items] == [0, 1, 2, 3], (
+        "the evidence archive's four candidates are not offered, in their own "
+        f"order, any more: {items!r}"
+    )
+    assert all(
+        item["title"].startswith(f"#{item['value']} ") for item in items
+    ), f"a row's title no longer labels the candidate it points at: {items!r}"
+    assert not any("Error:" in item["title"] for item in items), (
+        f"a solved page is offering a refusal row: {items!r}"
+    )
+    picked = [
+        item["value"] for item in items if "(the solver's pick)" in item["title"]
+    ]
+    assert picked == [int(result["chosen"])], (
+        f"the one row marked as the pick is not the solver's chosen candidate "
+        f"{result['chosen']}: {items!r}"
     )
 
 
@@ -860,3 +983,90 @@ def test_a_family_switch_titles_the_page_with_the_field_on_screen(
             f"{title!r}"
         )
 
+
+# --- load_any_dump routes a surface archive by schema ---
+
+
+def test_load_any_dump_refuses_a_huygens_surface_dump_by_name(
+    tmp_path: Path, capsys
+) -> None:
+    """A surface archive is refused BY NAME on both routes, never read as a plane.
+
+    Nothing in this viewer draws surface currents, so the loader hands such a
+    file to ``emfit.ntff.load_surface_dump`` - the reader built for it - and
+    then refuses it, because returning the validated record would trade a named
+    refusal for an AttributeError in ``reload_page`` two frames down.
+
+    Two predicates reach that refusal and both are pinned here: the ``schema``
+    discriminator, and the key SIGNATURE that is all an archive predating the
+    discriminator carries.  The arrays are zeros on purpose - the claim under
+    test is which READER the file is handed to, not the physics - so the zeros
+    land in whichever branch of ``load_surface_dump`` they happen to satisfy
+    (validated, or refused by it), and the loader refuses at exit code 2 either
+    way.
+    """
+    import poc_app as app
+
+    from emfit.ntff import SURFACE_DUMP_KEYS, SURFACE_DUMP_SCHEMA
+
+    def _write(path, stamp_schema):
+        payload = {
+            "schema_version": np.asarray(1),
+            "stray": np.asarray(False),
+            "dt": np.asarray(1e-12),
+            "dx": np.asarray(1e-3),
+            "dy": np.asarray(1e-3),
+            "dz": np.asarray(1e-3),
+            "colocation_rule": np.asarray("zeros, for the route"),
+            "freqs": np.zeros(2),
+            "coordinates": np.zeros((3, 3)),
+            "normals": np.zeros((3, 3)),
+            "face_id": np.zeros(3, dtype=np.int8),
+            "dA": np.zeros(3),
+            "E_t": np.zeros((2, 3, 2), dtype=np.complex128),
+            "H_t": np.zeros((2, 3, 2), dtype=np.complex128),
+            "J_s": np.zeros((2, 3, 3), dtype=np.complex128),
+            "M_s": np.zeros((2, 3, 3), dtype=np.complex128),
+            "flux": np.zeros(2),
+            "flux_face": np.zeros((2, 3), dtype=np.complex128),
+        }
+        # the fixture is only a surface dump if it carries exactly the reader's
+        # keys, so a key added to the writer later fails here rather than
+        # silently turning this test into a plane-dump test
+        assert set(payload) == set(SURFACE_DUMP_KEYS), (
+            sorted(set(SURFACE_DUMP_KEYS) ^ set(payload))
+        )
+        assert app.PLANE_KEY not in payload
+        if stamp_schema:
+            payload["schema"] = np.asarray(SURFACE_DUMP_SCHEMA)
+        np.savez(path, **payload)
+        return path
+
+    stamped = _write(tmp_path / "surface.npz", stamp_schema=True)
+    with pytest.raises(SystemExit) as stamped_exit:
+        app.load_any_dump(stamped)
+    assert stamped_exit.value.code == 2, (
+        "a surface dump reached the plane loader instead of being refused: "
+        f"exit code {stamped_exit.value.code!r}"
+    )
+    stamped_err = capsys.readouterr().err
+    assert "Huygens surface dump" in stamped_err, (
+        "the refusal does not say what the file IS, so a caller cannot tell a "
+        f"surface archive from a corrupt plane dump: {stamped_err!r}"
+    )
+
+    # the branch that most needs pinning: an archive written BEFORE the
+    # discriminator existed carries no ``schema`` at all, and the key signature
+    # alone has to route it to the same refusal
+    legacy = _write(tmp_path / "surface_legacy.npz", stamp_schema=False)
+    with pytest.raises(SystemExit) as legacy_exit:
+        app.load_any_dump(legacy)
+    assert legacy_exit.value.code == 2, (
+        "an archive with no ``schema`` key fell through to the plane loader on "
+        f"its key signature alone: exit code {legacy_exit.value.code!r}"
+    )
+    legacy_err = capsys.readouterr().err
+    assert "Huygens surface dump" in legacy_err, (
+        "the legacy key-signature route does not name the file as a surface "
+        f"dump: {legacy_err!r}"
+    )

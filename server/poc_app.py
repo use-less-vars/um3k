@@ -518,14 +518,62 @@ def load_any_dump(path: Path) -> dict:
     not ours" is a REFUSAL rather than a fallback: a future dump format must not
     be read by this loader's shape expectations just because the filename looked
     familiar.
+
+    A HUYGENS SURFACE DUMP is the same rule taken one step further.  It is
+    handed to the reader built for it, ``emfit.ntff.load_surface_dump``, which
+    validates every key and names the one that fails - and then this loader
+    refuses it BY NAME, because nothing in this viewer draws surface currents:
+    it is never passed to ``load_dump``, whose shape expectations are a plane
+    dump's (before this dispatch existed such a file died on the missing
+    ``plane_ez``), and the validated ``SurfaceDump`` is not RETURNED either:
+    ``reload_page`` reads ``info.get`` and ``_plane_layout`` reads plane keys, so
+    returning one would trade a named refusal for an AttributeError two frames
+    down.
     """
     schema = ""
+    names: tuple = ()
     if path.is_file():
         with np.load(path) as data:
+            names = tuple(data.files)
             if "schema" in data.files:
                 schema = str(data["schema"])
     if schema in VIS_SCHEMAS:
         return load_vis(path)
+    # The discriminator on anything written since it existed, OR - for an
+    # archive that predates it - this key SIGNATURE: every key
+    # ``load_surface_dump`` demands is present and the plane dump's own
+    # ``plane_ez`` is ABSENT.  Both halves are load-bearing.  The eighteen keys
+    # are what make it a predicate rather than a guess about a filename (no
+    # plane dump carries ``colocation_rule``, ``normals`` or ``dA``), and
+    # ``plane_ez`` is what keeps this from claiming a plain dump if a future
+    # format ever grows those keys.  The list is IMPORTED from emfit.ntff, not
+    # re-typed here, so the eighteen strings have one home; it is imported here
+    # rather than at module scope because this module is stdlib + numpy only at
+    # import time.
+    from emfit.ntff import SURFACE_DUMP_KEYS, SURFACE_DUMP_SCHEMA, load_surface_dump
+
+    legacy_surface_signature = (
+        not schema and PLANE_KEY not in names and set(SURFACE_DUMP_KEYS) <= set(names)
+    )
+    if schema == SURFACE_DUMP_SCHEMA or legacy_surface_signature:
+        try:
+            load_surface_dump(path)
+        except ValueError as exc:
+            print(
+                f"[poc_app] {path} carries the Huygens surface dump's keys but "
+                f"is not a readable one: {exc}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        print(
+            f"[poc_app] {path} is a Huygens surface dump (schema "
+            f"{SURFACE_DUMP_SCHEMA!r}), not a field plane: it is read by "
+            "emfit.ntff.load_surface_dump, which validates it, and this viewer "
+            "has no surface-current renderer - it draws plane dumps and "
+            "wavedude animations only.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     if schema:
         print(
             f"[poc_app] {path} declares schema {schema!r}, which this viewer does "
@@ -5824,18 +5872,38 @@ def _mode_candidate_title(record, *, chosen=None) -> str:
         return f"#{index}"
 
 
+#: The ``value`` a refusal's one picker row carries. A kept candidate's value is
+#: always its own index, i.e. >= 0, so this can never name one: the select's
+#: closed state (``v_model=("mode_choice", 0)``) then shows the reason with NO
+#: row selected, instead of implying the solver kept a candidate it did not.
+_MODE_REFUSED_VALUE = -1
+
+
 def _mode_candidate_items(result):
     """The Mode picker's items for a ``mode_view`` result. NEVER raises.
 
-    ``[]`` when the result carries no candidate list - a refusal, a fake result
-    from a proof, or an older cached dict - so a caller can emit the picker
-    unconditionally and have it simply offer nothing. ``value`` is the
-    candidate's own index, the same number ``result['chosen']`` and
+    A REFUSAL yields one row carrying the solver's OWN reason, because the
+    dropdown is the only channel a press offers its outcome through: an empty
+    picker beside a ``mode refused: ...`` caption tells the reader that
+    something failed and then hides what. That row's ``value`` is
+    :data:`_MODE_REFUSED_VALUE`, which no candidate index can be, so it never
+    reads as a selection and picking it is inert (``_on_mode_choice`` returns
+    early: a refusal leaves ``handles["mode_result"]`` as None).
+
+    ``[]`` for everything that genuinely carries nothing to offer: a non-dict,
+    an ok result with no candidate list (a fake result from a proof, or an older
+    cached dict), and a refusal that records no reason string. ``value`` on a
+    candidate's item is its own index, the same number ``result['chosen']`` and
     ``candidate_grids`` are keyed by.
     """
     try:
-        if not isinstance(result, dict) or not result.get("ok"):
+        if not isinstance(result, dict):
             return []
+        if not result.get("ok"):
+            reason = result.get("reason")
+            if reason is None:
+                return []
+            return [{"title": f"Error: {reason}", "value": _MODE_REFUSED_VALUE}]
         chosen = result.get("chosen")
         items = []
         for record in result.get("candidates") or ():

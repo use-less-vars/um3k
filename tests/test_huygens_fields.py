@@ -61,6 +61,7 @@ import pytest
 from emfit.grid import Grid
 from emfit.huygens import HuygensBounds, SurfaceSamples
 from emfit.huygens_fields import SurfaceRecorder, surface_areas
+from emfit.ntff import SURFACE_DUMP_SCHEMA
 from emfit.operators import CellComplex
 
 NX, NY, NZ = 4, 3, 2
@@ -1184,9 +1185,11 @@ def test_flux_sign_follows_the_normal():
 # tolerance there would hide precisely the precision change it is meant to
 # catch.
 
-#: The seven metadata keys, i.e. the numbers, the version and the rule name.
+#: The eight metadata keys, i.e. the numbers, the version, the rule name and
+#: the ``schema`` discriminator ``save_npz`` appends last.
 NPZ_METADATA_KEYS = (
-    "schema_version", "stray", "dt", "dx", "dy", "dz", "colocation_rule")
+    "schema_version", "stray", "dt", "dx", "dy", "dz", "colocation_rule",
+    "schema")
 
 #: The payload: the geometry, the phasors and the power.
 NPZ_PAYLOAD_KEYS = (
@@ -1223,10 +1226,16 @@ def test_save_npz_writes_the_documented_schema(tmp_path):
 
     with np.load(path) as data:
         # the key set is the contract, so it is asserted as a set and then by
-        # name: a missing key is absent, an extra one is undocumented API
+        # name: a missing key is absent, an extra one is undocumented API --
+        # except the 19th, ``schema``, which IS documented API: it is
+        # ``emfit.ntff.SURFACE_DUMP_SCHEMA``, the discriminator naming which
+        # artefact the other eighteen keys belong to
         assert set(data.files) == set(NPZ_METADATA_KEYS) | set(NPZ_PAYLOAD_KEYS)
         for key in NPZ_METADATA_KEYS + NPZ_PAYLOAD_KEYS:
             assert key in data.files
+        # a discriminator is only usable if it names the artefact this reader
+        # was built for, so the stored VALUE is asserted, not just its presence
+        assert str(data["schema"]) == SURFACE_DUMP_SCHEMA
 
         version = data["schema_version"]
         assert version.shape == ()

@@ -128,6 +128,7 @@ from __future__ import annotations
 import numpy as np
 
 from .huygens import HuygensBounds, SurfaceSamples
+from .ntff import SURFACE_DUMP_SCHEMA
 
 __all__ = ["SurfaceRecorder", "surface_areas"]
 
@@ -692,6 +693,14 @@ class SurfaceRecorder:
         ``normals``, ``face_id``, ``dA``, ``E_t``, ``H_t``, ``J_s``, ``M_s``,
         ``flux`` and ``flux_face``.
 
+        Plus one key that is not one of those eighteen: ``schema``, the string
+        :data:`emfit.ntff.SURFACE_DUMP_SCHEMA`.  It says WHICH artefact this
+        archive is, so a loader can send it to the reader built for it instead
+        of inferring the format from a filename or from which keys happen to be
+        present; an archive written before this key existed simply has no
+        ``schema`` at all, which is how such an archive is still recognised (by
+        key signature - see ``poc_app.load_any_dump``).
+
         ``E_t`` and ``H_t`` are the physical phasors (V/m and A/m), ``J_s`` and
         ``M_s`` the physical surface currents (A/m and V/m), ``flux_face`` the
         per-face power in W and ``flux`` the net power in W -- all as read off
@@ -758,4 +767,8 @@ class SurfaceRecorder:
             M_s=self.M_s,
             flux=self.flux,
             flux_face=self.flux_face,
+            # Appended, so the eighteen documented keys keep their order and
+            # their meaning; this one says which artefact the other eighteen
+            # belong to.
+            schema=np.asarray(SURFACE_DUMP_SCHEMA),
         )
