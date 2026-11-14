@@ -6199,6 +6199,104 @@ def VCol(*, style: str = "", **kw):
     return html_widgets.Div(style=f"{base}; {style}" if style else base, **kw)
 
 
+def build_far_field_panel(surface_dump) -> dict:
+    """Integrate the ``--surface-dump`` archive and pick the ONE number.
+
+    MODULE-LEVEL, not a closure, for exactly the reason
+    ``build_frequency_chart`` (above) is: so a test can call it, and check what
+    the panel publishes, without a browser, a port or a trame widget.
+
+    WHY this panel has its own input: a far-field pattern needs the equivalent
+    currents ``J_s`` and ``M_s`` on a CLOSED surface, and the animation's plane
+    dump carries none - it is one sheet of |Ez| inside the volume. So the tab
+    reads a second artefact, named by ``--surface-dump``, and never touches
+    ``page``. That artefact also never goes through ``load_any_dump``: that
+    loader refuses a Huygens archive BY NAME (see its docstring), deliberately,
+    because nothing else in this viewer draws surface currents. Keeping the two
+    inputs apart is what lets both statements stay true.
+
+    The no-archive answer is returned FIRST, before any import and before the
+    disk is read: most runs give no archive, and a page that paid a matplotlib
+    import for a tab it cannot fill would be slower for nothing.
+
+    The builder is imported HERE, lazily, exactly the way ``_mode2d`` imports
+    its solver - this module's CLI path (``--help``, ``--list-keys``) is
+    documented as numpy-only and stays that way. The builder itself is
+    contracted never to raise, so what this needs to survive is only the
+    import; the call is wrapped anyway, so the panel keeps that promise for the
+    page even if the contract is ever broken.
+
+    Note the S-parameters helper reaches the same end a DIFFERENT way: it is a
+    module-level sibling that does its own ``import matplotlib`` inside itself,
+    so there is no import of it to guard.
+    """
+    if not surface_dump:
+        return {
+            "path": None,
+            "image": None,
+            "rows": [],
+            "reason": "no --surface-dump archive was given",
+            "caption": (
+                "no surface dump supplied: pass --surface-dump PATH to "
+                "plot a far-field pattern"
+            ),
+            "number": "",
+        }
+    builder = None
+    try:
+        # Inside the function, on purpose: the numpy-only entry points
+        # (``--help``, ``--list-keys``) must never need matplotlib, which is
+        # the same rule ``_mode2d`` follows for its solver. That is also why
+        # the import is guarded - a missing optional dependency costs this one
+        # panel and one stderr line instead of the whole page.
+        from emfit.antenna import build_far_field_report as builder
+    except Exception as exc:  # noqa: BLE001 - the panel is an extra
+        print(f"[poc_app] far-field builder unavailable: {exc}", file=sys.stderr)
+    if builder is None:
+        return {
+            "path": str(surface_dump),
+            "image": None,
+            "rows": [],
+            "reason": "the far-field report builder is unavailable",
+            "caption": (
+                "the far-field report builder could not be imported: "
+                "emfit.antenna is not usable here"
+            ),
+            "number": "",
+        }
+    try:
+        report = dict(builder(surface_dump))
+    except Exception as exc:  # noqa: BLE001 - the panel is not the page
+        # The builder is contracted never to raise. This keeps that promise
+        # TRUE for the page instead of trusting it. The reason is put through
+        # the same one-line/ASCII discipline ``emfit.antenna`` applies to its
+        # own reasons, inlined because this module has no such helper.
+        text = f"{type(exc).__name__}: {exc}"
+        detail = " ".join(
+            text.encode("ascii", "replace").decode("ascii").split()
+        )
+        reason = detail if len(detail) <= 180 else detail[:177].rstrip() + "..."
+        return {
+            "path": str(surface_dump),
+            "image": None,
+            "rows": [],
+            "reason": reason,
+            "caption": f"far-field report unavailable: {reason}",
+            "number": "",
+        }
+    peak = report.get("peak_d_dbi")
+    freq = report.get("freq")
+    # One sentence, and it names BOTH numbers: a directivity without the
+    # frequency it was taken at is not a measurement a reader can use, and
+    # the archive may hold several frequencies (freq_index picks one).
+    number = ""
+    if peak is not None and freq is not None:
+        number = f"peak directivity {peak:.2f} dBi at {freq / 1e6:.1f} MHz"
+    report["path"] = str(surface_dump)
+    report["number"] = number
+    return report
+
+
 def run_web_vis(
     info: dict,
     host: str,
@@ -6206,6 +6304,8 @@ def run_web_vis(
     fps: int = DEFAULT_FPS,
     structure=None,
     structures=None,
+    *,
+    surface_dump=None,
 ) -> int:
     """Serve the animation page for an ``emfit.vis/2`` dump.
 
@@ -6227,6 +6327,13 @@ def run_web_vis(
     slider (the frame label still counts), no html widgets costs the readout
     rows, and a missing pyvista.trame.ui is the only hard stop because without it
     there is no view at all.
+
+    ``surface_dump`` is the optional Huygens surface archive the Far Field tab
+    integrates. It is KEYWORD-ONLY and separate from ``info`` because it is a
+    different artefact from the one being animated: the page draws a plane
+    dump, and a far-field pattern can only come from currents on a closed
+    surface. It is None on every run that gives no archive, which is the
+    ordinary case - the tab then says so instead of showing an empty picture.
     """
     # Deliberately BEFORE any import of pyvista: on a machine without the web
     # stack the missing package must be a named message and exit 1, exactly as
@@ -6463,6 +6570,21 @@ def run_web_vis(
     state.s_params_image_style = "display: none;"
     state.s_params_rows = ""
     state.s_params_rows_style = "display: none;"
+
+    # The Far Field pane, on the same contract as the S-parameters one: the TAB
+    # owns visibility, so no label, no open flag and no wrapper style - these
+    # are only the payload strings its tab binds, and they exist at layout time
+    # because ``_load_far_field_panel`` pushes them before the tabs are built.
+    # Both styles start hidden for the reason they do one panel above: a tab
+    # that is never selected must not leave a broken-image box or an empty
+    # <pre> taking up room in the column, and the loader turns exactly one of
+    # them on.
+    state.far_field_caption = ""
+    state.far_field_number = ""
+    state.far_field_image = ""
+    state.far_field_image_style = "display: none;"
+    state.far_field_rows = ""
+    state.far_field_rows_style = "display: none;"
 
     # The Mode panel: caption and numbers only - one press solves the 2D
     # cross-section for the page on screen and reports it on these two strings.
@@ -7271,6 +7393,58 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - the panel is not the page
             print(f"[poc_app] confidence panel unavailable: {exc}", file=sys.stderr)
 
+    def _load_far_field_panel() -> None:
+        """Populate the Far Field panel; the tab owns its visibility.
+
+        Called ONCE while the layout is being built, like the S-parameters
+        loader: reading the archive and integrating the pattern are the slow
+        steps and neither depends on the animation frame, so
+        ``handles["far_field"]`` caches the panel and a second call republishes
+        the same strings.
+
+        A refusal is FILLED too: "no --surface-dump archive was given" is the
+        answer this tab exists to give, and a tab that opened blank would read
+        as a broken picture rather than as a missing input.
+
+        Nothing here may raise: the panel is an extra, so a failure costs the
+        panel and one stderr line, never the animation beside it.
+        """
+        try:
+            if "far_field" not in handles:
+                handles["far_field"] = build_far_field_panel(surface_dump)
+            panel = handles["far_field"]
+            caption = panel["caption"]
+            image = panel.get("image")
+            if image:
+                state.far_field_image = image
+                state.far_field_image_style = (
+                    "height: 150px; display: block; margin: 4px 0;"
+                )
+            else:
+                # No picture is a REASON, not an empty panel: the text rows are
+                # the numbers the plot would have drawn, and the reason is
+                # printed with the caption instead of being swallowed.
+                #
+                # ``rows`` from ``build_far_field_report`` are ``(label,
+                # value)`` PAIRS, not strings - the S-parameters helper's rows
+                # happen to be strings, so the identical-looking join there
+                # works and this one would raise TypeError. Flatten each pair
+                # to one line instead: the join is the whole panel, and a
+                # TypeError here would cost the caption and the number too.
+                state.far_field_rows = "\n".join(
+                    f"{row[0]}: {row[1]}"
+                    if isinstance(row, (tuple, list)) and len(row) == 2
+                    else str(row)
+                    for row in (panel.get("rows") or [])
+                )
+                state.far_field_rows_style = "font-size: 10px; margin: 4px 0;"
+                if panel.get("reason"):
+                    caption += f" (no picture: {panel['reason']})"
+            state.far_field_caption = caption
+            state.far_field_number = panel["number"]
+        except Exception as exc:  # noqa: BLE001 - the panel is not the page
+            print(f"[poc_app] far-field panel unavailable: {exc}", file=sys.stderr)
+
     @ctrl.set("mode_view_toggle")
     async def _on_mode_view(**_kwargs) -> None:
         """Solve the 2D cross-section for the page ON SCREEN, OFF the event loop.
@@ -7735,6 +7909,43 @@ def run_web_vis(
                 style=("s_params_rows_style", "display: none;"),
             )
 
+    def _emit_far_field_panel() -> None:
+        """Emit the far-field pattern inside its TAB, number first.
+
+        Same shape as ``_emit_s_params_panel``: everything inside is bound to
+        state, the TAB owns visibility (so no wrapper and no style string), and
+        the payload was pushed by ``_load_far_field_panel`` before the tabs were
+        built. The number line comes first because it is the sentence a reader
+        keeps - peak directivity and the frequency it was taken at - while the
+        caption says WHICH archive it came from, or why there is no picture.
+        """
+        if html_div is None:
+            return
+        html_div(
+            "Far Field",
+            style="font-size: 12px; font-weight: 600; padding: 2px 0;",
+        )
+        html_div(
+            "{{ far_field_number }}",
+            style="font-size: 12px; padding: 2px 0;",
+        )
+        html_div(
+            "{{ far_field_caption }}",
+            style="font-size: 11px; color: #333; padding: 2px 0;",
+        )
+        img_cls = getattr(html_widgets, "Img", None)
+        if img_cls is not None:
+            img_cls(
+                src=("far_field_image", ""),
+                style=("far_field_image_style", "display: none;"),
+            )
+        pre_cls = getattr(html_widgets, "Pre", None)
+        if pre_cls is not None:
+            pre_cls(
+                "{{ far_field_rows }}",
+                style=("far_field_rows_style", "display: none;"),
+            )
+
     def _emit_confidence_panel() -> None:
         """Emit the Confidence & Accuracy panel as TEXT inside its TAB.
 
@@ -7929,11 +8140,17 @@ def run_web_vis(
         # screen.
         handles.pop("s_params", None)
         handles.pop("confidence", None)
+        # The far field does not read this page, but it is dropped and refilled
+        # with the two above all the same: one rule for the tab payloads is what
+        # keeps a reader from having to know which cache is page-scoped, and a
+        # refill costs one cached report per solve, not one per frame.
+        handles.pop("far_field", None)
         # Refill them HERE, not "on the next open": the tabs own visibility now,
         # so no button triggers a rebuild any more - without this the tabs would
         # keep the previous page's caption and rows for good. Both loaders
         # swallow their own failures (stderr only), so no guard is needed here.
         _load_s_params_panel()
+        _load_far_field_panel()
         _load_confidence_panel()
         _rebuild_sheets()
         state.solve_status = f"solved -> {Path(applied['new_path']).name}"
@@ -8285,6 +8502,7 @@ def run_web_vis(
                                 # Each loader swallows its own failure (stderr).
                                 for _load_panel in (
                                     _load_s_params_panel,
+                                    _load_far_field_panel,
                                     _load_confidence_panel,
                                 ):
                                     _load_panel()
@@ -8315,11 +8533,11 @@ def run_web_vis(
                                     # handed - its group-item props default is
                                     # ``value: null`` and ``useGroupItem`` takes
                                     # ``toRef(() => props.value)`` as-is, with NO
-                                    # index fallback for VTab. So four bare
+                                    # index fallback for VTab. So five bare
                                     # ``VTab("label")`` calls all register ``null``,
                                     # and ``VTabsWindow`` resolves its model to the
                                     # selected TAB's value - null - which matches
-                                    # none of the four STRING window-item values.
+                                    # none of the five STRING window-item values.
                                     # Result: a tab bar that highlights a tab and a
                                     # window that renders nothing. Naming both
                                     # sides is the contract; the alternative
@@ -8329,6 +8547,11 @@ def run_web_vis(
                                     # reader cannot see in the code.
                                     with tabs_cls(v_model=("tab", "s_params")):
                                         tab_cls("S-Parameters", value="s_params")
+                                        # Second, beside the S-parameters it is
+                                        # read against: both are the antenna's
+                                        # own numbers, one from the feed and
+                                        # one from the radiating currents.
+                                        tab_cls("Far Field", value="far_field")
                                         tab_cls(
                                             "Confidence N-lambda",
                                             value="confidence",
@@ -8340,6 +8563,8 @@ def run_web_vis(
                                     ):
                                         with tabs_item_cls(value="s_params"):
                                             _emit_s_params_panel()
+                                        with tabs_item_cls(value="far_field"):
+                                            _emit_far_field_panel()
                                         with tabs_item_cls(value="confidence"):
                                             _emit_confidence_panel()
                                         with tabs_item_cls(value="modes"):
@@ -8371,16 +8596,18 @@ def run_web_vis(
                                     # FALLBACK, and here is why it exists: the tab
                                     # widgets come from trame-vuetify, an optional
                                     # install. Without them the page still has to
-                                    # show all four panels, so they are stacked in
+                                    # show all five panels, so they are stacked in
                                     # the flat order they had before the tabs -
-                                    # Confidence, then S-Parameters, then the
-                                    # Circuit box, then the Mode caption that used
+                                    # Confidence, then S-Parameters, then the Far
+                                    # Field pattern, then the Circuit box, then the
+                                    # Mode caption that used
                                     # to sit in the readout. Same
                                     # emitters, same state names, same eagerly
                                     # loaded payloads; only the tab container around
                                     # them is missing.
                                     _emit_confidence_panel()
                                     _emit_s_params_panel()
+                                    _emit_far_field_panel()
                                     _emit_circuit_netlist()
                                     _emit_load_series_panel(
                                         info.get("load_series"),
@@ -8446,6 +8673,24 @@ def main(argv=None) -> int:
             "npz dump to read; wins over --structure when given (default: the "
             "selected structure's field_dump.path, else "
             f"{DEFAULT_INPUT})"
+        ),
+    )
+    # The Huygens archive the Far Field tab integrates, and NOT a viewer input.
+    # It never reaches load_any_dump (whose refusal of a surface archive as a
+    # plane dump is deliberate and stays byte-identical), it is not read by
+    # --list-keys, and it is NOT part of the --dump-state JSON - build_state_dump
+    # is deliberately not given it - because that document describes the ONE
+    # dump a page shows, while this is a second artefact that only feeds a tab.
+    parser.add_argument(
+        "--surface-dump",
+        dest="surface_dump",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Huygens surface archive (npz schema "
+            '"emfit.surface-dump/1", emfit.ntff.SURFACE_DUMP_SCHEMA) whose '
+            "far field the Far Field tab draws; a SEPARATE input from the dump "
+            "the page animates (default: none - the tab then says so)"
         ),
     )
     parser.add_argument(
@@ -8541,7 +8786,15 @@ def main(argv=None) -> int:
             print_keys(info)
             return 0
         return run_web_vis(
-            info, args.host, args.port, args.fps, structure, structures
+            info,
+            args.host,
+            args.port,
+            args.fps,
+            structure,
+            structures,
+            # Only ever a PATH here: the far-field reader resolves nothing and
+            # must not be handed a bare relative string from a different cwd.
+            surface_dump=(_resolve(args.surface_dump) if args.surface_dump else None),
         )
 
     n_st = info[PLANE_KEY].shape[0]
