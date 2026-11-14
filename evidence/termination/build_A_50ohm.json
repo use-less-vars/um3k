@@ -59,7 +59,7 @@
         "load_units": "ohm",
         "load_value": 50.0,
         "plane_offset_from_load": 1,
-        "plane_sweep_diagnostic": true,
+        "plane_sweep_diagnostic": false,
         "s21_plane_index": 51
       },
       "bar": "the run JSON carries the load specification (value, units, plane index) and the index of the plane the S-parameters were extracted from",
@@ -160,6 +160,7 @@
     "s11_at_plane_valid": 0.0,
     "s21_plane_index": 51,
     "s21_plane_requested": 51.0,
+    "s21_provenance": "cut_plane@20.400mm",
     "station_fit_n": 8.0,
     "station_fit_span_m": 0.0084,
     "w": 0.0032,
@@ -195,22 +196,30 @@
   "meta": {
     "argv": [
       "evidence/termination/run_build_A.py",
-      "--s21-plane-col",
-      "51"
+      "--structure",
+      "A",
+      "--nsteps",
+      "2400"
     ],
     "cgroup_limit_mb": null,
-    "command_line": "evidence/termination/run_build_A.py --s21-plane-col 51",
+    "command_line": "evidence/termination/run_build_A.py --structure A --nsteps 2400",
     "cwd": "/home/jojo/PycharmProjects/EE",
-    "finished_utc": "2026-11-08T13:59:36+00:00",
+    "finished_utc": "2026-11-14T20:40:30+00:00",
     "git_rev": null,
+    "kernel_abi": 2,
+    "kernel_name": "emfit_core.fit_leapfrog",
     "label": "A",
-    "peak_rss_mb": 313.34765625,
-    "pid": 2158664,
-    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.39",
+    "n_threads_env": "1",
+    "n_threads_env_requested": "1",
+    "n_threads_kernel": 1,
+    "peak_rss_mb": 368.33984375,
+    "pid": 1397173,
+    "platform": "Linux-7.0.0-43-generic-x86_64-with-glibc2.39",
     "python": "3.12.3",
     "schema_version": 1,
-    "started_utc": "2026-11-08T13:58:58+00:00",
+    "started_utc": "2026-11-14T20:40:00+00:00",
     "status": "ok",
+    "step_engine": "cpp",
     "study": "termination-build-A",
     "trip_clause": {
       "mem_ceiling_mb": 2000.0,
@@ -224,8 +233,8 @@
       "wall_limit_s": 1400.0
     },
     "tripped": false,
-    "wall_call_s": 36.80769553896971,
-    "wall_total_s": 37.73064746707678
+    "wall_call_s": 29.25834739000129,
+    "wall_total_s": 29.721465988011914
   },
   "run": {
     "function": "emfit.studies.microstrip_wave",
@@ -277,6 +286,13 @@
     "deembed_distance_m": 0.0072000000000000015,
     "magnitude": 0.32586326001662264,
     "magnitude_one_wave_station_fit": 0.3261349242788359,
+    "passivity": {
+      "basis": "|S11|^2 + |S21|^2 on the two magnitudes this artefact publishes (s11.magnitude, the two-wave |B/A|, and s21.magnitude), compared against 1 + tolerance.  A passive two-port cannot exceed 1; the tolerance is the float64 sum's own roundoff plus the 9-decimal copy a reader may re-sum, not a physical allowance (PASSIVITY_TOL).  The magnitudes are published unclipped and unrounded, so a failing record keeps the numbers that failed.",
+      "power_sum": 0.6863820159501787,
+      "status": null,
+      "tolerance": 4e-09,
+      "verdict": "|S11|^2 + |S21|^2 = 0.686382015950 is within 1 + 4.0e-09 = 1.000000004000: the published pair is passive-coherent"
+    },
     "phase_deg": -101.418601249314,
     "station_phasors": {
       "beta_one": null,
@@ -389,16 +405,18 @@
     "deembed_distance_m": 0.0072000000000000015,
     "imag": 0.0766470019569431,
     "magnitude": 0.7617054231929281,
+    "measured": true,
     "phase_deg": 5.775191650413429,
     "phase_deg_basis": "s21 de-embedded on the cut branch, and WHICH de-embedding it is depends on the branch.  With a twin reference -- the path these loaded runs take -- reference is not None, so s21 = raw_s21 / reference.forward_ratio(x_port, x_cut) (emfit/studies.py:3352) and line_s21 is NOT called; the delay is taken out by the reference's own measured forward amplitude ratio, rescaled to the run's span, not by this run's beta.  Only on the no-reference branch does line_s21 (emfit/studies.py:1242, called at :3354) multiply by exp(+1j*beta*distance) (emfit/ports.py:1707-1731) with this run's own measured beta. Flat in L only to the extent that beta is exact -- what the de-embedding leaves is arg t + (beta_meas - beta_true)*d, so the slope recorded in phase_degeneracy.deembedded_slope_rad_per_m is this run's de-embedding residual, NOT ~0 by construction. Not the AC-7 quantity, and not the same number as the field of that name in graded.json's AC-7 block, which differences two runs over 10.0 mm.",
     "phase_rad": 0.10079610923339968,
-    "plane_from_default_policy": false,
-    "plane_policy": "explicit",
-    "plane_sweep_diagnostic": true,
+    "plane_from_default_policy": true,
+    "plane_policy": "default",
+    "plane_sweep_diagnostic": false,
     "planes_m": [
       0.0032,
       0.0204
     ],
+    "provenance": "cut_plane@20.400mm",
     "raw_basis": "operands use reference.gamma and reference.zc; raw_magnitude differs from noref raw 0.762847 by 5.8% and is not a reference-independent measurement",
     "raw_magnitude": 0.7617054231929281,
     "raw_phase_deg": 136.35478892246113,
@@ -407,7 +425,8 @@
     "raw_reference_independent": true,
     "real": 0.7578392895677355,
     "s21_plane_index": 51,
-    "s21_plane_requested": 51
+    "s21_plane_requested": 51,
+    "unmeasured_reason": null
   },
   "s21_plane": {
     "a": {
