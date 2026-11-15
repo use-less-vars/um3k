@@ -142,6 +142,20 @@ class Available:
         )
 
 
+def choose_entry(info=None, planes=None, is_vis=None) -> str:
+    """Which viewer ``main`` may hand this page to: ``"vis"`` or ``"field"``.
+
+    The one question the dispatch asks (poc_app.py:9539-9545), answered from the
+    snapshot :class:`Available` already keeps - ``source_format`` - rather than
+    from a second reading of the schema, so the fork and the flags under it
+    cannot disagree about what was loaded. ``_is_vis`` is the loader's rule
+    (poc_app.py:348-353) and :meth:`Available.compute` applies it unchanged;
+    this names the answer. It never raises: a missing, empty or malformed
+    ``info`` is the field page, so a deleted dump does not become a traceback.
+    """
+    return Available.compute(info, planes, is_vis=is_vis).source_format
+
+
 class PageContext:
     """One page's data, its availability snapshot and its presentation state.
 

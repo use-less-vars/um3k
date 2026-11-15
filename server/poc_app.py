@@ -9321,6 +9321,9 @@ def run_web_vis(
                         ctx.register("html_div", html_div)
                         ctx.register("VRow", VRow)
                         ctx.register("plotter_ui", plotter_ui)
+                        # The DATA column's two page objects and its 11
+                        # emitters/loaders, registered here because the column
+                        # now reaches them through `ctx`.
                         ctx.register_handle("widgets_module", widgets_module)
                         ctx.register_handle("info", info)
                         ctx.register("_load_s_params_panel", _load_s_params_panel)
@@ -9535,7 +9538,7 @@ def main(argv=None) -> int:
 
     # The animation dump has no station axis (its planes carry TIME instead), so
     # it forks BEFORE the legacy station clamp and station-driven viewer.
-    if _is_vis(info):
+    if um3k_context.choose_entry(info) == "vis":
         if args.list_keys:
             print_keys(info)
             return 0

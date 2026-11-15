@@ -40,6 +40,7 @@ The claims, one per test:
 """
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -533,3 +534,82 @@ def test_name_literals_are_pinned_against_poc_app():
     source = Path(poc_app.__file__).read_text(encoding="utf-8")
     assert f'view_mode = "{um3k_context.DEFAULT_VIEW_MODE}"' in source
     assert um3k_context.DEFAULT_VIEW_MODE in um3k_context.VIEW_MODES
+
+
+def _poc_app_is_vis_format():
+    """The literal ``_is_vis`` compares ``info["format"]`` against, as source.
+
+    PARSED, not imported: the claim is about poc_app's own rule (poc_app.py:348-353),
+    and reading its text keeps this file runnable with no pyvista and no trame.
+    """
+    tree = ast.parse((REPO_ROOT / "server" / "poc_app.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_is_vis":
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Compare) and isinstance(sub.left, ast.Call):
+                    compared = sub.comparators[0]
+                    if not isinstance(compared, ast.Constant):
+                        continue
+                    if isinstance(compared.value, str):
+                        return compared.value
+    raise AssertionError("poc_app._is_vis no longer compares a call against a string")
+
+
+def test_choose_entry_forks_the_two_artefacts():
+    """If this fails, main hands one artefact the other artefact's viewer."""
+    assert um3k_context.choose_entry({"format": um3k_context.VIS_FORMAT}) == "vis"
+    assert um3k_context.choose_entry(_field_info()) == "field"
+
+
+def test_choose_entry_on_a_bare_page_answers_field():
+    """If this fails, a deleted page raises instead of opening as a field page."""
+    for page in (None, {}, {"schema": "emfit.vis/2"}):
+        assert um3k_context.choose_entry(page) == "field"
+
+
+def test_choose_entry_never_raises_on_a_malformed_format():
+    """If this fails, a hand-edited ``format`` value turns dispatch into a traceback."""
+    for value in (123, None, ["wavedude"], "wavedude "):
+        assert um3k_context.choose_entry({"format": value}) == "field"
+
+
+def test_choose_entry_is_the_available_snapshot_not_a_second_rule():
+    """If this fails, choose_entry re-tests the schema instead of reading source_format."""
+    for info in ({}, {"format": um3k_context.VIS_FORMAT}, _field_info()):
+        live = um3k_context.Available.compute(info).source_format
+        assert um3k_context.choose_entry(info) == live
+
+
+def test_choose_entry_agrees_with_the_is_vis_rule_in_poc_app():
+    """If this fails, choose_entry and _is_vis disagree about what is loaded.
+
+    The copy is pinned by PARSING poc_app, not importing it: a drifted
+    ``um3k_context.VIS_FORMAT`` and ``poc_app._is_vis``'s literal would fork the
+    wrong viewer while every other test here stayed green.
+    """
+    literal = _poc_app_is_vis_format()
+    assert um3k_context.VIS_FORMAT == literal, (
+        f"um3k_context.VIS_FORMAT {um3k_context.VIS_FORMAT!r} is not the value "
+        f"poc_app._is_vis compares against ({literal!r})"
+    )
+    for info in ({}, {"format": literal}, {"format": "legacy"}):
+        forks_vis = um3k_context.choose_entry(info) == "vis"
+        assert forks_vis is (info.get("format") == literal)
+
+
+def test_choose_entry_takes_the_loaders_is_vis_override():
+    """If this fails, an explicit is_vis is overruled by the info dict."""
+    assert um3k_context.choose_entry({"format": "legacy"}, is_vis=True) == "vis"
+    pinned = {"format": um3k_context.VIS_FORMAT}
+    assert um3k_context.choose_entry(pinned, is_vis=False) == "field"
+
+
+def test_choose_entry_does_not_mutate_the_page():
+    """If this fails, dispatch rewrote the dict main keeps reading afterwards."""
+    info = {"format": um3k_context.VIS_FORMAT, "nstep": 3}
+    planes = {"src_s11": "geometry.ix_port", "slice_index": 0}
+    info_before, planes_before = dict(info), dict(planes)
+    um3k_context.choose_entry(info, planes)
+    assert info == info_before
+    assert planes == planes_before
+
