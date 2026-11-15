@@ -3272,3 +3272,214 @@ def test_a_dump_missing_a_mandatory_key_is_still_refused(key, tmp_path, capsys):
         "still holds"
     )
 
+
+
+def test_a_legacy_dump_handed_to_the_vis_page_still_raises_nt(tmp_path):
+    """The same fence at the READ SITE, where ``load_vis`` cannot hold it.
+
+    ``test_a_dump_missing_a_mandatory_key_is_still_refused`` proves the LOADER
+    refuses a short dump.  It cannot see a page that DEFAULTS an axis, because
+    changing ``nt = int(info["nt"])`` (poc_app.py:7192) into
+    ``int(info.get("nt", 0))`` leaves that refusal exactly as it was: the file
+    the operator opened is refused by ``load_vis``, and every dict that reaches
+    the page by another road - a legacy dump, a page dict built by hand, a
+    future loader - boots instead into a picture with no frames in it.
+
+    So the fence is repeated on the dict the page actually reads.  A legacy
+    single-plane dump carries no ``nt`` at all; handing one to the animation
+    page must still raise ``KeyError('nt')``.  A crash is a report; a page that
+    starts, registers every trigger and paints nothing is a silent wrong
+    answer, which is strictly worse and is what the subscript is there for.
+    """
+    import poc_app as app
+
+    legacy = _fixture_legacy_info(app, tmp_path / "legacy.npz")
+    assert "nt" not in legacy, (
+        "the legacy fixture now carries nt, so this fence no longer proves "
+        "anything about a dump that has none"
+    )
+
+    with pytest.raises(KeyError) as excinfo:
+        _boot_app(legacy)
+    assert "nt" in str(excinfo.value), (
+        "the animation page failed on something other than the missing axis "
+        f"({excinfo.value!r}); the fence is then guarding the wrong line"
+    )
+
+
+
+
+# --- the cut STATION: recorded, or said out loud as absent -------------------
+#
+# ``j_cut`` is the y SAMPLE INDEX the x-z sheet was taken from, and it is the
+# only fact that says where that sheet belongs.  A dump need not carry it (it is
+# not one of VIS_MANDATORY_KEYS), and the page has exactly three ways to get
+# that wrong, one test each below: the loader fills in a 0, the geometry draws
+# the sheet at that 0, the readout prints that 0 - or the state dump reports it
+# as a measured position.  The pair in each test is a bare dump and a full one,
+# so "never draws" cannot be satisfied by "never draws at all".
+
+
+def test_a_dump_without_j_cut_hands_the_page_a_null_station(tmp_path):
+    """If this fails, a cut station the dump never recorded has been invented.
+
+    ``load_vis`` is where the station enters the page, and the comment above the
+    line already promised recorded values only.  A dump with no ``j_cut`` must
+    hand the page ``None`` and KEEP the key - dropping it would change the key
+    set the page reads (the fence in
+    ``test_a_dump_with_no_optional_key_boots_without_a_keyerror``), and
+    defaulting it to 0 puts an x-z sheet at the bottom edge of the grid, which
+    is a position nothing recorded.
+
+    Mutation that breaks it: restore
+    ``"j_cut": int(_npz_scalar(data, "j_cut", 0.0))`` (poc_app.py:548) - the
+    bare dump then reports ``0`` instead of ``None``.
+    """
+    import poc_app as app
+
+    bare = _fixture_bare_info(app, tmp_path / "bare.npz")
+    full = _fixture_info(app, tmp_path / "full.npz")
+
+    assert "j_cut" in bare, (
+        "load_vis dropped j_cut instead of nulling it: the page then reads a "
+        "different key set from a bare dump than from a full one"
+    )
+    assert bare["j_cut"] is None, (
+        f"a dump that records no j_cut was handed j_cut={bare['j_cut']!r}; the "
+        "loader has substituted a station for one the file does not carry"
+    )
+    assert full["j_cut"] == 3, (
+        f"the RECORDED station stopped being read: j_cut={full['j_cut']!r}, "
+        "so the null above would prove nothing but a dead loader"
+    )
+
+
+def test_the_x_z_sheet_is_only_placed_at_a_recorded_station(tmp_path):
+    """If this fails, the drawn sheet sits at a station nothing recorded.
+
+    ``_vis_grid`` is the ONE place the drawn geometry is built (the reload path
+    references its arrays rather than copying the geometry, on purpose), so the
+    y of the x-z sheet is decided here and nowhere else.  With no recorded index
+    there is no station, and the build must refuse with a message naming
+    ``j_cut`` - the caller drops that one sheet and prints why, which is what
+    makes the absence visible instead of silent.  With an index, the sheet must
+    land on exactly ``j_cut * cell_mm``, i.e. NOT on the y = 0 the old default
+    produced (0 is a legal station, so only the millimetres can tell them apart).
+
+    Mutation that breaks it: put
+    ``origin = (0.0, float(int(info["j_cut"])) * cell_mm, 0.0)`` back
+    (poc_app.py:4944) - the bare build then returns a sheet at y = 0 (or raises
+    ``TypeError``) instead of the named refusal.
+    """
+    pytest.importorskip("pyvista")  # the ImageData is built through it
+    import poc_app as app
+
+    bare = _fixture_bare_info(app, tmp_path / "bare.npz")
+    with pytest.raises(ValueError) as excinfo:
+        app._vis_grid(bare, "ez_ycut", 0)
+    assert "j_cut" in str(excinfo.value), (
+        "the refusal for an unrecorded station does not name j_cut, so the "
+        f"stderr line it produces cannot say what is missing: {excinfo.value!r}"
+    )
+
+    full = _fixture_info(app, tmp_path / "full.npz")
+    cell_mm = app._cell_mm(full)
+    grid = app._vis_grid(full, "ez_ycut", 0)
+    assert grid.origin[1] == pytest.approx(full["j_cut"] * cell_mm), (
+        f"the x-z sheet was built at y = {grid.origin[1]!r} mm, not at the "
+        f"recorded station {full['j_cut'] * cell_mm!r} mm"
+    )
+    assert grid.origin[1] != 0.0, (
+        "the sheet landed on y = 0, which is the station the old default "
+        "invented - check the cell size and the index are both still applied"
+    )
+
+
+def test_the_x_z_readout_says_not_recorded_when_no_station_is(tmp_path, monkeypatch):
+    """If this fails, a readout names a sheet that is not on screen.
+
+    The mode line is the page's own statement of where the x-z sheet is, and on
+    a dump with no ``j_cut`` there is no such sheet: the geometry refuses it, so
+    the line has to say "not recorded" in the same words the other readouts use
+    rather than format a station out of a 0.  The full dump is the counterpart -
+    without it, a line that always said "not recorded" would pass.
+
+    Mutation that breaks it: bring the boot-time ``j_mm = float(int(info[
+    "j_cut"])) * cell_mm`` back and format it here - the bare boot then dies
+    with a ``TypeError`` inside the page builder instead of reaching the
+    readout, and the full-dump assertion below would print ``y = 0.0000``.
+    """
+    pyvista = pytest.importorskip("pyvista")
+    import poc_app as app
+
+    # Same reason the playback fixture doubles it: this image has no EGL, no
+    # libOSMesa and no X server.
+    monkeypatch.setattr(pyvista.Plotter, "render", lambda self, *a, **k: None)
+
+    bare = _fixture_bare_info(app, tmp_path / "bare.npz")
+    _app, srv = _boot_app(bare)
+    label = srv.state.mode_label
+    assert "not recorded" in label, (
+        f"the x-z readout claims a station on a dump that records none: {label!r}"
+    )
+    assert "j_cut" in label, (
+        f"the readout says something is missing without saying what: {label!r}"
+    )
+    assert " y = " not in label and "y = 0.0000" not in label, (
+        f"the readout still quotes a y for a sheet that was not drawn: {label!r}"
+    )
+
+    full = _fixture_info(app, tmp_path / "full.npz")
+    _app, srv = _boot_app(full)
+    full_label = srv.state.mode_label
+    station_mm = full["j_cut"] * app._cell_mm(full)
+    assert f"y = {station_mm:.4f} mm" in full_label, (
+        "a recorded station no longer reaches the readout: "
+        f"expected y = {station_mm:.4f} mm in {full_label!r}"
+    )
+
+
+def test_the_state_dump_does_not_record_a_station_the_dump_lacks(tmp_path):
+    """If this fails, the state document reports an invented position.
+
+    ``build_state_dump`` is what an operator reads to check what the page
+    believes, so a number in it is a claim.  For a dump with no ``j_cut`` the
+    x-z plane's ``fixed_mm`` must be null WITH the reason beside it (the shape
+    ``geometry_mm.strip_y`` already uses for a position the dump does not
+    carry), and for a dump that records one it must be the recorded index times
+    the cell size - not the 0.0 an ``int(...)`` default used to print.
+
+    Mutation that breaks it: restore
+    ``"fixed_mm": {"y": round(int(info["j_cut"]) * cell_mm, 9)}``
+    (poc_app.py:3042) - the bare document then carries ``y = 0.0`` (or raises
+    ``TypeError``) and there is no note to read.
+    """
+    import poc_app as app
+
+    bare = _fixture_bare_info(app, tmp_path / "bare.npz")
+    full = _fixture_info(app, tmp_path / "full.npz")
+
+    bare_ycut = app.build_state_dump(bare, {})["animation"]["planes"][0]
+    assert bare_ycut["key"] == "ez_ycut", (
+        f"the first animation plane is no longer the x-z sheet: {bare_ycut!r}"
+    )
+    fixed = bare_ycut["fixed_mm"]
+    assert fixed["y"] is None, (
+        f"a dump that records no j_cut still reports y = {fixed['y']!r} mm in "
+        "the state document; that number is a position nothing measured"
+    )
+    assert "not recorded" in fixed.get("y_note", ""), (
+        f"the null station carries no reason: {fixed!r}"
+    )
+    assert "j_cut" in fixed["y_note"], (
+        f"the reason does not name the key that is missing: {fixed['y_note']!r}"
+    )
+
+    full_ycut = app.build_state_dump(full, {})["animation"]["planes"][0]
+    assert full_ycut["fixed_mm"]["y"] == pytest.approx(
+        full["j_cut"] * app._cell_mm(full)
+    ), (
+        "a RECORDED station no longer reaches the state document: "
+        f"{full_ycut['fixed_mm']!r}"
+    )
+

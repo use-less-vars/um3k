@@ -317,6 +317,24 @@ def _npz_text(data, key: str):
         return None
 
 
+def _npz_int_or_none(data, key: str):
+    """One stored sample INDEX, or None when the dump does not carry it.
+
+    Not ``_npz_scalar``: a station that is not recorded must stay None all the
+    way to the picture. Defaulting it would put a cut sheet at an index the dump
+    never named - which is exactly what ``int(_npz_scalar(..., 0.0))`` does, and
+    a state dump then reports the invented station as a measured position.
+    """
+    value = _npz_scalar(data, key)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(number):
+        return None
+    return int(number)
+
+
 def _vis_colour_limit(arrays, percentile: float = COLOR_PERCENTILE):
     """One |Ez| ceiling for EVERY frame, plus a flag for an all-zero cube.
 
@@ -525,7 +543,9 @@ def load_vis(path: Path) -> dict:
             "cell_m": float(data["cell_m"]),
             # Geometry the overlays draw. Recorded values only - a NaN here is
             # drawn as nothing and printed as "not recorded", never invented.
-            "j_cut": int(_npz_scalar(data, "j_cut", 0.0)),
+            # j_cut is the y SAMPLE INDEX the x-z sheet was taken from, so an
+            # absent one is None: nothing may stand in for it.
+            "j_cut": _npz_int_or_none(data, "j_cut"),
             "dump_stride": int(_npz_scalar(data, "dump_stride", 1.0)),
             "nstep": int(_npz_scalar(data, "nsteps", 0.0)),
             "f_ref_hz": _npz_scalar(data, "f_ref_hz"),
@@ -2914,6 +2934,28 @@ VIS_EXTENT_BASIS = (
 )
 
 
+def _vis_cut_station_block(info: dict, cell_mm: float) -> dict:
+    """The x-z sheet's fixed y, in this document's own null-plus-reason form.
+
+    The dump records the y SAMPLE INDEX ``j_cut`` the sheet was taken from, and
+    that index is the only thing that may be turned into millimetres here. When
+    it is absent the number is null and ``y_note`` says why - the same shape
+    ``geometry_mm.strip_y`` already uses for a position the dump does not carry,
+    and for the same reason: a state dump that printed y = 0.0 for a station
+    nothing recorded is a position invented by the reader.
+    """
+    station = _finite(info.get("j_cut"))
+    if station is None:
+        return {
+            "y": None,
+            "y_note": (
+                "not recorded - the dump carries no j_cut, so the y station "
+                "of the x-z sheet is unknown and no sheet is drawn at one"
+            ),
+        }
+    return {"y": round(float(int(station)) * cell_mm, 9)}
+
+
 def _vis_field_block(info: dict, path: Path) -> dict:
     """The animation's own field block: a dense cube, so the extents agree.
 
@@ -2997,7 +3039,7 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
                 "label": "x-z plane through the strip (one fixed y sample)",
                 "shape": [int(n) for n in info["ez_ycut"].shape],
                 "frames": nt,
-                "fixed_mm": {"y": round(int(info["j_cut"]) * cell_mm, 9)},
+                "fixed_mm": _vis_cut_station_block(info, cell_mm),
             },
             {
                 "key": "ez_xcut_near",
@@ -4889,7 +4931,17 @@ def _vis_grid(info: dict, plane_key: str, frame) -> "pyvista.ImageData":
     data = np.abs(np.asarray(array[frame], dtype=float))
     if plane_key == "ez_ycut":
         dims = (int(info["nx"]), 1, int(info["nz"]))
-        origin = (0.0, float(int(info["j_cut"])) * cell_mm, 0.0)
+        # The sheet's y is the recorded SAMPLE INDEX times the cell size. With no
+        # recorded index there is no station, and a sheet drawn anyway would
+        # claim the field was captured at y = 0. The caller drops the sheet and
+        # says why; the other two planes are unaffected.
+        station = _finite(info.get("j_cut"))
+        if station is None:
+            raise ValueError(
+                "no recorded j_cut: the dump does not say which y sample "
+                "ez_ycut was taken from, so no x-z sheet is drawn"
+            )
+        origin = (0.0, float(int(station)) * cell_mm, 0.0)
     elif plane_key == "ez_xcut_near":
         dims = (1, int(info["ny"]), int(info["nz"]))
         origin = (float(info["xcut_near_mm"]), 0.0, 0.0)
@@ -5367,7 +5419,10 @@ def reload_page(npz_path, structure_id=None) -> dict:
         # one.
         planes = {
             "cell_mm": _cell_mm(info),
-            "j_cut": int(info["j_cut"]),
+            # Kept for the legacy reader, where None already means "centre that
+            # sample"; it may be None for a dump that records no station, so it
+            # is passed through rather than cast.
+            "j_cut": info["j_cut"],
             "xcut_near_mm": float(info["xcut_near_mm"]),
             "xcut_far_mm": float(info["xcut_far_mm"]),
             "ez_ycut": info["ez_ycut"],
@@ -7193,7 +7248,6 @@ def run_web_vis(
     nt_x = int(info["nt_x"])
     cell_mm = _cell_mm(info)
     vmin, vmax = info["color_range"]
-    j_mm = float(int(info["j_cut"])) * cell_mm
     # The domain's full y width, computed once for the whole page: the x-cut
     # readout quotes it so the transverse section can be read against it.
     y_span_mm = float(int(info["ny"])) * cell_mm
@@ -7903,8 +7957,19 @@ def run_web_vis(
         state.frame_label = f"frame {index + 1} / {frames}"
         state.phase_label = _vis_phase_text(t_ns, info["t_traverse_ns"])
         if mode == "ycut":
+            # The y the x-z sheet sits on is READ per draw, from the LIVE page,
+            # and is None when the dump records no j_cut - in which case no such
+            # sheet exists to name. The readout says that rather than quoting a
+            # station nothing was drawn at.
+            station = _finite(info.get("j_cut"))
             state.mode_label = (
-                f"x-z sheet at y = {j_mm:.4f} mm (one recorded y sample)"
+                "x-z sheet: not recorded - this dump carries no j_cut, "
+                "so no x-z sheet is drawn"
+                if station is None
+                else (
+                    f"x-z sheet at y = {float(station) * cell_mm:.4f} mm "
+                    "(one recorded y sample)"
+                )
             )
         else:
             # FIXED planes. These two y-z slices are the only ones the dump
@@ -7962,13 +8027,12 @@ def run_web_vis(
         removed and rebuilt here with the NEW dump's single colour limit, and the
         camera is re-framed because the new domain need not have the old bounds.
         """
-        nonlocal nt, nt_x, vmin, vmax, cell_mm, j_mm, y_span_mm
+        nonlocal nt, nt_x, vmin, vmax, cell_mm, y_span_mm
         live = page["info"]
         nt = int(live["nt"])
         nt_x = int(live["nt_x"])
         vmin, vmax = live["color_range"]
         cell_mm = _cell_mm(live)
-        j_mm = float(int(live["j_cut"])) * cell_mm
         y_span_mm = float(int(live["ny"])) * cell_mm
         for entry in list(sheets.values()):
             try:
