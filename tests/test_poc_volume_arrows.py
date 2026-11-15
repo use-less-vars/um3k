@@ -51,7 +51,12 @@ The claims, one per test:
   otherwise;
 * a port slice that cannot be drawn costs the SLICE and not the page: a stub
   plotter that refuses the image still gets the outline, the axes, the markers
-  and both corner labels, so ``_draw_scene`` never raises out of that branch.
+  and both corner labels, so ``_draw_scene`` never raises out of that branch;
+* the vis page's arrow overlay (``_volume_quiver_callback``) is ONE actor under
+  ``name="volume_quiver"``: on adds it and stores the handle, off removes it and
+  a second off is a no-op, a None from the mesh seam draws nothing and says so,
+  and the glyph is paid ONCE across redraws - the callback runs on every
+  cut-slider move, so a per-redraw build would be a per-move second.
 """
 from __future__ import annotations
 
@@ -771,6 +776,193 @@ def test_the_station_label_can_be_left_out_of_the_scene(monkeypatch):
     assert ("add_mesh", outline) in plotter.calls
     assert markers == ["markers"]
     assert "reset_camera" in plotter.calls
+
+
+class _QuiverPlotter:
+    """Records the TWO plotter calls the arrow overlay is allowed to make.
+
+    ``add_mesh`` and ``remove_actor`` and nothing else: the overlay does not
+    clear, frame, label or render - the scene owns all of that, and a stub that
+    accepted those calls would hide it if the overlay ever started doing them.
+    """
+
+    def __init__(self):
+        self.calls = []
+        self._next = 0
+
+    def add_mesh(self, mesh, **kwargs):
+        self._next += 1
+        actor = f"actor-{self._next}"
+        self.calls.append(("add_mesh", mesh, kwargs, actor))
+        return actor
+
+    def remove_actor(self, actor):
+        self.calls.append(("remove_actor", actor))
+
+    @property
+    def meshes(self):
+        return [call[1] for call in self.calls if call[0] == "add_mesh"]
+
+    @property
+    def removed(self):
+        return [call[1] for call in self.calls if call[0] == "remove_actor"]
+
+
+def _quiver_state(ticked=True):
+    """The ONE flag the overlay reads, and nothing else.
+
+    A plain namespace, not a fake trame state: the contract is that the callback
+    reads ``state.show_quiver`` (NOT the legacy page's ``show_volume_quiver``),
+    so a namespace that has only the first key fails loudly if the code ever
+    reaches for the other one.
+    """
+    import types
+
+    return types.SimpleNamespace(show_quiver=ticked)
+
+
+def test_the_vis_arrow_overlay_adds_one_actor_and_stores_its_handle(monkeypatch):
+    """Ticked: ONE ``volume_quiver`` actor, black on the white background.
+
+    The mesh is stubbed - what is under test is the DRAW half: one actor, the
+    styling the legacy page uses (black, unlit, no scalar bar, because this
+    plotter's background is white), and a handle through which the next redraw
+    can take it off again.
+    """
+    mesh = object()
+    monkeypatch.setattr(poc_app, "_volume_quiver_mesh", lambda info, **kw: mesh)
+    plotter = _QuiverPlotter()
+    handles: dict = {}
+    show = poc_app._volume_quiver_callback(
+        plotter, {}, _quiver_state(ticked=True), handles
+    )
+
+    show()
+
+    assert plotter.meshes == [mesh], (
+        f"the overlay drew {plotter.meshes!r} instead of the one arrow mesh"
+    )
+    kwargs = plotter.calls[0][2]
+    assert kwargs.get("name") == "volume_quiver", (
+        f"the arrow actor is not named volume_quiver: {kwargs!r}"
+    )
+    assert kwargs.get("color") == "black", (
+        "the arrows are not black, so they cannot be seen on this page's "
+        f"white background: {kwargs!r}"
+    )
+    assert kwargs.get("lighting") is False, (
+        f"lighting is on, so the arrows are shaded by a light nobody placed: {kwargs!r}"
+    )
+    assert kwargs.get("show_scalar_bar") is False, (
+        f"a scalar bar came with the arrows: {kwargs!r}"
+    )
+    assert handles.get("volume_quiver") == {"actor": plotter.calls[0][3]}, (
+        "the overlay did not store the actor it drew, so no redraw can remove "
+        f"it: handles={handles!r}"
+    )
+
+
+def test_unticking_the_vis_arrow_overlay_removes_its_actor_once(monkeypatch):
+    """Off removes exactly the actor it drew, and off again does nothing.
+
+    The callback runs on EVERY redraw, so "off" is not a rare edge: an unticked
+    box must be able to say so any number of times without touching the
+    renderer or raising on a handle that is already gone.
+    """
+    monkeypatch.setattr(poc_app, "_volume_quiver_mesh", lambda info, **kw: object())
+    plotter = _QuiverPlotter()
+    handles: dict = {}
+    state = _quiver_state(ticked=True)
+    show = poc_app._volume_quiver_callback(plotter, {}, state, handles)
+    show()
+    actor = handles["volume_quiver"]["actor"]
+
+    state.show_quiver = False
+    show()
+    assert plotter.removed == [actor], (
+        f"unticking removed {plotter.removed!r}, not the actor it drew ({actor!r})"
+    )
+    assert "volume_quiver" not in handles, (
+        f"the handle outlived the actor it named: {handles!r}"
+    )
+
+    before = list(plotter.calls)
+    show()
+    assert plotter.calls == before, (
+        "a second untick went to the renderer again; the overlay must be "
+        f"idempotent: {plotter.calls[len(before):]!r}"
+    )
+
+
+def test_the_vis_arrow_overlay_says_so_when_there_is_no_volume(monkeypatch, capsys):
+    """A None from the mesh seam draws nothing, raises nothing, says ONE line.
+
+    None is the seam's honest answer for a dump with no volume (or nothing above
+    the floor).  The box stays ticked and the page keeps drawing, so the only
+    thing that can tell a reader why no arrows appeared is this line.
+    """
+    monkeypatch.setattr(poc_app, "_volume_quiver_mesh", lambda info, **kw: None)
+    plotter = _QuiverPlotter()
+    handles: dict = {}
+    show = poc_app._volume_quiver_callback(
+        plotter, {}, _quiver_state(ticked=True), handles
+    )
+
+    show()  # must not raise
+
+    assert plotter.calls == [], (
+        f"the overlay touched the renderer with nothing to draw: {plotter.calls!r}"
+    )
+    assert "volume_quiver" not in handles, (
+        f"an actor handle was stored for a mesh that does not exist: {handles!r}"
+    )
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert len(lines) == 1, (
+        f"the no-volume case printed {len(lines)} stderr lines, not one: {lines!r}"
+    )
+    assert "volume arrows skipped" in lines[0], (
+        f"the one stderr line does not name the overlay: {lines[0]!r}"
+    )
+
+
+def test_the_vis_arrow_mesh_is_built_once_across_two_redraws(monkeypatch):
+    """Two consecutive ticked redraws pay the glyph ONCE and draw twice.
+
+    ``show()`` is called after every cut-slider move, so a per-call build would
+    re-glyph the whole volume (~1 s and ~140 MiB on the real dump) on each move.
+    The ACTOR is still added every time: ``_draw_scene`` clears the plotter
+    first, so the arrows have to be put back or they vanish on the first move.
+    """
+    built = []
+
+    def _fake_build(info, **kwargs):
+        built.append(1)
+        return object()
+
+    monkeypatch.setattr(poc_app, "_volume_quiver_mesh", _fake_build)
+    plotter = _QuiverPlotter()
+    handles: dict = {}
+    show = poc_app._volume_quiver_callback(
+        plotter, {}, _quiver_state(ticked=True), handles
+    )
+
+    show()
+    show()
+
+    assert len(built) == 1, (
+        f"the mesh builder ran {len(built)} times for two redraws; the glyph is "
+        "cached per page, not per redraw"
+    )
+    assert len(plotter.meshes) == 2, (
+        f"the arrows were added {len(plotter.meshes)} times, not once per redraw: "
+        "_draw_scene clears the plotter, so they must be re-added every time"
+    )
+    assert plotter.meshes[0] is plotter.meshes[1], (
+        "the second redraw drew a different mesh: the cache was not used"
+    )
+    assert len(handles["volume_quiver"]) == 1, (
+        f"the handle gained keys across redraws: {handles!r}"
+    )
 
 
 def test_an_out_of_range_port_slice_index_is_named_not_raised(monkeypatch, capsys):

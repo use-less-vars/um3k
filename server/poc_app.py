@@ -6955,6 +6955,81 @@ def _volume_quiver_mesh(info, *, stride=VOLUME_QUIVER_STRIDE):
         return None
 
 
+def _volume_quiver_callback(plotter, info, state, handles):
+    """The vis page's arrow overlay, as the ``show()`` closure it needs.
+
+    WHY a factory and not a closure inside ``run_web_vis``: the overlay is three
+    decisions - is the box ticked, is the mesh already built, is there an actor
+    to replace - and none of them needs trame, a server or a live page. Built
+    here, a test drives all three with a stub plotter and a namespace for
+    ``state``, which is the only way the cache and the remove path can be
+    pinned at all (the legacy page's copy of this logic, ``run_web``'s
+    ``_show_volume_quiver``, is only reachable through a booted page).
+
+    WHY the cache lives in this closure and not in ``handles``: ``show()`` runs
+    on EVERY redraw - each cut-slider move and each station change - while the
+    glyph costs ~1 s and ~140 MiB on the real dump (:func:`_volume_quiver_mesh`).
+    One build per page is all there can ever be, because ``info`` cannot change
+    under a running page. ``built`` is separate from ``mesh`` because None is a
+    real answer (no volume in this dump, nothing above the floor) and must not
+    be re-attempted on every redraw that follows it.
+
+    The caller owns both the renderer and the render: this function adds and
+    removes ONE actor and never calls ``plotter.render()``, because
+    ``_redraw_scene`` renders immediately after the seam it is injected into
+    (poc_app.py:4005). ``state.show_quiver`` is the box's own flag - the
+    LEGACY page's ``state.show_volume_quiver`` is a different key and is not
+    read here.
+    """
+    cache: dict = {"mesh": None, "built": False}
+
+    def show() -> None:
+        """Put the volume arrows on the plotter, or take them off. NEVER raises."""
+        try:
+            if not bool(state.show_quiver):
+                # Idempotent by construction: an unticked box twice pops None the
+                # second time and touches no actor.
+                entry = handles.pop("volume_quiver", None)
+                if isinstance(entry, dict) and entry.get("actor") is not None:
+                    plotter.remove_actor(entry["actor"])
+                return
+            if not cache["built"]:
+                cache["mesh"] = _volume_quiver_mesh(info)
+                cache["built"] = True
+            mesh = cache["mesh"]
+            if mesh is None:
+                # The builder has already named its own reason (no volume, or
+                # nothing above the relative floor); this line is the one that
+                # says the CHECKBOX drew nothing, which is what a reader needs.
+                print(
+                    "[poc_app] volume arrows skipped: the dump has no volume "
+                    "arrow field to draw (see the 3D vectors line above)",
+                    file=sys.stderr,
+                )
+                return
+            # One actor, replaced in place: pyvista's add_mesh replaces the actor
+            # of the same name, so a second redraw cannot stack arrow fields.
+            previous = handles.get("volume_quiver")
+            if isinstance(previous, dict) and previous.get("actor") is not None:
+                plotter.remove_actor(previous["actor"])
+            # BLACK, not white: this plotter's background is white
+            # (create_plotter calls set_background("white")), so white geometry
+            # cannot be seen on it. Same styling as the legacy page (:4382),
+            # under the name this page's handles key is.
+            actor = plotter.add_mesh(
+                mesh,
+                color="black",
+                lighting=False,
+                show_scalar_bar=False,
+                name="volume_quiver",
+            )
+            handles["volume_quiver"] = {"actor": actor}
+        except Exception as exc:  # noqa: BLE001 - the arrows are not the page
+            print(f"[poc_app] volume arrows skipped: {exc}", file=sys.stderr)
+
+    return show
+
+
 SOLVE_DEFAULT_XCUT_MM = 20.4
 
 
@@ -7632,14 +7707,14 @@ def run_web_vis(
             int(state.station), planes["cell_mm"], n_st
         )
 
-        def _show_volume_quiver() -> None:
-            """No arrow field on this page: a NO-OP with the signature asked for.
-
-            ``_redraw_scene`` calls it between the scene and the render (:4005),
-            so it must exist and must not raise - an overlay this page does not
-            have is no reason to lose the redraw.
-            """
-            return None
+        # The 3-D arrow field the "Show Vector Field" box owns on this page. The
+        # seam keeps its zero-argument signature and its position in
+        # _redraw_scene's arguments: that call runs AFTER _draw_scene and BEFORE
+        # its render (:4005), and _draw_scene starts with plotter.clear(), so an
+        # actor added any earlier is gone by the time the scene returns - the
+        # arrows have to be re-added on every redraw, which is why the cache
+        # lives inside the callback (poc_app.py:_volume_quiver_callback).
+        _show_volume_quiver = _volume_quiver_callback(plotter, info, state, handles)
 
         def _redraw() -> None:
             """Rebuild the scene in the one plotter. Failure leaves the old picture."""
@@ -8776,28 +8851,45 @@ def run_web_vis(
         """Draw or drop the Mode arrow overlay. NEVER raises."""
         try:
             wanted = bool(state.show_quiver if show_quiver is None else show_quiver)
-            if not wanted:
-                _clear_mode_quiver()
-            else:
-                entry = handles.get("mode_actor")
-                if isinstance(entry, dict) and entry.get("actor") is not None:
-                    # The picture's own handle carries what the overlay is drawn
-                    # from, so the toggle repaints THIS cross-section and never
-                    # re-solves it.
+            entry = handles.get("mode_actor")
+            has_mode_picture = (
+                isinstance(entry, dict) and entry.get("actor") is not None
+            )
+            if has_mode_picture:
+                # The picture's own handle carries what the overlay is drawn
+                # from, so the toggle repaints THIS cross-section and never
+                # re-solves it - and a page that HAS a mode picture never takes
+                # the redraw path below, so its behaviour is unchanged.
+                if not wanted:
+                    _clear_mode_quiver()
+                else:
                     _draw_mode_quiver(
                         entry.get("result"),
                         x_mm=entry.get("x_mm", 0.0),
                         y_centre_mm=entry.get("y_centre_mm", 0.0),
                         index=entry.get("index"),
                     )
+            else:
+                # No mode picture: the field this box turns on is the 3-D VOLUME
+                # arrow field of the scene, which lives through
+                # handles["cut_redraw"] -> _show_volume_quiver and is therefore
+                # drawn or dropped by a redraw and by nothing else. Reached
+                # through the handle, because a page without a plane stack never
+                # bound a redraw (a local name would be unbound there).
+                redraw = handles.get("cut_redraw")
+                if callable(redraw):
+                    redraw()
                 else:
-                    # Nothing solved on screen: saying so is the honest answer,
-                    # rather than drawing a field with no mode under it.
-                    print(
-                        "[poc_app] mode vector field skipped: no mode picture to "
-                        "overlay",
-                        file=sys.stderr,
-                    )
+                    _clear_mode_quiver()
+                    if wanted:
+                        # Nothing solved on screen and nothing to redraw: saying
+                        # so is the honest answer, rather than drawing a field
+                        # with no mode under it.
+                        print(
+                            "[poc_app] mode vector field skipped: no mode picture "
+                            "to overlay",
+                            file=sys.stderr,
+                        )
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - the overlay is an EXTRA
             print(
