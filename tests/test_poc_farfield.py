@@ -9,9 +9,10 @@ WHY this is reachable from a test at all: the builder is MODULE-LEVEL, for
 exactly the reason ``poc_app.build_frequency_chart`` is - a tab's payload has to
 be checkable without a browser, a port or a trame widget, or the only way to
 learn what the page would show is to open one. The layout that consumes it is
-still asserted, by reading the source of ``run_web_vis`` (the last test): a
-``VTab``'s ``value`` and its ``VTabsWindowItem``'s ``value`` have to be the SAME
-string, and nothing short of a running browser can observe that from outside.
+still asserted, by BUILDING it (the last test): a ``VTab``'s ``value`` and its
+``VTabsWindowItem``'s ``value`` have to be the SAME string, and nothing short of
+a running browser can observe that from outside - so the column that holds them
+is built against a recording context and its widgets are read back.
 
 The archive is a real one - the exact field of a Hertzian dipole on a closed
 cube, with ``J_s = n x H_t`` and ``M_s = -n x E_t``, written through
@@ -21,7 +22,6 @@ PNG that was merely ``not None`` would pass whatever the numbers were.
 
 from __future__ import annotations
 
-import inspect
 import math
 import sys
 from pathlib import Path
@@ -64,6 +64,8 @@ pytest.importorskip(
 )
 
 import poc_app as app  # noqa: E402
+import um3k_panels  # noqa: E402 - the DATA column builder the tab moved into
+from test_um3k_panels import _fake_right_context  # noqa: E402 - its recording ctx
 
 DIPOLE_FREQ = 1.0e9
 DIPOLE_MOMENT = 1.0e-3
@@ -280,28 +282,87 @@ def test_the_archive_is_still_refused_as_a_page_dump(archive):
 
 
 # ---------------------------------------------------------------------------
-# The wiring: one tab value, one window-item value, two emitters
+# The wiring: one tab label, one tab value, one window item, two emitters
 # ---------------------------------------------------------------------------
 
 def test_the_tab_and_its_window_item_share_one_value():
     """A VTab value must EQUAL its VTabsWindowItem's, and a browser is the only other witness.
 
-    WHY a source assertion is the right instrument here.  The tab bar and the
-    tab window are two independent widget trees, and vuetify matches them by
-    the ``value`` string they are each given.  A mismatch does not raise and
-    does not log: the tab bar highlights a tab and the window renders NOTHING,
-    which is only observable once a real browser runs the Vue component.  There
-    is no browser here, so the source is read instead - it is the only place
-    both strings can be compared.  The same reading has to find BOTH emitters
-    (inside the tab window, and in the flat stack shown when trame-vuetify is
-    absent) and the loader in the layout-time call list, because a panel with a
-    tab but no payload shows the empty strings the page booted with.
+    WHY a BUILT column is the right instrument here.  The tab bar and the tab
+    window are two independent widget trees, and vuetify matches them by the
+    ``value`` string they are each given.  A mismatch does not raise and does
+    not log: the tab bar highlights a tab and the window renders NOTHING, which
+    is only observable once a real browser runs the Vue component.  There is no
+    browser here, so the column is built instead - against the recording context
+    ``tests/test_um3k_panels.py`` already uses - and the widgets it made and the
+    callbacks it called are read back.  BUILT, not scraped, because the tab has
+    moved module once already (out of ``run_web_vis`` into
+    ``um3k_panels.build_right_panel``) and a source reading of the wrong module
+    says nothing about the page.  The same reading has to find the tab, the
+    window item under it carrying the SAME value, BOTH emitters (inside the tab
+    window, and in the flat stack shown when trame-vuetify is absent) and the
+    loader in the layout-time call list, because a panel with a tab but no
+    payload shows the empty strings the page booted with.
     """
-    src = inspect.getsource(app.run_web_vis)
-    assert 'tab_cls("Far Field", value="far_field")' in src
-    assert 'tabs_item_cls(value="far_field")' in src
-    # Count CALL SITES, not occurrences: the ``def`` line carries the same text.
-    calls = [line.strip() for line in src.splitlines()
-             if line.strip() == "_emit_far_field_panel()"]
-    assert len(calls) == 2
-    assert "_load_far_field_panel," in src
+    ctx, log, built = _fake_right_context()
+
+    um3k_panels.build_right_panel(ctx)
+
+    # THE TAB: exactly one carries the value, and the LABEL rides that same
+    # widget - a tab whose label moved to another call would be a different tab.
+    far_tabs = [w for w in built["VTab"] if w.kwargs.get("value") == "far_field"]
+    assert len(far_tabs) == 1, (
+        f"{len(far_tabs)} tabs carry value='far_field': "
+        f"{[(w.args, w.kwargs) for w in built['VTab']]!r}"
+    )
+    assert far_tabs[0].args == ("Far Field",), (
+        f"the far-field tab reads {far_tabs[0].args!r}"
+    )
+
+    # THE WINDOW ITEM: one, carrying the SAME string, and the emitter runs INSIDE
+    # it - the entry straight after the item is opened is the far-field emitter.
+    items = built["VTabsWindowItem"]
+    item_at = [i for i, entry in enumerate(log)
+               if entry == ("tab", "VTabsWindowItem")]
+    assert len(item_at) == len(items), (
+        f"{len(items)} window items were logged {len(item_at)} times"
+    )
+    values = [w.kwargs.get("value") for w in items]
+    assert values.count("far_field") == 1, f"the window items carry {values!r}"
+    far_at = item_at[values.index("far_field")]
+    assert log[far_at + 1] == ("callback", "_emit_far_field_panel"), (
+        f"the far-field window item covers {log[far_at + 1:far_at + 3]!r}"
+    )
+
+    # BOTH EMITTERS, one per branch, and never twice into one column: inside the
+    # tab window read above, and in the flat stack shown with no tab classes.
+    assert [name for _kind, name in log].count("_emit_far_field_panel") == 1, (
+        f"the tabbed column emitted {log!r}"
+    )
+    flat_ctx, flat_log, _flat_built = _fake_right_context(tab_classes=False)
+
+    um3k_panels.build_right_panel(flat_ctx)
+
+    flat = [name for kind, name in flat_log if kind == "callback"]
+    assert flat.count("_emit_far_field_panel") == 1, (
+        f"the trame-vuetify-free column emitted {flat!r}"
+    )
+
+    # THE LOADER: called once, at layout time, BEFORE the first tab exists.
+    loader_at = [i for i, entry in enumerate(log)
+                 if entry == ("callback", "_load_far_field_panel")]
+    assert len(loader_at) == 1, f"the far-field loader ran {len(loader_at)} times"
+    first_tab = next(i for i, (kind, _name) in enumerate(log) if kind == "tab")
+    assert loader_at[0] < first_tab, (
+        f"the loader ran at {loader_at[0]}, after the first tab at {first_tab}"
+    )
+
+    # ... and the registration it needs is LOAD-BEARING: the builder takes the
+    # loader off the context, so a page that forgets to register it raises here
+    # instead of opening a tab with nothing behind it.
+    del ctx.callbacks["_load_far_field_panel"]
+    with pytest.raises(KeyError) as excinfo:
+        um3k_panels.build_right_panel(ctx)
+    assert "_load_far_field_panel" in str(excinfo.value), (
+        f"the refusal names {str(excinfo.value)!r}"
+    )
