@@ -3764,8 +3764,43 @@ def create_plotter(info: dict):
     return plotter
 
 
+def _add_plane_marker(
+    plotter,
+    what: str,
+    center_x: float,
+    y_mid: float,
+    z_mid: float,
+    y_span: float,
+    z_span: float,
+    color: str,
+    render: bool = True,
+) -> None:
+    """Draw ONE plane normal to x, centred at ``center_x`` on the y/z mid-plane.
+
+    WHY one construction for two discs: the load plane and the S11 port plane
+    differ only in the x they sit at and in the colour that names them, so they
+    are the same ``pv.Plane`` twice rather than two markers that could drift
+    apart. ``direction`` is x for both, which is the axis either plane cuts.
+
+    Guarded: a pyvista that disagrees about a Plane keyword must cost the
+    marker, not the viewer. ``what`` names the plane in that message.
+    """
+    import pyvista as pv
+
+    try:
+        plane = pv.Plane(
+            center=(center_x, y_mid, z_mid),
+            direction=(1.0, 0.0, 0.0),
+            i_size=y_span,
+            j_size=z_span,
+        )
+        plotter.add_mesh(plane, color=color, opacity=0.25, render=render)
+    except Exception as exc:  # noqa: BLE001 - losing the plane is survivable
+        print(f"[poc_app] {what} plane not drawn: {exc}", file=sys.stderr)
+
+
 def _add_markers(plotter, info: dict, planes: dict) -> None:
-    """Draw the load plane and the two extraction planes, with labels.
+    """Draw the two port planes and the extraction labels.
 
     WHY this layer exists: the finding behind it is that an extraction plane one
     column past the load reads a collapsed field. A number in a browser cannot
@@ -3774,26 +3809,59 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
     the record), and a position taken from a built-in constant is spelled out
     as FALLBACK in the legend.
 
-    The plane is guarded: a pyvista that disagrees about a Plane keyword must
+    WHY a second, purple plane: the S11 port plane is the only other placeable
+    surface in the record, it is parallel to the load plane and offset along x,
+    and until now it was named by a label with nothing to look at. Purple is
+    how it is told apart from the load; its position and extent are the load
+    plane's own (same y/z centre, same spans), so the pair reads as one slice
+    pair and not as two different kinds of marker.
+
+    WHY the switches ride INSIDE ``planes``: the scene is drawn with one
+    ``planes`` argument that already carries every position this layer reads, and
+    a redraw is the only caller that knows the page state - so
+    ``show_load_plane`` / ``show_port_plane`` join the positions there (see
+    ``_scene_planes``) instead of becoming two more arguments on every scene
+    function. Absent -> ON, which is the picture this layer has always drawn.
+
+    The LABELS are drawn either way: they are the legend of where the planes
+    are, so hiding a disc must not hide the sentence that places it.
+
+    The planes are guarded: a pyvista that disagrees about a Plane keyword must
     cost the plane, not the viewer.
     """
-    import pyvista as pv
-
     cell_mm = planes["cell_mm"]
     y_span = info[PLANE_KEY].shape[1] * cell_mm
     z_span = info[PLANE_KEY].shape[2] * cell_mm
     y_mid, z_mid = 0.5 * y_span, 0.5 * z_span
 
-    try:
-        disc = pv.Plane(
-            center=(planes["x_load_mm"], y_mid, z_mid),
-            direction=(1.0, 0.0, 0.0),
-            i_size=y_span,
-            j_size=z_span,
+    if planes.get("show_load_plane", True):
+        _add_plane_marker(
+            plotter,
+            "load",
+            planes["x_load_mm"],
+            y_mid,
+            z_mid,
+            y_span,
+            z_span,
+            "red",
         )
-        plotter.add_mesh(disc, color="red", opacity=0.25)
-    except Exception as exc:  # noqa: BLE001 - losing the plane is survivable
-        print(f"[poc_app] load plane not drawn: {exc}", file=sys.stderr)
+    if planes.get("show_port_plane", True):
+        _add_plane_marker(
+            plotter,
+            "S11 port",
+            planes["x_s11_mm"],
+            y_mid,
+            z_mid,
+            y_span,
+            z_span,
+            "purple",
+            # render=False on the SECOND disc: the first one already flushes
+            # the frame, the rebuild ends with one render of its own, and a
+            # flush per disc would draw a scene that has just been cleared and
+            # is not finished yet (and one draw is the unit the page's draw
+            # count is measured in).
+            render=False,
+        )
 
     # Labels at mid-height of each plane: x is the axis that matters here, so a
     # text anchor is unambiguous where a disc is not. There are NO sphere glyphs
@@ -4019,6 +4087,24 @@ def _init_cut_state(
     )
 
 
+def _scene_planes(planes: dict, state) -> dict:
+    """Return ``planes`` with the two marker switches folded in.
+
+    WHY the switches travel here: ``_draw_scene`` and ``_add_markers`` already
+    take the ``planes`` mapping, and both ``run_web`` redraw closures plus the
+    legacy callers hand that mapping straight through. Folding the page's two
+    checkboxes into it keeps every one of those signatures untouched while the
+    picture still follows the widgets. The layout dict itself is never mutated
+    (a copy is returned), and a state object that predates the toggles -> both
+    planes ON, which is the picture this app has always drawn.
+    """
+    return dict(
+        planes,
+        show_load_plane=bool(getattr(state, "show_load_plane", True)),
+        show_port_plane=bool(getattr(state, "show_port_plane", True)),
+    )
+
+
 # Extracted from run_web's ``_redraw`` closure: the quiver callback arrives as
 # a parameter because the arrow cache and the handle table belong to the page,
 # not to this function, and nothing here reaches back into run_web's locals.
@@ -4035,7 +4121,12 @@ def _redraw_scene(
         _draw_scene(
             plotter,
             info,
-            planes,
+            # The marker switches are read off STATE here and handed over
+            # inside the mapping the scene already carries: a checkbox writes
+            # the flag and this rebuild is what shows the result, so both
+            # run_web ``_redraw`` closures and every legacy caller stay
+            # byte-identical. A state object that predates them -> ON.
+            _scene_planes(planes, state),
             state.view_mode,
             int(state.station),
             int(state.cut_y),
@@ -7648,6 +7739,13 @@ def run_web_vis(
     # panel had before the overlay existed: nothing is drawn, nothing is
     # cleared, and every other control keeps the meaning it always had.
     state.show_quiver = False
+    # The two marker planes. BOTH at boot: the red load plane has been in the
+    # scene since the marker layer existed, and the purple S11 port plane is
+    # the position the corner label already named. ON is therefore the picture
+    # every page drew before these boxes existed, so a page that never touches
+    # a box is unchanged.
+    state.show_load_plane = True
+    state.show_port_plane = True
 
     # The Confidence & Accuracy pane: TEXT, prose rather than a picture. Its tab
     # owns its visibility, so (like the S-parameters pane) there is no style
@@ -8984,6 +9082,33 @@ def run_web_vis(
                 f"[poc_app] mode vector field toggle skipped: {exc}", file=sys.stderr
             )
 
+    # The two marker-plane boxes. Same rule as the arrow field above: the box
+    # only WRITES the flag, and the redraw hangs off the state change, so every
+    # writer of the flag takes one path - and the picture that answers is the
+    # scene rebuilt, which is what a redraw already does.
+    def _redraw_for_plane_toggle(what: str) -> None:
+        """Repaint the scene after a marker plane was switched. NEVER raises."""
+        try:
+            redraw = handles.get("cut_redraw")
+            if callable(redraw):
+                # Through the handle, for the arrow field's reason: a page with
+                # no plane stack never bound a local _redraw (and drew no box
+                # to ask for one), so there is nothing to repaint and nothing
+                # to explain.
+                redraw()
+        except Exception as exc:  # noqa: BLE001 - a marker is an EXTRA
+            print(f"[poc_app] {what} plane toggle skipped: {exc}", file=sys.stderr)
+
+    @state.change("show_load_plane")
+    def _on_show_load_plane(**_kwargs) -> None:
+        """Draw or drop the red load plane. NEVER raises."""
+        _redraw_for_plane_toggle("load")
+
+    @state.change("show_port_plane")
+    def _on_show_port_plane(**_kwargs) -> None:
+        """Draw or drop the purple S11 port plane. NEVER raises."""
+        _redraw_for_plane_toggle("S11 port")
+
     # The fallback expander's handler. Only the VBtn path binds it: the panels
     # path is opened and closed by Vuetify itself and never reaches the server.
     @ctrl.set("netlist_toggle")
@@ -9785,13 +9910,24 @@ def run_web_vis(
             print(f"[poc_app] mode picker unavailable: {exc}", file=sys.stderr)
 
     def _emit_vector_toggle() -> None:
-        """The arrow-field toggle: ONE VCheckbox over ``show_quiver``.
+        """The overlay toggles: the arrow field and the two marker planes.
 
         WHY a checkbox and not a second picture: the arrows are an OVERLAY on
         the cross-section already on screen, so the control is a yes/no about
         that overlay and not a third view to choose between. It is OFF at boot,
         so a browser that never touches it sees precisely the picture the panel
         had before the overlay existed.
+
+        WHY the two plane boxes ride along here: they are the same kind of
+        control over the same plotter - a yes/no about a marker that redraws
+        the scene - so they are emitted by the same entry point rather than by
+        a second one that would have to be registered and called everywhere
+        this one already is. BOTH are ON at boot (the red load plane and the
+        purple S11 port plane are what the scene has always drawn once the
+        marker layer existed), so a page that never touches them is unchanged.
+        They are emitted only where a redraw is bound (``cut_redraw``): a page
+        with no plane stack has no plane to hide, and a box that hid nothing
+        would be a control lying about the picture.
 
         Probed HERE, for the picker's own reason: this entry point resolves its
         widgets from the probe above rather than borrowing run_web's names, and
@@ -9824,6 +9960,26 @@ def run_web_vis(
             print(
                 f"[poc_app] vector field toggle unavailable: {exc}", file=sys.stderr
             )
+        if not callable(handles.get("cut_redraw")):
+            return
+        for plane_state, plane_label in (
+            ("show_load_plane", "Show Load Plane"),
+            ("show_port_plane", "Show S11 Port Plane"),
+        ):
+            try:
+                checkbox_cls(
+                    # The same (state_name, default) binding as the box above:
+                    # the browser writes the flag and the @state.change
+                    # handlers decide what a change means.
+                    v_model=(plane_state, True),
+                    label=plane_label,
+                    hide_details=True,
+                    style="padding: 2px 0;",
+                )
+            except Exception as exc:  # noqa: BLE001 - a toggle is never the page
+                print(
+                    f"[poc_app] plane toggles unavailable: {exc}", file=sys.stderr
+                )
 
     def _emit_station_readout() -> None:
         """The station sentence as SHELL TEXT, inside the cut row.

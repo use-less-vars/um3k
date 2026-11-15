@@ -4485,3 +4485,107 @@ def test_a_page_with_one_captured_plane_draws_its_picture_and_publishes_its_cut_
         "the one-plane page raised while drawing, so the picture is not the "
         f"picture this test is about:\n{proc.stderr}"
     )
+
+
+class _MarkerPlotter:
+    """A plotter that RECORDS the marker layer and draws nothing.
+
+    Doubled, not simulated: ``pv.Plane`` is the real pyvista construction (a
+    plain ``PolyData``, no render window), and only ``add_mesh`` /
+    ``add_point_labels`` - the boundaries that reach VTK's pipeline - are
+    replaced.  This image has no EGL, no libOSMesa and no X server, so a real
+    plotter would segfault before the first assertion.
+    """
+
+    def __init__(self) -> None:
+        self.meshes: list = []
+        self.labels: list = []
+
+    def add_mesh(self, mesh, **kwargs):
+        self.meshes.append((mesh, kwargs))
+        return None
+
+    def add_point_labels(self, points, labels, **kwargs):
+        self.labels.append((list(points), list(labels), kwargs))
+        return None
+
+
+def _marker_draw(app, info, planes, **switches):
+    """``_add_markers`` once, into a recording plotter.
+
+    The switches ride INSIDE the mapping, which is how the source carries them:
+    ``_add_markers`` keeps its three-argument signature and reads
+    ``planes.get("show_load_plane", True)``, so a caller that wants a disc hidden
+    folds the flag in rather than passing another argument.
+    """
+    plotter = _MarkerPlotter()
+    app._add_markers(plotter, info, dict(planes, **switches))
+    return plotter
+
+
+def test_the_s11_port_plane_is_drawn_parallel_to_the_load_plane() -> None:
+    """The purple S11 disc: same construction, same y/z, its own x - and its own
+    switch.
+
+    The point of the layer is a POSITION in space, so the assertions are the
+    three numbers a reader needs: where each disc sits on x, that they share the
+    y/z mid-plane and the grid's own spans (two parallel slices of one pair, not
+    two differently-shaped markers), and that hiding one leaves the other - and
+    the labels that place both - alone.
+    """
+    import poc_app as app
+
+    info = {app.PLANE_KEY: np.zeros((2, 3, 4)), "cell_m": 1e-4}
+    planes = app._plane_layout(info, None)
+    # Both boxes are ON at boot: the default call is every page's picture.  The
+    # layout itself carries no switches - they are folded in by the redraw - and
+    # a state that predates them still asks for both discs.
+    assert "show_load_plane" not in planes
+    assert "show_port_plane" not in planes
+    absent = app._scene_planes(planes, SimpleNamespace())
+    assert (absent["show_load_plane"], absent["show_port_plane"]) == (True, True)
+
+    both = _marker_draw(app, info, planes)
+    assert [kwargs["color"] for _mesh, kwargs in both.meshes] == ["red", "purple"], (
+        "the S11 port plane is not drawn, is not purple, or is drawn in some "
+        f"other order: {[kwargs['color'] for _mesh, kwargs in both.meshes]}"
+    )
+    (red, red_kwargs), (purple, purple_kwargs) = both.meshes
+    assert red_kwargs["opacity"] == pytest.approx(0.25)
+    assert purple_kwargs["opacity"] == pytest.approx(0.25)
+
+    assert red.center[0] == pytest.approx(planes["x_load_mm"])
+    assert purple.center[0] == pytest.approx(planes["x_s11_mm"])
+    # Parallel and concentric: same y/z centre, same two spans.
+    assert purple.center[1:] == pytest.approx(red.center[1:])
+    y_span, z_span = red.bounds[3] - red.bounds[2], red.bounds[5] - red.bounds[4]
+    assert purple.bounds[3] - purple.bounds[2] == pytest.approx(y_span)
+    assert purple.bounds[5] - purple.bounds[4] == pytest.approx(z_span)
+    # WHICH of the two grid spans each plane axis gets is pyvista's own business
+    # (with an x direction it maps i/j onto y/z in its order, and the red disc
+    # has always been built that way), so what is asserted is the pair: both
+    # discs carry the grid's own two spans, unchanged by the second disc.
+    cell_mm = planes["cell_mm"]
+    grid_spans = sorted(
+        [
+            info[app.PLANE_KEY].shape[1] * cell_mm,
+            info[app.PLANE_KEY].shape[2] * cell_mm,
+        ]
+    )
+    assert sorted([y_span, z_span]) == pytest.approx(grid_spans)
+
+    # The labels are the legend of where the planes are, so they are drawn with
+    # either disc hidden - and they are the same three sentences as before.
+    assert len(both.labels) == 1
+    _points, labels, _kwargs = both.labels[0]
+    assert len(labels) == 3
+    assert labels[0].startswith("S11 port plane")
+    assert labels[1].startswith("load (termination)")
+
+    only_load = _marker_draw(app, info, planes, show_port_plane=False)
+    assert [kwargs["color"] for _mesh, kwargs in only_load.meshes] == ["red"]
+    assert len(only_load.labels[0][1]) == 3
+
+    only_port = _marker_draw(app, info, planes, show_load_plane=False)
+    assert [kwargs["color"] for _mesh, kwargs in only_port.meshes] == ["purple"]
+    assert len(only_port.labels[0][1]) == 3
