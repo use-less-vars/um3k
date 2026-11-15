@@ -3818,13 +3818,20 @@ def test_vis_cut_state_opens_on_the_middle_sample(field_page):
 #:
 #: ``_redraw_scene``'s own ``plotter.render()`` is only ONE of them: it calls
 #: ``_draw_scene``, which re-adds every actor, and pyvista draws from inside
-#: those internals - 8 from ``renderer.add_actor``, 2 from
+#: those internals - 7 from ``renderer.add_actor``, 2 from
 #: ``renderer.reset_camera`` and 1 from ``plotter.reset_camera`` on top of the
 #: explicit render.  The count is asserted EXACTLY, not as ``>= 1``: fewer means
 #: ``_redraw_scene`` soft-failed (it swallows its exception, leaving the label
 #: already moved), more means the scene was built twice.  Both handlers are
 #: measured against this one constant, so they must produce the same delta.
-_CUT_REDRAW_RENDERS = 12
+#:
+#: The count is 11 and not 12 because this page no longer draws the station
+#: text: ``Plotter.add_text`` passes ``render=True`` down to ``add_actor``
+#: (pyvista/plotting/plotter.py:5725), so every text costs one draw, and the
+#: eighth ``add_actor`` used to be that corner label.  The vis page asks
+#: ``_draw_scene(..., station_label=False)`` and says the same sentence as
+#: shell text instead, which leaves 7 + 2 + 1 + 1 draws per cut change.
+_CUT_REDRAW_RENDERS = 11
 
 
 def test_vis_cut_change_moves_the_cut_and_redraws(field_page):

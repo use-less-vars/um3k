@@ -3795,6 +3795,7 @@ def _draw_scene(
     station: int,
     j_cut=None,
     k_cut=None,
+    station_label: bool = True,
 ) -> None:
     """Draw one view into the single existing plotter.
 
@@ -3886,13 +3887,20 @@ def _draw_scene(
     plotter.add_mesh(grid.outline(), color="black", line_width=1)
     plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")
     _add_markers(plotter, info, planes)
-    plotter.add_text(
-        _station_text(int(station), cell_mm, n_st),
-        name="station_label",
-        position="upper_left",
-        font_size=10,
-        color="black",
-    )
+    # WHY the station text is optional: ``position="upper_left"`` makes this a
+    # VTK corner annotation, whose font is scaled against the render window - a
+    # 10 pt label becomes a banner across a wide picture and cannot be sized
+    # from here. The unified vis page asks for it to be skipped (:7619) and
+    # says the same sentence as shell text instead; every legacy page keeps the
+    # default, so its in-scene corner label is unchanged.
+    if station_label:
+        plotter.add_text(
+            _station_text(int(station), cell_mm, n_st),
+            name="station_label",
+            position="upper_left",
+            font_size=10,
+            color="black",
+        )
     plotter.add_text(
         _marker_text(
             planes, _marker_cut_lines(planes, cut_layout, cuts_drawn, view_mode)
@@ -3986,7 +3994,12 @@ def _init_cut_state(
 # a parameter because the arrow cache and the handle table belong to the page,
 # not to this function, and nothing here reaches back into run_web's locals.
 def _redraw_scene(
-    plotter, info: dict, planes, state, _show_volume_quiver
+    plotter,
+    info: dict,
+    planes,
+    state,
+    _show_volume_quiver,
+    station_label: bool = True,
 ) -> None:
     """Rebuild the scene in the one plotter. Failure leaves the old picture."""
     try:
@@ -3998,6 +4011,10 @@ def _redraw_scene(
             int(state.station),
             int(state.cut_y),
             int(state.cut_z),
+            # Forwards the flag as a KEYWORD: the three cut arguments stay
+            # positional, and a page that never passes it keeps the in-scene
+            # corner label ``_draw_scene`` has always drawn (:3889).
+            station_label=station_label,
         )
         # AFTER the scene, never before it: _draw_scene clears the plotter,
         # so this one call is what keeps a ticked arrow field on screen
@@ -7606,6 +7623,14 @@ def run_web_vis(
         # than a loud failure. It starts on the middle captured plane for the
         # reason the cut starts on the middle sample of each axis (:3975).
         state.station = n_st // 2
+        # The same sentence the corner label used to carry, as a value the SHELL
+        # renders (see _emit_station_readout): built by the one helper the label
+        # was built by, at the one station this page draws, so the line beside
+        # the sliders cannot disagree with the picture. Published behind the same
+        # gate, because a page with no stack has no station to name.
+        state.station_readout = _station_text(
+            int(state.station), planes["cell_mm"], n_st
+        )
 
         def _show_volume_quiver() -> None:
             """No arrow field on this page: a NO-OP with the signature asked for.
@@ -7618,7 +7643,17 @@ def run_web_vis(
 
         def _redraw() -> None:
             """Rebuild the scene in the one plotter. Failure leaves the old picture."""
-            _redraw_scene(plotter, info, planes, state, _show_volume_quiver)
+            # station_label=False: the station sentence is shell text on this
+            # page (see the readout), not a corner annotation whose font grows
+            # with the render window. Legacy pages keep the default (:3988).
+            _redraw_scene(
+                plotter,
+                info,
+                planes,
+                state,
+                _show_volume_quiver,
+                station_label=False,
+            )
 
         # Published so the BOOT can draw: on this page there are no ez_* sheets
         # to switch between, so _show below finds nothing to show and the
@@ -9586,6 +9621,31 @@ def run_web_vis(
                 f"[poc_app] vector field toggle unavailable: {exc}", file=sys.stderr
             )
 
+    def _emit_station_readout() -> None:
+        """The station sentence as SHELL TEXT, inside the cut row.
+
+        WHY not in the picture: ``_station_text`` used to reach the scene through
+        a VTK corner annotation, whose font is scaled against the render window,
+        so on a wide page it covered the cross-section instead of captioning it.
+        This page now draws the scene WITHOUT it (``_redraw``, :7648) and says
+        the same sentence once, here, in the column whose sliders move the
+        station - a div of ordinary page text the browser sizes with every other
+        line.
+
+        Emitted only where it has a value: ``state.station_readout`` is published
+        behind the same ``plane_stack`` gate the cut row sits behind (:7625), and
+        the centre column calls this from inside that gate
+        (server/um3k_panels.py:58), so a page with no station axis never reaches
+        it. A layout failure loses the LINE, never the page.
+        """
+        try:
+            html_div(
+                "{{ station_readout }}",
+                style="padding: 2px 12px; font-size: 13px;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a caption is never the page
+            print(f"[poc_app] station readout not emitted: {exc}", file=sys.stderr)
+
     with SinglePageLayout(server) as layout:
         # The header is the second place the page title lives, so it is written
         # from the same helper as the browser title and re-pointed from now on
@@ -9636,6 +9696,9 @@ def run_web_vis(
                         # build_center_panel): run_web's own emitter, plus the
                         # three of its arguments that are not already on `ctx`.
                         ctx.register("_emit_cut_sliders", _emit_cut_sliders)
+                        # The station sentence that row carries, for the same
+                        # reason and behind the same gate (see the emitter).
+                        ctx.register("_emit_station_readout", _emit_station_readout)
                         ctx.register_handle("state", state)
                         ctx.register_handle("missing_widgets", missing_widgets)
                         # The DATA column's two page objects and its 11

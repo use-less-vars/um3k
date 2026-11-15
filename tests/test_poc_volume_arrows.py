@@ -682,8 +682,13 @@ class _StubPlotter:
         self.calls.append("reset_camera")
 
 
-def _drive_port_scene(monkeypatch, plotter, planes):
-    """``_draw_scene`` in port mode against stubs; returns (outline, markers)."""
+def _drive_port_scene(monkeypatch, plotter, planes, **draw_kwargs):
+    """``_draw_scene`` in port mode against stubs; returns (outline, markers).
+
+    ``draw_kwargs`` is handed straight to ``_draw_scene``, so a test can ask for
+    the same scene with one of its optional switches turned (``station_label``)
+    without a second copy of these stubs.
+    """
     import types
 
     # pyvista is only used for a dataset container here, so a namespace with an
@@ -715,7 +720,7 @@ def _drive_port_scene(monkeypatch, plotter, planes):
     monkeypatch.setattr(poc_app, "_marker_text", lambda pl, cuts: "legend")
 
     info = {poc_app.PLANE_KEY: np.ones((planes["n_st"], 4, 5), dtype=complex)}
-    poc_app._draw_scene(plotter, info, planes, "port", 0)
+    poc_app._draw_scene(plotter, info, planes, "port", 0, **draw_kwargs)
     return outline, markers
 
 
@@ -740,6 +745,31 @@ def test_a_refused_port_slice_still_leaves_outline_markers_and_labels(
     assert ("add_text", "station_label") in plotter.calls
     assert ("add_text", "marker_legend") in plotter.calls
     assert "view_isometric" in plotter.calls
+    assert "reset_camera" in plotter.calls
+
+
+def test_the_station_label_can_be_left_out_of_the_scene(monkeypatch):
+    """``station_label=False`` draws the SAME scene without the corner text.
+
+    The unified vis page says the station sentence as page text and asks the
+    scene not to draw it too (poc_app.py:7648), while every legacy page keeps
+    the label this function has always put in the corner.  Both halves matter,
+    so this checks the absence of that ONE ``add_text`` and that the rest of the
+    tail - the legend included - was drawn anyway.
+    """
+    plotter = _StubPlotter(refuse_image=False)
+    outline, markers = _drive_port_scene(
+        monkeypatch, plotter, _planes("record"), station_label=False
+    )
+    assert ("add_text", "station_label") not in plotter.calls, (
+        "station_label=False still drew the in-scene station text: one "
+        f"plotter call list carries {plotter.calls!r}"
+    )
+    assert ("add_text", "marker_legend") in plotter.calls, (
+        "skipping the station text took the marker legend with it"
+    )
+    assert ("add_mesh", outline) in plotter.calls
+    assert markers == ["markers"]
     assert "reset_camera" in plotter.calls
 
 

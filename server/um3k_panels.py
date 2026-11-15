@@ -36,8 +36,10 @@ def build_center_panel(ctx) -> object:
     field dump): the player and the scrubber are then not built at all, and one
     label says why in their place. A page with a plane stack opens the column
     with the two cut sliders, bound to the page's own ``cut_y``/``cut_z``
-    triggers, above the picture. Returns the view ``plotter_ui`` made, which
-    the page keeps as ``handles["view"]``.
+    triggers, above the picture, followed by the station sentence that page
+    publishes - an OPTIONAL callback, so a context that has none builds exactly
+    the row it always built. Returns the view ``plotter_ui`` made, which the
+    page keeps as ``handles["view"]``.
     """
     widgets = ctx.handle("widgets")
     ctrl = ctx.handle("ctrl")
@@ -57,6 +59,17 @@ def build_center_panel(ctx) -> object:
     # falls back to the row's own html_div for the label (poc_app.py:4049-4064).
     if ctx.available.plane_stack:
         n_j, n_k = ctx.handle("cut_shape")
+        # THE STATION SENTENCE: ordinary page text naming the plane this stack is
+        # drawn at, inside the row whose sliders choose it (poc_app.py:9630).
+        # Resolved LENIENTLY - the page registers `_emit_station_readout` beside
+        # the cut row, but this column is also built by contexts that have no
+        # such emitter (the header tests' fakes, a diff whose stack carries no
+        # station axis), and those must build the row they always built.
+        emit_station_readout = (
+            ctx.callback("_emit_station_readout")
+            if "_emit_station_readout" in ctx.callbacks
+            else None
+        )
         with html_div(
             style=(
                 "flex: 0 0 auto; display: flex; flex-wrap: wrap; "
@@ -72,6 +85,8 @@ def build_center_panel(ctx) -> object:
                 n_j,
                 n_k,
             )
+            if emit_station_readout is not None:
+                emit_station_readout()
 
     # VIEW: the 3-D picture keeps the wrapper div it
     # has always had, and now shares the column with
