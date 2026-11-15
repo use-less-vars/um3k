@@ -39,6 +39,19 @@ The claims, one per test:
 * a dump with no ``e`` edge vector at all still loads under either flag: one
   stderr line, no volume key, no raw key, no raise - and the mesh seam then
   returns None, so run_web never even builds that checkbox.
+* the seam SAYS why it drew nothing - the house ``[poc_app]`` stderr line in
+  every branch - and on a forced failure it prints the exception and its
+  traceback before returning None, because that is the only way an operator
+  can tell "no vectors in this dump" from "the arrow path broke";
+* the port-plane view is drawn BLACK, not white, because the plotter's
+  background is white (a source check: the add_mesh call lives inside run_web's
+  ``_show_volume_quiver`` closure, which needs a live trame page to reach);
+* the port-plane LABEL admits that its x is the FALLBACK constant when the
+  record carries no port plane, and is byte-identical to the recorded-x label
+  otherwise;
+* a port slice that cannot be drawn costs the SLICE and not the page: a stub
+  plotter that refuses the image still gets the outline, the axes, the markers
+  and both corner labels, so ``_draw_scene`` never raises out of that branch.
 """
 from __future__ import annotations
 
@@ -523,4 +536,232 @@ def test_the_raw_flag_without_an_e_key_says_so_and_draws_nothing(
     assert "no 'e' edge vector" in lines[0]
     # And the reader's answer is "draw nothing" rather than an empty mesh.
     assert poc_app._volume_quiver_mesh(info) is None
+
+
+# --------------------------------------------------------------------------- #
+# the DIAGNOSTICS: every "nothing drawn" branch says so, and so does success
+# --------------------------------------------------------------------------- #
+def test_the_mesh_seam_says_why_it_drew_nothing(monkeypatch, capsys):
+    """``[poc_app]`` on stderr in the no-volume branch and on a forced failure.
+
+    run_web shows the operator a page with no arrows; without these lines there
+    is no way to tell an absent volume from a broken glyph. The failure case
+    also has to keep returning None: the seam is called from a redraw and a
+    traceback there would take the page down.
+    """
+    assert poc_app._volume_quiver_mesh({}) is None
+    err = capsys.readouterr().err
+    assert "[poc_app]" in err
+    # The message has to name BOTH routes it looked for, because "no volume" is
+    # only actionable if the reader knows which two keys were absent.
+    assert poc_app.VOLUME_KEY in err
+    assert poc_app.VOLUME_RAW_KEY in err
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("arrow path exploded")
+
+    monkeypatch.setattr(poc_app, "_volume_arrows", _boom)
+    assert poc_app._volume_quiver_mesh(_info(np.ones((3, 4, 2, 3)))) is None
+    err = capsys.readouterr().err
+    # The exception AND its traceback: the message alone does not say where.
+    assert any(
+        line.startswith("[poc_app]") and "arrow path exploded" in line
+        for line in err.splitlines()
+    )
+    assert "Traceback (most recent call last)" in err
+
+
+def test_the_volume_arrows_are_drawn_black_on_the_white_background():
+    """Source check: the volume-arrow add_mesh is BLACK, and the mode one is not.
+
+    HONESTLY: this reads server/poc_app.py rather than driving a plotter. The
+    call under test lives in ``_show_volume_quiver``, a closure inside
+    ``run_web`` that needs a live trame page and a GL context; neither exists in
+    this container, so a behavioural version cannot be written here. What the
+    check does pin is the one thing that was wrong: white geometry on the white
+    background ``create_plotter`` sets cannot be seen.
+    """
+    source = (REPO_ROOT / "server" / "poc_app.py").read_text(encoding="utf-8")
+
+    def _block(name):
+        """The ``plotter.add_mesh(...)`` call that carries ``name=<name>``."""
+        marker = f'name="{name}"'
+        assert source.count(marker) == 1, marker
+        end = source.index(marker)
+        start = source.rindex("plotter.add_mesh(", 0, end)
+        return source[start:end]
+
+    volume = _block("volume_e_quiver")
+    assert 'color="black"' in volume
+    assert 'color="white"' not in volume
+    # The parallel call in run_web_vis draws white arrows OVER an opaque turbo
+    # surface, where white is the visible choice. It must stay as it is: the fix
+    # belongs to the transparent-on-white plotter only.
+    mode = _block("mode_quiver")
+    assert 'color="white"' in mode
+
+
+#: The ``planes`` dict as ``_plane_layout`` hands it over, trimmed to the keys
+#: ``_view_label`` and ``_draw_scene`` read.
+def _planes(src_s11):
+    stations = [0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.8, 3.2]
+    return {
+        "cell_mm": 0.4,
+        "n_st": len(stations),
+        "stations_mm": stations,
+        "x_load_mm": 20.0,
+        "src_load": "FALLBACK",
+        "ix_load": None,
+        "x_s11_mm": stations[0],
+        "src_s11": src_s11,
+        "x_s21_mm": 20.4,
+        "src_s21": "FALLBACK",
+        "s21_valid": False,
+        "s21_valid_src": "FALLBACK",
+        "s21_reason": "no record",
+        "slice_index": 0,
+    }
+
+
+def test_the_port_label_admits_a_fallback_x():
+    """A FALLBACK port x is named as one; a recorded one says nothing extra."""
+    recorded = poc_app._view_label("port", _planes("record"), True)
+    # Byte-for-byte what the label said before this note existed: the caveat is
+    # appended only when the x really is the constant, so a recorded study is
+    # not made to look less certain than it is.
+    assert recorded == "port-plane |Ez|: station 1/9, x = 0.0000 mm"
+
+    fallback = poc_app._view_label("port", _planes("FALLBACK"), True)
+    assert fallback.startswith(recorded)
+    assert len(fallback) > len(recorded)
+    assert "FALLBACK" in fallback[len(recorded):]
+    # The number the reader would otherwise trust is named as the constant.
+    assert f"{poc_app.FALLBACK_S11_MM:g} mm" in fallback
+
+    # The volume view never shows a port x, so it must not grow the note either.
+    volume = poc_app._view_label("volume", _planes("FALLBACK"), True)
+    assert "FALLBACK" not in volume
+
+
+class _FakeImageData:
+    """Stands in for ``pv.ImageData``: attributes, no VTK, no GL."""
+
+    def __init__(self):
+        self.dimensions = None
+        self.spacing = None
+        self.origin = None
+        self.point_data = {}
+
+
+class _StubPlotter:
+    """Records what ``_draw_scene`` asks for; can refuse the port image."""
+
+    def __init__(self, refuse_image=True):
+        self.calls = []
+        self.refuse_image = refuse_image
+
+    def clear(self):
+        self.calls.append("clear")
+
+    def add_mesh(self, mesh, **kwargs):
+        if self.refuse_image and isinstance(mesh, _FakeImageData):
+            raise RuntimeError("slice mesh refused")
+        self.calls.append(("add_mesh", mesh))
+        return object()
+
+    def add_axes(self, **kwargs):
+        self.calls.append("add_axes")
+
+    def add_text(self, text, **kwargs):
+        self.calls.append(("add_text", kwargs.get("name")))
+
+    def view_isometric(self):
+        self.calls.append("view_isometric")
+
+    def reset_camera(self):
+        self.calls.append("reset_camera")
+
+
+def _drive_port_scene(monkeypatch, plotter, planes):
+    """``_draw_scene`` in port mode against stubs; returns (outline, markers)."""
+    import types
+
+    # pyvista is only used for a dataset container here, so a namespace with an
+    # attribute-only stand-in keeps this test free of VTK and of any GL probe.
+    fake_pv = types.SimpleNamespace(ImageData=_FakeImageData)
+    monkeypatch.setitem(sys.modules, "pyvista", fake_pv)
+
+    outline = object()
+    monkeypatch.setattr(
+        poc_app,
+        "build_grid",
+        lambda _info: types.SimpleNamespace(outline=lambda: outline),
+    )
+    monkeypatch.setattr(
+        poc_app,
+        "_cut_layout",
+        lambda _info, j, k: {
+            "y_mm": 0.0, "j": 0, "n_j": 1,
+            "z_mm": 0.0, "k": 0, "n_k": 1,
+        },
+    )
+    markers = []
+    monkeypatch.setattr(
+        poc_app, "_add_markers", lambda p, i, pl: markers.append("markers")
+    )
+    monkeypatch.setattr(
+        poc_app, "_marker_cut_lines", lambda pl, cl, drawn, vm: {}
+    )
+    monkeypatch.setattr(poc_app, "_marker_text", lambda pl, cuts: "legend")
+
+    info = {poc_app.PLANE_KEY: np.ones((planes["n_st"], 4, 5), dtype=complex)}
+    poc_app._draw_scene(plotter, info, planes, "port", 0)
+    return outline, markers
+
+
+def test_a_refused_port_slice_still_leaves_outline_markers_and_labels(
+    monkeypatch, capsys
+):
+    """A failing port image must cost the image, not the rest of the scene.
+
+    The stub plotter raises on exactly the ``pv.ImageData`` add_mesh, i.e. on
+    the port slice alone; everything drawn AFTER that branch has to be reached
+    anyway, and the failure has to be reported rather than raised.
+    """
+    plotter = _StubPlotter(refuse_image=True)
+    outline, markers = _drive_port_scene(monkeypatch, plotter, _planes("record"))
+    err = capsys.readouterr().err
+    assert "[poc_app] port-plane view not drawn: slice mesh refused" in err
+    # The common tail ran: outline, axes, markers, station text, marker legend,
+    # camera. Without the guard the exception would have escaped here.
+    assert ("add_mesh", outline) in plotter.calls
+    assert "add_axes" in plotter.calls
+    assert markers == ["markers"]
+    assert ("add_text", "station_label") in plotter.calls
+    assert ("add_text", "marker_legend") in plotter.calls
+    assert "view_isometric" in plotter.calls
+    assert "reset_camera" in plotter.calls
+
+
+def test_an_out_of_range_port_slice_index_is_named_not_raised(monkeypatch, capsys):
+    """``slice_index`` past the captured planes: refused, named, page survives."""
+    planes = _planes("record")
+    planes["slice_index"] = planes["n_st"]  # one past the last captured plane
+    plotter = _StubPlotter(refuse_image=False)
+    outline, markers = _drive_port_scene(monkeypatch, plotter, planes)
+    err = capsys.readouterr().err
+    # The index AND the count are in the message: "not drawn" alone would not
+    # say whether the data or the viewer was wrong.
+    assert "port-plane view not drawn" in err
+    assert f"slice_index {planes['n_st']}" in err
+    assert f"{planes['n_st']} captured planes" in err
+    # Nothing was asked of the renderer for the slice, but the tail still ran.
+    assert not any(
+        call == ("add_mesh",)
+        or (isinstance(call, tuple) and isinstance(call[1], _FakeImageData))
+        for call in plotter.calls
+    )
+    assert ("add_mesh", outline) in plotter.calls
+    assert markers == ["markers"]
+    assert "reset_camera" in plotter.calls
 

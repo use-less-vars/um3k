@@ -3245,6 +3245,15 @@ def _view_label(
             f"port-plane |Ez|: station {idx + 1}/{planes['n_st']}, "
             f"x = {planes['stations_mm'][idx]:.4f} mm"
         )
+        if planes.get("src_s11") == "FALLBACK":
+            # The x above is NOT a measured position: the record carries no port
+            # plane, so it falls back to the constant. Say it here, in the same
+            # suffix style as the other caveats on this label, so the number is
+            # not read as something the study recorded.
+            label += (
+                "  (port x is the FALLBACK constant "
+                f"{FALLBACK_S11_MM:g} mm: the record has no port plane)"
+            )
     else:
         label = (
             f"|Ez| volume: {planes['n_st']} captured x-planes, "
@@ -3759,22 +3768,33 @@ def _draw_scene(
     if view_mode == "port":
         # The port-plane cross-section: the captured station nearest the port
         # x, drawn as a single-sample-thick image so it lies in the y-z plane.
-        idx = int(planes["slice_index"])
-        x_mm = planes["stations_mm"][idx]
-        shot = info[PLANE_KEY][idx]
-        image = pv.ImageData()
-        image.dimensions = (int(shot.shape[0]), int(shot.shape[1]), 1)
-        image.spacing = (cell_mm, cell_mm, cell_mm)
-        image.origin = (x_mm, 0.0, 0.0)
-        image.point_data["ez_abs"] = np.ascontiguousarray(
-            np.abs(shot).ravel(order="F"), dtype=float
-        )
-        plotter.add_mesh(
-            image,
-            scalars="ez_abs",
-            cmap="turbo",
-            scalar_bar_args={"title": f"|Ez| at x = {x_mm:.4f} mm [V/m]"},
-        )
+        # Guarded: a slice that cannot be read must cost the SLICE, not the
+        # outline, the markers and the two labels drawn after this branch.
+        try:
+            idx = int(planes["slice_index"])
+            if not 0 <= idx < n_st:
+                raise ValueError(
+                    f"slice_index {idx} is outside the {n_st} captured planes"
+                )
+            x_mm = planes["stations_mm"][idx]
+            shot = info[PLANE_KEY][idx]
+            image = pv.ImageData()
+            image.dimensions = (int(shot.shape[0]), int(shot.shape[1]), 1)
+            image.spacing = (cell_mm, cell_mm, cell_mm)
+            image.origin = (x_mm, 0.0, 0.0)
+            image.point_data["ez_abs"] = np.ascontiguousarray(
+                np.abs(shot).ravel(order="F"), dtype=float
+            )
+            plotter.add_mesh(
+                image,
+                scalars="ez_abs",
+                cmap="turbo",
+                scalar_bar_args={"title": f"|Ez| at x = {x_mm:.4f} mm [V/m]"},
+            )
+        except Exception as exc:  # noqa: BLE001 - see comment above
+            print(
+                f"[poc_app] port-plane view not drawn: {exc}", file=sys.stderr
+            )
     else:
         plotter.add_volume(
             grid,
@@ -4154,9 +4174,13 @@ def run_web(
         if mesh is None:
             return
         try:
+            # BLACK, not white: this plotter's background is white
+            # (create_plotter calls set_background("white")), so white geometry
+            # cannot be seen on it. Black is absent from the turbo colour map
+            # the surface uses and is maximally distinct from that background.
             actor = plotter.add_mesh(
                 mesh,
-                color="white",
+                color="black",
                 lighting=False,
                 show_scalar_bar=False,
                 name="volume_e_quiver",
@@ -4165,6 +4189,11 @@ def run_web(
             # Stated rather than assumed: a variant that adds the actor hidden
             # must not leave the arrows invisible with the box ticked.
             actor.SetVisibility(True)
+            print(
+                f"[poc_app] 3D vectors actor: "
+                f"{getattr(actor, 'name', None)} bounds={actor.GetBounds()}",
+                file=sys.stderr,
+            )
         except Exception as exc:  # noqa: BLE001 - the arrows are not the page
             print(f"[poc_app] 3D vectors skipped: {exc}", file=sys.stderr)
 
@@ -6708,6 +6737,12 @@ def _volume_quiver_mesh(info, *, stride=VOLUME_QUIVER_STRIDE):
             if VOLUME_RAW_KEY not in info:
                 # Neither route: there is nothing to draw, and saying so is the
                 # caller's "no arrows on this dump", not an error.
+                print(
+                    f"[poc_app] 3D vectors not drawn: the dump carries no "
+                    f"volume (neither '{VOLUME_KEY}' nor "
+                    f"'{VOLUME_RAW_KEY}' is present)",
+                    file=sys.stderr,
+                )
                 return None
             raw = info[VOLUME_RAW_KEY]
             # Imported on use, like every other emfit use in this module.
@@ -6722,13 +6757,30 @@ def _volume_quiver_mesh(info, *, stride=VOLUME_QUIVER_STRIDE):
         points, vectors = _volume_arrows(info, stride=stride)
         cloud = _volume_quiver_polydata(points, vectors)
         if cloud is None:
+            print(
+                f"[poc_app] 3D vectors not drawn: no arrows survived the "
+                f"relative floor / stride (stride={stride})",
+                file=sys.stderr,
+            )
             return None
         import pyvista as pv  # noqa: F401 - deferred, see the docstring
 
-        return cloud.glyph(
+        glyphed = cloud.glyph(
             orient="volume_e_quiver", scale="volume_e_quiver", factor=1.0
         )
-    except Exception:  # noqa: BLE001 - a picture is never worth a traceback
+        print(
+            f"[poc_app] 3D vectors glyphed: {glyphed.n_points} points, "
+            f"{glyphed.n_cells} cells, bounds={glyphed.bounds}",
+            file=sys.stderr,
+        )
+        return glyphed
+    except Exception as exc:  # noqa: BLE001 - a picture is never worth a traceback
+        # Imported here: traceback is not needed anywhere else in this module,
+        # and a failure on the way to a picture is the only place it helps.
+        import traceback
+
+        print(f"[poc_app] 3D vectors not drawn: {exc}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
         return None
 
 
