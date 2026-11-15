@@ -14,8 +14,11 @@ The claims, one per test:
 * importing the module in a FRESH interpreter leaves ``trame`` and ``pyvista``
   out of ``sys.modules``, which is what keeps the flag layer importable on a
   machine with no UI stack installed;
-* ``Available.compute`` on a realistic legacy field page turns on the plane and
-  volume views from the station AXIS, not from any widget;
+* ``Available.compute`` on a realistic legacy field page turns on the plane
+  views from the station AXIS, not from any widget;
+* ``volume_field`` (the 3-D vector field, a question about the KEYS present) and
+  ``plane_stack`` (more than one captured x-plane) are INDEPENDENT, proved on a
+  one-station dump that carries a volume and a nine-station dump that does not;
 * ``Available.compute`` on a realistic animation page says "animation" and says
   nothing about stations, because that page forks to its own viewer;
 * the snapshot really is a snapshot: replacing ``dump`` moves no flag until
@@ -135,7 +138,8 @@ def test_page_context_constructs_bare():
     assert ctx.callbacks == {}
 
     available = ctx.available
-    assert available.volume_3d is False
+    assert available.volume_field is False
+    assert available.plane_stack is False
     assert available.port_planes is False
     assert available.multifreq is False
     assert available.record is False
@@ -181,16 +185,17 @@ def test_importing_the_module_pulls_in_no_ui_stack():
 def test_available_from_a_legacy_field_page():
     """If this fails, a field dump's plane/volume views are read from the wrong axis.
 
-    The station AXIS decides both flags (poc_app.py:3167-3170 for one plane,
-    :3280-3281 for the stack), and the loader's info dict is the only place
-    that axis lives. A single-station page can show the port plane but has
-    nothing to stack; a nine-station page can show both.
+    The station AXIS decides ``port_planes`` and ``plane_stack`` (poc_app.py:3167-
+    3170 for one plane, :3280-3281 for the stack), and the loader's info dict is
+    the only place that axis lives. Neither page below carries a volume key, so
+    ``volume_field`` stays false while the station flags move.
     """
     planed = um3k_context.Available.compute(
         _field_info(n_st=1), _field_planes(), multifreq=None, record=None,
     )
     assert planed.port_planes is True
-    assert planed.volume_3d is False
+    assert planed.plane_stack is False  # one station is not a stack
+    assert planed.volume_field is False  # and no volume key is present
     assert planed.record is False
     assert planed.s11_record is True  # the record carried the port plane
     assert planed.animation is False
@@ -201,7 +206,8 @@ def test_available_from_a_legacy_field_page():
         record={"geometry": {"ix_port": 4}, "f_hz": 1.0e9},
     )
     assert stacked.port_planes is True
-    assert stacked.volume_3d is True
+    assert stacked.plane_stack is True
+    assert stacked.volume_field is False  # nine x-planes, still no volume
     assert stacked.record is True
     assert stacked.multifreq is False
     assert stacked.animation is False
@@ -229,7 +235,8 @@ def test_available_from_an_animation_page():
     )
     assert available.animation is True
     assert available.source_format == "vis"
-    assert available.volume_3d is False
+    assert available.volume_field is False
+    assert available.plane_stack is False
     assert available.port_planes is False
     assert available.s11_record is False
     assert available.multifreq is True
@@ -253,25 +260,32 @@ def test_available_is_a_frozen_snapshot_until_recomputed():
     """
     seeded = um3k_context.PageContext(dump=um3k_context.LoadedDump(info=_field_info(3)))
     assert seeded.available.port_planes is True  # computed at construction
-    assert seeded.available.volume_3d is True
+    assert seeded.available.plane_stack is True
+    assert seeded.available.volume_field is False
 
     ctx = um3k_context.PageContext()
     before = ctx.available
-    assert before.volume_3d is False
+    assert before.plane_stack is False
+    assert before.volume_field is False
 
+    loaded = _field_info(9)
+    loaded[um3k_context.VOLUME_KEY] = object()
     ctx.dump = um3k_context.LoadedDump(
-        info=_field_info(9), planes=_field_planes(), record={"geometry": {}},
+        info=loaded, planes=_field_planes(), record={"geometry": {}},
     )
     assert ctx.available is before, "replacing the dump recomputed by itself"
-    assert ctx.available.volume_3d is False
+    assert ctx.available.plane_stack is False
+    assert ctx.available.volume_field is False
 
     after = ctx.recompute_available()
     assert after is ctx.available
     assert after is not before
-    assert after.volume_3d is True
+    assert after.plane_stack is True
+    assert after.volume_field is True
     assert after.port_planes is True
     assert after.record is True
-    assert before.volume_3d is False, "the retired snapshot moved with the page"
+    assert before.plane_stack is False, "the retired snapshot moved with the page"
+    assert before.volume_field is False, "the retired snapshot moved with the page"
 
 
 def test_set_view_mode_accepts_both_modes():
@@ -408,9 +422,9 @@ def test_available_of_an_empty_page_never_raises():
     """
     empty = um3k_context.Available.compute()
     assert (
-        empty.volume_3d, empty.port_planes, empty.multifreq,
+        empty.volume_field, empty.plane_stack, empty.port_planes, empty.multifreq,
         empty.record, empty.s11_record, empty.animation,
-    ) == (False,) * 6
+    ) == (False,) * 7
     assert empty.source_format == "field"
     assert empty == um3k_context.Available.compute({}, {})
     assert empty == um3k_context.Available()
@@ -420,7 +434,53 @@ def test_available_of_an_empty_page_never_raises():
     assert um3k_context.Available.compute({um3k_context.PLANE_KEY: 5}).port_planes is False
     shapeless = um3k_context.Available.compute({um3k_context.PLANE_KEY: _Stack(0)})
     assert shapeless.port_planes is False
-    assert shapeless.volume_3d is False
+    assert shapeless.plane_stack is False
+    assert shapeless.volume_field is False
+
+
+def test_volume_field_and_plane_stack_are_independent():
+    """If this fails, the volume flag was derived from the station count again.
+
+    ``volume_field`` is a question about the KEYS the page carries - ``e_centres``
+    (poc_app.py:85) or ``e_raw`` (:91), the two ``_volume_quiver_mesh`` tests
+    before it draws anything (:6737-6790) - while ``plane_stack`` is a question
+    about how many x-planes were captured (:3280-3281). A one-station dump CAN
+    carry a volume and a nine-station one can carry none, so the flags must move
+    independently. ``volume_3d`` must also be gone: a half-done rename would
+    leave a stale alias answering the old, wrong question.
+    """
+    assert not hasattr(um3k_context.Available, "volume_3d")
+    assert not hasattr(um3k_context.Available(), "volume_3d")
+
+    one_station = _field_info(n_st=1)
+    stacked_stations = _field_info(n_st=9)
+    cell_centred = dict(one_station, **{um3k_context.VOLUME_KEY: object()})
+    staggered = dict(one_station, **{um3k_context.VOLUME_RAW_KEY: {"e": object()}})
+    both = dict(stacked_stations, **{um3k_context.VOLUME_KEY: object()})
+    both[um3k_context.VOLUME_RAW_KEY] = {"e": object()}
+
+    volume_one_station = um3k_context.Available.compute(info=cell_centred)
+    assert volume_one_station.volume_field is True
+    assert volume_one_station.plane_stack is False
+    assert volume_one_station.port_planes is True
+
+    raw_one_station = um3k_context.Available.compute(info=staggered)
+    assert raw_one_station.volume_field is True
+    assert raw_one_station.plane_stack is False
+
+    stack_no_volume = um3k_context.Available.compute(info=stacked_stations)
+    assert stack_no_volume.volume_field is False
+    assert stack_no_volume.plane_stack is True
+    assert stack_no_volume.port_planes is True
+
+    both_page = um3k_context.Available.compute(info=both)
+    assert both_page.volume_field is True
+    assert both_page.plane_stack is True
+
+    plain = um3k_context.Available.compute(info=one_station)
+    assert plain.volume_field is False
+    assert plain.plane_stack is False
+    assert plain.port_planes is True
 
 
 def test_name_literals_are_pinned_against_poc_app():

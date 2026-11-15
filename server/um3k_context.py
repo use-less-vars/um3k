@@ -92,7 +92,14 @@ class Available:
     (poc_app.py:9734-9750), so only ``animation``/``source_format`` describe it.
     """
 
-    volume_3d: bool = False
+    #: The 3-D vector field itself: it is a question about the KEYS the page
+    #: carries, cell-centred (poc_app.py:85) or still staggered (:91), the two
+    #: ``_volume_quiver_mesh`` tests before it draws anything (:6737-6790).
+    volume_field: bool = False
+    #: The stacked-cut-plane case: MORE THAN ONE captured x-plane, which is what
+    #: the volume view stacks (poc_app.py:3280-3281). Not the volume: a one-station
+    #: dump can carry ``e_centres`` and a nine-station one can carry nothing.
+    plane_stack: bool = False
     port_planes: bool = False
     multifreq: bool = False
     record: bool = False
@@ -110,6 +117,10 @@ class Available:
         :483-532 animation), ``planes`` the page layout (:3172-3187 plane,
         :5353-5361 vis), ``is_vis`` overrides :338; no file is opened here, so a
         deleted dump still answers -- and an empty page answers, every flag false.
+
+        ``volume_field`` asks which KEYS the info holds (:85, :91) and
+        ``plane_stack`` how many stations it captured (:3280-3281); the two are
+        independent, so neither may be derived from the other.
         """
         info = info if isinstance(info, dict) else {}
         planes = planes if isinstance(planes, dict) else {}
@@ -118,7 +129,9 @@ class Available:
         )
         stations = _stations(info)
         return cls(
-            volume_3d=stations > 1,  # stacks x-planes (poc_app.py:3280-3281)
+            # The keys, not the station count (poc_app.py:85, :91, :6737-6790).
+            volume_field=VOLUME_KEY in info or VOLUME_RAW_KEY in info,
+            plane_stack=stations > 1,  # stacks x-planes (poc_app.py:3280-3281)
             port_planes=stations > 0,  # one station (poc_app.py:3167-3170)
             multifreq=multifreq is not None,  # None is real (:5370, :966)
             record=record is not None,  # None = no record (:5342-5345)
