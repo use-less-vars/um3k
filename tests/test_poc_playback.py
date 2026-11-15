@@ -3660,7 +3660,60 @@ def field_page(tmp_path_factory):
             "the legacy fixture no longer carries plane_ez, so this is not the "
             "plane-stack page the cut sheets are gated on"
         )
-        app, srv = _boot_app(info)
+        # ---- the two BOOT-level records (see the two tests below) --------
+        # Both spies have to be installed BEFORE the boot, and for different
+        # reasons:
+        #   * `add_volume` is reached by the boot's own first picture, which
+        #     goes through `handles["cut_redraw"]` (poc_app.py:8341);
+        #   * the cut row's emitter is put on `ctx` as a FUNCTION OBJECT while
+        #     the page builds itself (poc_app.py:9633), so a spy installed
+        #     after the boot would record nothing while the row still appeared
+        #     - the layout already holds the object it found at build time.
+        # Both delegate to the callable they replace, so the page is unchanged;
+        # both are restored as soon as the boot returns, so what each test reads
+        # is exactly "what the boot did" and never a later drive.
+        pyvista = pytest.importorskip("pyvista")
+        real_add_volume = pyvista.Plotter.add_volume
+        volume_calls = []
+
+        def _counted_add_volume(self, *args, **kwargs):
+            volume_calls.append((args, kwargs))
+            return real_add_volume(self, *args, **kwargs)
+
+        real_emit = app._emit_cut_sliders
+        emit_calls = []
+
+        def _cut_snapshot(state):
+            # The state the row is handed (:7596) is the LIVE server state, and
+            # a later test in the same process drives a cut handler over it, so
+            # the sample the emit actually saw is snapshotted HERE, at call
+            # time: read back off `args[4]` at assert time it reports whatever
+            # the last driver left behind, not what the emit saw.
+            snap = {}
+            for name in ("cut_y", "cut_z"):
+                value = getattr(state, name, None)
+                snap[name] = None if value is None else int(value)
+            return snap
+
+        def _counted_emit(*args, **kwargs):
+            emit_calls.append(
+                {"args": args, "kwargs": kwargs, **_cut_snapshot(args[4])}
+            )
+            return real_emit(*args, **kwargs)
+
+        # WHICH module carries the emitter spy is kept apart from `app`: the
+        # boot REBINDS `app` to whatever `_boot_app` returns, so restoring
+        # through `app` would put the real emitter back on the returned object
+        # (leaving the spy on the module) and, if the boot raised, would have
+        # no `app` to restore at all.
+        poc_app_module = app
+        pyvista.Plotter.add_volume = _counted_add_volume
+        app._emit_cut_sliders = _counted_emit
+        try:
+            app, srv = _boot_app(info)
+        finally:
+            pyvista.Plotter.add_volume = real_add_volume
+            poc_app_module._emit_cut_sliders = real_emit
         state, ctrl = srv.state, srv.controller
 
         opened = {
@@ -3688,6 +3741,13 @@ def field_page(tmp_path_factory):
                 name: getattr(ctrl, name, None) is not None
                 for name in ("cut_y", "cut_z")
             },
+            # What the BOOT drew the volume with, and the one call the cut
+            # row's emitter received while the layout was built.  Both lists
+            # were closed when the boot returned (the spies are taken back
+            # out in the `finally` above), so these are boot records, not a
+            # running log a later test could grow.
+            "add_volume_calls": volume_calls,
+            "emit_calls": emit_calls,
         }
         yield app, srv, renders, opened
 
@@ -3835,6 +3895,259 @@ def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
     )
 
 
+# =============================================================================
+# The cut row on the BOOTED page: what the boot drew, and what it emitted
+# =============================================================================
+# The tests above pin the cut MACHINERY on a page the fixture built once.  The
+# two below read that same boot from the other end: what the boot put on screen
+# (a volume to cut into) and what it asked the layout to emit (the row itself).
+# Both records come from spies the fixture installs around `_boot_app` only, so
+# each count is what the BOOT did and not a running log.
+
+
+def test_booted_field_page_draws_the_volume_with_ez_abs(field_page):
+    """If this fails, the plane-stack page opens on a picture with no volume.
+
+    The boot's first picture goes through ``handles["cut_redraw"]``
+    (poc_app.py:8341), and ``_draw_scene`` adds the volume only on its volume
+    branch (poc_app.py:3863) - the port branch adds one station's mesh instead
+    and no volume at all.  So an ``add_volume`` call during the boot is the
+    proof that the two cut sheets are drawn into a real volume rather than into
+    an empty plotter, which is the one thing the render counters above cannot
+    tell apart.  ``ez_abs`` is the scalar ``build_grid`` publishes (:3698) and
+    the one ``create_plotter`` asks for (:3717); a volume added with any other
+    scalar comes out uncoloured and no count would notice.
+    """
+    _app, _srv, _renders, opened = field_page
+    calls = opened["add_volume_calls"]
+    assert calls, (
+        "the plane-stack page's boot never called add_volume, so the picture it "
+        "opens on has no volume for the cut sheets to sit in"
+    )
+    scalars = [kwargs.get("scalars") for _args, kwargs in calls]
+    assert "ez_abs" in scalars, (
+        "the booted page added its volume with "
+        f"{scalars!r}, not with the grid's own 'ez_abs'"
+    )
+
+
+def test_booted_field_page_emits_the_cut_row_once(field_page):
+    """If this fails, the booted plane-stack page draws no cut sliders.
+
+    The row is emitted from the LAYOUT build (server/um3k_panels.py:58-74)
+    through the emitter poc_app published on `ctx` while it built itself, and
+    that publish hands over the FUNCTION OBJECT (:9633) - which is why the spy
+    has to predate the boot: patched afterwards it records 0 calls while the
+    row still appears on the page.
+
+    This is the only place the REAL page's arguments exist, so all of them are
+    pinned here: the placeholder is ``None`` (the centre column has no
+    placeholder div and relies on its own ``html_div``), the two bounds are the
+    stack's own ``(n_j, n_k) = (12, 5)`` from ``ctx.handle("cut_shape")``
+    (:7630), and the state handed over is the server's own object, already on
+    the middle sample because ``_init_cut_state`` ran before the build (:7596).
+    A stand-in state would make the sliders bind to nothing.
+    """
+    _app, srv, _renders, opened = field_page
+    calls = opened["emit_calls"]
+    assert len(calls) == 1, (
+        f"the booted page emitted the cut row {len(calls)} time(s); the layout "
+        "builds it once, so 0 means the centre column never reached the row and "
+        ">1 means a second emitter was installed over the first"
+    )
+    record = calls[0]
+    args = record["args"]
+    assert args[1] is None, (
+        "the cut row was emitted with "
+        f"{args[1]!r} as the placeholder; the centre column has no placeholder "
+        "div and passes None"
+    )
+    assert (args[5], args[6]) == (12, 5), (
+        "the cut row was emitted with bounds "
+        f"{(args[5], args[6])!r} instead of the stack's (n_j, n_k) = (12, 5), so "
+        "a slider would span the wrong number of samples"
+    )
+    assert args[4] is srv.state, (
+        f"the cut row was emitted with {args[4]!r} instead of the page's own "
+        "state, so the sliders would bind to a copy nothing writes to"
+    )
+    # The sample comes from the SNAPSHOT the spy took at emit time, never off
+    # `args[4]`: that is the live state, and a test driving a cut handler
+    # (test_vis_cut_change_moves_the_cut_and_redraws, earlier in this file)
+    # leaves it on 11, so a late read would report the drive, not the emit.
+    assert record["cut_y"] == 6, (
+        "the cut row was emitted while the page was on cut_y="
+        f"{record['cut_y']!r}; _init_cut_state runs before the layout is built, "
+        "so the first slider must be drawn on the middle sample"
+    )
+
+
+# =============================================================================
+# The cut row's EMITTER: the two sliders, and the label-only fallbacks
+# =============================================================================
+# ``_emit_cut_sliders`` is the function the centre column calls for a
+# plane-stack page (server/um3k_panels.py, build_center_panel).  It is a plain
+# function over a widget TABLE and one div factory, so it is tested directly:
+# recording callables stand in for the Vuetify classes, and nothing is booted,
+# laid out or rendered - the arguments it passes ARE the whole contract of the
+# row.  Both fallbacks matter: a plane stack can be captured on a page whose
+# widget probe came up short, and the layout that calls it has no placeholder
+# div at all (it passes ``None`` and relies on its own ``html_div``).
+
+
+def _cut_slider_fakes():
+    """Recording ``VLabel``/``VSlider`` factories plus a recording div.
+
+    ``widgets`` maps a widget NAME to a callable because that is what the emitter
+    is handed: it resolves ``widgets["VSlider"]`` rather than importing the
+    class, which is what makes a plain dict a valid stand-in.  Every widget call
+    lands in ``calls`` as ``(name, args, kwargs)`` in build order, so one
+    assertion can pin the row's order AND each slider's arguments.
+    """
+    calls = []
+    widgets = {}
+
+    def _record(name):
+        def _call(*args, **kwargs):
+            calls.append((name, args, kwargs))
+        return _call
+
+    for name in ("VLabel", "VSlider"):
+        widgets[name] = _record(name)
+
+    divs = []
+
+    def div_recorder(*args, **kwargs):
+        divs.append((args, kwargs))
+
+    return widgets, calls, div_recorder, divs
+
+
+def test_emit_cut_sliders_builds_two_sliders_between_their_labels():
+    """If this fails, the two cut sliders are not bound to the page's cut axes.
+
+    The row is ``y cut`` / the y slider / ``z cut`` / the z slider / the caption,
+    and each slider carries the sample range the page opened on: ``n_j - 1`` and
+    ``n_k - 1`` bounded at 0, one sample per step, bound to ``cut_y`` / ``cut_z``
+    at the state the page is holding.  A transposed ``(n_j, n_k)`` shows up as the
+    two ``max`` values swapping; a slider that lost its ``v_model`` would move
+    nothing when dragged.
+    """
+    import poc_app as app
+
+    widgets, calls, div_recorder, divs = _cut_slider_fakes()
+
+    app._emit_cut_sliders(
+        [], None, div_recorder, widgets, SimpleNamespace(cut_y=6, cut_z=2), 12, 5
+    )
+
+    assert [name for name, _args, _kwargs in calls] == [
+        "VLabel",
+        "VSlider",
+        "VLabel",
+        "VSlider",
+        "VLabel",
+    ], f"the cut row built {[name for name, _a, _k in calls]!r}"
+    assert calls[0][1] == ("y cut",), f"the y label says {calls[0][1]!r}"
+    assert calls[2][1] == ("z cut",), f"the z label says {calls[2][1]!r}"
+    assert calls[-1][1] == ("{{ cut_label }}",), (
+        f"the row does not end on the caption: {calls[-1][1]!r}"
+    )
+
+    y_kwargs = calls[1][2]
+    assert y_kwargs["v_model"] == ("cut_y", 6), (
+        f"the y slider is bound to {y_kwargs['v_model']!r}, not the live cut"
+    )
+    assert (y_kwargs["min"], y_kwargs["max"], y_kwargs["step"]) == (0, 11, 1), (
+        "the y slider does not span n_j = 12 samples one at a time: "
+        f"min={y_kwargs['min']!r} max={y_kwargs['max']!r} "
+        f"step={y_kwargs['step']!r}"
+    )
+
+    z_kwargs = calls[3][2]
+    assert z_kwargs["v_model"] == ("cut_z", 2), (
+        f"the z slider is bound to {z_kwargs['v_model']!r}, not the live cut"
+    )
+    assert (z_kwargs["min"], z_kwargs["max"], z_kwargs["step"]) == (0, 4, 1), (
+        "the z slider does not span n_k = 5 samples one at a time: "
+        f"min={z_kwargs['min']!r} max={z_kwargs['max']!r} "
+        f"step={z_kwargs['step']!r}"
+    )
+
+    assert divs == [], (
+        f"a complete row still drew the label-only fallback: {divs!r}"
+    )
+
+
+def test_emit_cut_sliders_labels_the_row_when_the_sliders_are_missing():
+    """If this fails, a plane-stack layout with no placeholder div draws nothing.
+
+    This is the case chunk B creates: ``build_center_panel`` has no placeholder
+    div and passes ``None``, so the caption has to go through the row's own
+    ``html_div``.  A page whose probe found no ``VSlider`` must still say where
+    the cut is, and the absent widgets must not be built at all.
+    """
+    import poc_app as app
+
+    widgets, calls, div_recorder, divs = _cut_slider_fakes()
+
+    app._emit_cut_sliders(
+        ["VSlider"],
+        None,
+        div_recorder,
+        widgets,
+        SimpleNamespace(cut_y=6, cut_z=2),
+        12,
+        5,
+    )
+
+    assert divs == [(("{{ cut_label }}",), {})], (
+        "the row's own div did not receive the caption: "
+        f"{divs!r}"
+    )
+    assert calls == [], (
+        f"a widget the page does not have was built anyway: {calls!r}"
+    )
+
+
+def test_emit_cut_sliders_prefers_a_real_placeholder_over_the_row_div():
+    """If this fails, the None-tolerance above proves nothing.
+
+    The two fallbacks are exclusive: a page that HAS a placeholder div (the vis
+    page does) gets the caption there and the row's div is not touched.  Without
+    this half, an emitter that always called ``html_div`` would pass the previous
+    test while painting the caption into the wrong container.
+    """
+    import poc_app as app
+
+    widgets, calls, div_recorder, divs = _cut_slider_fakes()
+    placeholders = []
+
+    def placeholder(*args, **kwargs):
+        placeholders.append((args, kwargs))
+
+    app._emit_cut_sliders(
+        ["VSlider"],
+        placeholder,
+        div_recorder,
+        widgets,
+        SimpleNamespace(cut_y=6, cut_z=2),
+        12,
+        5,
+    )
+
+    assert placeholders == [(("{{ cut_label }}",), {})], (
+        f"the placeholder div did not receive the caption: {placeholders!r}"
+    )
+    assert divs == [], (
+        "the row's div was used even though the page has a placeholder: "
+        f"{divs!r}"
+    )
+    assert calls == [], (
+        f"a widget the page does not have was built anyway: {calls!r}"
+    )
+
+
 #: The child interpreter for the no-plane-stack test, below.
 #:
 #: It boots the page in a VIRGIN process.  In the parent, ``get_server()`` has
@@ -3869,6 +4182,23 @@ real_render = pyvista.Plotter.render
 # The child's boot draws too, and this image has no OpenGL: double it for the
 # whole child, then report how often the page drew.
 pyvista.Plotter.render = lambda self, *a, **k: renders.append(1)
+
+# The cut row's emitter, spied for the same reason and BEFORE the boot: the
+# page publishes the FUNCTION OBJECT on `ctx` while it builds itself
+# (poc_app.py:9633), so a spy installed after the boot would report 0 calls even
+# if the row had been emitted. It delegates, so a page that does emit the row
+# still gets its row - and the count, not the picture, is what this child
+# reports.
+real_emit = app._emit_cut_sliders
+emit_calls = []
+
+
+def _counted_emit(*args, **kwargs):
+    emit_calls.append(1)
+    return real_emit(*args, **kwargs)
+
+
+app._emit_cut_sliders = _counted_emit
 try:
     info = tp._fixture_info(app, Path(tempfile.mkdtemp()) / "vis.npz")
     if app.PLANE_KEY in info:
@@ -3890,11 +4220,13 @@ try:
             key: state.has(key) for key in ("cut_y", "cut_z", "cut_label")
         },
         "handlers": {name: has_handler(name) for name in ("cut_y", "cut_z")},
+        "emit_calls": len(emit_calls),
         "renders": len(renders),
     }
     print("VERDICT " + json.dumps(verdict))
 finally:
     pyvista.Plotter.render = real_render
+    app._emit_cut_sliders = real_emit
 """
 
 
@@ -3947,13 +4279,20 @@ def test_vis_page_without_a_plane_stack_has_no_cut():
         "a slider would call into a redraw of a scene that does not exist: "
         f"{verdict['handlers']}"
     )
+    assert verdict["emit_calls"] == 0, (
+        "a page with no plane stack still emitted the cut row, so the layout "
+        "would draw two sliders over a sheet that is not there: "
+        f"{verdict['emit_calls']} call(s)"
+    )
     # The boot's own draw count is REPORTED here, never asserted as zero: this
     # page draws a few times while it builds and that number is not the subject -
-    # a cut handler firing during the boot would be, and the two records above
+    # a cut handler firing during the boot would be, and the three records above
     # are what would catch it.  What is asserted is that the verdict is a REAL
-    # verdict: exactly the three records the child builds, no more, so a child
+    # verdict: exactly the four records the child builds, no more, so a child
     # that printed a hand-written line instead of running the boot cannot pass.
-    assert sorted(verdict) == ["handlers", "renders", "state_keys"], (
+    assert sorted(verdict) == [
+        "emit_calls", "handlers", "renders", "state_keys"
+    ], (
         "the child's verdict does not carry the records it is supposed to build: "
         f"{sorted(verdict)}"
     )

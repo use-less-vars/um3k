@@ -451,6 +451,113 @@ def test_build_center_panel_constructs_the_column_in_order():
     ], f"the centre column built {log!r}"
 
 
+def test_build_center_panel_puts_the_cut_row_above_the_picture_on_a_plane_stack():
+    """If this fails, a plane-stack page loses or mis-wires its two cut sliders.
+
+    A page that captured more than one x-plane opens the centre column with one
+    wrapping ``html_div`` row that emits the two cut sliders, and the emitter is
+    handed run_web's own arguments in that order: the page's missing-widget list,
+    a None placeholder (this layout has no placeholder div), the row's own
+    ``html_div``, the widget table, the page state and the captured (n_j, n_k)
+    plane shape. Everything else in the column is unchanged: the registered frame
+    count is still None here, so the player and the scrubber stay absent exactly
+    as the no-timeline test above pins them.
+    """
+    ctx, log, built, view = _fake_center_context(nt=None)
+    ctx.available = um3k_context.Available(volume_field=True, plane_stack=True)
+    calls = []
+
+    def _rec(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    state = object()
+    missing = []
+    ctx.register_handle("cut_shape", (12, 5))
+    ctx.register_handle("state", state)
+    ctx.register_handle("missing_widgets", missing)
+    ctx.register("_emit_cut_sliders", _rec)
+
+    result = um3k_panels.build_center_panel(ctx)
+
+    assert len(calls) == 1, f"the cut row emitted {len(calls)} time(s): {calls!r}"
+    args, _kwargs = calls[0]
+    assert args[0] is missing, f"the emitter got {args[0]!r} for missing_widgets"
+    assert args[1] is None, (
+        f"the emitter got {args[1]!r} as the placeholder; this layout has no "
+        "placeholder div, so it must be None"
+    )
+    assert args[2] is ctx.callback("html_div"), (
+        f"the emitter got {args[2]!r} instead of the column's own html_div"
+    )
+    assert args[3] is ctx.handle("widgets"), (
+        f"the emitter got {args[3]!r} instead of the page's widget table"
+    )
+    assert args[4] is state, f"the emitter got {args[4]!r} for the page state"
+    assert args[5] == 12, f"the emitter got {args[5]!r} for n_j"
+    assert args[6] == 5, f"the emitter got {args[6]!r} for n_k"
+
+    assert log[0] == ("callback", "html_div"), (
+        f"the cut row is not the first thing the column built: {log!r}"
+    )
+    style = built["html_div"][0].kwargs.get("style", "")
+    assert "flex-wrap" in style, f"the cut row does not wrap: {style!r}"
+
+    assert result is view
+    assert log == [
+        ("callback", "html_div"),
+        ("callback", "html_div"),
+        ("callback", "plotter_ui"),
+        ("callback", "VRow"),
+        ("widget", "VLabel"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VSpacer"),
+    ], f"the centre column built {log!r}"
+    assert "VSlider" not in built, (
+        f"the cut row brought a timeline with it: {sorted(built)}"
+    )
+
+
+def test_build_center_panel_leaves_the_cut_row_out_off_a_plane_stack():
+    """If this fails, every page that is not a plane stack breaks on the cut row.
+
+    ``_fake_center_context()`` registers none of the four things the cut row asks
+    for (``cut_shape``, ``state``, ``missing_widgets``, ``_emit_cut_sliders``), so
+    a builder that reached it would raise ``KeyError`` here. The page is declared
+    a plain ``Available()`` - no plane stack - so the block is never entered, the
+    emitter is never called, and the column is exactly the one the order test
+    above pins.
+    """
+    ctx, log, _built, view = _fake_center_context()
+    ctx.available = um3k_context.Available()
+    calls = []
+
+    def _rec(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    ctx.register("_emit_cut_sliders", _rec)
+
+    result = um3k_panels.build_center_panel(ctx)
+
+    assert calls == [], f"the cut row ran off a plane stack: {calls!r}"
+    assert result is view
+    assert log == [
+        ("callback", "html_div"),
+        ("callback", "plotter_ui"),
+        ("callback", "VRow"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VSlider"),
+        ("widget", "VLabel"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VSpacer"),
+    ], f"the centre column built {log!r}"
+
+
 def test_build_center_panel_returns_the_view_it_built():
     """If this fails, ``handles["view"]`` gets something other than the picture."""
     ctx, _log, _built, view = _fake_center_context()

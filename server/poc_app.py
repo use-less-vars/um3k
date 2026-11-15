@@ -7615,6 +7615,20 @@ def run_web_vis(
             """Rebuild the scene in the one plotter. Failure leaves the old picture."""
             _redraw_scene(plotter, info, planes, state, _show_volume_quiver)
 
+        # Published so the BOOT can draw: on this page there are no ez_* sheets
+        # to switch between, so _show below finds nothing to show and the
+        # picture the browser loads would be blank. The boot draw and the two
+        # sliders call this SAME function, so the first picture a user sees is
+        # the picture the sliders move (:8341).
+        handles["cut_redraw"] = _redraw
+
+        # What the layout needs to emit the two sliders: only a page that
+        # reached this block has a sample count to bound them with, so the
+        # pair goes on `ctx` here rather than as a new argument to the
+        # builder - `build_center_panel(ctx)` keeps taking only `ctx`
+        # (server/um3k_panels.py:27).
+        ctx.register_handle("cut_shape", (n_j, n_k))
+
         # Registered BEFORE the layout is built, so ctrl.cut_y / ctrl.cut_z exist
         # by the time a slider binds to them. The arguments are run_web's own
         # (:4412 and :4428) in that order: the clamp, both labels and the redraw
@@ -8315,6 +8329,18 @@ def run_web_vis(
     # Initial labels, set before the layout is built so the first page a browser
     # loads already carries frame 1's own numbers.
     _show(0, "ycut")
+
+    # THE FIRST PICTURE on a plane-stack page is the cut's own redraw. The
+    # sheet loop above (:7372-7406) keys off `ez_ycut` / `ez_xcut_near` /
+    # `ez_xcut_far`, none of which a legacy field dump carries, so `sheets` is
+    # EMPTY here and _show drew nothing: without these three lines the shell
+    # would stand a blank plotter on the page. run_web draws its first picture
+    # the same way (:4460), through the same function its sliders call. On
+    # every other page the handle is absent and this does nothing at all, so
+    # _show's behaviour there is exactly what it was.
+    _cut_redraw = handles.get("cut_redraw")
+    if _cut_redraw is not None:
+        _cut_redraw()
 
     # v_model=("frame", 0) only WRITES state["frame"]: trame turns a callable
     # into a server call for EVENT kwargs (click=, change=), never for v_model,
@@ -9601,6 +9627,12 @@ def run_web_vis(
                         ctx.register("html_div", html_div)
                         ctx.register("VRow", VRow)
                         ctx.register("plotter_ui", plotter_ui)
+                        # The centre column's cut row (server/um3k_panels.py:
+                        # build_center_panel): run_web's own emitter, plus the
+                        # three of its arguments that are not already on `ctx`.
+                        ctx.register("_emit_cut_sliders", _emit_cut_sliders)
+                        ctx.register_handle("state", state)
+                        ctx.register_handle("missing_widgets", missing_widgets)
                         # The DATA column's two page objects and its 11
                         # emitters/loaders, registered here because the column
                         # now reaches them through `ctx`.

@@ -34,7 +34,9 @@ def build_center_panel(ctx) -> object:
     ``nt`` is the frame count as the page registered it, which is the count this
     layout is built with - and ``None`` on a page that has NO timeline (a plain
     field dump): the player and the scrubber are then not built at all, and one
-    label says why in their place. Returns the view ``plotter_ui`` made, which
+    label says why in their place. A page with a plane stack opens the column
+    with the two cut sliders, bound to the page's own ``cut_y``/``cut_z``
+    triggers, above the picture. Returns the view ``plotter_ui`` made, which
     the page keeps as ``handles["view"]``.
     """
     widgets = ctx.handle("widgets")
@@ -44,6 +46,32 @@ def build_center_panel(ctx) -> object:
     html_div = ctx.callback("html_div")
     VRow = ctx.callback("VRow")
     plotter_ui = ctx.callback("plotter_ui")
+
+    # THE CUT SHEETS: a page that captured more than one x-plane has a stack to
+    # cut through, and the two sliders that move the cut belong with the
+    # picture they move - in this column, above it, rather than in the toolbar.
+    # `cut_shape` and the emitter are registered by the page ONLY behind the
+    # same `plane_stack` gate (poc_app.py:7572), so on any other page this block
+    # does not run and neither handle is ever asked for. `placeholder` is None
+    # on purpose: there is no placeholder div in this layout, and the emitter
+    # falls back to the row's own html_div for the label (poc_app.py:4049-4064).
+    if ctx.available.plane_stack:
+        n_j, n_k = ctx.handle("cut_shape")
+        with html_div(
+            style=(
+                "flex: 0 0 auto; display: flex; flex-wrap: wrap; "
+                "align-items: center; padding: 2px 12px;"
+            )
+        ):
+            ctx.callback("_emit_cut_sliders")(
+                ctx.handle("missing_widgets"),
+                None,
+                html_div,
+                widgets,
+                ctx.handle("state"),
+                n_j,
+                n_k,
+            )
 
     # VIEW: the 3-D picture keeps the wrapper div it
     # has always had, and now shares the column with
