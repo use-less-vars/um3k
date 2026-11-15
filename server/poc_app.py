@@ -7546,10 +7546,15 @@ def run_web_vis(
     # handler reaches it through this dict instead of closing over it.
     handles: dict = {}
 
-    # The page's own context: the loaded dump, for now, and the registry the
-    # layout builders reach their callables through. Nothing else is mirrored
-    # here yet - the view mode is still `state.view_mode` and stays the only
-    # copy of itself, so there are not two answers to any one question.
+    # The page's own context: the loaded dump - either kind, since one shell now
+    # opens both - and the registry the layout builders reach their callables
+    # through. Nothing else is mirrored here yet, and the two modes are kept
+    # apart on purpose: what the shell switches is `state.mode` ("ycut"/"xcut"),
+    # while `state.view_mode` is the port / volume toggle `_init_cut_state`
+    # writes once and nothing on this page ever varies, so only the legacy
+    # page's toggle can make it read "port". `PageContext` has a `view_mode` of
+    # its own - defaulted to the same value, read by nothing - so do not mistake
+    # it for a second copy of an answer.
     ctx = um3k_context.PageContext(
         dump=um3k_context.LoadedDump.from_any_dump(page),
     )
@@ -9855,41 +9860,32 @@ def main(argv=None) -> int:
         print(f"[poc_app] wrote {out}")
         return 0
 
-    # The animation dump has no station axis (its planes carry TIME instead), so
-    # it forks BEFORE the legacy station clamp and station-driven viewer.
-    if um3k_context.choose_entry(info) == "vis":
-        if args.list_keys:
-            print_keys(info)
-            return 0
-        return run_web_vis(
-            info,
-            args.host,
-            args.port,
-            args.fps,
-            structure,
-            structures,
-            # Only ever a PATH here: the far-field reader resolves nothing and
-            # must not be handed a bare relative string from a different cwd.
-            surface_dump=(_resolve(args.surface_dump) if args.surface_dump else None),
-            loaded_page=page,
-        )
-
-    n_st = info[PLANE_KEY].shape[0]
-    station = args.station
-    if station < 0 or station > n_st - 1:
-        clamped = max(0, min(n_st - 1, station))
-        print(
-            f"[poc_app] --station {station} out of range 0..{n_st - 1}, "
-            f"using {clamped}",
-            file=sys.stderr,
-        )
-        station = clamped
-
+    # ONE shell for whichever artefact this turned out to be: the page above was
+    # built by the same reload a browser reload uses, and the shell asks the
+    # page's own context (``ctx.available``) for the machinery it needs - a field
+    # dump stacks stations, an animation dump carries frames - so there is no
+    # second viewer below to keep in step with this one, and no fork that can
+    # hand an artefact the other artefact's page.
+    #
+    # ``--station`` therefore no longer selects the entry point: a station is a
+    # per-page index the page itself decides (the shell starts a field page on
+    # the middle captured plane), not a floodgate in front of it.
     if args.list_keys:
         print_keys(info)
         return 0
 
-    return run_web(info, args.host, args.port, station, structure, structures)
+    return run_web_vis(
+        info,
+        args.host,
+        args.port,
+        args.fps,
+        structure,
+        structures,
+        # Only ever a PATH here: the far-field reader resolves nothing and
+        # must not be handed a bare relative string from a different cwd.
+        surface_dump=(_resolve(args.surface_dump) if args.surface_dump else None),
+        loaded_page=page,
+    )
 
 
 if __name__ == "__main__":
