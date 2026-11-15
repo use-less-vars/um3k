@@ -1,9 +1,9 @@
 """The state of ONE um3k page: what was loaded, what can be shown, what is drawn.
 
-Not a loader (``reload_page`` is the one reader, poc_app.py:5318-5376), not a
+Not a loader (``reload_page`` is the one reader, poc_app.py:5333-5391), not a
 drawing module (no trame, no pyvista at any level; the plotter is ``typing.Any``,
-the separation ``poc_app`` draws around its 2D compute layer, poc_app.py:5381-5383)
-and not a second opinion on ``is_vis`` (poc_app.py:333-338, used at :5375, :9736).
+the separation ``poc_app`` draws around its 2D compute layer, poc_app.py:5396-5398)
+and not a second opinion on ``is_vis`` (poc_app.py:348-353, used at :5390, :9541).
 :class:`Available` is a frozen snapshot; :meth:`PageContext.recompute_available`
 refreshes it, so a flag read and the draw after it cannot see the ground move.
 """
@@ -17,20 +17,20 @@ from typing import Any, Optional
 # Copied literals, not imports (poc_app is a 441 KB UI module behind five
 # strings); a test pins each one against poc_app's own constant, so the copies
 # cannot drift in silence.
-PLANE_KEY = "plane_ez"  # poc_app.py:81 - the legacy dump's (station, y, z) |Ez|
-VOLUME_KEY = "e_centres"  # poc_app.py:85 - the colocated E volume (nx, ny, nz, 3)
-VOLUME_RAW_KEY = "e_raw"  # poc_app.py:91 - the same vector, still un-colocated
-VIS_FORMAT = "wavedude"  # poc_app.py:485 - the value _is_vis tests (poc_app.py:338)
-FALLBACK_SRC = "FALLBACK"  # poc_app.py:3123 - provenance of a port x nobody recorded
+PLANE_KEY = "plane_ez"  # poc_app.py:96 - the legacy dump's (station, y, z) |Ez|
+VOLUME_KEY = "e_centres"  # poc_app.py:100 - the colocated E volume (nx, ny, nz, 3)
+VOLUME_RAW_KEY = "e_raw"  # poc_app.py:106 - the same vector, still un-colocated
+VIS_FORMAT = "wavedude"  # poc_app.py:500 - the value _is_vis tests (poc_app.py:353)
+FALLBACK_SRC = "FALLBACK"  # poc_app.py:3138 - provenance of a port x nobody recorded
 
 #: :attr:`PageContext.view_mode`'s legal values: the label branches on the exact
-#: string ``"port"`` and draws the volume otherwise (poc_app.py:3242, :3257); the
-#: toggle flips between these two (:4224).
+#: string ``"port"`` and draws the volume otherwise (poc_app.py:3257, :3272); the
+#: toggle flips between these two (:4239).
 VIEW_MODES = ("port", "volume")
-#: What the page shows before anyone toggles it (poc_app.py:4091).
+#: What the page shows before anyone toggles it (poc_app.py:4106).
 DEFAULT_VIEW_MODE = "volume"
-#: One page's seven values, in ``reload_page``'s order (poc_app.py:5365-5375);
-#: the first six are ``PAGE_KEYS`` (poc_app.py:6879).
+#: One page's seven values, in ``reload_page``'s order (poc_app.py:5380-5390);
+#: the first six are ``PAGE_KEYS`` (poc_app.py:6894).
 PAGE_FIELDS = ("path", "info", "planes", "multifreq", "structure_id", "record", "is_vis")
 
 
@@ -39,7 +39,7 @@ class LoadedDump:
     """One page's loaded values, as ``reload_page`` hands them over.
 
     ``is_vis`` is ``None`` when nobody has said, and :meth:`Available.compute`
-    then applies the loader's own rule (poc_app.py:338), not one of its own.
+    then applies the loader's own rule (poc_app.py:353), not one of its own.
     """
 
     path: Optional[Path] = None
@@ -52,10 +52,10 @@ class LoadedDump:
 
     @classmethod
     def from_any_dump(cls, page) -> "LoadedDump":
-        """Build from the page ``reload_page`` assembles (poc_app.py:5364-5376).
+        """Build from the page ``reload_page`` assembles (poc_app.py:5379-5391).
 
         ``load_any_dump`` returns the loader's INFO dict and nothing else
-        (poc_app.py:588 declares ``-> dict``; :615 and :671 each return one), so
+        (poc_app.py:603 declares ``-> dict``; :630 and :686 each return one), so
         this reads the page ``reload_page`` gathers. Order is :data:`PAGE_FIELDS`,
         the one place it is spelled out: mappings by key, sequences positionally.
         """
@@ -73,8 +73,8 @@ class LoadedDump:
 def _stations(info: dict) -> int:
     """How many x-planes the page captured; 0 when it holds no plane stack.
 
-    ``plane_ez``'s first axis is the station axis (poc_app.py:214-217), read as
-    ``n_st`` (poc_app.py:3102). It never raises: the caller decides a flag here.
+    ``plane_ez``'s first axis is the station axis (poc_app.py:244-247), read as
+    ``n_st`` (poc_app.py:3117). It never raises: the caller decides a flag here.
     """
     try:
         return int(info[PLANE_KEY].shape[0])
@@ -87,17 +87,17 @@ class Available:
     """What this page can show, decided once from the loaded data.
 
     Every field is a statement about the DATA, never about the widgets (whether a
-    toggle exists belongs to the trame install, poc_app.py:3271-3274). An
+    toggle exists belongs to the trame install, poc_app.py:3286-3289). An
     animation dump forks to its own viewer before any station logic runs
-    (poc_app.py:9734-9750), so only ``animation``/``source_format`` describe it.
+    (poc_app.py:9539-9545), so only ``animation``/``source_format`` describe it.
     """
 
     #: The 3-D vector field itself: it is a question about the KEYS the page
-    #: carries, cell-centred (poc_app.py:85) or still staggered (:91), the two
-    #: ``_volume_quiver_mesh`` tests before it draws anything (:6737-6790).
+    #: carries, cell-centred (poc_app.py:100) or still staggered (:106), the two
+    #: ``_volume_quiver_mesh`` tests before it draws anything (:6751-6762).
     volume_field: bool = False
     #: The stacked-cut-plane case: MORE THAN ONE captured x-plane, which is what
-    #: the volume view stacks (poc_app.py:3280-3281). Not the volume: a one-station
+    #: the volume view stacks (poc_app.py:3295-3296). Not the volume: a one-station
     #: dump can carry ``e_centres`` and a nine-station one can carry nothing.
     plane_stack: bool = False
     port_planes: bool = False
@@ -113,13 +113,13 @@ class Available:
     ) -> "Available":
         """Compute every flag, once, with no I/O and no raising.
 
-        ``info`` is the dict ``load_any_dump`` returns (poc_app.py:215-223 plane,
-        :483-532 animation), ``planes`` the page layout (:3172-3187 plane,
-        :5353-5361 vis), ``is_vis`` overrides :338; no file is opened here, so a
+        ``info`` is the dict ``load_any_dump`` returns (poc_app.py:230-238 plane,
+        :498-547 animation), ``planes`` the page layout (:3187-3202 plane,
+        :5368-5376 vis), ``is_vis`` overrides :353; no file is opened here, so a
         deleted dump still answers -- and an empty page answers, every flag false.
 
-        ``volume_field`` asks which KEYS the info holds (:85, :91) and
-        ``plane_stack`` how many stations it captured (:3280-3281); the two are
+        ``volume_field`` asks which KEYS the info holds (:100, :106) and
+        ``plane_stack`` how many stations it captured (:3295-3296); the two are
         independent, so neither may be derived from the other.
         """
         info = info if isinstance(info, dict) else {}
@@ -129,13 +129,13 @@ class Available:
         )
         stations = _stations(info)
         return cls(
-            # The keys, not the station count (poc_app.py:85, :91, :6737-6790).
+            # The keys, not the station count (poc_app.py:100, :106, :6751-6762).
             volume_field=VOLUME_KEY in info or VOLUME_RAW_KEY in info,
-            plane_stack=stations > 1,  # stacks x-planes (poc_app.py:3280-3281)
-            port_planes=stations > 0,  # one station (poc_app.py:3167-3170)
-            multifreq=multifreq is not None,  # None is real (:5370, :966)
-            record=record is not None,  # None = no record (:5342-5345)
-            # An unrecorded port x is FALLBACK and the label says so (:3123, :3248).
+            plane_stack=stations > 1,  # stacks x-planes (poc_app.py:3295-3296)
+            port_planes=stations > 0,  # one station (poc_app.py:3182-3185)
+            multifreq=multifreq is not None,  # None is real (:5385, :981)
+            record=record is not None,  # None = no record (:5357-5360)
+            # An unrecorded port x is FALLBACK and the label says so (:3138, :3263).
             s11_record=planes.get("src_s11") not in (None, FALLBACK_SRC),
             animation=animation,
             source_format="vis" if animation else "field",
@@ -161,7 +161,7 @@ class PageContext:
 
     Constructible bare, so a test can hold a page with no dump yet. ``plotter``,
     ``handles`` and ``callbacks`` are the drawing side's storage, opaque here so
-    that the flag logic stays callable with no OpenGL (poc_app.py:5381-5383).
+    that the flag logic stays callable with no OpenGL (poc_app.py:5396-5398).
     """
 
     def __init__(
@@ -191,13 +191,13 @@ class PageContext:
         """Switch the drawn view, returning the mode that is now live.
 
         Checked rather than stored: the label branches on ``"port"`` and treats
-        anything else as the volume (poc_app.py:3242, :3257), so a misspelling
+        anything else as the volume (poc_app.py:3257, :3272), so a misspelling
         fails where it was made, not where it draws.
         """
         if mode not in VIEW_MODES:
             raise ValueError(
                 f"{mode!r} is not a view mode: the page knows {VIEW_MODES[0]!r} and "
-                f"treats {VIEW_MODES[1]!r} as the volume (poc_app.py:3242-3262)"
+                f"treats {VIEW_MODES[1]!r} as the volume (poc_app.py:3257-3277)"
             )
         self.view_mode = mode
         return mode
