@@ -74,6 +74,21 @@ import time
 
 import numpy as np
 
+# The um3k modules are siblings in server/, which has no __init__.py: script
+# form (`python3 server/poc_app.py`) puts server/ on sys.path so the bare names
+# resolve; package form (`import server.poc_app` or `-m server.poc_app`) has no
+# such entry and needs the relative form. Both hold state and layout only.
+try:
+    import um3k_context
+    from um3k_panels import build_left_panel
+except ModuleNotFoundError as exc:
+    # Narrow, on purpose: only OUR two names may be re-routed. A dependency
+    # missing inside them must surface as itself, not as a relative import.
+    if exc.name not in ("um3k_context", "um3k_panels"):
+        raise
+    from . import um3k_context
+    from .um3k_panels import build_left_panel
+
 # server/ sits ONE level below the repository root.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -7366,6 +7381,14 @@ def run_web_vis(
     # handler reaches it through this dict instead of closing over it.
     handles: dict = {}
 
+    # The page's own context: the loaded dump, for now, and the registry the
+    # layout builders reach their callables through. Nothing else is mirrored
+    # here yet - the view mode is still `state.view_mode` and stays the only
+    # copy of itself, so there are not two answers to any one question.
+    ctx = um3k_context.PageContext(
+        dump=um3k_context.LoadedDump(info=info),
+    )
+
     def _set_picture_title(text: str) -> None:
         """Publish the page title for whatever the 3D view is showing. NEVER raises.
 
@@ -9284,6 +9307,13 @@ def run_web_vis(
                         # The row claims the height the parent column leaves
                         # over: without flex here it took only its min-height
                         # and the picture never filled the page.
+                        #
+                        # THE SEAM: the builders below reach the page through
+                        # `ctx`, so what they may call is registered here, at
+                        # the layout that will use it. It has to be before the
+                        # row opens - a builder is called from inside its own
+                        # column, and the callable must already be there.
+                        ctx.register("_emit_solve_controls", _emit_solve_controls)
                         with VRow(
                             style=(
                                 "flex: 1 1 auto; align-items: stretch; "
@@ -9302,7 +9332,7 @@ def run_web_vis(
                             ):
                                 # SETUP: the solve controls, unchanged, out of
                                 # the toolbar and into their own column.
-                                _emit_solve_controls()
+                                build_left_panel(ctx)
                             with VCol(
                                 style=(
                                     "flex: 1 1 0; min-width: 240px; "
