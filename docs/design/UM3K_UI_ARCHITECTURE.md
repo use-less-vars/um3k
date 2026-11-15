@@ -6,7 +6,10 @@ everything in Sections 4 and 7 is a proposal until Section 9 is answered.
 
 Conventions: every factual claim carries a `file:line` citation into the tree at the time of writing.
 Where evidence is absent the text says `unknown` rather than guessing. Ranges are inclusive; bare line
-numbers refer to `server/poc_app.py` (9,771 lines).
+numbers refer to `server/poc_app.py` (9,771 lines). Those counts and line numbers describe the working
+tree at the time of writing, which carries 52 net uncommitted lines of C2 follow-up work in `_view_label`,
+`_draw_scene`, `_show_volume_quiver` and `_volume_quiver_mesh`, all of them between `:3245` and `:6790`; at
+commit `7d6683c` the same code therefore sits up to 52 lines lower, and nothing cited above `:3245` moves.
 
 ---
 
