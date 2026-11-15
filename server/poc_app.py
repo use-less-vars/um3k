@@ -3918,8 +3918,8 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
         (planes["x_s21_mm"], y_mid, z_mid),
     ]
     labels = [
-        f"S11 port plane\nx = {planes['x_s11_mm']:.4f} mm",
-        f"load (termination)\nx = {planes['x_load_mm']:.4f} mm",
+        f"S11 port plane - purple\nx = {planes['x_s11_mm']:.4f} mm",
+        f"load (termination) - red\nx = {planes['x_load_mm']:.4f} mm",
         _s21_label(planes),
     ]
     try:
@@ -10038,8 +10038,8 @@ def run_web_vis(
         if not callable(handles.get("cut_redraw")):
             return
         for plane_state, plane_label in (
-            ("show_load_plane", "Show Load Plane"),
-            ("show_port_plane", "Show S11 Port Plane"),
+            ("show_load_plane", "Show Load Plane (red)"),
+            ("show_port_plane", "Show S11 Port Plane (purple)"),
         ):
             try:
                 checkbox_cls(

@@ -2745,6 +2745,26 @@ def _capture_v_selects(monkeypatch):
     return log
 
 
+def _capture_v_checkboxes(monkeypatch):
+    """Record every VCheckbox the layout builds, in construction order.
+
+    Same module-attribute patch as ``_capture_v_selects``: ``poc_app`` resolves
+    ``VCheckbox`` from the vuetify3 MODULE, so the page sees the recorder.  The
+    real class is still constructed, so the shipped layout is what is measured.
+    """
+    import trame.widgets.vuetify3 as vuetify3
+
+    log = []
+    real = vuetify3.VCheckbox
+
+    def _factory(*args, **kwargs):
+        log.append({"args": args, "kwargs": kwargs})
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(vuetify3, "VCheckbox", _factory)
+    return log
+
+
 def test_setup_project_picker_offers_the_solvers_own_arms(tmp_path: Path,
                                                           monkeypatch) -> None:
     """The SETUP picker's items ARE the solver's arm keys - not a literal list.
@@ -4579,8 +4599,18 @@ def test_the_s11_port_plane_is_drawn_parallel_to_the_load_plane() -> None:
     assert len(both.labels) == 1
     _points, labels, _kwargs = both.labels[0]
     assert len(labels) == 3
-    assert labels[0].startswith("S11 port plane")
-    assert labels[1].startswith("load (termination)")
+    assert labels[0].startswith("S11 port plane - purple"), (
+        f"the S11 label does not name its disc's colour: {labels[0]!r}"
+    )
+    assert labels[1].startswith("load (termination) - red"), (
+        f"the load label does not name its disc's colour: {labels[1]!r}"
+    )
+    assert f"x = {planes['x_s11_mm']:.4f} mm" in labels[0], (
+        f"the S11 label does not carry the mm position: {labels[0]!r}"
+    )
+    assert f"x = {planes['x_load_mm']:.4f} mm" in labels[1], (
+        f"the load label does not carry the mm position: {labels[1]!r}"
+    )
 
     only_load = _marker_draw(app, info, planes, show_port_plane=False)
     assert [kwargs["color"] for _mesh, kwargs in only_load.meshes] == ["red"]
@@ -4589,6 +4619,80 @@ def test_the_s11_port_plane_is_drawn_parallel_to_the_load_plane() -> None:
     only_port = _marker_draw(app, info, planes, show_load_plane=False)
     assert [kwargs["color"] for _mesh, kwargs in only_port.meshes] == ["purple"]
     assert len(only_port.labels[0][1]) == 3
+
+
+def test_the_marker_legend_names_each_discs_colour(tmp_path: Path,
+                                                   monkeypatch) -> None:
+    """A disc is a translucent sheet; its COLOUR is what tells the two apart, so
+    the legend - and the two boxes that show or hide them - have to name it.
+
+    The label and the disc are asserted AGAINST EACH OTHER: the sentence at the
+    red load disc says "red", the one at the purple S11 disc says "purple".  A
+    hardcoded pair of strings would satisfy the wording assertions while being
+    swapped, which is exactly what nobody would notice on screen.
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    info = {app.PLANE_KEY: np.zeros((2, 3, 4)), "cell_m": 1e-4}
+    planes = app._plane_layout(info, None)
+    drawn = _marker_draw(app, info, planes)
+    (_, load_kwargs), (_, port_kwargs) = drawn.meshes
+    assert (load_kwargs["color"], port_kwargs["color"]) == ("red", "purple"), (
+        "the discs are no longer red (load) then purple (S11 port), so the "
+        "colour words below are not the ones on screen: "
+        f"{[kwargs['color'] for _mesh, kwargs in drawn.meshes]}"
+    )
+    _points, labels, _kwargs = drawn.labels[0]
+    assert "red" in labels[1], (
+        f"the label at the red load disc does not name its colour: {labels[1]!r}"
+    )
+    assert "purple" in labels[0], (
+        f"the label at the purple S11 disc does not name its colour: {labels[0]!r}"
+    )
+    assert "purple" not in labels[1] and "red" not in labels[0], (
+        "the two colour words are on the wrong discs: "
+        f"S11={labels[0]!r}, load={labels[1]!r}"
+    )
+    # Still a position as well as a colour: the mm value is the other half.
+    assert f"{planes['x_s11_mm']:.4f} mm" in labels[0], (
+        f"the S11 label lost its mm position: {labels[0]!r}"
+    )
+    assert f"{planes['x_load_mm']:.4f} mm" in labels[1], (
+        f"the load label lost its mm position: {labels[1]!r}"
+    )
+
+    # The boxes that show and hide those discs are the other half of the legend.
+    # They are built BY THE PAGE, so they are read back from a boot - and from
+    # the PLANE-STACK boot: the two plane boxes are emitted only where a redraw
+    # is bound (poc_app.py:10038-10039), so a page with no plane stack never
+    # builds them.  pyvista's own plotter toolbar adds label-less boxes of its
+    # own on every boot, so the recorder is filtered by label, not indexed.
+    recorded = _capture_v_checkboxes(monkeypatch)
+    pyvista = pytest.importorskip("pyvista")
+    real_render = pyvista.Plotter.render
+    pyvista.Plotter.render = lambda self, *a, **k: None  # no OpenGL in this image
+    try:
+        _boot_app(_fixture_legacy_info(app, tmp_path / "legend.npz"))
+    finally:
+        pyvista.Plotter.render = real_render
+    # Each label is pinned TOGETHER with the state flag it drives: two boxes
+    # that say the right words while switching the other disc - or one flag
+    # twice - would be the same swapped pair as the sentences above.
+    boxes = {}
+    for entry in recorded:
+        label = entry["kwargs"].get("label")
+        v_model = entry["kwargs"].get("v_model")
+        if label and isinstance(v_model, tuple) and v_model:
+            boxes[label] = v_model[0]
+    assert boxes.get("Show Load Plane (red)") == "show_load_plane", (
+        "no plane box names the red load disc and switches its flag: "
+        f"{sorted(boxes.items())}"
+    )
+    assert boxes.get("Show S11 Port Plane (purple)") == "show_port_plane", (
+        "no plane box names the purple S11 port disc and switches its flag: "
+        f"{sorted(boxes.items())}"
+    )
 
 
 # =============================================================================
