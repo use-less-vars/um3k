@@ -149,6 +149,57 @@ def build_center_panel(ctx) -> object:
     return view
 
 
+#: The DATA column's tabs, in the order it has always shown them: the label, the
+#: value BOTH sides of the tab pair carry, and the ``Available`` flag whose truth
+#: is what the panel behind it READS before it has anything to draw. Each flag is
+#: the real one from :class:`um3k_context.Available`, picked off its own loader;
+#: ``None`` marks a tab that is always offered: either it needs no page data at
+#: all, or it fills a refusal when the data it would have read is missing.
+RIGHT_TABS = (
+    # The sweep: ``multifreq = load_multifreq(info["path"], structure_id)``.
+    ("S-Parameters", "s_params", "multifreq"),
+    # NOT page data: the panel is ``build_far_field_panel(surface_dump)``, i.e.
+    # the --surface-dump archive, which no Available flag describes.
+    ("Far Field", "far_field", None),
+    # The record: ``_field_record(info["path"])``.
+    ("Confidence N-lambda", "confidence", "record"),
+    # Always-on: with no record beside the dump ``_mode_view`` solves from the
+    # dump's own metadata instead (``_mode_geometry_from_dump``, poc_app.py:5936)
+    # and otherwise fills a refusal (:5937-5943), so a record-less page can still
+    # fill this tab and hiding it would hide an answer.
+    ("Modes", "modes", None),
+    # The operator's own netlist text plus the load trace: no page data at all.
+    ("Circuit", "circuit", None),
+)
+
+
+def visible_right_tabs(available=None) -> list:
+    """The tab values this page can fill, in :data:`RIGHT_TABS` order.
+
+    An ANIMATION page keeps all five: that is the page this column was built for,
+    and each of its panels already says so itself when its neighbour file is
+    missing. ``available`` of ``None`` - a context that never carried a snapshot -
+    answers the same way, so no page loses a tab to a fact nobody recorded. On any
+    other page a tab is kept only when its flag is true, and a page that claims
+    none of them keeps all five rather than an empty column: a wrong flag must not
+    cost the reader the whole right side.
+    """
+    values = [value for _label, value, _flag in RIGHT_TABS]
+    if available is None or getattr(available, "animation", False):
+        return list(values)
+    if not any(
+        getattr(available, flag, False)
+        for _label, _value, flag in RIGHT_TABS
+        if flag is not None
+    ):
+        return list(values)
+    return [
+        value
+        for _label, value, flag in RIGHT_TABS
+        if flag is None or getattr(available, flag, False)
+    ]
+
+
 def build_right_panel(ctx) -> None:
     """Fill the caller's right column with DATA: the readout and the tabbed panels.
 
@@ -213,6 +264,44 @@ def build_right_panel(ctx) -> None:
     # wrapper, no style string and no toggle button,
     # because selecting a tab already shows the panel
     # the eager loader above has just filled in.
+    def _emit_modes_tab() -> None:
+        # The Mode panel's ONE line: the hint before the
+        # first press, the solve's own caption after
+        # one, or the reason the solve refused.
+        _emit_mode_caption()
+        _emit_mode_picker()
+        # The arrow toggle sits with the picker it
+        # annotates: both are about the picture above
+        # them.
+        _emit_vector_toggle()
+
+    def _emit_circuit_tab() -> None:
+        # The netlist's OWN home, so it is reachable
+        # without scrolling the SETUP column to find it.
+        html_div(
+            "The netlist names the circuit on the "
+            "load's cut; its V(t) and I(t) become part "
+            "of the run. Empty box = the built-in "
+            "resistor.",
+            style="padding: 2px 0;",
+        )
+        _emit_circuit_netlist()
+        # The load's trace belongs to the netlist above it.
+        _emit_load_series_panel(
+            info.get("load_series"),
+            info.get("load_series_reason"),
+        )
+
+    _emit_tab = {
+        "s_params": _emit_s_params_panel,
+        "far_field": _emit_far_field_panel,
+        "confidence": _emit_confidence_panel,
+        "modes": _emit_modes_tab,
+        "circuit": _emit_circuit_tab,
+    }
+    # Which tabs this page can fill, in RIGHT_TABS order. The
+    # FIRST kept one is the tab the column opens on.
+    shown = visible_right_tabs(getattr(ctx, "available", None))
     tabs_cls = getattr(widgets_module, "VTabs", None)
     tab_cls = getattr(widgets_module, "VTab", None)
     tabs_window_cls = getattr(
@@ -246,57 +335,21 @@ def build_right_panel(ctx) -> None:
         # implicit values line up) was rejected because
         # the tab state would then be a number the
         # reader cannot see in the code.
-        with tabs_cls(v_model=("tab", "s_params")):
-            tab_cls("S-Parameters", value="s_params")
-            # Second, beside the S-parameters it is
-            # read against: both are the antenna's
-            # own numbers, one from the feed and
-            # one from the radiating currents.
-            tab_cls("Far Field", value="far_field")
-            tab_cls(
-                "Confidence N-lambda",
-                value="confidence",
-            )
-            tab_cls("Modes", value="modes")
-            tab_cls("Circuit", value="circuit")
+        # The label and the value ride the SAME widget:
+        # RIGHT_TABS holds them as one pair, so a tab can
+        # never be drawn under one name and select another.
+        # The kept order is RIGHT_TABS order, which is the
+        # order the five have always had.
+        with tabs_cls(v_model=("tab", shown[0])):
+            for _label, _value, _flag in RIGHT_TABS:
+                if _value in shown:
+                    tab_cls(_label, value=_value)
         with tabs_window_cls(
-            v_model=("tab", "s_params")
+            v_model=("tab", shown[0])
         ):
-            with tabs_item_cls(value="s_params"):
-                _emit_s_params_panel()
-            with tabs_item_cls(value="far_field"):
-                _emit_far_field_panel()
-            with tabs_item_cls(value="confidence"):
-                _emit_confidence_panel()
-            with tabs_item_cls(value="modes"):
-                # The Mode panel's ONE line: the
-                # hint before the first press, the
-                # solve's own caption after one, or
-                # the reason the solve refused.
-                _emit_mode_caption()
-                _emit_mode_picker()
-                # The arrow toggle sits with the
-                # picker it annotates: both are
-                # about the picture above them.
-                _emit_vector_toggle()
-            with tabs_item_cls(value="circuit"):
-                # The netlist's OWN home, so it is
-                # reachable without scrolling the
-                # SETUP column to find it.
-                html_div(
-                    "The netlist names the circuit "
-                    "on the load's cut; its V(t) "
-                    "and I(t) become part of the "
-                    "run. Empty box = the built-in "
-                    "resistor.",
-                    style="padding: 2px 0;",
-                )
-                _emit_circuit_netlist()
-                # The load's trace belongs to the netlist above it.
-                _emit_load_series_panel(
-                    info.get("load_series"),
-                    info.get("load_series_reason"),
-                )
+            for _value in shown:
+                with tabs_item_cls(value=_value):
+                    _emit_tab[_value]()
     else:
         # FALLBACK, and here is why it exists: the tab
         # widgets come from trame-vuetify, an optional

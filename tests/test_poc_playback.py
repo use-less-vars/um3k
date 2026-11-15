@@ -163,7 +163,7 @@ def _fixture_legacy_info(app, path: Path) -> dict:
     return app.load_dump(path)
 
 
-def _boot_app(info):
+def _boot_app(info, loaded_page=None):
     """Run ``run_web_vis`` up to the point it would call ``server.start``.
 
     Same recipe as artifacts/verify_wd.py: wrap ``trame.app.get_server`` so the
@@ -190,7 +190,9 @@ def _boot_app(info):
     trame_app.get_server = fake_get_server
     try:
         with contextlib.suppress(_Stop):
-            app.run_web_vis(info, "127.0.0.1", 8999, fps=FPS)
+            app.run_web_vis(
+                info, "127.0.0.1", 8999, fps=FPS, loaded_page=loaded_page
+            )
     finally:
         trame_app.get_server = real_get_server
 
@@ -2465,6 +2467,60 @@ def test_every_tab_value_matches_exactly_one_window_item(tmp_path: Path,
         "the tab values and the window-item values are different sets, so at "
         "least one tab selects a value no window item answers: tabs "
         f"{sorted(set(tab_values))} vs window {sorted(set(window_values))}"
+    )
+
+
+def test_run_web_vis_stands_the_column_on_the_loaded_page(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """If this fails, the DATA column's tabs are chosen from a hard-coded page.
+
+    ``main`` hands the vis branch the page ``reload_page`` returned
+    (``loaded_page=page``), so the snapshot the tab gating reads has to come
+    from THAT page - here a sweep and a study record, both of which the
+    ``is_vis: True`` literal holds as ``None`` - and the caller's dict must be
+    left alone (``run_web_vis`` copies it and fills the copy's ``info``).
+    """
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "dump.npz")
+    freq = {"freq_ghz": [1.0], "s11": [0.0]}
+    record = {"solver": "emfit"}
+    handed = {
+        "path": info.get("path"),
+        "planes": None,
+        "multifreq": freq,
+        "record": record,
+        "structure_id": None,
+        "is_vis": True,
+    }
+    seen: dict = {}
+    real_build = app.build_right_panel
+
+    def _spy(ctx):
+        seen["ctx"] = ctx
+        real_build(ctx)
+
+    monkeypatch.setattr(app, "build_right_panel", _spy)
+
+    _boot_app(info, loaded_page=handed)
+
+    assert "ctx" in seen, "run_web_vis never built the DATA column"
+    ctx = seen["ctx"]
+    assert ctx.dump.multifreq is freq, (
+        "the context was built from a page other than the one handed in: "
+        f"multifreq is {ctx.dump.multifreq!r}"
+    )
+    assert ctx.dump.record is record
+    assert ctx.available.multifreq and ctx.available.record, (
+        f"the snapshot claims {ctx.available!r}"
+    )
+    assert ctx.available.animation, (
+        f"the handed page says is_vis, so the column keeps its five tabs: "
+        f"{ctx.available!r}"
+    )
+    assert "info" not in handed, (
+        "run_web_vis filled the caller's page dict instead of a copy of it"
     )
 
 

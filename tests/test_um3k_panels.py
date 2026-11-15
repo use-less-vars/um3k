@@ -431,12 +431,14 @@ READOUT_ROWS = (
 )
 
 
-def _fake_right_context(tab_classes=True, info=None):
+def _fake_right_context(tab_classes=True, info=None, available=None):
     """A real page context carrying the DATA column's fakes, and the log.
 
     ``html_div`` and every panel callback append ``("callback", <name>)``, the
     four tab classes append ``("tab", <name>)``, and each made widget is kept in
-    ``built`` so a test can read its arguments.
+    ``built`` so a test can read its arguments. ``available`` replaces the
+    snapshot the constructor computed, so a test can stand the column on a page
+    other than the bare one (which claims nothing).
     """
     log = []
     built = {}
@@ -459,6 +461,8 @@ def _fake_right_context(tab_classes=True, info=None):
     ctx.register("html_div", _fake("callback", "html_div"))
     for name in RIGHT_CALLBACKS:
         ctx.register(name, _fake("callback", name))
+    if available is not None:
+        ctx.available = available
     return ctx, log, built
 
 
@@ -538,6 +542,110 @@ def test_build_right_panel_names_both_sides_of_every_tab():
         ("callback", "_emit_circuit_netlist"),
         ("callback", "_emit_load_series_panel"),
     ], f"the window built {log[-14:]!r}"
+
+
+def test_build_right_panel_shows_every_tab_on_an_animation_page():
+    """If this fails, the animation page lost a tab it has always shown.
+
+    A vis page is what this column was built for: its snapshot says
+    ``animation``, and it keeps all five tabs whatever the other flags hold,
+    still opening on S-Parameters.
+    """
+    ctx, _log, built = _fake_right_context(
+        available=um3k_context.Available(animation=True, source_format="um3k")
+    )
+
+    um3k_panels.build_right_panel(ctx)
+
+    values = ["s_params", "far_field", "confidence", "modes", "circuit"]
+    for cls in ("VTab", "VTabsWindowItem"):
+        assert [w.kwargs["value"] for w in built[cls]] == values, (
+            f"{cls} carries {[w.kwargs['value'] for w in built[cls]]!r}"
+        )
+    for container in ("VTabs", "VTabsWindow"):
+        assert built[container][0].kwargs["v_model"] == ("tab", "s_params")
+
+
+def test_build_right_panel_shows_only_the_tabs_the_page_can_fill():
+    """If this fails, a tab is drawn for data the page does not hold.
+
+    A field page with a sweep keeps S-Parameters, the Far Field tab (which
+    reads the --surface-dump archive, not the page), Modes (which solves from
+    the dump's own metadata when no record sits beside it) and the Circuit box
+    that asks the page for nothing; only Confidence N-lambda, the one RECORD
+    reader left, is gone from BOTH sides of the tab pair, not just one.
+    """
+    ctx, _log, built = _fake_right_context(
+        available=um3k_context.Available(multifreq=True)
+    )
+
+    um3k_panels.build_right_panel(ctx)
+
+    values = ["s_params", "far_field", "modes", "circuit"]
+    for cls in ("VTab", "VTabsWindowItem"):
+        assert [w.kwargs["value"] for w in built[cls]] == values, (
+            f"{cls} carries {[w.kwargs['value'] for w in built[cls]]!r}"
+        )
+    assert built["VTabs"][0].kwargs["v_model"] == ("tab", "s_params")
+
+
+def test_build_right_panel_opens_on_the_first_tab_it_kept():
+    """If this fails, the column opens on a tab the page cannot draw.
+
+    With only a record, Far Field is the first kept tab - the always-on row
+    that asks the page for nothing - so both containers are handed ITS value
+    rather than the hard-coded ``s_params``, which this page cannot fill at all.
+    """
+    ctx, _log, built = _fake_right_context(
+        available=um3k_context.Available(record=True)
+    )
+
+    um3k_panels.build_right_panel(ctx)
+
+    for cls in ("VTab", "VTabsWindowItem"):
+        assert [w.kwargs["value"] for w in built[cls]] == [
+            "far_field", "confidence", "modes", "circuit"
+        ]
+    for container in ("VTabs", "VTabsWindow"):
+        assert built[container][0].kwargs["v_model"] == ("tab", "far_field"), (
+            f"{container} was handed {built[container][0].kwargs['v_model']!r}"
+        )
+
+
+def test_build_right_panel_keeps_all_five_when_no_flag_is_true():
+    """If this fails, a page that claims nothing loses the whole right side.
+
+    The bare context's snapshot says nothing about anything: a wrong flag has to
+    cost a tab at most, never the column, so all five are drawn.
+    """
+    ctx, _log, built = _fake_right_context()
+    true_flags = [
+        flag for _label, _value, flag in um3k_panels.RIGHT_TABS
+        if flag is not None and getattr(ctx.available, flag, False)
+    ]
+    assert not true_flags, f"the bare context claims {true_flags!r}"
+
+    um3k_panels.build_right_panel(ctx)
+
+    values = ["s_params", "far_field", "confidence", "modes", "circuit"]
+    for cls in ("VTab", "VTabsWindowItem"):
+        assert [w.kwargs["value"] for w in built[cls]] == values
+
+
+def test_build_right_panel_pairs_each_label_with_its_own_value():
+    """If this fails, a tab is drawn under one name and selects another.
+
+    Each label and the value it registers come off ONE ``RIGHT_TABS`` row, so
+    the bar can never advertise a panel it cannot reach.
+    """
+    ctx, _log, built = _fake_right_context()
+
+    um3k_panels.build_right_panel(ctx)
+
+    pairs = [(made.args[0], made.kwargs["value"]) for made in built["VTab"]]
+    assert pairs == [
+        (label, value) for label, value, _flag in um3k_panels.RIGHT_TABS
+    ], f"the tabs read {pairs!r}"
 
 
 def test_build_right_panel_hands_the_load_series_its_two_info_values():

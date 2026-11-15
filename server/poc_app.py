@@ -7064,7 +7064,7 @@ def run_web_vis(
     structure=None,
     structures=None,
     *,
-    surface_dump=None,
+    surface_dump=None, loaded_page=None,
 ) -> int:
     """Serve the animation page for an ``emfit.vis/2`` dump.
 
@@ -7177,7 +7177,7 @@ def run_web_vis(
     # solve REPLACES the page (apply_page) while the server keeps running. A
     # closure that captured `info` directly would keep drawing the dump that is
     # no longer on disk under the name the operator just re-solved for.
-    page = {
+    page = dict(loaded_page) if loaded_page is not None else {
         "path": info.get("path"),
         "info": info,
         "planes": None,
@@ -7186,6 +7186,7 @@ def run_web_vis(
         "structure_id": info.get("structure_id"),
         "is_vis": True,
     }
+    page["info"] = info
 
     fps = max(1, int(fps))
     nt = int(info["nt"])
@@ -7386,7 +7387,7 @@ def run_web_vis(
     # here yet - the view mode is still `state.view_mode` and stays the only
     # copy of itself, so there are not two answers to any one question.
     ctx = um3k_context.PageContext(
-        dump=um3k_context.LoadedDump(info=info),
+        dump=um3k_context.LoadedDump.from_any_dump(page),
     )
 
     def _set_picture_title(text: str) -> None:
@@ -9552,6 +9553,7 @@ def main(argv=None) -> int:
             # Only ever a PATH here: the far-field reader resolves nothing and
             # must not be handed a bare relative string from a different cwd.
             surface_dump=(_resolve(args.surface_dump) if args.surface_dump else None),
+            loaded_page=page,
         )
 
     n_st = info[PLANE_KEY].shape[0]
