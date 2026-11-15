@@ -4994,7 +4994,14 @@ def _vis_grid(info: dict, plane_key: str, frame) -> "pyvista.ImageData":
     cell_mm = _cell_mm(info)
     array = info[plane_key]
     if array.shape[0] == 0:
-        raise SystemExit(2)
+        # A build, not an entry refusal: both callers wrap this in a per-plane
+        # guard that drops the one sheet and says why, so the other two planes
+        # still draw. An exit here would take the whole page down over one
+        # empty plane, which is what the guard cannot catch.
+        raise ValueError(
+            f"no {plane_key} frames: the dump's {plane_key} plane holds no "
+            f"samples, so no sheet is drawn for it"
+        )
     frame = max(0, min(int(array.shape[0]) - 1, int(frame)))
     data = np.abs(np.asarray(array[frame], dtype=float))
     if plane_key == "ez_ycut":

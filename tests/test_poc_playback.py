@@ -3395,6 +3395,52 @@ def test_the_x_z_sheet_is_only_placed_at_a_recorded_station(tmp_path):
     )
 
 
+def test_an_empty_plane_is_dropped_with_a_reason_instead_of_ending_the_page(
+    tmp_path, capsys
+):
+    """If this fails, one empty plane takes the whole vis page down.
+
+    ``_vis_grid`` is called once per plane inside the boot loop's ``try``, whose
+    ``except Exception`` prints ``plane <key> not drawn: <why>`` and moves on to
+    the next sheet.  An empty plane is a *build* that cannot be made, not an
+    entry refusal, so it has to arrive as an ``Exception``: a ``SystemExit``
+    walks straight through that guard and ends the page over one blank sheet.
+    The dump below is a full vis dump with one plane's frame axis emptied, which
+    is the state a truncated archive leaves behind.
+
+    Mutation that breaks it: put ``raise SystemExit(2)`` where ``_vis_grid``
+    refuses the empty plane (poc_app.py:5002) - the direct call below then
+    raises ``SystemExit`` instead of ``ValueError``, and the boot would exit.
+    """
+    pytest.importorskip("pyvista")  # the ImageData is built through it
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "empty_plane.npz")
+    array = info["ez_ycut"]
+    info["ez_ycut"] = np.zeros((0, array.shape[1], array.shape[2]), array.dtype)
+
+    with pytest.raises(ValueError) as excinfo:
+        app._vis_grid(info, "ez_ycut", 0)
+    assert "ez_ycut" in str(excinfo.value), (
+        "the refusal does not name the plane it could not build, so the stderr "
+        f"line cannot say which sheet is missing: {excinfo.value!r}"
+    )
+
+    _app, srv = _boot_app(info)
+    err = capsys.readouterr().err
+    assert "plane ez_ycut not drawn" in err, (
+        "the boot loop's per-plane guard printed nothing for the empty plane, "
+        f"so no reason for the missing sheet reaches the log: {err!r}"
+    )
+    assert "no ez_ycut frames" in err, (
+        f"the guard's line does not carry the build's own reason: {err!r}"
+    )
+    assert srv is not None, (
+        "the page did not come up with one empty plane, which is what the "
+        "per-plane guard exists to allow"
+    )
+
+
 def test_the_x_z_readout_says_not_recorded_when_no_station_is(tmp_path, monkeypatch):
     """If this fails, a readout names a sheet that is not on screen.
 

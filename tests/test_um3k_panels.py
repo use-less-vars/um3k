@@ -22,6 +22,10 @@ whoever calls the builder, never by the builder. This file pins both halves:
   view its own ``plotter_ui`` made, tolerates a widget table with no ``VBtn``,
   and refuses a context that is missing a handle instead of drawing nothing.
   or a tab widget it never probed;
+* every page fixture DECLARES the kind it stands for through ``available=``,
+  because a bare context computes the empty snapshot and so claims a field page
+  by default: the centre fixture is explicitly the ANIMATION page whose player
+  bar it builds, and a second fixture covers the field kind;
 * the right builder builds what it was given: the readout strip, the three
   eager loaders ahead of any tab, five tabs whose values match five window
   items, the two ``info`` payloads handed to the load-series panel, and the
@@ -82,11 +86,31 @@ def test_importing_the_module_pulls_in_no_ui_stack():
     )
 
 
+# --- the page KIND every fixture below declares -------------------------------
+# ``build_center_panel`` builds the player bar and the frame scrubber, and that
+# furniture is the ANIMATION viewer's - it is the page that carries ``nt`` and
+# scrubs it. ``PageContext()``, though, computes its snapshot from an EMPTY dump,
+# which reports ``animation is False`` as well, so a centre fixture built that way
+# claims a field page while the tests under it assert a vis player's controls.
+# Each fixture therefore NAMES the kind it stands for - the same ``available=``
+# idiom ``_fake_right_context`` already uses per test - so a snapshot and the
+# assertions built on it cannot disagree without a test failing.
+ANIMATION_PAGE = um3k_context.Available(animation=True, source_format="vis")
+#: A field page holding none of the flagged data: the legacy (station, y, z)
+#: dump, whose every :class:`um3k_context.Available` flag is false.
+FIELD_PAGE = um3k_context.Available()
+
+
 def _context(events=None):
-    """A real page context whose one callback records that it was called."""
+    """A real page context whose one callback records that it was called.
+
+    Declared a FIELD page, the kind this dump is: the SETUP column reads no
+    snapshot at all, so the declaration is what keeps it from being a default.
+    """
     ctx = um3k_context.PageContext(
         dump=um3k_context.LoadedDump(info={"nstep": 3, "nx": 2, "ny": 3, "nz": 4}),
     )
+    ctx.available = FIELD_PAGE
     log = events if events is not None else []
 
     def _emit_solve_controls() -> None:
@@ -121,6 +145,7 @@ def test_build_left_panel_refuses_a_context_with_nothing_registered():
     KeyError is a page that looks built and is not.
     """
     bare = um3k_context.PageContext()
+    bare.available = FIELD_PAGE  # kind: the refusal precedes any snapshot read
 
     with pytest.raises(KeyError) as excinfo:
         um3k_panels.build_left_panel(bare)
@@ -309,13 +334,23 @@ class _FakeController:
 CENTER_WIDGETS = ("VBtn", "VLabel", "VSlider", "VSpacer")
 
 
-def _fake_center_context(widget_names=CENTER_WIDGETS, nt=7):
+def _fake_center_context(
+    widget_names=CENTER_WIDGETS, nt=7, available=ANIMATION_PAGE, dump=None
+):
     """A real page context carrying recording fakes, and what they recorded.
 
     Every fake factory takes any arguments, is usable as a ``with`` block and
     appends ``("widget", <name>)`` to the log; ``html_div``, ``VRow`` and
     ``plotter_ui`` append ``("callback", <name>)``, and ``plotter_ui`` returns
     the view sentinel so a test can assert on identity.
+
+    The page is DECLARED an animation page (``available``): the player bar and
+    the frame scrubber this column builds belong to the vis viewer, which is the
+    page that carries ``nt``, so a fixture left on the empty snapshot would
+    claim a field page while the assertions under it describe a vis one.
+    ``dump`` is what the context computes from when a test wants a real dump's
+    own snapshot instead of a declared kind, and ``available=None`` then means
+    "keep what that dump computed".
     """
     log = []
     built = {}
@@ -330,7 +365,9 @@ def _fake_center_context(widget_names=CENTER_WIDGETS, nt=7):
         return _call
 
     widgets = {name: _fake("widget", name) for name in widget_names}
-    ctx = um3k_context.PageContext()
+    ctx = um3k_context.PageContext(dump=dump)
+    if available is not None:
+        ctx.available = available
     ctx.register_handle("widgets", widgets)
     ctx.register_handle("ctrl", _FakeController(log))
     ctx.register_handle("nt", nt)
@@ -339,6 +376,52 @@ def _fake_center_context(widget_names=CENTER_WIDGETS, nt=7):
     ctx.register("VRow", _fake("callback", "VRow"))
     ctx.register("plotter_ui", _fake("callback", "plotter_ui", result=view))
     return ctx, log, built, view
+
+
+def _fake_field_context(widget_names=CENTER_WIDGETS, nt=7):
+    """The same fakes on a FIELD page: a legacy (station, y, z) plane dump.
+
+    No kind is declared here on purpose: ``PageContext`` computes the snapshot
+    from this dump, and ``animation`` is FALSE because the info carries no vis
+    ``format`` - the loader's own rule (poc_app.py:353) - rather than a literal
+    this file wrote. The two fixtures are the two page kinds, reached the two
+    different ways a page ever reaches one.
+    """
+    return _fake_center_context(
+        widget_names=widget_names,
+        nt=nt,
+        available=None,
+        dump=um3k_context.LoadedDump(
+            info={"nstep": 3, "nx": 2, "ny": 3, "nz": 4},
+        ),
+    )
+
+
+def test_the_centre_fixture_declares_the_page_kind_it_stands_for():
+    """If this fails, the centre tests sit on an UNDECLARED page kind.
+
+    ``build_center_panel`` builds the player bar and the frame scrubber
+    unconditionally, and that is the ANIMATION viewer's furniture, so the page
+    the three centre tests build on has to say ``animation``. It said nothing: a
+    bare ``PageContext()`` computes the empty snapshot, which reports ``animation
+    is False`` too - the right answer for a page holding no data and the wrong
+    one for the page whose player is being built, which is why the omission was
+    invisible. The field fixture is the other kind, and reaches it the other
+    way: computed from a legacy dump that carries no vis ``format``.
+    """
+    animation_ctx, _log, _built, _view = _fake_center_context()
+    assert animation_ctx.available.animation is True, (
+        f"the centre fixture claims {animation_ctx.available!r}"
+    )
+    assert animation_ctx.available.source_format == "vis"
+
+    field_ctx, _log, _built, _view = _fake_field_context()
+    assert field_ctx.available.animation is False
+    assert field_ctx.available.source_format == "field"
+    assert "format" not in field_ctx.dump.info, (
+        "the field fixture carries a vis format, so its snapshot is false for a "
+        f"reason the loader never gives: {field_ctx.dump.info!r}"
+    )
 
 
 def test_build_center_panel_constructs_the_column_in_order():
@@ -406,6 +489,7 @@ def test_build_center_panel_refuses_a_context_missing_a_handle():
     IS stored; the builder must let that through rather than draw nothing.
     """
     ctx = um3k_context.PageContext()
+    ctx.available = ANIMATION_PAGE  # kind: the centre column is the vis player
     ctx.register_handle("widgets", {})
 
     with pytest.raises(KeyError) as excinfo:
@@ -431,14 +515,16 @@ READOUT_ROWS = (
 )
 
 
-def _fake_right_context(tab_classes=True, info=None, available=None):
+def _fake_right_context(tab_classes=True, info=None, available=FIELD_PAGE):
     """A real page context carrying the DATA column's fakes, and the log.
 
     ``html_div`` and every panel callback append ``("callback", <name>)``, the
     four tab classes append ``("tab", <name>)``, and each made widget is kept in
-    ``built`` so a test can read its arguments. ``available`` replaces the
-    snapshot the constructor computed, so a test can stand the column on a page
-    other than the bare one (which claims nothing).
+    ``built`` so a test can read its arguments. ``available`` is the page KIND
+    this fixture declares - a FIELD page holding none of the flagged data, so
+    every tab is offered - and a test stands the column on another page by
+    passing its own snapshot (``animation=True``, ``multifreq=True``,
+    ``record=True``) rather than by leaving the constructor's default in place.
     """
     log = []
     built = {}
@@ -461,8 +547,7 @@ def _fake_right_context(tab_classes=True, info=None, available=None):
     ctx.register("html_div", _fake("callback", "html_div"))
     for name in RIGHT_CALLBACKS:
         ctx.register(name, _fake("callback", name))
-    if available is not None:
-        ctx.available = available
+    ctx.available = available
     return ctx, log, built
 
 
@@ -697,6 +782,7 @@ def test_build_right_panel_refuses_a_context_missing_a_handle():
     IS stored; the builder must let that through rather than draw nothing.
     """
     ctx = um3k_context.PageContext()
+    ctx.available = FIELD_PAGE  # kind: the refusal precedes any snapshot read
     ctx.register_handle("widgets_module", object())
 
     with pytest.raises(KeyError) as excinfo:
