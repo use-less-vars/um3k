@@ -4386,6 +4386,7 @@ def run_web(
                 )
 
     with SinglePageLayout(server) as layout:
+        layout.icon.hide()
         layout.title.set_text(
             f"{structure_label} - |Ez| ({n_st} captured x-planes)"
         )
@@ -4402,7 +4403,6 @@ def run_web(
                     hide_details=True,
                     style="max-width: 420px; margin-right: 16px;",
                 )
-                widgets["VLabel"]("{{ station_label }}")
                 # The view toggle. The VBtn call is deliberately bare: no
                 # variant, no icon, no size - those keyword names differ between
                 # Vuetify 2 and 3 and cannot be checked in this environment. If
@@ -4499,6 +4499,7 @@ def run_web(
                         ):
                             _emit_frequency_panel()
                             _emit_port_wave_panel()
+                            html_div("{{ station_label }}")
 
     # Now that the plotter_ui handle exists, hand it to the toggle handler.
     handles["view"] = view
