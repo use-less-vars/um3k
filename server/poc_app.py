@@ -3955,6 +3955,132 @@ def check_web_requirements() -> list[str]:
     return missing
 
 
+def _init_cut_state(
+    state, info: dict, n_j: int, n_k: int, planes, toggle_available: bool
+) -> None:
+    """Set the opening cut, its label and the first view label.
+
+    Extracted from run_web without a change of numbers: the default cut is the
+    middle sample of each transverse axis, which is where the markers already
+    sit, so the first frame is the picture the page has always drawn. The
+    sliders move these two numbers and nothing else.
+    """
+    cut_layout = _cut_layout(info, n_j // 2, n_k // 2)
+    state.cut_y = cut_layout["j"]
+    state.cut_z = cut_layout["k"]
+    state.cut_label = _cut_text(cut_layout)
+    state.view_mode = "volume"
+    state.view_label = _view_label(
+        state.view_mode, planes, toggle_available, cut_layout
+    )
+
+
+# Extracted from run_web's ``_redraw`` closure: the quiver callback arrives as
+# a parameter because the arrow cache and the handle table belong to the page,
+# not to this function, and nothing here reaches back into run_web's locals.
+def _redraw_scene(
+    plotter, info: dict, planes, state, _show_volume_quiver
+) -> None:
+    """Rebuild the scene in the one plotter. Failure leaves the old picture."""
+    try:
+        _draw_scene(
+            plotter,
+            info,
+            planes,
+            state.view_mode,
+            int(state.station),
+            int(state.cut_y),
+            int(state.cut_z),
+        )
+        # AFTER the scene, never before it: _draw_scene clears the plotter,
+        # so this one call is what keeps a ticked arrow field on screen
+        # across a cut or station change.
+        _show_volume_quiver()
+        plotter.render()
+    except Exception as exc:  # noqa: BLE001 - never take the server down
+        print(f"[poc_app] redraw skipped: {exc}", file=sys.stderr)
+
+
+def _on_cut_change(
+    axis: str,
+    value,
+    state,
+    n_j: int,
+    n_k: int,
+    info: dict,
+    planes,
+    toggle_available: bool,
+    _redraw,
+    handles,
+) -> None:
+    """Clamp one cut index, store it, and rebuild the scene."""
+    current = state.cut_y if axis == "y" else state.cut_z
+    limit = (n_j if axis == "y" else n_k) - 1
+    try:
+        idx = int(round(float(value)))
+    except (TypeError, ValueError):
+        idx = int(current)
+    idx = max(0, min(limit, idx))
+    if axis == "y":
+        state.cut_y = idx
+    else:
+        state.cut_z = idx
+    layout = _cut_layout(info, int(state.cut_y), int(state.cut_z))
+    state.cut_label = _cut_text(layout)
+    state.view_label = _view_label(
+        state.view_mode, planes, toggle_available, layout
+    )
+    _redraw()
+    view_handle = handles.get("view")
+    if view_handle is not None:
+        try:
+            view_handle.update()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+
+
+def _emit_cut_sliders(
+    missing_widgets, placeholder, html_div, widgets, state, n_j: int, n_k: int
+) -> None:
+    """Emit the two cut sliders, or the label alone when they cannot be.
+
+    The rows say which sample is drawn and where it is in mm, because a
+    one-sample-thick sheet cannot be counted off the screen.
+    """
+    if missing_widgets:
+        if placeholder is not None:
+            placeholder("{{ cut_label }}")
+        elif html_div is not None:
+            html_div("{{ cut_label }}")
+        return
+    try:
+        widgets["VLabel"]("y cut")
+        widgets["VSlider"](
+            v_model=("cut_y", int(state.cut_y)),
+            min=0,
+            max=n_j - 1,
+            step=1,
+            thumb_label=True,
+            hide_details=True,
+            style="max-width: 200px; margin: 0 10px;",
+        )
+        widgets["VLabel"]("z cut")
+        widgets["VSlider"](
+            v_model=("cut_z", int(state.cut_z)),
+            min=0,
+            max=n_k - 1,
+            step=1,
+            thumb_label=True,
+            hide_details=True,
+            style="max-width: 160px; margin: 0 10px;",
+        )
+        widgets["VLabel"]("{{ cut_label }}")
+    except Exception as exc:  # noqa: BLE001 - label only, see above
+        print(f"[poc_app] cut sliders unavailable: {exc}", file=sys.stderr)
+        if placeholder is not None:
+            placeholder("{{ cut_label }}")
+
+
 def run_web(
     info: dict,
     host: str,
@@ -4141,14 +4267,7 @@ def run_web(
     # Default cuts: the middle sample of each transverse axis, which is where
     # the markers already sit, so the first frame is the picture the previous
     # version drew. The sliders move these two numbers and nothing else.
-    cut_layout = _cut_layout(info, n_j // 2, n_k // 2)
-    state.cut_y = cut_layout["j"]
-    state.cut_z = cut_layout["k"]
-    state.cut_label = _cut_text(cut_layout)
-    state.view_mode = "volume"
-    state.view_label = _view_label(
-        state.view_mode, planes, toggle_available, cut_layout
-    )
+    _init_cut_state(state, info, n_j, n_k, planes, toggle_available)
     # The dump's own single frequency, printed beside the view toggle so the
     # number can only be read as belonging to the 3-D field on screen - never to
     # the sweep panel below, which is a different artefact.
@@ -4256,23 +4375,7 @@ def run_web(
 
     def _redraw() -> None:
         """Rebuild the scene in the one plotter. Failure leaves the old picture."""
-        try:
-            _draw_scene(
-                plotter,
-                info,
-                planes,
-                state.view_mode,
-                int(state.station),
-                int(state.cut_y),
-                int(state.cut_z),
-            )
-            # AFTER the scene, never before it: _draw_scene clears the plotter,
-            # so this one call is what keeps a ticked arrow field on screen
-            # across a cut or station change.
-            _show_volume_quiver()
-            plotter.render()
-        except Exception as exc:  # noqa: BLE001 - never take the server down
-            print(f"[poc_app] redraw skipped: {exc}", file=sys.stderr)
+        _redraw_scene(plotter, info, planes, state, _show_volume_quiver)
 
     # Registered BEFORE the layout is built, so ctrl.toggle_view exists by the
     # time the toolbar button binds to it.
@@ -4293,41 +4396,37 @@ def run_web(
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
-    def _on_cut_change(axis: str, value) -> None:
-        """Clamp one cut index, store it, and rebuild the scene."""
-        current = state.cut_y if axis == "y" else state.cut_z
-        limit = (n_j if axis == "y" else n_k) - 1
-        try:
-            idx = int(round(float(value)))
-        except (TypeError, ValueError):
-            idx = int(current)
-        idx = max(0, min(limit, idx))
-        if axis == "y":
-            state.cut_y = idx
-        else:
-            state.cut_z = idx
-        layout = _cut_layout(info, int(state.cut_y), int(state.cut_z))
-        state.cut_label = _cut_text(layout)
-        state.view_label = _view_label(
-            state.view_mode, planes, toggle_available, layout
-        )
-        _redraw()
-        view_handle = handles.get("view")
-        if view_handle is not None:
-            try:
-                view_handle.update()
-            except Exception as exc:  # noqa: BLE001
-                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
-
     @ctrl.set("cut_y")
     def _on_cut_y(*args, **_kwargs) -> None:
         value = args[0] if args else _kwargs.get("cut_y", state.cut_y)
-        _on_cut_change("y", value)
+        _on_cut_change(
+            "y",
+            value,
+            state,
+            n_j,
+            n_k,
+            info,
+            planes,
+            toggle_available,
+            _redraw,
+            handles,
+        )
 
     @ctrl.set("cut_z")
     def _on_cut_z(*args, **_kwargs) -> None:
         value = args[0] if args else _kwargs.get("cut_z", state.cut_z)
-        _on_cut_change("z", value)
+        _on_cut_change(
+            "z",
+            value,
+            state,
+            n_j,
+            n_k,
+            info,
+            planes,
+            toggle_available,
+            _redraw,
+            handles,
+        )
 
     @ctrl.set("show_volume_quiver")
     def _on_volume_quiver_toggle(*args, **_kwargs) -> None:
@@ -4453,45 +4552,6 @@ def run_web(
             )
         ):
             html_div(banner_text)
-
-    def _emit_cut_sliders() -> None:
-        """Emit the two cut sliders, or the label alone when they cannot be.
-
-        The rows say which sample is drawn and where it is in mm, because a
-        one-sample-thick sheet cannot be counted off the screen.
-        """
-        if missing_widgets:
-            if placeholder is not None:
-                placeholder("{{ cut_label }}")
-            elif html_div is not None:
-                html_div("{{ cut_label }}")
-            return
-        try:
-            widgets["VLabel"]("y cut")
-            widgets["VSlider"](
-                v_model=("cut_y", int(state.cut_y)),
-                min=0,
-                max=n_j - 1,
-                step=1,
-                thumb_label=True,
-                hide_details=True,
-                style="max-width: 200px; margin: 0 10px;",
-            )
-            widgets["VLabel"]("z cut")
-            widgets["VSlider"](
-                v_model=("cut_z", int(state.cut_z)),
-                min=0,
-                max=n_k - 1,
-                step=1,
-                thumb_label=True,
-                hide_details=True,
-                style="max-width: 160px; margin: 0 10px;",
-            )
-            widgets["VLabel"]("{{ cut_label }}")
-        except Exception as exc:  # noqa: BLE001 - label only, see above
-            print(f"[poc_app] cut sliders unavailable: {exc}", file=sys.stderr)
-            if placeholder is not None:
-                placeholder("{{ cut_label }}")
 
     def _emit_volume_quiver_toggle() -> None:
         """The 3-D vectors checkbox, or nothing when it cannot do anything.
@@ -4763,7 +4823,15 @@ def run_web(
                                 "align-items: center; padding: 2px 12px;"
                             )
                         ):
-                            _emit_cut_sliders()
+                            _emit_cut_sliders(
+                                missing_widgets,
+                                placeholder,
+                                html_div,
+                                widgets,
+                                state,
+                                n_j,
+                                n_k,
+                            )
                             # Same row as the cut sliders: both are ways of
                             # reading the one field on screen, so they belong
                             # side by side rather than in a second toolbar row.
