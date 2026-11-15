@@ -13,9 +13,14 @@ whoever calls the builder, never by the builder. This file pins both halves:
   callback AND what is registered instead - never a silent no-op, which would
   ship a left column with no solve controls in it;
 * the seam in ``run_web_vis`` really moved: the 3-column row's left ``VCol``
-  body is one call to ``build_left_panel(ctx)`` - parsed out of the source, not
-  imported, because the layout only exists with the UI stack present - and the
-  other two columns still hold what they held.
+  body is one call to ``build_left_panel(ctx)`` and its centre ``VCol`` body is
+  ``view = build_center_panel(ctx)`` - parsed out of the source, not imported,
+  because the layout only exists with the UI stack present - and the right
+  column still holds what it held;
+* the centre builder builds what it was given: called against recording fake
+  widgets it constructs them in the order the column holds them, returns the
+  view its own ``plotter_ui`` made, tolerates a widget table with no ``VBtn``,
+  and refuses a context that is missing a handle instead of drawing nothing.
 """
 from __future__ import annotations
 
@@ -200,29 +205,47 @@ def test_the_left_column_is_one_call_to_the_panel_builder():
     assert not call.keywords, f"build_left_panel got keywords {call.keywords!r}"
 
 
-def test_the_other_two_columns_are_untouched():
-    """If this fails, the move took the picture or the readout with it.
+def test_the_centre_column_is_one_call_to_the_panel_builder():
+    """If this fails, the picture and its player bar are built inline again.
 
-    The centre column still builds the 3-D view (``view = plotter_ui(...)``) and
-    the right column still carries its readout template rows; both are checked
-    by shape, so a column that was emptied to make the row parse fails here.
+    One statement, and it is ``view = build_center_panel(ctx)``: the builder
+    returns the view its own ``plotter_ui`` made, and the page stores that in
+    ``handles["view"]`` after the layout closes. Anything more in the column is
+    content the panel module does not own.
     """
-    _left, centre, right = _three_column_row()
+    centre = _three_column_row()[1]
 
-    views = [
-        node for node in ast.walk(centre)
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "view"
-            for target in node.targets
-        )
-    ]
-    assert len(views) == 1, (
-        f"the centre column assigns 'view' {len(views)} times, not once: the "
-        f"3-D picture is not built there any more"
+    assert len(centre.body) == 1, (
+        f"the centre VCol holds {len(centre.body)} statements; the panel builder "
+        f"is supposed to be all of them"
     )
-    assert isinstance(views[0].value, ast.Call) and (
-        getattr(views[0].value.func, "id", None) == "plotter_ui"
-    ), f"the centre column's 'view' is {ast.dump(views[0].value)[:80]}"
+    stmt = centre.body[0]
+    assert isinstance(stmt, ast.Assign), f"the centre VCol's statement is {stmt!r}"
+    assert len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name), (
+        f"the centre VCol assigns {ast.dump(stmt.targets[0])[:80]}"
+    )
+    assert stmt.targets[0].id == "view", (
+        f"the centre VCol assigns {stmt.targets[0].id!r}"
+    )
+    call = stmt.value
+    assert isinstance(call, ast.Call), f"the centre VCol's expression is {call!r}"
+    assert isinstance(call.func, ast.Name) and call.func.id == "build_center_panel", (
+        f"the centre VCol calls {ast.dump(call.func)[:80]}"
+    )
+    assert len(call.args) == 1 and isinstance(call.args[0], ast.Name), (
+        f"build_center_panel takes {len(call.args)} positional argument(s)"
+    )
+    assert call.args[0].id == "ctx", f"the panel is handed {call.args[0].id!r}"
+    assert not call.keywords, f"build_center_panel got keywords {call.keywords!r}"
+
+
+def test_the_right_column_is_untouched():
+    """If this fails, the move took the readout with it.
+
+    The right column still carries its readout template rows, checked by shape,
+    so a column that was emptied to make the row parse fails here.
+    """
+    _left, _centre, right = _three_column_row()
 
     readouts = [
         node for node in ast.walk(right)
@@ -233,6 +256,152 @@ def test_the_other_two_columns_are_untouched():
         and "{{ structure_readout }}" in node.args[0].value
     ]
     assert readouts, "the right column lost its structure readout row"
+
+
+class _FakeWidget:
+    """A stand-in trame widget: remembers how it was built, and is a context.
+
+    The centre body both calls widget factories as plain calls (the buttons, the
+    labels, the spacer) and uses one as a ``with`` block (the wrapper div, the
+    player bar), so the fake has to do both.
+    """
+
+    def __init__(self, name, args, kwargs):
+        self.name = name
+        self.args = args
+        self.kwargs = kwargs
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def __repr__(self):
+        return f"<fake {self.name}>"
+
+
+class _FakeController:
+    """Stands in for the page controller: reading a click handler is enough."""
+
+    def __init__(self, log):
+        self._log = log
+
+    def __getattr__(self, name):
+        def _handler(*args, **kwargs):
+            self._log.append(("ctrl", name))
+        return _handler
+
+
+CENTER_WIDGETS = ("VBtn", "VLabel", "VSlider", "VSpacer")
+
+
+def _fake_center_context(widget_names=CENTER_WIDGETS, nt=7):
+    """A real page context carrying recording fakes, and what they recorded.
+
+    Every fake factory takes any arguments, is usable as a ``with`` block and
+    appends ``("widget", <name>)`` to the log; ``html_div``, ``VRow`` and
+    ``plotter_ui`` append ``("callback", <name>)``, and ``plotter_ui`` returns
+    the view sentinel so a test can assert on identity.
+    """
+    log = []
+    built = {}
+    view = _FakeWidget("view", (), {})
+
+    def _fake(kind, name, result=None):
+        def _call(*args, **kwargs):
+            log.append((kind, name))
+            made = _FakeWidget(name, args, kwargs)
+            built.setdefault(name, []).append(made)
+            return made if result is None else result
+        return _call
+
+    widgets = {name: _fake("widget", name) for name in widget_names}
+    ctx = um3k_context.PageContext()
+    ctx.register_handle("widgets", widgets)
+    ctx.register_handle("ctrl", _FakeController(log))
+    ctx.register_handle("nt", nt)
+    ctx.register_handle("plotter", object())
+    ctx.register("html_div", _fake("callback", "html_div"))
+    ctx.register("VRow", _fake("callback", "VRow"))
+    ctx.register("plotter_ui", _fake("callback", "plotter_ui", result=view))
+    return ctx, log, built, view
+
+
+def test_build_center_panel_constructs_the_column_in_order():
+    """If this fails, the player bar's contents or their order changed.
+
+    The expected log is the moved body read straight off: the wrapper div, the
+    view, the player bar, then the three playback buttons, the frame slider
+    with its label, the three view buttons and the spacer.
+    """
+    ctx, log, _built, _view = _fake_center_context()
+
+    um3k_panels.build_center_panel(ctx)
+
+    assert log == [
+        ("callback", "html_div"),
+        ("callback", "plotter_ui"),
+        ("callback", "VRow"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VSlider"),
+        ("widget", "VLabel"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VSpacer"),
+    ], f"the centre column built {log!r}"
+
+
+def test_build_center_panel_returns_the_view_it_built():
+    """If this fails, ``handles["view"]`` gets something other than the picture."""
+    ctx, _log, _built, view = _fake_center_context()
+
+    assert um3k_panels.build_center_panel(ctx) is view
+
+
+def test_build_center_panel_without_a_VBtn_skips_its_buttons_and_survives():
+    """If this fails, a widget table with no buttons breaks the page.
+
+    The body guards every button group on ``"VBtn" in widgets``; with the name
+    gone the slider and the spacer must still be built and nothing may raise.
+    """
+    ctx, log, built, view = _fake_center_context(
+        widget_names=("VLabel", "VSlider", "VSpacer")
+    )
+
+    result = um3k_panels.build_center_panel(ctx)
+
+    assert "VBtn" not in built, f"a VBtn was built anyway: {sorted(built)}"
+    assert result is view
+    assert log == [
+        ("callback", "html_div"),
+        ("callback", "plotter_ui"),
+        ("callback", "VRow"),
+        ("widget", "VSlider"),
+        ("widget", "VLabel"),
+        ("widget", "VSpacer"),
+    ], f"the column built {log!r}"
+
+
+def test_build_center_panel_refuses_a_context_missing_a_handle():
+    """If this fails, a missing page object draws a half-built column instead.
+
+    ``PageContext.handle`` raises ``KeyError`` naming the missing name and what
+    IS stored; the builder must let that through rather than draw nothing.
+    """
+    ctx = um3k_context.PageContext()
+    ctx.register_handle("widgets", {})
+
+    with pytest.raises(KeyError) as excinfo:
+        um3k_panels.build_center_panel(ctx)
+
+    message = str(excinfo.value)
+    assert "ctrl" in message
+    assert "known" in message
+    assert "widgets" in message, f"the message does not name what is stored: {message}"
 
 
 def _child_env_without_server_on_path():
