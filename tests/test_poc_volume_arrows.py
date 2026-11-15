@@ -23,7 +23,22 @@ The claims, one per test:
   refused rather than silently clamped;
 * the real dump survives end to end with finite points, finite shafts and no
   shaft longer than its own stride cell;
-* pyvista builds one glyph per arrow from a POINT-data array.
+* pyvista builds one glyph per arrow from a POINT-data array;
+* ``_volume_quiver_mesh`` - the seam run_web draws from - glyphs the REAL
+  dump's whole field in one call, and its mesh carries exactly one glyph per
+  arrow of that same lattice, measured against a one-arrow glyph;
+* that mesh needs no repair before a renderer sees it: every vertex is finite
+  and sits inside the dump's own extent plus one arrow length;
+* the same seam returns None - not an empty mesh, not a raise - when there is
+  no volume at all or the volume is zero everywhere, which is the branch that
+  keeps run_web's checkbox honest on a dump with no vectors in it.
+* the loader can DEFER the colocation (``e_raw=True``) and stash the raw edge
+  vector instead; the deferred route glyphs the SAME mesh as the eager one -
+  same point count, same cell count, same coordinates - so the saving is a
+  delay and not a second answer;
+* a dump with no ``e`` edge vector at all still loads under either flag: one
+  stderr line, no volume key, no raw key, no raise - and the mesh seam then
+  returns None, so run_web never even builds that checkbox.
 """
 from __future__ import annotations
 
@@ -389,3 +404,123 @@ def test_polydata_carries_the_points_and_the_point_data():
     ]
     for pts, vecs in refused:
         assert poc_app._volume_quiver_polydata(pts, vecs) is None
+
+
+def test_the_mesh_seam_glyphs_every_arrow_of_the_real_dump_once():
+    """``_volume_quiver_mesh`` on the shipped dump: N arrows, N glyphs, measured.
+
+    The claim run_web's overlay rests on. One glyph per arrow is MEASURED
+    against a one-arrow glyph built by the same call, never against a count
+    written down here, so a pyvista that changed the per-arrow cell count could
+    not silently change the picture.
+    """
+    try:
+        import pyvista as pv
+    except Exception as exc:  # noqa: BLE001 - the overlay is not always available
+        pytest.skip(f"pyvista not importable here: {exc}")
+    info = poc_app.load_dump(DEFAULT_DUMP, e_volume=True)
+    mesh = poc_app._volume_quiver_mesh(info)
+    assert mesh is not None
+    assert mesh.n_cells > 0
+    points, vectors = poc_app._volume_arrows(info)
+    n_arrows = int(points.shape[0])
+    assert n_arrows > 0
+    one = pv.PolyData(points[:1])
+    one.point_data["volume_e_quiver"] = vectors[:1]
+    single = one.glyph(
+        orient="volume_e_quiver", scale="volume_e_quiver", factor=1.0
+    )
+    assert single.n_cells > 0
+    assert mesh.n_cells == n_arrows * single.n_cells
+    # Nothing a renderer would have to repair: every vertex finite, and every
+    # vertex inside the arrow lattice's own box plus the longest shaft.
+    coords = np.asarray(mesh.points, dtype=float)
+    assert coords.shape == (mesh.n_points, 3)
+    assert np.all(np.isfinite(coords))
+    bound = FRACTION * STRIDE * float(info["cell_m"]) * 1e3
+    assert np.all(coords >= points.min(axis=0) - bound)
+    assert np.all(coords <= points.max(axis=0) + bound)
+
+
+def test_the_mesh_seam_returns_none_when_there_is_nothing_to_draw():
+    """No volume, or a volume that is zero everywhere: None, and no raise.
+
+    run_web reads None as "draw nothing": this is the branch that decides a
+    dump with no vectors in it still gets a working page rather than an empty
+    actor or a traceback.
+    """
+    assert poc_app._volume_quiver_mesh({}) is None
+    assert poc_app._volume_quiver_mesh(_info(np.zeros((3, 4, 2, 3)))) is None
+
+
+# --------------------------------------------------------------------------- #
+# the LAZY route: the loader stashes the raw vector, the first reader colocates
+# --------------------------------------------------------------------------- #
+def test_the_raw_flag_stashes_the_edge_vector_and_no_volume():
+    """``e_raw=True``: the vector is on ``info``, the colocation has not run."""
+    info = poc_app.load_dump(DEFAULT_DUMP, e_raw=True)
+    # The whole saving: the deferred route carries no volume yet ...
+    assert poc_app.VOLUME_KEY not in info
+    raw = info[poc_app.VOLUME_RAW_KEY]
+    with np.load(DEFAULT_DUMP) as data:
+        flat = np.asarray(data["e"])
+    # ... but it does carry the vector UNTOUCHED - same length, same values,
+    # same order - so the deferred colocation reads exactly the bytes the eager
+    # one read, and the delay cannot change the answer.
+    assert np.array_equal(raw["e"], flat)
+    # The grid travels WITH the array, which is what lets the reader colocate
+    # without re-opening the archive or trusting a second copy of the shape.
+    assert (raw["nx"], raw["ny"], raw["nz"]) == (
+        info["nx"], info["ny"], info["nz"])
+    # And the plane and its scalars are what a flag-less load hands over: asking
+    # for the raw vector must not change anything a flag-less reader sees.
+    plain = poc_app.load_dump(DEFAULT_DUMP)
+    assert np.array_equal(info[poc_app.PLANE_KEY], plain[poc_app.PLANE_KEY])
+    assert set(info) - set(plain) == {poc_app.VOLUME_RAW_KEY}
+
+
+def test_the_lazy_route_glyphs_the_same_mesh_as_the_eager_one():
+    """One picture, two routes: the deferral is a delay, not a second answer."""
+    try:
+        import pyvista as pv  # noqa: F401 - the glyph is the thing under test
+    except Exception as exc:  # noqa: BLE001 - the overlay is not always available
+        pytest.skip(f"pyvista not importable here: {exc}")
+    eager = poc_app._volume_quiver_mesh(
+        poc_app.load_dump(DEFAULT_DUMP, e_volume=True))
+    lazy = poc_app._volume_quiver_mesh(poc_app.load_dump(DEFAULT_DUMP, e_raw=True))
+    assert eager is not None
+    assert lazy is not None
+    # Counts first: a colocation that landed the components on different points
+    # would change how many samples survive the relative floor, so this is not
+    # merely a shape check - it is the same lattice, arrow for arrow.
+    assert lazy.n_points == eager.n_points
+    assert lazy.n_cells == eager.n_cells
+    # And the geometry is the same to the last bit a coordinate can be trusted
+    # for: both routes stack the same three fields in the same order, so any
+    # difference here would mean the stash was not the archive's own array.
+    np.testing.assert_allclose(
+        np.asarray(lazy.points, dtype=float),
+        np.asarray(eager.points, dtype=float),
+        rtol=0.0,
+        atol=1e-12,
+    )
+
+
+def test_the_raw_flag_without_an_e_key_says_so_and_draws_nothing(
+    tmp_path, capsys
+):
+    """No ``e`` at all: one stderr line, no stash, no raise, None from the seam."""
+    path = tmp_path / "plane_only.npz"
+    plane = np.zeros((3, 4, 5), dtype=complex)
+    np.savez(path, plane_ez=plane, nstep=np.array(1), nx=np.array(2),
+             ny=np.array(3), nz=np.array(4), cell_m=np.array(1e-4))
+    info = poc_app.load_dump(path, e_raw=True)
+    assert poc_app.VOLUME_RAW_KEY not in info
+    assert poc_app.VOLUME_KEY not in info
+    assert np.array_equal(info[poc_app.PLANE_KEY], plane)
+    lines = [line for line in capsys.readouterr().err.splitlines() if line]
+    assert len(lines) == 1
+    assert "no 'e' edge vector" in lines[0]
+    # And the reader's answer is "draw nothing" rather than an empty mesh.
+    assert poc_app._volume_quiver_mesh(info) is None
+

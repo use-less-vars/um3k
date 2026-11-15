@@ -83,6 +83,12 @@ PLANE_KEY = "plane_ez"
 # ships the flat staggered `e` vector, and this is the key it lands under when
 # load_dump is asked to colocate it. Shape (nx, ny, nz, 3), the components last.
 VOLUME_KEY = "e_centres"
+# The SAME volume, still un-colocated: the archive's own flat, staggered ``e``
+# vector plus the grid it belongs to, stashed by ``load_dump(..., e_raw=True)``.
+# It exists so the colocation can wait for a READER instead of being paid by
+# every load: the array itself is a cheap read, ``edge_to_cell_centres`` is not.
+# The value is a dict of ``e`` (1-D, as stored) and ``nx``/``ny``/``nz``.
+VOLUME_RAW_KEY = "e_raw"
 # The |S11|/|S21| vs frequency sweep the panel reads, when a dump ships one.
 # The record written beside the dump carries ONE frequency (geometry.f_hz), so a
 # curve cannot come from it; this is a different artefact of the same study.
@@ -172,7 +178,9 @@ def _resolve(path_str: str) -> Path:
     return REPO_ROOT / path
 
 
-def load_dump(path: Path, *, e_volume: bool = False) -> dict:
+def load_dump(
+    path: Path, *, e_volume: bool = False, e_raw: bool = False
+) -> dict:
     """Load the npz metadata plus the Ez plane. Exits with 2 on bad input.
 
     ``e_volume`` (keyword only, OFF by default) additionally colocates the
@@ -183,6 +191,19 @@ def load_dump(path: Path, *, e_volume: bool = False) -> dict:
     is ``emfit.operators.edge_to_cell_centres``, and that is what is called here.
     A dump without an ``e`` key still loads: one line goes to stderr and the
     volume key is simply absent.
+
+    ``e_raw`` (also keyword only, OFF by default) asks for that SAME vector
+    WITHOUT the colocation: the archive's flat ``e`` array and the grid it
+    lives on are stashed under :data:`VOLUME_RAW_KEY` and nothing else is
+    computed. WHY it exists: the colocation is ~1 s on the shipped dump and the
+    only thing that needs it is a picture a reader asks for, so a load that
+    wants the plane must not drag it along; the work moves to the first READER
+    (:func:`_volume_quiver_mesh`), which then hands over the volume
+    ``e_volume=True`` would have produced, element for element.
+    ``e_volume`` WINS when both flags are set -- the colocated volume is the
+    answer a reader wants and the raw stash would only be a second copy of the
+    same data. A dump without an ``e`` key still loads under ``e_raw``: one
+    line to stderr, no raw key, no raise, exactly as above.
     """
     if not path.is_file():
         print(f"[poc_app] input not found: {path}", file=sys.stderr)
@@ -200,7 +221,9 @@ def load_dump(path: Path, *, e_volume: bool = False) -> dict:
             "nz": int(data["nz"]),
             "cell_m": float(data["cell_m"]),
         }
-        if e_volume and "e" in data.files:
+        if (e_volume or e_raw) and "e" in data.files:
+            # The array is read ONCE and merely read: this copy is the whole
+            # cost of ``e_raw``, which is why it can be paid on every load.
             e_flat = np.asarray(data["e"])
 
     if plane.ndim != 3:
@@ -227,6 +250,23 @@ def load_dump(path: Path, *, e_volume: bool = False) -> dict:
             # ONE deliberate copy: the three components are the volume's inner
             # axis, so a reader takes e_centres[i, j, k] without gathering.
             info[VOLUME_KEY] = np.stack((ex, ey, ez), axis=-1)
+    elif e_raw:
+        # NO colocation here, on purpose: the stash is the vector exactly as the
+        # archive stored it, plus the grid it was stored for, and the ~1 s
+        # ``edge_to_cell_centres`` waits for the reader that needs it.
+        if e_flat is None:
+            print(
+                f"[poc_app] {path} carries no 'e' edge vector: the raw edge "
+                "field is not available from this dump.",
+                file=sys.stderr,
+            )
+        else:
+            info[VOLUME_RAW_KEY] = {
+                "e": e_flat,
+                "nx": info["nx"],
+                "ny": info["ny"],
+                "nz": info["nz"],
+            }
     return info
 
 
@@ -617,7 +657,18 @@ def load_any_dump(path: Path) -> dict:
             file=sys.stderr,
         )
         raise SystemExit(2)
-    return load_dump(path)
+    # A legacy plane dump that gets this far IS what ``run_web`` serves: every
+    # other schema above has already returned or exited, and a VIS dump never
+    # reaches this line (it is dispatched to ``load_vis`` earlier and becomes
+    # the ``run_web_vis`` page, whose live reload re-enters here with a fresh
+    # path). It is NOT, however, the only load this line feeds: ``main()`` hands
+    # the very same dict to ``--list-keys`` and ``--dump-state``, which never
+    # look at a volume -- so an eager colocation here was paid by every legacy
+    # CLI run as well as by the viewer (~0.95 s on the shipped dump).
+    # Hence the STASH and not the colocation: reading ``e`` costs the array copy,
+    # and the deferred ``edge_to_cell_centres`` is paid by the first reader that
+    # actually draws arrows - the vectors checkbox's first tick.
+    return load_dump(path, e_raw=True)
 
 
 def _velocity_label(info: dict) -> str:
@@ -4030,6 +4081,10 @@ def run_web(
         if dump_f_ghz is not None
         else "Current 3D dump frequency: not recorded beside the dump"
     )
+    # The 3-D vectors are OFF at boot: the plane picture is what the page is
+    # for, and the arrows are something a reader asks for. The value is the one
+    # the checkbox below binds to, so it must exist before the layout is built.
+    state.show_volume_quiver = False
 
     # The multi-frequency sweep, if one was written beside the dump. Optional
     # at every step: no file, no matplotlib, an unusable row - the 3-D view
@@ -4064,6 +4119,55 @@ def run_web(
     # handlers below reach it through this dict instead of closing over it.
     handles: dict = {}
 
+    # The glyphed whole-volume arrow field, built ONCE and lazily: the first tick
+    # of the checkbox pays the glyph, every redraw after that re-adds the cached
+    # mesh. ``built`` is separate from ``mesh`` because None is a real answer
+    # (no volume, nothing above the floor) and must not be re-attempted on every
+    # click.
+    quiver_cache: dict = {"mesh": None, "built": False}
+
+    def _clear_volume_quiver() -> None:
+        """Drop this page's arrow actor. Never raises."""
+        entry = handles.pop("volume_quiver", None)
+        if entry is None:
+            return
+        try:
+            plotter.remove_actor(entry["actor"], render=False)
+        except Exception as exc:  # noqa: BLE001 - a stale actor is not fatal
+            print(
+                f"[poc_app] 3D vectors clear skipped: {exc}", file=sys.stderr
+            )
+
+    def _show_volume_quiver() -> None:
+        """Put the cached arrow mesh on the plotter, or take it off. Never raises.
+
+        Called at the END of every redraw, never from inside _draw_scene: that
+        function starts with plotter.clear(), so an actor added before it is
+        gone by the time it returns. Re-adding costs nothing - the mesh is
+        cached, and pyvista's add_actor() replaces the actor of the same name -
+        and it is what makes the arrows survive a cut or station change.
+        """
+        _clear_volume_quiver()
+        if not state.show_volume_quiver:
+            return
+        mesh = quiver_cache["mesh"]
+        if mesh is None:
+            return
+        try:
+            actor = plotter.add_mesh(
+                mesh,
+                color="white",
+                lighting=False,
+                show_scalar_bar=False,
+                name="volume_e_quiver",
+            )
+            handles["volume_quiver"] = {"actor": actor}
+            # Stated rather than assumed: a variant that adds the actor hidden
+            # must not leave the arrows invisible with the box ticked.
+            actor.SetVisibility(True)
+        except Exception as exc:  # noqa: BLE001 - the arrows are not the page
+            print(f"[poc_app] 3D vectors skipped: {exc}", file=sys.stderr)
+
     def _redraw() -> None:
         """Rebuild the scene in the one plotter. Failure leaves the old picture."""
         try:
@@ -4076,6 +4180,10 @@ def run_web(
                 int(state.cut_y),
                 int(state.cut_z),
             )
+            # AFTER the scene, never before it: _draw_scene clears the plotter,
+            # so this one call is what keeps a ticked arrow field on screen
+            # across a cut or station change.
+            _show_volume_quiver()
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - never take the server down
             print(f"[poc_app] redraw skipped: {exc}", file=sys.stderr)
@@ -4134,6 +4242,25 @@ def run_web(
     def _on_cut_z(*args, **_kwargs) -> None:
         value = args[0] if args else _kwargs.get("cut_z", state.cut_z)
         _on_cut_change("z", value)
+
+    @ctrl.set("show_volume_quiver")
+    def _on_volume_quiver_toggle(*args, **_kwargs) -> None:
+        """Tick or untick the 3-D arrows: build the mesh at most once, redraw."""
+        value = args[0] if args else _kwargs.get("show_volume_quiver", False)
+        state.show_volume_quiver = bool(value)
+        # Built on the FIRST tick, not at boot: a reader who never asks for the
+        # vectors never pays the glyph. ``info`` cannot change under a running
+        # page, so one build per page is all there can ever be.
+        if state.show_volume_quiver and not quiver_cache["built"]:
+            quiver_cache["mesh"] = _volume_quiver_mesh(info)
+            quiver_cache["built"] = True
+        _show_volume_quiver()
+        try:
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - the box still holds the truth
+            print(
+                f"[poc_app] 3D vectors render skipped: {exc}", file=sys.stderr
+            )
 
     # First draw goes through the same function the toggle uses, so the marker
     # layer is on screen before the first click and both views share one camera
@@ -4195,6 +4322,22 @@ def run_web(
         select_cls = getattr(widgets_module, "VSelect", None)
     except Exception as exc:  # noqa: BLE001 - optional layer
         print(f"[poc_app] VSelect unavailable: {exc}", file=sys.stderr)
+
+    # The 3-D vectors checkbox is probed the same way and for the same reason,
+    # and is offered only when this dump really carries an ``e`` edge vector to
+    # arrow: a control that cannot change the picture is a lie about the page.
+    # The gate is the RAW key because that is what the loader stashes on every
+    # dump -- the colocation happens on the first tick, not here, so gating on
+    # the colocated volume would hide the checkbox on exactly the dumps that
+    # deferred it. It is deliberately NOT in the probed widget tuple above -
+    # putting it there would degrade the whole toolbar whenever only the
+    # checkbox is missing.
+    quiver_checkbox_cls = None
+    try:
+        if VOLUME_RAW_KEY in info:
+            quiver_checkbox_cls = getattr(widgets_module, "VCheckbox", None)
+    except Exception as exc:  # noqa: BLE001 - optional layer
+        print(f"[poc_app] VCheckbox unavailable: {exc}", file=sys.stderr)
 
     def _emit_mismatch_banner() -> None:
         """The full-width warning, or nothing at all when the two runs agree.
@@ -4263,6 +4406,33 @@ def run_web(
             print(f"[poc_app] cut sliders unavailable: {exc}", file=sys.stderr)
             if placeholder is not None:
                 placeholder("{{ cut_label }}")
+
+    def _emit_volume_quiver_toggle() -> None:
+        """The 3-D vectors checkbox, or nothing when it cannot do anything.
+
+        Silent when the class is missing: run_web_vis prints its own line for
+        this probe, but on THIS page an absent VCheckbox costs the extra and
+        nothing else, and the stderr probe message above already said so. It is
+        silent when the dump has no volume too, because then there is nothing a
+        tick could draw.
+        """
+        if quiver_checkbox_cls is None:
+            return
+        try:
+            # A (state_name, default) tuple, the picker's own binding idiom: it
+            # binds state rather than inlining a value, so the checkbox reads
+            # and writes ``show_volume_quiver`` and the controller below - not
+            # the widget - decides what a change means.
+            quiver_checkbox_cls(
+                v_model=("show_volume_quiver", False),
+                label="Show 3D Vectors",
+                hide_details=True,
+                style="padding: 2px 0;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a toggle is never the page
+            print(
+                f"[poc_app] 3D vectors toggle unavailable: {exc}", file=sys.stderr
+            )
 
     def _emit_structure_picker() -> None:
         """The case picker: every entry, record-only ones present but disabled.
@@ -4508,6 +4678,10 @@ def run_web(
                             )
                         ):
                             _emit_cut_sliders()
+                            # Same row as the cut sliders: both are ways of
+                            # reading the one field on screen, so they belong
+                            # side by side rather than in a second toolbar row.
+                            _emit_volume_quiver_toggle()
                         # min-height: 0, not a pixel floor. A flex item's
                         # default min-height is its content, so 320px was a
                         # floor the column could not shrink below: on a window
@@ -6500,6 +6674,60 @@ def _volume_quiver_polydata(points, vectors):
         cloud = pv.PolyData(pts)
         cloud.point_data["volume_e_quiver"] = vecs
         return cloud
+    except Exception:  # noqa: BLE001 - a picture is never worth a traceback
+        return None
+
+
+def _volume_quiver_mesh(info, *, stride=VOLUME_QUIVER_STRIDE):
+    """The whole-volume arrow field as ONE glyphed mesh, or None.
+
+    The second half of the seam :func:`_volume_quiver_polydata` opens: that
+    function hands over the anchors and the shafts, this one glyphs them with
+    the same ``glyph(orient=..., scale=..., factor=1.0)`` call ``run_web_vis``
+    makes for the mode field -- one glyph per point, oriented and scaled by a
+    POINT-data array -- so the arrows are drawn by the same mechanism whatever
+    draws them. The ARRAY name differs (``volume_e_quiver`` here,
+    ``mode_e_arrows`` there) because the two fields are different fields; the
+    call does not. Nothing here knows what a plotter is - the caller owns the
+    renderer and decides whether to draw at all.
+
+    The volume comes from :data:`VOLUME_KEY` when the loader already colocated
+    it, and otherwise from :data:`VOLUME_RAW_KEY`, colocated HERE on the first
+    reader: that deferral is the whole point of the raw stash -- the ~1 s
+    ``edge_to_cell_centres`` is paid by a page that draws arrows, not by every
+    load of the dump -- and it produces the same volume, so both routes land on
+    one lattice. ``info`` is READ, never written into.
+
+    None means "draw nothing": no volume on ``info`` by EITHER route, a volume
+    with no sample above the relative floor, or any failure on the way to a
+    mesh. The GL context is not touched - pyvista is imported here, not at
+    module scope, so the numpy-only CLI paths still never pay for it.
+    """
+    try:
+        if VOLUME_KEY not in info:
+            if VOLUME_RAW_KEY not in info:
+                # Neither route: there is nothing to draw, and saying so is the
+                # caller's "no arrows on this dump", not an error.
+                return None
+            raw = info[VOLUME_RAW_KEY]
+            # Imported on use, like every other emfit use in this module.
+            from emfit.operators import edge_to_cell_centres
+
+            ex, ey, ez = edge_to_cell_centres(
+                raw["e"], raw["nx"], raw["ny"], raw["nz"])
+            # A COPY of info, never a write into it: one reader must not change
+            # what the next one sees.
+            info = dict(info)
+            info[VOLUME_KEY] = np.stack((ex, ey, ez), axis=-1)
+        points, vectors = _volume_arrows(info, stride=stride)
+        cloud = _volume_quiver_polydata(points, vectors)
+        if cloud is None:
+            return None
+        import pyvista as pv  # noqa: F401 - deferred, see the docstring
+
+        return cloud.glyph(
+            orient="volume_e_quiver", scale="volume_e_quiver", factor=1.0
+        )
     except Exception:  # noqa: BLE001 - a picture is never worth a traceback
         return None
 

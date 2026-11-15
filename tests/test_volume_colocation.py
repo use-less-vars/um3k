@@ -188,7 +188,7 @@ def _expected_flat_dict(path):
 
 
 def test_the_flag_defaults_off():
-    assert poc_app.load_dump.__kwdefaults__ == {"e_volume": False}
+    assert poc_app.load_dump.__kwdefaults__ == {"e_volume": False, "e_raw": False}
 
 
 def test_flag_off_reads_the_default_dump_exactly_as_before():
