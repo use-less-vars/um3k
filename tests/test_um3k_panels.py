@@ -501,6 +501,47 @@ def test_build_center_panel_refuses_a_context_missing_a_handle():
     assert "widgets" in message, f"the message does not name what is stored: {message}"
 
 
+def test_build_center_panel_without_a_timeline_leaves_the_player_out():
+    """If this fails, a page with no timeline ships a player over nothing.
+
+    The page is DECLARED an animation page (``available=ANIMATION_PAGE``)
+    because that is the page ``run_web_vis`` hands this builder for a legacy
+    dump: its page dict says ``is_vis``, so the snapshot claims the animation
+    even though the registered frame count is None.  The gate therefore keys on
+    ``nt is None``, not on the snapshot: the player (prev/play/next) and the
+    scrubber are absent, one visible label says why in their place, and the
+    column still returns the picture it built.
+    """
+    ctx, log, built, view = _fake_center_context(nt=None)
+
+    result = um3k_panels.build_center_panel(ctx)
+
+    assert result is view
+    assert log == [
+        ("callback", "html_div"),
+        ("callback", "plotter_ui"),
+        ("callback", "VRow"),
+        ("widget", "VLabel"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VSpacer"),
+    ], f"the centre column built {log!r}"
+    assert "VSlider" not in built, (
+        f"a scrubber was built over no frame axis: {sorted(built)}"
+    )
+    button_labels = [made.args[0] for made in built["VBtn"]]
+    assert button_labels == ["Switch plane", "Top View", "Side View"], (
+        f"the buttons built are {button_labels}; the player's three are not "
+        "among them"
+    )
+    reason = built["VLabel"][0].args[0]
+    assert "no timeline" in reason, (
+        f"the label standing in for the player says {reason!r}"
+    )
+    assert "\n" not in reason, f"the reason is not one line: {reason!r}"
+
+
 RIGHT_CALLBACKS = (
     "_load_s_params_panel", "_load_far_field_panel", "_load_confidence_panel",
     "_emit_s_params_panel", "_emit_far_field_panel", "_emit_confidence_panel",

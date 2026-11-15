@@ -713,10 +713,12 @@ def _velocity_label(info: dict) -> str:
     print the same sentence from the same code: a dump that arrives mid-session
     must not get a differently-worded readout than the one the app booted with.
     """
-    measured = _finite(info["v_measured_m_s"])
-    analytic = _finite(info["v_analytic_m_s"])
-    traverse = _finite(info["t_traverse_ns"])
-    reliability = "reliable" if info["v_measured_reliable"] else "NOT reliable"
+    measured = _finite(info.get("v_measured_m_s"))
+    analytic = _finite(info.get("v_analytic_m_s"))
+    traverse = _finite(info.get("t_traverse_ns"))
+    reliability = (
+        "reliable" if info.get("v_measured_reliable") else "NOT reliable"
+    )
     return (
         "velocity: measured "
         + (
@@ -737,12 +739,17 @@ def _scale_label(info: dict) -> str:
     Same reason as _velocity_label: the sentence names the ceiling of the dump
     now on screen, so it has to be rebuilt from that dump, not kept from boot.
     """
-    if info["color_range_empty"]:
+    color_range = info.get("color_range")
+    if color_range is None:
+        # A page with no timeline records no colour range either: there is no
+        # frame to scale, so the line says that instead of quoting a limit.
+        return "scale: not recorded - this page carries no colour range"
+    if info.get("color_range_empty"):
         return (
             "scale: [EMPTY DUMP] every stored |Ez| is zero - 0 .. 1 is a "
             "placeholder and no frame has a scale of its own"
         )
-    vmin, vmax = info["color_range"]
+    vmin, vmax = color_range
     return (
         f"scale: |Ez| {vmin:.4e} .. {vmax:.4e} V/m, ONE limit for EVERY "
         f"frame (p{COLOR_PERCENTILE:g} ceiling; the brightest "
@@ -4948,13 +4955,15 @@ def _vis_frame_time_ns(info: dict, mode: str, frame) -> float:
     except (TypeError, ValueError):
         return float("nan")
     if mode == "xcut":
-        index = info["frame_index_xcut"]
-        if index.size == 0:
+        index = info.get("frame_index_xcut")
+        if index is None or index.size == 0:
             return float("nan")
         frame = max(0, min(index.size - 1, frame))
         return float(int(index[frame]) * float(info["dt_s"]) * 1e9)
-    t_ns = info["t_ns"]
-    if t_ns.size == 0:
+    # A page with no timeline records no clock at all: nan is this module's
+    # "not recorded" and _show already renders it as exactly that.
+    t_ns = info.get("t_ns")
+    if t_ns is None or t_ns.size == 0:
         return float("nan")
     frame = max(0, min(t_ns.size - 1, frame))
     return float(t_ns[frame])
@@ -7319,10 +7328,29 @@ def run_web_vis(
     page["info"] = info
 
     fps = max(1, int(fps))
-    nt = int(info["nt"])
-    nt_x = int(info["nt_x"])
+    # THE TIMELINE FENCE. A page that CLAIMS the animation - "format" in
+    # VIS_FORMATS, which is what load_vis writes - must carry its timeline, so
+    # the two frame counts are read with [] and a missing one still raises
+    # KeyError("nt"): a crash naming the key is the report that the writer and
+    # this reader disagree. A page that claims NOTHING (a bare field dump, which
+    # records no frame axis) has no timeline at all: both counts are None, which
+    # is "no timeline", never "0 frames".
+    claims_timeline = _is_vis(info)
+    if claims_timeline:
+        nt = int(info["nt"])
+        nt_x = int(info["nt_x"])
+    else:
+        nt = None
+        nt_x = None
     cell_mm = _cell_mm(info)
-    vmin, vmax = info["color_range"]
+    # The colour limits are the dump's own recorded range, and a page with no
+    # timeline records none: 0 .. 1 is the placeholder the [EMPTY DUMP] line
+    # already names, and no sheet is drawn to paint with it anyway.
+    color_range = info.get("color_range")
+    if color_range is None:
+        vmin, vmax = 0.0, 1.0
+    else:
+        vmin, vmax = color_range
     # The domain's full y width, computed once for the whole page: the x-cut
     # readout quotes it so the transverse section can be read against it.
     y_span_mm = float(int(info["ny"])) * cell_mm
@@ -7366,7 +7394,11 @@ def run_web_vis(
             print(f"[poc_app] plane {key} not drawn: {exc}", file=sys.stderr)
             continue
         sheets[key] = {"grid": grid, "actor": actor, "family": family}
-    if not sheets:
+    if not sheets and claims_timeline:
+        # A page that CLAIMS the animation with no plane drawn has no picture to
+        # serve, so it has always exited here. A page with no timeline is the
+        # SHELL: the per-plane lines above are the whole report, and the page
+        # boots with the player absent instead of exiting over a missing one.
         print(
             "[poc_app] no plane could be drawn - check the pyvista/VTK build",
             file=sys.stderr,
@@ -7421,7 +7453,8 @@ def run_web_vis(
     state.mode = "ycut"
     state.playing = False
     state.frame = 0
-    state.frame_max = nt - 1
+    # No timeline: the scrubber's range is ABSENT (None), never 0 frames.
+    state.frame_max = None if nt is None else nt - 1
     state.play_label = "play"
 
     # Keyboard shortcuts (Space = play/pause, arrows = step). The browser side is
@@ -7504,7 +7537,9 @@ def run_web_vis(
     state.structure_readout = _structure_readout_text(info)
 
     state.velocity_label = _velocity_label(info)
-    state.velocity_note = info["velocity_note"] or "velocity note: not recorded"
+    state.velocity_note = (
+        info.get("velocity_note") or "velocity note: not recorded"
+    )
     state.scale_label = _scale_label(info)
 
     # The plotter_ui handle only exists once the layout is built, so the frame
@@ -7898,7 +7933,13 @@ def run_web_vis(
             index = int(round(float(frame)))
         except (TypeError, ValueError):
             index = int(state.frame)
-        index = max(0, min(frames - 1, index))
+        # A page with no timeline has no frame axis to clamp into: nothing was
+        # indexed (no sheet was drawn), and the label below stays ABSENT rather
+        # than claiming frame 1 of None.
+        if frames is None:
+            index = 0
+        else:
+            index = max(0, min(frames - 1, index))
         state.frame = index
         state.mode = mode
 
@@ -8029,8 +8070,10 @@ def run_web_vis(
             if not np.isfinite(t_ns)
             else f"sim time: t = {t_ns:.6f} ns"
         )
-        state.frame_label = f"frame {index + 1} / {frames}"
-        state.phase_label = _vis_phase_text(t_ns, info["t_traverse_ns"])
+        state.frame_label = (
+            None if frames is None else f"frame {index + 1} / {frames}"
+        )
+        state.phase_label = _vis_phase_text(t_ns, info.get("t_traverse_ns"))
         if mode == "ycut":
             # The y the x-z sheet sits on is READ per draw, from the LIVE page,
             # and is None when the dump records no j_cut - in which case no such
@@ -9515,15 +9558,22 @@ def run_web_vis(
 
     handles["view"] = view
 
-    print(
-        f"[poc_app] animation: {nt} frames on ez_ycut, {nt_x} on each x-cut, "
-        f"played at {fps} fps (a VIEWING rate - see the sim time readout)"
-    )
-    print(
-        "[poc_app] each frame's sim time is rebuilt from its own plane's "
-        "frame index: the x-cuts are written every "
-        f"{int(info['dump_stride']) * 10} steps"
-    )
+    if nt is None or nt_x is None:
+        # The shell: no timeline, so there is no rate and no stride to report.
+        print(
+            "[poc_app] no timeline on this page: it records no frame axis, so "
+            "the player bar and its scrubber are not built"
+        )
+    else:
+        print(
+            f"[poc_app] animation: {nt} frames on ez_ycut, {nt_x} on each x-cut, "
+            f"played at {fps} fps (a VIEWING rate - see the sim time readout)"
+        )
+        print(
+            "[poc_app] each frame's sim time is rebuilt from its own plane's "
+            "frame index: the x-cuts are written every "
+            f"{int(info['dump_stride']) * 10} steps"
+        )
     print(f"[poc_app] serving on http://{host}:{port}")
     print("[poc_app] open that URL in a browser; Ctrl-C to stop")
     try:

@@ -3274,36 +3274,97 @@ def test_a_dump_missing_a_mandatory_key_is_still_refused(key, tmp_path, capsys):
 
 
 
-def test_a_legacy_dump_handed_to_the_vis_page_still_raises_nt(tmp_path):
-    """The same fence at the READ SITE, where ``load_vis`` cannot hold it.
+def test_a_page_that_claims_the_animation_still_raises_nt(tmp_path):
+    """The PLAYER fence at the READ SITE, on the pages ``load_vis`` cannot see.
 
     ``test_a_dump_missing_a_mandatory_key_is_still_refused`` proves the LOADER
     refuses a short dump.  It cannot see a page that DEFAULTS an axis, because
-    changing ``nt = int(info["nt"])`` (poc_app.py:7192) into
-    ``int(info.get("nt", 0))`` leaves that refusal exactly as it was: the file
-    the operator opened is refused by ``load_vis``, and every dict that reaches
-    the page by another road - a legacy dump, a page dict built by hand, a
-    future loader - boots instead into a picture with no frames in it.
+    turning the frame count's ``info["nt"]`` into ``info.get("nt", 0)`` leaves
+    that refusal exactly as it was: the file the operator opened is refused by
+    ``load_vis``, and every dict that reaches the page by another road - a page
+    dict built by hand, a future loader - boots instead into a picture with no
+    frames in it.
 
-    So the fence is repeated on the dict the page actually reads.  A legacy
-    single-plane dump carries no ``nt`` at all; handing one to the animation
-    page must still raise ``KeyError('nt')``.  A crash is a report; a page that
-    starts, registers every trigger and paints nothing is a silent wrong
-    answer, which is strictly worse and is what the subscript is there for.
+    So the fence is repeated on the dict the page actually reads, and it is
+    keyed on the CLAIM: a page whose ``format`` is a vis format says it carries
+    the timeline, so a missing ``nt`` still raises ``KeyError('nt')``.  A crash
+    is a report; a page that starts, registers every trigger and paints nothing
+    is a silent wrong answer, which is strictly worse.
     """
     import poc_app as app
 
-    legacy = _fixture_legacy_info(app, tmp_path / "legacy.npz")
-    assert "nt" not in legacy, (
-        "the legacy fixture now carries nt, so this fence no longer proves "
-        "anything about a dump that has none"
+    info = _fixture_info(app, tmp_path / "vis.npz")
+    assert info.get("format") in app.VIS_FORMATS, (
+        f"the fixture no longer claims the animation: {info.get('format')!r}"
     )
+    page = dict(info)
+    page.pop("nt")
 
     with pytest.raises(KeyError) as excinfo:
-        _boot_app(legacy)
+        _boot_app(page)
     assert "nt" in str(excinfo.value), (
-        "the animation page failed on something other than the missing axis "
-        f"({excinfo.value!r}); the fence is then guarding the wrong line"
+        "the page claimed the animation and failed on something other than "
+        f"the missing axis ({excinfo.value!r}); the fence guards the wrong line"
+    )
+
+
+def test_a_page_that_claims_no_animation_boots_a_shell_without_a_timeline(
+    tmp_path, capsys, monkeypatch
+):
+    """The SHELL fence: no ``format`` means no timeline, and the page LIVES.
+
+    A legacy single-plane dump carries no ``nt`` and does not claim one either
+    - it is the field dump ``run_web`` has always served - so the animation
+    page booted on one must not read a timeline it never claimed.  Nothing can
+    be drawn from it (``_vis_grid`` indexes the arrays a vis dump stores, and a
+    field dump has none), so each plane costs ONE stderr line through the
+    per-plane guard while the page still boots: the columns build, and the
+    centre column is handed ``nt`` of None.
+
+    None, never 0: zero frames is a page CLAIMING an empty animation, and every
+    readout built on that count would quote frame 1 of 0.
+    """
+    import poc_app as app
+    import um3k_context
+
+    legacy = _fixture_legacy_info(app, tmp_path / "legacy.npz")
+    assert "format" not in legacy, (
+        "the legacy fixture now claims a vis format, so this page is not the "
+        "shell case any more"
+    )
+    assert "nt" not in legacy
+
+    registered: dict = {}
+    real_register = um3k_context.PageContext.register_handle
+
+    def _record(self, name, obj):
+        registered[name] = obj
+        return real_register(self, name, obj)
+
+    monkeypatch.setattr(um3k_context.PageContext, "register_handle", _record)
+
+    _app, srv = _boot_app(legacy)  # must not raise: the shell lives
+
+    err = capsys.readouterr().err
+    for key in ("ez_ycut", "ez_xcut_near", "ez_xcut_far"):
+        assert f"[poc_app] plane {key} not drawn: " in err, (
+            f"the undrawable plane {key} reported nothing on stderr: {err!r}"
+        )
+
+    assert srv.state.frame_max is None, (
+        "a page with no timeline booted with frame_max "
+        f"{srv.state.frame_max!r}; absent must read as None, never as frames"
+    )
+    assert srv.state.frame_label is None, (
+        "the page labelled a frame it has no axis for: "
+        f"{srv.state.frame_label!r}"
+    )
+    assert "nt" in registered, (
+        f"the layout registered {sorted(registered)}; the centre column reads "
+        "its frame count off a registered handle"
+    )
+    assert registered["nt"] is None, (
+        f"the shell page registered nt={registered['nt']!r}"
     )
 
 

@@ -32,8 +32,10 @@ def build_center_panel(ctx) -> object:
     already owns arrive as handles (the widget table, the controller, the frame
     count, the plotter); the three callables the body calls arrive as callbacks.
     ``nt`` is the frame count as the page registered it, which is the count this
-    layout is built with. Returns the view ``plotter_ui`` made, which the page
-    keeps as ``handles["view"]``.
+    layout is built with - and ``None`` on a page that has NO timeline (a plain
+    field dump): the player and the scrubber are then not built at all, and one
+    label says why in their place. Returns the view ``plotter_ui`` made, which
+    the page keeps as ``handles["view"]``.
     """
     widgets = ctx.handle("widgets")
     ctrl = ctx.handle("ctrl")
@@ -75,7 +77,18 @@ def build_center_panel(ctx) -> object:
             "gap: 4px; width: 100%; padding: 4px 0;"
         )
     ):
-        if "VBtn" in widgets:
+        # NO TIMELINE: nt is None (never 0), so there is no frame to play or
+        # scrub. The player and the slider are left OUT of this row rather
+        # than built over an invented frame count, and one visible line takes
+        # their place - the same degraded-row idiom the guards below use.
+        if nt is None:
+            if "VLabel" in widgets:
+                widgets["VLabel"](
+                    "no timeline on this page: it records no "
+                    "frame axis, so there is nothing to play or "
+                    "scrub"
+                )
+        if nt is not None and "VBtn" in widgets:
             try:
                 widgets["VBtn"](
                     "<< PREV", click=ctrl.step_back
@@ -98,7 +111,7 @@ def build_center_panel(ctx) -> object:
                         "playback unavailable "
                         "(button binding failed)"
                     )
-        if "VSlider" in widgets and "VLabel" in widgets:
+        if nt is not None and "VSlider" in widgets and "VLabel" in widgets:
             try:
                 widgets["VSlider"](
                     v_model=("frame", 0),
