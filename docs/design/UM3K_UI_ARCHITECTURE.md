@@ -451,3 +451,154 @@ regressions. Unowned, they become stale fixtures that fail for the wrong reason.
   into the layout work.
 - **No performance work.** The 949.4 ms figure is a design constraint, not a task.
 - **No fix for Q1 in code.** The `"port"` branch symptom is diagnosed before it is touched.
+
+---
+
+## 11. Migration log
+
+Section 10 closed this document at a plan. This section records the first tranche of that plan being
+carried out: what was built, what the build proved, what it deliberately left alone, and what the
+citations in this document now cost the reader. One branch, `main`, seven commits, `db2410b` to
+`4f326af`.
+
+### 11.1 `Available` is a statement about data, not about the install
+
+Every field of `Available` (`server/um3k_context.py:86`) answers a question about the loaded DATA.
+"Is there a `VBtn` in this trame variant" is not such a question and is not in the model; it stays
+in the layout, where a missing widget degrades the UI (`:3286-3289`) and leaves every flag
+untouched. That is what makes the model testable at all: `Available.compute` opens no file, imports
+no trame and raises on nothing, so a deleted dump still answers, and an empty page answers with
+every flag false.
+
+Second half, and the reason it is a dataclass rather than a property bag: a flag read and the draw
+that follows it must not see the ground move. `Available` is `@dataclass(frozen=True)`, computed
+once in `PageContext.__init__`, and the ONLY way it changes is `PageContext.recompute_available()`
+(`um3k_context.py:178`), the explicit reload path. Nothing re-reads `info` behind a flag's back.
+
+Instantiated in `0a955c9`, which fixed a real conflation and not a naming one: `volume_field` had
+been asking how many stations the dump captured and `plane_stack` which keys it carried - the same
+question twice, in two places free to disagree with the data. `volume_field` now asks the keys
+(`poc_app.py:100` `VOLUME_KEY`, `:106` `VOLUME_RAW_KEY`; the two tests passed before
+`_volume_quiver_mesh` draws anything, `:6751-6762`) and `plane_stack` the station count
+(`:3295-3296`). A one-station dump can carry `e_centres`; a nine-station one can carry nothing.
+Neither flag is derivable from the other, and a model that derived one from the other would be wrong
+on the first dump that broke the pattern.
+
+### 11.2 Three columns, three builders
+
+`server/um3k_panels.py`, 323 lines, one function per column. It imports `__future__` and `sys` and
+nothing else, so a builder CANNOT reach a `poc_app` module global - which is the point. What it
+reaches is the `PageContext` it is handed, through `callback(name)` and `handle(name)`, both of
+which raise `KeyError` naming what IS stored rather than drawing half a column.
+
+| column | builder | commit |
+| --- | --- | --- |
+| left (SETUP) | `build_left_panel(ctx) -> None` | `529ac4d` |
+| centre (VIEW) | `build_center_panel(ctx) -> object` | `f7499cb` |
+| right (DATA) | `build_right_panel(ctx) -> None` | `0bab52a` |
+
+Each takes `ctx` and nothing else, and is called from INSIDE the column it fills, because a trame
+widget attaches to the ambient layout context: the call site owns the position, the builder the
+content. `build_center_panel` returns the view `plotter_ui` made, which `run_web_vis` keeps as
+`handles["view"]`. The right column registers 13 names before its builder runs
+(`poc_app.py:9327-9339`: two handles, `widgets_module` and `info`, plus 11 callbacks) and reaches a
+14th, `html_div`, registered at `:9321`. Each `VCol` body is now one statement (`:9358`, `:9365`,
+`:9374`); the right column's 154-line inline body became `build_right_panel(ctx)`.
+
+Six tests in `tests/test_um3k_panels.py` name the new builder (`:465`, `:488`, `:511`, `:543`,
+`:563`, `:585`), one of them the tab-absent fallback, which was previously untested: with no `VTabs`
+in the install the five panels still stack in their pre-tabs order and no tab is built at all.
+
+### 11.3 The seam the move depends on
+
+The move binds 11 callables out of `run_web_vis`'s own body into a builder that runs later, in the
+same call, so it is sound only if every one is defined before the registration executes. Proven, by
+parsing `server/poc_app.py` rather than by reading it: all 11 are nested `def`s in `run_web_vis`
+(`:7059-9407`), headers spanning `:8195` (`_load_s_params_panel`) to `:9237`
+(`_emit_vector_toggle`), the last body ending `:9276`; the first registration is `:9316`. No
+registration precedes any definition.
+
+The limit is worth stating, because a green test invites you to overclaim it: the parse proves
+ORDERING and BINDING at layout build, and nothing about whether a callback works when the browser
+fires it - that needs a client, and there is none here (11.8).
+
+### 11.4 Dispatch now asks the model
+
+`poc_app.py:9541` reads `if um3k_context.choose_entry(info) == "vis":`; `:9545` is the `return
+run_web_vis(` it guards. `choose_entry` (`um3k_context.py:145`) answers from
+`Available.compute(...).source_format`, so the fork and the flags beneath it cannot disagree about
+what was loaded. It replaces the direct `_is_vis` test at `poc_app.py:348-353` (`info.get("format")
+== "wavedude"`). `_is_vis` keeps eight call sites (`:3052`, `:3067`, `:3092`, `:3093`, `:3099`,
+`:3583`, `:5361`, `:5390`) and the fork is no longer one of them.
+
+The risk is one this document should name: the model holds a COPY of a decision that lives in
+`poc_app`. `VIS_FORMAT = "wavedude"` (`um3k_context.py:23`) is a copied literal, and in `poc_app`
+that literal has three inline homes - `:353` the test, `:500` the writer inside `load_vis`'s info,
+`:3092` the state dump - and no module-level constant, so there is nothing to import. The fence is
+`tests/test_um3k_context.py:583`: it parses `_is_vis`'s literal out of the `poc_app` SOURCE,
+asserts `VIS_FORMAT` equals it, then that the two agree on which dump forks. A copy pinned by a
+parser is tolerable; an unpinned copy is the defect this section would be reporting next time.
+
+### 11.5 Deferred, and why
+
+- **"Shelter the static field dump in the shell."** Not done: "the shell" is undefined in this
+  document and Phase 1 (7) is *golden page documents*, not a shell. Adopting the phrase would import
+  another phase's scope into a refactor - a scope decision for the plan's owner, not taken here.
+- **A static field dump through `run_web_vis`.** Not done: that entry point is frame-driven - a
+  frame counter, a scrubber, a player bar (`um3k_panels.py:72-147`) - so a single-plate dump routed
+  through it yields a page whose player has nothing to play. That is a new shell, not a flag.
+- **`state.view_mode` -> `ctx.view_mode`.** Not done. `PageContext` already carries a `view_mode`
+  (`um3k_context.py:159`) nothing in `poc_app` reads, and trame is reactive: moving the live copy
+  into the context leaves two copies to keep in step, whose desynchronisation only a live client can
+  show. With no browser, display or GL (11.8) the move is provable syntactically, never provably
+  correct.
+
+### 11.6 Known and unfixed
+
+- **Silent button loss.** In the centre builder `if "VBtn" in widgets:` (`um3k_panels.py:78`,
+  `:123`) is a positive guard OUTSIDE the `try`: an install with no `VBtn` loses the playback and
+  the view buttons with no stderr line and no message on the page. The "unavailable" labels (`:96`,
+  `:141`) sit inside the matching `except`, so they appear only when a binding RAISED, never when
+  the widget was missing. Moved as it stood; the defect is older than the move, and is recorded here
+  rather than fixed.
+- **`html_div` may be `None`.** `poc_app.py:7152-7156` leaves it `None` when the trame html layer is
+  absent, and `:9321` registers it unexamined; `PageContext.callback` returns what it was given, so
+  the first `with html_div(...)` raises. Pre-existing: the registry now carries the `None` through
+  silently.
+- **White arrows on a white page.** The vis page sets `plotter.set_background("white")` (`:7201`)
+  and `mode_quiver` is drawn `color="white"` (`:7735`). Plausibly harmless, since the picture under
+  it is coloured, and unverifiable without a rendered frame: flagged, not changed.
+- **`tests/test_dr43_pulse_writer.py`** needs roughly 4 GB and cannot run here. It must carry a skip
+  with a reason rather than sit permanently red (8.3; still open as Q6 in section 9).
+
+### 11.7 Corrections, including to this document
+
+All 37 `poc_app.py:<line>` citations in `server/um3k_context.py` were stale - written against an
+older, longer `poc_app` and never re-read. The drift is uniform: +15 lines below roughly `:6,900`,
+while the viewer fork moved the other way, `:9734-9750` -> `:9539-9545`. Checked against both blobs:
+`:81/:85/:91` -> `:96/:100/:106`; `:485` -> `:500`; `:5318-5376` -> `:5333-5391`; `:6879` ->
+`:6894`. All 37 were corrected in `4f326af`, whose own subject carries the count.
+
+One was wrong by CONTENT, not by drift: `_stations` cited `:214-217` for "`plane_ez`'s first axis is
+the station axis". Neither there nor at the drifted `:229-232` does `poc_app` say which axis is
+which; the statement is made at `:244-247`, by the ndim check and the `f"(station, y, z)."` in its
+error. A mechanical renumbering would have preserved that error under a confident new line number.
+
+The same drift applies to THIS document, and is not corrected here. The skeleton citation
+`:9287-9435`, the tabbed layout `:9512-9542` and the stacked layout `:9559-9569` are stale, as are
+section 9's; until a separate mechanical pass fixes them, every line reference in sections 3, 4 and
+7 means "the code this describes, at a position that has since moved". A defect of the document, not
+of the reader who follows a number and lands somewhere else.
+
+### 11.8 What none of this proves
+
+No frame was ever rendered: no display, no X server, no EGL, no OSMesa. Appearance, colour,
+legibility, layout proportions, latency and trame reactivity are therefore unverified, and there is
+no screenshot anywhere in this record. What was proven is structure - ordering, argument passing,
+key membership, counts - each by a test or by AST and source inspection. Container measurements are
+not host measurements, so the milliseconds quoted in 5.4 size a container and not a workstation; and
+a green suite proves the assertions hold, not that the page is right, because no assertion in it
+looks at a page.
+
+Branch `main`, commits `db2410b`, `0a955c9`, `529ac4d`, `f7499cb`, `0bab52a`, `b874c44`, `4f326af`,
+pushed from the host: the agent sandbox has no network.
