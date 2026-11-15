@@ -124,13 +124,16 @@ def build_center_panel(ctx) -> object:
         # scrub. The player and the slider are left OUT of this row rather
         # than built over an invented frame count, and one visible line takes
         # their place - the same degraded-row idiom the guards below use.
+        #
+        # The line says what the page IS, not what is missing from it: it stands
+        # in a control bar, so it gets a control bar's length. The long form of
+        # the reason (no frame axis recorded, so nothing to play or scrub) is
+        # what the boot log prints as its
+        # "[poc_app] no timeline on this page:" line, which is where a
+        # reader goes to ask WHY.
         if nt is None:
             if "VLabel" in widgets:
-                widgets["VLabel"](
-                    "no timeline on this page: it records no "
-                    "frame axis, so there is nothing to play or "
-                    "scrub"
-                )
+                widgets["VLabel"]("Static field snapshot - no timeline")
         if nt is not None and "VBtn" in widgets:
             try:
                 widgets["VBtn"](

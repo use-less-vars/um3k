@@ -1029,9 +1029,16 @@ def _absent_multifreq_reason(arm, npz_path) -> str:
     if single:
         looked += f", {single}"
     if not arm:
+        # The NO-PROVENANCE case says why nothing can be chosen, not merely that
+        # nothing was: with no arm the beside-dump scan does not run at all
+        # (_multifreq_candidates filters on the arm), so "no summary can be
+        # chosen" alone sends a reader looking for a missing FILE when the files
+        # may well be sitting there and the missing thing is the provenance that
+        # says which of them is this dump's.
         head = (
-            "no structure arm is recorded for this dump, so no "
-            "multi-frequency summary can be chosen for it"
+            "no structure arm is recorded for this dump, so no multi-frequency "
+            "summary can be chosen for it - without an arm there is no way to "
+            "tell which sweep is this dump's"
         )
     elif not registered:
         head = (
@@ -1450,6 +1457,21 @@ def load_multifreq(npz_path: Path, structure_id=None):
     """
     candidates = _multifreq_candidates(npz_path, structure_id)
     path = next((p for p in candidates if p.is_file()), None)
+    # A LAST check on the chosen file, because the scan is not the only door:
+    # the registry fallback is a LITERAL path, and an entry edited to point at
+    # another arm's summary would otherwise be believed and drawn. The filename
+    # carries the arm exactly as the scan matches it, so the same test applies to
+    # whichever door the path came through - and a file that fails it is treated
+    # as NOT FOUND (the one-point fallback below, then the reason), never
+    # plotted as this dump's numbers.
+    arm_key = _structure_key(structure_id)
+    if path is not None and arm_key and f"_{arm_key}_" not in path.name:
+        print(
+            f"[poc_app] sweep {path} is not named for structure arm {arm_key}; "
+            "refusing to draw it as this dump's sweep",
+            file=sys.stderr,
+        )
+        path = None
     if path is None:
         single = _single_point_multifreq(structure_id)
         if single is not None:
@@ -1638,22 +1660,29 @@ def _frequency_rows(mf: dict) -> list[str]:
     return rows
 
 
-def _frequency_caption(mf: dict, record) -> str:
-    """One line naming the source file, the row count, and what was NOT done."""
+def _frequency_caption(mf: dict, record, arm=None) -> str:
+    """One line: the source file, its arm, the row count, and what was NOT done."""
+    # The ARM is named beside the filename, and it is not decoration: the arm is
+    # what decides WHICH file could ever have been chosen (_multifreq_candidates
+    # filters the beside-dump scan by it, and load_multifreq refuses a file that
+    # does not carry it), so a caption naming only the file cannot show that the
+    # choice was made by provenance rather than by sorting order. "structure
+    # arm B" is the page's own word for it - the SETUP picker's label.
+    arm_note = f" (structure arm {arm})" if arm else ""
     if mf.get("single_point"):
         # ONE point is this arm's own single run, not a sweep. Said first, before
         # any number: a one-point "curve" is the easiest thing on this page to
         # misread as a trend.
         caption = (
-            f"ONE recorded point from {mf['path'].name} - this arm's own single "
-            "run, not a frequency sweep - marker only, no line and no "
-            "interpolation: a point is not a curve"
+            f"ONE recorded point from {mf['path'].name}{arm_note} - this arm's "
+            "own single run, not a frequency sweep - marker only, no line and "
+            "no interpolation: a point is not a curve"
         )
     else:
         caption = (
-            f"{len(mf['points'])} recorded frequencies from {mf['path'].name} - "
-            "markers joined by a guide line for the eye: nothing between "
-            "these bins was solved or interpolated"
+            f"{len(mf['points'])} recorded frequencies from "
+            f"{mf['path'].name}{arm_note} - markers joined by a guide line for "
+            "the eye: nothing between these bins was solved or interpolated"
         )
         if mf.get("bin_spacing_mhz"):
             caption += f" (bin spacing {mf['bin_spacing_mhz']:.1f} MHz)"
@@ -4328,7 +4357,9 @@ def run_web(
             _structure_key(info.get("structure_id")), info["path"]
         )
     else:
-        frequency_caption = _frequency_caption(multifreq, record)
+        frequency_caption = _frequency_caption(
+            multifreq, record, _structure_key(info.get("structure_id"))
+        )
     # The recorded station phasors. No matplotlib costs the picture and prints the
     # rows instead - build_port_wave_chart returns its rows and the reason rather
     # than raising, so the 3-D view and the caption still come up.
@@ -8663,7 +8694,9 @@ def run_web_vis(
             "image": chart.get("image"),
             "rows": chart.get("rows") or [],
             "reason": chart.get("reason"),
-            "caption": _frequency_caption(multifreq, _field_record(info["path"])),
+            "caption": _frequency_caption(
+                multifreq, _field_record(info["path"]), arm
+            ),
             "single_point": bool(multifreq.get("single_point")),
             "number": _s_params_number_text(multifreq, f_ref_ghz),
         }
@@ -9274,6 +9307,11 @@ def run_web_vis(
                 widgets["VBtn"](
                     "{{ solve_label }}",
                     click=ctrl.solve_start,
+                    # BOUND, not a literal: the label and the enabled state are
+                    # ONE decision (state.solve_disabled is set from the page
+                    # beside the label), so a literal here could show "Solve"
+                    # on a page the state beside it says is not solvable.
+                    disabled=("solve_disabled", False),
                     size="large",
                     style="width: 100%;",
                 )
@@ -9482,7 +9520,26 @@ def run_web_vis(
     state.solve_structure = default_arm
     state.solve_xcut_mm = SOLVE_DEFAULT_XCUT_MM
     state.solve_status = "no solve run in this session"
-    state.solve_label = "Solve"
+    # The LABEL and the ENABLED state describe the PAGE, not the job: this shell
+    # serves a static field snapshot as well as an animation dump, and the static
+    # page (nt is None - no frame axis, um3k_panels.py:127-140) has no timeline
+    # for a new run to land in. A bare "Solve" over a snapshot read as "solve
+    # THIS page", which nothing here does; so the label NAMES the page it is
+    # drawn on ("Solve (static field snapshot)" over a snapshot, "Solve" over an
+    # animation dump) and the grey-out is there so nobody reads the button as
+    # "press this to refresh the picture" - the press starts a new run, it does
+    # not re-read the file this page was opened from. The machinery is not
+    # missing; it just does not do that.
+    static_page = nt is None
+    state.solve_label = (
+        "Solve (static field snapshot)" if static_page else "Solve"
+    )
+    state.solve_disabled = static_page
+    if static_page:
+        state.solve_status = (
+            "this page is a static field snapshot; Solve runs a new solve and "
+            "does not refresh this view"
+        )
     # The netlist a solve may be run on, as JSON TEXT. It lives in the state so
     # the editor in the solve panel binds it the usual way
     # (v_model=("solve_netlist_json", "")) and the button reads it from here;
