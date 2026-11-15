@@ -3590,3 +3590,371 @@ def test_the_state_dump_does_not_record_a_station_the_dump_lacks(tmp_path):
         f"{full_ycut['fixed_mm']!r}"
     )
 
+
+
+# =============================================================================
+# The Y / Z cut sheets on the VIS page (run_web_vis)
+# =============================================================================
+# The three tests below pin the part of the cut that has no widgets yet: the
+# STATE the page opens on, the two controller methods the sliders will call, and
+# the fact that a page with no plane stack gets neither.  They boot the real
+# builder - same recipe as _boot_app - with Plotter.render doubled, because this
+# image has no OpenGL: the boot itself draws, and so does every cut change.
+
+
+@contextlib.contextmanager
+def _counted_render():
+    """``Plotter.render`` doubled and COUNTED, for the whole block.
+
+    The page draws four times while it boots and once per cut change, so the
+    double has to span both phases; a double installed only around the drive
+    would leave the boot's real render in place.
+    """
+    pyvista = pytest.importorskip("pyvista")
+    real_render = pyvista.Plotter.render
+    calls = []
+
+    def _no_render(self, *args, **kwargs):
+        calls.append(1)  # counted, never performed
+
+    pyvista.Plotter.render = _no_render
+    try:
+        yield calls
+    finally:
+        pyvista.Plotter.render = real_render
+
+
+@pytest.fixture(scope="module")
+def field_page(tmp_path_factory):
+    """Boot the legacy single-plane page ONCE, and record what it opened on.
+
+    ``trame.app.get_server()`` is a PROCESS-WIDE singleton: every ``_boot_app``
+    in one pytest process lands on the SAME ``Server`` - its ``state`` and its
+    controller-function registry - so a second boot inherits the first boot's
+    keys and the handlers the first boot registered.  Measured before this
+    fixture existed: one ``cut_y(9)`` call fired the previous boot's handler as
+    well and drew 12 times, and the no-plane-stack page saw ``cut_y = 9`` left
+    over from the test before it.  ONE boot per process is therefore what makes
+    an exact ``delta == 1`` assertion mean anything at all.
+
+    The render double is entered HERE, not around an individual drive, and stays
+    in place for the whole module: the page draws ~4x while it BOOTS as well as
+    once per cut change, and this image has no EGL, no libOSMesa and no X server,
+    so a real ``render()`` either raises or takes the interpreter down.
+
+    ``opened`` is the opening state RECORDED at boot time.  The opening-state
+    test asserts on that record rather than on live state, so a later test
+    driving the cut cannot make it pass or fail, and the two tests below do not
+    depend on the order pytest happens to run them in.
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    with _counted_render() as renders:
+        info = _fixture_legacy_info(
+            app, tmp_path_factory.mktemp("field") / "field.npz"
+        )
+        # _fixture_legacy_info writes the 8080 artefact: plane_ez plus five
+        # scalars, and nothing else.
+        assert app.PLANE_KEY in info, (
+            "the legacy fixture no longer carries plane_ez, so this is not the "
+            "plane-stack page the cut sheets are gated on"
+        )
+        app, srv = _boot_app(info)
+        state, ctrl = srv.state, srv.controller
+
+        opened = {
+            # what the boot itself drew, reported rather than asserted: that
+            # number belongs to the page, not to the cuts.
+            "boot_renders": len(renders),
+            "has_cut_state": state.has("cut_y") and state.has("cut_z"),
+            "cut_y": int(state.cut_y) if state.has("cut_y") else None,
+            "cut_z": int(state.cut_z) if state.has("cut_z") else None,
+            "has_station": state.has("station"),
+            "station": int(state.station) if state.has("station") else None,
+            "view_mode": (
+                str(state.view_mode) if state.has("view_mode") else None
+            ),
+            "cut_label": (
+                str(state.cut_label) if state.has("cut_label") else None
+            ),
+            "view_label": (
+                str(state.view_label) if state.has("view_label") else None
+            ),
+            # A @ctrl.set name is a controller METHOD, not a trigger: the
+            # sliders bind to these two names, so their presence is the thing
+            # to record.
+            "handlers": {
+                name: getattr(ctrl, name, None) is not None
+                for name in ("cut_y", "cut_z")
+            },
+        }
+        yield app, srv, renders, opened
+
+
+def test_vis_cut_state_opens_on_the_middle_sample(field_page):
+    """The opening cut is the middle sample of each transverse axis.
+
+    ``_init_cut_state`` is fed ``n_j, n_k`` from the plane stack, so the page
+    must open on j = 12 // 2 = 6 and k = 5 // 2 = 2 of a (9, 12, 5) field.  A
+    transposed shape (n_k, n_j in the wrong slots) shows up here as cut_y = 2,
+    which is why the two indices are asserted separately from their labels.
+
+    Every assertion here reads ``opened`` - the state RECORDED at boot - not the
+    live server state, so this test stands on its own.
+    """
+    app, srv, renders, opened = field_page
+
+    assert opened["has_cut_state"], (
+        "the plane-stack page did not initialise the cut state at all "
+        f"(the boot drew {opened['boot_renders']}x)"
+    )
+    assert (opened["cut_y"], opened["cut_z"]) == (6, 2), (
+        "the opening cut is not the middle sample of a (9, 12, 5) field: "
+        f"cut_y={opened['cut_y']!r} cut_z={opened['cut_z']!r} (expected 6, 2)"
+    )
+    assert opened["view_mode"] == "volume", (
+        "the cut state did not leave the view on the full volume: "
+        f"view_mode={opened['view_mode']!r}"
+    )
+    # _redraw_scene reads int(state.station): without it every redraw
+    # soft-fails inside its own try/except and the picture silently stops
+    # following the sliders.
+    assert opened["has_station"], (
+        "the page has no `station`, so _redraw_scene (poc_app._redraw_scene) "
+        "would raise AttributeError and never reach plotter.render() - the "
+        "cuts would be dead on arrival"
+    )
+    assert opened["station"] == 4, (
+        "the page did not settle on the middle captured plane: "
+        f"station={opened['station']!r} (expected 4 of 9)"
+    )
+
+    # _cut_text carries the sample counts and the mm position of each sheet;
+    # _view_label carries the axis letter and the capture count.  Both are read
+    # because the row a user reads is _cut_text's and the title is _view_label's.
+    cut_label = opened["cut_label"] or ""
+    assert "7/12" in cut_label and "3/5" in cut_label, (
+        f"the cut row does not name the sample it draws: {cut_label!r}"
+    )
+    assert "0.6000 mm" in cut_label and "0.2000 mm" in cut_label, (
+        f"the cut row does not give the mm position of the sheet: {cut_label!r}"
+    )
+    view_label = opened["view_label"] or ""
+    for needle in ("9 captured x-planes", "j 7/12", "k 3/5"):
+        assert needle in view_label, (
+            f"the view label lost {needle!r}: {view_label!r}"
+        )
+
+    # A @ctrl.set name is a controller METHOD, not a trigger: the two names must
+    # resolve through the controller or the sliders have nothing to bind to.
+    assert opened["handlers"] == {"cut_y": True, "cut_z": True}, (
+        "the page does not expose both cut handlers, so a slider "
+        f"v_model=cut_y / v_model=cut_z has nothing to call: {opened['handlers']}"
+    )
+
+
+#: How many ``pyvista.Plotter.render`` calls ONE cut change produces.
+#:
+#: ``_redraw_scene``'s own ``plotter.render()`` is only ONE of them: it calls
+#: ``_draw_scene``, which re-adds every actor, and pyvista draws from inside
+#: those internals - 8 from ``renderer.add_actor``, 2 from
+#: ``renderer.reset_camera`` and 1 from ``plotter.reset_camera`` on top of the
+#: explicit render.  The count is asserted EXACTLY, not as ``>= 1``: fewer means
+#: ``_redraw_scene`` soft-failed (it swallows its exception, leaving the label
+#: already moved), more means the scene was built twice.  Both handlers are
+#: measured against this one constant, so they must produce the same delta.
+_CUT_REDRAW_RENDERS = 12
+
+
+def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
+    """Driving either cut handler clamps, stores, relabels and redraws.
+
+    The handler is called the way trame calls it - positional value, no kwargs -
+    and the render counter is the proof that the scene was really rebuilt rather
+    than the label alone being rewritten.  The counter comes from the fixture,
+    which is why the expected delta is exact: this process has booted the page
+    once.  What the number is made of is in ``_CUT_REDRAW_RENDERS``.
+    """
+    app, srv, renders, opened = field_page
+    state, ctrl = srv.state, srv.controller
+    cut_y = _registered_trigger(ctrl, "cut_y")
+    cut_z = _registered_trigger(ctrl, "cut_z")
+
+    before = len(renders)
+    cut_y(9)
+    assert int(state.cut_y) == 9, (
+        f"cut_y(9) left the cut at {state.cut_y!r}; the handler is not storing "
+        "the value the slider sends"
+    )
+    assert len(renders) - before == _CUT_REDRAW_RENDERS, (
+        f"cut_y(9) rebuilt the scene {len(renders) - before} times (expected "
+        f"exactly {_CUT_REDRAW_RENDERS}): _redraw_scene soft-fails silently, so "
+        "0 here means the cut is dead even though the label moved"
+    )
+    assert int(state.cut_z) == 2, (
+        f"moving the y cut moved the z cut too: cut_z={state.cut_z!r}"
+    )
+    assert "10/12" in state.cut_label and "0.9000 mm" in state.cut_label, (
+        f"the cut row did not follow the y cut: {state.cut_label!r}"
+    )
+    assert "j 10/12" in str(state.view_label), (
+        f"the view label did not follow the y cut: {state.view_label!r}"
+    )
+
+    before = len(renders)
+    cut_z(4)
+    assert int(state.cut_z) == 4, f"cut_z(4) left the cut at {state.cut_z!r}"
+    assert len(renders) - before == _CUT_REDRAW_RENDERS, (
+        f"cut_z(4) rebuilt the scene {len(renders) - before} times (expected "
+        f"exactly {_CUT_REDRAW_RENDERS}, the count cut_y(9) produced: both "
+        "handlers must take the same redraw path)"
+    )
+    assert int(state.cut_y) == 9, (
+        f"moving the z cut reset the y cut: cut_y={state.cut_y!r}"
+    )
+    assert "11/12" not in state.cut_label and "5/5" in state.cut_label, (
+        f"the cut row did not follow the z cut: {state.cut_label!r}"
+    )
+
+    # The clamp is the handler's, not the slider's: a client may send a value
+    # outside the sample range (a stale layout, a typed number).
+    cut_y(999)
+    assert int(state.cut_y) == 11, (
+        "an out-of-range y cut was not clamped to n_j - 1 = 11: "
+        f"cut_y={state.cut_y!r}"
+    )
+    cut_z(-5)
+    assert int(state.cut_z) == 0, (
+        f"a negative z cut was not clamped to 0: cut_z={state.cut_z!r}"
+    )
+    cut_y("junk")
+    assert int(state.cut_y) == 11, (
+        "an unparsable cut value did not fall back to the current one: "
+        f"cut_y={state.cut_y!r}"
+    )
+
+
+#: The child interpreter for the no-plane-stack test, below.
+#:
+#: It boots the page in a VIRGIN process.  In the parent, ``get_server()`` has
+#: already been handed the field page by the fixture above, so the parent cannot
+#: ask "does a page with no plane stack get a cut?" - the answer would be about
+#: the leaked server, not about this page.  ``TESTS_DIR`` is substituted with
+#: this file's directory by the test; the child puts the repo root and
+#: ``server/`` on ``sys.path`` itself (this file's module-level block, which it
+#: imports for that reason, does the same for the parent at :21-40).
+_ABSENCE_CHILD = """
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, TESTS_DIR)
+
+# ``poc_app`` lives in the repo's server/ directory and is on no default path:
+# importing this test module is what puts it there (tests/test_poc_playback.py:
+# 21-40), so import that FIRST and add the two paths explicitly - a child that
+# opens with ``import poc_app`` dies with ModuleNotFoundError.
+import test_poc_playback as tp
+sys.path.insert(0, str(Path(TESTS_DIR).parent))
+sys.path.insert(0, str(Path(TESTS_DIR).parent / "server"))
+
+import pyvista
+
+import poc_app as app
+
+renders = []
+real_render = pyvista.Plotter.render
+# The child's boot draws too, and this image has no OpenGL: double it for the
+# whole child, then report how often the page drew.
+pyvista.Plotter.render = lambda self, *a, **k: renders.append(1)
+try:
+    info = tp._fixture_info(app, Path(tempfile.mkdtemp()) / "vis.npz")
+    if app.PLANE_KEY in info:
+        raise SystemExit("the vis fixture carries plane_ez: wrong page")
+    _app, srv = tp._boot_app(info)
+    state, ctrl = srv.state, srv.controller
+
+    def has_handler(name):
+        # Controller.__getattr__ fabricates a ControllerFunction proxy for ANY
+        # name, registered or not (trame_server/controller.py), so "the
+        # attribute is not None" is a tautology that every controller passes.
+        # ControllerFunction.exists() is the real question: is there a function
+        # behind the proxy?
+        proxy = getattr(ctrl, name, None)
+        return bool(proxy is not None and proxy.exists())
+
+    verdict = {
+        "state_keys": {
+            key: state.has(key) for key in ("cut_y", "cut_z", "cut_label")
+        },
+        "handlers": {name: has_handler(name) for name in ("cut_y", "cut_z")},
+        "renders": len(renders),
+    }
+    print("VERDICT " + json.dumps(verdict))
+finally:
+    pyvista.Plotter.render = real_render
+"""
+
+
+def test_vis_page_without_a_plane_stack_has_no_cut():
+    """The vis dump has no plane stack, so it gets no cut state and no handlers.
+
+    The gate is ``ctx.available.plane_stack``: a page that cannot draw the
+    volume must not expose sliders that would move a sheet that is not there,
+    and must not read ``info["plane_ez"]`` - that KeyError takes the whole boot
+    down, not just the cut.
+
+    This runs in a CHILD interpreter: ``trame.app.get_server()`` is a
+    process-wide singleton, and in this process the field page above already
+    owns that server.  A crash, a non-zero exit or a missing verdict FAILS the
+    test; nothing about the child is allowed to pass by silence.
+    """
+    import subprocess
+
+    script = _ABSENCE_CHILD.replace(
+        "TESTS_DIR", repr(str(Path(__file__).resolve().parent))
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO_ROOT),
+    )
+    assert proc.returncode == 0, (
+        "the child that boots the no-plane-stack page failed, so there is no "
+        "evidence this page is free of the cut machinery:\n"
+        f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("VERDICT ")]
+    assert len(lines) == 1, (
+        f"the child printed {len(lines)} verdict line(s), expected exactly 1 - "
+        "without it this test would assert nothing:\n"
+        f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+    verdict = json.loads(lines[0][len("VERDICT "):])
+
+    assert verdict["state_keys"] == {
+        "cut_y": False, "cut_z": False, "cut_label": False
+    }, (
+        "a page with no plane stack still exposes cut state, so the cut is not "
+        f"gated on ctx.available.plane_stack: {verdict['state_keys']}"
+    )
+    assert verdict["handlers"] == {"cut_y": False, "cut_z": False}, (
+        "a page with no plane stack still registers a cut controller method, so "
+        "a slider would call into a redraw of a scene that does not exist: "
+        f"{verdict['handlers']}"
+    )
+    # The boot's own draw count is REPORTED here, never asserted as zero: this
+    # page draws a few times while it builds and that number is not the subject -
+    # a cut handler firing during the boot would be, and the two records above
+    # are what would catch it.  What is asserted is that the verdict is a REAL
+    # verdict: exactly the three records the child builds, no more, so a child
+    # that printed a hand-written line instead of running the boot cannot pass.
+    assert sorted(verdict) == ["handlers", "renders", "state_keys"], (
+        "the child's verdict does not carry the records it is supposed to build: "
+        f"{sorted(verdict)}"
+    )
+

@@ -7554,6 +7554,103 @@ def run_web_vis(
         dump=um3k_context.LoadedDump.from_any_dump(page),
     )
 
+    # --- the Y / Z cut sheets: STATE and TRIGGERS, no widgets yet -------------
+    #
+    # WHY GATED, and why on this particular flag: every helper below reads
+    # ``info[PLANE_KEY]`` - the legacy dump's (station, y, z) stack
+    # (_plane_layout :3166, _cut_layout :3369) - which an animation dump does not
+    # carry at all, so calling any of them on a vis page is KeyError('plane_ez').
+    # ``ctx.available.plane_stack`` is the page's own answer to "did this page
+    # capture more than one x-plane" (um3k_context.py:130-145), computed once
+    # from the data at boot; this does not re-read the format to guess it.
+    #
+    # WHY the widgets are NOT here: the two VSliders belong to the layout, built
+    # far below (:9461). What is installed here is what both the layout and the
+    # browser reach - the state the sliders will bind to, the two redraw pieces
+    # ``_redraw_scene`` insists on, and the two triggers those sliders will fire -
+    # so the cut machinery is complete and drivable before any widget exists.
+    if ctx.available.plane_stack:
+        plane = info[PLANE_KEY]
+        # The same three reads run_web makes on its own stack (:4232-4235), so a
+        # transposed shape would break in one place, not in two different ones.
+        n_st = plane.shape[0]
+        n_j = plane.shape[1]
+        n_k = plane.shape[2]
+
+        # The study record beside the dump is OPTIONAL: ``load_record`` answers
+        # None for a missing or unreadable one and never raises (poc_app.py:907),
+        # so the only failing path here is a hand-built info with no "path" key at
+        # all. Both routes end in the same 14-key layout, whose ``src_*`` entries
+        # then say FALLBACK: a plane position is never invented in silence.
+        try:
+            planes = _plane_layout(info, load_record(info["path"]))
+        except Exception:  # noqa: BLE001 - a record is optional, the page is not
+            planes = _plane_layout(info, None)
+
+        # The SAME rule run_web applies (:4273), available here for the same
+        # reason: this page resolves its widgets from its own probe loop over
+        # ("VSpacer", "VSlider", "VLabel", "VContainer", "VBtn") at :7283, so
+        # ``missing_widgets`` and ``widgets["VBtn"]`` mean what they mean there.
+        # Without VBtn the label says so instead of offering a toggle.
+        toggle_available = (not missing_widgets) and ("VBtn" in widgets)
+        _init_cut_state(state, info, n_j, n_k, planes, toggle_available)
+
+        # The station this page never had. ``_redraw_scene`` reads it for the
+        # corner label (:3996) and run_web keeps it in state (:4249); a page
+        # without it soft-fails EVERY redraw, which is a silent picture rather
+        # than a loud failure. It starts on the middle captured plane for the
+        # reason the cut starts on the middle sample of each axis (:3975).
+        state.station = n_st // 2
+
+        def _show_volume_quiver() -> None:
+            """No arrow field on this page: a NO-OP with the signature asked for.
+
+            ``_redraw_scene`` calls it between the scene and the render (:4005),
+            so it must exist and must not raise - an overlay this page does not
+            have is no reason to lose the redraw.
+            """
+            return None
+
+        def _redraw() -> None:
+            """Rebuild the scene in the one plotter. Failure leaves the old picture."""
+            _redraw_scene(plotter, info, planes, state, _show_volume_quiver)
+
+        # Registered BEFORE the layout is built, so ctrl.cut_y / ctrl.cut_z exist
+        # by the time a slider binds to them. The arguments are run_web's own
+        # (:4412 and :4428) in that order: the clamp, both labels and the redraw
+        # are the shipped functions, not a second copy of them.
+        @ctrl.set("cut_y")
+        def _on_cut_y(*args, **_kwargs) -> None:
+            value = args[0] if args else _kwargs.get("cut_y", state.cut_y)
+            _on_cut_change(
+                "y",
+                value,
+                state,
+                n_j,
+                n_k,
+                info,
+                planes,
+                toggle_available,
+                _redraw,
+                handles,
+            )
+
+        @ctrl.set("cut_z")
+        def _on_cut_z(*args, **_kwargs) -> None:
+            value = args[0] if args else _kwargs.get("cut_z", state.cut_z)
+            _on_cut_change(
+                "z",
+                value,
+                state,
+                n_j,
+                n_k,
+                info,
+                planes,
+                toggle_available,
+                _redraw,
+                handles,
+            )
+
     def _set_picture_title(text: str) -> None:
         """Publish the page title for whatever the 3D view is showing. NEVER raises.
 
