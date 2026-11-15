@@ -140,6 +140,74 @@ def _fixture_info(app, path: Path, *, structure_id="A", load_ohm=50.0,
     return app.load_vis(path)
 
 
+#: The keys ``load_vis`` REFUSES a dump for lacking (poc_app.py:461-478): the
+#: axes and the three stored field arrays the picture cannot be drawn without.
+VIS_MANDATORY_KEYS = (
+    "ez_ycut", "ez_xcut_near", "ez_xcut_far", "t_ns", "frame_index",
+    "frame_index_xcut", "x_mm", "y_mm", "z_mm", "nx", "ny", "nz", "nt",
+    "nt_x", "dt_s", "cell_m",
+)
+
+#: Every key ``_fixture_info`` writes that ``load_vis`` does NOT require.  The
+#: loader materialises all of them itself - ``_npz_scalar`` answers NaN and
+#: ``_npz_text`` answers None (poc_app.py:297, :312) - so a dump carrying none
+#: of them still hands the page a dict with the SAME key set as a full one.
+VIS_OPTIONAL_KEYS = (
+    "j_cut", "dump_stride", "nsteps", "f_ref_hz", "f_pulse_hz",
+    "xcut_near_mm", "xcut_far_mm", "port_x_mm", "load_x_mm",
+    "substrate_h_mm", "strip_w_mm", "eps_r", "v_analytic_m_s",
+    "v_measured_m_s", "t_traverse_ns", "v_measured_reliable",
+    "velocity_note", "structure_id", "load_ohm",
+)
+
+
+def _bare_payload(app, *, drop=None) -> dict:
+    """The dump ``_fixture_info`` writes MINUS every optional key.
+
+    Only the schema and :data:`VIS_MANDATORY_KEYS` survive, so this is the
+    smallest file ``load_vis`` accepts.  ``drop`` removes one of even those, to
+    make the mirror image: a file that is one structural fact short.
+    """
+    nt, nx, nz = 4, 8, 5
+    nt_x, ny_x = 3, 6
+    rng = np.random.default_rng(0)
+    payload = {
+        "schema": app.VIS_SCHEMA,
+        "ez_ycut": rng.normal(size=(nt, nx, nz)),
+        "ez_xcut_near": rng.normal(size=(nt_x, ny_x, nz)),
+        "ez_xcut_far": rng.normal(size=(nt_x, ny_x, nz)),
+        "t_ns": np.arange(nt) * 1e-3,
+        "frame_index": np.arange(nt),
+        "frame_index_xcut": np.arange(nt_x) * 2,
+        "x_mm": np.linspace(0.0, 7.0, nx),
+        "y_mm": np.linspace(-1.0, 1.0, ny_x),
+        "z_mm": np.linspace(0.0, 2.0, nz),
+        "nx": np.array(nx),
+        "ny": np.array(ny_x),
+        "nz": np.array(nz),
+        "nt": np.array(nt),
+        "nt_x": np.array(nt_x),
+        "dt_s": np.array(1e-13),
+        "cell_m": np.array(1e-5),
+    }
+    leaked = sorted(set(payload) & set(VIS_OPTIONAL_KEYS))
+    assert not leaked, (
+        f"the bare dump carries the optional key(s) {leaked}; an optional key "
+        "leaking in here hands the page a datum this test exists to deny it, "
+        "which weakens the bare-dump test silently instead of failing it"
+    )
+    assert set(payload) - {"schema"} == set(VIS_MANDATORY_KEYS)
+    if drop is not None:
+        payload.pop(drop)
+    return payload
+
+
+def _fixture_bare_info(app, path: Path) -> dict:
+    """A vis dump with EVERY optional key absent, loaded the way boot loads it."""
+    np.savez(path, **_bare_payload(app))
+    return app.load_vis(path)
+
+
 def _fixture_legacy_info(app, path: Path) -> dict:
     """Minimal legacy single-plane dump: the artefact the 8080 path serves.
 
@@ -2233,7 +2301,9 @@ def _looks_like_vue_expression(expr: str) -> bool:
     return True
 
 
-@pytest.mark.parametrize("builder", ["run_web_vis", "run_web"])
+@pytest.mark.parametrize(
+    "builder", ["run_web_vis", "run_web_vis_bare", "run_web"]
+)
 def test_every_bound_attribute_is_a_valid_vue_expression(builder, tmp_path):
     """No emitted `:attr="..."` may carry a value that is not JavaScript.
 
@@ -2242,6 +2312,12 @@ def test_every_bound_attribute_is_a_valid_vue_expression(builder, tmp_path):
     dump - and that legacy builder is the one ``python3 server/poc_app.py``
     reaches on port 8080, because the default structure's dump carries
     ``plane_ez`` and no ``format`` key.
+
+    ``run_web_vis`` is swept TWICE: from the full fixture and from a dump that
+    omits every optional key.  The second one is where a defaulted value would
+    leak a Python repr into a binding (the readouts are then the "not
+    recorded" strings), so the two sweeps cover different values of the same
+    template.
 
     trame renders attributes to text in
     trame_client/widgets/vue.py::HtmlElement._process_attrs:
@@ -2275,6 +2351,9 @@ def test_every_bound_attribute_is_a_valid_vue_expression(builder, tmp_path):
     try:
         if builder == "run_web_vis":
             info = _fixture_info(app, tmp_path / "dump.npz")
+            _boot_app(info)
+        elif builder == "run_web_vis_bare":
+            info = _fixture_bare_info(app, tmp_path / "bare.npz")
             _boot_app(info)
         else:
             info = _fixture_legacy_info(app, tmp_path / "legacy.npz")
@@ -3108,4 +3187,88 @@ def test_mode_picture_reaches_the_plotter_in_front_of_the_xcut_sheets(
             )
     finally:
         pyvista.Plotter.render = real_render
+
+
+# --- what a dump may leave out, and what it may not -------------------------
+#
+# ``_fixture_info`` writes every optional key, so on its own it cannot tell a
+# page that DEFAULTS a missing key from a page that would crash on it.  The two
+# tests below are the pair that can: one drops every optional key (the boot must
+# still happen, with "not recorded" readouts rather than invented numbers), the
+# mirror drops a STRUCTURAL one (the loader must still refuse, loudly, naming
+# the key - a missing axis is never defaulted into a wrong picture).
+
+
+def test_a_dump_with_no_optional_key_boots_without_a_keyerror(tmp_path):
+    """If this fails, the page reads an optional key as if the dump owed it.
+
+    The file carries the schema and the mandatory axes and NOTHING else.  Two
+    things have to hold for the page to boot from it:
+
+    * ``load_vis`` materialises the absent optionals itself - NaN for a number,
+      None for a text - so the key set the page reads is EXACTLY the one a full
+      dump hands it (asserted below, so a loader that stopped doing this fails
+      here rather than in a browser), and
+    * ``run_web_vis`` therefore reaches ``server.start``: every readout that has
+      nothing to print says so instead of raising ``KeyError``.
+    """
+    import poc_app as app
+
+    optional = _fixture_bare_info(app, tmp_path / "bare.npz")
+    full = _fixture_info(app, tmp_path / "full.npz")
+
+    assert set(optional) == set(full), (
+        "a dump without the optional keys was handed a different key set: "
+        f"missing {sorted(set(full) - set(optional))}, extra "
+        f"{sorted(set(optional) - set(full))}"
+    )
+    # A recorded-only number is NaN, a recorded-only text is None: the page
+    # prints "not recorded" for these rather than substituting a number.
+    for key in (
+        "xcut_near_mm", "xcut_far_mm", "port_x_mm", "load_x_mm",
+        "substrate_h_mm", "strip_w_mm", "eps_r", "v_analytic_m_s",
+        "v_measured_m_s", "t_traverse_ns", "f_ref_hz", "f_pulse_hz",
+    ):
+        assert math.isnan(optional[key]), (
+            f"{key} is {optional[key]!r} on a dump that never recorded it"
+        )
+    assert optional["velocity_note"] is None
+    assert optional["structure_id"] is None
+    assert optional["load_series"] is None
+
+    _app, srv = _boot_app(optional)
+
+    assert srv is not None, "the page did not boot from a dump with no optionals"
+
+
+@pytest.mark.parametrize("key", ["t_ns", "nx", "ez_xcut_far", "frame_index_xcut"])
+def test_a_dump_missing_a_mandatory_key_is_still_refused(key, tmp_path, capsys):
+    """The mirror image: a STRUCTURAL key is never defaulted, only advertised.
+
+    Drop one of the keys ``load_vis`` refuses a dump for lacking and the boot
+    must still stop at that loader, with the key's own name in the message -
+    both from ``load_vis`` and through ``reload_page``, the call ``main`` and a
+    finished solve actually use, so the fence is at the ONE entry point.
+    """
+    import poc_app as app
+
+    path = tmp_path / f"no_{key}.npz"
+    np.savez(path, **_bare_payload(app, drop=key))
+
+    with pytest.raises(SystemExit) as excinfo:
+        app.load_vis(path)
+    assert excinfo.value.code == 2, (
+        f"a dump without {key} exited {excinfo.value.code!r}, not 2"
+    )
+    message = capsys.readouterr().err
+    assert key in message, (
+        f"the refusal for a dump without {key} does not name it: {message!r}"
+    )
+
+    with pytest.raises(SystemExit):
+        app.reload_page(path)
+    assert key in capsys.readouterr().err, (
+        f"reload_page let a dump without {key} past the fence that load_vis "
+        "still holds"
+    )
 

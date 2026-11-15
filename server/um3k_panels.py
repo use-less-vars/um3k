@@ -176,13 +176,22 @@ RIGHT_TABS = (
 def visible_right_tabs(available=None) -> list:
     """The tab values this page can fill, in :data:`RIGHT_TABS` order.
 
-    An ANIMATION page keeps all five: that is the page this column was built for,
-    and each of its panels already says so itself when its neighbour file is
-    missing. ``available`` of ``None`` - a context that never carried a snapshot -
-    answers the same way, so no page loses a tab to a fact nobody recorded. On any
-    other page a tab is kept only when its flag is true, and a page that claims
-    none of them keeps all five rather than an empty column: a wrong flag must not
-    cost the reader the whole right side.
+    A tab is dropped only for a flag it HAS and that flag is FALSE: the two
+    flagged rows are S-Parameters (``multifreq``) and Confidence N-lambda
+    (``record``), and a false flag on either costs exactly that one tab. Every
+    other case KEEPS the tab, because a column must never lose a panel to a fact
+    nobody recorded:
+
+    * ``None`` in :data:`RIGHT_TABS` is a row with no flag at all - Far Field
+      reads the --surface-dump archive, Modes falls back to the dump's own
+      metadata and Circuit asks the page for nothing - so it is never dropped;
+    * ``available`` of ``None`` - a context that never carried a snapshot -
+      keeps all five, the same answer as a snapshot that carries the flags;
+    * an ANIMATION page keeps all five: it is the page this column was built
+      for, and each of its panels already says so itself when its neighbour
+      file is missing;
+    * a page that claims NONE of the flags keeps all five rather than an empty
+      column, so a wrong flag can cost a tab but never the whole right side.
     """
     values = [value for _label, value, _flag in RIGHT_TABS]
     if available is None or getattr(available, "animation", False):
