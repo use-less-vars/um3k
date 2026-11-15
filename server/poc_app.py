@@ -777,6 +777,50 @@ def _structure_readout_text(info: dict) -> str:
     return f"structure: {structure_id} ({load_ohm:g} Ω)"
 
 
+def _page_source_text(info: dict, nt=None) -> str:
+    """One line naming the FILE this page is showing, and what kind of page it is.
+
+    The question it answers is the one every other readout here leaves open: the
+    labels say which ARM and which COLOUR LIMIT are on screen, never which
+    artefact they came off - and a page opened from a copy of a dump, or from a
+    dump a solve has since replaced on disk, looks identical to one opened from
+    the original. ``info["path"]`` is the file the page was actually loaded
+    from, so it is the only thing that can answer it.
+
+    The KIND is part of the same sentence because the file name alone does not
+    say it: a static field snapshot has no frame axis at all (``nt`` is None,
+    server/um3k_panels.py:127-140), while an animation dump carries ``nt`` frames
+    along ``ez_ycut``. The station count comes from the plane stack's own shape
+    and is 0 on a page that has none - reported as such, never guessed.
+
+    Pure over its arguments, like _structure_readout_text and _scale_label, so
+    boot and a live page swap print the same sentence from the same code.
+    """
+    try:
+        name = Path(info.get("path")).name
+    except (TypeError, ValueError):
+        # No path, or a path object that will not stringify: the page was built
+        # from an in-memory dump, which is a state this shell allows.
+        name = ""
+    if not name:
+        return "showing: not recorded - no dump is loaded on this page"
+    if nt is None:
+        try:
+            n_st = int(info[PLANE_KEY].shape[0])
+        except (KeyError, IndexError, TypeError, AttributeError):
+            # A dump with no plane stack carries no station axis at all; the
+            # count is then 0 and the line says so instead of quoting one.
+            n_st = 0
+        if n_st <= 0:
+            count = "no stations"
+        elif n_st == 1:
+            count = "1 station"
+        else:
+            count = f"{n_st} stations"
+        return f"showing {name} - static field snapshot, {count}, no timeline"
+    return f"showing {name} - animation, {int(nt)} frames on ez_ycut"
+
+
 def _cell_mm(info: dict) -> float:
     return float(info["cell_m"]) * 1e3
 
@@ -7763,6 +7807,11 @@ def run_web_vis(
     )
     state.scale_label = _scale_label(info)
 
+    # WHICH FILE, and which kind of page: the provenance line every other label
+    # here leaves out. Rebuilt from the dump now on screen, never carried over
+    # from boot, for the same reason as the two lines above.
+    state.page_source_text = _page_source_text(info, nt)
+
     # The plotter_ui handle only exists once the layout is built, so the frame
     # handler reaches it through this dict instead of closing over it.
     handles: dict = {}
@@ -9757,7 +9806,14 @@ def run_web_vis(
         _load_far_field_panel()
         _load_confidence_panel()
         _rebuild_sheets()
-        state.solve_status = f"solved -> {Path(applied['new_path']).name}"
+        # WHAT a reader must do next is part of the sentence: the swap reaches
+        # the page's own arrays and labels, but the browser's picture and the
+        # dump line still describe the page the reader opened, so "solved" alone
+        # read as "this view is now the new run" when it was not.
+        state.solve_status = (
+            f"solved -> {Path(applied['new_path']).name}; this page was NOT "
+            "refreshed - reload it to view the new dump"
+        )
 
     def _drop_netlist(netlist_path) -> None:
         """Delete one run's netlist FILE. Never raises: the run is over anyway.
@@ -9794,7 +9850,26 @@ def run_web_vis(
         what an ordinary press gives) solves the built-in resistor study.  An
         explicit keyword wins, otherwise the text comes from the page's own
         slot, ``state.solve_netlist_json``.
+
+        A STATIC page refuses HERE, before anything is spawned or written: the
+        page has no timeline for a new run to land in, so a press either did
+        nothing visible or replaced the dump under a page that cannot read it.
+        The button is greyed out for the same reason (state.solve_disabled);
+        this is the same refusal for a press that arrives anyway - a stale
+        browser, or a caller driving the trigger directly.
         """
+        if static_page:
+            print(
+                "[poc_app] solve refused: this page is a static field snapshot "
+                "(no timeline), so nothing was spawned and no dump was written",
+                file=sys.stderr,
+            )
+            state.solve_status = (
+                "solve refused: this page is a static field snapshot, which has "
+                "no timeline for a new run to land in - open an animation dump "
+                "to solve, then reload the page to view the result"
+            )
+            return
         running = solve.get("job")
         if running is not None and running.status == "running":
             state.solve_status = "a solve is already running - one at a time"

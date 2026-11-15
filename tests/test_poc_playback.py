@@ -4589,3 +4589,149 @@ def test_the_s11_port_plane_is_drawn_parallel_to_the_load_plane() -> None:
     only_port = _marker_draw(app, info, planes, show_load_plane=False)
     assert [kwargs["color"] for _mesh, kwargs in only_port.meshes] == ["purple"]
     assert len(only_port.labels[0][1]) == 3
+
+
+# =============================================================================
+# WHICH PAGE: the source line, and what a static page does with a Solve press
+# =============================================================================
+# Every other readout on this page says which ARM and which COLOUR LIMIT are on
+# screen; none of them says which FILE, so a copy of a dump and the dump a solve
+# replaced on disk read exactly like the original. ``state.page_source_text`` is
+# that missing line, and its sentence differs between the two kinds of page the
+# shell serves - so it is pinned on both.
+#
+# NOTE on the shared Server: ``trame.app.get_server()`` is a process-wide
+# singleton, so ``state`` has already been written by earlier boots in this
+# process. That is why every assertion below compares the WHOLE string rather
+# than asking whether the key exists - a stale line from a previous boot cannot
+# satisfy these by accident.
+
+
+def test_a_static_page_names_its_dump_and_says_it_has_no_timeline(
+    tmp_path: Path,
+) -> None:
+    """The 8080 artefact says WHICH file it is, that it is static, and its count.
+
+    ``_fixture_legacy_info`` writes plane_ez with nine stations and no frame axis
+    at all, so the expected sentence names all three facts: the file the page was
+    loaded from, the kind of page, and the station count the plane stack carries.
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    info = _fixture_legacy_info(app, tmp_path / "field_A.npz")
+    with _counted_render():
+        _app, srv = _boot_app(info)
+    state = srv.state
+
+    assert state.has("page_source_text"), (
+        "the static page publishes no source line at all, so nothing on it says "
+        "which dump is on screen: the provenance block in run_web_vis never "
+        "reached the assignment"
+    )
+    assert str(state.page_source_text) == (
+        "showing field_A.npz - static field snapshot, 9 stations, no timeline"
+    ), (
+        "the static page does not name its own dump, its kind and its station "
+        f"count: {str(state.page_source_text)!r}"
+    )
+
+
+def test_an_animation_page_names_its_dump_and_its_frame_count(
+    tmp_path: Path,
+) -> None:
+    """The animation page's same line, in the animation words: nt frames on ycut.
+
+    ``_fixture_info`` writes nt = 4, so the sentence has to carry that number and
+    the sweep axis - a static page's wording here would mean the line is not
+    reading the page it is drawn on.
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    info = _fixture_info(
+        app, tmp_path / "anim_A.npz", structure_id="A", load_ohm=50.0
+    )
+    with _counted_render():
+        _app, srv = _boot_app(info)
+    state = srv.state
+
+    assert state.has("page_source_text"), (
+        "the animation page publishes no source line: the same provenance block "
+        "serves both kinds of page, so this is the vis path's own miss"
+    )
+    assert str(state.page_source_text) == (
+        "showing anim_A.npz - animation, 4 frames on ez_ycut"
+    ), (
+        "the animation page does not name its own dump, its kind and its frame "
+        f"count: {str(state.page_source_text)!r}"
+    )
+
+
+def test_a_static_page_refuses_a_solve_and_spawns_nothing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A Solve press on a static page is REFUSED before any child or file exists.
+
+    The button is greyed out, but a press can still arrive - a stale browser tab,
+    or a caller driving the registered trigger - and the page has no timeline for
+    a new run to land in. ``SolveJob`` is replaced by a recorder that raises if it
+    is ever constructed, and ``LIVE_DUMP`` is pointed at a path under ``tmp_path``,
+    so the two things a press must not do are both observable: no child, no dump.
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    info = _fixture_legacy_info(app, tmp_path / "static_refuse.npz")
+    live_dump = tmp_path / "live" / "live_run.npz"
+    launched: list = []
+
+    class _RecordingJob:
+        """A launcher that records the argv it was handed, then refuses."""
+
+        def __init__(self, argv, *args, **kwargs) -> None:
+            launched.append(list(argv))
+            raise AssertionError(
+                "a static page spawned a solver: the press was supposed to be "
+                f"refused before this, argv={argv!r}"
+            )
+
+    # Both are module globals the shipped trigger reads at CALL time, so patching
+    # the attributes redirects it instead of re-implementing it.
+    monkeypatch.setattr(app, "LIVE_DUMP", live_dump)
+    monkeypatch.setattr(app, "SolveJob", _RecordingJob)
+
+    with _counted_render():
+        _app, srv = _boot_app(info)
+        state, ctrl = srv.state, srv.controller
+        assert str(state.solve_label) == "Solve (static field snapshot)", (
+            "this is not the static page the refusal is about: "
+            f"solve_label={str(state.solve_label)!r}"
+        )
+        assert state.solve_disabled, (
+            "the static page left Solve enabled, so a press is offered on a page "
+            "that cannot take one"
+        )
+        trigger = _registered_trigger(ctrl, "solve_start")
+        trigger()  # exactly what the button calls
+        printed = capsys.readouterr().err
+
+    assert not launched, (
+        f"the static page built a solver job anyway: {launched!r}"
+    )
+    assert not live_dump.exists(), (
+        f"the refused press wrote {live_dump}: a solve that cannot land must not "
+        "leave a dump behind, and must not touch the live one"
+    )
+    assert "[poc_app] solve refused" in printed, (
+        "the refusal is silent: nothing reached stderr, so an operator reading "
+        f"the server log sees no reason for the dead button. stderr was {printed!r}"
+    )
+    assert str(state.solve_status) == (
+        "solve refused: this page is a static field snapshot, which has no "
+        "timeline for a new run to land in - open an animation dump to solve, "
+        "then reload the page to view the result"
+    ), (
+        "the status line does not say WHY nothing happened, or what to do "
+        f"instead: {str(state.solve_status)!r}"
+    )

@@ -14,13 +14,36 @@ import sys
 
 
 def build_left_panel(ctx) -> None:
-    """Fill the caller's left column with SETUP: the solve controls.
+    """Fill the caller's left column with SETUP: which page, then what acts on it.
 
-    Called inside the left ``VCol`` of the 3-column row, and stated as one
-    callback call so the widgets still land in the caller's layout. ``ctx``
+    Called inside the left ``VCol`` of the 3-column row, and every call goes
+    through ``ctx`` so the widgets still land in the caller's layout. ``ctx``
     holds the callables rather than this module closing over the page
     (``poc_app.py`` registers them at the row, just before it opens).
+
+    The header line - WHICH file this page is showing, and which kind of page it
+    is (``state.page_source_text``, poc_app.py:778) - is OPTIONAL and resolved
+    leniently, the same way the centre column resolves the station sentence: a
+    context that registers no ``html_div`` builds exactly the column it built
+    before, and the solve controls are reached either way.
     """
+    # WHY the file name belongs HERE: the controls under it start a NEW study,
+    # and a reader about to press them needs to know which artefact the page
+    # under them came off (and whether it is an animation or a static snapshot).
+    # Emitted through the caller's own html_div so it lands in the caller's
+    # column; a failed emit costs the line and never the column.
+    if "html_div" in ctx.callbacks:
+        try:
+            ctx.callback("html_div")(
+                "{{ page_source_text }}",
+                style="padding: 2px 4px; font-size: 12px;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a header line is not the column
+            print(
+                f"[poc_app] page source line not emitted: {exc}",
+                file=sys.stderr,
+            )
+
     ctx.callback("_emit_solve_controls")()
 
 
