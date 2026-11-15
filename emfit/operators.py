@@ -36,7 +36,7 @@ import scipy.sparse as sp
 
 from .grid import Grid
 
-__all__ = ["CellComplex"]
+__all__ = ["CellComplex", "edge_to_cell_centres"]
 
 
 class CellComplex:
@@ -330,3 +330,77 @@ class CellComplex:
             f"CellComplex(cells={self.nx}x{self.ny}x{self.nz}, "
             f"edges={self.n_edges}, faces={self.n_faces})"
         )
+
+
+# ----------------------------------------------------------------------
+# staggered edges -> cell centres
+# ----------------------------------------------------------------------
+def edge_to_cell_centres(e, nx, ny, nz):
+    """The three staggered ``E`` components, moved to the cell centres.
+
+    Each component lives on its own edges, so a vector picture of the field has
+    to be brought back to one common set of points first.  The four edges that
+    corner a cell in the plane normal to a component are equidistant from that
+    cell's centre, so their plain mean is the component at the centre:
+
+    ========  ====================  =====================================
+    EX        ``(i+1/2, j, k)``    mean of ``j, j+1`` x ``k, k+1``
+    EY        ``(i, j+1/2, k)``    mean of ``i, i+1`` x ``k, k+1``
+    EZ        ``(i, j, k+1/2)``    mean of ``i, i+1`` x ``j, j+1``
+    ========  ====================  =====================================
+
+    The mean is unweighted (``0.25`` each), second order on a uniform grid and
+    first order on a graded one -- the caveat :mod:`emfit.huygens` states for
+    its four-edge samples.  No modulus is applied anywhere: for ``i < nx``,
+    ``j < ny`` and ``k < nz`` all four neighbours are inside the point layers
+    (``n + 1`` of them on a bounded axis), so an index that wrapped would be an
+    off-by-one rather than a boundary condition.
+
+    Parameters
+    ----------
+    e : array_like
+        Flat edge-voltage vector in C order -- the EX block, then EY, then EZ,
+        ``n_ex + n_ey + n_ez`` long (see :class:`CellComplex`).
+    nx, ny, nz : int
+        Cell counts per axis.  Only the shape is needed -- the layout is
+        topological -- so no :class:`Grid` and no metric is involved.
+
+    Returns
+    -------
+    ex, ey, ez : ndarray, each ``(nx, ny, nz)``
+        The component at the centre of every cell, in a floating point dtype
+        of the same family as ``e``.
+
+    Raises
+    ------
+    ValueError
+        ``e`` does not have the edge count of an ``(nx, ny, nz)`` complex.
+    """
+    flat = np.asarray(e)
+    cc = CellComplex(Grid.uniform(nx, ny, nz))
+    expected = cc.n_ex + cc.n_ey + cc.n_ez
+    if flat.size != expected:
+        raise ValueError(
+            f"e has {flat.size} entries, expected {expected} = n_ex + n_ey + "
+            f"n_ez = {cc.n_ex} + {cc.n_ey} + {cc.n_ez} on an (nx, ny, nz) = "
+            f"({cc.nx}, {cc.ny}, {cc.nz}) cell complex")
+
+    dtype = np.result_type(flat.dtype, np.float64)
+    shape = (cc.nx, cc.ny, cc.nz)
+    ex = np.empty(shape, dtype=dtype)
+    ey = np.empty(shape, dtype=dtype)
+    ez = np.empty(shape, dtype=dtype)
+    idx_ex, idx_ey, idx_ez = cc.idx_ex, cc.idx_ey, cc.idx_ez
+    for i in range(cc.nx):
+        for j in range(cc.ny):
+            for k in range(cc.nz):
+                ex[i, j, k] = 0.25 * (
+                    flat[idx_ex(i, j, k)] + flat[idx_ex(i, j + 1, k)]
+                    + flat[idx_ex(i, j, k + 1)] + flat[idx_ex(i, j + 1, k + 1)])
+                ey[i, j, k] = 0.25 * (
+                    flat[idx_ey(i, j, k)] + flat[idx_ey(i + 1, j, k)]
+                    + flat[idx_ey(i, j, k + 1)] + flat[idx_ey(i + 1, j, k + 1)])
+                ez[i, j, k] = 0.25 * (
+                    flat[idx_ez(i, j, k)] + flat[idx_ez(i + 1, j, k)]
+                    + flat[idx_ez(i, j + 1, k)] + flat[idx_ez(i + 1, j + 1, k)])
+    return ex, ey, ez

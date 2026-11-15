@@ -79,6 +79,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_INPUT = "evidence/termination/build_A_50ohm_p51_ghostwave_fields.npz"
 PLANE_KEY = "plane_ez"
+# The cell-centred three-component E volume a dump can be asked for: the archive
+# ships the flat staggered `e` vector, and this is the key it lands under when
+# load_dump is asked to colocate it. Shape (nx, ny, nz, 3), the components last.
+VOLUME_KEY = "e_centres"
 # The |S11|/|S21| vs frequency sweep the panel reads, when a dump ships one.
 # The record written beside the dump carries ONE frequency (geometry.f_hz), so a
 # curve cannot come from it; this is a different artefact of the same study.
@@ -168,12 +172,23 @@ def _resolve(path_str: str) -> Path:
     return REPO_ROOT / path
 
 
-def load_dump(path: Path) -> dict:
-    """Load the npz metadata plus the Ez plane. Exits with 2 on bad input."""
+def load_dump(path: Path, *, e_volume: bool = False) -> dict:
+    """Load the npz metadata plus the Ez plane. Exits with 2 on bad input.
+
+    ``e_volume`` (keyword only, OFF by default) additionally colocates the
+    archive's flat three-component ``e`` vector at the cell centres and returns
+    it under :data:`VOLUME_KEY`. The dump already carries that vector -- it is
+    what the solver stepped -- but each component is staggered on its own edges,
+    so the one place that knows how to put all three on a common set of points
+    is ``emfit.operators.edge_to_cell_centres``, and that is what is called here.
+    A dump without an ``e`` key still loads: one line goes to stderr and the
+    volume key is simply absent.
+    """
     if not path.is_file():
         print(f"[poc_app] input not found: {path}", file=sys.stderr)
         raise SystemExit(2)
 
+    e_flat = None
     with np.load(path) as data:
         plane = np.asarray(data[PLANE_KEY])
         info = {
@@ -185,6 +200,8 @@ def load_dump(path: Path) -> dict:
             "nz": int(data["nz"]),
             "cell_m": float(data["cell_m"]),
         }
+        if e_volume and "e" in data.files:
+            e_flat = np.asarray(data["e"])
 
     if plane.ndim != 3:
         print(
@@ -193,6 +210,23 @@ def load_dump(path: Path) -> dict:
             file=sys.stderr,
         )
         raise SystemExit(2)
+    if e_volume:
+        if e_flat is None:
+            print(
+                f"[poc_app] {path} carries no 'e' edge vector: the cell-centred "
+                "volume is not available from this dump.",
+                file=sys.stderr,
+            )
+        else:
+            # Imported on use, like every other emfit use in this module: the
+            # CLI path (--help, --list-keys) stays stdlib + numpy only.
+            from emfit.operators import edge_to_cell_centres
+
+            ex, ey, ez = edge_to_cell_centres(
+                e_flat, info["nx"], info["ny"], info["nz"])
+            # ONE deliberate copy: the three components are the volume's inner
+            # axis, so a reader takes e_centres[i, j, k] without gathering.
+            info[VOLUME_KEY] = np.stack((ex, ey, ez), axis=-1)
     return info
 
 
