@@ -20,7 +20,8 @@ from typing import Any, Optional
 PLANE_KEY = "plane_ez"  # poc_app.py:96 - the legacy dump's (station, y, z) |Ez|
 VOLUME_KEY = "e_centres"  # poc_app.py:100 - the colocated E volume (nx, ny, nz, 3)
 VOLUME_RAW_KEY = "e_raw"  # poc_app.py:106 - the same vector, still un-colocated
-VIS_FORMAT = "wavedude"  # poc_app.py:500 - the value _is_vis tests (poc_app.py:353)
+VIS_FORMAT = "um3k"  # poc_app.py:154 - what load_vis writes (poc_app.py:500)
+VIS_FORMATS = (VIS_FORMAT, "wavedude")  # poc_app.py:155 - the set _is_vis opens
 FALLBACK_SRC = "FALLBACK"  # poc_app.py:3138 - provenance of a port x nobody recorded
 
 #: :attr:`PageContext.view_mode`'s legal values: the label branches on the exact
@@ -125,7 +126,7 @@ class Available:
         info = info if isinstance(info, dict) else {}
         planes = planes if isinstance(planes, dict) else {}
         animation = (
-            bool(is_vis) if is_vis is not None else info.get("format") == VIS_FORMAT
+            bool(is_vis) if is_vis is not None else info.get("format") in VIS_FORMATS
         )
         stations = _stations(info)
         return cls(

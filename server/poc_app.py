@@ -145,13 +145,14 @@ VIS_SCHEMA = "emfit.vis/2"
 # Version 1 is still READ - the fields are the same and the two extra keys were
 # never required to draw the picture - so a dump written before the bump opens
 # and reads as "structure: unknown" instead of being refused.
-# These two strings are the ONLY permitted "wavedude" survivors in the
-# codebase: they are schema literals written into dumps by earlier builds, so
-# they are stored data rather than identifiers and must never be renamed.
-# "emfit.wavedude/2" is the schema every current build wrote until the rename,
-# "emfit.wavedude/1" the one before the provenance bump; both still open.
+# These literals are STORED DATA, not identifiers: earlier builds wrote them
+# into files, so none of them is renamed and every one still OPENS - the npz
+# schemas below ("emfit.wavedude/2" until the rename, /1 before the provenance
+# bump), and the info["format"] tag, which is NOT the npz schema (:500, :3092).
 VIS_LEGACY_SCHEMAS = ("emfit.wavedude/1", "emfit.wavedude/2")
 VIS_SCHEMAS = (VIS_SCHEMA,) + VIS_LEGACY_SCHEMAS
+VIS_FORMAT = "um3k"  # what a new dump declares
+VIS_FORMATS = (VIS_FORMAT, "wavedude")  # ... and what every build before it wrote
 # A vis document gains a version when it gains a KEY - that is the rule /2 was
 # introduced under. /3 adds ``load_series`` and its sibling ``load_series_reason``
 # (the load's own recorded V(t)/I(t) trace) and changes nothing else. The legacy
@@ -347,10 +348,9 @@ def _vis_colour_limit(arrays, percentile: float = COLOR_PERCENTILE):
 
 def _is_vis(info: dict) -> bool:
     """True when ``info`` came from load_vis, not from load_dump."""
-    # "wavedude" is a serialized poc-state value (written by load_vis and read
-    # by the state document), so it is data rather than an identifier and keeps
-    # its spelling.
-    return info.get("format") == "wavedude"
+    # "format" is a serialized poc-state value, i.e. data rather than an
+    # identifier, and VIS_FORMATS is the whole set the dumps on disk spell.
+    return info.get("format") in VIS_FORMATS
 
 
 def _load_series_block(data, path: Path):
@@ -497,7 +497,7 @@ def load_vis(path: Path) -> dict:
 
         info = {
             "path": path,
-            "format": "wavedude",
+            "format": VIS_FORMAT,
             "schema": schema,
             "engine": _npz_text(data, "engine"),
             "created_utc": _npz_text(data, "created_utc"),
@@ -3089,7 +3089,7 @@ def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_
         # emfit.poc-state/1 byte-for-byte; a vis dump is /3, because it adds the
         # keys below (format/animation under /2, load_series beside its reason
         # under /3) and reads field_dump's extents off stored nodes.
-        "format": "wavedude" if _is_vis(info) else "legacy",
+        "format": VIS_FORMAT if _is_vis(info) else "legacy",
         "animation": _animation_block(info, fps) if _is_vis(info) else None,
     }
     # The load's own V(t)/I(t) trace, added on the vis branch only - the same rule

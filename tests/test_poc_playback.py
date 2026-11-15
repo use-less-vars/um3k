@@ -451,12 +451,12 @@ def test_version_1_dump_without_provenance_still_loads(tmp_path: Path) -> None:
     path = tmp_path / "legacy.npz"
     info = _fixture_info(app, path, structure_id=None, load_ohm=None,
                         schema="emfit.wavedude/1")
-    assert info["format"] == "wavedude"
+    assert info["format"] == app.VIS_FORMAT
     assert info["structure_id"] is None
     assert app._structure_readout_text(info) == "structure: unknown", (
         "a dump that records no arm must read as unknown, not be guessed"
     )
-    assert app.load_any_dump(path)["format"] == "wavedude", (
+    assert app.load_any_dump(path)["format"] == app.VIS_FORMAT, (
         "load_any_dump refused a version-1 dump after the schema bump; the bump "
         "must not orphan the files already on disk"
     )

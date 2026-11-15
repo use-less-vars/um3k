@@ -35,6 +35,9 @@ The claims, one per test:
   raises ``KeyError`` naming it rather than handing back ``None``;
 * an empty page answers every flag false and never raises - a deleted dump must
   not become a traceback;
+* the ``format`` tag as a dump written BEFORE the rename spells it and as one
+  written after it are BOTH read as the animation dump, so the rename orphans
+  no file already on disk;
 * every name literal the module copies is pinned against poc_app's own source
   of truth, so the copies cannot drift in silence.
 """
@@ -504,6 +507,9 @@ def test_name_literals_are_pinned_against_poc_app():
     assert poc_app._is_vis({"format": um3k_context.VIS_FORMAT}) is True
     assert poc_app._is_vis({}) is False
     assert poc_app._is_vis({um3k_context.VIS_FORMAT: True}) is False
+    # The tag is DATA, so the copy is the whole accepted set, not its first one.
+    assert um3k_context.VIS_FORMATS == poc_app.VIS_FORMATS
+    assert poc_app._is_vis({"format": "wavedude"}) is True
 
     # The label branches on these two strings and on the FALLBACK provenance.
     planes = {
@@ -536,23 +542,49 @@ def test_name_literals_are_pinned_against_poc_app():
     assert um3k_context.DEFAULT_VIEW_MODE in um3k_context.VIEW_MODES
 
 
-def _poc_app_is_vis_format():
-    """The literal ``_is_vis`` compares ``info["format"]`` against, as source.
+def _poc_app_assignment(name):
+    """The expression poc_app assigns to module-level ``name``, as a node."""
+    tree = ast.parse((REPO_ROOT / "server" / "poc_app.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name) and target.id == name:
+                return node.value
+    raise AssertionError(f"poc_app no longer assigns a module-level {name!r}")
+
+
+def _poc_app_value(node):
+    """The value of a poc_app constant expression, resolved without importing it."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        return _poc_app_value(_poc_app_assignment(node.id))
+    if isinstance(node, ast.Tuple):
+        return tuple(_poc_app_value(element) for element in node.elts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _poc_app_value(node.left) + _poc_app_value(node.right)
+    raise AssertionError(f"poc_app builds a constant from a {type(node).__name__}")
+
+
+def _poc_app_is_vis_formats():
+    """Every ``info["format"]`` spelling ``_is_vis`` ACCEPTS, as source.
 
     PARSED, not imported: the claim is about poc_app's own rule (poc_app.py:348-353),
     and reading its text keeps this file runnable with no pyvista and no trame.
+    The rule is a MEMBERSHIP test, so the whole set is resolved through poc_app's
+    constants - a fence that read only the spelling written first would stay green
+    while a second one was dropped from one side.
     """
     tree = ast.parse((REPO_ROOT / "server" / "poc_app.py").read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name == "_is_vis":
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Compare) and isinstance(sub.left, ast.Call):
-                    compared = sub.comparators[0]
-                    if not isinstance(compared, ast.Constant):
-                        continue
-                    if isinstance(compared.value, str):
-                        return compared.value
-    raise AssertionError("poc_app._is_vis no longer compares a call against a string")
+                    accepted = _poc_app_value(sub.comparators[0])
+                    if isinstance(accepted, str):
+                        return frozenset((accepted,))
+                    return frozenset(accepted)
+    raise AssertionError("poc_app._is_vis no longer compares a call against a value")
 
 
 def test_choose_entry_forks_the_two_artefacts():
@@ -584,17 +616,39 @@ def test_choose_entry_agrees_with_the_is_vis_rule_in_poc_app():
     """If this fails, choose_entry and _is_vis disagree about what is loaded.
 
     The copy is pinned by PARSING poc_app, not importing it: a drifted
-    ``um3k_context.VIS_FORMAT`` and ``poc_app._is_vis``'s literal would fork the
-    wrong viewer while every other test here stayed green.
+    ``um3k_context.VIS_FORMATS`` and ``poc_app._is_vis``'s own set would fork the
+    wrong viewer while every other test here stayed green. The comparison is SET
+    equality, not "the new spelling is in both": a spelling one side accepts and
+    the other refuses is the same defect in either direction.
     """
-    literal = _poc_app_is_vis_format()
-    assert um3k_context.VIS_FORMAT == literal, (
-        f"um3k_context.VIS_FORMAT {um3k_context.VIS_FORMAT!r} is not the value "
-        f"poc_app._is_vis compares against ({literal!r})"
+    accepted = _poc_app_is_vis_formats()
+    assert set(um3k_context.VIS_FORMATS) == accepted, (
+        f"um3k_context.VIS_FORMATS {sorted(um3k_context.VIS_FORMATS)} is not the "
+        f"set poc_app._is_vis accepts ({sorted(accepted)})"
     )
-    for info in ({}, {"format": literal}, {"format": "legacy"}):
+    assert um3k_context.VIS_FORMAT in accepted, (
+        f"the spelling this build WRITES ({um3k_context.VIS_FORMAT!r}) is not one "
+        f"poc_app._is_vis accepts ({sorted(accepted)})"
+    )
+    probes = [{}, {"format": "legacy"}] + [{"format": s} for s in sorted(accepted)]
+    for info in probes:
         forks_vis = um3k_context.choose_entry(info) == "vis"
-        assert forks_vis is (info.get("format") == literal)
+        assert forks_vis is (info.get("format") in accepted)
+
+
+def test_choose_entry_reads_the_tag_both_builds_wrote():
+    """If this fails, a dump saved before the rename opens as a field page.
+
+    ``info["format"]`` is stored data (poc_app.py:151-155): a dump on disk says
+    "wavedude" and a dump written now says "um3k", so a reader that knows only
+    one spelling silently hands half the files to the wrong viewer. Both must
+    answer "vis", and the ``animation`` flag with them - that flag is the
+    reason the fork exists at all.
+    """
+    for spelling in ("um3k", "wavedude"):
+        info = dict(_vis_info(), format=spelling)
+        assert um3k_context.Available.compute(info).animation is True, spelling
+        assert um3k_context.choose_entry(info) == "vis", spelling
 
 
 def test_choose_entry_takes_the_loaders_is_vis_override():

@@ -443,7 +443,7 @@ def test_t12_vis_document_carries_the_load_trace(vis_states):
         "the vis branch gained the load_series keys, so its document is /3; "
         f"the dump declares {document['schema']!r}"
     )
-    assert document["format"] == "wavedude", document["format"]
+    assert document["format"] == "um3k", document["format"]
     series = document["load_series"]
     assert isinstance(series, dict), (
         "the traced dump produced no load_series block, so the page has no "
