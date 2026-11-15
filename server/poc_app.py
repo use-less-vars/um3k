@@ -7780,6 +7780,61 @@ def run_web_vis(
                 handles,
             )
 
+    # A dump that captured exactly ONE x-plane is not a stack (um3k_context
+    # answers plane_stack False, port_planes True), so there is nothing to cut
+    # and no slider exists that could move a cut - but the page still owns a
+    # picture. Without this branch it drew NOTHING: the boot and the vector
+    # toggle both look for ``cut_redraw``, neither found it, and the browser
+    # showed an empty view with no error. So the same draw path as the stacked
+    # page, minus its sliders - ``cut_redraw`` is this page's DRAW HANDLE, not a
+    # promise that a cut exists.
+    elif ctx.available.port_planes:
+        plane = info[PLANE_KEY]
+        # The two transverse axes of the one captured plane: the shared redraw
+        # reads a sample for each cut sheet even though no slider here moves
+        # them, and the middle is where the stacked page opens.
+        n_j = plane.shape[1]
+        n_k = plane.shape[2]
+
+        # Built exactly as the stacked branch builds it: the study record beside
+        # the dump is OPTIONAL and load_record answers None without raising, so
+        # the only failing path is an info with no "path" - and a plane position
+        # is never invented in silence, the layout says FALLBACK.
+        try:
+            planes = _plane_layout(info, load_record(info["path"]))
+        except Exception:  # noqa: BLE001 - a record is optional, the page is not
+            planes = _plane_layout(info, None)
+
+        cut_layout = _cut_layout(info, n_j // 2, n_k // 2)
+        # EVERY field the shared redraw reads, because it catches its own
+        # exceptions (:4026): a missing one is not a loud failure, it is the
+        # silently blank picture this branch exists to remove. Station 0 is the
+        # only captured station, so there is nothing to choose there.
+        state.station = 0
+        state.cut_y = cut_layout["j"]
+        state.cut_z = cut_layout["k"]
+        state.view_mode = "volume"
+
+        _show_volume_quiver = _volume_quiver_callback(plotter, info, state, handles)
+
+        def _redraw() -> None:
+            """Rebuild the scene in the one plotter. Failure leaves the old picture."""
+            _redraw_scene(
+                plotter,
+                info,
+                planes,
+                state,
+                _show_volume_quiver,
+                station_label=False,
+            )
+
+        # The boot draw and the "Show Vector Field" toggle both reach the draw
+        # through this NAME, so publishing it here is the whole of the fix. No
+        # sliders are registered (there is nothing they could move) and no
+        # station_readout is published (um3k_panels emits that line only inside
+        # its plane_stack row, so the value would be rendered by nothing).
+        handles["cut_redraw"] = _redraw
+
     def _set_picture_title(text: str) -> None:
         """Publish the page title for whatever the 3D view is showing. NEVER raises.
 

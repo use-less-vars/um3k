@@ -231,6 +231,29 @@ def _fixture_legacy_info(app, path: Path) -> dict:
     return app.load_dump(path)
 
 
+def _fixture_one_plane_info(app, path: Path) -> dict:
+    """Legacy dump that captured exactly ONE x-plane: port planes, not a stack.
+
+    The recorded shape with its station axis collapsed to one, which is the page
+    this fallback is about: ``Available`` answers ``plane_stack`` False and
+    ``port_planes`` True for it (server/um3k_context.py).  The two transverse
+    axes are deliberately different lengths, so "the middle sample of each" is a
+    different number on each (12 -> 6, 5 -> 2) and a transposed copy of the plane
+    cannot satisfy the assertions by accident.
+    """
+    rng = np.random.default_rng(0)
+    np.savez(
+        path,
+        plane_ez=rng.normal(size=(1, 12, 5)),
+        nstep=np.array(6),
+        nx=np.array(1),
+        ny=np.array(12),
+        nz=np.array(5),
+        cell_m=np.array(1e-4),
+    )
+    return app.load_dump(path)
+
+
 def _boot_app(info, loaded_page=None):
     """Run ``run_web_vis`` up to the point it would call ``server.start``.
 
@@ -4304,3 +4327,161 @@ def test_vis_page_without_a_plane_stack_has_no_cut():
         f"{sorted(verdict)}"
     )
 
+
+
+#: The child interpreter for the one-plane test, below.
+#:
+#: It boots the page in a VIRGIN process for the same reason
+#: ``_ABSENCE_CHILD`` does: ``trame.app.get_server()`` is a process-wide
+#: singleton.  What it REPORTS is what the boot actually did - the state keys the
+#: shared redraw reads, and the ``_draw_scene`` calls the boot produced - because
+#: ``handles["cut_redraw"]`` is a local of ``run_web_vis`` and cannot be read from
+#: outside; a draw call carrying station_label=False IS that handle being found
+#: and invoked.  ``TESTS_DIR`` is substituted by the test.
+_ONE_PLANE_CHILD = """
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, TESTS_DIR)
+
+# Importing this module is what puts the repo root and ``server/`` on sys.path,
+# so it comes FIRST; a child that opens with ``import poc_app`` dies with
+# ModuleNotFoundError.
+import test_poc_playback as tp
+sys.path.insert(0, str(Path(TESTS_DIR).parent))
+sys.path.insert(0, str(Path(TESTS_DIR).parent / "server"))
+
+import pyvista
+
+import poc_app as app
+
+# This image has no OpenGL: double the render call for the whole child.
+pyvista.Plotter.render = lambda self, *a, **k: None
+
+draws = []
+real_draw = app._draw_scene
+
+
+def spy_draw(plotter, info, planes, view_mode, station, j_cut=None, k_cut=None,
+             station_label=True):
+    # Records the SCENE call only, and delegates: a redraw that raises still
+    # raises (and is still swallowed) exactly where the shipped code swallows it.
+    draws.append([view_mode, station, j_cut, k_cut, station_label])
+    return real_draw(
+        plotter, info, planes, view_mode, station,
+        j_cut=j_cut, k_cut=k_cut, station_label=station_label,
+    )
+
+
+app._draw_scene = spy_draw
+try:
+    info = tp._fixture_one_plane_info(app, Path(tempfile.mkdtemp()) / "one.npz")
+    stations = int(info[app.PLANE_KEY].shape[0])
+    if stations != 1:
+        raise SystemExit("the one-plane fixture is not one station")
+    _app, srv = tp._boot_app(info)
+    state = srv.state
+    keys = ("station", "cut_y", "cut_z", "view_mode", "station_readout")
+    verdict = {
+        "stations": stations,
+        "state_keys": {key: state.has(key) for key in keys},
+        "values": {key: state[key] for key in keys if state.has(key)},
+        "draws": draws,
+    }
+    print("VERDICT " + json.dumps(verdict))
+finally:
+    app._draw_scene = real_draw
+"""
+
+
+def test_a_page_with_one_captured_plane_draws_its_picture_and_publishes_its_cut_state():
+    """One captured x-plane: not a stack, but still a picture on screen.
+
+    ``plane_stack`` is ``stations > 1`` and ``port_planes`` is ``stations > 0``,
+    so a one-station dump used to take NEITHER branch of the boot: no ``planes``,
+    no state for the shared redraw to read, no ``handles["cut_redraw"]`` - and
+    the browser showed an empty view with no error, because ``_redraw_scene``
+    catches its own exceptions.  The fix is a ``port_planes`` branch: the same
+    draw path, minus the sliders it cannot have.
+
+    Run in a CHILD interpreter, like the no-plane-stack test above, because
+    ``trame.app.get_server()`` is a process-wide singleton this process has
+    already handed to another page.  A crash, a non-zero exit or a missing
+    verdict FAILS the test.
+    """
+    import subprocess
+
+    script = _ONE_PLANE_CHILD.replace(
+        "TESTS_DIR", repr(str(Path(__file__).resolve().parent))
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO_ROOT),
+    )
+    assert proc.returncode == 0, (
+        "the child that boots the one-plane page failed, so there is no "
+        "evidence the fallback drew anything:\n"
+        f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("VERDICT ")]
+    assert len(lines) == 1, (
+        f"the child printed {len(lines)} verdict line(s), expected exactly 1 - "
+        f"without it this test would assert nothing:\nstdout:\n{proc.stdout}\n"
+        f"stderr:\n{proc.stderr}"
+    )
+    verdict = json.loads(lines[0][len("VERDICT "):])
+    assert verdict["stations"] == 1, (
+        "the fixture is no longer the one-plane page this test is about: "
+        f"{verdict}"
+    )
+
+    # What was MISSING before: every field the shared redraw reads.  Without
+    # them _redraw_scene raises AttributeError into the silent blank picture.
+    assert verdict["state_keys"] == {
+        "station": True,
+        "cut_y": True,
+        "cut_z": True,
+        "view_mode": True,
+        "station_readout": False,
+    }, (
+        "a one-plane page does not publish exactly the state its redraw reads "
+        f"(station_readout must stay absent: nothing renders that line here): "
+        f"{verdict['state_keys']}"
+    )
+    # station 0 is the only captured plane; 6 = 12 // 2 and 2 = 5 // 2 are the
+    # middle samples of the two transverse axes.
+    assert verdict["values"] == {
+        "station": 0,
+        "cut_y": 6,
+        "cut_z": 2,
+        "view_mode": "volume",
+    }, (
+        "the one-plane page opened on the wrong cut: expected the single "
+        f"captured station and the middle of each transverse axis, got "
+        f"{verdict['values']}"
+    )
+
+    # The redraw HANDLE, observed where it is observable: the boot found
+    # cut_redraw and drove it, and that draw reached the scene with the state
+    # asserted above and with the page's own station_label=False.
+    assert verdict["draws"] == [["volume", 0, 6, 2, False]], (
+        "the boot did not draw the one-plane picture exactly once, through the "
+        f"shared redraw, in the volume view: {verdict['draws']}"
+    )
+    assert "redraw skipped" not in proc.stderr, (
+        "the page has a redraw handle now but the redraw FAILED, so the picture "
+        f"is still blank for a second reason:\n{proc.stderr}"
+    )
+    # Not "no warnings": a bare legacy dump legitimately says plane ez_ycut and
+    # friends were not drawn. What must NOT be there is an exception escaping the
+    # boot - that would be a blank picture with a crash instead of a blank
+    # picture with a missing handle.
+    assert "Traceback" not in proc.stderr, (
+        "the one-plane page raised while drawing, so the picture is not the "
+        f"picture this test is about:\n{proc.stderr}"
+    )
