@@ -6310,6 +6310,123 @@ def _mode_quiver_arrows(result, *, x_mm: float, y_centre_mm: float = 0.0):
         return empty
 
 
+#: Take every ``stride``-th CELL of the volume on each axis for the arrow field:
+#: 13 x 43 x 5 = 2795 arrows on the shipped 62 x 212 x 22 grid (that is
+#: ``ceil(n / stride)`` per axis, so 13 not 12 on 62), which is a density a reader
+#: can follow. The volume itself keeps every cell - only the arrows are strided,
+#: and a cell the arrows do not sit on simply has none.
+VOLUME_QUIVER_STRIDE = 5
+#: Longest arrow, as a fraction of ONE stride cell of the arrow lattice. WHY the
+#: arrow's OWN cell and not the box: ``stride * cell_mm`` is the distance between
+#: neighbouring arrows, so a shaft of 90 % of it keeps its head inside the cell it
+#: was drawn from, and two neighbouring arrows cannot run into each other whatever
+#: the field does. ``_mode_quiver_arrows`` may anchor its length to the extent of
+#: the sampled box because it draws ONE sheet, where a single span bounds every
+#: arrow; a volume has no such bound - tie the length to the box span and a 2 mm
+#: cell in a 20 cm stack gets a 20 cm shaft, and the lattice passes through itself.
+#: The length below the peak is scaled LINEARLY by ``|E|``, so the ratio between
+#: two arrows is the recorded ratio of the two fields and not a re-normalisation
+#: of it.
+VOLUME_QUIVER_MAX_LEN_FRACTION = 0.9
+
+
+def _volume_arrows(info, *, stride=VOLUME_QUIVER_STRIDE):
+    """The colocated ``E`` volume as arrow anchors and shafts, in MILLIMETRES.
+
+    Takes the loader's ``info`` dict -- the same way ``_mode_quiver_arrows``
+    takes its result dict -- so :data:`VOLUME_KEY` and the array's layout stay a
+    loader detail and no page builder has to know either.
+
+    Returns ``(points, vectors)``, both ``(n, 3)``: one arrow per usable sample
+    of the strided lattice, in MILLIMETRES. The anchor is the CENTRE of the cell
+    the sample came from, ``(i + 0.5) * cell_mm`` on each axis and not
+    ``i * cell_mm``: the values in the volume were averaged onto the cell centre,
+    so anchoring on the face would put the arrow half a cell away from the point
+    the field was actually computed at.
+
+    WHY a volume of three components is a vector field and a single component is
+    not: the archive ships the solve's flat ``e`` vector with each component
+    staggered on its OWN edge set, so no two components share a point in it.
+
+    ``emfit.operators.edge_to_cell_centres`` averages each component onto the
+    common cell centres, and only after that colocation do all three live at one
+    point. An ``Ez``-only volume, before that step, is a SCALAR field on a grid:
+    an arrow drawn from it would invent two directions the solve never produced.
+    Hence the shape check -- ``(nx, ny, nz, 3)`` exactly, three components at one
+    point -- and nothing else is accepted.
+
+    The shaft is the field's own DIRECTION (normalised, so a sign reversal cannot
+    hide) and a length LINEAR in ``|E|``: ``VOLUME_QUIVER_MAX_LEN_FRACTION`` of
+    the arrow's OWN stride cell at the peak, in proportion below it. Two arrows
+    therefore stand in the recorded ratio of the two fields, and the longest
+    still fits inside the cell it was drawn from (see the constant).
+
+    A NaN sample is skipped -- a point with no field gets no arrow -- and so is a
+    literal zero, which has no direction to draw. A volume that is zero or
+    unanswerable everywhere, a cell size that is not a finite positive number of
+    METRES, or a stride that is not a positive integer returns EMPTY arrays: the
+    caller then draws nothing, rather than a lattice of zero-length glyphs that
+    reads as a solved zero field.
+    """
+    empty = (np.empty((0, 3), dtype=float), np.empty((0, 3), dtype=float))
+    try:
+        if not isinstance(info, dict):
+            return empty
+        volume = info.get(VOLUME_KEY)
+        cell_m = info.get("cell_m")
+        if volume is None or cell_m is None:
+            return empty
+        volume = np.asarray(volume, dtype=float)
+        if volume.ndim != 4 or volume.shape[3] != 3 or min(volume.shape[:3]) < 1:
+            return empty
+        # METRES in the dump, millimetres in the picture - converted ONCE here so
+        # no later line has to remember which unit it is holding.
+        cell_mm = float(cell_m) * 1e3
+        if not np.isfinite(cell_mm) or cell_mm <= 0.0:
+            return empty
+        try:
+            stride = int(stride)
+        except (TypeError, ValueError):
+            return empty
+        if stride < 1:
+            return empty
+        nx, ny, nz = (int(n) for n in volume.shape[:3])
+        ix = np.arange(0, nx, stride)
+        iy = np.arange(0, ny, stride)
+        iz = np.arange(0, nz, stride)
+        # ``ix_`` is the strided subvolume itself, gathered in one go: the mask
+        # below must be applied to the SAMPLES, so peak and anchor are drawn from
+        # the same set of cells the arrows sit on.
+        sampled = volume[np.ix_(ix, iy, iz)]
+        # Sampled AND non-zero: a NaN is "no field here", and a literal zero is
+        # "no direction here", which an arrow cannot draw either.
+        usable = np.all(np.isfinite(sampled), axis=3) & np.any(sampled != 0.0, axis=3)
+        if not np.any(usable):
+            return empty
+        ai, bi, ci = np.nonzero(usable)
+        vecs = sampled[ai, bi, ci]
+        mag = np.sqrt(np.sum(vecs * vecs, axis=1))
+        peak = float(np.max(mag))
+        if not np.isfinite(peak) or peak <= 0.0:
+            return empty
+        max_len_mm = VOLUME_QUIVER_MAX_LEN_FRACTION * stride * cell_mm
+        if not np.isfinite(max_len_mm) or max_len_mm <= 0.0:
+            return empty
+        length = max_len_mm * mag / peak
+        points = np.stack(
+            [
+                (ix[ai] + 0.5) * cell_mm,
+                (iy[bi] + 0.5) * cell_mm,
+                (iz[ci] + 0.5) * cell_mm,
+            ],
+            axis=1,
+        )
+        vectors = length[:, None] * vecs / mag[:, None]
+        return points, vectors
+    except Exception:  # noqa: BLE001 - an arrow is never worth a traceback
+        return empty
+
+
 SOLVE_DEFAULT_XCUT_MM = 20.4
 
 
