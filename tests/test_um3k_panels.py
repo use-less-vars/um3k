@@ -16,11 +16,16 @@ whoever calls the builder, never by the builder. This file pins both halves:
   body is one call to ``build_left_panel(ctx)`` and its centre ``VCol`` body is
   ``view = build_center_panel(ctx)`` - parsed out of the source, not imported,
   because the layout only exists with the UI stack present - and the right
-  column still holds what it held;
+  column's body is one call to ``build_right_panel(ctx)``;
 * the centre builder builds what it was given: called against recording fake
   widgets it constructs them in the order the column holds them, returns the
   view its own ``plotter_ui`` made, tolerates a widget table with no ``VBtn``,
   and refuses a context that is missing a handle instead of drawing nothing.
+  or a tab widget it never probed;
+* the right builder builds what it was given: the readout strip, the three
+  eager loaders ahead of any tab, five tabs whose values match five window
+  items, the two ``info`` payloads handed to the load-series panel, and the
+  stacked fallback when the optional tab classes are absent.
 """
 from __future__ import annotations
 
@@ -239,23 +244,31 @@ def test_the_centre_column_is_one_call_to_the_panel_builder():
     assert not call.keywords, f"build_center_panel got keywords {call.keywords!r}"
 
 
-def test_the_right_column_is_untouched():
-    """If this fails, the move took the readout with it.
+def test_the_right_column_is_one_call_to_the_panel_builder():
+    """If this fails, the readout and the tabbed panels are built inline again.
 
-    The right column still carries its readout template rows, checked by shape,
-    so a column that was emptied to make the row parse fails here.
+    One statement, and it is ``build_right_panel(ctx)``: the builder owns the
+    readout strip and the tab container, so anything more in the column is
+    content the panel module does not own.
     """
-    _left, _centre, right = _three_column_row()
+    right = _three_column_row()[2]
 
-    readouts = [
-        node for node in ast.walk(right)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        and node.func.id == "html_div" and node.args
-        and isinstance(node.args[0], ast.Constant)
-        and isinstance(node.args[0].value, str)
-        and "{{ structure_readout }}" in node.args[0].value
-    ]
-    assert readouts, "the right column lost its structure readout row"
+    assert len(right.body) == 1, (
+        f"the right VCol holds {len(right.body)} statements; the panel builder "
+        f"is supposed to be all of them"
+    )
+    stmt = right.body[0]
+    assert isinstance(stmt, ast.Expr), f"the right VCol's statement is {stmt!r}"
+    call = stmt.value
+    assert isinstance(call, ast.Call), f"the right VCol's expression is {call!r}"
+    assert isinstance(call.func, ast.Name) and call.func.id == "build_right_panel", (
+        f"the right VCol calls {ast.dump(call.func)[:80]}"
+    )
+    assert len(call.args) == 1 and isinstance(call.args[0], ast.Name), (
+        f"build_right_panel takes {len(call.args)} positional argument(s)"
+    )
+    assert call.args[0].id == "ctx", f"the panel is handed {call.args[0].id!r}"
+    assert not call.keywords, f"build_right_panel got keywords {call.keywords!r}"
 
 
 class _FakeWidget:
@@ -402,6 +415,191 @@ def test_build_center_panel_refuses_a_context_missing_a_handle():
     assert "ctrl" in message
     assert "known" in message
     assert "widgets" in message, f"the message does not name what is stored: {message}"
+
+
+RIGHT_CALLBACKS = (
+    "_load_s_params_panel", "_load_far_field_panel", "_load_confidence_panel",
+    "_emit_s_params_panel", "_emit_far_field_panel", "_emit_confidence_panel",
+    "_emit_mode_caption", "_emit_mode_picker", "_emit_vector_toggle",
+    "_emit_circuit_netlist", "_emit_load_series_panel",
+)
+TAB_CLASSES = ("VTabs", "VTab", "VTabsWindow", "VTabsWindowItem")
+READOUT_ROWS = (
+    "{{ structure_readout }}", "{{ t_label }}", "{{ mode_label }}",
+    "{{ phase_label }}", "{{ scale_label }}", "{{ velocity_label }}",
+    "{{ velocity_note }}",
+)
+
+
+def _fake_right_context(tab_classes=True, info=None):
+    """A real page context carrying the DATA column's fakes, and the log.
+
+    ``html_div`` and every panel callback append ``("callback", <name>)``, the
+    four tab classes append ``("tab", <name>)``, and each made widget is kept in
+    ``built`` so a test can read its arguments.
+    """
+    log = []
+    built = {}
+
+    def _fake(kind, name):
+        def _call(*args, **kwargs):
+            log.append((kind, name))
+            made = _FakeWidget(name, args, kwargs)
+            built.setdefault(name, []).append(made)
+            return made
+        return _call
+
+    module = type("FakeWidgetModule", (), {})()
+    if tab_classes:
+        for cls in TAB_CLASSES:
+            setattr(module, cls, _fake("tab", cls))
+    ctx = um3k_context.PageContext()
+    ctx.register_handle("widgets_module", module)
+    ctx.register_handle("info", dict(info or {}))
+    ctx.register("html_div", _fake("callback", "html_div"))
+    for name in RIGHT_CALLBACKS:
+        ctx.register(name, _fake("callback", name))
+    return ctx, log, built
+
+
+def test_build_right_panel_builds_the_readout_strip_first():
+    """If this fails, the readout rows, or what they say, changed.
+
+    One ``html_div`` wrapper, the seven template rows in order, then the note
+    saying where a solve runs. The FALLBACK context, so the count is the strip.
+    """
+    ctx, log, built = _fake_right_context(tab_classes=False)
+
+    um3k_panels.build_right_panel(ctx)
+
+    assert log[0] == ("callback", "html_div"), f"the column began with {log[0]!r}"
+    strip = built["html_div"]
+    assert len(strip) == 9, f"the column made {len(strip)} html_div calls"
+    rows = strip[1:]
+    assert len(rows) == 8, f"the strip holds {len(rows)} rows, not eight"
+    assert [row.args[0] for row in rows[:7]] == list(READOUT_ROWS), (
+        f"the readout rows are {[row.args[0] for row in rows[:7]]!r}"
+    )
+    assert "solve runs on the HOST" in rows[7].args[0], (
+        f"the last row reads {rows[7].args[0]!r}"
+    )
+
+
+def test_build_right_panel_loads_the_three_panels_before_any_tab():
+    """If this fails, a tab can be selected before its panel was filled in.
+
+    Each loader runs once, at layout time, in the order the panels were
+    stacked, and all three before the first tab widget exists.
+    """
+    ctx, log, _built = _fake_right_context()
+
+    um3k_panels.build_right_panel(ctx)
+
+    names = [name for kind, name in log if kind == "callback"]
+    assert names[9:12] == list(RIGHT_CALLBACKS[:3]), (
+        f"the loaders ran {names[9:14]!r}"
+    )
+    first_tab = next(i for i, (kind, _n) in enumerate(log) if kind == "tab")
+    loader_at = [i for i, entry in enumerate(log) if entry[1] in RIGHT_CALLBACKS[:3]]
+    assert len(loader_at) == 3, f"the loaders ran {len(loader_at)} times"
+    assert max(loader_at) < first_tab, (
+        f"a tab was built at {first_tab} before the loaders ended at "
+        f"{max(loader_at)}"
+    )
+
+
+def test_build_right_panel_names_both_sides_of_every_tab():
+    """If this fails, the tab bar selects a value its window cannot match.
+
+    Five tabs and five window items carrying the SAME five strings, both
+    containers handed one ``v_model`` tuple, each panel emitting in its item.
+    """
+    ctx, log, built = _fake_right_context()
+
+    um3k_panels.build_right_panel(ctx)
+
+    values = ["s_params", "far_field", "confidence", "modes", "circuit"]
+    for cls in ("VTab", "VTabsWindowItem"):
+        assert [w.kwargs["value"] for w in built[cls]] == values
+    for container in ("VTabs", "VTabsWindow"):
+        made = built[container]
+        assert len(made) == 1, f"{container} was built {len(made)} times"
+        model = made[0].kwargs["v_model"]
+        assert isinstance(model, tuple) and model == ("tab", "s_params"), (
+            f"{container} was handed v_model={model!r}"
+        )
+    assert log[-14:] == [
+        ("tab", "VTabsWindowItem"), ("callback", "_emit_s_params_panel"),
+        ("tab", "VTabsWindowItem"), ("callback", "_emit_far_field_panel"),
+        ("tab", "VTabsWindowItem"), ("callback", "_emit_confidence_panel"),
+        ("tab", "VTabsWindowItem"), ("callback", "_emit_mode_caption"),
+        ("callback", "_emit_mode_picker"), ("callback", "_emit_vector_toggle"),
+        ("tab", "VTabsWindowItem"), ("callback", "html_div"),
+        ("callback", "_emit_circuit_netlist"),
+        ("callback", "_emit_load_series_panel"),
+    ], f"the window built {log[-14:]!r}"
+
+
+def test_build_right_panel_hands_the_load_series_its_two_info_values():
+    """If this fails, the load's trace is built from the wrong keys.
+
+    ``_emit_load_series_panel`` takes exactly those two payloads, by identity,
+    so a renamed or reordered pair fails here instead of drawing an empty box.
+    """
+    series = object()
+    reason = object()
+    info = {"load_series": series, "load_series_reason": reason}
+    ctx, _log, built = _fake_right_context(tab_classes=False, info=info)
+
+    um3k_panels.build_right_panel(ctx)
+
+    assert len(built["_emit_load_series_panel"]) == 1
+    args = built["_emit_load_series_panel"][0].args
+    assert len(args) == 2 and args[0] is series and args[1] is reason, (
+        f"_emit_load_series_panel got {args!r}"
+    )
+
+
+def test_build_right_panel_without_the_tab_widgets_stacks_the_five_panels():
+    """If this fails, a trame-vuetify-free page lost a panel.
+
+    With no tab classes the body stacks all five panels in the flat pre-tabs
+    order, asserts below, and builds no tab at all.
+    """
+    ctx, log, built = _fake_right_context(tab_classes=False)
+
+    um3k_panels.build_right_panel(ctx)
+
+    names = [name for kind, name in log if kind == "callback"]
+    assert names[-8:] == [
+        "_emit_confidence_panel", "_emit_s_params_panel",
+        "_emit_far_field_panel", "_emit_circuit_netlist",
+        "_emit_load_series_panel", "_emit_mode_caption",
+        "_emit_mode_picker", "_emit_vector_toggle",
+    ], f"the fallback built {names[-8:]!r}"
+    assert not [name for name in built if name.startswith("VTab")], (
+        f"a tab was built without the classes: {sorted(built)}"
+    )
+
+
+def test_build_right_panel_refuses_a_context_missing_a_handle():
+    """If this fails, a missing page object draws a half-built DATA column.
+
+    ``PageContext.handle`` raises ``KeyError`` naming the missing name and what
+    IS stored; the builder must let that through rather than draw nothing.
+    """
+    ctx = um3k_context.PageContext()
+    ctx.register_handle("widgets_module", object())
+
+    with pytest.raises(KeyError) as excinfo:
+        um3k_panels.build_right_panel(ctx)
+
+    message = str(excinfo.value)
+    assert "info" in message
+    assert "known" in message
+    assert "widgets_module" in message, (
+        f"the message does not name what is stored: {message}"
+    )
 
 
 def _child_env_without_server_on_path():

@@ -80,14 +80,14 @@ import numpy as np
 # such entry and needs the relative form. Both hold state and layout only.
 try:
     import um3k_context
-    from um3k_panels import build_center_panel, build_left_panel
+    from um3k_panels import build_center_panel, build_left_panel, build_right_panel
 except ModuleNotFoundError as exc:
     # Narrow, on purpose: only OUR two names may be re-routed. A dependency
     # missing inside them must surface as itself, not as a relative import.
     if exc.name not in ("um3k_context", "um3k_panels"):
         raise
     from . import um3k_context
-    from .um3k_panels import build_center_panel, build_left_panel
+    from .um3k_panels import build_center_panel, build_left_panel, build_right_panel
 
 # server/ sits ONE level below the repository root.
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -9321,6 +9321,19 @@ def run_web_vis(
                         ctx.register("html_div", html_div)
                         ctx.register("VRow", VRow)
                         ctx.register("plotter_ui", plotter_ui)
+                        ctx.register_handle("widgets_module", widgets_module)
+                        ctx.register_handle("info", info)
+                        ctx.register("_load_s_params_panel", _load_s_params_panel)
+                        ctx.register("_load_far_field_panel", _load_far_field_panel)
+                        ctx.register("_load_confidence_panel", _load_confidence_panel)
+                        ctx.register("_emit_s_params_panel", _emit_s_params_panel)
+                        ctx.register("_emit_far_field_panel", _emit_far_field_panel)
+                        ctx.register("_emit_confidence_panel", _emit_confidence_panel)
+                        ctx.register("_emit_mode_caption", _emit_mode_caption)
+                        ctx.register("_emit_mode_picker", _emit_mode_picker)
+                        ctx.register("_emit_vector_toggle", _emit_vector_toggle)
+                        ctx.register("_emit_circuit_netlist", _emit_circuit_netlist)
+                        ctx.register("_emit_load_series_panel", _emit_load_series_panel)
                         with VRow(
                             style=(
                                 "flex: 1 1 auto; align-items: stretch; "
@@ -9355,154 +9368,7 @@ def run_web_vis(
                                     "border-left: 1px solid #dcdcdc"
                                 )
                             ):
-                                with html_div(
-                                    style=(
-                                        "flex: 0 0 auto; padding: 4px 12px; "
-                                        "font-size: 13px; line-height: 1.4;"
-                                    )
-                                ):
-                                    html_div("{{ structure_readout }}")
-                                    html_div("{{ t_label }}")
-                                    html_div("{{ mode_label }}")
-                                    html_div("{{ phase_label }}")
-                                    html_div("{{ scale_label }}")
-                                    html_div("{{ velocity_label }}")
-                                    html_div("{{ velocity_note }}")
-                                    # Two things the button does NOT tell you: where it
-                                    # runs, and what it cannot produce.
-                                    html_div(
-                                        "solve runs on the HOST machine running this "
-                                        "app (a child process, not in the browser). A "
-                                        "vis-dump solve forces the PULSE excitation, "
-                                        "so it writes NO cut-plane S21 - the "
-                                        "S-Parameters panel keeps whatever sweep file "
-                                        "it already finds."
-                                    )
-                                # Fill both panels ONCE, here, at layout time:
-                                # the tabs own visibility now, so there is no
-                                # button and no first click to load on - whichever
-                                # tab a reader selects must already hold its text.
-                                # Each loader swallows its own failure (stderr).
-                                for _load_panel in (
-                                    _load_s_params_panel,
-                                    _load_far_field_panel,
-                                    _load_confidence_panel,
-                                ):
-                                    _load_panel()
-                                # DATA: one tab per panel, so the column holds the
-                                # readout plus ONE open panel instead of three
-                                # stacked ones. The TAB owns visibility here: no
-                                # wrapper, no style string and no toggle button,
-                                # because selecting a tab already shows the panel
-                                # the eager loader above has just filled in.
-                                tabs_cls = getattr(widgets_module, "VTabs", None)
-                                tab_cls = getattr(widgets_module, "VTab", None)
-                                tabs_window_cls = getattr(
-                                    widgets_module, "VTabsWindow", None
-                                )
-                                tabs_item_cls = getattr(
-                                    widgets_module, "VTabsWindowItem", None
-                                )
-                                if None not in (
-                                    tabs_cls,
-                                    tab_cls,
-                                    tabs_window_cls,
-                                    tabs_item_cls,
-                                ):
-                                    # EVERY tab names its value, and the value is
-                                    # the SAME string as the window item below it.
-                                    # WHY (this is the whole fix): Vuetify's tab
-                                    # item registers whatever ``value`` prop it was
-                                    # handed - its group-item props default is
-                                    # ``value: null`` and ``useGroupItem`` takes
-                                    # ``toRef(() => props.value)`` as-is, with NO
-                                    # index fallback for VTab. So five bare
-                                    # ``VTab("label")`` calls all register ``null``,
-                                    # and ``VTabsWindow`` resolves its model to the
-                                    # selected TAB's value - null - which matches
-                                    # none of the five STRING window-item values.
-                                    # Result: a tab bar that highlights a tab and a
-                                    # window that renders nothing. Naming both
-                                    # sides is the contract; the alternative
-                                    # (indexes on the window items, so the tabs'
-                                    # implicit values line up) was rejected because
-                                    # the tab state would then be a number the
-                                    # reader cannot see in the code.
-                                    with tabs_cls(v_model=("tab", "s_params")):
-                                        tab_cls("S-Parameters", value="s_params")
-                                        # Second, beside the S-parameters it is
-                                        # read against: both are the antenna's
-                                        # own numbers, one from the feed and
-                                        # one from the radiating currents.
-                                        tab_cls("Far Field", value="far_field")
-                                        tab_cls(
-                                            "Confidence N-lambda",
-                                            value="confidence",
-                                        )
-                                        tab_cls("Modes", value="modes")
-                                        tab_cls("Circuit", value="circuit")
-                                    with tabs_window_cls(
-                                        v_model=("tab", "s_params")
-                                    ):
-                                        with tabs_item_cls(value="s_params"):
-                                            _emit_s_params_panel()
-                                        with tabs_item_cls(value="far_field"):
-                                            _emit_far_field_panel()
-                                        with tabs_item_cls(value="confidence"):
-                                            _emit_confidence_panel()
-                                        with tabs_item_cls(value="modes"):
-                                            # The Mode panel's ONE line: the
-                                            # hint before the first press, the
-                                            # solve's own caption after one, or
-                                            # the reason the solve refused.
-                                            _emit_mode_caption()
-                                            _emit_mode_picker()
-                                            # The arrow toggle sits with the
-                                            # picker it annotates: both are
-                                            # about the picture above them.
-                                            _emit_vector_toggle()
-                                        with tabs_item_cls(value="circuit"):
-                                            # The netlist's OWN home, so it is
-                                            # reachable without scrolling the
-                                            # SETUP column to find it.
-                                            html_div(
-                                                "The netlist names the circuit "
-                                                "on the load's cut; its V(t) "
-                                                "and I(t) become part of the "
-                                                "run. Empty box = the built-in "
-                                                "resistor.",
-                                                style="padding: 2px 0;",
-                                            )
-                                            _emit_circuit_netlist()
-                                            # The load's trace belongs to the netlist above it.
-                                            _emit_load_series_panel(
-                                                info.get("load_series"),
-                                                info.get("load_series_reason"),
-                                            )
-                                else:
-                                    # FALLBACK, and here is why it exists: the tab
-                                    # widgets come from trame-vuetify, an optional
-                                    # install. Without them the page still has to
-                                    # show all five panels, so they are stacked in
-                                    # the flat order they had before the tabs -
-                                    # Confidence, then S-Parameters, then the Far
-                                    # Field pattern, then the Circuit box, then the
-                                    # Mode caption that used
-                                    # to sit in the readout. Same
-                                    # emitters, same state names, same eagerly
-                                    # loaded payloads; only the tab container around
-                                    # them is missing.
-                                    _emit_confidence_panel()
-                                    _emit_s_params_panel()
-                                    _emit_far_field_panel()
-                                    _emit_circuit_netlist()
-                                    _emit_load_series_panel(
-                                        info.get("load_series"),
-                                        info.get("load_series_reason"),
-                                    )
-                                    _emit_mode_caption()
-                                    _emit_mode_picker()
-                                    _emit_vector_toggle()
+                                build_right_panel(ctx)
 
     handles["view"] = view
 
