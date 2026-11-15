@@ -6328,6 +6328,17 @@ VOLUME_QUIVER_STRIDE = 5
 #: two arrows is the recorded ratio of the two fields and not a re-normalisation
 #: of it.
 VOLUME_QUIVER_MAX_LEN_FRACTION = 0.9
+#: A sample is DRAWN only if its magnitude is strictly greater than this fraction
+#: of the PEAK sample's. WHY a ratio and not an absolute epsilon in V/m or mm: a
+#: real solve's far field bottoms out in denormal-scale round-off, and on the
+#: shipped dump 116 of the 2795 arrows had a shaft under ``1e-9`` mm - invisible
+#: dots a reader mistakes for stray marks rather than for data. But the field's
+#: ABSOLUTE scale moves with frequency and with drive amplitude, so a threshold in
+#: V/m would be far too high at one frequency and far too low at another: it would
+#: hide real structure in the quiet run and keep the noise in the loud one. "Six
+#: decades below the strongest sample" is the same statement at every frequency,
+#: which is the only form of it that survives a change of drive.
+VOLUME_QUIVER_REL_FLOOR = 1e-6
 
 
 def _volume_arrows(info, *, stride=VOLUME_QUIVER_STRIDE):
@@ -6360,6 +6371,16 @@ def _volume_arrows(info, *, stride=VOLUME_QUIVER_STRIDE):
     the arrow's OWN stride cell at the peak, in proportion below it. Two arrows
     therefore stand in the recorded ratio of the two fields, and the longest
     still fits inside the cell it was drawn from (see the constant).
+
+    Samples more than ``1 / VOLUME_QUIVER_REL_FLOOR`` (six decades) BELOW THE PEAK
+    are dropped as well, and the drop is relative to the peak on purpose: a real
+    far field bottoms out in denormal-scale round-off, which on the shipped dump
+    put 116 of 2795 shafts under ``1e-9`` mm - dots a reader reads as stray marks.
+    A threshold in V/m could not do this job, because the field's absolute scale
+    moves with frequency and with drive amplitude. The peak is measured BEFORE the
+    floor is applied and never after it, so the floor cannot shrink the reference
+    it is being measured against; every survivor keeps its length in the recorded
+    ratio of the fields.
 
     A NaN sample is skipped -- a point with no field gets no arrow -- and so is a
     literal zero, which has no direction to draw. A volume that is zero or
@@ -6409,6 +6430,20 @@ def _volume_arrows(info, *, stride=VOLUME_QUIVER_STRIDE):
         peak = float(np.max(mag))
         if not np.isfinite(peak) or peak <= 0.0:
             return empty
+        # The floor is applied HERE - after ``peak`` was measured and never
+        # feeding back into it. A reference that shrank with its own filter would
+        # drag the whole length scale down along with the noise. Strictly
+        # greater, so a field that is uniform at the peak keeps every sample
+        # instead of losing the ones that merely tie with it.
+        keep = mag > peak * VOLUME_QUIVER_REL_FLOOR
+        if not np.any(keep):
+            # Unreachable in principle: the sample that ATTAINED ``peak`` always
+            # passes ``peak > peak * 1e-6``. Guarded anyway rather than argued,
+            # because the cost of being wrong here is a lattice of zero arrows.
+            return empty
+        ai, bi, ci = ai[keep], bi[keep], ci[keep]
+        vecs = vecs[keep]
+        mag = mag[keep]
         max_len_mm = VOLUME_QUIVER_MAX_LEN_FRACTION * stride * cell_mm
         if not np.isfinite(max_len_mm) or max_len_mm <= 0.0:
             return empty
@@ -6425,6 +6460,48 @@ def _volume_arrows(info, *, stride=VOLUME_QUIVER_STRIDE):
         return points, vectors
     except Exception:  # noqa: BLE001 - an arrow is never worth a traceback
         return empty
+
+
+def _volume_quiver_polydata(points, vectors):
+    """``_volume_arrows`` output as ONE pyvista point cloud, or None.
+
+    The seam between the arrow field and a renderer, and deliberately nothing
+    more: the anchors become the cloud's points and the shafts become a
+    POINT-data array named ``volume_e_quiver``, so a caller can glyph ``orient``
+    and ``scale`` off that one array without this function knowing what an arrow
+    looks like. Glyphing is NOT done here and no plotter is created - the caller
+    owns the renderer, its camera, and the decision of whether to draw at all.
+
+    Returns None, not empty arrays, when there is nothing to hand over: this
+    feeds a renderer, and a renderer can skip a None in one ``if`` where it would
+    otherwise have to interrogate a zero-row cloud. Both arguments must be
+    FINITE ``(n, 3)`` float-convertible arrays of the SAME ``n >= 1``; None, a
+    wrong width, a mismatch, a non-finite coordinate or an empty pair are all
+    None.
+    """
+    try:
+        if points is None or vectors is None:
+            return None
+        pts = np.asarray(points, dtype=float)
+        vecs = np.asarray(vectors, dtype=float)
+        if pts.ndim != 2 or vecs.ndim != 2:
+            return None
+        if pts.shape[1] != 3 or vecs.shape[1] != 3:
+            return None
+        if pts.shape[0] < 1 or pts.shape[0] != vecs.shape[0]:
+            return None
+        # A NaN anchor or a NaN shaft reaches the renderer as a NaN primitive:
+        # pyvista accepts the array, so the failure would surface as a broken
+        # picture far from here. Refused at the seam instead.
+        if not np.all(np.isfinite(pts)) or not np.all(np.isfinite(vecs)):
+            return None
+        import pyvista as pv  # deferred: --list-keys / --dump-state stay numpy-only
+
+        cloud = pv.PolyData(pts)
+        cloud.point_data["volume_e_quiver"] = vecs
+        return cloud
+    except Exception:  # noqa: BLE001 - a picture is never worth a traceback
+        return None
 
 
 SOLVE_DEFAULT_XCUT_MM = 20.4

@@ -305,3 +305,87 @@ def test_pyvista_builds_one_glyph_per_arrow_from_point_data():
     assert single.n_points > 0
     assert arrows.n_cells == n_arrows * single.n_cells
     assert arrows.n_points == n_arrows * single.n_points
+
+
+def test_denormal_samples_are_dropped_by_the_relative_floor():
+    """1e-9 of the peak is round-off; 1e-3 of the peak is signal."""
+    nx, ny, nz = 2, 1, 1
+    # The RATIO to the peak is what decides, so the same shape is walked twice
+    # with the same 1.0 peak and a weak cell either side of the floor. One of
+    # these two cases alone would prove nothing: 1 survivor could come from a
+    # filter that drops every weak sample, and 2 survivors could come from no
+    # filter at all. Together they pin the boundary.
+    for weak, survivors in ((1e-9, 1), (1e-3, 2)):
+        volume = np.zeros((nx, ny, nz, 3))
+        volume[0, 0, 0] = (1.0, 0.0, 0.0)  # the peak sample, always kept
+        volume[1, 0, 0] = (weak, 0.0, 0.0)  # 1e-9 or 1e-3 of the peak
+        points, vectors = poc_app._volume_arrows(_info(volume), stride=1)
+        assert points.shape == (survivors, 3)
+        lengths = _lengths(vectors)
+        bound = FRACTION * 1 * CELL_MM
+        if survivors == 1:
+            # The strong cell keeps the FULL arrow-cell bound: dropping the
+            # round-off must not rescale what is left, which is what would happen
+            # if the floor were applied before ``peak`` was taken.
+            np.testing.assert_allclose(lengths, [bound], rtol=1e-12)
+            # And the survivor is the STRONG cell's anchor, not the weak one's.
+            np.testing.assert_allclose(
+                points[0], [0.5 * CELL_MM, 0.5 * CELL_MM, 0.5 * CELL_MM], rtol=0.0
+            )
+        else:
+            # Below the floor neither cell is special, so both are drawn and the
+            # pair still stands in the recorded ratio of the fields.
+            np.testing.assert_allclose(lengths, [bound, bound * 1e-3], rtol=1e-12)
+
+
+def test_the_floor_is_relative_to_the_peak_not_absolute():
+    """The same pair scaled by 1e-20: the RATIO is unchanged, so both survive."""
+    scale = 1e-20
+    volume = np.zeros((2, 1, 1, 3))
+    volume[0, 0, 0] = (scale, 0.0, 0.0)
+    volume[1, 0, 0] = (scale * 1e-3, 0.0, 0.0)
+    points, vectors = poc_app._volume_arrows(_info(volume), stride=1)
+    # An ABSOLUTE epsilon in V/m fails exactly here: both magnitudes are now
+    # ~1e-20, below any fixed threshold anyone would choose, so the whole arrow
+    # field would vanish although its internal contrast is untouched. Being
+    # relative, the floor cannot see ``scale`` at all - and the peak arrow still
+    # reaches the full arrow-cell bound, so the picture does not shrink either.
+    assert points.shape == (2, 3)
+    lengths = _lengths(vectors)
+    np.testing.assert_allclose(
+        lengths, [FRACTION * 1 * CELL_MM, FRACTION * 1 * CELL_MM * 1e-3], rtol=1e-12
+    )
+
+
+def test_polydata_carries_the_points_and_the_point_data():
+    """The cloud is the anchors plus ONE named point-data array - nothing else."""
+    try:
+        import pyvista as pv
+    except Exception as exc:  # noqa: BLE001 - the overlay is not always available
+        pytest.skip(f"pyvista not importable here: {exc}")
+    volume = _uniform((4, 6, 3), (1.0, 2.0, -0.5))
+    points, vectors = poc_app._volume_arrows(_info(volume), stride=2)
+    n_arrows = int(points.shape[0])
+    assert n_arrows == 12
+    cloud = poc_app._volume_quiver_polydata(points, vectors)
+    assert isinstance(cloud, pv.PolyData)
+    assert cloud.n_points == n_arrows
+    carried = np.asarray(cloud.point_data["volume_e_quiver"], dtype=float)
+    assert carried.shape == (n_arrows, 3)
+    # The shafts are carried through uninspected: this function is a seam, not a
+    # normaliser, and a caller that glyphs ``scale`` off this array is relying on
+    # getting back the same millimetres it handed in.
+    np.testing.assert_array_equal(carried, vectors)
+    # Refusals return None, not empty arrays: a renderer skips a None in one
+    # ``if`` and cannot skip a cloud with no points.
+    refused = [
+        (None, vectors),
+        (points, None),
+        (points[:, 0], vectors),  # 1-D, so no per-point tuple
+        (points[:, :2], vectors[:, :2]),  # two components, not three
+        (points[:-1], vectors),  # mismatched n
+        (points[:0], vectors[:0]),  # empty pair
+        (np.array([[np.nan, 0.0, 0.0]]), np.array([[1.0, 0.0, 0.0]])),
+    ]
+    for pts, vecs in refused:
+        assert poc_app._volume_quiver_polydata(pts, vecs) is None
