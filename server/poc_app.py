@@ -3560,6 +3560,79 @@ def _geom_mm(info: dict, record, x_s21_mm=None, x_s21_src=None) -> dict:
     return out
 
 
+def _bare_board_page(structure=None, record_path=None, structure_id=None) -> dict:
+    """A page dict for a structure whose BOARD is drawn with no dump at all.
+
+    WHY this exists: a record-only structure has a study record on disk but no
+    field dump, so there is no field to paint - yet the board the study solved on
+    is fully described by that record (cell, grid counts, substrate height, strip
+    width, both port positions). Booting the viewer with nothing to show used to
+    leave the centre column empty; this hands the same page plumbing a page whose
+    ``info`` carries those numbers, so ``_vis_geometry`` draws the substrate, the
+    strip and the two port wires exactly as it does over a dump.
+
+    WHY every unknown is NaN and never a constant: the draw sites test
+    ``isfinite()``, so a number the record did not carry must arrive as NaN to
+    keep that part absent. A fabricated cell size would put the board at a scale
+    nobody measured.
+
+    WHY ``is_vis`` is False and there is no ``nt``: this page claims NO timeline,
+    which is the existing "bare field dump" case in run_web_vis (no player, no
+    frame range), not a new kind of page.
+    """
+    path = record_path
+    if path is None:
+        path = _structure_artifact_path(structure, "sparams")
+    record = load_record(path) if path is not None else None
+    geom = _geom_mm({}, record)
+    geometry = record.get("geometry") if isinstance(record, dict) else None
+    geometry = geometry if isinstance(geometry, dict) else {}
+
+    def _mm(key):
+        """A resolved millimetre value, or NaN when neither source had it."""
+        value = _finite(geom.get(key))
+        return value if value is not None else float("nan")
+
+    def _count(key, index):
+        """A grid count from the record's geometry, else from its grid list."""
+        value = _as_float(geometry.get(key))
+        if value is None:
+            grid = geometry.get("grid")
+            if isinstance(grid, list) and len(grid) > index:
+                value = _as_float(grid[index])
+        return value if value is not None else float("nan")
+
+    board = {
+        "format": None,
+        "cell_m": _mm("cell_mm") * 1e-3,
+        "nx": _count("nx", 0),
+        "ny": _count("ny", 1),
+        "nz": _count("nz", 2),
+        "substrate_h_mm": _mm("substrate_h_mm"),
+        "strip_w_mm": _mm("strip_w_mm"),
+        "port_x_mm": _mm("port_x_mm"),
+        "load_x_mm": _mm("load_x_mm"),
+        "xcut_near_mm": _mm("xcut_near_mm"),
+    }
+    if record is None:
+        print(
+            "[poc_app] no study record for "
+            + _structure_label(structure)
+            + ": the page has no board to draw",
+            file=sys.stderr,
+        )
+    return {
+        "path": None,
+        "info": board,
+        "planes": None,
+        "multifreq": None,
+        "record": record,
+        "structure_id": structure_id
+        or (structure.get("id") if isinstance(structure, dict) else None),
+        "is_vis": False,
+    }
+
+
 def _plane_layout(info: dict, record) -> dict:
     """Resolve the x of the load, S11 port and S21 planes, in mm.
 
@@ -9287,7 +9360,13 @@ def run_web_vis(
     else:
         nt = None
         nt_x = None
-    cell_mm = _cell_mm(info)
+    # A page with NO data at all (the bare board, _bare_board_page) carries no
+    # cell at all, so this read is tolerated rather than fenced: NaN is the
+    # absence every downstream isfinite() guard already understands.
+    try:
+        cell_mm = _cell_mm(info)
+    except (KeyError, TypeError, ValueError):
+        cell_mm = float("nan")
     # The colour limits are the dump's own recorded range, and a page with no
     # timeline records none: 0 .. 1 is the placeholder the [EMPTY DUMP] line
     # already names, and no sheet is drawn to paint with it anyway.
@@ -9298,7 +9377,10 @@ def run_web_vis(
         vmin, vmax = color_range
     # The domain's full y width, computed once for the whole page: the x-cut
     # readout quotes it so the transverse section can be read against it.
-    y_span_mm = float(int(info["ny"])) * cell_mm
+    try:
+        y_span_mm = float(int(info["ny"])) * cell_mm
+    except (KeyError, TypeError, ValueError):
+        y_span_mm = float("nan")
 
     plotter = pv.Plotter(off_screen=True)
     plotter.set_background("white")
@@ -9701,6 +9783,22 @@ def run_web_vis(
         # station_readout is published (um3k_panels emits that line only inside
         # its plane_stack row, so the value would be rendered by nothing).
         handles["cut_redraw"] = _redraw
+
+    else:
+        # A PAGE WITH NO DATA TO SLICE. Neither a plane stack nor a port-plane
+        # archive resolved, so there is no cut to redraw and no sheet to frame:
+        # all the page holds is what _vis_geometry drew over the board. Framing
+        # it here, once, is what makes that board a picture instead of an empty
+        # centre column; camera_framed is published so _show() does not replace
+        # this view with its flat x-cut framing (which would also dim the board
+        # to the overlay opacity meant for a field sheet).
+        try:
+            plotter.view_isometric()
+            plotter.reset_camera()
+            plotter._poc_camera_framed = True
+            handles["camera_framed"] = True
+        except Exception as exc:  # noqa: BLE001 - decoration only
+            print(f"[poc_app] bare board not framed: {exc}", file=sys.stderr)
 
     def _set_picture_title(text: str) -> None:
         """Publish the page title for whatever the 3D view is showing. NEVER raises.
@@ -12229,6 +12327,15 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
+        "--bare-board",
+        action="store_true",
+        dest="bare_board",
+        help=(
+            "draw the structure's BOARD from its study record and nothing else: "
+            "no field dump, no timeline, no solve (the entry need not have a dump)"
+        ),
+    )
+    parser.add_argument(
         "--station", type=int, default=4, help="initial station index (default: 4)"
     )
     parser.add_argument(
@@ -12262,8 +12369,33 @@ def main(argv=None) -> int:
     # it, with the same message and the same exit status, rather than rendering
     # run A under the default's name. It runs before load_dump, so a refusal
     # reads nothing and writes no half-finished state file.
-    if _structure_is_record_only(structure):
+    # --bare-board is the ONE exception, and it is opt-in: it reads no dump at
+    # all, so the reason for the refusal ("the only field data on disk belongs to
+    # a different case") does not apply to a page that shows no field data.
+    if _structure_is_record_only(structure) and not args.bare_board:
         parser.error(_record_only_refusal(args.structure, structures))
+
+    if args.bare_board:
+        # A page, not a report: the two dump-reading exits below have no board to
+        # describe, so asking for both is a usage error rather than a chosen one.
+        if args.list_keys or args.dump_state:
+            parser.error(
+                "--bare-board serves the board page; it cannot be combined with "
+                "--list-keys or --dump-state"
+            )
+        bare_page = _bare_board_page(structure, structure_id=args.structure)
+        return run_web_vis(
+            bare_page["info"],
+            args.host,
+            args.port,
+            args.fps,
+            structure,
+            structures,
+            surface_dump=(
+                _resolve(args.surface_dump) if args.surface_dump else None
+            ),
+            loaded_page=bare_page,
+        )
 
     # --input wins when given, then the entry's own dump, then the default - see
     # _structure_input_path. The registry never overrides an explicit path, so a
