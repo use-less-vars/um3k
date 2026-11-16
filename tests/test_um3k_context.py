@@ -530,9 +530,9 @@ def test_name_literals_are_pinned_against_poc_app():
     assert layout["src_s11"] == um3k_context.FALLBACK_SRC
     assert layout["src_load"] == um3k_context.FALLBACK_SRC
     assert set(layout) == {
-        "cell_mm", "n_st", "stations_mm", "x_load_mm", "src_load", "ix_load",
-        "x_s11_mm", "src_s11", "x_s21_mm", "src_s21", "s21_valid",
-        "s21_valid_src", "s21_reason", "slice_index",
+        "cell_mm", "n_st", "stations_mm", "stations_src", "x_load_mm",
+        "src_load", "ix_load", "x_s11_mm", "src_s11", "x_s21_mm", "src_s21",
+        "s21_valid", "s21_valid_src", "s21_reason", "slice_index",
     }
 
     # The page's default view is the one the boot assignment states

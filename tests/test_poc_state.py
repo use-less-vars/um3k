@@ -19,9 +19,9 @@ What each test is protecting, in one line:
     T6  the sweep bin with an unresolved dispersion branch is marked as such;
     T7  the frequency chart is markers-only and says it does not interpolate;
     T8  an unknown structure id is refused (exit 2) and the valid ones are named;
-    T9  the two extents are distinct numbers with a stated basis, each derived
-        from the shape it describes (domain cells vs the stored array), and the
-        old single ``extent_mm`` key is gone;
+    T9  the two extents are distinct numbers with a stated basis - domain cells
+        vs the line the stored planes cover on x and the stored array's shape on
+        y/z - and the old single ``extent_mm`` key is gone;
     T10 a record-only structure id is REFUSED (exit 2, it names itself, it names
         what CAN be opened, and it writes no state file) instead of silently
         rendering another case's field data under that id;
@@ -261,14 +261,16 @@ def test_t9_two_extents_have_a_basis_and_the_legacy_key_is_gone(state):
         assert isinstance(extent, dict) and set(extent) == {"x", "y", "z"}, (
             f"{label} must carry exactly x/y/z, got: {extent!r}"
         )
-    # 24.8 mm / 0.4 mm = 62 cells across the DOMAIN; 3.6 mm / 0.4 mm = 9 samples
-    # across what is STORED. Both divide by the cell exactly, which is the only
-    # reason a reader can trust either figure to the cell count it claims.
+    # 24.8 mm / 0.4 mm = 62 cells across the DOMAIN; 10.0 mm / 0.4 mm = 25 cells
+    # across the line the captured planes COVER on x. Both divide by the cell
+    # exactly, which is the only reason a reader can trust either figure to the
+    # cell count it claims.
     assert domain["x"] == pytest.approx(24.8, abs=1e-9), domain
-    assert sampled["x"] == pytest.approx(3.6, abs=1e-9), sampled
-    # The sampled span is the stored array's, axis by axis: 9 planes in x,
-    # 85.2 mm = 213 rows in y, 8.8 mm = 22 in z. Reading y off the domain (212
-    # cells -> 84.8 mm) is the off-by-one-row this pins against.
+    assert sampled["x"] == pytest.approx(10.0, abs=1e-9), sampled
+    # On y and z the sampled span is the stored array's own shape: 85.2 mm = 213
+    # rows in y, 8.8 mm = 22 in z. Reading y off the domain (212 cells -> 84.8
+    # mm) is the off-by-one-row this pins against. x is no longer read off the
+    # shape at all - it is the span the stations themselves cover.
     assert sampled["y"] == pytest.approx(85.2, abs=1e-9), sampled
     assert sampled["z"] == pytest.approx(8.8, abs=1e-9), sampled
     cells = field["cells"]
@@ -277,11 +279,25 @@ def test_t9_two_extents_have_a_basis_and_the_legacy_key_is_gone(state):
     # own n_stations disagrees with the array it claims to describe, every
     # stations_x_mm entry below is off as well.
     assert field["n_stations"] == n_sampled_x, (field["n_stations"], STORED_PLANE_SHAPE)
+    # End to end: the x extent IS this axis, so the axis is pinned with it. The
+    # nine planes the npz stores sit on the study's own stations, 10.4 .. 20.0 mm
+    # three cells apart - not at i * 0.4 mm from the port end, which is what a
+    # shape-only axis would claim.
+    stations = field["stations_x_mm"]
+    assert field["stations_src"] == "s11.station_phasors.x_m", field.get("stations_src")
+    assert len(stations) == field["n_stations"] == 9, stations
+    assert stations[0] == pytest.approx(10.4, abs=1e-9), stations
+    assert stations[-1] == pytest.approx(20.0, abs=1e-9), stations
+    assert {round(b - a, 9) for a, b in zip(stations, stations[1:])} == {1.2}, stations
+    # The x extent is cells COVERED, not planes SAMPLED: nine planes three cells
+    # apart span 25 cells (10.4 .. 20.0 mm is 9.6 mm, plus the cell each plane
+    # covers), so 10.0 mm / 0.4 mm = 25 - while n_stations stays 9 above.
+    n_covered_x = 25
     for label, extent, expected in (
         ("extent_domain_mm.x", domain["x"], cells["nx"]),
         ("extent_domain_mm.y", domain["y"], cells["ny"]),
         ("extent_domain_mm.z", domain["z"], cells["nz"]),
-        ("extent_sampled_mm.x", sampled["x"], n_sampled_x),
+        ("extent_sampled_mm.x", sampled["x"], n_covered_x),
         ("extent_sampled_mm.y", sampled["y"], n_sampled_y),
         ("extent_sampled_mm.z", sampled["z"], n_sampled_z),
     ):
@@ -293,7 +309,13 @@ def test_t9_two_extents_have_a_basis_and_the_legacy_key_is_gone(state):
         assert round(quotient) == expected, (
             f"{label} is {round(quotient)} cells, expected {expected}"
         )
-    assert sampled["x"] == pytest.approx(9 * cell, abs=1e-9), sampled
+    # The covered span, not the plane count times the cell: 9 * 0.4 = 3.6 mm is
+    # what an invented uniform-from-zero axis reports, and it covers less than
+    # half the line these planes actually span.
+    assert sampled["x"] == pytest.approx((stations[-1] - stations[0]) + cell, abs=1e-9), (
+        sampled,
+        stations,
+    )
     # 212 domain cells vs 213 stored rows: the samples ARE the padded/extended
     # array, so the two y extents cannot be the same number. Equality would mean
     # one count was borrowed from the other - the defect this split removes.

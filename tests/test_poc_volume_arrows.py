@@ -705,12 +705,12 @@ def _drive_port_scene(monkeypatch, plotter, planes, **draw_kwargs):
     monkeypatch.setattr(
         poc_app,
         "build_grid",
-        lambda _info: types.SimpleNamespace(outline=lambda: outline),
+        lambda _info, _stations_mm=None: types.SimpleNamespace(outline=lambda: outline),
     )
     monkeypatch.setattr(
         poc_app,
         "_cut_layout",
-        lambda _info, j, k: {
+        lambda _info, j, k, _stations_mm=None: {
             "y_mm": 0.0, "j": 0, "n_j": 1,
             "z_mm": 0.0, "k": 0, "n_k": 1,
         },

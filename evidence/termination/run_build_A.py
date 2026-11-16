@@ -300,6 +300,18 @@ def write_field_snapshot(res, out_path: Path) -> Path | None:
     arrays["ny"] = np.int64(geo.get("ny", 0))
     arrays["nz"] = np.int64(geo.get("nz", 0))
     arrays["cell_m"] = np.float64(geo.get("cell", 0.0))
+    # The station axis next to the cell size, so a reloaded dump carries where
+    # its planes actually are: the study snaps each wanted station to the nearest
+    # grid cell (``geometry["station_cells"]``, emfit/studies.py:4283), so the
+    # captured planes are NOT one cell apart from x = 0.  Written only when the
+    # geometry carries both the cells and the cell size -- a run without station
+    # capture leaves the key out rather than storing an axis nobody measured.
+    station_cells = geo.get("station_cells")
+    station_cell_m = geo.get("cell")
+    if station_cells is not None and station_cell_m and len(station_cells):
+        arrays["station_x_m"] = np.asarray(station_cells, dtype=float) * float(
+            station_cell_m
+        )
     path = out_path.with_name(out_path.stem + "_fields.npz")
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, **arrays)

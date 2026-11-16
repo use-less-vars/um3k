@@ -220,12 +220,24 @@ def load_dump(
     answer a reader wants and the raw stash would only be a second copy of the
     same data. A dump without an ``e`` key still loads under ``e_raw``: one
     line to stderr, no raw key, no raise, exactly as above.
+
+    ``station_x_m`` is the OPTIONAL station axis: metres, one entry per captured
+    station, the x of the plane that station holds -- which is NOT ``i *
+    cell_m``, because the study snaps each wanted station to the nearest grid
+    cell. When the archive carries it, and it holds exactly one finite number
+    per captured plane, it is published as ``info["station_x_m"]`` and
+    :func:`_station_axis_mm` reads it in preference to every sidecar. It is
+    optional because dumps written before it existed simply do not have the
+    key: then nothing is stored (no placeholder, no NaN array) and the consumer
+    falls back to the record beside the dump, or to its stated uniform
+    assumption.
     """
     if not path.is_file():
         print(f"[poc_app] input not found: {path}", file=sys.stderr)
         raise SystemExit(2)
 
     e_flat = None
+    station_x = None
     with np.load(path) as data:
         plane = np.asarray(data[PLANE_KEY])
         info = {
@@ -241,6 +253,11 @@ def load_dump(
             # The array is read ONCE and merely read: this copy is the whole
             # cost of ``e_raw``, which is why it can be paid on every load.
             e_flat = np.asarray(data["e"])
+        if "station_x_m" in data.files:
+            # Read INSIDE the `with`: the archive's arrays are unreadable once
+            # it closes. Whether it IS an axis is decided below, beside the
+            # plane's own validation.
+            station_x = np.asarray(data["station_x_m"], dtype=float).ravel()
 
     if plane.ndim != 3:
         print(
@@ -249,6 +266,16 @@ def load_dump(
             file=sys.stderr,
         )
         raise SystemExit(2)
+    # One finite number per captured station, or the key is left out entirely:
+    # a short axis is not a smaller axis, it is a dump whose plane count and
+    # station list disagree, and guessing which is right would be a lie about
+    # where every captured plane sits.
+    if (
+        station_x is not None
+        and station_x.size == plane.shape[0]
+        and bool(np.all(np.isfinite(station_x)))
+    ):
+        info["station_x_m"] = station_x
     if e_volume:
         if e_flat is None:
             print(
@@ -838,8 +865,19 @@ def _cell_mm(info: dict) -> float:
     return float(info["cell_m"]) * 1e3
 
 
-def _station_text(idx: int, cell_mm: float, n_st: int) -> str:
-    return f"station {idx + 1}/{n_st}   x = {idx * cell_mm:.4f} mm"
+def _station_text(idx: int, cell_mm: float, n_st: int, stations_mm=None) -> str:
+    """Corner label for one captured station.
+
+    ``stations_mm`` is the recorded station axis when the caller has resolved
+    one (``_station_axis_mm``): then the x printed is that station's OWN x. A
+    caller without it keeps the old ``idx * cell`` reading byte for byte, which
+    is what a hand-built info or a page that never resolved the axis prints.
+    """
+    if stations_mm is None:
+        x_mm = idx * cell_mm
+    else:
+        x_mm = float(stations_mm[max(0, min(len(stations_mm) - 1, int(idx)))])
+    return f"station {idx + 1}/{n_st}   x = {x_mm:.4f} mm"
 
 
 # --- where each reported number is measured ---------------------------------
@@ -1969,13 +2007,14 @@ _PORT_FIELDS = ("v_re", "v_im", "i_re", "i_im")
 STATE_SCHEMA = "emfit.poc-state/1"
 RESIDUAL_BASIS = "50/(50 + 2*z0)"
 # Why two extents and not one: the domain box is what was SOLVED, the sampled
-# span is what the npz STORES, and on x they are nx cells versus the n_stations
-# captured planes. The basis string ships with the numbers so a reader never has
-# to guess which of the two a millimetre figure came from.
+# span is what the npz STORES, and on x they are nx cells versus the 25 cells
+# the n_stations captured planes COVER. The basis string ships with the numbers
+# so a reader never has to guess which of the two a millimetre figure came from.
 EXTENT_BASIS = (
-    "domain_mm = nx*cell (the simulated box); sampled_mm = the span of the "
-    "field samples actually stored in the npz (9 planes of 0.4 mm = 3.6 mm "
-    "here)"
+    "domain_mm = nx*cell (the simulated box); sampled_mm = the span the field "
+    "samples actually stored in the npz COVER - on x the line the 9 captured "
+    "planes span, 25 cells of 0.4 mm = 10.0 mm here, and on y/z the stored "
+    "array's own shape (213 rows = 85.2 mm, 22 = 8.8 mm)"
 )
 
 
@@ -2374,29 +2413,51 @@ def _multifreq_path(npz_path: Path, structure, structure_id=None):
 
 
 def _field_dump_block(info: dict, path: Path) -> dict:
-    """The field-dump half: cells from the ARRAY SHAPE, never from a record.
+    """The field-dump half: CELLS from the array shape, the x axis from the record.
 
     TWO extents, deliberately kept apart. ``extent_domain_mm`` is the simulated
-    box, nx cells across. ``extent_sampled_mm`` is the span of the samples the
-    npz actually stores - and on x that is the n_stations captured planes, not
-    nx. One number called "extent" cannot say which of the two it means, and
-    here they differ by a factor of seven (24.8 mm vs 3.6 mm): reading the
-    domain box as "the field I have" is the misreading this split exists to
-    make impossible. ``extent_basis`` says it in words as well.
+    box, nx cells across. ``extent_sampled_mm`` is the span the captured planes
+    actually COVER - on x the bounding span of the station axis (last station
+    minus first, plus one cell), not nx. One number called "extent" cannot say
+    which of the two it means, and here they differ by more than a factor of two
+    (24.8 mm vs 10.0 mm): reading the domain box as "the field I have" is the
+    misreading this split exists to make impossible. ``extent_basis`` says it in
+    words as well.
 
     The two extents therefore come from two different places, and the counts
     behind them are named for where they were read: nx/ny/nz are the DOMAIN
-    cells the record declares, while the sampled span is the STORED array's own
-    shape. Those do not agree on every axis - the stored plane is 9 x 213 x 22
-    inside a 62 x 212 x 22 box, one row more in y than the box has cells - so
-    borrowing the domain count for the sampled y would report 84.8 mm for an
-    array that spans 85.2 mm.
+    cells the record declares. On y and z the sampled span is still the STORED
+    array's own shape; those do not agree with the box on every axis - the
+    stored plane is 9 x 213 x 22 inside a 62 x 212 x 22 box, one row more in y
+    than the box has cells - so borrowing the domain count for the sampled y
+    would report 84.8 mm for an array that spans 85.2 mm. On x the span comes
+    from the station axis, which is where the planes actually sit; how MANY
+    planes there are is a separate fact and is reported as ``n_stations``.
     """
     plane = info[PLANE_KEY]
     nx_domain, ny_domain, nz_domain = int(info["nx"]), int(info["ny"]), int(info["nz"])
     cell_m = float(info["cell_m"])
     cell_mm = cell_m * 1e3
     n_stations_sampled, ny_sampled, nz_sampled = (int(n) for n in plane.shape)
+    # The record IS in scope: it sits beside the dump and is found from the
+    # dump's own path, so the study's real station axis is readable here. The
+    # npz's own ``station_x_m`` still wins when the dump carries one - that is
+    # step 1 of _station_axis_mm - and the uniform assumption is only the last
+    # resort for a dump that really has nothing recorded.
+    record = _field_record(path)
+    stations_x_mm, stations_src = _station_axis_mm(info, record)
+    # The span COVERED on x, not ``n_stations * cell``: a plane count times the
+    # cell only equals the span when the planes sit one cell apart starting at
+    # the origin. For such a dump this is byte-identical to the old n_st * cell
+    # (9 planes -> 3.6 mm); for the shipped study, whose nine planes run 10.4 to
+    # 20.0 mm, it is 9.6 + 0.4 = 10.0 mm of covered line - 25 cells, 16 of them
+    # with no plane sampled on them. How many PLANES there are stays in
+    # ``n_stations``.
+    span_x_mm = (
+        (stations_x_mm[-1] - stations_x_mm[0]) + cell_mm
+        if n_stations_sampled > 1
+        else cell_mm
+    )
     return {
         "file": str(path),
         "cells": {"nx": nx_domain, "ny": ny_domain, "nz": nz_domain},
@@ -2408,12 +2469,17 @@ def _field_dump_block(info: dict, path: Path) -> dict:
             "z": round(nz_domain * cell_mm, 9),
         },
         "extent_sampled_mm": {
-            "x": round(n_stations_sampled * cell_mm, 9),
+            "x": round(span_x_mm, 9),
             "y": round(ny_sampled * cell_mm, 9),
             "z": round(nz_sampled * cell_mm, 9),
         },
         "extent_basis": EXTENT_BASIS,
-        "stations_x_mm": [idx * cell_mm for idx in range(n_stations_sampled)],
+        # The station axis is READ, never derived from the index: the study snaps
+        # each wanted station to a grid cell, so ``i * cell`` would put the nine
+        # captured planes over the port end of the line (see _station_axis_mm).
+        # Key and shape stay exactly what they were - only the numbers change.
+        "stations_x_mm": [float(value) for value in stations_x_mm],
+        "stations_src": stations_src,
         "n_stations": n_stations_sampled,
         "nstep": int(info["nstep"]),
     }
@@ -3242,6 +3308,73 @@ def build_state_dump(info: dict, structure, structures=None, fps: int = DEFAULT_
     return page
 
 
+def _station_axis_mm(info: dict, record=None) -> tuple:
+    """Resolve the x of each captured station, in mm, plus where the axis came from.
+
+    Returns ``(stations_mm, src)``.  ``src`` names the key the axis was read
+    from, or states that the axis is an ASSUMPTION, so the UI can print the
+    provenance beside the numbers instead of a position nobody recorded.
+
+    WHY an index is not an x: the study snaps each WANTED station to the nearest
+    grid cell (``emfit/studies.py`` around :3258, ``js = floor(wanted/cell+0.5)``),
+    so the nine Build A stations are cells 26, 29, 32 ... 50 - 1.2 mm apart
+    starting at 10.4 mm - and NOT one cell apart starting at 0.  ``i * cell_mm``
+    is therefore a shape-only guess that draws the whole captured slab over the
+    port end of the line, so the axis is read from the artefacts instead:
+
+    1. ``info["station_x_m"]`` (metres, written by the dump itself);
+    2. ``record["s11"]["station_phasors"]["x_m"]`` (metres);
+    3. ``record["geometry"]["station_cells"]`` (cell indices, times the cell);
+    4. ``record["line"]["station_fit_cells"]`` (cell indices, same length only);
+    5. ``[i * cell_mm]`` - the uniform stack, marked ASSUMED in ``src``.
+
+    A step is accepted only when it is a real sequence of ``n_st`` finite
+    numbers; anything else (missing key, non-dict record, a string, a scalar, a
+    sequence of the wrong length - ``line.station_fit_cells`` has 8 entries for
+    9 stations because it drops the load station) falls through.  NEVER raises.
+    """
+    n_st = int(info[PLANE_KEY].shape[0])
+    cell_mm = _cell_mm(info)
+
+    def _as_axis(values, scale_mm):
+        """``values`` times ``scale_mm`` as mm, or None if that is not an axis."""
+        if values is None or isinstance(values, (str, bytes, dict)):
+            return None
+        try:
+            axis = [float(v) * scale_mm for v in values]
+        except (TypeError, ValueError):
+            return None
+        if len(axis) != n_st or not bool(np.all(np.isfinite(axis))):
+            return None
+        return axis
+
+    def _dig(block, *keys):
+        """``block[key0][key1]...``, or None as soon as a level is not a dict."""
+        for key in keys:
+            if not isinstance(block, dict):
+                return None
+            block = block.get(key)
+        return block
+
+    for values, scale_mm, src in (
+        (info.get("station_x_m"), 1e3, "station_x_m"),
+        (_dig(record, "s11", "station_phasors", "x_m"), 1e3,
+         "s11.station_phasors.x_m"),
+        (_dig(record, "geometry", "station_cells"), cell_mm,
+         "geometry.station_cells"),
+        (_dig(record, "line", "station_fit_cells"), cell_mm,
+         "line.station_fit_cells"),
+    ):
+        axis = _as_axis(values, scale_mm)
+        if axis is not None:
+            return axis, src
+
+    # The stated assumption, not a measurement: one cell per station from x = 0.
+    return [i * cell_mm for i in range(n_st)], (
+        "ASSUMED uniform i*cell (no station axis recorded)"
+    )
+
+
 def _plane_layout(info: dict, record) -> dict:
     """Resolve the x of the load, S11 port and S21 planes, in mm.
 
@@ -3251,7 +3384,9 @@ def _plane_layout(info: dict, record) -> dict:
     """
     n_st = int(info[PLANE_KEY].shape[0])
     cell_mm = _cell_mm(info)
-    stations_mm = [i * cell_mm for i in range(n_st)]
+    # The station axis is READ, never derived from the index: see
+    # _station_axis_mm for why ``i * cell`` is not where the stations are.
+    stations_mm, stations_src = _station_axis_mm(info, record)
 
     record = record if isinstance(record, dict) else {}
     geom = record.get("geometry")
@@ -3315,14 +3450,16 @@ def _plane_layout(info: dict, record) -> dict:
         valid_src = f"computed: plane {int(ix_s21)} vs load {int(ix_load)}"
 
     # The port-plane cross-section is the captured station nearest the port x.
-    # The dump stacks captured planes from x = 0 at one cell spacing, so this
-    # picks station 0 unless the record puts the port plane somewhere else.
+    # The stations are NOT one cell apart from x = 0 - they are snapped to cells
+    # 1.2 mm apart from 10.4 mm (see _station_axis_mm) - so the nearest captured
+    # plane is the first station and not the origin.
     slice_index = min(range(n_st), key=lambda i: abs(stations_mm[i] - x_s11))
 
     return {
         "cell_mm": cell_mm,
         "n_st": n_st,
         "stations_mm": stations_mm,
+        "stations_src": stations_src,
         "x_load_mm": x_load,
         "src_load": src_load,
         "ix_load": ix_load,
@@ -3438,23 +3575,37 @@ def _view_label(
 #
 # The trap this layer has to avoid is a marker that LOOKS like it belongs to a
 # cut. The S11 / load / S21 markers sit at mid-height of the y-z section and at
-# x = 0.0, 20.0 and 20.4 mm, while the cut sheets span only the captured slab
-# (x = 0.0 .. 3.2 mm): the load and the S21 plane are off every sheet by
+# x = 3.2, 20.0 and 20.4 mm, while the cut sheets span only the captured slab
+# (x = 10.4 .. 20.0 mm): the port and the S21 plane are off every sheet by
 # construction. Nothing is moved, clipped or projected to make them fit - each
 # marker's relation to the drawn cuts is stated in the corner legend instead,
 # because a marker drawn at the edge of a sheet would be a lie about where the
-# plane is.
+# plane is. That slab is the RECORDED station axis when the caller resolved one
+# (``_station_axis_mm``), never ``(n_st - 1) * cell``.
 
 
-def _cut_layout(info: dict, j_cut=None, k_cut=None) -> dict:
+def _cut_layout(info: dict, j_cut=None, k_cut=None, stations_mm=None) -> dict:
     """Resolve which y and z sample the cut sheets sit on. Numbers only.
 
     Split out from build_cut_sheets so the labels, the legend and the slider
     handlers can describe the cuts without importing pyvista.
+
+    ``stations_mm`` is the recorded station axis: the sheets span the FIRST and
+    LAST captured station on x, so ``x_lo_mm`` / ``x_hi_mm`` and the per-step
+    ``dx_mm`` they use come from it. Without it the sheets keep the old uniform
+    span of ``0`` to ``(n_st - 1)`` cells, which is the same stated assumption
+    the axis makes when nothing was recorded.
     """
     plane = info[PLANE_KEY]
     n_st, n_j, n_k = plane.shape
     cell_mm = _cell_mm(info)
+    if stations_mm is None:
+        x_lo_mm = 0.0
+        x_hi_mm = (n_st - 1) * cell_mm
+    else:
+        x_lo_mm = float(stations_mm[0])
+        x_hi_mm = float(stations_mm[-1])
+    dx_mm = (x_hi_mm - x_lo_mm) / (n_st - 1) if n_st > 1 else cell_mm
     j = n_j // 2 if j_cut is None else j_cut
     k = n_k // 2 if k_cut is None else k_cut
     try:
@@ -3474,8 +3625,9 @@ def _cut_layout(info: dict, j_cut=None, k_cut=None) -> dict:
         "k": k,
         "y_mm": j * cell_mm,
         "z_mm": k * cell_mm,
-        "x_lo_mm": 0.0,
-        "x_hi_mm": (n_st - 1) * cell_mm,
+        "x_lo_mm": x_lo_mm,
+        "x_hi_mm": x_hi_mm,
+        "dx_mm": dx_mm,
     }
 
 
@@ -3500,6 +3652,10 @@ def build_cut_sheets(info: dict, layout: dict) -> list:
 
     Axis 0 is the station axis and stays the x axis of the sheet in both cases;
     VTK wants x to vary fastest, hence the Fortran ravel, as in build_grid.
+    Because it is the station axis, its origin is the FIRST captured station and
+    its spacing the layout's own ``dx_mm`` - not ``0.0`` and not the cell: the
+    stations are snapped to cells 1.2 mm apart from 10.4 mm (see
+    ``_station_axis_mm``), and a sheet drawn from x = 0 would sit off the volume.
     """
     import pyvista as pv
 
@@ -3511,16 +3667,16 @@ def build_cut_sheets(info: dict, layout: dict) -> list:
 
     y_sheet = pv.ImageData()
     y_sheet.dimensions = (n_st, 1, n_k)
-    y_sheet.spacing = (cell_mm, cell_mm, cell_mm)
-    y_sheet.origin = (0.0, j * cell_mm, 0.0)
+    y_sheet.spacing = (layout["dx_mm"], cell_mm, cell_mm)
+    y_sheet.origin = (layout["x_lo_mm"], j * cell_mm, 0.0)
     y_sheet.point_data["ez_abs"] = np.ascontiguousarray(
         np.abs(plane[:, j : j + 1, :]).ravel(order="F"), dtype=float
     )
 
     z_sheet = pv.ImageData()
     z_sheet.dimensions = (n_st, n_j, 1)
-    z_sheet.spacing = (cell_mm, cell_mm, cell_mm)
-    z_sheet.origin = (0.0, 0.0, k * cell_mm)
+    z_sheet.spacing = (layout["dx_mm"], cell_mm, cell_mm)
+    z_sheet.origin = (layout["x_lo_mm"], 0.0, k * cell_mm)
     z_sheet.point_data["ez_abs"] = np.ascontiguousarray(
         np.abs(plane[:, :, k : k + 1]).ravel(order="F"), dtype=float
     )
@@ -3727,14 +3883,22 @@ def print_keys(info: dict) -> None:
     print(f"nstep       : {info['nstep']}")
     print(f"nx/ny/nz    : {info['nx']} / {info['ny']} / {info['nz']} (cells)")
     print(f"cell_m      : {info['cell_m']:.6e} m  ({cell_mm:.6f} mm)")
-    # The npz counts CELLS, not nodes: axis 1 carries ny + 1 node samples.
+    # Read, not derived from the index - see _station_axis_mm. The extent on x
+    # and the listing below are what a reader compares against the geometry, so
+    # both must be the same axis the 3-D view draws on, not a shape-only guess;
+    # the record beside the dump is where that axis is written.
+    xs_mm, _xs_src = _station_axis_mm(info, _field_record(info["path"]))
+    # The x extent is the line the planes COVER - last station minus first, plus
+    # one cell - not the plane count times the cell, which is the same number
+    # only when the planes run one cell apart from the origin. y and z have no
+    # axis of their own, so they stay count times cell, and the npz counts
+    # CELLS, not nodes: axis 1 carries ny + 1 node samples.
+    span_x_mm = (xs_mm[-1] - xs_mm[0]) + cell_mm if n_st > 1 else cell_mm
     print(
-        f"extent      : {n_st * cell_mm:.4f} x {n_j * cell_mm:.4f} x "
+        f"extent      : {span_x_mm:.4f} x {n_j * cell_mm:.4f} x "
         f"{n_k * cell_mm:.4f} mm"
     )
     print(f"samples     : {n_st} x {n_j} x {n_k}")
-
-    xs_mm = [i * cell_mm for i in range(n_st)]
     print("station x/mm: " + ", ".join(f"{x:.4f}" for x in xs_mm))
 
     ez_real = np.real(plane)
@@ -3753,7 +3917,19 @@ def print_keys(info: dict) -> None:
     )
 
 
-def build_grid(info: dict) -> "pyvista.ImageData":
+def build_grid(info: dict, stations_mm=None) -> "pyvista.ImageData":
+    """Build the volume's grid on the STATION AXIS the dump or record records.
+
+    ``stations_mm`` is that axis (``_station_axis_mm``). Without it the grid is
+    the uniform ``i * cell`` stack this function has always built, which is a
+    stated assumption and not a measured position.
+
+    WHY the x sampling comes from the axis: the stations are snapped to grid
+    cells, so the shipped record's nine planes are 1.2 mm apart from 10.4 mm - a
+    uniform ``cell_mm`` on x would stack the same nine planes at 0 .. 3.2 mm,
+    over the port end of the line. The y/z axes really are one cell per sample,
+    so they keep ``cell_mm`` and origin 0.
+    """
     # Deferred import: keeps --help / --list-keys runnable with numpy alone.
     import pyvista as pv
 
@@ -3761,11 +3937,10 @@ def build_grid(info: dict) -> "pyvista.ImageData":
     n_st, n_j, n_k = plane.shape
     dims = (n_st, n_j, n_k)
     cell_mm = _cell_mm(info)
-
-    image = pv.ImageData()
-    image.dimensions = dims
-    image.spacing = (cell_mm, cell_mm, cell_mm)
-    image.origin = (0.0, 0.0, 0.0)
+    if stations_mm is None:
+        xs_mm = [i * cell_mm for i in range(n_st)]
+    else:
+        xs_mm = [float(v) for v in stations_mm]
 
     ez_real = np.real(plane).astype(float)
     ez_abs = np.abs(plane).astype(float)
@@ -3776,6 +3951,34 @@ def build_grid(info: dict) -> "pyvista.ImageData":
             file=sys.stderr,
         )
         raise SystemExit(2)
+
+    # A non-uniform station axis cannot be ONE spacing, so which branch applies
+    # is decided on the axis itself rather than assumed.
+    if n_st > 1:
+        dx_mm = (xs_mm[-1] - xs_mm[0]) / (n_st - 1)
+        uniform = all(
+            abs(xs_mm[i] - (xs_mm[0] + i * dx_mm)) <= 1e-9 for i in range(n_st)
+        )
+    else:
+        dx_mm = cell_mm
+        uniform = True
+
+    if uniform:
+        image = pv.ImageData()
+        image.dimensions = dims
+        image.spacing = (dx_mm, cell_mm, cell_mm)
+        image.origin = (xs_mm[0], 0.0, 0.0)
+    else:
+        # The same points, handed over explicitly. VTK wants x to vary fastest,
+        # which is the ravel order the constructor itself uses, so the arrays
+        # that follow keep the layout the uniform branch gives them.
+        xs, ys, zs = np.meshgrid(
+            np.asarray(xs_mm, dtype=float),
+            np.arange(n_j, dtype=float) * cell_mm,
+            np.arange(n_k, dtype=float) * cell_mm,
+            indexing="ij",
+        )
+        image = pv.StructuredGrid(xs, ys, zs)
 
     # VTK expects x to vary fastest, so ravel in Fortran order.
     image.point_data["ez_real"] = np.ascontiguousarray(
@@ -3791,7 +3994,13 @@ def create_plotter(info: dict):
     # Deferred import: pyvista is only needed once we actually render.
     import pyvista as pv
 
-    grid = build_grid(info)
+    # No record is read here (create_plotter only ever sees ``info``), so the
+    # axis is whatever the dump itself carries: a recorded ``station_x_m`` when
+    # the npz has one, the stated uniform assumption when it has not. Every
+    # later frame comes from _draw_scene, which passes the record-backed axis it
+    # was handed in ``planes``.
+    stations_mm, _stations_src = _station_axis_mm(info)
+    grid = build_grid(info, stations_mm)
     n_st = info[PLANE_KEY].shape[0]
     cell_mm = _cell_mm(info)
 
@@ -3807,7 +4016,7 @@ def create_plotter(info: dict):
     plotter.add_mesh(grid.outline(), color="black", line_width=1)
     plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")
     plotter.add_text(
-        _station_text(0, cell_mm, n_st),
+        _station_text(0, cell_mm, n_st, stations_mm),
         name="station_label",
         position="upper_left",
         font_size=10,
@@ -3971,11 +4180,14 @@ def _draw_scene(
 
     n_st = int(info[PLANE_KEY].shape[0])
     cell_mm = planes["cell_mm"]
-    # One build, used for both the volume view and the outline.
-    grid = build_grid(info)
+    # One build, used for both the volume view and the outline. The station axis
+    # comes from ``planes`` - that is, from the record beside the dump - so the
+    # volume, the port slice, the markers and the cut sheets all live on ONE x
+    # axis and cannot disagree about where 10.4 mm is.
+    grid = build_grid(info, planes.get("stations_mm"))
     # Which y / z sample the cut sheets sit on, and whether they were actually
     # drawn: the legend must not claim sheets that pyvista refused.
-    cut_layout = _cut_layout(info, j_cut, k_cut)
+    cut_layout = _cut_layout(info, j_cut, k_cut, planes.get("stations_mm"))
     cuts_drawn = False
 
     try:
@@ -4049,7 +4261,7 @@ def _draw_scene(
     # default, so its in-scene corner label is unchanged.
     if station_label:
         plotter.add_text(
-            _station_text(int(station), cell_mm, n_st),
+            _station_text(int(station), cell_mm, n_st, planes.get("stations_mm")),
             name="station_label",
             position="upper_left",
             font_size=10,
@@ -4064,9 +4276,10 @@ def _draw_scene(
         font_size=8,
         color="black",
     )
-    # Isometric, then fit everything. The markers sit up to 20 mm away from a
-    # 3.2 mm captured slab, so a camera framed on the slab alone would hide the
-    # entire point of the layer.
+    # Isometric, then fit everything. The markers do not all lie inside the
+    # captured slab - the S11 port plane sits at the port end of the line and the
+    # S21 plane one cell past the load - so a camera framed on the slab alone
+    # would hide the entire point of the layer.
     try:
         plotter.view_isometric()
         plotter.reset_camera()
@@ -4134,7 +4347,7 @@ def _init_cut_state(
     sit, so the first frame is the picture the page has always drawn. The
     sliders move these two numbers and nothing else.
     """
-    cut_layout = _cut_layout(info, n_j // 2, n_k // 2)
+    cut_layout = _cut_layout(info, n_j // 2, n_k // 2, (planes or {}).get("stations_mm"))
     state.cut_y = cut_layout["j"]
     state.cut_z = cut_layout["k"]
     state.cut_label = _cut_text(cut_layout)
@@ -4226,7 +4439,9 @@ def _on_cut_change(
         state.cut_y = idx
     else:
         state.cut_z = idx
-    layout = _cut_layout(info, int(state.cut_y), int(state.cut_z))
+    layout = _cut_layout(
+        info, int(state.cut_y), int(state.cut_z), (planes or {}).get("stations_mm")
+    )
     state.cut_label = _cut_text(layout)
     state.view_label = _view_label(
         state.view_mode, planes, toggle_available, layout
@@ -4440,17 +4655,21 @@ def run_web(
 
     state, ctrl = server.state, server.controller
     state.trame__title = f"{structure_label} |Ez| PoC"
+    # Plane positions come from the record beside the dump, so the markers and
+    # the labels below cannot drift from the geometry that produced the numbers.
+    # Resolved BEFORE the first label: the station label prints the station axis
+    # those planes carry, and a label built first would have to guess it.
+    record = load_record(info["path"])
+    planes = _plane_layout(info, record)
+
     state.station = int(station)
-    state.station_label = _station_text(int(station), cell_mm, n_st)
+    state.station_label = _station_text(
+        int(station), cell_mm, n_st, planes["stations_mm"]
+    )
     structure_id = structure.get("id") if isinstance(structure, dict) else None
     structure_options = _structure_options(structures)
     state.structure = structure_id
     state.structure_note = f"showing {structure_label}"
-
-    # Plane positions come from the record beside the dump, so the markers and
-    # the labels below cannot drift from the geometry that produced the numbers.
-    record = load_record(info["path"])
-    planes = _plane_layout(info, record)
 
     # The page state the banner and the port-wave panel read from: the same
     # document --dump-state writes, so the warning sentence and the two cell
@@ -4589,7 +4808,9 @@ def run_web(
             state.view_mode,
             planes,
             toggle_available,
-            _cut_layout(info, int(state.cut_y), int(state.cut_z)),
+            _cut_layout(
+                info, int(state.cut_y), int(state.cut_z), planes.get("stations_mm")
+            ),
         )
         _redraw()
         view_handle = handles.get("view")
@@ -4674,7 +4895,7 @@ def run_web(
             ]
             plotter.reset_camera_clipping_range()
             plotter.add_text(
-                _station_text(idx, cell_mm, n_st),
+                _station_text(idx, cell_mm, n_st, planes.get("stations_mm")),
                 name="station_label",
                 position="upper_left",
                 font_size=10,
@@ -5098,7 +5319,9 @@ def run_web(
             idx = int(state.station)
         idx = max(0, min(n_st - 1, idx))
         state.station = idx
-        state.station_label = _station_text(idx, cell_mm, n_st)
+        state.station_label = _station_text(
+            idx, cell_mm, n_st, planes.get("stations_mm")
+        )
         _focus(idx)
         try:
             view.update()
@@ -7895,7 +8118,7 @@ def run_web_vis(
         # the sliders cannot disagree with the picture. Published behind the same
         # gate, because a page with no stack has no station to name.
         state.station_readout = _station_text(
-            int(state.station), planes["cell_mm"], n_st
+            int(state.station), planes["cell_mm"], n_st, planes["stations_mm"]
         )
 
         # The 3-D arrow field the "Show Vector Field" box owns on this page. The
@@ -7996,7 +8219,9 @@ def run_web_vis(
         except Exception:  # noqa: BLE001 - a record is optional, the page is not
             planes = _plane_layout(info, None)
 
-        cut_layout = _cut_layout(info, n_j // 2, n_k // 2)
+        cut_layout = _cut_layout(
+            info, n_j // 2, n_k // 2, planes.get("stations_mm")
+        )
         # EVERY field the shared redraw reads, because it catches its own
         # exceptions (:4026): a missing one is not a loud failure, it is the
         # silently blank picture this branch exists to remove. Station 0 is the
