@@ -608,13 +608,18 @@ def test_add_markers_sizes_its_discs_from_the_field_grid():
     for mesh in drawn:
         x0, x1, y0, y1, z0, z1 = mesh.bounds
         assert x0 == pytest.approx(x1, abs=1e-4), "a disc is not a plane normal to x"
-        # pyvista lays the plane's two sides however it likes inside the plane
-        # normal to x (here i_size lands on z), so the claim is the RECTANGLE
-        # and its centre, not which side went where: 84.8 mm by 8.4 mm,
-        # centred on the y/z mid-plane of the field.
+        # ORDERED, per axis - never ``sorted([y1 - y0, z1 - z0])``: which of the
+        # marker's two sides lies on y and which on z IS the claim. Sorting the
+        # two spans first swaps an axis swap away by construction, and did: an
+        # earlier version of this file passed while the marker drew the 84.8 mm
+        # Y span as an 84.8 mm VERTICAL ribbon rising out of an 8.4 mm tall
+        # slab. The long side is y, the short one z.
         # WHY the -1: n samples span n - 1 cells (build_grid points at i*cell).
-        assert sorted([y1 - y0, z1 - z0]) == pytest.approx(
-            [(NZ - 1) * CELL_MM, NY * CELL_MM], abs=1e-4
+        assert (y0, y1, z0, z1) == pytest.approx(
+            (0.0, NY * CELL_MM, 0.0, (NZ - 1) * CELL_MM), abs=1e-4
+        ), (
+            "the marker's y/z extents are not the plane stack's own, in the "
+            f"axes they belong to: {((y0, y1, z0, z1))!r}"
         )
         # Same rule for the centre: half of each (n - 1)*cell span.
         assert (0.5 * (y0 + y1), 0.5 * (z0 + z1)) == pytest.approx(
@@ -644,6 +649,121 @@ def test_add_markers_sizes_its_discs_from_the_field_grid():
     )
     # Only the first disc flushes the frame; the second one is drawn next.
     assert [kw.get("render") for _n, _m, kw in plotter.meshes] == [True, False]
+
+
+def test_add_markers_read_the_volumes_grid_when_the_dump_carries_a_volume():
+    """With a volume the discs span the VOLUME's grid: 84.4 x 8.4 mm at 42.4, 4.4.
+
+    WHY not the plane stack's numbers: ``_volume_abs_grid`` places its image at
+    ``origin = (0.5 * cell,) * 3`` - the CENTRE of the first cell, not 0 - and
+    spans ``n - 1`` cells from there, so on the shipped lattice (62 x 212 x 22 at
+    cell 0.4 mm) the volume's y runs 0.2 .. 84.6 mm and its z 0.2 .. 8.6, while
+    the 213 x 22 plane stack beside it runs 0 .. 84.8 and 0 .. 8.4. The marker is
+    a cross-section of the slab the VOLUME view draws, so it takes the volume's
+    counts and sits half a cell in at the near end: 0.2 + 84.4 = 84.6.
+    """
+    plotter = _Plotter()
+    info = {
+        # The counts the loader publishes beside the volume it kept
+        # (``_volume_grid_dims`` reads them after the volume is present).
+        "nx": NX,
+        "ny": NY,
+        "nz": NZ,
+        poc_app.PLANE_KEY: np.zeros((N_ST, NY + 1, NZ), dtype=complex),
+        # A volume that fills that lattice: ``_add_markers`` reads the counts
+        # through ``_volume_grid_dims`` and never the field.
+        poc_app.VOLUME_KEY: np.zeros((NX, NY, NZ, 3), dtype=float),
+    }
+    poc_app._add_markers(plotter, info, _planes())
+
+    drawn = [mesh for _name, mesh, _kw in plotter.meshes]
+    assert len(drawn) == 2, f"expected two discs, got {plotter.names()}"
+    lo = 0.5 * CELL_MM
+    for mesh in drawn:
+        x0, x1, y0, y1, z0, z1 = mesh.bounds
+        assert x0 == pytest.approx(x1, abs=1e-4), "a disc is not a plane normal to x"
+        # ORDERED, per axis: the volume's own y extent on y and its z extent on
+        # z. A sorted pair of spans cannot see an axis swap (see the plane test
+        # above for the ribbon that got through on exactly that).
+        assert (y0, y1, z0, z1) == pytest.approx(
+            (lo, lo + (NY - 1) * CELL_MM, lo, lo + (NZ - 1) * CELL_MM), abs=1e-4
+        ), (
+            "the marker's y/z extents are not the volume grid's, in the axes "
+            f"they belong to: {((y0, y1, z0, z1))!r}"
+        )
+        # 0.2 .. 84.6 mm and 0.2 .. 8.6 mm, i.e. the volume image's own bounds -
+        # half a cell in at BOTH ends than a count read off the plane stack would
+        # put them, and level with the samples the volume view actually draws.
+        assert (0.5 * (y0 + y1), 0.5 * (z0 + z1)) == pytest.approx(
+            (lo + 0.5 * (NY - 1) * CELL_MM, lo + 0.5 * (NZ - 1) * CELL_MM), abs=1e-4
+        )
+    # THE USER-FACING CLAIM, and the reason this file has a marker section at
+    # all: a marker must not float outside the board. EVERY bound of BOTH
+    # markers lies inside the |E| volume's own box - on x too, where each marker
+    # is one plane at its own x inside the dump's 0.2 .. 24.6 mm - so the
+    # rectangle can never again be an 84.4 mm ribbon rising out of an 8.6 mm
+    # tall slab (measured before the fix: y 38.2 .. 46.6, z -37.8 .. 46.6).
+    box = (
+        lo,
+        lo + (NX - 1) * CELL_MM,
+        lo,
+        lo + (NY - 1) * CELL_MM,
+        lo,
+        lo + (NZ - 1) * CELL_MM,
+    )
+    for mesh in drawn:
+        x0, x1, y0, y1, z0, z1 = mesh.bounds
+        for axis, got0, got1, low, high in (
+            ("x", x0, x1, box[0], box[1]),
+            ("y", y0, y1, box[2], box[3]),
+            ("z", z0, z1, box[4], box[5]),
+        ):
+            assert got0 >= low - 1e-4 and got1 <= high + 1e-4, (
+                f"the marker's {axis} extent {got0:.4f}..{got1:.4f} mm floats "
+                f"outside the volume's {low:.4f}..{high:.4f} mm"
+            )
+    # The three anchors sit at the middle of the volume's y/z extent.
+    points, _labels, _kwargs = plotter.labels[0]
+    for _x, y, z in points:
+        assert (y, z) == pytest.approx((42.4, 4.4), abs=1e-4)
+
+
+def test_add_markers_keep_the_plane_stacks_numbers_when_there_is_no_volume():
+    """No volume: 84.8 x 8.4 mm at 42.4, 4.2 - the plane stack's own grid.
+
+    The ``nx`` / ``ny`` / ``nz`` keys are present and are the VOLUME's counts:
+    the loader publishes them beside every dump's raw stash, including the ones
+    whose volume was never kept, so a marker sized from those keys alone would
+    move half a cell off the slab actually drawn (84.4 against 84.8 mm, and its
+    centre from 4.2 to 4.4 mm in z). Only a PRESENT volume may retarget them.
+    """
+    plotter = _Plotter()
+    info = {
+        "nx": NX,
+        "ny": NY,
+        "nz": NZ,
+        poc_app.PLANE_KEY: np.zeros((N_ST, NY + 1, NZ), dtype=complex),
+    }
+    poc_app._add_markers(plotter, info, _planes())
+
+    drawn = [mesh for _name, mesh, _kw in plotter.meshes]
+    assert len(drawn) == 2, f"expected two discs, got {plotter.names()}"
+    for mesh in drawn:
+        x0, x1, y0, y1, z0, z1 = mesh.bounds
+        assert x0 == pytest.approx(x1, abs=1e-4), "a disc is not a plane normal to x"
+        # ORDERED, per axis, for the same reason as the two tests above: the
+        # fallback keeps the plane stack's NUMBERS (84.8 mm of y, 8.4 mm of z)
+        # and draws them on the axes those numbers name - it does not inherit
+        # the axis swap. A sorted pair here would pass on the swapped picture.
+        assert (y0, y1, z0, z1) == pytest.approx(
+            (0.0, NY * CELL_MM, 0.0, (NZ - 1) * CELL_MM), abs=1e-4
+        ), (
+            "the cell-count keys alone retargeted the markers onto an absent "
+            f"volume, or the fallback's y/z extents are transposed: {(y0, y1, z0, z1)!r}"
+        )
+        assert (0.5 * (y0 + y1), 0.5 * (z0 + z1)) == pytest.approx(
+            (0.5 * NY * CELL_MM, 0.5 * (NZ - 1) * CELL_MM), abs=1e-4
+        )
 
 
 def test_add_markers_puts_its_labels_on_the_mid_plane():

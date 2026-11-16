@@ -679,7 +679,13 @@ def test_the_cut_sheets_are_subsets_of_the_volume_image():
     info = _volume_info(volume)
     j, k = 2, 1
 
-    sheets = dict(poc_app.build_cut_sheets(info, poc_app._cut_layout(info, j, k)))
+    laid = poc_app._cut_layout(info, j, k)
+    # ``build_cut_sheets`` hands back ``(axis, sheet, clim)``: the range is the
+    # sheet's own and is pinned by the colour-scale tests further down.
+    sheets = {
+        axis: sheet
+        for axis, sheet, _clim in poc_app.build_cut_sheets(info, laid)
+    }
 
     assert sorted(sheets) == ["y", "z"]
     y_sheet, z_sheet = sheets["y"], sheets["z"]
@@ -737,7 +743,10 @@ def test_a_dump_with_no_volume_keeps_the_plane_stack_sheets():
     assert layout["z_mm"] == pytest.approx(3 * CELL_MM)
     assert poc_app._cut_axis_counts(info, 4, 5) == (4, 5)
 
-    sheets = dict(poc_app.build_cut_sheets(info, layout))
+    sheets = {
+        axis: sheet
+        for axis, sheet, _clim in poc_app.build_cut_sheets(info, layout)
+    }
     assert tuple(sheets["y"].dimensions) == (2, 1, 5)
     assert tuple(sheets["z"].dimensions) == (2, 4, 1)
     for sheet in sheets.values():
@@ -801,22 +810,33 @@ class _SheetPlotter(_ScenePlotter):
         return super().add_mesh(mesh, **kwargs)
 
 
-def test_the_volume_cut_sheets_are_drawn_on_the_volumes_own_colour_scale(
+def test_the_volume_cut_sheets_are_drawn_on_their_own_colour_scale(
     monkeypatch,
 ):
-    """Two ``add_mesh`` calls, ``scalars="e_abs"``, log-scaled on the volume's clim.
+    """Two ``add_mesh`` calls, ``scalars="e_abs"``, log on EACH sheet's own clim.
 
-    WHY the scale matters: the sheets are drawn from the volume's samples, and a
-    linear bar over |E| would show the peak and nothing else - while a second bar
-    over the same field would be the same numbers twice, hence
-    ``show_scalar_bar=False``.
+    WHY each sheet's own range and not the volume's: a cut is a SUBSET of the
+    field, so its peak is at most the volume's and can be far below it - painted
+    on the volume's range the sheet spends the top of the colour bar on values it
+    does not have (measured on the shipped dump at the default cuts: 65.6 V/m on
+    the y cut and 8.2 V/m on the z cut against 90.7 V/m in the volume). WHY the
+    scale matters at all: |E| spans tens of decades, so a linear sheet would show
+    the peak and nothing else - while a second colour bar over the same field
+    would be the same numbers twice, hence ``show_scalar_bar=False`` and the
+    ranges named in the corner legend instead.
 
     The real ``_cut_layout`` and ``build_cut_sheets`` are put back after
     ``_stub_scene``: the stubs exist to keep the rest of the scene out of the way,
     not to fake the sheets under test.
     """
     nx, ny, nz = 3, 4, 2
-    info = _volume_info(_index_volume(nx, ny, nz))
+    volume = _index_volume(nx, ny, nz)
+    # ONE sample far above the rest, deliberately off BOTH default cuts
+    # (j = ny // 2, k = nz // 2) so the volume's range differs from EITHER
+    # sheet's: with a monotone fixture every cut could accidentally share the
+    # volume's peak and this test could pass on the very bug it is about.
+    volume[0, ny - 1, 0, :] = 1000.0
+    info = _volume_info(volume)
     plotter = _SheetPlotter()
 
     _stub_scene(monkeypatch)
@@ -836,7 +856,10 @@ def test_the_volume_cut_sheets_are_drawn_on_the_volumes_own_colour_scale(
         (nx, 1, nz),
         (nx, ny, 1),
     ], "the sheets are not the volume's y and z slices"
-    clim = passed[poc_app.VOLUME_ABS_KEY]["clim"]
+    # The range the volume image itself was drawn on - the one the sheets must
+    # NOT be sharing.
+    volume_clim = passed[poc_app.VOLUME_ABS_KEY]["clim"]
+    assert volume_clim is not None, "the fixture volume built no colour range"
     for mesh, kwargs in cuts:
         assert kwargs["scalars"] == "e_abs", (
             f"a cut sheet was drawn on {kwargs['scalars']!r}, not the volume's field"
@@ -849,12 +872,26 @@ def test_the_volume_cut_sheets_are_drawn_on_the_volumes_own_colour_scale(
         assert kwargs["log_scale"] is True, (
             "a linear |E| sheet shows the peak and nothing else"
         )
-        assert kwargs["clim"] == clim, (
-            f"the sheet's range {kwargs['clim']!r} is not the volume's {clim!r}"
-        )
         # The sheet is a SUBSET of the volume image: same parent field object
         # values, no second colocation paid.
         assert "e_abs" in mesh.point_data.keys()
+        # ...but its RANGE is its own: the bar is capped 60 dB below the SHEET's
+        # own peak, read off the array the mesh actually carries.
+        own = np.asarray(mesh.point_data["e_abs"], dtype=float)
+        peak = float(own.max())
+        assert kwargs["clim"] == pytest.approx((peak * 1e-3, peak)), (
+            f"the sheet's range {kwargs['clim']!r} is not its own "
+            f"{((peak * 1e-3, peak))!r}"
+        )
+        assert kwargs["clim"] != pytest.approx(volume_clim), (
+            f"the sheet was painted on the volume's {volume_clim!r} - the top of "
+            "that bar is spent on values the sheet does not have"
+        )
+    # The spike sits off both cuts, so the volume's own bar must still reach it:
+    # sharing one range would have been the only way for these two to agree.
+    assert volume_clim == pytest.approx((1732.0508075688772e-3, 1732.0508075688772)), (
+        f"the volume's own colour range moved: {volume_clim!r}"
+    )
 
 
 
@@ -1120,34 +1157,79 @@ def test_a_marker_off_the_cut_quotes_the_volumes_grid_not_a_captured_slab():
 
 
 
-# --- (k) no colour range: linear, never a made-up one ---------------------
-# ``clim`` is READ from the reader that produced the image. Every path that
-# returns no image returns ``clim=None``, and the single path that returns one
-# returns ``(peak / 1000, peak)`` - so the key is present exactly when the image
-# is. The guard below is the belt on that brace, and it is what stops a future
-# refactor from turning a missing range into either a KeyError out of the cut
-# block or a fabricated bar.
+# --- (k) no positive sample on a sheet: linear, never a made-up range -----
+# ``clim`` is READ off the samples the sheet actually carries, and a sheet whose
+# samples are all zero (a cut off the edge of a field that does not reach it)
+# has no peak to take 60 dB below. The guard below is the belt on that brace: it
+# stops a future refactor from turning "no peak" into either a KeyError out of
+# the cut block or a fabricated bar.
 
 
-def test_a_volume_with_no_colour_range_drops_the_log_scale_instead_of_inventing_one(
+def _sheet_with(arrays):
+    """A stand-in sheet: ``_cut_sheet_clim`` reads nothing but ``point_data``."""
+    return types.SimpleNamespace(point_data=arrays)
+
+
+def test_cut_sheet_clim_is_none_without_a_finite_positive_sample():
+    """No range when there is no peak to take 60 dB below - never a guessed one.
+
+    WHY every one of these returns None and not a made-up ``(0, max)``: the
+    numbers end up as the colour bar's own numbers, so a range the samples never
+    had is a lie the reader cannot check. ``nan``/``inf`` are here because ONE
+    non-finite sample moves a max to inf or NaN and the picture is then wrong
+    everywhere, not just there; negatives because a log scale has no place to put
+    them; and the missing array because a sheet that carries another field is not
+    this function's business.
+    """
+    cases = {
+        "all zero": _sheet_with({"e_abs": np.zeros(4)}),
+        "one non-finite": _sheet_with({"e_abs": np.array([np.nan, np.inf, -1.0, 0.0])}),
+        "negatives only": _sheet_with({"e_abs": np.array([-3.0, -1.0])}),
+        "no e_abs array": _sheet_with({"ez_abs": np.array([1.0, 2.0])}),
+        "no point_data": types.SimpleNamespace(point_data=None),
+    }
+
+    for label, sheet in cases.items():
+        assert poc_app._cut_sheet_clim(sheet, "e_abs") is None, (
+            f"{label}: a colour range was invented for a sheet with no peak"
+        )
+
+
+def test_cut_sheet_clim_reads_the_sheets_own_peak():
+    """``(peak / 1000, peak)`` off the sheet's own array, ignoring zero and non-finite.
+
+    WHY a real ``ImageData``: it is what ``build_cut_sheets`` hands over, and the
+    array it stores is Fortran-ordered, so this is also the proof that the peak is
+    read off the values and not off an ordering.
+    """
+    import pyvista as pv
+
+    sheet = pv.ImageData(dimensions=(4, 1, 1))
+    sheet.point_data["e_abs"] = np.array([2.0, 50.0, 0.0, 5.0])
+
+    assert poc_app._cut_sheet_clim(sheet, "e_abs") == (0.05, 50.0)
+
+
+def test_a_cut_sheet_with_no_positive_sample_is_drawn_linear_not_on_a_made_up_range(
     monkeypatch,
+    capsys,
 ):
-    """``clim is None`` beside a real image: the sheet is drawn LINEAR, unframed.
+    """A cut with no finite positive sample: drawn LINEAR, with no ``clim``.
 
     WHY linear and not some fallback range: a fabricated clim would put numbers
     on the colour bar that the field never had, which is the kind of lie this
-    page refuses - whereas a linear sheet over |E| merely shows less. WHY it must
-    not raise: this runs inside the cut block's try, so a KeyError here would
-    cost the cuts AND the "cuts drawn" flag the legend reads, over a colour bar.
+    page refuses - whereas a linear sheet over zeros merely shows nothing, which
+    is the truth. WHY it must not raise: this runs inside the cut block's try, so
+    a KeyError here would cost the cuts AND the "cuts drawn" flag the legend
+    reads, over a colour bar.
+
+    The volume is NOT all zero (that is refused by the reader outright), but its
+    only positive sample sits at the corner, off both default cuts: the image
+    builds, and both sheets still come out empty.
     """
-    info = _volume_info(_index_volume(3, 4, 2))
-    image, _meta = poc_app._volume_abs_grid(info, CELL_MM)
-    assert image is not None, "the fixture volume did not build"
-    monkeypatch.setattr(
-        poc_app,
-        "_volume_abs_grid",
-        lambda *_a, **_k: (image, {"clim": None, "reason": None, "n": 0}),
-    )
+    volume = np.zeros((3, 4, 2, 3))
+    volume[0, 0, 0, 0] = 1.0
+    info = _volume_info(volume)
 
     meshes = _volume_scene_meshes(monkeypatch, info)
     cuts = [(mesh, kwargs) for mesh, kwargs in meshes if "scalars" in kwargs]
@@ -1155,15 +1237,234 @@ def test_a_volume_with_no_colour_range_drops_the_log_scale_instead_of_inventing_
     assert len(cuts) == 2, (
         f"expected the two cut sheets, got {[k.get('scalars') for _m, k in meshes]}"
     )
-    for _mesh, kwargs in cuts:
+    for mesh, kwargs in cuts:
         assert kwargs["scalars"] == "e_abs", (
             f"a sheet dropped off the volume's own field: {kwargs['scalars']!r}"
+        )
+        own = np.asarray(mesh.point_data["e_abs"], dtype=float)
+        assert float(own.max()) == 0.0, (
+            f"the fixture sheet is not empty, so this test proves nothing: {own!r}"
         )
         assert "log_scale" not in kwargs, (
             "a log scale was applied with no range to apply it over: "
             f"{kwargs!r}"
         )
         assert "clim" not in kwargs, (
-            f"a colour range was invented for a volume that had none: {kwargs!r}"
+            f"a colour range was invented for a sheet that had no peak: {kwargs!r}"
+        )
+    assert "cut sheets not drawn" not in capsys.readouterr().err, (
+        "an empty cut sheet cost the whole cut block"
+    )
+
+
+
+# --- (l) the range each cut was painted on reaches the READER --------------
+# The sheets are drawn on their own 60 dB range with NO colour bar of their own,
+# so the corner legend is the only place those numbers exist: without it a dark
+# cut and a dim one look the same. The numbers must be the ones the sheets were
+# actually painted on - and a sheet that was never on a range (the plane
+# fallback) must not be given one beside it.
+
+
+def _scene_meshes_and_legend(monkeypatch, info):
+    """``_draw_scene`` in VOLUME mode: the meshes AND the legend's extra lines.
+
+    ``_volume_scene_meshes`` with the ONE stub replaced: ``_marker_text`` is
+    patched LAST (``_stub_scene`` already replaced it, and that one throws the
+    lines away) so the second POSITIONAL argument - the extra legend lines
+    ``_draw_scene`` appends - is captured instead. Positional and not keyword,
+    because that is how the production call passes it: a signature that only
+    accepted ``extra_lines=`` would never see the production call at all.
+    """
+    plotter = _SheetPlotter()
+    captured = {}
+    _stub_scene(monkeypatch)
+    monkeypatch.setattr(poc_app, "_cut_layout", _REAL_CUT_LAYOUT)
+    monkeypatch.setattr(poc_app, "build_cut_sheets", _REAL_BUILD_CUT_SHEETS)
+
+    def _capture(_planes_arg, extra_lines=None):
+        captured["lines"] = list(extra_lines or [])
+        return "legend"
+
+    monkeypatch.setattr(poc_app, "_marker_text", _capture)
+    passed = dict(info)
+    passed.setdefault(poc_app.PLANE_KEY, np.ones((4, 4, 5), dtype=complex))
+
+    poc_app._draw_scene(plotter, passed, _planes(4), "volume", 0)
+    return plotter.meshes, captured.get("lines", [])
+
+
+def test_a_plane_fallback_cut_is_drawn_linear_and_quotes_no_range(monkeypatch):
+    """No volume: the sheets keep ``ez_abs``, go LINEAR, and quote no range.
+
+    WHY the fallback keeps its old picture: the captured |Ez| stack is a different
+    field from the colocated |E| volume - the FFT normalisation makes the two
+    ~2053x apart in V/m - and it has been drawn linear since the cuts existed, so
+    applying a volume's 60 dB range to it would silently rescale one field onto
+    the other's numbers. WHY the legend must stay silent too: the range sentence
+    is the colour bar's own numbers, and there is no bar here; ``cut colour
+    ranges: y cut on a linear bar ...`` beside a linear sheet is the legend
+    describing a picture that is not on screen.
+
+    The plane stack is all ones, so every sheet DOES have a finite positive peak
+    and ``build_cut_sheets`` hands one back: the guard under test is the one in
+    ``_draw_scene``, not an empty array accidentally proving nothing.
+    """
+    info = {
+        "path": Path("hand-built.npz"),
+        "cell_m": CELL_MM * 1e-3,
+        poc_app.PLANE_KEY: np.ones((4, 4, 5), dtype=complex),
+    }
+
+    meshes, legend = _scene_meshes_and_legend(monkeypatch, info)
+
+    cuts = [(mesh, kwargs) for mesh, kwargs in meshes if "scalars" in kwargs]
+    assert len(cuts) == 2, (
+        "expected the two plane-fallback cut sheets, got "
+        f"{[kwargs.get('scalars') for _m, kwargs in meshes]}"
+    )
+    for mesh, kwargs in cuts:
+        assert kwargs["scalars"] == "ez_abs", (
+            f"a fallback sheet was drawn on {kwargs['scalars']!r}, not the plane's |Ez|"
+        )
+        assert "ez_abs" in mesh.point_data.keys(), (
+            "the fixture sheet carries no field, so this test proves nothing"
+        )
+        assert "log_scale" not in kwargs, (
+            f"a volume's log scale was applied to a captured |Ez| sheet: {kwargs!r}"
+        )
+        assert "clim" not in kwargs, (
+            "a colour range was applied to a sheet that has never been on one: "
+            f"{kwargs!r}"
+        )
+    assert not [line for line in legend if "cut colour ranges" in line], (
+        "the corner legend quoted a colour range for sheets drawn linear: "
+        f"{legend!r}"
+    )
+
+
+def test_the_corner_legend_quotes_each_cuts_own_peak(monkeypatch):
+    """ONE ``cut colour ranges:`` line, naming each sheet's own peak in V/m.
+
+    WHY the legend and not a second colour bar: two bars over one set of colours
+    read as two fields, so the numbers moved into the corner - which makes this
+    line the ONLY place a reader can learn what a cut is painted on, and the
+    numbers therefore have to be the ones the sheets ACTUALLY got (hence the
+    cross-check against the drawn ``clim``, not only against the arrays).
+
+    The peak is taken off the volume grid by hand, on the layout's own ``(j, k)``,
+    so a legend that quoted the volume's range - or one sheet's range for both -
+    disagrees with it. The fixture volume carries one spike far above the rest,
+    deliberately OFF both default cuts, so no cut accidentally shares the
+    volume's peak; the two cuts' own peaks differ from each other as well.
+    """
+    nx, ny, nz = 3, 4, 2
+    volume = _index_volume(nx, ny, nz)
+    volume[0, ny - 1, 0, :] = 1000.0
+    info = _volume_info(volume)
+    ex, ey, ez = volume[..., 0], volume[..., 1], volume[..., 2]
+    e_abs = np.sqrt(ex * ex + ey * ey + ez * ez)
+    layout = _REAL_CUT_LAYOUT(info)
+    j, k = layout["j"], layout["k"]
+    y_peak = float(e_abs[:, j, :].max())
+    z_peak = float(e_abs[:, :, k].max())
+
+    meshes, legend = _scene_meshes_and_legend(monkeypatch, info)
+
+    expected = (
+        "cut colour ranges: "
+        f"y cut {y_peak * 1e-3:.4g} .. {y_peak:.4g} V/m (log), "
+        f"z cut {z_peak * 1e-3:.4g} .. {z_peak:.4g} V/m (log)"
+    )
+    quoted = [line for line in legend if line.startswith("cut colour ranges:")]
+    assert len(quoted) == 1, (
+        "expected exactly one colour-range line in the corner legend, got "
+        f"{quoted!r} out of {legend!r}"
+    )
+    assert quoted[0] == expected, (
+        f"the legend quotes {quoted[0]!r}, not the cuts' own peaks {expected!r}"
+    )
+    # ...and those are the numbers the sheets were DRAWN on: a legend that agrees
+    # with the arrays while the meshes carry another clim would be worse than no
+    # legend at all.
+    cuts = [(mesh, kwargs) for mesh, kwargs in meshes if "scalars" in kwargs]
+    dims = [tuple(mesh.dimensions) for mesh, _kwargs in cuts]
+    assert dims == [(nx, 1, nz), (nx, ny, 1)], (
+        f"the drawn sheets are not the y and z cuts: {dims!r}"
+    )
+    for axis, (mesh, kwargs), peak in zip(("y", "z"), cuts, (y_peak, z_peak)):
+        assert kwargs["clim"] == pytest.approx((peak * 1e-3, peak)), (
+            f"the {axis} sheet was painted on {kwargs['clim']!r} while the legend "
+            f"quotes its own peak {((peak * 1e-3, peak))!r}"
+        )
+        assert "e_abs" in mesh.point_data.keys(), (
+            f"the {axis} sheet carries no |E| field of its own"
+        )
+
+
+# --- (m) the same ranges, measured on the shipped solve --------------------
+# Every range above is a fixture's. These are the real ones, off the only field
+# data in this repo: the numbers the page puts in front of an operator.
+
+#: The shipped Build A artefacts: the dump carries the staggered ``e`` vector, so
+#: ``e_raw=True`` is what makes it a volume at all (the colocation is deferred to
+#: the first reader, ~0.84 s, and this test is a reader).
+NPZ = REPO_ROOT / "evidence" / "termination" / "build_A_50ohm_p51_ghostwave_fields.npz"
+
+
+def test_on_the_shipped_dump_each_cut_is_quoted_on_its_own_peak():
+    """Measured: y cut 65.57 V/m, z cut 8.22 V/m, volume 90.68 V/m - not one range.
+
+    WHY the real dump and not another fixture: a fixture can be built to any
+    ratio, so only the solve proves the three ranges genuinely DIFFER - and they
+    do, by an order of magnitude between the z cut and the volume. Painted on the
+    volume's range the z cut would spend nine tenths of the colour bar on values
+    it does not have.
+
+    The sheet's peak is checked twice: against its own array, and against the
+    slice I took off the volume image by hand, so a sheet cut from the wrong j or
+    k is caught rather than a merely plausible number.
+    """
+    if not NPZ.is_file():
+        pytest.skip(f"field dump absent: {NPZ}")
+    info = poc_app.load_dump(NPZ, e_raw=True)
+    cell_mm = float(info["cell_m"]) * 1e3
+    layout = poc_app._cut_layout(info)
+    assert layout["source"] == "volume", (
+        f"the shipped dump was cut from the plane stack: {layout['source']!r}"
+    )
+
+    image, meta = poc_app._volume_abs_grid(info, cell_mm)
+    assert meta["reason"] is None, f"the shipped volume was refused: {meta}"
+    volume_clim = meta["clim"]
+    nx, ny, nz = (int(v) for v in image.dimensions)
+    grid = np.asarray(image.point_data["e_abs"], dtype=float).reshape(
+        (nx, ny, nz), order="F"
+    )
+    peaks = {
+        "y": float(grid[:, layout["j"], :].max()),
+        "z": float(grid[:, :, layout["k"]].max()),
+    }
+    assert peaks["y"] != pytest.approx(peaks["z"]), (
+        "the two cuts share a peak on this dump, so the test cannot tell their "
+        f"ranges apart: {peaks!r}"
+    )
+
+    sheets = poc_app.build_cut_sheets(info, layout)
+    assert [axis for axis, _s, _c in sheets] == ["y", "z"], (
+        f"the cuts are not the y and z sheets: {[a for a, _s, _c in sheets]!r}"
+    )
+    for axis, sheet, clim in sheets:
+        own = float(np.asarray(sheet.point_data["e_abs"], dtype=float).max())
+        assert own == pytest.approx(peaks[axis]), (
+            f"the {axis} sheet peaks at {own!r}, not at {peaks[axis]!r} where the "
+            "volume's own slice does: the cut is not on the sample it reports"
+        )
+        assert clim == pytest.approx((own * 1e-3, own)), (
+            f"the {axis} cut's range {clim!r} is not its own peak "
+            f"{((own * 1e-3, own))!r}"
+        )
+        assert clim != pytest.approx(volume_clim), (
+            f"the {axis} cut was given the volume's {volume_clim!r}"
         )
 

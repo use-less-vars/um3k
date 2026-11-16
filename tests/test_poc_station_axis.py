@@ -335,9 +335,11 @@ def test_cut_sheets_sit_on_the_recorded_axis_and_carry_the_plane_data(build_a):
     cut = poc_app._cut_layout(info, stations_mm=stations)
     sheets = poc_app.build_cut_sheets(info, cut)
 
-    assert [label for label, _sheet in sheets] == ["y", "z"]
+    # Each entry is ``(axis, sheet, clim)``: the colour range is the sheet's own
+    # and is pinned by the volume-view tests, not here.
+    assert [label for label, _sheet, _clim in sheets] == ["y", "z"]
     plane = info[poc_app.PLANE_KEY]
-    for (label, sheet), dims, expected in (
+    for (label, sheet, _clim), dims, expected in (
         (sheets[0], (N_ST, 1, 22), np.abs(plane[:, cut["j"], :])),
         (sheets[1], (N_ST, 213, 1), np.abs(plane[:, :, cut["k"]])),
     ):

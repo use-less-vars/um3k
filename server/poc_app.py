@@ -3908,8 +3908,67 @@ def _cut_text(layout: dict) -> str:
     return text
 
 
+def _cut_sheet_clim(sheet, scalars: str):
+    """One cut sheet's own colour range ``(peak / 1000, peak)``, or None.
+
+    WHY per sheet and not the volume's: a cut is a SUBSET of the field, so its
+    own peak is what its samples span, and painting it on the volume's range
+    spends the top of the bar on values the sheet does not have - measured on the
+    shipped dump at the default cuts: 65.6 V/m on the y cut and 8.2 V/m on the z
+    cut against 90.7 V/m in the volume. The 1/1000 ratio is the same 60 dB span
+    ``_volume_abs_grid`` uses, for the same reason: |E| spans tens of decades, so
+    a linear bar would show the peak and nothing else.
+
+    Read off the SHEET's own array, never off the layout or the volume, so a
+    caller cannot be handed a range the sheet does not have. None means the sheet
+    carries no finite positive sample; the caller then drops the log scale rather
+    than inventing a range, because a fabricated clim is the kind of lie this
+    page refuses.
+    """
+    try:
+        values = np.asarray(sheet.point_data[scalars], dtype=float)
+    except (KeyError, TypeError):
+        return None
+    values = values[np.isfinite(values) & (values > 0.0)]
+    if values.size == 0:
+        return None
+    peak = float(values.max())
+    return (peak * 1e-3, peak)
+
+
+def _cut_clim_text(cut_clims: dict) -> str:
+    """The corner-legend line naming the range each DRAWN cut was painted on.
+
+    WHY a sentence and not a second colour bar: two bars over one set of colours
+    read as two fields. The numbers still have to be somewhere, or a reader cannot
+    tell a dark cut from a dim one. ``cut_clims`` is keyed by the axis and holds
+    the clim each VOLUME sheet was actually drawn on (None = drawn linear, no
+    positive sample); an axis that was never reached (a refused mesh), or that
+    was drawn from the plane fallback (which quotes no range), is simply not in
+    it.
+    """
+    parts = []
+    for axis in ("y", "z"):
+        if axis not in cut_clims:
+            continue
+        clim = cut_clims[axis]
+        if clim is None:
+            parts.append(f"{axis} cut on a linear bar (no positive sample)")
+        else:
+            parts.append(f"{axis} cut {clim[0]:.4g} .. {clim[1]:.4g} V/m (log)")
+    if not parts:
+        return ""
+    return "cut colour ranges: " + ", ".join(parts)
+
+
 def build_cut_sheets(info: dict, layout: dict) -> list:
     """Build the two cut sheets as one-sample-thick pyvista images.
+
+    Each entry is ``(axis, sheet, clim)``. ``clim`` is the ``(peak / 1000, peak)``
+    colour range of THAT sheet's own samples (:func:`_cut_sheet_clim`), or None
+    when it holds no finite positive value; the caller paints a volume sheet on it
+    and leaves the plane sheet exactly as it has always been drawn (linear, no
+    clim), so the no-volume picture does not change.
 
     WHICH samples they carry follows ``layout["source"]`` (:func:`_cut_layout`):
 
@@ -3937,7 +3996,10 @@ def build_cut_sheets(info: dict, layout: dict) -> list:
     if layout.get("source") == "volume":
         sheets = _volume_cut_sheets(info, layout)
         if sheets is not None:
-            return sheets
+            return [
+                (axis, sheet, _cut_sheet_clim(sheet, "e_abs"))
+                for axis, sheet in sheets
+            ]
 
     import pyvista as pv
 
@@ -3962,7 +4024,10 @@ def build_cut_sheets(info: dict, layout: dict) -> list:
     z_sheet.point_data["ez_abs"] = np.ascontiguousarray(
         np.abs(plane[:, :, k : k + 1]).ravel(order="F"), dtype=float
     )
-    return [("y", y_sheet), ("z", z_sheet)]
+    return [
+        ("y", y_sheet, _cut_sheet_clim(y_sheet, "ez_abs")),
+        ("z", z_sheet, _cut_sheet_clim(z_sheet, "ez_abs")),
+    ]
 
 
 def _volume_cut_sheets(info: dict, layout: dict):
@@ -3970,9 +4035,10 @@ def _volume_cut_sheets(info: dict, layout: dict):
 
     Subsets, not rebuilds: ``extract_subset`` keeps the parent's sample values,
     its spacing, its origin - rebased to where the slice actually sits - and the
-    ``e_abs`` array NAME, so the sheets are drawn on the volume's own scale (and
-    through the volume's own colour bar) without this function restating any of
-    them. Measured in this image on a (5, 4, 3) image at cell 0.4 mm and origin
+    ``e_abs`` array NAME, so a sheet carries the field, its lattice and its array
+    without this function restating any of them (its COLOUR range is the sheet's
+    own, taken by ``build_cut_sheets`` from the samples below). Measured in this
+    image on a (5, 4, 3) image at cell 0.4 mm and origin
     (0.2, 0.2, 0.2): the y extent ``(0, 4, 2, 2, 0, 2)`` comes back dims
     (5, 1, 3) at origin (0.2, 1.0, 0.2) - the CELL CENTRE of j = 2, not 0.8 -
     and the z extent ``(0, 4, 0, 3, 1, 1)`` comes back (5, 4, 1) at origin
@@ -4376,11 +4442,9 @@ def _add_plane_marker(
 ) -> None:
     """Draw ONE plane normal to x, centred at ``center_x`` - as its EDGE.
 
-    WHAT reaches the plotter: the BOUNDARY of the rectangle, not its face. The
-    ``pv.Plane`` is built exactly as it always was (same centre, same x
-    direction, same ``i_size`` / ``j_size``, so the rectangle occupies exactly
-    the same space) and only its boundary edges are handed to ``add_mesh``, in
-    the marker's colour at ``line_width=2``.
+    WHAT reaches the plotter: the BOUNDARY of the rectangle, not its face: the
+    four corners of the rectangle in the y-z plane at ``x = center_x``, closed
+    back to the first, in the marker's colour at ``line_width=2``.
 
     WHY an edge and not a 25 % sheet: the field page draws the whole-volume |E|
     as a translucent, log-scaled volume, and a filled sheet the size of the
@@ -4388,45 +4452,63 @@ def _add_plane_marker(
     S11 port x hid the very field the marker exists to point at. An outline
     marks the same place and occludes nothing.
 
+    WHY four EXPLICIT corners and not a ``pv.Plane``: a Plane is built in its own
+    x-y frame and then turned by ``direction``, which leaves the caller to work
+    out which of ``i_size`` / ``j_size`` landed on which WORLD axis - and that
+    reasoning was wrong here, silently, for as long as these markers have
+    existed. ``direction=(1, 0, 0)`` is a +90 degree turn about y, so the i axis
+    (+x) lands on -z while j stays on +y: ``i_size=y_span`` drew the 84.4 mm Y
+    span as a VERTICAL ribbon rising 84.4 mm out of an 8.6 mm tall box (measured
+    on the shipped dump's grid, cell 0.4 mm: y 38.2 .. 46.6 and z -37.8 .. 46.6
+    where the box is y 0.2 .. 84.6, z 0.2 .. 8.6 - the complaint about ribbons
+    stretching far outside the board, in numbers). A corner list cannot be
+    swapped: every coordinate is written in the axis it belongs to, so
+    ``y_span`` is ALONG y and ``z_span`` ALONG z, centred on ``y_mid`` /
+    ``z_mid``, and no rotation stands between the arguments and the picture.
+
+    WHY ``lines_from_points`` and not the old ``extract_feature_edges``: that
+    extractor existed only to reduce the Plane's triangulation to its border,
+    which made the marker depend on an edge-extraction API and forced the old
+    "a pyvista without one loses the marker" apology. Four points and a closed
+    polyline are the oldest primitive there is, and they carry no fill to
+    occlude the field with.
+
     WHY not ``style="wireframe"``: pyvista would then draw every triangulation
-    diagonal of the Plane as well, and the marker reads as a grey smear instead
-    of a rectangle.
+    diagonal as well, and the marker reads as a grey smear instead of a
+    rectangle.
 
     WHY one construction for two discs: the load plane and the S11 port plane
     differ only in the x they sit at and in the colour that names them, so they
-    are the same ``pv.Plane`` twice rather than two markers that could drift
-    apart. ``direction`` is x for both, which is the axis either plane cuts.
+    are the same corner list twice rather than two markers that could drift
+    apart - and both are normal to x, the axis either plane cuts.
 
-    Guarded: a pyvista that disagrees about a Plane keyword must cost the
-    marker, not the viewer. ``what`` names the plane in that message.
+    Guarded: a pyvista that cannot build a polyline, or a plotter that refuses
+    one, must cost the marker and not the viewer. ``what`` names the plane in
+    that message.
     """
     import pyvista as pv
 
     try:
-        plane = pv.Plane(
-            center=(center_x, y_mid, z_mid),
-            direction=(1.0, 0.0, 0.0),
-            i_size=y_span,
-            j_size=z_span,
+        y0, y1 = y_mid - 0.5 * y_span, y_mid + 0.5 * y_span
+        z0, z1 = z_mid - 0.5 * z_span, z_mid + 0.5 * z_span
+        # The five points of a CLOSED rectangle: the last repeats the first, so
+        # the fourth side is drawn too. Only the four edges go to the plotter -
+        # the fill is what occluded the |E| volume - and each corner is written
+        # in the axis it belongs to, which is the whole point of the list: no
+        # rotation sits between ``y_span`` and the y extent below.
+        corners = np.asarray(
+            [
+                (center_x, y0, z0),
+                (center_x, y1, z0),  # the Y span, along y
+                (center_x, y1, z1),  # the Z span, along z
+                (center_x, y0, z1),
+                (center_x, y0, z0),  # back to the start: the fourth side
+            ],
+            dtype=float,
         )
-        # Only the boundary goes to the plotter: the fill is what occluded the
-        # |E| volume, and every other candidate fill is worse - the Plane itself
-        # at 25 % is the lid this marker no longer draws, and
-        # ``extract_all_edges`` would add the triangulation diagonals.
-        #
-        # WHY there is no fallback for a pyvista without an edge extractor:
-        # rebuilding the rectangle from ``plane.bounds`` would both assume the
-        # plane is axis aligned (true only while ``direction`` stays x) and
-        # duplicate geometry this call already hands over for free. So such a
-        # pyvista loses the MARKER - the except below names it on stderr - and
-        # the occlusion does not come back.
-        outline = plane.extract_feature_edges(
-            boundary_edges=True,
-            feature_edges=False,
-            manifold_edges=False,
-            non_manifold_edges=False,
+        plotter.add_mesh(
+            pv.lines_from_points(corners), color=color, line_width=2, render=render
         )
-        plotter.add_mesh(outline, color=color, line_width=2, render=render)
     except Exception as exc:  # noqa: BLE001 - losing the plane is survivable
         print(f"[poc_app] {what} plane not drawn: {exc}", file=sys.stderr)
 
@@ -4460,6 +4542,10 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
 
     The planes are guarded: a pyvista that disagrees about a Plane keyword must
     cost the plane, not the viewer.
+
+    The rectangles are sized from the |E| volume's grid when the dump carries a
+    volume, and from the plane stack's otherwise - see the block below for why
+    the two lattices sit half a cell apart.
     """
     cell_mm = planes["cell_mm"]
     # n samples span n - 1 cells: ``build_grid`` places its mesh POINTS at
@@ -4467,9 +4553,32 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
     # ``(n - 1) * cell``. Using ``n * cell`` put each marker's rectangle one
     # cell past the outermost sample at BOTH ends, so the red and purple
     # rectangles visibly overhung the volume they are cross-sections of.
-    y_span = (info[PLANE_KEY].shape[1] - 1) * cell_mm
-    z_span = (info[PLANE_KEY].shape[2] - 1) * cell_mm
-    y_mid, z_mid = 0.5 * y_span, 0.5 * z_span
+    #
+    # WHICH lattice those counts come from: the |E| volume's, whenever the dump
+    # carries one - that is the slab the volume view draws, and it is NOT the
+    # plane stack's. ``_volume_abs_grid`` places its image at
+    # ``origin = (0.5 * cell,) * 3``, the CENTRE of the first cell rather than 0,
+    # and spans ``n - 1`` cells from there, so the same rule read off the plane
+    # counts lands half a cell outside at the near end and level at the far one:
+    # on the shipped dump (ny 212, nz 22 at cell 0.4 mm) the volume's y spans
+    # 0.2 .. 84.6 and its z 0.2 .. 8.6, while the 213 x 22 plane stack spans
+    # 0 .. 84.8 and 0 .. 8.4. The counts are read through ``_volume_grid_dims`` -
+    # the one resolver the volume and both cuts are built from, whose memo is the
+    # image already on screen in the volume branch - so the markers cannot
+    # disagree with the field they cross-section. No volume -> the plane stack's
+    # own spans, exactly as before: a dump with no volume has nothing to line up
+    # with, and every picture of one is unchanged.
+    dims = _volume_grid_dims(info)
+    if dims is not None:
+        _n_x, n_y, n_z = (int(v) for v in dims)
+        lo = 0.5 * cell_mm
+        y_span = max(n_y - 1, 0) * cell_mm
+        z_span = max(n_z - 1, 0) * cell_mm
+        y_mid, z_mid = lo + 0.5 * y_span, lo + 0.5 * z_span
+    else:
+        y_span = (info[PLANE_KEY].shape[1] - 1) * cell_mm
+        z_span = (info[PLANE_KEY].shape[2] - 1) * cell_mm
+        y_mid, z_mid = 0.5 * y_span, 0.5 * z_span
 
     if planes.get("show_load_plane", True):
         _add_plane_marker(
@@ -4560,6 +4669,9 @@ def _draw_scene(
     # drawn: the legend must not claim sheets that pyvista refused.
     cut_layout = _cut_layout(info, j_cut, k_cut, planes.get("stations_mm"))
     cuts_drawn = False
+    # Axis -> the clim each cut sheet was drawn on, for the corner legend. Empty
+    # in the port view (no cuts there) and in a frame pyvista refused the sheets.
+    cut_clims: dict = {}
 
     try:
         plotter.clear()
@@ -4713,10 +4825,12 @@ def _draw_scene(
             except Exception as exc:  # noqa: BLE001 - see comment above
                 print(f"[poc_app] |Ez| volume not drawn: {exc}", file=sys.stderr)
         # The two cut sheets: one sample each, drawn opaque enough to read the
-        # field on, sharing the volume's colour scale (so only one bar is
-        # shown). Guarded - losing the cuts must cost the cuts, not the view.
+        # field on, each on its OWN 60 dB colour range (see below) with no bar of
+        # its own - the volume's bar stays the single one on screen, and the
+        # corner legend names what each cut was painted on. Guarded - losing the
+        # cuts must cost the cuts, not the view.
         try:
-            for _axis, sheet in build_cut_sheets(info, cut_layout):
+            for _axis, sheet, sheet_clim in build_cut_sheets(info, cut_layout):
                 # WHICH scalar: the volume sheets carry ``e_abs`` straight off the
                 # |E| image, the fallback sheets ``ez_abs``. Read off the SHEET's
                 # own arrays rather than off the layout, so a volume that refused
@@ -4724,22 +4838,29 @@ def _draw_scene(
                 # from the array it actually carries.
                 scalars = "e_abs" if "e_abs" in sheet.point_data else "ez_abs"
                 style = {}
-                # ``clim`` is READ from the reader that produced the image, never
-                # guessed: checked against _volume_abs_grid, every path that
-                # returns no image returns ``clim=None``, and the single path that
-                # does return one returns ``(peak / 1000, peak)`` with a finite
-                # positive peak - so the key is present exactly when the image is,
-                # and a cache entry that lost it makes that reader miss and hand
-                # back None rather than a bare clim. The ``is not None`` below is
-                # the belt to that brace: it drops the log scale instead of
-                # inventing a colour range, because a fabricated clim is the kind
-                # of lie this page refuses.
-                clim = abs_meta.get("clim") if isinstance(abs_meta, dict) else None
-                if scalars == "e_abs" and abs_image is not None and clim is not None:
-                    # The volume's own bar and its own 60 dB range: |E| spans tens
-                    # of decades, so a linear sheet would show the peak and
-                    # nothing else - and a second bar over the same field would
-                    # be the same numbers twice.
+                # ``clim`` is the SHEET's own range, computed by
+                # ``build_cut_sheets`` from the samples the sheet actually
+                # carries - never the volume's, and never guessed. WHY per sheet:
+                # a cut is a subset of the field, so its peak is at most the
+                # volume's and can be far below it (measured on the shipped dump
+                # at the default cuts: 65.6 V/m on the y cut and 8.2 V/m on the z
+                # cut against 90.7 V/m in the volume), and a sheet painted on the
+                # volume's range spends the top of the bar on values it does not
+                # have. The single bar on screen is still the volume's, and its
+                # clim is untouched; the corner legend names each cut's range
+                # instead of adding a second bar over the same colours. The
+                # ``is not None`` is the belt to that brace: a sheet with no
+                # finite positive sample drops the log scale instead of inventing
+                # a range, because a fabricated clim is the kind of lie this page
+                # refuses.
+                #
+                # The range is applied to the VOLUME sheets only: the plane
+                # fallback has always been drawn linear with no range quoted, and
+                # a dump with no volume must keep the picture it had.
+                clim = sheet_clim if scalars == "e_abs" else None
+                if clim is not None:
+                    # |E| spans tens of decades, so a linear sheet would show the
+                    # peak and nothing else: log, on the sheet's own 60 dB span.
                     style = {"log_scale": True, "clim": clim}
                 plotter.add_mesh(
                     sheet,
@@ -4749,6 +4870,14 @@ def _draw_scene(
                     show_scalar_bar=False,
                     **style,
                 )
+                # What this cut was ACTUALLY painted on, for the corner legend:
+                # recorded only after the mesh is on the plotter, so a refused
+                # sheet never gets a range claimed for it - and only for the
+                # volume sheets, because the plane fallback was never on a range
+                # at all and naming one beside it would describe a bar the reader
+                # is not looking at.
+                if scalars == "e_abs":
+                    cut_clims[_axis] = clim
                 # THE EDGE, the same one the port plane draws above and for the
                 # same reason: a sheet ONE SAMPLE thick has no flank for the light
                 # to fall on, so on its own it shows colour with no visible extent
@@ -4804,10 +4933,17 @@ def _draw_scene(
             font_size=10,
             color="black",
         )
+    legend_lines = list(
+        _marker_cut_lines(planes, cut_layout, cuts_drawn, view_mode)
+    )
+    # The cuts' own colour ranges ride in the SAME corner legend: a second colour
+    # bar over the one set of colours would read as a second field, and without
+    # the numbers a reader cannot tell a dark cut from a dim one.
+    clim_text = _cut_clim_text(cut_clims)
+    if clim_text:
+        legend_lines.append(clim_text)
     plotter.add_text(
-        _marker_text(
-            planes, _marker_cut_lines(planes, cut_layout, cuts_drawn, view_mode)
-        ),
+        _marker_text(planes, legend_lines),
         name="marker_legend",
         position="lower_left",
         font_size=8,
