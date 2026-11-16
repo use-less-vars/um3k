@@ -1409,13 +1409,20 @@ def _renderable_structure_ids(structures) -> list:
 
 
 def _record_only_refusal(requested_id, structures) -> str:
-    """The refusal for an entry with no dump: name it, say why, name what works."""
+    """The refusal for a dump report on an entry with no dump: name the way through.
+
+    Used by the two dump-READING exits (--list-keys, --dump-state), which have no
+    board to describe and so cannot fall back to one. The server itself no longer
+    refuses such an entry: it serves its BOARD page, so this message says so
+    rather than implying the entry cannot be opened at all.
+    """
     renderable = ", ".join(_renderable_structure_ids(structures))
     return (
         f"--structure {requested_id} is record only: this registry entry has "
         f"S-parameters recorded but no field dump on disk, so there is no field "
-        f"data to show for it, and this viewer will not substitute a different "
-        f"structure's; renderable structures: {renderable or 'none'}"
+        f"data to list or to dump - the entry opens as its BOARD page and nothing "
+        f"else, and this viewer will not substitute a different structure's; "
+        f"renderable structures: {renderable or 'none'}"
     )
 
 
@@ -3560,28 +3567,118 @@ def _geom_mm(info: dict, record, x_s21_mm=None, x_s21_src=None) -> dict:
     return out
 
 
+def _page_has_board(info) -> bool:
+    """Whether ``info`` already carries the board's own scale.
+
+    The ONE number that decides it is the cell size: every placement in
+    ``_vis_geometry`` is ``count x cell``, so a page with a cell and two counts
+    has a board to draw and a page without one has nothing to draw it from.
+    """
+    if not isinstance(info, dict):
+        return False
+    return _finite(info.get("cell_m")) is not None
+
+
+def _builder_board() -> dict:
+    """The board a page with NO data draws, from the builder that defines it.
+
+    WHY the builder and not a record: :func:`emfit.studies.microstrip_reference_board`
+    IS the default cross-section of :func:`emfit.studies.microstrip_wave` as a
+    board spec, and ``MicrostripBoard.to_cell_counts`` is the one function that
+    turns a spec into the mesh that study builds. Taking the numbers from there
+    means a page with no record on disk still draws the board the study would
+    solve on, at the scale the builder guarantees - and a spec that stops fitting
+    the mesh raises the builder's own ValueError here instead of producing a
+    plausible-looking picture.
+
+    WHY ``load_x_mm`` is NaN and ``xcut_near_mm`` is the port plane: the
+    reference board declares NO load (``loads == ()``: the strip runs out into
+    the far absorber), so there is no load plane to open a gap at. The strip is
+    then ONE run from the port plane to the far wall, which is exactly what the
+    two segment sites in ``_vis_geometry`` draw when the near cut sits on the
+    port: the feed segment needs a load this board does not have, and the stub
+    carries the whole line.
+
+    ``x_mm`` is the node axis the stub ends on - cell x index, so its last entry
+    is one cell short of the box, exactly as the axis a dump records.
+
+    Returns:
+        An ``info`` dict with every key the board draw sites read.
+    """
+    # Imported on use, like every other emfit use in this module: the CLI paths
+    # (--help, --list-keys) stay stdlib + numpy only.
+    from emfit import studies as studies_mod
+
+    spec = studies_mod.microstrip_reference_board()
+    counts = spec.to_cell_counts(
+        n_sub=studies_mod.MS_N_SUB, n_pml=studies_mod.MS_N_PML
+    )
+    cell = counts["cell"]
+    cell_mm = cell * 1e3
+    # The outline IS the grid: the builder sizes ``length`` to ``x_far`` and
+    # ``width`` to the lateral cells, so the two counts are the box over the cell
+    # and never a second copy of the study's arithmetic.
+    nx = int(round(spec.length / cell))
+    return {
+        "format": None,
+        "cell_m": cell,
+        "nx": nx,
+        "ny": int(round(spec.width / cell)),
+        "nz": studies_mod.MS_N_SUB + studies_mod.MS_N_AIR + studies_mod.MS_N_TOP,
+        "substrate_h_mm": spec.h * 1e3,
+        "strip_w_mm": spec.w * 1e3,
+        "port_x_mm": spec.x_port * 1e3,
+        "load_x_mm": float("nan"),
+        "xcut_near_mm": spec.x_port * 1e3,
+        "x_mm": [index * cell_mm for index in range(nx)],
+    }
+
+
+def _builder_page(structure_id=None) -> dict:
+    """The page dict around :func:`_builder_board`: no path, no record, no timeline."""
+    return {
+        "path": None,
+        "info": _builder_board(),
+        "planes": None,
+        "multifreq": None,
+        "record": None,
+        "structure_id": structure_id,
+        "is_vis": False,
+    }
+
+
 def _bare_board_page(structure=None, record_path=None, structure_id=None) -> dict:
     """A page dict for a structure whose BOARD is drawn with no dump at all.
 
     WHY this exists: a record-only structure has a study record on disk but no
     field dump, so there is no field to paint - yet the board the study solved on
-    is fully described by that record (cell, grid counts, substrate height, strip
-    width, both port positions). Booting the viewer with nothing to show used to
-    leave the centre column empty; this hands the same page plumbing a page whose
-    ``info`` carries those numbers, so ``_vis_geometry`` draws the substrate, the
-    strip and the two port wires exactly as it does over a dump.
+    is often fully described by that record (cell, grid counts, substrate height,
+    strip width, both port positions). Booting the viewer with nothing to show
+    used to leave the centre column empty; this hands the same page plumbing a
+    page whose ``info`` carries those numbers, so ``_vis_geometry`` draws the
+    substrate, the strip and the port wires exactly as it does over a dump.
 
     WHY every unknown is NaN and never a constant: the draw sites test
     ``isfinite()``, so a number the record did not carry must arrive as NaN to
     keep that part absent. A fabricated cell size would put the board at a scale
     nobody measured.
 
+    WHY a record that resolves NO mesh falls through to :func:`_builder_page`:
+    the numbers then come from the builder that defines the default cross-section
+    (emfit.studies.microstrip_reference_board) rather than from a constant written
+    here, and the fallback replaces the WHOLE board - a record carrying a cell but
+    not the counts is still a scale nobody measured, and mixing the two sources in
+    one dict would be a board neither of them describes.
+
     WHY ``is_vis`` is False and there is no ``nt``: this page claims NO timeline,
     which is the existing "bare field dump" case in run_web_vis (no player, no
     frame range), not a new kind of page.
     """
+    sid = structure_id or (
+        structure.get("id") if isinstance(structure, dict) else None
+    )
     path = record_path
-    if path is None:
+    if path is None and structure is not None:
         path = _structure_artifact_path(structure, "sparams")
     record = load_record(path) if path is not None else None
     geom = _geom_mm({}, record)
@@ -3614,21 +3711,21 @@ def _bare_board_page(structure=None, record_path=None, structure_id=None) -> dic
         "load_x_mm": _mm("load_x_mm"),
         "xcut_near_mm": _mm("xcut_near_mm"),
     }
-    if record is None:
+    if not _page_has_board(board):
         print(
-            "[poc_app] no study record for "
+            "[poc_app] no study record with a mesh for "
             + _structure_label(structure)
-            + ": the page has no board to draw",
+            + ": the board is drawn from the emfit builder instead",
             file=sys.stderr,
         )
+        return _builder_page(sid)
     return {
         "path": None,
         "info": board,
         "planes": None,
         "multifreq": None,
         "record": record,
-        "structure_id": structure_id
-        or (structure.get("id") if isinstance(structure, dict) else None),
+        "structure_id": sid,
         "is_vis": False,
     }
 
@@ -9334,6 +9431,19 @@ def run_web_vis(
     # solve REPLACES the page (apply_page) while the server keeps running. A
     # closure that captured `info` directly would keep drawing the dump that is
     # no longer on disk under the name the operator just re-solved for.
+    # A BOOT WITH NO DATA TO DRAW still has a board. A page handed neither a
+    # dump nor a page dict carries no cell and no counts, so every placement in
+    # _vis_geometry would name itself absent and the centre column would open
+    # empty. The builder that defines the default cross-section
+    # (emfit.studies.microstrip_reference_board, via _builder_page) describes the
+    # board exactly, so the page with nothing to show gets THAT board - not a
+    # read of somebody else's study record, which a structure may not have at all.
+    if loaded_page is None and not _page_has_board(info):
+        loaded_page = _builder_page(
+            structure.get("id") if isinstance(structure, dict) else None
+        )
+        info = loaded_page["info"]
+
     page = dict(loaded_page) if loaded_page is not None else {
         "path": info.get("path"),
         "info": info,
@@ -12327,15 +12437,6 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
-        "--bare-board",
-        action="store_true",
-        dest="bare_board",
-        help=(
-            "draw the structure's BOARD from its study record and nothing else: "
-            "no field dump, no timeline, no solve (the entry need not have a dump)"
-        ),
-    )
-    parser.add_argument(
         "--station", type=int, default=4, help="initial station index (default: 4)"
     )
     parser.add_argument(
@@ -12361,28 +12462,20 @@ def main(argv=None) -> int:
             f"valid ids: {valid or 'none (structures.json unreadable)'}"
         )
 
-    # A record-only entry is REFUSED, never substituted: its S-parameters were
-    # recorded without a field solve, and the only field data on disk belongs to
-    # a different case. The check is on the resolved entry, so it covers
-    # --structure OMITTED as well as given - args.structure is DEFAULT_STRUCTURE
-    # there, so if the default itself had no dump this same branch would fire on
-    # it, with the same message and the same exit status, rather than rendering
-    # run A under the default's name. It runs before load_dump, so a refusal
-    # reads nothing and writes no half-finished state file.
-    # --bare-board is the ONE exception, and it is opt-in: it reads no dump at
-    # all, so the reason for the refusal ("the only field data on disk belongs to
-    # a different case") does not apply to a page that shows no field data.
-    if _structure_is_record_only(structure) and not args.bare_board:
-        parser.error(_record_only_refusal(args.structure, structures))
-
-    if args.bare_board:
-        # A page, not a report: the two dump-reading exits below have no board to
-        # describe, so asking for both is a usage error rather than a chosen one.
+    # A record-only entry has NO field dump: its S-parameters were recorded
+    # without a field solve, and the only field data on disk belongs to a
+    # different case, so nothing of another structure's may be substituted for
+    # it. What it does have is a board - the mesh builder describes it, and the
+    # record describes it when the record carries one - so the entry opens the
+    # BOARD page instead of failing: no dump, no timeline, no solve. This is the
+    # default for such an entry rather than a flag, because an entry the viewer
+    # cannot open at all is what the flag existed to work around. The check is on
+    # the resolved entry, so it covers --structure OMITTED as well as given.
+    if _structure_is_record_only(structure):
+        # The two dump-reading exits below have no board to describe, so asking
+        # for one of them here is a usage error rather than a chosen one.
         if args.list_keys or args.dump_state:
-            parser.error(
-                "--bare-board serves the board page; it cannot be combined with "
-                "--list-keys or --dump-state"
-            )
+            parser.error(_record_only_refusal(args.structure, structures))
         bare_page = _bare_board_page(structure, structure_id=args.structure)
         return run_web_vis(
             bare_page["info"],
