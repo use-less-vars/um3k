@@ -1672,3 +1672,138 @@ def test_watching_the_clip_piles_up_neither_bars_nor_actors(volume_page):
             "not on screen"
         )
 
+
+
+def test_the_frame_label_counts_the_positions_the_player_steps(desync_page):
+    """The "frame k / n" label is ONE pure helper, and n is the player's count.
+
+    ``_frame_label`` is the only place that sentence is composed, and it is what
+    ``_show`` prints, so the denominator a reader sees is the number of
+    positions the scrubber can actually reach. On the desync dump that is the
+    volume's THREE frames, not the twelve plane frames the file stores: a label
+    reading "frame 1 / 12" offers nine positions that do not exist.
+    """
+    live = desync_page
+    three = len(DESYNC_VOLUME_STEPS)
+    assert app._frame_label(0, three) == f"frame 1 / {three}", (
+        f"the label composes {app._frame_label(0, three)!r}, not 'frame 1 / 3'"
+    )
+    assert app._frame_label(three - 1, three) == f"frame {three} / {three}", (
+        "the LAST position no longer prints as the last frame: "
+        f"{app._frame_label(three - 1, three)!r}"
+    )
+    assert app._frame_label(0, None) is None, (
+        "a page with no timeline composed a label instead of leaving it ABSENT: "
+        "None is 'no timeline', never 'frame 1 / None'"
+    )
+
+    with _render_doubled():
+        live.show(0, "ycut")
+    nt = int(live.page["info"]["nt"])
+    assert live.state.frame_label == f"frame 1 / {three}", (
+        f"the player printed {live.state.frame_label!r} on a timeline of "
+        f"{three} positions: the denominator is the dump's {nt} plane frames, "
+        "not the count the player steps"
+    )
+
+
+def test_the_state_dump_counts_the_frames_the_player_steps(desync_page):
+    """``_animation_block`` must not drift from ``_synced_frame_counts``.
+
+    The state document is what an operator reads to check what the page
+    believes, so its two counts - and the wall clock built from them - are
+    claims. On the desync dump the y-cut timeline is the volume's three frames
+    while the file stores twelve: reporting twelve claims positions the player
+    cannot reach and a play time three times too long.
+    """
+    info = desync_page.page["info"]
+    nt, nt_x = int(info["nt"]), int(info["nt_x"])
+    synced = app._synced_frame_counts(info, nt, nt_x)
+    assert synced == (len(DESYNC_VOLUME_STEPS), nt_x), (
+        f"the fixture stopped desynchronising: synced {synced} against "
+        f"({nt}, {nt_x}), so nothing below can tell the two clocks apart"
+    )
+
+    block = app._animation_block(info)
+    assert block["frames"] == synced[0] != nt, (
+        f"the state dump says the animation has {block['frames']} frames, not "
+        f"{synced[0]}: it is counted from the dump's {nt} plane frames, which "
+        "is more positions than the player can step"
+    )
+    assert block["frames_xcut"] == synced[1], (
+        f"the x-cut count is {block['frames_xcut']}, not {synced[1]}: the "
+        "x-cut clock is untouched by the volume and must stay so"
+    )
+    assert block["wall_clock_s"] == pytest.approx(
+        synced[0] / block["fps"], rel=1e-12
+    ), (
+        f"the wall clock is {block['wall_clock_s']} s: play time is counted on "
+        f"the dump's {nt} plane frames, not on the {synced[0]} the player shows"
+    )
+    assert block["planes"][0]["frames"] == nt, (
+        "the stored ez_ycut plane is reported as holding "
+        f"{block['planes'][0]['frames']} frames, not the {nt} it holds: a "
+        "plane entry states a fact about the FILE, not about the timeline"
+    )
+
+
+def test_the_left_panel_header_counts_the_frames_the_player_steps(tmp_path):
+    """The LEFT column's header line states the PLAYER's timeline length.
+
+    ``build_left_panel`` prints ``state.page_source_text`` (um3k_panels.py:38) and
+    ``run_web_vis`` fills it from ``_page_source_text(info, nt)`` with the ``nt``
+    the timeline fence has already re-synced to the volume's own clock
+    (poc_app.py:10047, then 10292) - a DIFFERENT expression from the state dump's
+    ``_animation_block``, so the two can drift apart. On the desync dump the
+    y-cut timeline is the volume's three frames while the file stores twelve: a
+    header reading "12 frames on ez_ycut" would name a length the scrubber
+    beside it cannot reach, and one reading "3 frames on ez_ycut" would name a
+    length the ARRAY does not hold. So when the two numbers differ the header
+    must quote both - "animation, 3 of 12 frames on ez_ycut" - and when they
+    agree (a page with no |E| volume) it must keep the plain one-number form.
+
+    Booted HERE instead of read off the module-scoped ``desync_page``: the trame
+    server is process-wide (see ``_boot``), so ``state`` is shared and every
+    later boot in this file would overwrite ``page_source_text`` under the test -
+    the desync dump has to be the LAST write.
+    """
+    three = len(DESYNC_VOLUME_STEPS)
+    with _render_doubled():
+        live = _boot(tmp_path, with_volume=True, payload=_desync_payload())
+        _silence_view(live)
+        info = live.page["info"]
+        nt = int(info["nt"])
+        assert nt > three, (
+            f"the desync dump has {nt} plane frames against {three} volume "
+            "frames: the volume is not the coarser recording, so there is no "
+            "desynchronisation to test"
+        )
+        assert app._volume_player_plan(info, "ycut")["frames"] == three, (
+            "the player does not step the volume's frames on this dump, so "
+            "nothing below can tell the two clocks apart"
+        )
+        text = live.state.page_source_text
+    assert f"animation, {three} of {nt} frames on ez_ycut" in text, (
+        f"the left panel prints {text!r}, not 'animation, {three} of {nt} "
+        "frames on ez_ycut': the timeline is the player's three positions "
+        f"while the stored ez_ycut array holds {nt}, and a header that quotes "
+        "only one of the two numbers names the wrong one for the other"
+    )
+
+    # The same helper on a page whose two counts agree: nothing that was
+    # already true may start reading oddly.
+    with _render_doubled():
+        plain = _boot(tmp_path, with_volume=False)
+        _silence_view(plain)
+        n = int(plain.page["info"]["nt"])
+        plain_text = plain.state.page_source_text
+    assert f"animation, {n} frames on ez_ycut" in plain_text, (
+        f"a dump with no |E| volume prints {plain_text!r}, not 'animation, {n} "
+        "frames on ez_ycut': its timeline and its stored array are one clock, "
+        "so the plain form must be untouched"
+    )
+    assert " of " not in plain_text, (
+        f"a page whose two frame counts agree printed {plain_text!r}: the "
+        "'of' form is for a page where they DIFFER"
+    )
+

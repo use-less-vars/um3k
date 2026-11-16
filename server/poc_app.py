@@ -417,6 +417,20 @@ def _frame_span_max(nt, nt_x, mode: str):
     return None if frames is None else int(frames) - 1
 
 
+def _frame_label(index, frames):
+    """The player's "frame k / n" label, or None on a page with no timeline.
+
+    The ONE place that sentence is composed, and ``frames`` is the count the
+    PLAYER steps - the synchronised one (``_synced_frame_counts``) - so the
+    denominator cannot be the dump's own plane-frame count while the slider and
+    the play loop are counted on the volume's clock. None is "no timeline",
+    never "frame 1 / None".
+    """
+    if frames is None:
+        return None
+    return f"frame {int(index) + 1} / {int(frames)}"
+
+
 def _load_series_block(data, path: Path):
     """The load's own V(t)/I(t) trace as ONE state block, or ``(None, reason)``.
 
@@ -883,6 +897,13 @@ def _page_source_text(info: dict, nt=None) -> str:
 
     Pure over its arguments, like _structure_readout_text and _scale_label, so
     boot and a live page swap print the same sentence from the same code.
+
+    ``nt`` is the PLAYER's timeline length, which is the |E| volume's coarser
+    clock whenever that film is present (see _synced_frame_counts). The stored
+    ``ez_ycut`` array can hold more frames than that, so when the two numbers
+    differ the line quotes both - ``animation, 3 of 12 frames on ez_ycut`` -
+    rather than letting one number be read as a claim about the array it names.
+    When they agree the plain form is unchanged.
     """
     try:
         name = Path(info.get("path")).name
@@ -906,7 +927,17 @@ def _page_source_text(info: dict, nt=None) -> str:
         else:
             count = f"{n_st} stations"
         return f"showing {name} - static field snapshot, {count}, no timeline"
-    return f"showing {name} - animation, {int(nt)} frames on ez_ycut"
+    frames = int(nt)
+    try:
+        # The stored `ez_ycut` array's own count, from the DUMP: on a page whose
+        # timeline is the volume's clock this is the larger number, and the
+        # header has to name both instead of quoting one for the other.
+        stored = int(info["nt"])
+    except (KeyError, TypeError, ValueError):
+        stored = frames
+    if stored != frames:
+        return f"showing {name} - animation, {frames} of {stored} frames on ez_ycut"
+    return f"showing {name} - animation, {frames} frames on ez_ycut"
 
 
 def _cell_mm(info: dict) -> float:
@@ -3214,16 +3245,26 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
     long the page will take to play the dump once, while ``sim_time_ns`` is the
     dump's own simulation clock. Letting the two be read as one number is how a
     reader comes to believe the solver ran at 24 frames per second.
+
+    The two frame counts, and the wall clock derived from them, are the ones the
+    PLAYER steps - ``_synced_frame_counts`` - never the dump's own plane-frame
+    counts: while the |E| volume is the coarser recording the timeline is
+    counted in ITS frames, so reporting ``info["nt"]`` here would claim frames
+    the player cannot reach and a play time it never takes. The ``planes``
+    entries below keep saying how many frames each stored array HOLDS, which is
+    a fact about the file rather than about the timeline.
     """
     fps = max(1, int(fps))
     vmin, vmax = info["color_range"]
     dt_ns = float(info["dt_s"]) * 1e9
-    nt = int(info["nt"])
+    nt, nt_x = _synced_frame_counts(
+        info, int(info["nt"]), int(info["nt_x"])
+    )
     t_ns = info["t_ns"]
     cell_mm = _cell_mm(info)
     return {
         "frames": nt,
-        "frames_xcut": int(info["nt_x"]),
+        "frames_xcut": nt_x,
         "fps": fps,
         "wall_clock_s": round(nt / float(fps), 6),
         "sim_time_ns": {
@@ -3252,7 +3293,7 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
                 "key": "ez_ycut",
                 "label": "x-z plane through the strip (one fixed y sample)",
                 "shape": [int(n) for n in info["ez_ycut"].shape],
-                "frames": nt,
+                "frames": int(info["nt"]),
                 "fixed_mm": _vis_cut_station_block(info, cell_mm),
             },
             {
@@ -11259,9 +11300,7 @@ def run_web_vis(
             if not np.isfinite(t_ns)
             else f"sim time: t = {t_ns:.6f} ns"
         )
-        state.frame_label = (
-            None if frames is None else f"frame {index + 1} / {frames}"
-        )
+        state.frame_label = _frame_label(index, frames)
         state.phase_label = _vis_phase_text(t_ns, info.get("t_traverse_ns"))
         if mode == "ycut":
             # The y the x-z sheet sits on is READ per draw, from the LIVE page,
