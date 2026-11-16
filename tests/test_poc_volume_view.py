@@ -227,22 +227,53 @@ def test_clim_is_sixty_decibels_below_the_peak():
     assert np.isclose(float(np.max(image.point_data["e_abs"])), peak)
 
 
+class _FakeMapper:
+    """The one thing a scalar bar is ever handed: an actor's mapper."""
+
+    def __init__(self):
+        self.scalar_range = (0.0, 1.0)
+
+
+class _FakeActor:
+    """An actor stand-in that carries the mapper a bar reads.
+
+    WHY not a bare ``object()``: the bars are placed from the ACTOR's own mapper
+    (that is what makes one bar describe one field), so the fake has to carry
+    one for the placement to be observable at all.
+    """
+
+    def __init__(self):
+        self.mapper = _FakeMapper()
+        self.visibility = True
+
+
 class _ScenePlotter:
     """Records what ``_draw_scene`` asks for. No VTK, no GL, no display."""
 
     def __init__(self):
         self.calls = []
+        # Separate from ``calls``: a bar is decoration, and the tests that count
+        # draws must not see it as one.
+        self.bar_calls = []
+        self.scalar_bars = {}
+
+    def add_scalar_bar(self, **kwargs):
+        self.bar_calls.append(kwargs)
+        self.scalar_bars[kwargs.get("title")] = kwargs.get("mapper")
+
+    def remove_scalar_bar(self, title=None, render=True):
+        self.scalar_bars.pop(title, None)
 
     def clear(self):
         self.calls.append("clear")
 
     def add_mesh(self, mesh, **kwargs):
         self.calls.append(("add_mesh", kwargs))
-        return object()
+        return _FakeActor()
 
     def add_volume(self, mesh, **kwargs):
         self.calls.append(("add_volume", mesh, kwargs))
-        return object()
+        return _FakeActor()
 
     def add_axes(self, **kwargs):
         self.calls.append("add_axes")
@@ -380,9 +411,16 @@ def test_the_scene_draws_the_volume_log_scaled_with_its_own_title(monkeypatch):
     # here is the 60 dB ratio, not a floating-point summation order.
     assert kwargs["clim"][0] == pytest.approx(peak / 1000.0, rel=1e-12)
     assert kwargs["clim"][1] == pytest.approx(peak, rel=1e-12)
-    title = kwargs["scalar_bar_args"]["title"]
-    assert title == "|E| [V/m] (log)"
-    assert title != "|Ez| [V/m]"
+    # The bar is NOT made by the volume draw: the same title twice is the same
+    # KEY to pyvista, which MERGES - the second frame's range would union with
+    # the first's. It is placed once, below, under the |E| title.
+    assert kwargs["show_scalar_bar"] is False
+    titles = [call["title"] for call in plotter.bar_calls]
+    assert titles == [poc_app.VOLUME_BAR_TITLE], (
+        f"expected one bar titled {poc_app.VOLUME_BAR_TITLE!r}, got {titles}"
+    )
+    assert titles[0] == "|E| (Log)"
+    assert titles[0] != "|Ez| [V/m]"
     # The mesh handed over IS the memoised image, not a second build.
     assert mesh is passed[poc_app.VOLUME_ABS_KEY]["image"]
     assert tuple(mesh.dimensions) == (nx, ny, nz)

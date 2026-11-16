@@ -4842,6 +4842,100 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
         print(f"[poc_app] marker labels not drawn: {exc}", file=sys.stderr)
 
 
+# --- the two colour bars of a field page -------------------------------------
+#
+# TWO fields, TWO bars: the captured |Ez| planes carry a LINEAR scale, the |E|
+# volume a LOG one, and the FFT normalisation makes the colocated volume ~2053x
+# smaller in V/m - so one bar over both would be read at the wrong scale.
+#
+# WHY the titles are module constants: a bar's TITLE is also the KEY pyvista
+# stores it under, and re-using a key is NOT a second bar.  ``add_scalar_bar``
+# answers a repeated title by MERGING into the standing bar and widening the
+# range it shows to the UNION of every mapper bound to that key so far.  On a
+# page that repaints a PER-FRAME range that union only ever grows, so the bar
+# slowly stops describing the frame on screen.  One distinct title per field,
+# and every rebuild REMOVES its own bar before making a new one.
+#
+# WHY the positions are explicit: a bar placed by pyvista takes a slot from a
+# finite pool and derives its x from that slot, so a bar rebuilt once per frame
+# is a bar whose position walks.  Two hand-placed rectangles cannot overlap
+# (the plane bar's right edge is left of the volume bar's left edge), and no
+# slot is ever consumed.
+PLANE_BAR_TITLE = "Ez (Linear)"
+VOLUME_BAR_TITLE = "|E| (Log)"
+
+#: The bar the fallback |E| volume gets on a pyvista that refuses ``log_scale``:
+#: the same field on the same range, but a linear ramp - and the title says so.
+VOLUME_BAR_TITLE_LINEAR = "|E| (Linear)"
+
+#: Normalised viewport rectangles: ``(position_x, position_y)`` with the theme's
+#: own bar size.  The plane bar sits on the left, the volume bar on the right.
+PLANE_BAR_POSITION = (0.02, 0.28)
+VOLUME_BAR_POSITION = (0.88, 0.28)
+BAR_WIDTH = 0.08
+BAR_HEIGHT = 0.45
+
+
+def plane_bar_args() -> dict:
+    """``add_scalar_bar`` arguments for the plane bar, title and geometry both.
+
+    Handed to ``add_mesh(scalar_bar_args=...)`` (pyvista forwards the mapping
+    straight into ``add_scalar_bar``) and to ``add_scalar_bar`` itself, so the
+    boot bar, both sheet rebuilds and the per-family swap are ONE definition -
+    which is what keeps them from disagreeing about the title or the place.
+    """
+    return {
+        "title": PLANE_BAR_TITLE,
+        "position_x": PLANE_BAR_POSITION[0],
+        "position_y": PLANE_BAR_POSITION[1],
+        "width": BAR_WIDTH,
+        "height": BAR_HEIGHT,
+        "vertical": True,
+    }
+
+
+def _remove_scalar_bar(plotter, title: str) -> None:
+    """Remove the bar stored under ``title``, when this plotter has one.
+
+    Guarded and idempotent: it runs on the frame path, and a plotter without a
+    bar - or without a scalar-bar API at all - must cost nothing.
+    """
+    try:
+        if title in plotter.scalar_bars:
+            plotter.remove_scalar_bar(title=title, render=False)
+    except Exception as exc:  # noqa: BLE001 - a bar is decoration
+        print(f"[poc_app] stale colour bar kept: {exc}", file=sys.stderr)
+
+
+def _place_scalar_bar(plotter, *, title: str, mapper, position) -> None:
+    """Stand ONE bar up under ``title``, at ``position``, reading ``mapper``.
+
+    WHY remove-then-add and not an update: the title is a KEY, and a second
+    ``add_scalar_bar`` on a standing key MERGES - the range it shows becomes the
+    union of every mapper bound to that key, and the numbers on it stop being
+    the ones the caller resolved.  Removing first is what makes the bar read the
+    mapper handed in HERE, which is the whole point of rebuilding it per frame.
+
+    Guarded: a page whose plotter has no scalar-bar API keeps its picture.
+    """
+    _remove_scalar_bar(plotter, title)
+    try:
+        plotter.add_scalar_bar(
+            title=title,
+            mapper=mapper,
+            position_x=position[0],
+            position_y=position[1],
+            width=BAR_WIDTH,
+            height=BAR_HEIGHT,
+            vertical=True,
+            render=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - a bar is decoration
+        print(
+            f"[poc_app] colour bar {title!r} not drawn: {exc}", file=sys.stderr
+        )
+
+
 def _draw_volume_scene(
     plotter,
     info: dict,
@@ -4891,19 +4985,30 @@ def _draw_volume_scene(
     # volume ACTUALLY drawn below - the |E| image when the dump carries one.
     volume_clim = abs_meta["clim"] if clim_override is None else clim_override
     abs_drawn = False
+    # The actor the |E| bar READS and the title that bar may honestly carry:
+    # the retry below draws a LINEAR volume, and a linear ramp under a log title
+    # would be the one lie a colour bar must not tell.
+    abs_actor = None
+    abs_bar_title = VOLUME_BAR_TITLE
     if abs_image is not None:
-        # WHY the title is not the plane stack's "|Ez| [V/m]": these are two
-        # different fields, and the FFT normalisation makes the colocated
-        # volume ~2053x smaller in V/m than the captured |Ez| planes, so one
-        # bar carrying the other's title would be read as the other's scale.
+        # WHY the bar is NOT made here: ``add_volume(show_scalar_bar=True)``
+        # keys its bar on a title, and the next frame of this page re-uses that
+        # same title - which pyvista answers by MERGING into the standing bar
+        # and widening it to the UNION of every mapper bound so far.  A
+        # per-frame range would then be painted over by its own history.  The
+        # bar is placed by hand BELOW, from the actor this call returns.
+        # WHY its title is not the plane stack's: these are two different
+        # fields, and the FFT normalisation makes the colocated volume ~2053x
+        # smaller in V/m than the captured |Ez| planes, so one bar carrying the
+        # other's title would be read as the other's scale.
         try:
-            plotter.add_volume(
+            abs_actor = plotter.add_volume(
                 abs_image,
                 scalars="e_abs",
                 cmap="turbo",
                 log_scale=True,
                 clim=volume_clim,
-                scalar_bar_args={"title": "|E| [V/m] (log)"},
+                show_scalar_bar=False,
             )
             abs_drawn = True
         except TypeError as exc:
@@ -4913,15 +5018,17 @@ def _draw_volume_scene(
             # that no longer claims a log bar - and never a third time.
             print(f"[poc_app] |E| volume not drawn: {exc}", file=sys.stderr)
             try:
-                plotter.add_volume(
+                abs_actor = plotter.add_volume(
                     abs_image,
                     scalars="e_abs",
                     cmap="turbo",
                     clim=volume_clim,
-                    scalar_bar_args={"title": "|E| [V/m]"},
+                    show_scalar_bar=False,
                 )
                 abs_drawn = True
+                abs_bar_title = VOLUME_BAR_TITLE_LINEAR
             except Exception as exc_again:  # noqa: BLE001 - see below
+                abs_actor = None
                 print(
                     f"[poc_app] |E| volume not drawn: {exc_again}",
                     file=sys.stderr,
@@ -4931,7 +5038,29 @@ def _draw_volume_scene(
             # the board, the markers and both corner labels are drawn after
             # this branch, and an exception escaping here would take them all
             # (``_redraw_scene`` would swallow it and keep a stale picture).
+            abs_actor = None
             print(f"[poc_app] |E| volume not drawn: {exc}", file=sys.stderr)
+        if abs_actor is not None:
+            # The bar follows the frame it describes: it reads THIS actor's
+            # mapper, on the clim this call was handed (``volume_clim``, i.e.
+            # the caller's ``clim_override`` when there is one). WHY the mapper
+            # lookup is guarded too: a bar is decoration, and a plotter whose
+            # volume actor carries no mapper must still keep its picture.
+            try:
+                abs_mapper = abs_actor.mapper
+            except Exception as exc:  # noqa: BLE001 - decoration only
+                abs_mapper = None
+                print(
+                    f"[poc_app] |E| colour bar not drawn: {exc}",
+                    file=sys.stderr,
+                )
+            if abs_mapper is not None:
+                _place_scalar_bar(
+                    plotter,
+                    title=abs_bar_title,
+                    mapper=abs_mapper,
+                    position=VOLUME_BAR_POSITION,
+                )
     # Exactly ONE volume actor: two of them over the same slab occlude each
     # other, and the coarser nine-plane stack would read as a shell laid over
     # the 62-station |E| field - so it is drawn only when |E| is NOT.
@@ -9915,10 +10044,13 @@ def run_web_vis(
     except Exception as exc:  # noqa: BLE001 - decoration only
         print(f"[poc_app] axes not drawn: {exc}", file=sys.stderr)
 
-    # The bar's title is also the KEY pyvista stores the bar under, so the one
-    # string is used both to create it here and to swap it per family in _show:
-    # two different strings would be two bars.
-    scalar_bar_title = "|Ez| [V/m]"
+    # The PLANE bar: its title and its place, defined once in ``plane_bar_args``
+    # so the y-cut sheet created here, the sheets rebuilt after a solve, and the
+    # per-family swap in ``_show`` cannot disagree about either. The bar's title
+    # is also the KEY pyvista stores it under, so the swap re-uses the same
+    # string instead of adding a second bar.
+    plane_args = plane_bar_args()
+    scalar_bar_title = plane_args["title"]
 
     # Three sheets, added ONCE. clim is the dump's single ceiling for every one
     # of them, so no later frame has a scale of its own to renormalise with.
@@ -9941,7 +10073,10 @@ def run_web_vis(
                 smooth_shading=False,
                 show_edges=VIS_SHOW_EDGES,
                 show_scalar_bar=(family == "ycut"),
-                scalar_bar_args={"title": scalar_bar_title},
+                # A FRESH mapping per call: ``add_mesh`` fills in defaults on the
+                # dict it is handed, so one shared dict is one sheet's arguments
+                # leaking into the next.
+                scalar_bar_args=plane_bar_args(),
             )
         except Exception as exc:  # noqa: BLE001 - one sheet is not the picture
             print(f"[poc_app] plane {key} not drawn: {exc}", file=sys.stderr)
@@ -10401,7 +10536,7 @@ def run_web_vis(
             _set_picture_title(_animation_title_text(structure_label))
 
     def _swap_scalar_bar(mode: str) -> None:
-        """Leave exactly ONE bar standing, for the family now on screen.
+        """Leave exactly ONE PLANE bar standing, for the family now on screen.
 
         The y-cut sheet makes its bar at add_mesh time and the x-cut sheets make
         none, so a plane switch would otherwise keep the y-cut's bar over a field
@@ -10409,12 +10544,14 @@ def run_web_vis(
         own mapper: every sheet was added with the same fixed (vmin, vmax), so
         the numbers do not move, only the actor the bar reads from does. A bar
         is decoration, so every step here degrades to a stderr line.
+
+        WHY the title is the plane's alone: this bar and the |E| volume's are
+        two different fields on two different scales, and a title is the KEY
+        pyvista stores a bar under - so this function removes and rebuilds the
+        PLANE bar by name and never touches the volume's.
         """
         try:
-            if scalar_bar_title in plotter.scalar_bars:
-                plotter.remove_scalar_bar(
-                    title=scalar_bar_title, render=False
-                )
+            _remove_scalar_bar(plotter, scalar_bar_title)
         except Exception as exc:  # noqa: BLE001 - decoration only
             print(
                 f"[poc_app] stale scalar bar kept: {exc}", file=sys.stderr
@@ -10431,7 +10568,7 @@ def run_web_vis(
             if entry is None:
                 return
             plotter.add_scalar_bar(
-                title=scalar_bar_title, mapper=entry["actor"].mapper
+                mapper=entry["actor"].mapper, **plane_args
             )
         except Exception as exc:  # noqa: BLE001 - decoration only
             print(
@@ -10733,6 +10870,14 @@ def run_web_vis(
                 print(
                     f"[poc_app] stale volume layer actor kept: {exc}", file=sys.stderr
                 )
+        # WHY the volume bar dies with the layer: the bar is a reading of THIS
+        # volume's |E| range. Left behind it would describe a layer that is no
+        # longer on screen - and, since a title is pyvista's KEY for a bar, a
+        # later frame rebuilding it under the same title would UNION the two
+        # ranges instead of replacing one. Both spellings are cleared because the
+        # old-pyvista retry places the bar under an honest "Linear" title.
+        _remove_scalar_bar(plotter, VOLUME_BAR_TITLE)
+        _remove_scalar_bar(plotter, VOLUME_BAR_TITLE_LINEAR)
 
     def _draw_volume_layer(index, mode, volume_frame=None) -> None:
         """Draw the |E| volume layer for the CURRENT frame, or drop it.
@@ -11226,6 +11371,11 @@ def run_web_vis(
         ):
             try:
                 grid = _vis_grid(live, key, 0)
+                # WHY no bar is made here: this loop REPLACES every sheet, and
+                # a bar added under the same title would be union-merged with
+                # the mappers of the sheets just dropped - the new dump's
+                # (vmin, vmax) would silently widen to cover the old one. The
+                # bar is placed once, below, from the sheet that survives.
                 actor = plotter.add_mesh(
                     grid,
                     scalars="ez_abs",
@@ -11233,8 +11383,7 @@ def run_web_vis(
                     clim=(vmin, vmax),
                     smooth_shading=False,
                     show_edges=VIS_SHOW_EDGES,
-                    show_scalar_bar=(family == "ycut"),
-                    scalar_bar_args={"title": scalar_bar_title},
+                    show_scalar_bar=False,
                 )
             except Exception as exc:  # noqa: BLE001 - one sheet is not the page
                 print(
@@ -11242,6 +11391,10 @@ def run_web_vis(
                 )
                 continue
             sheets[key] = {"grid": grid, "actor": actor, "family": family}
+        # The plane bar is rebuilt from the sheet now on screen: the removal is
+        # what drops the stale bar's claim on the title, so the new limit is
+        # the one the bar reads. Never touches the |E| volume bar.
+        _swap_scalar_bar(mode or state.mode)
         state.frame_max = _frame_span_max(nt, nt_x, mode or state.mode)
         # The prose lines that name THIS dump's numbers are rebuilt from `live`
         # rather than kept from boot: a solve can change the arm, the velocity

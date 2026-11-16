@@ -1394,3 +1394,281 @@ def test_per_frame_clim_follows_the_volume_frame_the_player_is_showing(desync_pa
         "clock and painted on another"
     )
 
+
+
+
+# ---------------------------------------------------------------------------
+# THE TWO COLOUR BARS.  The plane sheets and the |E| volume are two DIFFERENT
+# fields on two different scales (the FFT normalisation makes the volume ~2053x
+# smaller in V/m), so each needs its own bar - and, because a title is pyvista's
+# KEY for a bar, "own bar" is a claim about the title as much as about the
+# numbers: a second bar added under an existing title is MERGED with it, and the
+# range becomes the UNION of both mappers'.  Everything below reads the bar off
+# the real plotter; the lookup table ``add_scalar_bar(mapper=...)`` hands it IS
+# the mapper's own, so the range read here is the range the bar grades.
+# ---------------------------------------------------------------------------
+
+
+def _bar(live, title: str):
+    """The bar standing under ``title``, or a failure that names what IS there."""
+    bars = live.plotter.scalar_bars
+    assert title in bars, (
+        f"no colour bar titled {title!r} is on the page; it stands "
+        f"{sorted(bars.keys())}"
+    )
+    return bars[title]
+
+
+def _bar_range(live, title: str) -> tuple:
+    """The range the bar for ``title`` actually grades.
+
+    ``add_scalar_bar(mapper=...)`` gives the bar that mapper's OWN lookup table,
+    so this reads what the bar shows - not what a call was asked for.
+    """
+    lut = _bar(live, title).GetLookupTable()
+    assert lut is not None, f"the bar titled {title!r} carries no lookup table"
+    return tuple(float(value) for value in lut.GetRange())
+
+
+def _bar_span(bar) -> tuple:
+    """A bar's horizontal footprint in normalised viewport coordinates."""
+    left = float(bar.GetPosition()[0])
+    return (left, left + float(bar.GetWidth()))
+
+
+def _volume_frame_shown(info: dict, index: int, mode: str = "ycut") -> int:
+    """The stored |E| frame animation position ``index`` maps onto."""
+    axis = info["frame_index" if mode == "ycut" else "frame_index_xcut"]
+    frame = app._volume_frame_for_step(
+        info.get("e_abs_volume_step_index"), int(axis[index])
+    )
+    assert frame is not None, (
+        f"animation position {index} (step {int(axis[index])}) maps onto no "
+        "stored |E| frame, so the assertions below would have nothing to read"
+    )
+    return int(frame)
+
+
+def test_the_page_stands_exactly_two_bars_named_for_the_two_fields(tmp_path):
+    """TWO bars, titled EXACTLY "Ez (Linear)" and "|E| (Log)" - at boot and after.
+
+    WHY the titles are written out as literals here: they are what a reader of
+    the picture sees, and they are pyvista's keys.  Asserting them against the
+    module's own constants would pin nothing - a renamed constant would move the
+    bar with it and the test would still pass.
+
+    WHY after a draw too: the boot picture is one frame, and every later frame
+    rebuilds the volume layer (and, on a plane switch, the plane's bar).  A bar
+    added per draw without being removed first is how this page would end up
+    with three, or with two bars unioned into one.
+    """
+    with _render_doubled():
+        live = _boot(tmp_path, with_volume=True)
+        _silence_view(live)
+
+        assert set(live.plotter.scalar_bars.keys()) == {
+            app.PLANE_BAR_TITLE,
+            app.VOLUME_BAR_TITLE,
+        }, (
+            "the first picture the page draws stands "
+            f"{sorted(live.plotter.scalar_bars.keys())}, not one bar for the "
+            "planes and one for |E|"
+        )
+        assert set(live.plotter.scalar_bars.keys()) == {"Ez (Linear)", "|E| (Log)"}, (
+            "the bars are titled "
+            f"{sorted(live.plotter.scalar_bars.keys())}, not "
+            '{"Ez (Linear)", "|E| (Log)"}: a title is the key pyvista stores a '
+            "bar under, and it is what the reader is told the colours mean"
+        )
+
+        for index in (0, 3):
+            _only_the_layers_volume(live)
+            live.draw(index, "ycut")
+            assert set(live.plotter.scalar_bars.keys()) == {
+                app.PLANE_BAR_TITLE,
+                app.VOLUME_BAR_TITLE,
+            }, (
+                f"after drawing frame slider {index} the page stands "
+                f"{sorted(live.plotter.scalar_bars.keys())}: a draw added or "
+                "dropped a bar"
+            )
+
+    # Explicitly positioned bars consume NO auto-placement slot, so a page that
+    # ever falls back to the theme's slot engine would collide with itself.
+    slots = getattr(live.plotter, "_scalar_bar_slot_lookup", None)
+    assert slots == {}, (
+        f"the two bars took {slots!r} of pyvista's auto-placement slots; both "
+        "are placed by explicit position and must take none"
+    )
+
+
+def test_the_volume_bar_follows_the_frame_the_volume_is_painted_on(volume_page):
+    """The |E| bar grades each frame's OWN window - and SHRINKS back after a peak.
+
+    WHY the shrink is the assertion and not merely the value: a bar re-added
+    under an existing title is MERGED, and the merged range is the union of
+    every mapper ever bound to that key.  On this dump the loud frame peaks 1e6
+    above the quiet one, so a merged bar would keep the loud peak forever and
+    every later frame would paint itself into the bottom pixel of the scale -
+    the reading would be wrong while the colours still looked plausible.
+    """
+    live = volume_page
+    info = live.page["info"]
+    volume = info["e_abs_volume"]
+
+    loud = _volume_frame_shown(info, LOUD_FRAME)
+    quiet = _volume_frame_shown(info, QUIET_FRAME)
+    loud_peak = float(np.max(volume[loud]))
+    quiet_peak = float(np.max(volume[quiet]))
+    assert loud_peak > quiet_peak * 100.0, (
+        f"volume frame {loud} peaks at {loud_peak!r} against {quiet_peak!r} on "
+        f"frame {quiet}: the two are too close for this test to tell a fresh "
+        "range from a union of both"
+    )
+
+    with _clim_mode(live, app.VOLUME_CLIM_PER_FRAME):
+        for index in range(NT):
+            # One volume at a time: a scene shares ONE scalar range between the
+            # volumes in it, so an orphan would widen this frame's window.
+            _only_the_layers_volume(live)
+            live.draw(index, "ycut")
+            frame = _volume_frame_shown(info, index)
+            assert int(_layer_entry(live)["frame"]) == frame, (
+                f"frame slider {index} drew volume frame "
+                f"{_layer_entry(live)['frame']}, expected {frame}: the "
+                "assertions below would be reading another frame's bar"
+            )
+            peak = float(np.max(volume[frame]))
+            window = app._volume_abs_frame_clim(volume, frame)
+            assert window == pytest.approx((peak * 1e-3, peak), rel=1e-12), (
+                f"the resolver answers {window} for frame {frame}, not its own "
+                f"60 dB window {(peak * 1e-3, peak)}"
+            )
+            drawn = _bar_range(live, app.VOLUME_BAR_TITLE)
+            assert drawn == pytest.approx(window, rel=1e-6), (
+                f"frame slider {index} (volume frame {frame}) leaves the "
+                f"\"{app.VOLUME_BAR_TITLE}\" bar grading {drawn}, not that "
+                f"frame's own window {window}: the bar does not describe the "
+                "picture it stands over"
+            )
+
+    # The LAST position drawn was the quiet frame, right after the loud one.
+    last = _bar_range(live, app.VOLUME_BAR_TITLE)
+    assert last[1] == pytest.approx(quiet_peak, rel=1e-6), (
+        f"after the loud frame {loud} the bar still reads up to {last[1]!r}, "
+        f"not the quiet frame {quiet}'s peak {quiet_peak!r}: the range was "
+        "UNIONed with the frame before it (a bar re-added under the same title "
+        "merges) instead of being replaced"
+    )
+    assert last[1] < loud_peak, (
+        f"the bar never came back down from {loud_peak!r} (still {last[1]!r}): "
+        "one loud frame left its peak on the scale for good"
+    )
+
+
+def test_the_volume_bar_never_touches_the_plane_bar(volume_page):
+    """|E| draws change the |E| bar and leave the PLANE bar exactly as it was.
+
+    WHY identity and not just the number: the plane bar is ONE object the page
+    keeps for the whole plane family, placed from the sheet on screen.  A volume
+    draw that removed and re-created it under the same title would merge its
+    range with the volume's mappers - the plane bar would then grade the plane
+    colours on a range that includes a field 2053x smaller, i.e. not at all.
+    """
+    live = volume_page
+    vmin, vmax = live.page["info"]["color_range"]
+
+    _only_the_layers_volume(live)
+    live.draw(0, "ycut")
+    plane = _bar(live, app.PLANE_BAR_TITLE)
+    plane_range = _bar_range(live, app.PLANE_BAR_TITLE)
+    assert plane_range == pytest.approx(
+        (float(vmin), float(vmax)), rel=1e-9
+    ), (
+        f"the plane bar grades {plane_range}, not the sheets' fixed "
+        f"{(float(vmin), float(vmax))}: nothing below could then show that the "
+        "volume leaves it alone"
+    )
+
+    volume_bar = _bar(live, app.VOLUME_BAR_TITLE)
+    assert volume_bar is not plane, (
+        "the plane and the |E| volume share ONE bar object: two fields on two "
+        "scales cannot be read off one scale"
+    )
+    assert volume_bar.GetLookupTable() is not plane.GetLookupTable(), (
+        "the two bars share a lookup table, so each one's range moves with the "
+        "other's"
+    )
+
+    for index in (1, 2, 3):
+        _only_the_layers_volume(live)
+        live.draw(index, "ycut")
+    with _clim_mode(live, app.VOLUME_CLIM_PER_FRAME):
+        _only_the_layers_volume(live)
+        live.draw(1, "ycut")
+
+    assert _bar(live, app.PLANE_BAR_TITLE) is plane, (
+        "a volume draw replaced the plane bar: the new one is bound to whatever "
+        "mappers the volume brought, so the plane colours are now graded on a "
+        "range that is not the sheets'"
+    )
+    assert _bar_range(live, app.PLANE_BAR_TITLE) == pytest.approx(
+        plane_range, rel=1e-12
+    ), (
+        "the plane bar's range moved from "
+        f"{plane_range} to {_bar_range(live, app.PLANE_BAR_TITLE)} while only "
+        "the |E| volume was being drawn"
+    )
+
+
+def test_watching_the_clip_piles_up_neither_bars_nor_actors(volume_page):
+    """Eight frame steps: still TWO bars, still the same scene, still apart.
+
+    WHY both halves: a bar per frame is the same leak as an actor per frame, only
+    harder to notice - the picture looks right and the third bar sits on top of
+    the first.  The footprints are checked as well because two bars placed over
+    each other would be one readable bar and one hidden, whatever their count.
+    """
+    live = volume_page
+    _only_the_layers_volume(live)
+    live.draw(0, "ycut")
+
+    actors = len(live.plotter.actors)
+    bars = len(live.plotter.scalar_bars)
+    for step in range(2 * NT):
+        live.trigger()
+        assert len(live.plotter.scalar_bars) == bars, (
+            f"{step + 1} frame steps left "
+            f"{len(live.plotter.scalar_bars)} bars on the page, not {bars}: a "
+            "draw adds a bar without removing the one it replaces"
+        )
+        assert set(live.plotter.scalar_bars.keys()) == {
+            app.PLANE_BAR_TITLE,
+            app.VOLUME_BAR_TITLE,
+        }, (
+            f"after {step + 1} frame steps the page stands "
+            f"{sorted(live.plotter.scalar_bars.keys())}"
+        )
+        assert len(live.plotter.actors) == actors, (
+            f"the scene grew from {actors} to {len(live.plotter.actors)} actors "
+            f"after {step + 1} frame steps"
+        )
+
+    plane_span = _bar_span(_bar(live, app.PLANE_BAR_TITLE))
+    volume_span = _bar_span(_bar(live, app.VOLUME_BAR_TITLE))
+    assert (
+        plane_span[1] <= volume_span[0] or volume_span[1] <= plane_span[0]
+    ), (
+        f"the two bars overlap: the plane bar covers {plane_span} and the |E| "
+        f"bar {volume_span} of the viewport width - whichever is behind the "
+        "other is unreadable"
+    )
+    for name, span in (
+        (app.PLANE_BAR_TITLE, plane_span),
+        (app.VOLUME_BAR_TITLE, volume_span),
+    ):
+        assert 0.0 <= span[0] < span[1] <= 1.0, (
+            f"the bar titled {name!r} spans {span} of the viewport, which is "
+            "not on screen"
+        )
+
