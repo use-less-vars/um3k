@@ -25,12 +25,12 @@ Claims pinned by this file, one per test group:
    unknown the stub is gone and the board, the feed and both wires stay; with
    no number known at all only the ground plane is drawn and ONE stderr line
    names the five keys and their sources. A drawn board prints nothing.
-6. ``_add_markers`` sizes its two discs from the FIELD grid - ``shape * cell``
-   about the y/z mid-plane - not from the board.  ``shape * cell`` and not
-   ``(shape - 1) * cell`` because the samples are STAGGERED Yee data: the y axis
-   carries 213 samples over a 212-cell width while z carries 22 over 22, so no
-   single ``(n - 1) * cell`` rule fits every axis and the committed convention
-   is ``shape * cell``.
+6. ``_add_markers`` sizes its two discs from the FIELD grid - ``(shape - 1) *
+   cell`` about the y/z mid-plane - not from the board.  ``(shape - 1) * cell``
+   and not ``shape * cell`` because the grid places its samples at ``i * cell``
+   (i in 0..n-1), so n samples span n - 1 cells: the 213 y samples span 212
+   cells and the 22 z samples span 21, and a disc one cell wider at each end
+   would overhang the volume it is a cross-section of.
 7. ``_draw_scene`` draws the board UNDER the markers and after the axes, and
    hands both layers the same ``info`` and the same ``planes``.
 8. The near cut's provenance is the route ``_plane_layout`` ACTUALLY took: when
@@ -62,7 +62,7 @@ import um3k_context  # noqa: E402 - the named FALLBACK provenance constant
 # --- the shipped numbers ---------------------------------------------------
 #
 # The grid cell and the field shape of the shipped Build A dump: the board
-# spans nx*cell by ny*cell, the marker discs shape*cell.
+# spans nx*cell by ny*cell, the marker discs (n - 1)*cell.
 CELL_M = 0.0004
 CELL_MM = CELL_M * 1e3
 NX, NY, NZ = 62, 212, 22
@@ -591,11 +591,12 @@ def test_vis_geometry_takes_the_millimetres_from_info_when_it_has_them():
 
 
 def test_add_markers_sizes_its_discs_from_the_field_grid():
-    """shape * cell about the mid-plane: 85.2 x 8.8 mm at y 42.6, z 4.4."""
+    """(shape - 1) * cell about the mid-plane: 84.8 x 8.4 mm at y 42.4, z 4.2."""
     plotter = _Plotter()
-    # shape (9, 213, 22): the spans the markers read are shape * cell, the
-    # committed staggered-Yee convention (213 y-samples over a 212-cell width,
-    # 22 over 22), which the page pins - not (shape - 1) * cell.
+    # shape (9, 213, 22): the spans the markers read are (shape - 1) * cell, the
+    # n samples span n - 1 cells rule (build_grid places its mesh POINTS at
+    # i * cell for i in 0..n-1), so 212 and 21 cells are drawn, not 213 and 22 -
+    # the rectangles must not overhang the volume they cross-section.
     info = {poc_app.PLANE_KEY: np.zeros((N_ST, NY + 1, NZ), dtype=complex)}
     poc_app._add_markers(plotter, info, _planes())
 
@@ -609,13 +610,15 @@ def test_add_markers_sizes_its_discs_from_the_field_grid():
         assert x0 == pytest.approx(x1, abs=1e-4), "a disc is not a plane normal to x"
         # pyvista lays the plane's two sides however it likes inside the plane
         # normal to x (here i_size lands on z), so the claim is the RECTANGLE
-        # and its centre, not which side went where: 85.2 mm by 8.8 mm,
+        # and its centre, not which side went where: 84.8 mm by 8.4 mm,
         # centred on the y/z mid-plane of the field.
+        # WHY the -1: n samples span n - 1 cells (build_grid points at i*cell).
         assert sorted([y1 - y0, z1 - z0]) == pytest.approx(
-            [NZ * CELL_MM, (NY + 1) * CELL_MM], abs=1e-4
+            [(NZ - 1) * CELL_MM, NY * CELL_MM], abs=1e-4
         )
+        # Same rule for the centre: half of each (n - 1)*cell span.
         assert (0.5 * (y0 + y1), 0.5 * (z0 + z1)) == pytest.approx(
-            (0.5 * (NY + 1) * CELL_MM, 0.5 * NZ * CELL_MM), abs=1e-4
+            (0.5 * NY * CELL_MM, 0.5 * (NZ - 1) * CELL_MM), abs=1e-4
         )
     # Each disc sits at its own x, and the colours are the ones the page reads.
     assert [m.bounds[0] for m in drawn] == pytest.approx([LOAD_MM, PORT_MM], abs=1e-4)
@@ -637,7 +640,8 @@ def test_add_markers_puts_its_labels_on_the_mid_plane():
         [planes["x_s11_mm"], planes["x_load_mm"], planes["x_s21_mm"]]
     )
     for _x, y, z in points:
-        assert (y, z) == pytest.approx((0.5 * (NY + 1) * CELL_MM, 0.5 * NZ * CELL_MM))
+        # WHY the -1: the anchors sit on the mid-plane of the (n - 1)*cell spans.
+        assert (y, z) == pytest.approx((0.5 * NY * CELL_MM, 0.5 * (NZ - 1) * CELL_MM))
     assert len(labels) == 3
     assert kwargs.get("font_size") == 9
 

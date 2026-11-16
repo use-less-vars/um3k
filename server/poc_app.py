@@ -98,6 +98,12 @@ PLANE_KEY = "plane_ez"
 # ships the flat staggered `e` vector, and this is the key it lands under when
 # load_dump is asked to colocate it. Shape (nx, ny, nz, 3), the components last.
 VOLUME_KEY = "e_centres"
+# The SAME volume reduced to one |E| per cell and wrapped in a pyvista image,
+# built ONCE per dump and cached here: ``_redraw_scene`` rebuilds the whole scene
+# on every cut or station move, and the colocation behind that image costs ~1 s
+# (measured: 0.84 s on the shipped dump), so a per-redraw build would be a
+# per-move second. The value is a dict of ``image``, ``clim`` and ``n``.
+VOLUME_ABS_KEY = "e_abs_grid"
 # The SAME volume, still un-colocated: the archive's own flat, staggered ``e``
 # vector plus the grid it belongs to, stashed by ``load_dump(..., e_raw=True)``.
 # It exists so the colocation can wait for a READER instead of being paid by
@@ -4248,11 +4254,13 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
     cost the plane, not the viewer.
     """
     cell_mm = planes["cell_mm"]
-    # ``shape * cell`` is the committed, test-pinned convention: the samples are
-    # STAGGERED Yee data (213 y-samples over a 212-cell width, 22 over 22), so
-    # no single ``(n - 1) * cell`` rule fits every axis; changing it is not a fix.
-    y_span = info[PLANE_KEY].shape[1] * cell_mm
-    z_span = info[PLANE_KEY].shape[2] * cell_mm
+    # n samples span n - 1 cells: ``build_grid`` places its mesh POINTS at
+    # ``i * cell`` for i in 0 .. n-1, so the drawn slab's outer faces are at
+    # ``(n - 1) * cell``. Using ``n * cell`` put each marker's rectangle one
+    # cell past the outermost sample at BOTH ends, so the red and purple
+    # rectangles visibly overhung the volume they are cross-sections of.
+    y_span = (info[PLANE_KEY].shape[1] - 1) * cell_mm
+    z_span = (info[PLANE_KEY].shape[2] - 1) * cell_mm
     y_mid, z_mid = 0.5 * y_span, 0.5 * z_span
 
     if planes.get("show_load_plane", True):
@@ -4382,12 +4390,76 @@ def _draw_scene(
                 f"[poc_app] port-plane view not drawn: {exc}", file=sys.stderr
             )
     else:
-        plotter.add_volume(
-            grid,
-            scalars="ez_abs",
-            cmap="turbo",
-            scalar_bar_args={"title": "|Ez| [V/m]"},
-        )
+        # THE WHOLE VOLUME first, when the dump carries one: |E| over every grid
+        # cell the solve produced, log-scaled (see _volume_abs_grid for the clim)
+        # and MEMOISED inside that helper, because this branch runs on every cut
+        # or station move.
+        abs_image, abs_meta = _volume_abs_grid(info, cell_mm)
+        abs_drawn = False
+        if abs_image is not None:
+            # WHY the title is not the plane stack's "|Ez| [V/m]": these are two
+            # different fields, and the FFT normalisation makes the colocated
+            # volume ~2053x smaller in V/m than the captured |Ez| planes, so one
+            # bar carrying the other's title would be read as the other's scale.
+            try:
+                plotter.add_volume(
+                    abs_image,
+                    scalars="e_abs",
+                    cmap="turbo",
+                    log_scale=True,
+                    clim=abs_meta["clim"],
+                    scalar_bar_args={"title": "|E| [V/m] (log)"},
+                )
+                abs_drawn = True
+            except TypeError as exc:
+                # An older pyvista accepts every one of these arguments EXCEPT
+                # ``log_scale``. The same image on the same clim is still worth
+                # showing, so it is retried ONCE without log_scale, on a title
+                # that no longer claims a log bar - and never a third time.
+                print(f"[poc_app] |E| volume not drawn: {exc}", file=sys.stderr)
+                try:
+                    plotter.add_volume(
+                        abs_image,
+                        scalars="e_abs",
+                        cmap="turbo",
+                        clim=abs_meta["clim"],
+                        scalar_bar_args={"title": "|E| [V/m]"},
+                    )
+                    abs_drawn = True
+                except Exception as exc_again:  # noqa: BLE001 - see below
+                    print(
+                        f"[poc_app] |E| volume not drawn: {exc_again}",
+                        file=sys.stderr,
+                    )
+            except Exception as exc:  # noqa: BLE001 - a picture is not a crash
+                # Losing the volume must cost the VOLUME: the outline, the axes,
+                # the board, the markers and both corner labels are drawn after
+                # this branch, and an exception escaping here would take them all
+                # (``_redraw_scene`` would swallow it and keep a stale picture).
+                print(f"[poc_app] |E| volume not drawn: {exc}", file=sys.stderr)
+        # Exactly ONE volume actor: two of them over the same slab occlude each
+        # other, and the coarser nine-plane stack would read as a shell laid over
+        # the 62-station |E| field - so it is drawn only when |E| is NOT.
+        if abs_image is None:
+            plotter.add_volume(
+                grid,
+                scalars="ez_abs",
+                cmap="turbo",
+                scalar_bar_args={"title": "|Ez| [V/m]"},
+            )
+        elif not abs_drawn:
+            # Only reached when a volume WAS available and the plotter refused
+            # it: the same fallback, guarded, because an exception escaping here
+            # would cost the outline, the axes, the board and the markers too.
+            try:
+                plotter.add_volume(
+                    grid,
+                    scalars="ez_abs",
+                    cmap="turbo",
+                    scalar_bar_args={"title": "|Ez| [V/m]"},
+                )
+            except Exception as exc:  # noqa: BLE001 - see comment above
+                print(f"[poc_app] |Ez| volume not drawn: {exc}", file=sys.stderr)
         # The two cut sheets: one sample each, drawn opaque enough to read the
         # field on, sharing the volume's colour scale (so only one bar is
         # shown). Guarded - losing the cuts must cost the cuts, not the view.
@@ -7515,6 +7587,169 @@ def _volume_quiver_polydata(points, vectors):
         return cloud
     except Exception:  # noqa: BLE001 - a picture is never worth a traceback
         return None
+
+
+def _volume_abs_grid(info, cell_mm, grid_hint=None):
+    """The whole colocated ``E`` volume as ONE cell-centred ``|E|`` image.
+
+    Returns ``(image, meta)``. ``image`` is a ``pyvista.ImageData`` carrying one
+    POINT-data array named ``e_abs``, or None; ``meta`` is a dict of ``clim``,
+    ``reason`` and ``n``, and ``reason`` is None exactly when an image came back.
+    A None is never an error the caller must handle - it means "draw the picture
+    you drew before" - and ``reason`` says which of the causes applied.
+
+    WHY the whole volume and not the plane stack: the dump's ``e`` covers EVERY
+    grid cell, while ``plane_ez`` holds only the nine captured stations. |E| over
+    the whole volume is the field the solve actually produced, on the lattice it
+    produced it on, and it is what makes a 3D field read as a field instead of a
+    thin slab of nine sheets.
+
+    WHY the colocation is deferred to this reader: the ~1 s
+    ``edge_to_cell_centres`` should be paid by a page that DRAWS |E|, not by
+    every load of the dump. That is the same trade ``_volume_quiver_mesh`` makes,
+    and both routes land on one lattice, so a dump loaded either way draws the
+    same field.
+
+    WHY the result is MEMOISED under :data:`VOLUME_ABS_KEY`: ``_redraw_scene``
+    rebuilds the whole scene on every cut or station move, so a per-redraw
+    colocation would be a per-move second. ``info`` is read, and the ONLY write
+    into it is that cache entry, added once and never rewritten.
+
+    The lattice is CELL-CENTRED throughout: ``dimensions`` is the dump's own
+    ``(nx, ny, nz)``, ``spacing`` is ``cell_mm``, and ``origin`` is HALF A CELL in,
+    because the colocation averaged each component onto a cell centre - the same
+    anchor ``_volume_arrows`` draws its shafts at. The cell counts come from the
+    dump's metadata and then from ``grid_hint`` (the record's ``geometry.grid``),
+    and NEVER from ``e.size``: the raw vector is staggered, so its length counts
+    EDGES, not the cells the colocation lands on.
+
+    ``clim`` is 60 dB of the field above its own floor, ``(peak / 1000, peak)``:
+    |E| over a whole line spans tens of decades down into round-off (the shipped
+    dump bottoms out near 1e-31 V/m), so the caller draws this image log-scaled
+    or shows nothing but the peak.
+
+    Never raises and never returns a partially built image: an unusable volume,
+    an unusable cell size, an unresolved grid or any failure on the way to the
+    image is ``(None, meta-with-reason)``.
+    """
+
+    def _miss(reason):
+        """Nothing to draw, plus the sentence that says why."""
+        return None, {"clim": None, "reason": reason, "n": 0}
+
+    try:
+        if not isinstance(info, dict):
+            return _miss("no volume in this dump")
+        # The cache: an EXISTING entry is returned untouched, never rebuilt and
+        # never rewritten - see the docstring for why it has to exist at all.
+        cached = info.get(VOLUME_ABS_KEY)
+        if isinstance(cached, dict) and cached.get("image") is not None:
+            return cached["image"], {
+                "clim": cached["clim"],
+                "reason": None,
+                "n": cached["n"],
+            }
+        cell_mm = float(cell_mm)
+        if not np.isfinite(cell_mm) or cell_mm <= 0.0:
+            return _miss("no finite positive cell size for the volume")
+
+        # WHICH volume: the loader's already-colocated one when the dump was
+        # asked for it, otherwise the archive's raw staggered vector, colocated
+        # HERE on the first reader - the same two routes, and the same deferred
+        # cost, as ``_volume_quiver_mesh``.
+        volume = info.get(VOLUME_KEY)
+        if volume is None:
+            raw = info.get(VOLUME_RAW_KEY)
+            if not isinstance(raw, dict) or raw.get("e") is None:
+                return _miss("no volume in this dump")
+            # Imported on use, like every other emfit use in this module: the
+            # CLI paths (--help, --list-keys) stay stdlib + numpy only.
+            from emfit.operators import edge_to_cell_centres
+
+            ex, ey, ez = edge_to_cell_centres(
+                raw["e"], raw["nx"], raw["ny"], raw["nz"]
+            )
+            volume = np.stack((ex, ey, ez), axis=-1)
+
+        # The cell counts: the dump's own metadata first, then the record's
+        # ``geometry.grid`` when it was supplied, and never ``e.size``.
+        dims = None
+        for source in (info, grid_hint):
+            try:
+                if isinstance(source, dict):
+                    triple = (
+                        source.get("nx"),
+                        source.get("ny"),
+                        source.get("nz"),
+                    )
+                elif source is None:
+                    continue
+                else:
+                    triple = tuple(source)[:3]
+                dims = tuple(int(v) for v in triple)
+            except (TypeError, ValueError):
+                dims = None
+                continue
+            if len(dims) == 3 and min(dims) > 0:
+                break
+            dims = None
+        if dims is None:
+            return _miss("no (nx,ny,nz) for the volume")
+        nx, ny, nz = dims
+
+        volume = np.asarray(volume)
+        if np.iscomplexobj(volume):
+            # A complex volume is a PHASOR: |E| is the modulus per component, so
+            # the modulus is taken FIRST. Summing the phasors' complex squares
+            # would cancel phase and draw a field the solve never had.
+            volume = np.abs(volume)
+        volume = np.asarray(volume, dtype=float)
+        if volume.ndim != 4 or volume.shape[3] != 3 or min(volume.shape[:3]) < 1:
+            return _miss("the volume is not an (nx, ny, nz, 3) array")
+        if tuple(volume.shape[:3]) != dims:
+            # A volume that does not fill the grid its own metadata states would
+            # be drawn at the wrong positions; refused whole rather than skewed.
+            return _miss("the volume does not fill its (nx,ny,nz) grid")
+
+        ex = volume[..., 0]
+        ey = volume[..., 1]
+        ez = volume[..., 2]
+        e_abs = np.sqrt(ex * ex + ey * ey + ez * ez)
+        if e_abs.size < 1:
+            return _miss("the volume is empty")
+        if not np.all(np.isfinite(e_abs)):
+            # ONE non-finite sample poisons the colour scale and the bounds, so
+            # the picture would be wrong everywhere and not just there.
+            return _miss("the volume has samples that are not finite")
+        hi = float(np.max(e_abs))
+        if not np.isfinite(hi) or hi <= 0.0:
+            # Zero everywhere: a volume with no field in it is a wrong picture.
+            return _miss("the volume is zero everywhere")
+
+        import pyvista as pv  # deferred: the numpy-only CLI paths stay module-light
+
+        image = pv.ImageData()
+        image.dimensions = (nx, ny, nz)
+        image.spacing = (cell_mm, cell_mm, cell_mm)
+        # ORIGIN AT HALF A CELL, and not at 0: every sample in this volume is a
+        # CELL CENTRE, so the first one sits half a cell in - the anchor
+        # ``_volume_arrows`` draws at (``(i + 0.5) * cell_mm``).
+        image.origin = (0.5 * cell_mm, 0.5 * cell_mm, 0.5 * cell_mm)
+        # ``order="F"``: the sample's inner axis is its LAST one, and ``ImageData``
+        # fills its points with x varying fastest, which is Fortran order.
+        image.point_data["e_abs"] = np.ascontiguousarray(
+            e_abs.ravel(order="F"), dtype=float
+        )
+        # 60 dB above the field's own floor: three decades below the peak. Above
+        # it the bar would be all peak; below it there is round-off, not field.
+        clim = (hi * 1e-3, hi)
+        meta = {"clim": clim, "reason": None, "n": int(e_abs.size)}
+        # ADD-ONLY: one entry, set once, so a second reader fits the same image
+        # and nothing already in ``info`` is touched.
+        info[VOLUME_ABS_KEY] = {"image": image, "clim": clim, "n": meta["n"]}
+        return image, meta
+    except Exception as exc:  # noqa: BLE001 - a picture is never worth a traceback
+        return _miss(f"the |E| volume could not be built: {exc}")
 
 
 def _volume_quiver_mesh(info, *, stride=VOLUME_QUIVER_STRIDE):

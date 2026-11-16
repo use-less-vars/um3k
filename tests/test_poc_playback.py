@@ -4631,10 +4631,12 @@ def test_the_s11_port_plane_is_drawn_parallel_to_the_load_plane() -> None:
     # has always been built that way), so what is asserted is the pair: both
     # discs carry the grid's own two spans, unchanged by the second disc.
     cell_mm = planes["cell_mm"]
+    # WHY the -1: n samples span n - 1 cells (build_grid points at i*cell), so
+    # the markers read (shape - 1) * cell, not shape * cell.
     grid_spans = sorted(
         [
-            info[app.PLANE_KEY].shape[1] * cell_mm,
-            info[app.PLANE_KEY].shape[2] * cell_mm,
+            (info[app.PLANE_KEY].shape[1] - 1) * cell_mm,
+            (info[app.PLANE_KEY].shape[2] - 1) * cell_mm,
         ]
     )
     assert sorted([y_span, z_span]) == pytest.approx(grid_spans)
