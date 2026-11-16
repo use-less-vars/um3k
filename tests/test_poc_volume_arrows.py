@@ -657,6 +657,13 @@ class _FakeImageData:
         self.origin = None
         self.point_data = {}
 
+    def outline(self):
+        # ``_draw_scene`` derives the port sheet's EDGE from the image's own
+        # bounds now, so a stand-in without this method would make the branch's
+        # own except swallow the AttributeError and let a real scene lose the
+        # line that tells the reader where the cross-section stops.
+        return ("outline", self)
+
 
 class _StubPlotter:
     """Records what ``_draw_scene`` asks for; can refuse the port image."""
@@ -672,6 +679,11 @@ class _StubPlotter:
         if self.refuse_image and isinstance(mesh, _FakeImageData):
             raise RuntimeError("slice mesh refused")
         self.calls.append(("add_mesh", mesh))
+        # The arguments ride along under their own tag: the port sheet's edge is
+        # only "black, 2 px wide, drawn without a mid-scene render" if those
+        # three travel with the mesh, and the older assertions on this list
+        # compare ("add_mesh", mesh) pairs.
+        self.calls.append(("add_mesh_kwargs", mesh, dict(kwargs)))
         return object()
 
     def add_axes(self, **kwargs):
@@ -687,12 +699,18 @@ class _StubPlotter:
         self.calls.append("reset_camera")
 
 
-def _drive_port_scene(monkeypatch, plotter, planes, **draw_kwargs):
+def _drive_port_scene(monkeypatch, plotter, planes, shot=None, **draw_kwargs):
     """``_draw_scene`` in port mode against stubs; returns (outline, markers).
 
     ``draw_kwargs`` is handed straight to ``_draw_scene``, so a test can ask for
     the same scene with one of its optional switches turned (``station_label``)
     without a second copy of these stubs.
+
+    ``shot`` is the captured plane every station carries. It defaults to all
+    ones, which is enough for "was the scene drawn" and is useless for "which
+    sample went where" - a field that is the same everywhere looks identical
+    under every arrangement - so a test that cares about the arrangement passes
+    its own.
     """
     import types
 
@@ -724,7 +742,12 @@ def _drive_port_scene(monkeypatch, plotter, planes, **draw_kwargs):
     )
     monkeypatch.setattr(poc_app, "_marker_text", lambda pl, cuts: "legend")
 
-    info = {poc_app.PLANE_KEY: np.ones((planes["n_st"], 4, 5), dtype=complex)}
+    if shot is None:
+        shot = np.ones((4, 5), dtype=complex)
+    plane = np.asarray(shot)
+    info = {
+        poc_app.PLANE_KEY: np.repeat(plane[None, ...], planes["n_st"], axis=0)
+    }
     poc_app._draw_scene(plotter, info, planes, "port", 0, **draw_kwargs)
     return outline, markers
 
@@ -776,6 +799,102 @@ def test_the_station_label_can_be_left_out_of_the_scene(monkeypatch):
     assert ("add_mesh", outline) in plotter.calls
     assert markers == ["markers"]
     assert "reset_camera" in plotter.calls
+
+
+def test_the_port_sheet_is_the_y_z_cross_section(monkeypatch):
+    """The port view draws the captured plane AS the y-z cross-section at its x.
+
+    What it means for the picture: sample (j, k) of the captured plane has to be
+    drawn at (x_mm, j*cell, k*cell) and nowhere else, on a sheet with no
+    thickness along x - that is what makes the view a slice through the line
+    rather than a piece of the line seen edge-on. The triple this branch used to
+    carry, (n_j, n_k, 1), put all n_j samples along x instead: a 213 x 22 sheet
+    at 0.4 mm became an 84.8 x 8.4 mm rectangle lying in the z = 0 plane and
+    running 84.8 mm past the port x. And because VTK fills points x fastest,
+    then y, then z, the ravel order is the other half of the same claim: a
+    C-order ravel of the very same array - numpy's default, one keyword away -
+    puts sample (100, 5) of that sheet at (19.6, 30.0, 4.0) where it belongs at
+    (19.6, 40.0, 2.0), a field that visibly moved. The assertions below are
+    therefore about the ARRANGEMENT of the numbers on the sheet, not about the
+    numbers themselves - a field with one strong sample proves an arrangement;
+    a flat one proves nothing.
+    """
+    planes = _planes("record")
+    planes["slice_index"] = 3  # x = 1.2 mm, so the origin is not the y-z plane
+    n_j, n_k = 4, 5  # the plane shape _drive_port_scene carries
+    j_peak, k_peak = 1, 3
+    shot = np.zeros((n_j, n_k), dtype=complex)
+    shot[j_peak, k_peak] = 2.0 + 3.0j  # one sample, |shot| = sqrt(13)
+    plotter = _StubPlotter(refuse_image=False)
+    _drive_port_scene(monkeypatch, plotter, planes, shot=shot)
+
+    image = next(
+        call[1]
+        for call in plotter.calls
+        if isinstance(call, tuple)
+        and call[0] == "add_mesh"
+        and isinstance(call[1], _FakeImageData)
+    )
+    cell = planes["cell_mm"]
+    x_mm = planes["stations_mm"][planes["slice_index"]]
+
+    assert tuple(image.dimensions) == (1, n_j, n_k), (
+        f"the port sheet's dimension counts are {tuple(image.dimensions)}, so "
+        f"the {n_j} j-samples and the {n_k} k-samples are not on y and z: x has "
+        "to be the one-sample axis of a cross-section, and a triple ending in 1 "
+        "puts the j axis along x and the picture 84.8 mm outside the line"
+    )
+    assert tuple(image.origin) == pytest.approx((x_mm, 0.0, 0.0)), (
+        f"the sheet is anchored at {tuple(image.origin)} instead of the "
+        f"captured station x = {x_mm} mm on the y = z = 0 corner: the slice is "
+        "then drawn in the wrong place on the line"
+    )
+    assert tuple(image.spacing) == pytest.approx((cell, cell, cell)), (
+        f"the sheet's spacing is {tuple(image.spacing)} instead of one grid "
+        f"cell ({cell} mm) on all three axes, so it no longer matches the "
+        "volume, the markers and the cut sheets"
+    )
+
+    drawn = np.asarray(image.point_data["ez_abs"])
+    nx = int(image.dimensions[0])
+    ny = int(image.dimensions[1])
+    peak = int(np.argmax(drawn))
+    # VTK's own fill order, restated: x fastest, then y, then z.
+    i_drawn = peak % nx
+    j_drawn = (peak // nx) % ny
+    k_drawn = peak // (nx * ny)
+    assert (i_drawn, j_drawn, k_drawn) == (0, j_peak, k_peak), (
+        "the one strong sample of the captured plane stands at grid "
+        f"(i, j, k) = ({i_drawn}, {j_drawn}, {k_drawn}) in the image, so the "
+        f"reader sees it at ({x_mm}, {j_drawn * cell}, {k_drawn * cell}) mm "
+        f"instead of ({x_mm}, {j_peak * cell}, {k_peak * cell}) mm: the field "
+        "is on the wrong axes or transposed inside the sheet"
+    )
+    assert np.array_equal(drawn.reshape((n_j, n_k), order="F"), np.abs(shot)), (
+        "the drawn samples do not read back as |shot| in F order, the order "
+        "VTK fills points in: sample (j, k) is not drawn at (x, j*cell, "
+        "k*cell), and C order would hold the same numbers in a different "
+        f"arrangement - a transposed field: {drawn!r} against "
+        f"{np.abs(shot).ravel(order='F')!r}"
+    )
+
+    edges = [
+        call
+        for call in plotter.calls
+        if isinstance(call, tuple)
+        and call[0] == "add_mesh_kwargs"
+        and call[1] == ("outline", image)
+    ]
+    assert edges, (
+        "the port sheet was drawn without its edge: a one-sample-thick sheet "
+        "has no flank to catch the light, so it shows colour with no visible "
+        f"extent at all. Calls made: {plotter.calls!r}"
+    )
+    assert edges[0][2] == {"color": "black", "line_width": 2, "render": False}, (
+        "the sheet's edge is not the black 2 px boundary drawn without a "
+        f"mid-scene render: {edges[0][2]!r} - render=True here would flush a "
+        "scene that is still being built and pay a draw on every rebuild"
+    )
 
 
 class _QuiverPlotter:

@@ -3904,7 +3904,8 @@ def test_vis_cut_state_opens_on_the_middle_sample(field_page):
 #: those internals - 8 from ``renderer.add_actor`` on top of the explicit
 #: render.  The camera contributes NOTHING here, and that is the point: a cut
 #: change rebuilds a plotter the page's BOOT already framed (``_draw_scene``
-#: frames on its first build only, poc_app.py:4527), so this path never reaches
+#: frames on its first build only, through its own ``_poc_camera_framed`` guard),
+#: so this path never reaches
 #: ``view_isometric`` (measured: 1 draw) or ``reset_camera`` (measured: 2
 #: draws).  Those 3 are what the boot pays and every slider tick no longer does;
 #: re-pinning this to 12 would re-pin the view snapping back under the

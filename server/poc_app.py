@@ -4393,8 +4393,33 @@ def _draw_scene(
         print(f"[poc_app] plotter.clear failed: {exc}", file=sys.stderr)
 
     if view_mode == "port":
-        # The port-plane cross-section: the captured station nearest the port
-        # x, drawn as a single-sample-thick image so it lies in the y-z plane.
+        # The port-plane cross-section: the captured station nearest the port x,
+        # drawn as a single-sample-thick image that IS the y-z plane at that x.
+        # WHICH AXIS EACH SAMPLE LANDS ON IS DECIDED BY THE ORDER OF THESE THREE
+        # COUNTS, and nothing else here: pyvista fills an ImageData point by
+        # point with x varying fastest, then y, then z. With dimensions
+        # (1, n_j, n_k) sample (j, k) therefore lands at (x_mm, j*cell_mm,
+        # k*cell_mm) - the field as captured, on the two axes it was captured on
+        # - and the sheet has ZERO extent along x because a cross-section has
+        # none: every point of it is at the port x by construction.
+        # The triple used to be (n_j, n_k, 1), which is wrong in a way that still
+        # looks like a picture: all 213 j-samples ran along x. Measured on a
+        # 213 x 22 sheet at cell 0.4 mm and x_mm 19.6, that drew bounds
+        # (19.6, 104.4, 0.0, 8.4, 0.0, 0.0) - an 84.8 x 8.4 mm rectangle lying
+        # flat in the z = 0 plane, sticking 84.8 mm PAST the port x rather than
+        # through it, with the field rotated inside it. That is a second volume
+        # seen edge-on, not the slice the label promises.
+        # THE RAVEL ORDER IS THE OTHER HALF AND IT DOES NOT FOLLOW THE DIMS: it
+        # is already right, and changing it with the dims would transpose the
+        # field invisibly. For dims (1, n_j, n_k) VTK's own point order is
+        # index = j + n_j*k (x fastest, then y, then z), which is exactly an
+        # F-order ravel of the (n_j, n_k) shot - hence "F" below. Measured,
+        # with one sample set to 1.0 at (j=100, k=5) of a 213 x 22 sheet at cell
+        # 0.4 mm and x_mm 19.6: the F-order ravel puts that sample at
+        # (19.6, 40.0, 2.0), exactly where it was captured, while the C-order
+        # ravel of the same array puts it at (19.6, 30.0, 4.0). The two orders
+        # are one keyword apart and the second one would be read as a field that
+        # moved, so the measurement, not a convention, is what pins "F" here.
         # Guarded: a slice that cannot be read must cost the SLICE, not the
         # outline, the markers and the two labels drawn after this branch.
         try:
@@ -4406,7 +4431,7 @@ def _draw_scene(
             x_mm = planes["stations_mm"][idx]
             shot = info[PLANE_KEY][idx]
             image = pv.ImageData()
-            image.dimensions = (int(shot.shape[0]), int(shot.shape[1]), 1)
+            image.dimensions = (1, int(shot.shape[0]), int(shot.shape[1]))
             image.spacing = (cell_mm, cell_mm, cell_mm)
             image.origin = (x_mm, 0.0, 0.0)
             image.point_data["ez_abs"] = np.ascontiguousarray(
@@ -4417,6 +4442,25 @@ def _draw_scene(
                 scalars="ez_abs",
                 cmap="turbo",
                 scalar_bar_args={"title": f"|Ez| at x = {x_mm:.4f} mm [V/m]"},
+            )
+            # THE EDGE, so the slice reads as a SHEET and not as a smear. A sheet
+            # one sample thick has no flank for the light to fall on, so on its
+            # own it shows colour with no extent at all - the reader cannot tell
+            # where the cross-section stops. The boundary is taken from the
+            # image's OWN bounds rather than rebuilt here as a rectangle: a
+            # rectangle would have to restate the origin, the spacing and the
+            # sample counts, and could then disagree with the field pyvista
+            # actually drew, which is the one failure this page cannot show.
+            # Measured on this zero-thickness image, outline() returns 8 points
+            # and 12 line cells whose bounds equal the image's to the last
+            # float, the four x-coincident edge pairs redundant but well formed
+            # - so the derived edge is exact by construction and merely draws a
+            # few duplicate lines. ``render=False`` for the same reason the
+            # marker legend uses it: the common tail ends with the one render of
+            # a finished scene, and a render here would flush a picture that is
+            # still being built (and pay a draw on every rebuild).
+            plotter.add_mesh(
+                image.outline(), color="black", line_width=2, render=False
             )
         except Exception as exc:  # noqa: BLE001 - see comment above
             print(

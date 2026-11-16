@@ -681,6 +681,13 @@ class _FakeImageData:
         self.origin = None
         self.point_data = {}
 
+    def outline(self):
+        # ``_draw_scene`` derives the port sheet's EDGE from the image's own
+        # bounds now, so a stand-in without this method would make the branch's
+        # own except swallow the AttributeError and let a real scene lose the
+        # line that tells the reader where the cross-section stops.
+        return ("outline", self)
+
 
 class _ScenePlotter:
     """Records the plotter half of ``_draw_scene`` into one ordered log."""
