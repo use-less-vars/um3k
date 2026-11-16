@@ -8,9 +8,9 @@ context object, the tests — exists to keep those three from becoming one file.
 
 Head is `a5886031a3657288751b6098dcbecee2b4965745` on `main`, subject
 *"fix(tests): restore the shared trame server in animation volume teardown"*,
-dated 2026-11-16, with 9 pre-existing untracked files and nothing modified. The
-pack's own baseline was the commit before it, `bb9d142` — *"docs: graded meshing
-for the lateral axes - a plan (design only)"* — which added
+dated 2026-11-16, with 9 pre-existing untracked files and nothing modified at that
+commit. The pack's own baseline was the commit before it, `bb9d142` —
+*"docs: graded meshing for the lateral axes - a plan (design only)"* — which added
 `docs/design/graded_meshing_plan.md`, and it is the tree every line-number
 citation here is stated against. `a588603` touches one file only
 (`tests/test_animation_volume.py`, a single hunk inside `_boot`), so advancing the

@@ -48,7 +48,7 @@ working document, not a monument.
 
 ---
 
-## 2. The four rules
+## 2. The Gen 14 Rules of Engagement
 
 These are not style preferences. Each one exists because it was already violated
 and the violation cost something recorded in `docs/design/defect_register.md`.
@@ -113,6 +113,10 @@ A fixed bug is not a repaired artefact. DR-43 is fixed and pinned by a test, and
 the pre-fix files in the tree still lack the key the fix introduced — which is
 correct, because you cannot retroactively repair data that was already written.
 When you write your own status line, say which of the four you mean.
+
+**Corollary, and not a fifth rule.** A citation is only as good as the blob it was
+read from: verify line numbers against committed blobs (`git show <hash>:path`), never
+against a working tree, where an uncommitted edit above the line moves it.
 
 ---
 

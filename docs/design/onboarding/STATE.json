@@ -20,7 +20,7 @@
       "modified": 0,
       "untracked_preexisting": 9,
       "modified_after_reading": ["server/poc_app.py", "tests/test_poc_volume_view.py"],
-      "working_tree_note": "0 modified is the state the citations in this pack were read at. While this re-baseline ran, uncommitted edits made OUTSIDE this pack touched those two tracked files; this pack neither made nor reverted them, and neither file is one this pack edited."
+      "working_tree_note": "0 modified is the working-tree state at commit a588603 that the citations in this pack were read at. While this re-baseline ran, uncommitted edits made OUTSIDE this pack touched those two tracked files; this pack neither made nor reverted them, and neither file is one this pack edited."
     },
     "citation_tree": "Line-number citations in this pack are stated against a5886031a3657288751b6098dcbecee2b4965745, i.e. against that commit's content and NOT against a dirty working tree. That commit touches one file only (tests/test_animation_volume.py, a single hunk inside _boot, :261-273), so nothing outside that test file moved when HEAD advanced from the baseline commit bb9d142. The uncommitted edit described in working_tree.modified_after_reading starts at server/poc_app.py:4842, so the constants cited here (:140, :143, :149, :158-161, :167) still land in the working tree, while the 9 citations to later lines are valid against the commit only.",
     "newest_commit_date_claimed": "2026-11-12 (DR-45's premise, measured against the baseline commit bb9d142 and NOT current; HEAD is dated 2026-11-16, so the figure is quoted as the register's assumption and not as a statement that the tree is current)",

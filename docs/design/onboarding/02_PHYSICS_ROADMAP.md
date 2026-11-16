@@ -122,8 +122,8 @@ at the throttle. It is not a chapter waiting to be written.
 `docs/design/graded_meshing_plan.md`, 650 lines, and it is the subject of `bb9d142`
 (`docs: graded meshing for the lateral axes - a plan (design only)`) — the baseline
 commit this pack's citations are stated against. It is **not** the subject of the
-current HEAD, which is a later test-only fix (`a588603`, touching
-`tests/test_animation_volume.py` and nothing else).
+HEAD this pack is pinned to, which is a later test-only fix (`a588603`, touching
+`tests/test_animation_volume.py` and no other file).
 
 **Status: DESIGN ONLY.** No `emfit/` file was edited. No graded grid has been
 built or run. A throwaway `tests/test_graded_meshing.py` was written, run and then
