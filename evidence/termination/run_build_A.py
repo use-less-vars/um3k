@@ -545,6 +545,15 @@ VIS_BUDGET_MB = 45.0
 #: ``VIS_XCUT_STRIDE`` frames of ``ez_ycut``, so ``nt_x == ceil(nt / 10)``
 #: and the two arrays share a time base without a second time array to say so.
 VIS_XCUT_STRIDE = 10
+#: Hard size ceiling for the OPTIONAL ``|E|`` volume inside the same file [MB
+#: decimal].  Separate from ``VIS_BUDGET_MB`` on purpose: the planes are planned
+#: -- the stride rises until they fit -- because a dump with fewer frames is
+#: still a dump of the march.  A volume is NOT planned that way.  Asking for one
+#: is asking for frames at ONE cadence, and the steps those frames carry are
+#: recorded from that cadence, so a writer that quietly raised the stride would
+#: hand back a different set of steps than the ones asked for.  Over budget is
+#: therefore a refusal that names the two knobs, not a substitution.
+VIS_VOLUME_BUDGET_MB = 48.0
 #: The measurement frequency of this geometry, recorded unconditionally.  This
 #: is ``geometry.f`` of every banked Run A artefact (k = 8 of the 0.4 mm-cell
 #: ladder: c0 * k / (2 pi ... )) and is NOT moved by --pulse-freq-ghz.
@@ -922,6 +931,39 @@ def _vis_plan_stride(nsteps: int, stride: int, nx: int, ny: int, nz: int,
             f"The stride actually used is recorded in the file as dump_stride.\n")
 
 
+def vis_volume_estimate_mb(n_frames: int, nx: int, ny: int, nz: int) -> float:
+    """Price the optional ``|E|`` volume [MB decimal].
+
+    Counted the same way :func:`_vis_estimate_mb` counts the planes: the array
+    is float32 and its ``int32`` step index is one entry per frame, so this is
+    the volume's payload and not an estimate of it.
+    """
+    n = max(int(n_frames), 0)
+    return (n * int(nx) * int(ny) * int(nz) * 4 + n * 4) / 1e6
+
+
+def _vis_volume_budget_check(n_frames: int, nx: int, ny: int, nz: int) -> float:
+    """Refuse a volume over ``VIS_VOLUME_BUDGET_MB``; return its size otherwise.
+
+    Called in TWO places from this one expression: by the writer, before it
+    writes, and by the plan in ``main``, before the solve starts.  A guard that
+    only fired at the end would have spent the 1400 s march to find out, and two
+    copies of the message would drift; so the message lives here and both
+    callers get it.
+    """
+    est_mb = vis_volume_estimate_mb(n_frames, nx, ny, nz)
+    if est_mb > VIS_VOLUME_BUDGET_MB:
+        raise SystemExit(
+            f"VIS REFUSED: the requested |E| volume is {int(n_frames)} frames "
+            f"of {int(nx)}x{int(ny)}x{int(nz)} float32 = {est_mb:.1f} MB, "
+            f"above the {VIS_VOLUME_BUDGET_MB:.0f} MB volume budget. Unlike "
+            "the planes, a volume is refused rather than thinned: its stride "
+            "is what names the steps in the file, so the cadence is yours to "
+            "choose and not the writer's to change. Raise --volume-stride "
+            "(fewer frames), or lower --volume-frames (a shorter tail).")
+    return est_mb
+
+
 def vis_geometry(kwargs: dict) -> dict:
     """The mesh integers the dump needs, derived from the call's own kwargs.
 
@@ -1009,7 +1051,9 @@ class _VisRecorder:
 
     def __init__(self, *, nx: int, ny: int, nz: int, nt: int, nt_x: int,
                  stride: int, j_cut: int, ix_near: int, ix_far: int,
-                 xcut_stride: int = VIS_XCUT_STRIDE):
+                 xcut_stride: int = VIS_XCUT_STRIDE,
+                 volume_stride: int | None = None,
+                 volume_frames: int | None = None):
         import numpy as np
 
         self.nx, self.ny, self.nz = int(nx), int(ny), int(nz)
@@ -1029,6 +1073,47 @@ class _VisRecorder:
         self._map_near = None
         self._map_far = None
         self.warnings = []
+        # The optional |E| volume.  ``volume_stride`` is the gate: it stays None
+        # unless the caller asked for a volume, and everything below allocates
+        # nothing in that case, so an unasked dump is the file it always was
+        # down to its key set (``vis_selftest`` refuses an unexpected key).
+        self.volume_stride = (None if volume_stride is None
+                              else max(1, int(volume_stride)))
+        self.n_vol = 0
+        self.e_abs_volume = None
+        if self.volume_stride is not None:
+            n_vol = (self.nt + self.volume_stride - 1) // self.volume_stride
+            if volume_frames is not None:
+                n_vol = min(n_vol, max(0, int(volume_frames)))
+            self.n_vol = int(n_vol)
+            self.e_abs_volume = np.zeros(
+                (self.n_vol, self.nx, self.ny, self.nz), dtype=np.float32)
+
+    def _e_abs(self, cc, e):
+        """``|E|`` on the dump's own ``(nx, ny, nz)`` node grid [V/m].
+
+        The three components live on their own primal edges, each block C order
+        over its own edge shape (``emfit/operators.py:49-92``), so the node grid
+        is a SLICE of each block and nothing more: ``ex`` already spans the full
+        ``nx`` along x, ``ey`` the full ``ny`` along y, ``ez`` the full ``nz``
+        along z, and the block's other two extents are the point layers the
+        dump's grid is on.  So there is no wrap and no interpolation, and
+        nothing is divided by a cell width -- this is the same raw node sampling
+        ``ez_ycut`` is gathered with, taken on all three components before they
+        are squared.  (``emfit/viz.py`` MAGNITUDE co-locates to cell centres and
+        divides by widths because it draws VOLTS on a pcolormesh; this is the
+        node grid of the planes and is in V/m because the leapfrog's E IS V/m.)
+        """
+        import numpy as np
+
+        nx, ny, nz = self.nx, self.ny, self.nz
+        ex = (e[cc.off_ex:cc.off_ex + cc.n_ex]
+              .reshape(cc.nx, cc.nyn, cc.nzn)[:, :ny, :nz])
+        ey = (e[cc.off_ey:cc.off_ey + cc.n_ey]
+              .reshape(cc.nxn, cc.ny, cc.nzn)[:nx, :, :nz])
+        ez = (e[cc.off_ez:cc.off_ez + cc.n_ez]
+              .reshape(cc.nxn, cc.nyn, cc.nz)[:nx, :ny, :])
+        return np.sqrt(ex * ex + ey * ey + ez * ez)
 
     # -- index maps, built once, off the CellComplex the stepper already has --
     def _build(self, cc):
@@ -1082,6 +1167,13 @@ class _VisRecorder:
                 "dump that silently drops its tail is worse than none.")
         e = stepper.e
         self.ez_ycut[fi] = e[self._map_ycut]
+        if self.volume_stride is not None and fi % self.volume_stride == 0:
+            # Frame vi of the volume is y-cut frame vi * volume_stride, which
+            # is the SAME index the writer reads the step number off, so the
+            # volume's step axis cannot drift from its frames.
+            vi = fi // self.volume_stride
+            if vi < self.n_vol:
+                self.e_abs_volume[vi] = self._e_abs(stepper.cc, e)
         if fi % self.xcut_stride == 0:
             xi = fi // self.xcut_stride
             if xi < self.nt_x:
@@ -1097,7 +1189,7 @@ class _VisRecorder:
         """The recorded arrays, trimmed to the frames actually written."""
         n = self.n_written
         nt_x = min(self.nt_x, max(1, (n + self.xcut_stride - 1) // self.xcut_stride))
-        return {
+        out = {
             "ez_ycut": self.ez_ycut[:n],
             "ez_xcut_near": self.ez_near[:nt_x],
             "ez_xcut_far": self.ez_far[:nt_x],
@@ -1106,6 +1198,15 @@ class _VisRecorder:
             "frame_time_s": self.frame_time_s[:n],
             "dt_s": self.dt_s,
         }
+        if self.volume_stride is not None:
+            # Only the frames written, and only the volume frames whose y-cut
+            # frame exists: a march that stopped early hands the writer a short
+            # volume rather than the preallocated zeros of frames never taken.
+            n_vol = min(self.n_vol,
+                        (n + self.volume_stride - 1) // self.volume_stride)
+            out["volume_e_abs"] = self.e_abs_volume[:n_vol]
+            out["volume_stride"] = self.volume_stride
+        return out
 
 
 def vis_analytic_velocity(
@@ -1312,7 +1413,9 @@ def write_vis_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
                    strip_w_mm: float = VIS_STRIP_W_MM,
                    eps_r: float = VIS_EPS_R,
                    load_v=None, load_i=None,
-                   load_netlist_json: str = "") -> dict:
+                   load_netlist_json: str = "",
+                   volume_e_abs=None, volume_stride: int | None = None,
+                   volume_frames: int | None = None) -> dict:
     """Write the one ``.npz`` this script's animation reads, and describe it.
 
     Units are the file's own: millimetres and nanoseconds everywhere, ``Ez`` in
@@ -1358,6 +1461,20 @@ def write_vis_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
     ``schema`` stays ``emfit.vis/2``: every pre-existing key keeps its name,
     dtype and meaning, so a reader that ignores these five keys reads exactly
     the file it read before.
+
+    ``volume_e_abs`` is the OPTIONAL ``|E|`` volume, and ``volume_stride`` is
+    what turns it on: with no stride there is no volume and NO volume key, so a
+    run that did not ask for one writes the archive it always wrote, key for
+    key.  When it is on, three keys go in as ``e_abs_volume`` (float32,
+    ``(n, nx, ny, nz)`` V/m on the same node grid as ``ez_ycut``),
+    ``e_abs_volume_step_index`` (int32, the 1-BASED step number of each frame)
+    and ``e_abs_volume_stride`` (int32, the cadence those frames are every Nth
+    of *y-cut* frame).  The step axis is taken from the SAME ``frame_index``
+    array the planes carry, ``frame_index[::volume_stride]``, rather than
+    recomputed from the stride: a recomputation is a second opinion about which
+    step a frame is, and the two can disagree by one without anything raising.
+    ``volume_frames`` caps the tail; a record with fewer strided frames than
+    asked for is written short and said so on stderr, never padded.
     """
     import numpy as np
 
@@ -1450,6 +1567,56 @@ def write_vis_dump(path, *, ez_ycut, ez_xcut_near, ez_xcut_far,
         "load_trace_present": np.int32(load_trace_present),
         "load_netlist_json": np.str_(str(load_netlist_json)),
     }
+    # --- the optional |E| volume, and it is GATED ----------------------------
+    # No stride, no volume, no key: the archive a run without --volume-stride
+    # writes is the file it always wrote, key for key (``vis_selftest`` refuses
+    # an unexpected key, and every reader that walks the archive would
+    # otherwise start counting frames twice).
+    volume_stride = None if volume_stride is None else max(1, int(volume_stride))
+    if volume_stride is None:
+        if volume_e_abs is not None:
+            raise SystemExit(
+                "VIS REFUSED: a |E| volume of shape "
+                f"{tuple(np.shape(volume_e_abs))} was handed in with no "
+                "volume_stride, so nothing says WHICH steps its frames are. "
+                "The stride is what turns a frame into the step number "
+                "recorded in e_abs_volume_step_index; without it the file "
+                "could only guess, so nothing is written.")
+    else:
+        vol = np.asarray(volume_e_abs)
+        if vol.ndim != 4 or tuple(vol.shape[1:]) != (int(nx), int(ny), int(nz)):
+            raise SystemExit(
+                f"VIS REFUSED: the |E| volume has shape {tuple(vol.shape)}, "
+                f"not (n, nx, ny, nz) = (n, {int(nx)}, {int(ny)}, {int(nz)}). "
+                "It is drawn on the same node grid as ez_ycut and cannot be "
+                "on another one.")
+        if volume_frames is not None:
+            wanted = max(0, int(volume_frames))
+            if vol.shape[0] > wanted:
+                vol = vol[:wanted]
+            elif vol.shape[0] < wanted:
+                sys.stderr.write(
+                    f"VIS WARNING: --volume-frames {wanted} asked for, but the "
+                    f"record has {int(vol.shape[0])} stride-{volume_stride} "
+                    "frames. Writing those, and NOT padding the difference "
+                    "with frames that were never taken.\n")
+        n_vol = int(vol.shape[0])
+        # From the SAME array the planes index with: one source, so the step a
+        # volume frame is cannot drift from the step its picture came from.
+        step_index = fi[::volume_stride][:n_vol]
+        if step_index.size != n_vol:
+            raise SystemExit(
+                f"VIS REFUSED: {n_vol} |E| volume frames but only "
+                f"{step_index.size} y-cut frames fall on stride "
+                f"{volume_stride}. The volume's frames and its step axis are "
+                "ONE record and cannot be written at two lengths.")
+        # Priced before it is copied or written, and the same check runs in the
+        # plan: over budget is a REFUSAL here, not a raised stride.
+        _vis_volume_budget_check(n_vol, nx, ny, nz)
+        arrays["e_abs_volume"] = np.ascontiguousarray(vol, dtype=np.float32)
+        arrays["e_abs_volume_step_index"] = np.ascontiguousarray(
+            step_index, dtype=np.int32)
+        arrays["e_abs_volume_stride"] = np.int32(volume_stride)
     path = Path(path).resolve()
     if path.suffix != ".npz":
         # np.savez_compressed appends ".npz" to a name that does not carry it,
@@ -3179,6 +3346,21 @@ def main(argv: list[str] | None = None) -> int:
              "step). Raised automatically, with a warning, if the planned "
              f"arrays would exceed the {VIS_BUDGET_MB:.0f} MB budget.")
     ap.add_argument(
+        "--volume-stride", type=int, default=None, metavar="N",
+        help="ALSO record the |E| volume (all three components, on the same "
+             "node grid as the cuts) into the emfit-vis .npz, keeping every "
+             "Nth y-cut FRAME -- note: frames, not steps, so stride 1 is one "
+             "volume per kept cut and stride 4 is one in four of them. Off "
+             "by default, and off writes no volume key at all. Unlike the "
+             f"planes, an over-budget volume ({VIS_VOLUME_BUDGET_MB:.0f} MB) "
+             "is REFUSED rather than thinned: the stride is what names the "
+             "steps in the file, so the cadence is the caller's to choose.")
+    ap.add_argument(
+        "--volume-frames", type=int, default=None, metavar="N",
+        help="cap the |E| volume at its first N frames (default: every "
+             "strided frame the run records). A shorter tail, never padding: "
+             "a record that produced fewer than N says so instead.")
+    ap.add_argument(
         "--pulse-freq-ghz", type=float, default=None, metavar="GHZ",
         help="centre frequency of the pulse the emfit-vis dump records "
              f"(default {VIS_F_PULSE_HZ / 1e9:.1f} GHz). Only used "
@@ -3467,6 +3649,23 @@ def main(argv: list[str] | None = None) -> int:
                                           geo["nx"], geo["cell_m"], "near")
             ix_far = vis_xcut_column(float(args.xcut_far_mm),
                                          geo["nx"], geo["cell_m"], "far")
+            # The optional |E| volume, priced BEFORE the march.  ``nt`` here is
+            # the y-cut frame count the plan settled on, so the volume's
+            # cadence is counted in those frames and not in solver steps; the
+            # budget check is the SAME one the writer runs, so an over-budget
+            # request fails now rather than after the 1400 s solve.
+            vol_stride = (None if args.volume_stride is None
+                          else max(1, int(args.volume_stride)))
+            vol_frames = (None if args.volume_frames is None
+                          else max(0, int(args.volume_frames)))
+            n_vol = 0
+            vol_mb = 0.0
+            if vol_stride is not None:
+                n_vol = (nt + vol_stride - 1) // vol_stride
+                if vol_frames is not None:
+                    n_vol = min(n_vol, vol_frames)
+                vol_mb = _vis_volume_budget_check(
+                    n_vol, geo["nx"], geo["ny"], geo["nz"])
             sys.stderr.write(
                 f"VIS: {args.vis_dump}: {nt} frames of Ez on the "
                 f"j={geo['j_cut']} z-cut ({geo['nx']}x{geo['nz']}) plus "
@@ -3478,10 +3677,17 @@ def main(argv: list[str] | None = None) -> int:
                 f"VIS: excite='pulse' at {f_pulse_hz / 1e9:.3f} GHz: the "
                 "dump is the march of one packet, so the excitation is "
                 "overridden for this run\n")
+            if vol_stride is not None:
+                sys.stderr.write(
+                    f"VIS: |E| volume: {n_vol} frames of "
+                    f"{geo['nx']}x{geo['ny']}x{geo['nz']} float32, one every "
+                    f"{vol_stride} y-cut frame(s), ~{vol_mb:.1f} MB, with "
+                    "the 1-based step number of each frame\n")
             recorder = _VisRecorder(
                 nx=geo["nx"], ny=geo["ny"], nz=geo["nz"], nt=nt, nt_x=nt_x,
                 stride=stride, j_cut=geo["j_cut"], ix_near=ix_near,
-                ix_far=ix_far)
+                ix_far=ix_far, volume_stride=vol_stride,
+                volume_frames=vol_frames)
             dump_meta = {
                 "nx": geo["nx"], "ny": geo["ny"], "nz": geo["nz"],
                 "cell_m": geo["cell_m"], "j_cut": geo["j_cut"],

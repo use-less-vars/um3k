@@ -611,6 +611,23 @@ def load_vis(path: Path) -> dict:
             "v_measured_reliable": bool(_npz_scalar(data, "v_measured_reliable", 0.0)),
             "velocity_note": _npz_text(data, "velocity_note"),
         }
+        # The optional ``|E|`` volume, and the normal answer is that there is
+        # none: only a run asked for with ``--volume-stride`` writes one, and
+        # then it writes all three keys together. Absent reads as three Nones
+        # rather than zeros so "this dump carries no volume" cannot be
+        # mistaken for "this dump carries a volume of zeroes", and a file with
+        # only one of the pair is treated as carrying none: half a volume says
+        # nothing about which steps its frames are.
+        info["e_abs_volume"] = None
+        info["e_abs_volume_step_index"] = None
+        info["e_abs_volume_stride"] = None
+        if "e_abs_volume" in names and "e_abs_volume_step_index" in names:
+            info["e_abs_volume"] = np.asarray(
+                data["e_abs_volume"], dtype=np.float32)
+            info["e_abs_volume_step_index"] = np.asarray(
+                data["e_abs_volume_step_index"], dtype=int)
+            info["e_abs_volume_stride"] = int(
+                _npz_scalar(data, "e_abs_volume_stride", 1.0))
         # The load's own probe trace, and what terminated it. Handed to the page
         # as one block beside its own reason (see _load_series_block), so that
         # "this dump predates the trace", "this run took no trace" and "here is
@@ -652,6 +669,31 @@ def load_vis(path: Path) -> dict:
         ):
             if size != expected:
                 problems.append(f"{key} has {size} entries, expected {expected}")
+        # The volume is checked exactly where the planes are, and against the
+        # file's own nx/ny/nz: it is drawn on the same node grid as ez_ycut, so
+        # a volume whose last three axes disagree with it would be plotted at
+        # the wrong mm per voxel rather than refused.
+        vol = info["e_abs_volume"]
+        if vol is not None:
+            steps = info["e_abs_volume_step_index"]
+            if vol.ndim != 4:
+                problems.append(
+                    f"e_abs_volume is {vol.ndim}D, expected a 4D array "
+                    "(n, nx, ny, nz)"
+                )
+            elif vol.shape[1:] != (info["nx"], info["ny"], info["nz"]):
+                problems.append(
+                    f"e_abs_volume has shape {vol.shape}, expected "
+                    f"(n, nx, ny, nz) = (n, {info['nx']}, {info['ny']}, "
+                    f"{info['nz']})"
+                )
+            if vol.ndim == 4 and steps.size != vol.shape[0]:
+                problems.append(
+                    f"e_abs_volume has {vol.shape[0]} frames but "
+                    f"e_abs_volume_step_index has {steps.size} entries; the "
+                    "volume's frames and its step axis are one record and "
+                    "cannot be read at two lengths"
+                )
     if problems:
         for problem in problems:
             print(f"[poc_app] {path}: {problem}", file=sys.stderr)
