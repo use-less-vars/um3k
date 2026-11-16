@@ -601,3 +601,569 @@ def test_a_volume_with_no_grid_is_refused_rather_than_guessed():
     image, meta = poc_app._volume_abs_grid(info, CELL_MM, grid_hint=(2, 2, 2))
     assert meta["reason"] is None, f"the grid hint was ignored: {meta}"
     assert tuple(image.dimensions) == (2, 2, 2)
+
+
+# --- (h) the y / z cut sliders slice the |E| volume ------------------------
+# The sliders used to index the captured plane stack unconditionally, so on a
+# dump that carries a colocated volume they cut a DIFFERENT lattice from the one
+# the volume beside them is drawn on. These tests pin the retarget: the volume
+# when there is one, and the plane stack - byte for byte as before - when there
+# is not.
+
+#: The two collaborators under test in the scene test below, captured BEFORE any
+#: ``_stub_scene`` replaces them, so the scene test can put the real ones back.
+_REAL_CUT_LAYOUT = poc_app._cut_layout
+_REAL_BUILD_CUT_SHEETS = poc_app.build_cut_sheets
+
+
+def test_the_cut_layout_indexes_the_volumes_own_lattice_when_there_is_one():
+    """``source == "volume"``: ``(j, k)`` index ``(ny, nz)``, half a cell in.
+
+    WHY half a cell and why the volume's x extent: the volume's samples are cell
+    CENTRES, so a cut quoted at ``j * cell`` would name the cell CORNER, half a
+    cell upstream of the field the volume draws - and the sheets would span the
+    captured slab instead of the volume they are cut from.
+    """
+    nx, ny, nz = 3, 4, 2
+    info = _volume_info(_index_volume(nx, ny, nz))
+
+    layout = poc_app._cut_layout(info)
+
+    assert layout["source"] == "volume"
+    assert (layout["n_j"], layout["n_k"]) == (ny, nz)
+    # The default is the middle sample of the VOLUME, not of the plane stack.
+    assert (layout["j"], layout["k"]) == (ny // 2, nz // 2) == (2, 1)
+    assert layout["n_st"] == nx
+    assert layout["y_mm"] == pytest.approx((2 + 0.5) * CELL_MM)
+    assert layout["z_mm"] == pytest.approx((1 + 0.5) * CELL_MM)
+    assert layout["x_lo_mm"] == pytest.approx(0.5 * CELL_MM)
+    assert layout["x_hi_mm"] == pytest.approx((nx - 0.5) * CELL_MM)
+    assert layout["dx_mm"] == pytest.approx(CELL_MM)
+    # The sliders span the volume's samples, not the plane stack's 12 x 5.
+    assert poc_app._cut_axis_counts(info, 12, 5) == (ny, nz)
+
+
+def test_the_cut_label_says_which_grid_its_millimetres_are_on():
+    """The volume row APPENDS the grid; the plane row is unchanged to the byte."""
+    info = _volume_info(_index_volume(3, 4, 2))
+
+    text = poc_app._cut_text(poc_app._cut_layout(info, 2, 1))
+
+    assert "y = 1.0000 mm" in text, f"the volume cut is not quoted at the cell centre: {text!r}"
+    assert "z = 0.6000 mm" in text, text
+    assert "|E| volume cells, cell centres" in text, (
+        f"the row does not say which lattice the millimetres are on: {text!r}"
+    )
+
+    plane_info = {
+        "cell_m": CELL_MM * 1e-3,
+        poc_app.PLANE_KEY: np.ones((2, 4, 5), dtype=complex),
+    }
+    plane_text = poc_app._cut_text(poc_app._cut_layout(plane_info, 1, 3))
+    assert plane_text == (
+        "cut y = 2/4 (y = 0.4000 mm)   cut z = 4/5 (z = 1.2000 mm)   "
+        "one sample each, no interpolation"
+    ), f"the plane row changed: {plane_text!r}"
+
+
+def test_the_cut_sheets_are_subsets_of_the_volume_image():
+    """One sample thick, cell-centred, carrying ``e_abs`` from the parent image.
+
+    The values are compared against the field itself, so a transposed extent or a
+    Fortran/C mix-up is caught rather than a merely well-formed mesh.
+    """
+    nx, ny, nz = 3, 4, 2
+    volume = _index_volume(nx, ny, nz)
+    ex, ey, ez = volume[..., 0], volume[..., 1], volume[..., 2]
+    e_abs = np.sqrt(ex * ex + ey * ey + ez * ez)
+    info = _volume_info(volume)
+    j, k = 2, 1
+
+    sheets = dict(poc_app.build_cut_sheets(info, poc_app._cut_layout(info, j, k)))
+
+    assert sorted(sheets) == ["y", "z"]
+    y_sheet, z_sheet = sheets["y"], sheets["z"]
+    assert tuple(y_sheet.dimensions) == (nx, 1, nz)
+    assert tuple(y_sheet.spacing) == pytest.approx((CELL_MM, CELL_MM, CELL_MM))
+    assert tuple(y_sheet.origin) == pytest.approx(
+        (0.5 * CELL_MM, (j + 0.5) * CELL_MM, 0.5 * CELL_MM)
+    )
+    assert tuple(z_sheet.dimensions) == (nx, ny, 1)
+    assert tuple(z_sheet.origin) == pytest.approx(
+        (0.5 * CELL_MM, 0.5 * CELL_MM, (k + 0.5) * CELL_MM)
+    )
+    for sheet in (y_sheet, z_sheet):
+        assert "e_abs" in sheet.point_data.keys(), (
+            f"the sheet carries {list(sheet.point_data.keys())}, not the volume's e_abs"
+        )
+        assert "ez_abs" not in sheet.point_data.keys()
+    # x fastest: the y sheet is the (i, k) plane at j, the z sheet the (i, j)
+    # plane at k.
+    assert np.allclose(
+        np.asarray(y_sheet.point_data["e_abs"]), e_abs[:, j, :].ravel(order="F")
+    )
+    assert np.allclose(
+        np.asarray(z_sheet.point_data["e_abs"]), e_abs[:, :, k].ravel(order="F")
+    )
+
+
+def test_a_dump_with_no_volume_keeps_the_plane_stack_sheets():
+    """The fallback: ``(n_j, n_k)`` of the PLANE, ``j * cell``, ``ez_abs``.
+
+    The ``nx`` / ``ny`` / ``nz`` keys are present and deliberately WRONG for the
+    plane stack (3 x 4 x 2 against a 2 x 4 x 5 plane): the loader publishes them
+    beside every dump's raw stash, so a predicate that read them alone would
+    retarget the sliders onto a grid that carries no field.
+    """
+    info = {
+        "path": Path("hand-built.npz"),
+        "nx": 3,
+        "ny": 4,
+        "nz": 2,
+        "cell_m": CELL_MM * 1e-3,
+        poc_app.PLANE_KEY: np.ones((2, 4, 5), dtype=complex),
+    }
+
+    layout = poc_app._cut_layout(info, 1, 3)
+
+    assert layout["source"] == "planes", (
+        f"the cell-count keys alone retargeted the cuts onto an absent volume: {layout}"
+    )
+    assert (layout["n_j"], layout["n_k"]) == (4, 5)
+    assert (layout["j"], layout["k"]) == (1, 3)
+    assert layout["y_mm"] == pytest.approx(1 * CELL_MM), (
+        "the plane cut moved off the cell corner it has always been quoted at"
+    )
+    assert layout["z_mm"] == pytest.approx(3 * CELL_MM)
+    assert poc_app._cut_axis_counts(info, 4, 5) == (4, 5)
+
+    sheets = dict(poc_app.build_cut_sheets(info, layout))
+    assert tuple(sheets["y"].dimensions) == (2, 1, 5)
+    assert tuple(sheets["z"].dimensions) == (2, 4, 1)
+    for sheet in sheets.values():
+        assert "ez_abs" in sheet.point_data.keys()
+        assert "e_abs" not in sheet.point_data.keys()
+    assert "volume" not in poc_app._cut_text(layout)
+
+
+def test_the_cut_sliders_span_the_volumes_own_samples():
+    """``max`` is the volume's last cell; the passed plane counts are ignored.
+
+    A slider that cannot reach the last volume cell would let the row report a
+    cut that is not where the sheet is actually drawn - and, worse, the clamp in
+    ``_on_cut_change`` would refuse a reachable sample.
+    """
+    info = _volume_info(_index_volume(3, 4, 2))
+    calls = []
+    widgets = {}
+
+    def _record(name):
+        def _call(*args, **kwargs):
+            calls.append((name, args, kwargs))
+
+        return _call
+
+    for name in ("VLabel", "VSlider"):
+        widgets[name] = _record(name)
+
+    poc_app._emit_cut_sliders(
+        [],
+        None,
+        lambda *a, **k: None,
+        widgets,
+        types.SimpleNamespace(cut_y=2, cut_z=1),
+        12,  # the plane-stack fallback counts, which must NOT be used here
+        5,
+        info,
+    )
+
+    sliders = [kwargs for name, _args, kwargs in calls if name == "VSlider"]
+    assert len(sliders) == 2, f"the row built {[c[0] for c in calls]!r}"
+    assert (sliders[0]["min"], sliders[0]["max"], sliders[0]["step"]) == (0, 3, 1), (
+        f"the y slider does not span the volume's ny = 4 cells: {sliders[0]!r}"
+    )
+    assert (sliders[1]["min"], sliders[1]["max"], sliders[1]["step"]) == (0, 1, 1), (
+        f"the z slider does not span the volume's nz = 2 cells: {sliders[1]!r}"
+    )
+    assert sliders[0]["v_model"] == ("cut_y", 2)
+    assert sliders[1]["v_model"] == ("cut_z", 1)
+
+
+class _SheetPlotter(_ScenePlotter):
+    """``_ScenePlotter`` that also keeps the mesh each ``add_mesh`` was handed."""
+
+    def __init__(self):
+        super().__init__()
+        self.meshes = []
+
+    def add_mesh(self, mesh, **kwargs):
+        self.meshes.append((mesh, kwargs))
+        return super().add_mesh(mesh, **kwargs)
+
+
+def test_the_volume_cut_sheets_are_drawn_on_the_volumes_own_colour_scale(
+    monkeypatch,
+):
+    """Two ``add_mesh`` calls, ``scalars="e_abs"``, log-scaled on the volume's clim.
+
+    WHY the scale matters: the sheets are drawn from the volume's samples, and a
+    linear bar over |E| would show the peak and nothing else - while a second bar
+    over the same field would be the same numbers twice, hence
+    ``show_scalar_bar=False``.
+
+    The real ``_cut_layout`` and ``build_cut_sheets`` are put back after
+    ``_stub_scene``: the stubs exist to keep the rest of the scene out of the way,
+    not to fake the sheets under test.
+    """
+    nx, ny, nz = 3, 4, 2
+    info = _volume_info(_index_volume(nx, ny, nz))
+    plotter = _SheetPlotter()
+
+    _stub_scene(monkeypatch)
+    monkeypatch.setattr(poc_app, "_cut_layout", _REAL_CUT_LAYOUT)
+    monkeypatch.setattr(poc_app, "build_cut_sheets", _REAL_BUILD_CUT_SHEETS)
+    passed = dict(info)
+    passed[poc_app.PLANE_KEY] = np.ones((4, 4, 5), dtype=complex)
+
+    poc_app._draw_scene(plotter, passed, _planes(4), "volume", 0)
+
+    cuts = [(mesh, kwargs) for mesh, kwargs in plotter.meshes if "scalars" in kwargs]
+    assert len(cuts) == 2, (
+        "expected the two cut sheets, got "
+        f"{[kwargs.get('scalars') for _m, kwargs in plotter.meshes]}"
+    )
+    assert [tuple(mesh.dimensions) for mesh, _k in cuts] == [
+        (nx, 1, nz),
+        (nx, ny, 1),
+    ], "the sheets are not the volume's y and z slices"
+    clim = passed[poc_app.VOLUME_ABS_KEY]["clim"]
+    for mesh, kwargs in cuts:
+        assert kwargs["scalars"] == "e_abs", (
+            f"a cut sheet was drawn on {kwargs['scalars']!r}, not the volume's field"
+        )
+        assert kwargs["cmap"] == "turbo"
+        assert kwargs["opacity"] == 0.75
+        assert kwargs["show_scalar_bar"] is False, (
+            "a second colour bar appeared over the same field"
+        )
+        assert kwargs["log_scale"] is True, (
+            "a linear |E| sheet shows the peak and nothing else"
+        )
+        assert kwargs["clim"] == clim, (
+            f"the sheet's range {kwargs['clim']!r} is not the volume's {clim!r}"
+        )
+        # The sheet is a SUBSET of the volume image: same parent field object
+        # values, no second colocation paid.
+        assert "e_abs" in mesh.point_data.keys()
+
+
+
+# --- (i) the cut sheets are FRAMED ----------------------------------------
+# A sheet one sample thick has no flank for the light to fall on, so on its own
+# it shows colour with no visible extent: the reader cannot tell where the cut
+# stops. The port plane has drawn its own outline for that reason; these tests
+# pin that the cuts do the same, from their OWN bounds, with the port plane's
+# styling - and that the extra edge costs no draw.
+
+
+def _port_edge(monkeypatch):
+    """The port plane's framing kwargs, read off a DRIVEN port scene.
+
+    WHY derived rather than restated: the cut edges must be the same framing the
+    port sheet already draws, and a literal copy of the dict in this file could
+    drift away from it without a single test going red.
+    """
+    plotter = _SheetPlotter()
+    _stub_scene(monkeypatch)
+    passed = {poc_app.PLANE_KEY: np.ones((4, 4, 5), dtype=complex)}
+
+    poc_app._draw_scene(plotter, passed, _planes(4), "port", 0)
+
+    sheets = [i for i, (_m, k) in enumerate(plotter.meshes) if "scalars" in k]
+    assert len(sheets) == 1, (
+        "expected the one port sheet, got "
+        f"{[k.get('scalars') for _m, k in plotter.meshes]}"
+    )
+    index = sheets[0]
+    assert index + 1 < len(plotter.meshes), (
+        "the port sheet is drawn with no edge after it, so there is no styling "
+        "to compare the cuts against"
+    )
+    return plotter.meshes[index + 1][1]
+
+
+def _volume_scene_meshes(monkeypatch, info):
+    """``_draw_scene`` in VOLUME mode, real cut layout and real sheet builder.
+
+    The stubs exist to keep the rest of the scene out of the way, not to fake
+    the sheets under test - hence the two collaborators put back after
+    ``_stub_scene``. Returns the ordered ``(mesh, kwargs)`` of every ``add_mesh``.
+    """
+    plotter = _SheetPlotter()
+    _stub_scene(monkeypatch)
+    monkeypatch.setattr(poc_app, "_cut_layout", _REAL_CUT_LAYOUT)
+    monkeypatch.setattr(poc_app, "build_cut_sheets", _REAL_BUILD_CUT_SHEETS)
+    passed = dict(info)
+    passed.setdefault(poc_app.PLANE_KEY, np.ones((4, 4, 5), dtype=complex))
+
+    poc_app._draw_scene(plotter, passed, _planes(4), "volume", 0)
+    return plotter.meshes
+
+
+def _sheets_and_followers(meshes):
+    """Every ``add_mesh`` carrying ``scalars``, with whatever came NEXT.
+
+    "Next" and not "somewhere later": the edge is only framable by the reader if
+    it is the call immediately after its own sheet.
+    """
+    pairs = []
+    for index, (mesh, kwargs) in enumerate(meshes):
+        if "scalars" not in kwargs:
+            continue
+        follower = meshes[index + 1] if index + 1 < len(meshes) else None
+        pairs.append((mesh, kwargs, follower))
+    return pairs
+
+
+def test_every_cut_sheet_is_framed_with_its_own_outline(monkeypatch):
+    """Each volume cut sheet is followed by ITS OWN outline, in the port styling.
+
+    WHY the sheet's own ``outline()``: a rectangle rebuilt here would have to
+    restate the origin, the spacing and the sample counts, and could then
+    disagree with the field pyvista actually drew - the one failure this page
+    cannot show. ``outline()`` is derived from the mesh, so the bounds match by
+    construction (measured on this (3,1,2) / (3,4,1) pair: 8 points, 12 line
+    cells, bounds equal to the sheet's to single precision - VTK keeps an
+    outline's points as float32).
+
+    WHY the port plane's kwargs: that framing is already on screen in the other
+    view, and two of them in one page would be an inconsistency a reader has to
+    explain. Read off a driven port scene, never restated as literals.
+    """
+    nx, ny, nz = 3, 4, 2
+    info = _volume_info(_index_volume(nx, ny, nz))
+    port_kwargs = _port_edge(monkeypatch)
+
+    meshes = _volume_scene_meshes(monkeypatch, info)
+    sheets = _sheets_and_followers(meshes)
+
+    assert len(sheets) == 2, (
+        "expected the two volume cut sheets, got "
+        f"{[k.get('scalars') for _m, k in meshes]}"
+    )
+    for mesh, kwargs, follower in sheets:
+        assert follower is not None, (
+            f"the {kwargs['scalars']} cut sheet is drawn with no edge after it: "
+            "a one-sample sheet shows colour with no extent"
+        )
+        edge_mesh, edge_kwargs = follower
+        assert edge_kwargs == port_kwargs, (
+            f"the cut edge is styled {edge_kwargs!r}, not the port plane's "
+            f"{port_kwargs!r}"
+        )
+        # ``approx``: the sheet's bounds are double precision, the outline's
+        # points are float32 (VTK's default point precision), so the two agree
+        # to single precision - measured 0.2 vs 0.20000000298023224 on this
+        # sub-millimetre cell. The claim is WHICH box is framed, not a bit.
+        assert tuple(edge_mesh.bounds) == pytest.approx(
+            tuple(mesh.bounds), rel=1e-6
+        ), (
+            f"the edge frames {tuple(edge_mesh.bounds)}, not the sheet it "
+            f"belongs to {tuple(mesh.bounds)}"
+        )
+
+
+def test_the_plane_fallback_cuts_are_framed_the_same_way(monkeypatch):
+    """No volume: the two ``ez_abs`` sheets get the same edge, from their own outline.
+
+    WHY every cut and not only the volume ones: thinness is a property of BOTH
+    sources - a plane sheet is one captured sample thick too, and it is the
+    picture this page drew before the volume existed - so an unframed fallback
+    sheet would be exactly the smear the port plane was given an edge to avoid.
+
+    The dump carries ``nx`` / ``ny`` / ``nz`` deliberately WRONG for the plane
+    stack (3 x 4 x 2 against a 2 x 4 x 5 plane), as the loader publishes them
+    beside every raw stash; the cuts must still be the plane ones.
+    """
+    port_kwargs = _port_edge(monkeypatch)
+    info = {
+        "path": Path("hand-built.npz"),
+        "nx": 3,
+        "ny": 4,
+        "nz": 2,
+        "cell_m": CELL_MM * 1e-3,
+        poc_app.PLANE_KEY: np.ones((2, 4, 5), dtype=complex),
+    }
+
+    meshes = _volume_scene_meshes(monkeypatch, info)
+    sheets = _sheets_and_followers(meshes)
+
+    assert [kwargs.get("scalars") for _m, kwargs, _f in sheets] == [
+        "ez_abs",
+        "ez_abs",
+    ], f"the cuts are not the plane stack's: {[k for _m, k, _f in sheets]}"
+    assert [tuple(mesh.dimensions) for mesh, _k, _f in sheets] == [
+        (2, 1, 5),
+        (2, 4, 1),
+    ], "the sheets are not the plane stack's y and z slices"
+    for mesh, kwargs, follower in sheets:
+        assert follower is not None, (
+            f"the {kwargs['scalars']} fallback sheet is drawn with no edge after it"
+        )
+        edge_mesh, edge_kwargs = follower
+        assert edge_kwargs == port_kwargs, (
+            f"the fallback edge is styled {edge_kwargs!r}, not the port plane's "
+            f"{port_kwargs!r}"
+        )
+        # ``approx`` for the same single-precision reason as the volume case.
+        assert tuple(edge_mesh.bounds) == pytest.approx(
+            tuple(mesh.bounds), rel=1e-6
+        ), (
+            f"the edge frames {tuple(edge_mesh.bounds)}, not the sheet it "
+            f"belongs to {tuple(mesh.bounds)}"
+        )
+
+
+def test_a_cut_redraw_adds_no_render_for_the_edges(monkeypatch):
+    """FOUR ``add_mesh`` calls for the cuts: two sheets and two edges, in order.
+
+    WHY the count matters: ``render=False`` on each edge - the keyword the port
+    plane already uses - is what keeps an edge from flushing a draw of a picture
+    that is still being built, so the common tail's one render is still the only
+    draw of a rebuild. That is why ``_CUT_REDRAW_RENDERS`` in
+    tests/test_poc_playback.py stays 9 and must never be relaxed to ``>= 1``.
+
+    A count of four also catches the OTHER failure: an edge that quietly stopped
+    being drawn would leave two calls and a picture with no extents, and every
+    assertion about the edge's styling would still pass on the sheet's.
+    """
+    nx, ny, nz = 3, 4, 2
+    info = _volume_info(_index_volume(nx, ny, nz))
+
+    meshes = _volume_scene_meshes(monkeypatch, info)
+    # The cut block is everything before the scene's grid outline, which is the
+    # one ``add_mesh`` drawn at line_width 1; the volume itself is an
+    # ``add_volume`` and so is not in this list at all.
+    cut_calls = []
+    for _mesh, kwargs in meshes:
+        if kwargs.get("line_width") == 1:
+            break
+        cut_calls.append(kwargs)
+
+    assert len(cut_calls) == 4, (
+        f"the cut block made {len(cut_calls)} add_mesh calls "
+        f"({[sorted(k) for k in cut_calls]}), not two sheets and two edges"
+    )
+    assert ["scalars" in kwargs for kwargs in cut_calls] == [
+        True,
+        False,
+        True,
+        False,
+    ], (
+        "the edges are not each drawn immediately after their own sheet: "
+        f"{[sorted(k) for k in cut_calls]}"
+    )
+    for kwargs in (cut_calls[1], cut_calls[3]):
+        assert kwargs["render"] is False, (
+            f"the edge renders its own draw ({kwargs!r}): a cut redraw would "
+            "then cost more than the one render of a finished scene"
+        )
+
+
+
+# --- (j) the corner legend names the RIGHT object -------------------------
+# The marker reason used to say every off-sheet marker was "outside the captured
+# slab". On a dump with a volume that is the wrong object: the sheets span the
+# VOLUME's grid, which starts half a cell in and ends half a cell short - there
+# is no captured slab in that picture at all.
+
+
+def test_a_marker_off_the_cut_quotes_the_volumes_grid_not_a_captured_slab():
+    """``source == "volume"``: the reason names the grid extent; the plane row is unchanged.
+
+    WHY the noun matters: the sentence sits next to the picture, and "the
+    captured slab ends at 3.2 mm" over a volume whose grid ends at 1.0 mm is the
+    page lying about the object it just drew. The DECISION is untouched - the
+    same ``in_slab`` test and the same half-cell tolerance - so only the words
+    differ, and the fallback keeps its own sentence byte for byte because there
+    the slab really is the captured one.
+    """
+    info = _volume_info(_index_volume(3, 4, 2))
+    layout = poc_app._cut_layout(info)
+
+    lines = poc_app._marker_cut_relation(_planes(4), layout)
+
+    load = next(line for line in lines if line.startswith("load marker is off"))
+    assert "outside the volume's grid extent 0.2000..1.0000 mm" in load, (
+        f"the load marker's reason does not quote the volume's own grid: {load!r}"
+    )
+    assert "captured slab" not in "".join(lines), (
+        f"a volume cut still claims a captured slab: {lines!r}"
+    )
+    assert layout["source"] == "volume"
+
+    plane_info = {
+        "path": Path("hand-built.npz"),
+        "cell_m": CELL_MM * 1e-3,
+        poc_app.PLANE_KEY: np.ones((2, 4, 5), dtype=complex),
+    }
+    plane_layout = poc_app._cut_layout(plane_info)
+    plane_lines = poc_app._marker_cut_relation(_planes(4), plane_layout)
+
+    plane_load = next(
+        line for line in plane_lines if line.startswith("load marker is off")
+    )
+    assert plane_load == (
+        "load marker is off both cuts: its x = 4.0000 mm is outside the "
+        "captured slab 0.0000..0.4000 mm, so no cut sheet reaches it"
+    ), f"the plane row's sentence changed: {plane_load!r}"
+
+
+
+# --- (k) no colour range: linear, never a made-up one ---------------------
+# ``clim`` is READ from the reader that produced the image. Every path that
+# returns no image returns ``clim=None``, and the single path that returns one
+# returns ``(peak / 1000, peak)`` - so the key is present exactly when the image
+# is. The guard below is the belt on that brace, and it is what stops a future
+# refactor from turning a missing range into either a KeyError out of the cut
+# block or a fabricated bar.
+
+
+def test_a_volume_with_no_colour_range_drops_the_log_scale_instead_of_inventing_one(
+    monkeypatch,
+):
+    """``clim is None`` beside a real image: the sheet is drawn LINEAR, unframed.
+
+    WHY linear and not some fallback range: a fabricated clim would put numbers
+    on the colour bar that the field never had, which is the kind of lie this
+    page refuses - whereas a linear sheet over |E| merely shows less. WHY it must
+    not raise: this runs inside the cut block's try, so a KeyError here would
+    cost the cuts AND the "cuts drawn" flag the legend reads, over a colour bar.
+    """
+    info = _volume_info(_index_volume(3, 4, 2))
+    image, _meta = poc_app._volume_abs_grid(info, CELL_MM)
+    assert image is not None, "the fixture volume did not build"
+    monkeypatch.setattr(
+        poc_app,
+        "_volume_abs_grid",
+        lambda *_a, **_k: (image, {"clim": None, "reason": None, "n": 0}),
+    )
+
+    meshes = _volume_scene_meshes(monkeypatch, info)
+    cuts = [(mesh, kwargs) for mesh, kwargs in meshes if "scalars" in kwargs]
+
+    assert len(cuts) == 2, (
+        f"expected the two cut sheets, got {[k.get('scalars') for _m, k in meshes]}"
+    )
+    for _mesh, kwargs in cuts:
+        assert kwargs["scalars"] == "e_abs", (
+            f"a sheet dropped off the volume's own field: {kwargs['scalars']!r}"
+        )
+        assert "log_scale" not in kwargs, (
+            "a log scale was applied with no range to apply it over: "
+            f"{kwargs!r}"
+        )
+        assert "clim" not in kwargs, (
+            f"a colour range was invented for a volume that had none: {kwargs!r}"
+        )
+

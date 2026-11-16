@@ -3722,9 +3722,20 @@ def _view_label(
 
 # --- the two Y / Z cut sheets ------------------------------------------------
 #
-# The volume view stacks 9 captured x-planes over a 213 x 22 (y, z) cross
-# section. Two sliders pick ONE y sample and ONE z sample and draw the sheet
-# through them, so the field can be read on a slice instead of through a volume.
+# Two sliders pick ONE y sample and ONE z sample of the field on screen and draw
+# the sheet through them, so the field can be read on a slice instead of through
+# a volume.
+#
+# WHICH field they cut is not a detail: the COLOCATED |E| volume when the dump
+# carries one - the lattice the solve actually produced, every sample a cell
+# centre half a cell in on each axis - so the cuts and the |E| volume drawn
+# beside them are the same samples of the same grid and cannot disagree about
+# where a feature is. Only when the dump carries no volume does the layer fall
+# back to the 9 captured x-planes over a 213 x 22 (y, z) cross section, which is
+# the |Ez| picture this layer has always drawn. ``_cut_layout`` names the choice
+# in its ``source`` key, ``_cut_text`` says it in the slider row,
+# ``build_cut_sheets`` builds the matching sheets, and ``_cut_axis_counts`` is
+# what makes the two sliders span the grid they actually index.
 #
 # WHY one sample thick and not a resample: the dump holds exactly these samples,
 # so a cut through them is recorded data. A resampled cut would be a picture of a
@@ -3733,13 +3744,73 @@ def _view_label(
 #
 # The trap this layer has to avoid is a marker that LOOKS like it belongs to a
 # cut. The S11 / load / S21 markers sit at mid-height of the y-z section and at
-# x = 3.2, 20.0 and 20.4 mm, while the cut sheets span only the captured slab
-# (x = 10.4 .. 20.0 mm): the port and the S21 plane are off every sheet by
-# construction. Nothing is moved, clipped or projected to make them fit - each
-# marker's relation to the drawn cuts is stated in the corner legend instead,
-# because a marker drawn at the edge of a sheet would be a lie about where the
-# plane is. That slab is the RECORDED station axis when the caller resolved one
-# (``_station_axis_mm``), never ``(n_st - 1) * cell``.
+# x = 3.2, 20.0 and 20.4 mm. With the volume the sheets span the volume's OWN x
+# extent (half a cell to ``(nx - 0.5)`` cells), so a marker is inside the slab
+# exactly when its x is on the grid at all; on the FALLBACK path they span only
+# the captured slab (x = 10.4 .. 20.0 mm), so the port and the S21 plane are off
+# every sheet by construction. Nothing is moved, clipped or projected to make
+# them fit - each marker's relation to the drawn cuts is stated in the corner
+# legend instead, because a marker drawn at the edge of a sheet would be a lie
+# about where the plane is. That fallback slab is the RECORDED station axis when
+# the caller resolved one (``_station_axis_mm``), never ``(n_st - 1) * cell``.
+
+
+def _volume_grid_dims(info: dict, grid_hint=None):
+    """The ``(nx, ny, nz)`` lattice the colocated volume sits on, or None.
+
+    ONE predicate for "does this dump carry a volume, and on which grid": the cut
+    sliders read it to decide whether they slice |E| or the captured plane stack,
+    and ``_volume_abs_grid`` reads it for the very same counts, so a cut sheet
+    and the volume it cuts can never be built on two different lattices.
+
+    None is the answer to two different causes and that is deliberate: no volume
+    at all, and a volume whose grid nobody stated. Both mean "index the plane
+    stack instead", which is the only thing a caller can do with either;
+    ``_volume_abs_grid`` is the one that separates them in a sentence.
+
+    WHY the ``nx``/``ny``/``nz`` keys alone are NOT enough: the loader publishes
+    them beside the raw stash of every dump, including the ones whose volume was
+    never kept, so reading them here would retarget the sliders onto a grid that
+    carries no field. A volume has to be PRESENT first; the counts are read
+    after it.
+
+    Cheap on purpose - dict reads, no colocation, no pyvista import - because it
+    runs on every slider construction and every redraw.
+    """
+    if not isinstance(info, dict):
+        return None
+    # The memo first: a page that already drew |E| states the lattice on the
+    # image itself, and that is the strongest answer available.
+    cached = info.get(VOLUME_ABS_KEY)
+    if isinstance(cached, dict) and cached.get("image") is not None:
+        try:
+            dims = tuple(int(v) for v in cached["image"].dimensions)
+        except (AttributeError, TypeError, ValueError):
+            dims = None
+        if dims is not None and len(dims) == 3 and min(dims) > 0:
+            return dims
+    raw = info.get(VOLUME_RAW_KEY)
+    if info.get(VOLUME_KEY) is None and not (
+        isinstance(raw, dict) and raw.get("e") is not None
+    ):
+        return None
+    # The dump's own metadata first, then the record's ``geometry.grid``, and
+    # never ``e.size``: the raw vector is staggered, so its length counts EDGES.
+    for source in (info, grid_hint):
+        try:
+            if isinstance(source, dict):
+                triple = (source.get("nx"), source.get("ny"), source.get("nz"))
+            elif source is None:
+                continue
+            else:
+                triple = tuple(source)[:3]
+            dims = tuple(int(v) for v in triple)
+        except (TypeError, ValueError):
+            dims = None
+            continue
+        if len(dims) == 3 and min(dims) > 0:
+            return dims
+    return None
 
 
 def _cut_layout(info: dict, j_cut=None, k_cut=None, stations_mm=None) -> dict:
@@ -3748,22 +3819,45 @@ def _cut_layout(info: dict, j_cut=None, k_cut=None, stations_mm=None) -> dict:
     Split out from build_cut_sheets so the labels, the legend and the slider
     handlers can describe the cuts without importing pyvista.
 
-    ``stations_mm`` is the recorded station axis: the sheets span the FIRST and
-    LAST captured station on x, so ``x_lo_mm`` / ``x_hi_mm`` and the per-step
-    ``dx_mm`` they use come from it. Without it the sheets keep the old uniform
-    span of ``0`` to ``(n_st - 1)`` cells, which is the same stated assumption
-    the axis makes when nothing was recorded.
+    WHICH grid the ``j`` / ``k`` index is ``source`` - the colocated |E| volume
+    when the dump carries one (:func:`_volume_grid_dims`), the captured plane
+    stack otherwise - and the two differ in more than their counts:
+
+        volume : (j, k) index the volume's own (ny, nz) lattice and every sample
+                 is a CELL CENTRE, so the cut sits at ``(j + 0.5) * cell`` and
+                 the sheets span the volume's x extent, half a cell in at both
+                 ends - the same anchor the volume is drawn at.
+        planes : (j, k) index the captured (n_j, n_k) plane and the cut sits at
+                 ``j * cell``, the corner of the cell the plane holds.
+
+    ``stations_mm`` is the recorded station axis and only the PLANE fallback
+    uses it: those sheets span the FIRST and LAST captured station on x, so
+    ``x_lo_mm`` / ``x_hi_mm`` and the per-step ``dx_mm`` they use come from it.
+    Without it the fallback keeps the old uniform span of ``0`` to
+    ``(n_st - 1)`` cells, which is the same stated assumption the axis makes
+    when nothing was recorded. A volume needs neither: its own grid states the
+    extent, and it is the same one ``build_grid`` puts the volume on.
     """
-    plane = info[PLANE_KEY]
-    n_st, n_j, n_k = plane.shape
     cell_mm = _cell_mm(info)
-    if stations_mm is None:
-        x_lo_mm = 0.0
-        x_hi_mm = (n_st - 1) * cell_mm
+    dims = _volume_grid_dims(info)
+    if dims is not None:
+        n_x, n_j, n_k = dims
+        n_st = n_x
+        x_lo_mm = 0.5 * cell_mm
+        x_hi_mm = (n_x - 0.5) * cell_mm
+        dx_mm = cell_mm
+        source = "volume"
     else:
-        x_lo_mm = float(stations_mm[0])
-        x_hi_mm = float(stations_mm[-1])
-    dx_mm = (x_hi_mm - x_lo_mm) / (n_st - 1) if n_st > 1 else cell_mm
+        plane = info[PLANE_KEY]
+        n_st, n_j, n_k = plane.shape
+        if stations_mm is None:
+            x_lo_mm = 0.0
+            x_hi_mm = (n_st - 1) * cell_mm
+        else:
+            x_lo_mm = float(stations_mm[0])
+            x_hi_mm = float(stations_mm[-1])
+        dx_mm = (x_hi_mm - x_lo_mm) / (n_st - 1) if n_st > 1 else cell_mm
+        source = "planes"
     j = n_j // 2 if j_cut is None else j_cut
     k = n_k // 2 if k_cut is None else k_cut
     try:
@@ -3774,15 +3868,20 @@ def _cut_layout(info: dict, j_cut=None, k_cut=None, stations_mm=None) -> dict:
         k = max(0, min(n_k - 1, int(k)))
     except (TypeError, ValueError):
         k = n_k // 2
+    # Half a cell IN for the volume: its samples are cell centres, so a cut
+    # quoted at ``j * cell`` would name the cell CORNER, half a cell upstream of
+    # the field the volume beside it draws.
+    off_mm = 0.5 * cell_mm if source == "volume" else 0.0
     return {
         "cell_mm": cell_mm,
+        "source": source,
         "n_st": n_st,
         "n_j": n_j,
         "n_k": n_k,
         "j": j,
         "k": k,
-        "y_mm": j * cell_mm,
-        "z_mm": k * cell_mm,
+        "y_mm": j * cell_mm + off_mm,
+        "z_mm": k * cell_mm + off_mm,
         "x_lo_mm": x_lo_mm,
         "x_hi_mm": x_hi_mm,
         "dx_mm": dx_mm,
@@ -3790,31 +3889,56 @@ def _cut_layout(info: dict, j_cut=None, k_cut=None, stations_mm=None) -> dict:
 
 
 def _cut_text(layout: dict) -> str:
-    """The slider label: which sample, and where that sample is in mm."""
-    return (
+    """The slider label: which sample, where it is in mm, and WHICH grid.
+
+    The plane sentence is byte for byte the one this row has always shown; the
+    volume path APPENDS why its millimetres are cell centres and not cell
+    corners, so an operator reading ``y = 42.6000 mm`` can tell which of the two
+    lattices that number is on. ``.get`` because a fake layout may predate the
+    key.
+    """
+    text = (
         f"cut y = {layout['j'] + 1}/{layout['n_j']} "
         f"(y = {layout['y_mm']:.4f} mm)   "
         f"cut z = {layout['k'] + 1}/{layout['n_k']} "
         f"(z = {layout['z_mm']:.4f} mm)   one sample each, no interpolation"
     )
+    if layout.get("source") == "volume":
+        text += "   (|E| volume cells, cell centres)"
+    return text
 
 
 def build_cut_sheets(info: dict, layout: dict) -> list:
     """Build the two cut sheets as one-sample-thick pyvista images.
 
-    The same construction as the port-plane view in _draw_scene (one sample
-    drawn one thick), so no new primitive is introduced:
+    WHICH samples they carry follows ``layout["source"]`` (:func:`_cut_layout`):
+
+    * ``"volume"`` - the sheets are SUBSETS of the |E| image the volume view
+      draws, so a cut cannot show a sample the volume beside it does not, and no
+      second colocation is paid. :func:`_volume_cut_sheets` does that; when the
+      volume reader refuses, this falls THROUGH to the plane sheets below rather
+      than losing the cuts (the volume is not drawn then either, so the two still
+      agree).
+    * anything else - the captured plane stack, by the same construction as the
+      port-plane view in _draw_scene (one sample drawn one thick), so no new
+      primitive is introduced:
 
         y = j * cell : plane[:, j:j+1, :] -> dims (n_st, 1, n_k), origin y = j*cell
         z = k * cell : plane[:, :, k:k+1] -> dims (n_st, n_j, 1), origin z = k*cell
 
-    Axis 0 is the station axis and stays the x axis of the sheet in both cases;
-    VTK wants x to vary fastest, hence the Fortran ravel, as in build_grid.
-    Because it is the station axis, its origin is the FIRST captured station and
-    its spacing the layout's own ``dx_mm`` - not ``0.0`` and not the cell: the
-    stations are snapped to cells 1.2 mm apart from 10.4 mm (see
-    ``_station_axis_mm``), and a sheet drawn from x = 0 would sit off the volume.
+      Axis 0 is the station axis and stays the x axis of the sheet in both
+      cases; VTK wants x to vary fastest, hence the Fortran ravel, as in
+      build_grid. Because it is the station axis, its origin is the FIRST
+      captured station and its spacing the layout's own ``dx_mm`` - not ``0.0``
+      and not the cell: the stations are snapped to cells 1.2 mm apart from
+      10.4 mm (see ``_station_axis_mm``), and a sheet drawn from x = 0 would sit
+      off the volume.
     """
+    if layout.get("source") == "volume":
+        sheets = _volume_cut_sheets(info, layout)
+        if sheets is not None:
+            return sheets
+
     import pyvista as pv
 
     plane = info[PLANE_KEY]
@@ -3841,6 +3965,39 @@ def build_cut_sheets(info: dict, layout: dict) -> list:
     return [("y", y_sheet), ("z", z_sheet)]
 
 
+def _volume_cut_sheets(info: dict, layout: dict):
+    """The two cuts as SUBSETS of the |E| volume image, or None if it refused.
+
+    Subsets, not rebuilds: ``extract_subset`` keeps the parent's sample values,
+    its spacing, its origin - rebased to where the slice actually sits - and the
+    ``e_abs`` array NAME, so the sheets are drawn on the volume's own scale (and
+    through the volume's own colour bar) without this function restating any of
+    them. Measured in this image on a (5, 4, 3) image at cell 0.4 mm and origin
+    (0.2, 0.2, 0.2): the y extent ``(0, 4, 2, 2, 0, 2)`` comes back dims
+    (5, 1, 3) at origin (0.2, 1.0, 0.2) - the CELL CENTRE of j = 2, not 0.8 -
+    and the z extent ``(0, 4, 0, 3, 1, 1)`` comes back (5, 4, 1) at origin
+    (0.2, 0.2, 0.6).
+
+    None means the volume reader produced no image (unusable volume, unusable
+    cell, unresolved grid); the caller then draws the plane sheets, which is the
+    same picture the volume branch falls back to.
+    """
+    cell_mm = layout.get("cell_mm") or _cell_mm(info)
+    image, _meta = _volume_abs_grid(info, cell_mm)
+    if image is None:
+        return None
+    nx, ny, nz = (int(v) for v in image.dimensions)
+    # Clamped against the IMAGE's own counts, not the layout's: the two are built
+    # from the same predicate, and a disagreement must cost the frame, not the
+    # render (an out-of-range extent raises inside VTK).
+    j = max(0, min(ny - 1, int(layout.get("j", ny // 2))))
+    k = max(0, min(nz - 1, int(layout.get("k", nz // 2))))
+    return [
+        ("y", image.extract_subset(voi=(0, nx - 1, j, j, 0, nz - 1))),
+        ("z", image.extract_subset(voi=(0, nx - 1, 0, ny - 1, k, k))),
+    ]
+
+
 def _marker_cut_relation(planes: dict, layout: dict) -> list[str]:
     """State, per marker, whether it lies ON a drawn cut sheet or off them.
 
@@ -3849,6 +4006,10 @@ def _marker_cut_relation(planes: dict, layout: dict) -> list[str]:
     only when its transverse coordinate is within half a cell of the cut AND its
     x is inside that sheet's own x extent; anything else is off, and the reason
     is spelled out. No marker is moved to make it fit.
+
+    The x extent named in that reason is the one the sheets ACTUALLY span, which
+    follows ``layout["source"]``: the captured slab for the plane fallback, the
+    volume's own grid extent for the volume path.
     """
     cell_mm = layout["cell_mm"]
     tol = 0.5 * cell_mm
@@ -3875,10 +4036,24 @@ def _marker_cut_relation(planes: dict, layout: dict) -> list[str]:
             continue
         why = []
         if not in_slab(x_mm):
-            why.append(
-                f"its x = {x_mm:.4f} mm is outside the captured slab "
-                f"{x_lo:.4f}..{x_hi:.4f} mm, so no cut sheet reaches it"
-            )
+            # WHICH object the x extent belongs to follows the layout's own
+            # ``source``: the plane fallback's sheets span the CAPTURED slab (its
+            # first and last station), while the volume's sheets span the VOLUME's
+            # grid - origin half a cell in, ``(n_x - 0.5) * cell`` out - which is
+            # not a captured slab at all. The test that decides ON-ness is the same
+            # ``in_slab`` for both, and so is the tolerance; only the noun changes,
+            # because naming the wrong object is how a page starts lying about the
+            # picture beside it.
+            if layout.get("source") == "volume":
+                why.append(
+                    f"its x = {x_mm:.4f} mm is outside the volume's grid extent "
+                    f"{x_lo:.4f}..{x_hi:.4f} mm, so no cut sheet reaches it"
+                )
+            else:
+                why.append(
+                    f"its x = {x_mm:.4f} mm is outside the captured slab "
+                    f"{x_lo:.4f}..{x_hi:.4f} mm, so no cut sheet reaches it"
+                )
         if abs(y_mid - layout["y_mm"]) > tol:
             why.append(
                 f"its y = {y_mid:.4f} mm is not the y cut "
@@ -4542,12 +4717,66 @@ def _draw_scene(
         # shown). Guarded - losing the cuts must cost the cuts, not the view.
         try:
             for _axis, sheet in build_cut_sheets(info, cut_layout):
+                # WHICH scalar: the volume sheets carry ``e_abs`` straight off the
+                # |E| image, the fallback sheets ``ez_abs``. Read off the SHEET's
+                # own arrays rather than off the layout, so a volume that refused
+                # to slice (and fell back to the plane sheets) is still drawn
+                # from the array it actually carries.
+                scalars = "e_abs" if "e_abs" in sheet.point_data else "ez_abs"
+                style = {}
+                # ``clim`` is READ from the reader that produced the image, never
+                # guessed: checked against _volume_abs_grid, every path that
+                # returns no image returns ``clim=None``, and the single path that
+                # does return one returns ``(peak / 1000, peak)`` with a finite
+                # positive peak - so the key is present exactly when the image is,
+                # and a cache entry that lost it makes that reader miss and hand
+                # back None rather than a bare clim. The ``is not None`` below is
+                # the belt to that brace: it drops the log scale instead of
+                # inventing a colour range, because a fabricated clim is the kind
+                # of lie this page refuses.
+                clim = abs_meta.get("clim") if isinstance(abs_meta, dict) else None
+                if scalars == "e_abs" and abs_image is not None and clim is not None:
+                    # The volume's own bar and its own 60 dB range: |E| spans tens
+                    # of decades, so a linear sheet would show the peak and
+                    # nothing else - and a second bar over the same field would
+                    # be the same numbers twice.
+                    style = {"log_scale": True, "clim": clim}
                 plotter.add_mesh(
                     sheet,
-                    scalars="ez_abs",
+                    scalars=scalars,
                     cmap="turbo",
                     opacity=0.75,
                     show_scalar_bar=False,
+                    **style,
+                )
+                # THE EDGE, the same one the port plane draws above and for the
+                # same reason: a sheet ONE SAMPLE thick has no flank for the light
+                # to fall on, so on its own it shows colour with no visible extent
+                # and the reader cannot tell where the cut stops.
+                #
+                # Taken from the sheet's OWN ``outline()`` and not rebuilt here as
+                # a rectangle: a rectangle would have to restate the origin, the
+                # spacing and the sample counts, and could then disagree with the
+                # field pyvista actually drew - the one failure this page cannot
+                # show. Measured on both volume sheets ((3,1,2) and (3,4,1) cut
+                # from a (3,4,2) image at cell 0.4 mm): ``outline()`` returns 8
+                # points and 12 line cells whose bounds equal the sheet's to
+                # SINGLE precision - VTK stores an outline's points as float32,
+                # so 0.2 comes back as 0.20000000298023224, ~3e-9 mm out - the
+                # coincident edge pairs redundant but well formed.
+                #
+                # EVERY cut, volume subset and plane fallback alike: thinness is a
+                # property of both sources, and two framings in one scene would be
+                # an inconsistency a reader has to explain.
+                #
+                # ``render=False`` exactly as the port sheet uses it: the common
+                # tail ends with the one render of a finished scene, so an edge
+                # adds no draw to a cut redraw. It sits inside this try because
+                # that is where the port sheet keeps its own edge - an edge that
+                # cannot be built costs the cuts, never the outline, the axes, the
+                # board, the markers or the two corner labels drawn after.
+                plotter.add_mesh(
+                    sheet.outline(), color="black", line_width=2, render=False
                 )
         except Exception as exc:  # noqa: BLE001 - see comment above
             print(f"[poc_app] cut sheets not drawn: {exc}", file=sys.stderr)
@@ -4660,6 +4889,22 @@ def check_web_requirements() -> list[str]:
     return missing
 
 
+def _cut_axis_counts(info: dict, n_j: int, n_k: int):
+    """How many y / z samples the two cut sliders span.
+
+    The colocated |E| volume's own ``(ny, nz)`` when the dump carries one, and
+    the counts the caller passed in - the captured plane stack's - otherwise.
+    WHY the caller still passes them at all: the plane stack is the fallback this
+    page has always drawn and every call site already has its shape in hand, so
+    this stays the ONE place that decides which grid the sliders index and no
+    call site has to learn about the volume.
+    """
+    dims = _volume_grid_dims(info)
+    if dims is not None:
+        return int(dims[1]), int(dims[2])
+    return int(n_j), int(n_k)
+
+
 def _init_cut_state(
     state, info: dict, n_j: int, n_k: int, planes, toggle_available: bool
 ) -> None:
@@ -4669,7 +4914,13 @@ def _init_cut_state(
     middle sample of each transverse axis, which is where the markers already
     sit, so the first frame is the picture the page has always drawn. The
     sliders move these two numbers and nothing else.
+
+    ``n_j`` / ``n_k`` are the plane-stack FALLBACK counts; when the dump carries
+    a volume the sliders span its own ``(ny, nz)`` instead
+    (:func:`_cut_axis_counts`), because a slider that cannot reach the last
+    volume cell would report a cut that is not where it says it is.
     """
+    n_j, n_k = _cut_axis_counts(info, n_j, n_k)
     cut_layout = _cut_layout(info, n_j // 2, n_k // 2, (planes or {}).get("stations_mm"))
     state.cut_y = cut_layout["j"]
     state.cut_z = cut_layout["k"]
@@ -4750,7 +5001,14 @@ def _on_cut_change(
     _redraw,
     handles,
 ) -> None:
-    """Clamp one cut index, store it, and rebuild the scene."""
+    """Clamp one cut index, store it, and rebuild the scene.
+
+    ``n_j`` / ``n_k`` are the plane-stack FALLBACK counts, and the clamp limit is
+    taken from ``_cut_axis_counts`` for the same reason the sliders are: on a dump
+    with a volume the two axes span the volume's grid, so clamping to the plane
+    stack's count would refuse - or invent - a reachable sample.
+    """
+    n_j, n_k = _cut_axis_counts(info, n_j, n_k)
     current = state.cut_y if axis == "y" else state.cut_z
     limit = (n_j if axis == "y" else n_k) - 1
     try:
@@ -4779,13 +5037,26 @@ def _on_cut_change(
 
 
 def _emit_cut_sliders(
-    missing_widgets, placeholder, html_div, widgets, state, n_j: int, n_k: int
+    missing_widgets,
+    placeholder,
+    html_div,
+    widgets,
+    state,
+    n_j: int,
+    n_k: int,
+    info=None,
 ) -> None:
     """Emit the two cut sliders, or the label alone when they cannot be.
 
     The rows say which sample is drawn and where it is in mm, because a
     one-sample-thick sheet cannot be counted off the screen.
+
+    ``n_j`` / ``n_k`` are the plane-stack FALLBACK counts and ``info`` is optional
+    (a caller that does not hand it over gets exactly the old slider range):
+    when the dump carries a volume the range is its own ``(ny, nz)``, so a slider
+    and the clamp in :func:`_on_cut_change` span the same grid.
     """
+    n_j, n_k = _cut_axis_counts(info, n_j, n_k)
     if missing_widgets:
         if placeholder is not None:
             placeholder("{{ cut_label }}")
@@ -5578,6 +5849,7 @@ def run_web(
                                 state,
                                 n_j,
                                 n_k,
+                                info,
                             )
                             # Same row as the cut sliders: both are ways of
                             # reading the one field on screen, so they belong
@@ -7764,27 +8036,10 @@ def _volume_abs_grid(info, cell_mm, grid_hint=None):
             volume = np.stack((ex, ey, ez), axis=-1)
 
         # The cell counts: the dump's own metadata first, then the record's
-        # ``geometry.grid`` when it was supplied, and never ``e.size``.
-        dims = None
-        for source in (info, grid_hint):
-            try:
-                if isinstance(source, dict):
-                    triple = (
-                        source.get("nx"),
-                        source.get("ny"),
-                        source.get("nz"),
-                    )
-                elif source is None:
-                    continue
-                else:
-                    triple = tuple(source)[:3]
-                dims = tuple(int(v) for v in triple)
-            except (TypeError, ValueError):
-                dims = None
-                continue
-            if len(dims) == 3 and min(dims) > 0:
-                break
-            dims = None
+        # ``geometry.grid`` when it was supplied, and never ``e.size``. The
+        # predicate is SHARED with the cut sliders (``_volume_grid_dims``), so a
+        # sheet and this volume are always built on one lattice.
+        dims = _volume_grid_dims(info, grid_hint)
         if dims is None:
             return _miss("no (nx,ny,nz) for the volume")
         nx, ny, nz = dims
