@@ -8348,6 +8348,150 @@ def _volume_abs_grid(info, cell_mm, grid_hint=None):
         return _miss(f"the |E| volume could not be built: {exc}")
 
 
+def _volume_frame_for_step(step_index, step):
+    """Which stored |E| frame belongs to animation ``step``, or None.
+
+    ``e_abs_volume`` does not hold one frame per animation step: the writer
+    stores every ``e_abs_volume_stride``-th step and records WHICH steps those
+    are in ``e_abs_volume_step_index`` - a slice of the very ``frame_index``
+    array the plane sheets are indexed by, so the two axes are one record and
+    not two. The mapping is therefore a LOOKUP in that array and never
+    ``step // stride``: the two agree only while the steps are 1-based,
+    consecutive and complete, and a dump that starts at a later step, skips one,
+    or was written at a cadence the loader did not see would silently draw the
+    wrong slice of time - which is the one failure this function exists to make
+    impossible.
+
+    The answer is the LAST frame stored at or before ``step``
+    (``searchsorted`` with ``side="right"``, minus one): the nearest capture in
+    the past, clamped to both ends of the array, so a step before the first
+    capture reads the first frame and a step after the last reads the last and a
+    page can never index off the end.
+
+    None means "no mapping this page can defend": no step axis, an empty one, a
+    non-monotonic one (a hand-built dump), or a step that is not a number.
+    """
+    if step_index is None or step is None:
+        return None
+    try:
+        steps = np.asarray(step_index).ravel()
+    except Exception:  # noqa: BLE001 - an axis we cannot read is a None
+        return None
+    if steps.size < 1:
+        return None
+    try:
+        wanted = int(step)
+    except (TypeError, ValueError):
+        return None
+    try:
+        if steps.size > 1 and np.any(np.diff(steps.astype(float)) < 0.0):
+            return None
+        found = int(np.searchsorted(steps, wanted, side="right")) - 1
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(int(steps.size) - 1, found))
+
+
+def _volume_abs_global_clim(volume):
+    """The ONE colour range every frame of ``e_abs_volume`` is drawn on.
+
+    ``(peak / 1000, peak)`` over the WHOLE stored volume: the same 60 dB span
+    ``_volume_abs_grid`` takes over its own image, and taken over EVERY frame on
+    purpose. A range per frame would renormalise each frame to its own peak and
+    paint the recorded decay away, which is the one thing an animation must not
+    do; it also puts the still cut sheets and the moving volume under one
+    ceiling for the length of the clip.
+
+    None when there is nothing to measure - no volume, an empty one, the wrong
+    rank, or a peak that is not finite and positive - and the caller then draws
+    no volume layer at all rather than an unpainted one.
+    """
+    if volume is None:
+        return None
+    try:
+        vol = np.asarray(volume)
+        if vol.ndim != 4 or vol.size < 1:
+            return None
+        if np.iscomplexobj(vol):
+            vol = np.abs(vol)
+        peak = float(np.max(vol))
+    except Exception:  # noqa: BLE001 - see the docstring's None
+        return None
+    if not np.isfinite(peak) or peak <= 0.0:
+        return None
+    return (peak * 1e-3, peak)
+
+
+def _volume_frame_grid(info: dict, frame, cell_mm: float, clim):
+    """ONE stored |E| frame as an ``ImageData`` on this page's own node grid.
+
+    WHY this exists beside ``_volume_abs_grid``: that reader COLOCATED the
+    archive's staggered vector onto cell centres, so its image starts half a
+    cell in. ``e_abs_volume`` needs none of that - it is already a magnitude on
+    the NODE grid, "the same node grid as ez_ycut" in the writer's own words
+    (evidence/termination/run_build_A.py) - so the frame is placed at
+    ``origin = (0, 0, 0)`` with ``spacing = cell``, which puts its first sample
+    at x = 0 exactly where ``_vis_grid`` puts the animated sheet's first sample.
+    The difference between the two anchors is one half cell: on the shipped dump
+    (cell 0.4 mm) a volume frame drawn at the colocated anchor would stand
+    0.2 mm off every sheet beside it.
+
+    WHY it writes :data:`VOLUME_ABS_KEY`: the cut sheets (``_volume_cut_sheets``),
+    ``_cut_layout`` and ``_add_markers`` all resolve their lattice through that
+    memo, and a vis dump carries no ``e`` / ``volume`` for any of them to fall
+    back on - without this the cuts have no grid and the markers have no
+    extents. The entry is REWRITTEN on each frame change, which is the one place
+    in this module that does so and the reason is that on this page the memo IS
+    the current frame; it is spelled out here because ``_volume_abs_grid``
+    promises the opposite ("set once, never rewritten") for the page that
+    function was written for, and these two readers are the only ones that ever
+    look at it.
+
+    ``clim`` is handed in by the caller, which resolves it once per dump instead
+    of once per frame. Returns the image, or None when there is nothing to place
+    (no volume, no range, a frame out of range, a non-finite cell size).
+    """
+    try:
+        volume = info.get("e_abs_volume")
+        if volume is None or clim is None:
+            return None
+        vol = np.asarray(volume)
+        if vol.ndim != 4 or vol.shape[0] < 1:
+            return None
+        which = max(0, min(int(vol.shape[0]) - 1, int(frame)))
+        e_abs = np.asarray(vol[which], dtype=float)
+        if e_abs.ndim != 3 or e_abs.size < 1:
+            return None
+        cell = float(cell_mm)
+        if not np.isfinite(cell) or cell <= 0.0:
+            return None
+        nx, ny, nz = (int(v) for v in e_abs.shape)
+        import pyvista as pv  # deferred, as everywhere else in this module
+
+        image = pv.ImageData()
+        image.dimensions = (nx, ny, nz)
+        image.spacing = (cell, cell, cell)
+        # NODE anchor, not the half-cell one: see the docstring above.
+        image.origin = (0.0, 0.0, 0.0)
+        # ``order="F"``: the sample's inner axis is its LAST one and ImageData
+        # fills its points with x varying fastest, as in build_grid.
+        image.point_data["e_abs"] = np.ascontiguousarray(
+            e_abs.ravel(order="F"), dtype=float
+        )
+        info[VOLUME_ABS_KEY] = {
+            "image": image,
+            "clim": clim,
+            "n": int(e_abs.size),
+        }
+        return image
+    except Exception as exc:  # noqa: BLE001 - a picture is never worth a traceback
+        print(
+            f"[poc_app] |E| volume frame {frame} not built: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
 def _volume_quiver_mesh(info, *, stride=VOLUME_QUIVER_STRIDE):
     """The whole-volume arrow field as ONE glyphed mesh, or None.
 
@@ -9679,6 +9823,188 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - the overlay is an EXTRA
             print(f"[poc_app] mode vector field skipped: {exc}", file=sys.stderr)
 
+    def _volume_layer_drop() -> None:
+        """Take the |E| volume layer off the plotter and forget its bookkeeping.
+
+        WHY one layer and not a set of actors: the volume, its two cut sheets and
+        the port planes are built together and thrown away together, so this page
+        needs exactly two operations - drop the whole layer, or build it afresh.
+        ``handles["volume_layer"]`` is the entry that names the actors belonging
+        to it; popping it is what keeps that entry and the screen in agreement.
+
+        WHY the removal is guarded: this runs on the frame path, and an actor
+        pyvista has already dropped must cost one actor, never the viewer.
+        """
+        entry = handles.pop("volume_layer", None)
+        if not isinstance(entry, dict):
+            return
+        for _actor in entry.get("actors", ()):
+            try:
+                plotter.remove_actor(_actor, render=False)
+            except Exception as exc:  # noqa: BLE001 - a stale actor is not fatal
+                print(
+                    f"[poc_app] stale volume layer actor kept: {exc}", file=sys.stderr
+                )
+
+    def _draw_volume_layer(index, mode) -> None:
+        """Draw the |E| volume layer for the CURRENT frame, or drop it.
+
+        WHY this is not part of ``_show``'s in-place rule: the animated sheets swap
+        one scalar array because their lattice never changes, but a frame of the
+        volume IS a different image - every nx*ny*nz sample on it changes - so the
+        volume is REBUILT. The rebuild is cached on ``(page, frame, load, port)``,
+        so a redraw that lands on the same frame (the frame slider moving inside
+        one saved volume step, or the app repainting for its own reasons) removes
+        and rebuilds nothing, and the actor count of this page cannot grow with the
+        number of frames watched.
+
+        WHEN the picture appears: this is called from ``_show`` just before its
+        single ``plotter.render()``, so a frame is on screen at the same moment the
+        sheets' frame is: one draw per tick, not two.
+
+        WHICH volume frame: the frame slider indexes the FRAME axis (1-based
+        samples of ``frame_index``), while the volume is saved on the STEP axis,
+        every ``e_abs_volume_stride``-th sample. The two are mapped by
+        ``_volume_frame_for_step``, which honours the steps actually written - a
+        restart or a dropped sample leaves a non-uniform cadence behind, and
+        ``step // stride`` would then point at the wrong frame.
+        """
+        try:
+            info = page["info"]
+            volume = info.get("e_abs_volume")
+            if volume is None:
+                # A dump with no volume carries no layer: dropping a stale one is
+                # the whole job here, and a no-volume page is left as it was.
+                _volume_layer_drop()
+                return
+            entry = handles.get("volume_layer")
+            same_source = isinstance(entry, dict) and entry.get("source") is volume
+            clim = entry.get("clim") if same_source else None
+            if clim is None:
+                # WHY the WHOLE volume and not the frame: the frames are one
+                # recording, and a range measured per frame would paint the
+                # recorded decay away - the exact lie the sheets refuse.
+                clim = _volume_abs_global_clim(volume)
+            if clim is None:
+                _volume_layer_drop()
+                print(
+                    "[poc_app] |E| volume layer skipped: "
+                    "the volume holds no finite sample",
+                    file=sys.stderr,
+                )
+                return
+            step_axis = info.get(
+                "frame_index" if mode == "ycut" else "frame_index_xcut"
+            )
+            step = None
+            if step_axis is not None:
+                try:
+                    position = max(0, min(len(step_axis) - 1, int(index)))
+                    step = int(step_axis[position])
+                except (TypeError, ValueError, IndexError):
+                    step = None
+            vol_frame = _volume_frame_for_step(
+                info.get("e_abs_volume_step_index"), step
+            )
+            if vol_frame is None:
+                _volume_layer_drop()
+                print(
+                    "[poc_app] |E| volume layer skipped: "
+                    "this frame maps to no recorded volume sample",
+                    file=sys.stderr,
+                )
+                return
+            show_load = bool(getattr(state, "show_load_plane", True))
+            show_port = bool(getattr(state, "show_port_plane", True))
+            # The cache key carries the TWO SWITCHES: the markers are part of this
+            # layer, so toggling one must rebuild it - and nothing else.
+            key = (page.get("path"), vol_frame, show_load, show_port)
+            if same_source and entry.get("key") == key:
+                return
+            _volume_layer_drop()
+            # The |E| image FIRST: ``_cut_layout`` and ``_volume_cut_sheets`` both
+            # resolve their dims through the memo this seeds, so the cuts land on
+            # exactly the lattice the volume was just built on.
+            if _volume_frame_grid(info, vol_frame, cell_mm, clim) is None:
+                print(
+                    "[poc_app] |E| volume layer skipped: "
+                    "the frame grid could not be built",
+                    file=sys.stderr,
+                )
+                return
+            layout = _cut_layout(info)
+            before = set(plotter.actors)
+            _draw_volume_scene(
+                plotter,
+                info,
+                grid=None,
+                cut_layout=layout,
+                cell_mm=cell_mm,
+                clim_override=clim,
+            )
+            _draw_port_plane_markers(plotter, info, cell_mm, show_load, show_port)
+            handles["volume_layer"] = {
+                "actors": [
+                    plotter.actors[name]
+                    for name in plotter.actors
+                    if name not in before
+                ],
+                "source": volume,
+                "clim": clim,
+                "key": key,
+                "frame": vol_frame,
+                "step": step,
+            }
+        except Exception as exc:  # noqa: BLE001 - the layer is an EXTRA
+            print(f"[poc_app] |E| volume layer skipped: {exc}", file=sys.stderr)
+
+    def _draw_port_plane_markers(
+        plotter_obj, info, cell_mm, show_load, show_port
+    ) -> None:
+        """Mark the load, S11 and stub-side planes on the volume layer.
+
+        WHY the positions come from the dump and not from ``_plane_layout``: this
+        page reads a VIS dump, which carries no layout dict, so ``_plane_layout``
+        has nothing to resolve against. The three places this layer needs ARE
+        recorded - ``load_x_mm``, ``port_x_mm`` and ``xcut_far_mm`` - and when one
+        of them is absent the markers are NOT invented: the layer names the key it
+        is missing and draws no plane, the same rule the corner legend follows.
+
+        WHAT they mean: ``port_x_mm`` is the SOURCE / S11 reference plane and
+        ``xcut_far_mm`` the stub-side extraction plane, so the red disc and the
+        purple one are the two surfaces the S-parameters are taken at.
+
+        WHY ``s21_valid`` is None: a vis dump records where the extraction planes
+        ARE, but no verdict about them. ``None`` is exactly "not recorded", and
+        ``_s21_label`` then says so instead of claiming a validity it cannot know.
+        """
+        positions = {
+            "x_load_mm": _finite(info.get("load_x_mm")),
+            "x_s11_mm": _finite(info.get("port_x_mm")),
+            "x_s21_mm": _finite(info.get("xcut_far_mm")),
+        }
+        missing = [name for name, value in positions.items() if value is None]
+        if missing:
+            print(
+                "[poc_app] port planes not drawn: this dump does not record "
+                f"{', '.join(sorted(missing))}",
+                file=sys.stderr,
+            )
+            return
+        _add_markers(
+            plotter_obj,
+            info,
+            dict(
+                positions,
+                cell_mm=cell_mm,
+                s21_valid=None,
+                s21_reason=None,
+                s21_valid_src="not recorded",
+                show_load_plane=show_load,
+                show_port_plane=show_port,
+            ),
+        )
+
     def _show(frame, mode=None) -> None:
         """Draw ONE frame of the selected family. Never rescales.
 
@@ -9891,6 +10217,12 @@ def run_web_vis(
                 f" Planes FIXED at x = {near_text} / {far_text} mm "
                 f"({near_side} / {far_side}; the dump stores only these two)."
             )
+        # The |E| volume layer last, and BEFORE the render: it is part of this
+        # frame, so it rides the single draw the sheets already paid for - and
+        # it is handed the SAME index, so the volume, the cuts and the sheet
+        # cannot show two different frames. A page whose dump carries no volume
+        # drops a stale layer and returns: nothing else changes for it.
+        _draw_volume_layer(index, mode)
         try:
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - never take the server down
@@ -10458,6 +10790,13 @@ def run_web_vis(
                 # to ask for one), so there is nothing to repaint and nothing
                 # to explain.
                 redraw()
+            elif page["info"].get("e_abs_volume") is not None:
+                # The |E| volume page keeps no cut_redraw (it has no plane
+                # stack to re-cut), but the two marker discs ARE part of its
+                # volume layer - and _show is what rebuilds that layer, its
+                # cache key carrying the two switches this toggle just moved.
+                # Without this branch the checkboxes were inert on this page.
+                _show(state.frame, state.mode)
         except Exception as exc:  # noqa: BLE001 - a marker is an EXTRA
             print(f"[poc_app] {what} plane toggle skipped: {exc}", file=sys.stderr)
 
