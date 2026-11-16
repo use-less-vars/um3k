@@ -174,13 +174,12 @@ now been fixed twice, which means it is a process failure and will recur. And
 
 ### A caution this pack adds
 
-File mtimes in `emfit/` and `server/` reach 2026-11-16 — *later* than the
-2026-11-12 date the register calls the newest commit. Those are checkout
-timestamps, not authorship, so they neither confirm nor refute DR-45. But it
-means nobody should try to close DR-45 by comparing mtimes, and it means this
-pack cannot independently confirm the "newest commit = 2026-11-12" premise
-without running git. Treat the premise as the register's, not as established
-here.
+File mtimes in `emfit/` and `server/` reach 2026-11-16. Those are checkout
+timestamps, not authorship, so nobody should close DR-45 by comparing them.
+This pack ran git instead of trusting the premise, and the premise fails at
+the head it read: the newest commit is dated 2026-11-16, four days past the
+2026-11-12 the register calls newest. Every date DR-45 lists is now in the
+past — the item is history now, and the register must restate it.
 
 ### The rule this defect produced
 

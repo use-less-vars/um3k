@@ -286,8 +286,8 @@ All from `server/poc_app.py:140-175` unless noted.
 | `VIS_FORMAT` | `um3k` | `:160` |
 | `VIS_FORMATS` | `um3k`, `wavedude` | `:161` |
 | `STATE_SCHEMA_VIS` | `emfit.poc-state/3` | `:167` |
-| `DEFAULT_FPS` | `24` | `:170`s |
-| `COLOR_PERCENTILE` | `99.5` | `:170`s |
+| `DEFAULT_FPS` | `24` | `:171` |
+| `COLOR_PERCENTILE` | `99.5` | `:175` |
 | `STATE_SCHEMA` (legacy) | `emfit.poc-state/1` | `:2062` |
 | `DEFAULT_VOLUME_STRIDE` | `100` | `emfit/config.py:79` |
 
