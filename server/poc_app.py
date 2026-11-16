@@ -4199,7 +4199,23 @@ def _add_plane_marker(
     color: str,
     render: bool = True,
 ) -> None:
-    """Draw ONE plane normal to x, centred at ``center_x`` on the y/z mid-plane.
+    """Draw ONE plane normal to x, centred at ``center_x`` - as its EDGE.
+
+    WHAT reaches the plotter: the BOUNDARY of the rectangle, not its face. The
+    ``pv.Plane`` is built exactly as it always was (same centre, same x
+    direction, same ``i_size`` / ``j_size``, so the rectangle occupies exactly
+    the same space) and only its boundary edges are handed to ``add_mesh``, in
+    the marker's colour at ``line_width=2``.
+
+    WHY an edge and not a 25 % sheet: the field page draws the whole-volume |E|
+    as a translucent, log-scaled volume, and a filled sheet the size of the
+    slab's y/z cross-section laid straight across it at the load x and at the
+    S11 port x hid the very field the marker exists to point at. An outline
+    marks the same place and occludes nothing.
+
+    WHY not ``style="wireframe"``: pyvista would then draw every triangulation
+    diagonal of the Plane as well, and the marker reads as a grey smear instead
+    of a rectangle.
 
     WHY one construction for two discs: the load plane and the S11 port plane
     differ only in the x they sit at and in the colour that names them, so they
@@ -4218,7 +4234,24 @@ def _add_plane_marker(
             i_size=y_span,
             j_size=z_span,
         )
-        plotter.add_mesh(plane, color=color, opacity=0.25, render=render)
+        # Only the boundary goes to the plotter: the fill is what occluded the
+        # |E| volume, and every other candidate fill is worse - the Plane itself
+        # at 25 % is the lid this marker no longer draws, and
+        # ``extract_all_edges`` would add the triangulation diagonals.
+        #
+        # WHY there is no fallback for a pyvista without an edge extractor:
+        # rebuilding the rectangle from ``plane.bounds`` would both assume the
+        # plane is axis aligned (true only while ``direction`` stays x) and
+        # duplicate geometry this call already hands over for free. So such a
+        # pyvista loses the MARKER - the except below names it on stderr - and
+        # the occlusion does not come back.
+        outline = plane.extract_feature_edges(
+            boundary_edges=True,
+            feature_edges=False,
+            manifold_edges=False,
+            non_manifold_edges=False,
+        )
+        plotter.add_mesh(outline, color=color, line_width=2, render=render)
     except Exception as exc:  # noqa: BLE001 - losing the plane is survivable
         print(f"[poc_app] {what} plane not drawn: {exc}", file=sys.stderr)
 

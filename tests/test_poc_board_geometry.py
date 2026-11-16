@@ -620,9 +620,28 @@ def test_add_markers_sizes_its_discs_from_the_field_grid():
         assert (0.5 * (y0 + y1), 0.5 * (z0 + z1)) == pytest.approx(
             (0.5 * NY * CELL_MM, 0.5 * (NZ - 1) * CELL_MM), abs=1e-4
         )
+        # The rectangle is handed over as its EDGE, not as a 25 % sheet: the
+        # page draws the whole-volume |E| translucently, so a filled marker laid
+        # an opaque-ish lid across the field it marks. Every cell that reaches
+        # the plotter is therefore a LINE, and not one polygon is left to
+        # occlude with.
+        assert mesh.n_cells > 0, "the marker edge mesh is empty"
+        assert mesh.n_lines == mesh.n_cells, (
+            f"the marker carries {mesh.n_cells - mesh.n_lines} non-line "
+            "cell(s), so a fill came back"
+        )
+        assert int(mesh.n_faces) == 0, (
+            f"the marker still has {int(mesh.n_faces)} face(s) to occlude with"
+        )
     # Each disc sits at its own x, and the colours are the ones the page reads.
     assert [m.bounds[0] for m in drawn] == pytest.approx([LOAD_MM, PORT_MM], abs=1e-4)
     assert [kw.get("color") for _n, _m, kw in plotter.meshes] == ["red", "purple"]
+    # 2 pt and NO opacity: an edge marker is drawn at a width, and an opacity
+    # keyword would mean a sheet was drawn again (the |E| occlusion above).
+    assert [kw.get("line_width") for _n, _m, kw in plotter.meshes] == [2, 2]
+    assert all("opacity" not in kw for _n, _m, kw in plotter.meshes), (
+        f"a marker was drawn with an opacity: {[kw for _n, _m, kw in plotter.meshes]}"
+    )
     # Only the first disc flushes the frame; the second one is drawn next.
     assert [kw.get("render") for _n, _m, kw in plotter.meshes] == [True, False]
 

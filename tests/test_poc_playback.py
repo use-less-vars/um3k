@@ -4623,8 +4623,28 @@ def test_the_s11_port_plane_is_drawn_parallel_to_the_load_plane() -> None:
         f"other order: {[kwargs['color'] for _mesh, kwargs in both.meshes]}"
     )
     (red, red_kwargs), (purple, purple_kwargs) = both.meshes
-    assert red_kwargs["opacity"] == pytest.approx(0.25)
-    assert purple_kwargs["opacity"] == pytest.approx(0.25)
+    # REPLACED (was: ``opacity == 0.25`` on both): the two markers are drawn as
+    # the EDGE of their rectangle, not as a 25 % sheet. WHY: a filled sheet the
+    # size of the slab's y/z cross-section laid an opaque-ish lid across the
+    # translucent |E| volume the layer exists to point at, so an edge occludes
+    # nothing. An opacity keyword here would mean the lid came back.
+    for kwargs in (red_kwargs, purple_kwargs):
+        assert "opacity" not in kwargs, (
+            f"a marker was drawn with an opacity, so it is a sheet again: {kwargs}"
+        )
+        assert kwargs.get("line_width") == 2, (
+            f"the marker edge is not drawn at line width 2: {kwargs}"
+        )
+    # The rectangle itself did not move: the edge mesh keeps the plane's own
+    # bounds and centre, and every cell in it is a line (a face would occlude).
+    for mesh in (red, purple):
+        assert mesh.n_cells > 0, "the marker edge mesh is empty"
+        assert mesh.n_lines == mesh.n_cells, (
+            f"{mesh.n_cells - mesh.n_lines} non-line cell(s): a fill came back"
+        )
+        assert int(mesh.n_faces) == 0, (
+            f"the marker still has {int(mesh.n_faces)} face(s) to occlude with"
+        )
 
     assert red.center[0] == pytest.approx(planes["x_load_mm"])
     assert purple.center[0] == pytest.approx(planes["x_s11_mm"])
