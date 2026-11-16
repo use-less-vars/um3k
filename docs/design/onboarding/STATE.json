@@ -1,0 +1,255 @@
+{
+  "pack": "gen14_onboarding",
+  "pack_version": 1,
+  "purpose": "The machine-readable half of the Gen-14 onboarding pack. Every other file in this directory is prose for a human; this one is for a script, a diff, or a successor agent that needs the facts as data.",
+  "read_order": [
+    "00_README.md",
+    "01_ARCHITECTURE.md",
+    "02_PHYSICS_ROADMAP.md",
+    "03_KNOWN_BUGS.md"
+  ],
+  "as_of": {
+    "head_commit": "a5886031a3657288751b6098dcbecee2b4965745",
+    "head_subject": "fix(tests): restore the shared trame server in animation volume teardown",
+    "head_commit_date": "2026-11-16",
+    "baseline_commit": "bb9d142bce678fedac47516988d6462d883c1a61",
+    "baseline_commit_subject": "docs: graded meshing for the lateral axes - a plan (design only)",
+    "baseline_commit_date": "2026-11-16",
+    "branch": "main",
+    "working_tree": {
+      "modified": 0,
+      "untracked_preexisting": 9,
+      "modified_after_reading": ["server/poc_app.py", "tests/test_poc_volume_view.py"],
+      "working_tree_note": "0 modified is the state the citations in this pack were read at. While this re-baseline ran, uncommitted edits made OUTSIDE this pack touched those two tracked files; this pack neither made nor reverted them, and neither file is one this pack edited."
+    },
+    "citation_tree": "Line-number citations in this pack are stated against a5886031a3657288751b6098dcbecee2b4965745, i.e. against that commit's content and NOT against a dirty working tree. That commit touches one file only (tests/test_animation_volume.py, a single hunk inside _boot, :261-273), so nothing outside that test file moved when HEAD advanced from the baseline commit bb9d142. The uncommitted edit described in working_tree.modified_after_reading starts at server/poc_app.py:4842, so the constants cited here (:140, :143, :149, :158-161, :167) still land in the working tree, while the 9 citations to later lines are valid against the commit only.",
+    "newest_commit_date_claimed": "2026-11-12 (DR-45's premise, measured against the baseline commit bb9d142 and NOT current; HEAD is dated 2026-11-16, so the figure is quoted as the register's assumption and not as a statement that the tree is current)",
+    "date_rule": "DR-45 (docs/design/defect_register.md:891): no file in this tree may carry a date later than the newest commit date. This pack therefore states no generation date of its own.",
+    "source": "re-derived in this tree for this re-baseline: git rev-parse HEAD, git log -1 on both a588603 and bb9d142, and git status were run; nothing in this block is now taken from a briefing"
+  },
+  "scale": {
+    "emfit": {
+      "modules": 43,
+      "bytes": 1423908,
+      "note": "count and byte sum taken from a directory listing of emfit/*.py",
+      "largest": [
+        ["emfit/studies.py", 335308],
+        ["emfit/mode2d.py", 110207],
+        ["emfit/ports.py", 83854],
+        ["emfit/spice.py", 66405],
+        ["emfit/ntff.py", 54646]
+      ]
+    },
+    "server": {
+      "files": 3,
+      "bytes": 644501,
+      "note": "count and byte sum taken from a directory listing of server/*.py",
+      "members": [
+        ["server/poc_app.py", 611825],
+        ["server/um3k_panels.py", 22304],
+        ["server/um3k_context.py", 10372]
+      ]
+    },
+    "tests": {
+      "files": 93,
+      "test_function_definitions": 1146,
+      "note": "a DEFINITION count of 'def test_', never a pass count. From briefing.",
+      "source": "briefing"
+    },
+    "docs_design": {
+      "files": 160,
+      "bytes": 5702497,
+      "source": "briefing"
+    }
+  },
+  "entry_points": {
+    "app": {
+      "file": "server/poc_app.py",
+      "kind": "trame/vuetify3 browser app plus argparse CLI in one module",
+      "default_host": "127.0.0.1",
+      "default_port": 8080,
+      "open_browser": false,
+      "citations": {
+        "DEFAULT_HOST": "server/poc_app.py:140",
+        "DEFAULT_PORT": "server/poc_app.py:143",
+        "open_browser": ["server/poc_app.py:4497", "server/poc_app.py:7885"]
+      }
+    },
+    "study_harness": {
+      "file": "evidence/termination/run_build_A.py",
+      "flags": {
+        "--vis-dump": 3332,
+        "--dump-stride": 3344
+      },
+      "record_frequencies": {
+        "VIS_F_PULSE_HZ": 15000000000.0,
+        "VIS_F_REF_HZ": 5827786408.327286,
+        "citation": "evidence/termination/run_build_A.py:560-561"
+      }
+    },
+    "library_cli": {
+      "files": ["emfit/__main__.py", "emfit/cli.py"],
+      "note": "exact invocation not re-read by this pack"
+    },
+    "webapp": {
+      "file": "emfit/webapp.py",
+      "note": "a second, older front end; the live one is server/poc_app.py"
+    }
+  },
+  "versions": {
+    "emfit.__version__": "0.1.0.dev0",
+    "citation": "emfit/__init__.py:41",
+    "source": "briefing"
+  },
+  "schemas": {
+    "vis_dump": {
+      "current": "emfit.vis/2",
+      "citation": "server/poc_app.py:149",
+      "legacy_still_opening": ["emfit.wavedude/1", "emfit.wavedude/2"],
+      "legacy_citation": "server/poc_app.py:158",
+      "accepted_set": "VIS_SCHEMAS = (VIS_SCHEMA,) + VIS_LEGACY_SCHEMAS, server/poc_app.py:159",
+      "rule": "The legacy literals are STORED DATA, not identifiers. None is renamed and every one still opens."
+    },
+    "page_state": {
+      "current": "emfit.poc-state/3",
+      "citation": "server/poc_app.py:167",
+      "adds": ["load_series", "load_series_reason"],
+      "older": "emfit.poc-state/1 (server/poc_app.py:2062) stays byte-for-byte; it never gains the new keys"
+    },
+    "format_name": {
+      "current": "um3k",
+      "citation": "server/poc_app.py:160",
+      "also_accepted": ["wavedude"],
+      "citation_2": "server/poc_app.py:161"
+    }
+  },
+  "constants": {
+    "DEFAULT_PORT": 8080,
+    "DEFAULT_HOST": "127.0.0.1",
+    "VIS_SCHEMA": "emfit.vis/2",
+    "VIS_FORMAT": "um3k",
+    "DEFAULT_FPS": 24,
+    "COLOR_PERCENTILE": 99.5,
+    "DEFAULT_VOLUME_STRIDE": 100,
+    "citation_volume_stride": "emfit/config.py:79 (value), emfit/config.py:122 (RunConfig.volume_stride)"
+  },
+  "defects_open": [
+    {
+      "id": "DR-47",
+      "title": "No @state.change listener anywhere is executed by the test suite",
+      "register_line": 931,
+      "severity": "HIGH",
+      "state": "OPEN",
+      "one_line": "_boot_app in tests/test_poc_playback.py replaces server.start, so protocol.port_callback never runs, state.is_ready stays false, trame State.flush() refuses to dispatch.",
+      "why_it_matters": "Every interactive control in the app is unverified by the suite as a class, not by accident.",
+      "file_this_pack": "03_KNOWN_BUGS.md"
+    },
+    {
+      "id": "DR-46",
+      "title": "Bare NaN written into gamma_plane in six in-tree artefacts",
+      "register_line": 913,
+      "severity": "MEDIUM to HIGH",
+      "state": "OPEN",
+      "one_line": "run_build_A.py:3896-3901 writes gamma_plane.{re,im,abs,arg_deg} unconditionally, contradicting the intent recorded at :2626-2630.",
+      "file_this_pack": "03_KNOWN_BUGS.md"
+    },
+    {
+      "id": "DR-45",
+      "title": "Document dates later than the newest commit",
+      "register_line": 891,
+      "severity": "MEDIUM",
+      "state": "OPEN (partially corrected)",
+      "one_line": "Two carriers still read 2026-11-14: docs/design/visualizer_architecture.md:7 and docs/design/lessons_learned_emfit_addendum.md:28.",
+      "file_this_pack": "03_KNOWN_BUGS.md"
+    },
+    {
+      "id": "DR-44",
+      "title": "Untracked file overwritten in place and lost",
+      "register_line": 871,
+      "severity": "MEDIUM",
+      "state": "OPEN (rule adopted)",
+      "one_line": "49,352 bytes of untracked docs/design/GEN12_HANDOFF.md were replaced in place and are unrecoverable; the file was never in the object store.",
+      "file_this_pack": "00_README.md, 03_KNOWN_BUGS.md"
+    },
+    {
+      "id": "DR-43",
+      "title": "Pulse-writer artefact lacked s21.measured",
+      "register_line": 826,
+      "amendment_line": 863,
+      "severity": "see register",
+      "state": "FIXED-TESTED with a residual open gap",
+      "one_line": "Pin test tests/test_dr43_pulse_writer.py; pre-fix artefacts in the tree still lack the s21.measured key.",
+      "source": "briefing plus register header"
+    },
+    {
+      "id": "DR-40",
+      "title": "The load-station filter un-filters itself",
+      "register_line": 725,
+      "severity": "MEDIUM, latent",
+      "state": "OPEN",
+      "source": "briefing plus register header"
+    }
+  ],
+  "ghosts_rejected": [
+    {
+      "claim": "_volume_quiver_mesh does not exist / is a phantom symbol",
+      "verdict": "FALSE",
+      "evidence": "def _volume_quiver_mesh(info, *, stride=VOLUME_QUIVER_STRIDE) at server/poc_app.py:9315; called at :6116 and :9431; referenced by tests/test_poc_volume_arrows.py and server/um3k_context.py:98"
+    },
+    {
+      "claim": "tests/test_animation_volume.py has an xfail / finalizer teardown bug",
+      "verdict": "FALSE (as stated)",
+      "evidence": "zero occurrences of xfail and zero of finalizer in the file; the only 'skip' hits are three module-level pytest.importorskip guards at :50, :51, :52-54; and no skip or xfail masks a teardown failure either",
+      "note": "A real teardown bug did live in this same file, and it is a different one: _boot installed the start double on the class first, so MonkeyPatch.setattr recorded the instance value through the MRO as that class double, and the undo then wrote the double onto the instance, where it permanently shadowed the restored Server.start. Repaired in commit a588603 at tests/test_animation_volume.py:264-273 (vars(srv).pop(\"start\", None) / srv.start = shadow). a588603 touches no file other than that test file."
+    },
+    {
+      "claim": "Something in the tree uses vi.Plane",
+      "verdict": "FALSE",
+      "evidence": "zero matches repo-wide for vi\\.Plane across the .py files searched"
+    }
+  ],
+  "source_of_truth": {
+    "defect_register": "docs/design/defect_register.md (947 lines)",
+    "graded_meshing_plan": "docs/design/graded_meshing_plan.md (650 lines, DESIGN ONLY, no emfit/ file edited)",
+    "ui_architecture": "docs/design/UM3K_UI_ARCHITECTURE.md (604 lines)",
+    "handoffs": ["docs/design/GEN13_HANDOFF.md (4,691 B)", "docs/design/GEN12_HANDOFF.md (27,138 B)"],
+    "stale_roadmap_warning": "docs/design/roadmap-next-2026-11-08.md still reads as unstarted at section 2 (:136) and section 6 (:456)"
+  },
+  "verification": {
+    "verified_by_reading_in_this_pack": [
+      "every citation in 02_PHYSICS_ROADMAP.md to emfit/evolve.py, emfit/maxwell.py, emfit/raster.py, emfit/studies.py, emfit/pml.py, emfit/huygens_fields.py",
+      "all four citations in 03_KNOWN_BUGS.md to tests/test_animation_volume.py",
+      "the three ghost verdicts above",
+      "the constants block in server/poc_app.py:140-175",
+      "emfit/board.py structure and _snap refusal at :545-551",
+      "server/poc_app.py:3650 _bare_board_page and its fallback",
+      "docs/design/graded_meshing_plan.md sections 1-8",
+      "emfit and server file counts and byte sums in the scale block"
+    ],
+    "taken_from_briefing_not_re_read": [
+      "the register's claim that the newest commit is dated 2026-11-12; the commits measured here are dated 2026-11-16, see as_of.newest_commit_date_claimed",
+      "emfit.__version__",
+      "the five stray emfit_core .so paths (a glob for them returned no result at all, so even their existence is unconfirmed here)",
+      "tests file count 93 and test-definition count 1146",
+      "docs/design file count and byte sum",
+      "emfit/spice.py and emfit/coupling.py line numbers",
+      "UM3K_UI_ARCHITECTURE.md section line numbers"
+    ],
+    "did_not_do": [
+      "ran no git write command: no stage, commit, checkout or branch. The re-baseline used read-only git calls only, so the commit identity, date and status above are re-derived and the tree was not changed by them",
+      "ran no test, so no count in this pack is a pass count",
+      "ran no study, so no number in this pack is a measurement"
+    ]
+  },
+  "mtime_caveat": {
+    "observation": "File mtimes in emfit/ and server/ reach 2026-11-16, later than the 2026-11-12 newest-commit date that DR-45 assumes.",
+    "reading": "Checkout timestamps, not authorship. Do not use mtime as evidence of when a file's content was written, and do not use it to close or reopen DR-45.",
+    "status": "observation by this pack; the register does not discuss mtime"
+  },
+  "first_day": [
+    "Read 00_README.md rules 1-4 before writing any file.",
+    "Run the suite with --ignore=tests/test_abc.py until the emfit_core import is understood (see 03_KNOWN_BUGS.md, B-5).",
+    "Before trusting any green test of an interactive control, read DR-47 in 03_KNOWN_BUGS.md.",
+    "Confirm the graded-meshing state from docs/design/graded_meshing_plan.md itself; nothing has been implemented."
+  ]
+}
