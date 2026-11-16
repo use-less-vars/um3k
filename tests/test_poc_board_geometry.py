@@ -755,3 +755,60 @@ def test_draw_scene_puts_the_board_under_the_markers(monkeypatch):
     assert seen["board"][2] is planes
     assert seen["markers"][1] is info
     assert seen["markers"][2] is planes
+
+
+def test_the_first_draw_scene_frames_the_camera(monkeypatch):
+    """A plotter is put in isometric view and fitted on the FIRST build.
+
+    Framing is what keeps the marker planes - which overhang the captured slab,
+    the S11 plane at the port end of the line and the S21 plane one cell past
+    the load - inside the picture, so it has to happen at least once.
+    """
+    log = []
+    _drive_scene(monkeypatch, _ScenePlotter(log), _planes(), log)
+
+    assert "view_isometric" in log, f"the first build did not aim the camera: {log}"
+    assert "reset_camera" in log, f"the first build did not fit the scene: {log}"
+    # Aimed, then fitted, and only once every actor is in place - a fit taken
+    # before the last marker exists would frame less than the build draws.
+    assert log.index("markers") < log.index("view_isometric") < log.index(
+        "reset_camera"
+    ), f"the camera work is not the last thing the build does: {log}"
+
+
+def test_a_second_draw_scene_leaves_the_camera_alone(monkeypatch):
+    """A rebuild is a slider move: it must not re-frame what the operator set.
+
+    The same plotter, built twice - the only difference between the runs is that
+    the first one already framed it. The two builds are handed DIFFERENT ``info``
+    dicts on purpose: the camera state is a fact about the render window, and a
+    flag kept on the dict would be lost here and re-frame the picture on every
+    tick. The board and the markers still have to be redrawn, so this cannot
+    pass by the second build doing nothing.
+    """
+    log = []
+    plotter = _ScenePlotter(log)
+    planes = _planes()
+    _drive_scene(monkeypatch, plotter, planes, log)
+    assert "reset_camera" in log, (
+        f"the first build did not frame the camera, so there is nothing to "
+        f"compare the second build against: {log}"
+    )
+
+    del log[:]
+    _drive_scene(monkeypatch, plotter, planes, log)
+
+    assert "view_isometric" not in log, (
+        "the second build re-aimed the camera: the rotation the operator had "
+        f"just made would snap back on the next slider tick: {log}"
+    )
+    assert "reset_camera" not in log, (
+        f"the second build re-fitted the scene under the operator's hand: {log}"
+    )
+    assert "board" in log and "markers" in log, (
+        f"the second build dropped the picture it was supposed to redraw: {log}"
+    )
+    assert ("add_text", "marker_legend") in log, (
+        f"the second build lost the marker legend: {log}"
+    )
+

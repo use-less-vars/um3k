@@ -4511,11 +4511,26 @@ def _draw_scene(
     # captured slab - the S11 port plane sits at the port end of the line and the
     # S21 plane one cell past the load - so a camera framed on the slab alone
     # would hide the entire point of the layer.
-    try:
-        plotter.view_isometric()
-        plotter.reset_camera()
-    except Exception as exc:  # noqa: BLE001
-        print(f"[poc_app] camera reset skipped: {exc}", file=sys.stderr)
+    #
+    # WHY only on the FIRST build of this plotter: every later build is a slider
+    # move (cut or station), and re-framing there would move the picture under
+    # the hand that just rotated and zoomed it - the view would snap back on the
+    # next tick. Nothing that motivated the framing has changed by then: the
+    # marker layer and the slab it overhangs are rebuilt identically on every
+    # build, so the fit the first build found is still the fit.
+    #
+    # The flag lives on the PLOTTER, not in a module global and not in ``info``:
+    # it is one fact about one render window, while both of those are handed in
+    # fresh or copied often enough to forget it. It is written INSIDE the guarded
+    # block so that a plotter refusing new attributes costs the FRAMING and not
+    # the scene.
+    if not getattr(plotter, "_poc_camera_framed", False):
+        try:
+            plotter.view_isometric()
+            plotter.reset_camera()
+            plotter._poc_camera_framed = True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[poc_app] camera reset skipped: {exc}", file=sys.stderr)
 
 
 # Everything the browser view needs beyond numpy, kept in one place so the

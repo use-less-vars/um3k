@@ -3901,12 +3901,19 @@ def test_vis_cut_state_opens_on_the_middle_sample(field_page):
 #:
 #: ``_redraw_scene``'s own ``plotter.render()`` is only ONE of them: it calls
 #: ``_draw_scene``, which re-adds every actor, and pyvista draws from inside
-#: those internals - 8 from ``renderer.add_actor``, 2 from
-#: ``renderer.reset_camera`` and 1 from ``plotter.reset_camera`` on top of the
-#: explicit render.  The count is asserted EXACTLY, not as ``>= 1``: fewer means
-#: ``_redraw_scene`` soft-failed (it swallows its exception, leaving the label
-#: already moved), more means the scene was built twice.  Both handlers are
-#: measured against this one constant, so they must produce the same delta.
+#: those internals - 8 from ``renderer.add_actor`` on top of the explicit
+#: render.  The camera contributes NOTHING here, and that is the point: a cut
+#: change rebuilds a plotter the page's BOOT already framed (``_draw_scene``
+#: frames on its first build only, poc_app.py:4527), so this path never reaches
+#: ``view_isometric`` (measured: 1 draw) or ``reset_camera`` (measured: 2
+#: draws).  Those 3 are what the boot pays and every slider tick no longer does;
+#: re-pinning this to 12 would re-pin the view snapping back under the
+#: operator's hand.
+#:
+#: The count is asserted EXACTLY, not as ``>= 1``: fewer means ``_redraw_scene``
+#: soft-failed (it swallows its exception, leaving the label already moved),
+#: more means the scene was built twice.  Both handlers are measured against
+#: this one constant, so they must produce the same delta.
 #:
 #: The eighth ``add_actor`` is ``_vis_geometry``'s GROUND PLANE: the field
 #: snapshot carries no board geometry of its own, so the vis page draws the board
@@ -3914,12 +3921,12 @@ def test_vis_cut_state_opens_on_the_middle_sample(field_page):
 #: station text still costs nothing - ``_draw_scene(..., station_label=False)``
 #: skips it, and ``Plotter.add_text`` passes ``render=True`` down to
 #: ``add_actor`` (pyvista/plotting/plotter.py:5725), so a text that WERE drawn
-#: would cost one draw - which leaves 8 + 2 + 1 + 1 draws per cut change.
+#: would cost one draw - which leaves 8 + 1 draws per cut change.
 #:
 #: The number stays EXACT on purpose: a silent extra redraw (one more actor, a
-#: second camera reset) is real work on every slider tick and must fail here
-#: rather than be absorbed, so never relax it to ``>= 1``.
-_CUT_REDRAW_RENDERS = 12
+#: camera that went back to re-framing) is real work on every slider tick and
+#: must fail here rather than be absorbed, so never relax it to ``>= 1``.
+_CUT_REDRAW_RENDERS = 9
 
 
 def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
