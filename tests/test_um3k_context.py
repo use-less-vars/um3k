@@ -529,10 +529,14 @@ def test_name_literals_are_pinned_against_poc_app():
     layout = poc_app._plane_layout({um3k_context.PLANE_KEY: _Stack(3), "cell_m": 1e-4}, None)
     assert layout["src_s11"] == um3k_context.FALLBACK_SRC
     assert layout["src_load"] == um3k_context.FALLBACK_SRC
+    # geometry_mm / geometry_src: the board geometry in mm plus its provenance,
+    # resolved by _geom_mm. They are part of the layout contract, so they are
+    # pinned here too; the pin stays EXACT (no issubset) on purpose.
     assert set(layout) == {
         "cell_mm", "n_st", "stations_mm", "stations_src", "x_load_mm",
         "src_load", "ix_load", "x_s11_mm", "src_s11", "x_s21_mm", "src_s21",
         "s21_valid", "s21_valid_src", "s21_reason", "slice_index",
+        "geometry_mm", "geometry_src",
     }
 
     # The page's default view is the one the boot assignment states

@@ -3375,12 +3375,156 @@ def _station_axis_mm(info: dict, record=None) -> tuple:
     )
 
 
+def _geom_mm(info: dict, record, x_s21_mm=None, x_s21_src=None) -> dict:
+    """The structure's millimetres, and where each number came from.
+
+    WHY this function exists: the numbers that place the board in space sit in
+    two artefacts that use two units. A vis/engine dump carries them as npz
+    scalars already in MILLIMETRES (substrate_h_mm, strip_w_mm, port_x_mm,
+    load_x_mm, xcut_near_mm), while the study record beside it carries the same
+    board under ``geometry`` in METRES (h, w, cell, length, width, height, and
+    the port as the CELL INDEX ix_port). Mixing the two is a silent 1000x
+    error, so the one multiplication by 1e3 lives here and nowhere else: a
+    caller gets millimetres from one function and never reads ``geometry``
+    itself. A dump written by the FIELD-snapshot exporter has NONE of the npz
+    keys - which is the case this function exists for, because without the
+    record the 3-D overlay has no board to draw on and silently disappears.
+
+    WHY a missing number is None and never a constant: a substrate height of 0
+    or a port at x = 0 is a claim about the board that neither the dump nor the
+    record supports, and a fabricated number becomes indistinguishable from a
+    measured one the moment it reaches the picture. None forces the draw site
+    to name the absence instead of drawing a board that was never recorded.
+
+    WHY ix_port and loads[0].x are converted differently: ix_port is a cell
+    INDEX, so it becomes a length by multiplying by the cell size, while
+    loads[0].x is already a length in metres and needs only the 1e3 unit
+    change. ``src`` records which route each number took, so the page can print
+    the provenance rather than asserting a position, and each label names the
+    route ACTUALLY taken - including when that route is the fallback constant
+    rather than the record, which is why the caller that substitutes one hands
+    its own label in beside the value.
+
+    NEVER raises: a non-dict record, a non-list ``loads``, a string where a
+    number belongs, NaN and inf all fall through to the next source, and the
+    final answer for that key is None.
+    """
+
+    def _num(value):
+        """A finite float, or None. Never raises on a string, NaN or inf."""
+        number = _as_float(value)
+        if number is None:
+            return None
+        return number if _finite(number) is not None else None
+
+    keys = (
+        "cell_mm",
+        "substrate_h_mm",
+        "strip_w_mm",
+        "port_x_mm",
+        "load_x_mm",
+        "xcut_near_mm",
+        "length_mm",
+        "width_mm",
+        "height_mm",
+    )
+    out = {key: None for key in keys}
+    src = {key: "absent" for key in keys}
+
+    info_d = info if isinstance(info, dict) else {}
+    record_d = record if isinstance(record, dict) else {}
+    geom = record_d.get("geometry")
+    if not isinstance(geom, dict):
+        geom = {}
+
+    def _take(key, value, origin):
+        """The first finite source wins; a later source cannot overwrite it."""
+        if out[key] is None:
+            number = _num(value)
+            if number is not None:
+                out[key] = number
+                src[key] = origin
+
+    def _metres(value):
+        """A record length in METRES as millimetres, or None."""
+        number = _num(value)
+        return None if number is None else number * 1e3
+
+    # 1. The dump's own scalars, which are already millimetres, key for key.
+    for key in (
+        "substrate_h_mm",
+        "strip_w_mm",
+        "port_x_mm",
+        "load_x_mm",
+        "xcut_near_mm",
+    ):
+        _take(key, info_d.get(key), f"info.{key}")
+    # ``cell`` is the one dump number stored in metres (cell_m), so it goes
+    # through the same helper the rest of the page uses for that key.
+    try:
+        _take("cell_mm", _cell_mm(info_d), "info.cell_m")
+    except Exception:  # noqa: BLE001 - a dump without cell_m still has a record
+        pass
+
+    # 2. The record's geometry, which is metres and needs the 1e3.
+    for key, field in (
+        ("cell_mm", "cell"),
+        ("substrate_h_mm", "h"),
+        ("strip_w_mm", "w"),
+        ("length_mm", "length"),
+        ("width_mm", "width"),
+        ("height_mm", "height"),
+    ):
+        _take(key, _metres(geom.get(field)), f"geometry.{field}")
+
+    # 3. The two positions the record stores in different forms. The port is a
+    # CELL INDEX, so it needs the cell size; the load is a LENGTH in metres,
+    # and only falls back to its column index when the x was not written.
+    cell_mm = out["cell_mm"]
+    if cell_mm is not None:
+        ix_port = _num(geom.get("ix_port"))
+        if ix_port is not None:
+            _take("port_x_mm", ix_port * cell_mm, "geometry.ix_port*cell")
+    loads = geom.get("loads")
+    first = (
+        loads[0]
+        if isinstance(loads, list) and loads and isinstance(loads[0], dict)
+        else {}
+    )
+    _take("load_x_mm", _metres(first.get("x")), "geometry.loads[0].x")
+    if cell_mm is not None:
+        column = _num(first.get("column"))
+        if column is not None:
+            _take(
+                "load_x_mm",
+                column * cell_mm,
+                "geometry.loads[0].column*cell",
+            )
+
+    # 4. The near cut plane has no record field at all - it is a viewer choice -
+    # so the only other place its x exists is the S21 extraction plane. The
+    # default names the documented route for a caller that passes only the
+    # value; the caller that knows better passes its own label, so a FALLBACK
+    # constant is never reported as a recorded plane.
+    _take("xcut_near_mm", x_s21_mm, x_s21_src or "s21_plane.x_m")
+
+    out["src"] = src
+    return out
+
+
 def _plane_layout(info: dict, record) -> dict:
     """Resolve the x of the load, S11 port and S21 planes, in mm.
 
     Each value carries the record key it came from (``src_*``) so the UI can
     print the provenance instead of asserting a position. Priority is always
     recorded metres > recorded column index times cell size > FALLBACK constant.
+    It also carries the STRUCTURE's millimetres (substrate height, strip width,
+    port/load x, line length/width/height) under ``geometry_mm`` for the 3-D
+    overlay, because the field-snapshot dump does not record them and the
+    record does; they ride in this dict rather than in a new argument because
+    ``_draw_scene`` and ``_vis_geometry`` already receive ``planes``, and
+    threading a ``record`` parameter through ``_redraw_scene`` and every caller
+    would change four signatures to move one dict.
     """
     n_st = int(info[PLANE_KEY].shape[0])
     cell_mm = _cell_mm(info)
@@ -3455,6 +3599,12 @@ def _plane_layout(info: dict, record) -> dict:
     # plane is the first station and not the origin.
     slice_index = min(range(n_st), key=lambda i: abs(stations_mm[i] - x_s11))
 
+    # The board's own millimetres, resolved ONCE and after ``x_s21`` has its
+    # final value: ``xcut_near_mm`` borrows that x when the dump did not record
+    # one, so a layout resolved before the S21 plane settles would report the
+    # near cut as absent on a dump that does carry it.
+    geometry_mm = _geom_mm(info, record, x_s21_mm=x_s21, x_s21_src=src_s21)
+
     return {
         "cell_mm": cell_mm,
         "n_st": n_st,
@@ -3471,6 +3621,8 @@ def _plane_layout(info: dict, record) -> dict:
         "s21_valid_src": valid_src,
         "s21_reason": reason,
         "slice_index": slice_index,
+        "geometry_mm": geometry_mm,
+        "geometry_src": geometry_mm["src"],
     }
 
 
@@ -4096,6 +4248,9 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
     cost the plane, not the viewer.
     """
     cell_mm = planes["cell_mm"]
+    # ``shape * cell`` is the committed, test-pinned convention: the samples are
+    # STAGGERED Yee data (213 y-samples over a 212-cell width, 22 over 22), so
+    # no single ``(n - 1) * cell`` rule fits every axis; changing it is not a fix.
     y_span = info[PLANE_KEY].shape[1] * cell_mm
     z_span = info[PLANE_KEY].shape[2] * cell_mm
     y_mid, z_mid = 0.5 * y_span, 0.5 * z_span
@@ -4252,6 +4407,10 @@ def _draw_scene(
 
     plotter.add_mesh(grid.outline(), color="black", line_width=1)
     plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")
+
+    # The structure the field sits on, BEFORE the marker layer: a marker with
+    # no board under it is the picture that started this.
+    _vis_geometry(plotter, info, planes)
     _add_markers(plotter, info, planes)
     # WHY the station text is optional: ``position="upper_left"`` makes this a
     # VTK corner annotation, whose font is scaled against the render window - a
@@ -5463,7 +5622,7 @@ def _vis_grid(info: dict, plane_key: str, frame) -> "pyvista.ImageData":
     return image
 
 
-def _vis_geometry(plotter, info: dict) -> None:
+def _vis_geometry(plotter, info: dict, planes=None) -> None:
     """The ground plane, the substrate, the strip and the two port markers.
 
     Three of these are ASSUMPTIONS about SHAPE, not about position, and the
@@ -5481,14 +5640,93 @@ def _vis_geometry(plotter, info: dict) -> None:
     """
     import pyvista as pv
 
-    cell_mm = _cell_mm(info)
-    x_span = int(info["nx"]) * cell_mm
-    y_span = int(info["ny"]) * cell_mm
+    # THE THREE PLACEMENT NUMBERS, and why an absence is NAMED instead of drawn.
+    # Nothing here can be positioned without the cell size and the two lateral
+    # extents: drawn anyway, the substrate, the strip and the ground plane would
+    # land on a guessed millimetre scale, and a board at the wrong size is read
+    # as a measurement. So the cell comes from planes["cell_mm"] FIRST - the
+    # already-resolved millimetre value the rest of the page uses, and the exact
+    # key _add_markers reads - and only then from the dump, through _cell_mm,
+    # which is a bare info["cell_m"] and so has to be called inside a try/except.
+    # Returning here, rather than raising out of _draw_scene, is what keeps a
+    # decoration from killing the scene it decorates.
+    cell_mm = None
+    cell_src = "absent"
+    if isinstance(planes, dict):
+        cell_mm = _finite(planes.get("cell_mm"))
+        if cell_mm is not None:
+            cell_src = "planes"
+    if cell_mm is None:
+        try:
+            _cell_from_info = _finite(_cell_mm(info))
+        except Exception:  # noqa: BLE001 - a dump with no cell_m is a scene, not an error
+            _cell_from_info = None
+        if _cell_from_info is not None:
+            cell_mm = _cell_from_info
+            cell_src = "info"
+    nx = _finite(info.get("nx"))
+    ny = _finite(info.get("ny"))
+
+    def _shown(value):
+        """The number as the diagnostic prints it; a gap is the word 'absent'."""
+        return "absent" if value is None else f"{value:g}"
+
+    if cell_mm is None or nx is None or ny is None:
+        print(
+            "[poc_app] geometry: not drawn - "
+            f"cell_mm={cell_src}, nx={_shown(nx)}, ny={_shown(ny)}",
+            file=sys.stderr,
+        )
+        return
+    x_span = nx * cell_mm
+    y_span = ny * cell_mm
     y_mid = 0.5 * y_span
-    substrate_h = float(info["substrate_h_mm"])
-    strip_w = float(info["strip_w_mm"])
-    port_x = float(info["port_x_mm"])
-    load_x = float(info["load_x_mm"])
+    # THE FIVE STRUCTURE NUMBERS, from the board-level block FIRST.
+    # On the field-snapshot page every one of those five npz keys exists and is
+    # NaN (load_vis fills them through _npz_scalar, whose default is NaN), so
+    # there is no KeyError to catch and every isfinite() guard below simply
+    # fails: the substrate, both gold segments and both port wires were skipped
+    # without a word. The record beside the dump carries the same numbers, and
+    # _geom_mm has already resolved them, in mm, into planes["geometry_mm"].
+    _geom_block = planes.get("geometry_mm") if isinstance(planes, dict) else None
+    _geom_block = _geom_block if isinstance(_geom_block, dict) else {}
+    _geom_src = _geom_block.get("src")
+    _geom_src = _geom_src if isinstance(_geom_src, dict) else {}
+
+    def _pick(key: str):
+        """geometry_mm first, the dump's own key second, None if neither."""
+        from_geom = _finite(_geom_block.get(key))
+        if from_geom is not None:
+            return from_geom
+        return _finite(info.get(key))
+
+    def _nan(value):
+        """The isfinite() guards need a float: an absence is NaN, never 0.0."""
+        return float("nan") if value is None else value
+
+    _resolved = {
+        "substrate_h_mm": _pick("substrate_h_mm"),
+        "strip_w_mm": _pick("strip_w_mm"),
+        "port_x_mm": _pick("port_x_mm"),
+        "load_x_mm": _pick("load_x_mm"),
+        "xcut_near_mm": _pick("xcut_near_mm"),
+    }
+    # ONE line, once, naming every quantity and the source it came from, so the
+    # next reader knows which source was missing instead of guessing.
+    if any(_value is None for _value in _resolved.values()):
+        print(
+            "[poc_app] geometry: not drawn - "
+            + ", ".join(
+                f"{key}={_geom_src.get(key) or 'absent'}" for key in _resolved
+            ),
+            file=sys.stderr,
+        )
+
+    substrate_h = _nan(_resolved["substrate_h_mm"])
+    strip_w = _nan(_resolved["strip_w_mm"])
+    port_x = _nan(_resolved["port_x_mm"])
+    load_x = _nan(_resolved["load_x_mm"])
+    near_xcut = _nan(_resolved["xcut_near_mm"])
 
     # Two surfaces that share a plane make the depth buffer flicker, and the
     # correction is below the grid the dump records. One epsilon for every
@@ -5546,10 +5784,9 @@ def _vis_geometry(plotter, info: dict) -> None:
         line_end = float(_x_axis[-1]) if _x_axis.size else float("nan")
     except (KeyError, TypeError, ValueError):
         line_end = float("nan")
-    try:
-        near_xcut = float(info["xcut_near_mm"])
-    except (KeyError, TypeError, ValueError):
-        near_xcut = float("nan")
+    # near_xcut is resolved above, from planes["geometry_mm"] first: the dump's
+    # own key is NaN on the field-snapshot page, and a bare read here would put
+    # that NaN straight back and drop the stub of the strip.
 
     # THE STRIP, in TWO segments: the load is a GAP in the conductor, not the
     # end of it. Segment A runs from the port plane to the recorded load plane;
