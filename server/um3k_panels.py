@@ -239,12 +239,19 @@ def build_center_panel(ctx) -> object:
 #: all, or it fills a refusal when the data it would have read is missing.
 RIGHT_TABS = (
     # The sweep: ``multifreq = load_multifreq(info["path"], structure_id)``.
-    ("S-Parameters", "s_params", "multifreq"),
+    # NO flag, deliberately: the tab is offered on EVERY page, because the page
+    # that has no sweep is exactly the page whose reader needs to be told so.
+    # Flagged on ``multifreq`` it vanished on the customer's shape - a legacy
+    # dump with no sweep but a study record beside it (``record`` true made
+    # "some flag is true" true, so the filter dropped this one) - and the panel
+    # that fills the refusal never ran. The body says "No sweep file found"
+    # instead (poc_app._emit_s_params_panel).
+    ("S-Params", "s_params", None),
     # NOT page data: the panel is ``build_far_field_panel(surface_dump)``, i.e.
     # the --surface-dump archive, which no Available flag describes.
     ("Far Field", "far_field", None),
     # The record: ``_field_record(info["path"])``.
-    ("Confidence N-lambda", "confidence", "record"),
+    ("Confidence", "confidence", "record"),
     # Always-on: with no record beside the dump ``_mode_view`` solves from the
     # dump's own metadata instead (``_mode_geometry_from_dump``, poc_app.py:5936)
     # and otherwise fills a refusal (:5937-5943), so a record-less page can still
@@ -258,22 +265,28 @@ RIGHT_TABS = (
 def visible_right_tabs(available=None) -> list:
     """The tab values this page can fill, in :data:`RIGHT_TABS` order.
 
-    A tab is dropped only for a flag it HAS and that flag is FALSE: the two
-    flagged rows are S-Parameters (``multifreq``) and Confidence N-lambda
-    (``record``), and a false flag on either costs exactly that one tab. Every
-    other case KEEPS the tab, because a column must never lose a panel to a fact
-    nobody recorded:
+    A tab is dropped only for a flag it HAS and that flag is FALSE. With
+    S-Params offered unconditionally the only flagged row left is Confidence
+    (``record``), so no snapshot can drop a tab TODAY: a false ``record`` is
+    also the flag that trips the "no flag is true" rescue below, which keeps
+    all five. The filter stays anyway, because a false flag must cost a tab at
+    most and never the column, and the next flagged row added rides it. Every
+    other case KEEPS the tab too:
 
-    * ``None`` in :data:`RIGHT_TABS` is a row with no flag at all - Far Field
-      reads the --surface-dump archive, Modes falls back to the dump's own
-      metadata and Circuit asks the page for nothing - so it is never dropped;
+    * ``None`` in :data:`RIGHT_TABS` is a row with no flag at all - S-Params
+      fills "No sweep file found" when the arm has none registered
+      (poc_app._emit_s_params_panel), Far Field reads the --surface-dump
+      archive, Modes falls back to the dump's own metadata and Circuit asks the
+      page for nothing - so it is never dropped;
     * ``available`` of ``None`` - a context that never carried a snapshot -
       keeps all five, the same answer as a snapshot that carries the flags;
     * an ANIMATION page keeps all five: it is the page this column was built
       for, and each of its panels already says so itself when its neighbour
       file is missing;
     * a page that claims NONE of the flags keeps all five rather than an empty
-      column, so a wrong flag can cost a tab but never the whole right side.
+      column, so a wrong flag can cost a tab but never the whole right side -
+      and that is the second reason the field page with no sweep still gets the
+      panel that says "No sweep file found".
     """
     values = [value for _label, value, _flag in RIGHT_TABS]
     if available is None or getattr(available, "animation", False):
@@ -431,10 +444,29 @@ def build_right_panel(ctx) -> None:
         # never be drawn under one name and select another.
         # The kept order is RIGHT_TABS order, which is the
         # order the five have always had.
-        with tabs_cls(v_model=("tab", shown[0])):
+        # Five labels in a column this narrow only fit if the BAR is asked to
+        # be small: ``density="compact"`` is Vuetify 3's short tab bar (there
+        # is no ``dense`` prop in v3 - that one is v2, and passing it here is
+        # silently dropped), ``show_arrows`` turns an overflow into a pair of
+        # pagination arrows instead of labels clipped off the panel edge, and
+        # the tag padding/min-width override Vuetify's 90px floor, which is
+        # what pushed "Modes" and "Circuit" out of sight.
+        with tabs_cls(
+            v_model=("tab", shown[0]),
+            density="compact",
+            show_arrows=True,
+            style="font-size: 11px;",
+        ):
             for _label, _value, _flag in RIGHT_TABS:
                 if _value in shown:
-                    tab_cls(_label, value=_value)
+                    tab_cls(
+                        _label,
+                        value=_value,
+                        style=(
+                            "min-width: 0; padding: 0 6px; "
+                            "text-transform: none;"
+                        ),
+                    )
         with tabs_window_cls(
             v_model=("tab", shown[0])
         ):

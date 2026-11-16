@@ -758,6 +758,46 @@ def test_s_params_panel_reports_no_data(tmp_path: Path, monkeypatch) -> None:
     )
 
 
+def test_the_s_params_tab_says_no_sweep_when_the_arm_has_none(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The tab is offered with no sweep, so it has to say that in ONE line.
+
+    ``um3k_panels.RIGHT_TABS`` now offers S-Params on every page: an arm with
+    nothing registered keeps the tab and fills the refusal. Before this the
+    body emitted a blank number line, an empty image and rows that could not
+    exist, which reads as a broken tab rather than one that looked and found
+    nothing. Both registry maps are emptied first, so this is the real arm-less
+    case without depending on which summaries are checked in today.
+    """
+    import poc_app as app
+
+    dump = tmp_path / "dumps" / "b.npz"
+    dump.parent.mkdir(parents=True)
+    info = _fixture_info(app, dump, structure_id="B", load_ohm=100.0)
+    monkeypatch.setattr(app, "MULTIFREQ_BY_STRUCTURE", {})
+    monkeypatch.setattr(app, "SINGLE_RUN_BY_STRUCTURE", {})
+
+    log = _capture_html_widgets(monkeypatch)
+    _boot_app(info)
+
+    texts = _texts(log)
+    assert "No sweep file found" in texts, (
+        "the S-Parameters tab was built over no sweep and never said so, so "
+        "the reader gets a heading over an empty panel. Texts emitted:\n"
+        + "\n".join(texts)
+    )
+    drawn = [
+        entry["src"]
+        for entry in log
+        if entry["kind"] == "Img" and "s_params_image" in str(entry["src"])
+    ]
+    assert not drawn, (
+        f"the panel with no sweep still drew the image tag {drawn!r}, which "
+        "can only ever be an empty box"
+    )
+
+
 def test_the_s_parameters_tab_is_selected_and_populated_without_a_click(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -4838,4 +4878,185 @@ def test_a_static_page_refuses_a_solve_and_spawns_nothing(
     ), (
         "the status line does not say WHY nothing happened, or what to do "
         f"instead: {str(state.solve_status)!r}"
+    )
+
+
+# =============================================================================
+# THE FAMILY SWITCH'S RANGE, and the lines that say what a reader is looking
+# at: a page with no timeline, two discs that are MARKERS, a caption that is
+# small print
+# =============================================================================
+
+
+def _capture_html_divs(monkeypatch):
+    """Record every ``Div`` the page builds, with its TEXT and its STYLE.
+
+    ``_capture_html_widgets`` (:2487) records the html layer too, but it keeps
+    only kind/text/src - and the point of the note and of the caption below is
+    their SIZE, so the style has to come back with them.  ``poc_app`` resolves
+    ``Div`` from the html MODULE at boot (:7566), so patching the module
+    attribute is what the page sees; the real class is still constructed, so
+    the shipped layout is what is measured.
+    """
+    import trame.widgets.html as html_mod
+
+    log = []
+    real = html_mod.Div
+
+    def _factory(*args, **kwargs):
+        log.append(
+            {"text": args[0] if args else None, "style": kwargs.get("style")}
+        )
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(html_mod, "Div", _factory)
+    return log
+
+
+def test_the_family_switch_returns_the_selected_clocks_own_range() -> None:
+    """The scrubber's range is the SELECTED family's last frame, never the other's.
+
+    The two clocks are different lengths - ``nt`` frames of ez_ycut against
+    ``nt_x`` of each x-cut sheet - so a range taken from the wrong one leaves
+    slider positions the picture cannot show, or hides ones it can.  And a page
+    with no timeline at all has NO range: ``None`` is "absent", not "0 frames".
+    """
+    import poc_app as app
+
+    for nt, nt_x, mode, expect in (
+        (None, None, "ycut", None),  # a static field dump: no timeline at all
+        (None, None, "xcut", None),
+        (4, 3, "ycut", 3),  # the y-cut clock is the longer of the two
+        (4, 3, "xcut", 2),
+        (None, 3, "xcut", 2),  # only the x-cut family was recorded
+    ):
+        got = app._frame_span_max(nt, nt_x, mode)
+        assert got == expect, (
+            f"_frame_span_max({nt!r}, {nt_x!r}, {mode!r}) returned {got!r}, "
+            f"not {expect!r}: the range is not the {mode} family's own last "
+            "frame, so the slider counts in the other clock"
+        )
+
+
+def test_a_static_page_never_breaks_the_family_switch(tmp_path: Path) -> None:
+    """A "Switch plane" press on a page with NO timeline must not take it down.
+
+    The button is emitted unconditionally (um3k_panels.py:205-210; the playback
+    buttons beside it are guarded by ``if nt is not None``, this one is not), so
+    a static field dump carries it ON SCREEN with both clocks None.  The press
+    used to reach ``int(None)`` through the range arithmetic and raise inside a
+    trame trigger; here it is driven exactly as the browser drives it.
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    with _counted_render():
+        info = _fixture_legacy_info(app, tmp_path / "switch.npz")
+        _app, srv = _boot_app(info)
+        toggle = _registered_trigger(srv.controller, "mode_toggle")
+        state = _closure_cells(toggle)["state"]
+        assert state.frame_max is None, (
+            "this is not the static page the press is about: the boot already "
+            f"handed the scrubber a range (frame_max={state.frame_max!r})"
+        )
+        # NO ready()/flush() here, deliberately: the press must change nothing,
+        # so there is no write for a listener to react to - and marking the
+        # PROCESS-WIDE server state ready would break the picker file's own
+        # "the boot double never bound a port" assertion (:647) when both run
+        # in one pytest process.
+        with state:
+            toggle()  # exactly what the button calls
+
+    assert state.frame_max is None, (
+        "the press handed the scrubber a range on a page that has no "
+        f"timeline: frame_max={state.frame_max!r}"
+    )
+    assert int(state.frame) == 0, (
+        f"the press moved the frame to {state.frame!r} on a page with one "
+        "picture, so the readouts now name a frame that was never drawn"
+    )
+    assert str(state.mode) == "ycut", (
+        f"the press switched the family to {state.mode!r} on a page that has "
+        "no second family: there is nothing to draw and the readouts name "
+        "keys this dump does not carry"
+    )
+
+
+def test_the_plane_boxes_carry_a_note_saying_they_are_markers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The two discs are X-markers, and the page has to SAY so where the boxes are.
+
+    A reader who takes the red/purple planes for two more field slices reads a
+    correct, localized field as a broken one.  The note rides with the boxes
+    (it is emitted inside the same ``cut_redraw`` guard), so the pair is
+    asserted together: a note on a page with no plane stack would be describing
+    boxes that are not there.
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    divs = _capture_html_divs(monkeypatch)
+    boxes = _capture_v_checkboxes(monkeypatch)
+    with _counted_render():
+        _boot_app(_fixture_legacy_info(app, tmp_path / "note.npz"))
+
+    note = (
+        "Note: Port and Load planes are X-markers. The 3D field is "
+        "localized to the microstrip."
+    )
+    found = [entry for entry in divs if entry["text"] == note]
+    assert len(found) == 1, (
+        f"the plane note is on the page {len(found)} times, not once: a note "
+        "that is missing leaves the discs readable as field slices, and two "
+        f"of them is noise. divs={[e['text'] for e in divs]}"
+    )
+    style = found[0]["style"] or ""
+    assert "font-size: 10px" in style, (
+        "the plane note is not drawn as small print: it is one line under the "
+        f"boxes for them, not a paragraph. style={style!r}"
+    )
+    assert "color: #555" in style, (
+        f"the plane note is not the muted grey the other footnotes use: {style!r}"
+    )
+
+    labels = {
+        entry["kwargs"].get("label")
+        for entry in boxes
+        if entry["kwargs"].get("label")
+    }
+    for wanted in ("Show Load Plane (red)", "Show S11 Port Plane (purple)"):
+        assert wanted in labels, (
+            f"the note describes boxes that are not on this page: {wanted!r} "
+            f"is missing. labels={sorted(labels)}"
+        )
+
+
+def test_the_mode_caption_is_drawn_as_small_print(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The Mode panel's caption is a NOTE, and it is drawn as one.
+
+    The line carries the boot hint, the solved numbers or a refusal - never the
+    page's headline - so it is 11 px and dark grey rather than the default body
+    size it used to inherit.
+    """
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    divs = _capture_html_divs(monkeypatch)
+    with _counted_render():
+        _boot_app(_fixture_info(app, tmp_path / "caption.npz"))
+
+    captions = [e for e in divs if e["text"] == "{{ mode_view_caption }}"]
+    assert len(captions) == 1, (
+        f"the Mode caption is emitted {len(captions)} times, not once: the "
+        "panel is supposed to be ONE line, and a second copy would say the "
+        f"same thing twice. divs={[e['text'] for e in divs]}"
+    )
+    assert captions[0]["style"] == (
+        "font-size: 11px; color: #333; padding: 2px 0;"
+    ), (
+        "the Mode caption is not drawn as small print: it inherits the body "
+        f"size and reads as the panel's headline. style={captions[0]['style']!r}"
     )

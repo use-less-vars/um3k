@@ -799,22 +799,100 @@ def test_build_right_panel_shows_every_tab_on_an_animation_page():
         assert built[container][0].kwargs["v_model"] == ("tab", "s_params")
 
 
-def test_build_right_panel_shows_only_the_tabs_the_page_can_fill():
+def test_build_right_panel_shows_only_the_tabs_the_page_can_fill(monkeypatch):
     """If this fails, a tab is drawn for data the page does not hold.
 
-    A field page with a sweep keeps S-Parameters, the Far Field tab (which
-    reads the --surface-dump archive, not the page), Modes (which solves from
-    the dump's own metadata when no record sits beside it) and the Circuit box
-    that asks the page for nothing; only Confidence N-lambda, the one RECORD
-    reader left, is gone from BOTH sides of the tab pair, not just one.
+    No REAL snapshot can provoke a drop any more: S-Params carries no flag (the
+    customer's sweep-less page has to keep it - see
+    ``test_s_params_stays_on_a_record_only_page_with_no_sweep``) and
+    Confidence, the only flagged row left, carries ``record``, the very flag
+    that makes "some flag is true" true - so a false ``record`` trips the
+    no-flags rescue instead of dropping anything. The filter is still the
+    mechanism a future flagged row rides, so the table is stood up here with a
+    second flagged row: Modes is given ``plane_stack``, a real ``Available``
+    field, and the page is a record page with no plane stack. Modes is then
+    gone and every other tab stays - from BOTH sides of the tab pair, not just
+    one.
     """
+    monkeypatch.setattr(
+        um3k_panels,
+        "RIGHT_TABS",
+        (
+            ("S-Params", "s_params", None),
+            ("Far Field", "far_field", None),
+            ("Confidence", "confidence", "record"),
+            ("Modes", "modes", "plane_stack"),
+            ("Circuit", "circuit", None),
+        ),
+    )
     ctx, _log, built = _fake_right_context(
-        available=um3k_context.Available(multifreq=True)
+        available=um3k_context.Available(record=True, plane_stack=False)
     )
 
     um3k_panels.build_right_panel(ctx)
 
-    values = ["s_params", "far_field", "modes", "circuit"]
+    values = ["s_params", "far_field", "confidence", "circuit"]
+    for cls in ("VTab", "VTabsWindowItem"):
+        assert [w.kwargs["value"] for w in built[cls]] == values, (
+            f"{cls} carries {[w.kwargs['value'] for w in built[cls]]!r}"
+        )
+    assert "s_params" in values, "the always-offered tab was dropped too"
+    assert built["VTabs"][0].kwargs["v_model"] == ("tab", "s_params")
+
+
+def test_build_right_panel_opens_on_the_first_tab_it_kept(monkeypatch):
+    """If this fails, the column opens on a tab the page cannot draw.
+
+    ``v_model`` must be ``shown[0]``, not a hard-coded ``"s_params"``. No real
+    page can put another tab first any more - S-Params carries no flag - so the
+    table is stood up here with S-Params carrying a flag that is false on this
+    page, which leaves Far Field first: a hard-coded ``"s_params"`` would then
+    point the window at an item that was never drawn.
+    """
+    monkeypatch.setattr(
+        um3k_panels,
+        "RIGHT_TABS",
+        (
+            ("S-Params", "s_params", "plane_stack"),
+            ("Far Field", "far_field", None),
+            ("Confidence", "confidence", "record"),
+            ("Modes", "modes", None),
+            ("Circuit", "circuit", None),
+        ),
+    )
+    ctx, _log, built = _fake_right_context(
+        available=um3k_context.Available(record=True, plane_stack=False)
+    )
+    shown = ["far_field", "confidence", "modes", "circuit"]
+
+    um3k_panels.build_right_panel(ctx)
+
+    for cls in ("VTab", "VTabsWindowItem"):
+        assert [w.kwargs["value"] for w in built[cls]] == shown, (
+            f"{cls} carries {[w.kwargs['value'] for w in built[cls]]!r}"
+        )
+    for container in ("VTabs", "VTabsWindow"):
+        assert built[container][0].kwargs["v_model"] == ("tab", "far_field"), (
+            f"{container} was handed {built[container][0].kwargs['v_model']!r}"
+        )
+
+
+def test_build_right_panel_keeps_s_params_on_a_page_with_no_sweep():
+    """If this fails, the arm with no sweep has no tab to say so in.
+
+    A FIELD page with no sweep and no record: S-Params still comes first,
+    because it carries no flag at all now, and the rest ride the "no flag is
+    true" rescue. The customer's own shape - a record beside the dump - is
+    ``test_s_params_stays_on_a_record_only_page_with_no_sweep`` below, which is
+    the page this tab used to disappear from.
+    """
+    ctx, _log, built = _fake_right_context(
+        available=um3k_context.Available(multifreq=False, record=False)
+    )
+
+    um3k_panels.build_right_panel(ctx)
+
+    values = ["s_params", "far_field", "confidence", "modes", "circuit"]
     for cls in ("VTab", "VTabsWindowItem"):
         assert [w.kwargs["value"] for w in built[cls]] == values, (
             f"{cls} carries {[w.kwargs['value'] for w in built[cls]]!r}"
@@ -822,26 +900,74 @@ def test_build_right_panel_shows_only_the_tabs_the_page_can_fill():
     assert built["VTabs"][0].kwargs["v_model"] == ("tab", "s_params")
 
 
-def test_build_right_panel_opens_on_the_first_tab_it_kept():
-    """If this fails, the column opens on a tab the page cannot draw.
+def test_s_params_stays_on_a_record_only_page_with_no_sweep():
+    """THE customer case: a legacy dump, a study record beside it, no sweep.
 
-    With only a record, Far Field is the first kept tab - the always-on row
-    that asks the page for nothing - so both containers are handed ITS value
-    rather than the hard-coded ``s_params``, which this page cannot fill at all.
+    ``info["format"]`` is absent, so ``nt``/``nt_x`` are None and
+    ``multifreq`` is False, while the record sibling makes ``record`` True.
+    That is the page that used to LOSE the S-Parameters tab: ``record`` kept
+    "some flag is true" true, so the ``multifreq`` flag dropped the tab and the
+    reader was never told the sweep was missing. The tab must now be drawn,
+    first, and its body dispatched - ``poc_app._emit_s_params_panel`` is what
+    fills "No sweep file found" (asserted on the real emitter in
+    ``test_poc_playback.py::test_the_s_params_tab_says_no_sweep_when_the_arm_has_none``).
     """
-    ctx, _log, built = _fake_right_context(
-        available=um3k_context.Available(record=True)
+    ctx, log, built = _fake_right_context(
+        available=um3k_context.Available(multifreq=False, record=True)
     )
 
     um3k_panels.build_right_panel(ctx)
 
+    values = ["s_params", "far_field", "confidence", "modes", "circuit"]
     for cls in ("VTab", "VTabsWindowItem"):
-        assert [w.kwargs["value"] for w in built[cls]] == [
-            "far_field", "confidence", "modes", "circuit"
-        ]
-    for container in ("VTabs", "VTabsWindow"):
-        assert built[container][0].kwargs["v_model"] == ("tab", "far_field"), (
-            f"{container} was handed {built[container][0].kwargs['v_model']!r}"
+        assert [w.kwargs["value"] for w in built[cls]] == values, (
+            f"{cls} carries {[w.kwargs['value'] for w in built[cls]]!r}: the "
+            "sweep-less record page lost the tab that says so"
+        )
+    assert built["VTabs"][0].kwargs["v_model"] == ("tab", "s_params"), (
+        "the column did not open on S-Params, so the reader's first view of "
+        "this page is another tab and the missing sweep goes unmentioned"
+    )
+    assert ("callback", "_emit_s_params_panel") in log, (
+        "the S-Parameters tab was drawn but its body was never dispatched, so "
+        "nothing could put 'No sweep file found' in it"
+    )
+
+
+def test_build_right_panel_asks_for_a_compact_tab_bar():
+    """If this fails, the five labels overflow the column again.
+
+    Five full-word tab labels do not fit the DATA column: Vuetify's 90px
+    ``min-width`` on ``v-tab`` plus its own padding pushed the last two tabs
+    off the edge. So the bar asks for the compact density (``dense`` is
+    Vuetify 2 and is dropped in v3), pagination arrows for when even the short
+    labels do not fit, and each tab is handed the style that removes the floor.
+    """
+    ctx, _log, built = _fake_right_context()
+
+    um3k_panels.build_right_panel(ctx)
+
+    bar = built["VTabs"][0].kwargs
+    assert bar["density"] == "compact", (
+        f"the tab bar asks for density={bar.get('density')!r}, not the compact "
+        "one, so the labels stand at full height and full width"
+    )
+    assert bar["show_arrows"] is True, (
+        "the bar has no pagination arrows: labels that overflow are then "
+        "clipped off the panel edge with no way to reach them"
+    )
+    assert "font-size: 11px" in bar["style"], (
+        f"the bar carries no smaller font: {bar['style']!r}"
+    )
+    labels = [made.args[0] for made in built["VTab"]]
+    assert labels == ["S-Params", "Far Field", "Confidence", "Modes", "Circuit"], (
+        f"the tab labels are {labels!r}; the two long ones are back"
+    )
+    for made in built["VTab"]:
+        style = made.kwargs["style"]
+        assert "min-width: 0" in style and "padding: 0 6px" in style, (
+            f"tab {made.args[0]!r} was handed {style!r}, which keeps Vuetify's "
+            "90px minimum width"
         )
 
 

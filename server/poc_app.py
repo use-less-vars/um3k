@@ -371,6 +371,19 @@ def _is_vis(info: dict) -> bool:
     return info.get("format") in VIS_FORMATS
 
 
+def _frame_span_max(nt, nt_x, mode: str):
+    """The LAST frame index of ``mode``'s own family, or None with no timeline.
+
+    The two clocks are different lengths - ``nt`` counts ez_ycut, ``nt_x`` each
+    of the x-cut sheets - so the range handed to the scrubber is always the
+    selected family's own, never the other one's. Both counts are None on a page
+    that claims no timeline (a bare field dump records no frame axis), and there
+    the range is ABSENT: None is "no timeline", never "0 frames".
+    """
+    frames = nt if mode == "ycut" else nt_x
+    return None if frames is None else int(frames) - 1
+
+
 def _load_series_block(data, path: Path):
     """The load's own V(t)/I(t) trace as ONE state block, or ``(None, reason)``.
 
@@ -7712,7 +7725,7 @@ def run_web_vis(
     state.playing = False
     state.frame = 0
     # No timeline: the scrubber's range is ABSENT (None), never 0 frames.
-    state.frame_max = None if nt is None else nt - 1
+    state.frame_max = _frame_span_max(nt, nt_x, "ycut")
     state.play_label = "play"
 
     # Keyboard shortcuts (Space = play/pause, arrows = step). The browser side is
@@ -8649,9 +8662,7 @@ def run_web_vis(
                 )
                 continue
             sheets[key] = {"grid": grid, "actor": actor, "family": family}
-        state.frame_max = (
-            nt if (mode or state.mode) == "ycut" else nt_x
-        ) - 1
+        state.frame_max = _frame_span_max(nt, nt_x, mode or state.mode)
         # The prose lines that name THIS dump's numbers are rebuilt from `live`
         # rather than kept from boot: a solve can change the arm, the velocity
         # record and the colour ceiling all at once.
@@ -8705,7 +8716,16 @@ def run_web_vis(
     def _on_mode_toggle(**_kwargs) -> None:
         """Swap which family is animated. The two clocks are never mixed."""
         mode = "xcut" if state.mode == "ycut" else "ycut"
-        state.frame_max = (nt if mode == "ycut" else nt_x) - 1
+        state.frame_max = _frame_span_max(nt, nt_x, mode)
+        if state.frame_max is None:
+            # NO TIMELINE: this page carries ONE static picture and no second
+            # family to swap to (both counts are None), so the press changes
+            # nothing. _show() is deliberately NOT called: its x-cut readouts
+            # name keys only an animation dump records, so drawing a family
+            # here would raise on the very dumps that have no timeline - and a
+            # "Switch plane" press must never take the server down, which is
+            # exactly what int(None) used to do.
+            return
         _show(min(int(state.frame), int(state.frame_max)), mode)
 
     # A step pressed while the animation RUNS is a SEEK, not a stop: ten frames
@@ -9522,6 +9542,22 @@ def run_web_vis(
             "S-Parameters",
             style="font-size: 12px; font-weight: 600; padding: 2px 0;",
         )
+        # No sweep is an ANSWER, and the tab is offered on every page now
+        # (``um3k_panels.RIGHT_TABS``), so the arm with no sweep registered is
+        # exactly the arm that has to read this line: without it the panel
+        # opened onto a blank number, an empty image and rows that do not
+        # exist. The caption below still names the arm and every path that was
+        # looked for, so the one-line refusal does not replace the detail.
+        if (handles.get("s_params") or {}).get("path") is None:
+            html_div(
+                "No sweep file found",
+                style="font-size: 11px; color: #333; padding: 2px 0;",
+            )
+            html_div(
+                "{{ s_params_caption }}",
+                style="font-size: 11px; color: #333; padding: 2px 0;",
+            )
+            return
         html_div(
             "{{ s_params_number }}",
             style="font-size: 12px; padding: 2px 0;",
@@ -9932,9 +9968,15 @@ def run_web_vis(
             # absent - the press's own picture still carries the result.
             label_cls = widgets.get("VLabel")
             if label_cls is not None:
-                label_cls("{{ mode_view_caption }}")
+                label_cls(
+                    "{{ mode_view_caption }}",
+                    style="font-size: 11px; color: #333; padding: 2px 0;",
+                )
             return
-        html_div("{{ mode_view_caption }}", style="padding: 2px 0;")
+        html_div(
+            "{{ mode_view_caption }}",
+            style="font-size: 11px; color: #333; padding: 2px 0;",
+        )
 
     def _emit_mode_picker() -> None:
         """The candidate picker: ONE VSelect over the solve's OWN candidates.
@@ -10055,6 +10097,19 @@ def run_web_vis(
                 print(
                     f"[poc_app] plane toggles unavailable: {exc}", file=sys.stderr
                 )
+        # The two discs are MARKERS, not field slices, and the boxes above are
+        # where the page has to say so: a reader who takes the planes for two
+        # more cross-sections reads the localized field as a broken one.
+        if html_div is None:
+            return
+        try:
+            html_div(
+                "Note: Port and Load planes are X-markers. The 3D field is "
+                "localized to the microstrip.",
+                style="font-size: 10px; color: #555; padding: 2px 0 0 0;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a note is never the page
+            print(f"[poc_app] plane note unavailable: {exc}", file=sys.stderr)
 
     def _emit_station_readout() -> None:
         """The station sentence as SHELL TEXT, inside the cut row.
