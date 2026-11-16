@@ -8831,6 +8831,94 @@ def _volume_abs_global_clim(volume):
     return (peak * 1e-3, peak)
 
 
+#: The two references the |E| volume's colour range can be measured against.
+#:
+#: ``"global"`` is the DEFAULT and the honest picture: ONE range measured over
+#: the whole recording, so the decay from the loud frames to the weak ones is
+#: painted AS decay - and a late frame that really has left the domain really
+#: does come out empty. ``"per_frame"`` takes the same 60 dB span but references
+#: it to the CURRENT frame's own peak, which reveals structure inside weak
+#: frames at the honest cost of painting that decay away.
+VOLUME_CLIM_GLOBAL = "global"
+VOLUME_CLIM_PER_FRAME = "per_frame"
+VOLUME_CLIM_MODES = (VOLUME_CLIM_GLOBAL, VOLUME_CLIM_PER_FRAME)
+
+#: What the layer uses when nothing says otherwise. A page - and a caller - that
+#: never mentions the mode therefore draws exactly the layer it always drew.
+VOLUME_CLIM_DEFAULT = VOLUME_CLIM_GLOBAL
+
+
+def _volume_clim_mode(value):
+    """The clim mode ``value`` asks for, or the DEFAULT when it does not ask.
+
+    The ONE normaliser every reader goes through. An absent state field, a
+    ``None``, and a string this build does not know all answer ``"global"``, so
+    the mode can never silently become the renormalising one by being misspelled
+    or by a control that has not been built yet.
+    """
+    if isinstance(value, str) and value in VOLUME_CLIM_MODES:
+        return value
+    return VOLUME_CLIM_DEFAULT
+
+
+def _volume_abs_frame_clim(volume, frame):
+    """The colour range ONE stored frame of ``e_abs_volume`` is drawn on.
+
+    ``(peak / 1000, peak)`` over THAT frame alone: the same 60 dB span
+    ``_volume_abs_global_clim`` takes over the whole clip, referenced to the
+    frame's own peak instead of the recording's.
+
+    None when the frame cannot name a reference: no volume, the wrong rank, a
+    frame index off either end, or a peak that is not finite and positive. WHY
+    that answer and not a tuple: ``(0.0, 0.0)`` is degenerate (every voxel sits
+    at the bottom of it, and a range whose ends are equal is a range VTK must
+    guess about) and any widening of it would be a number this function
+    invented. ``_volume_clim_for`` turns the None into the whole-recording
+    range, which is measured, finite and never inverted.
+    """
+    if volume is None:
+        return None
+    try:
+        vol = np.asarray(volume)
+        if vol.ndim != 4 or vol.size < 1:
+            return None
+        if np.iscomplexobj(vol):
+            vol = np.abs(vol)
+        position = int(frame)
+        if position < 0 or position >= vol.shape[0]:
+            return None
+        peak = float(np.max(vol[position]))
+    except Exception:  # noqa: BLE001 - see the docstring's None
+        return None
+    if not np.isfinite(peak) or peak <= 0.0:
+        return None
+    return (peak * 1e-3, peak)
+
+
+def _volume_clim_for(volume, frame, mode):
+    """The |E| volume layer's colour range under clim ``mode``.
+
+    ``VOLUME_CLIM_PER_FRAME`` -> ``_volume_abs_frame_clim``, with the
+    whole-recording range as the FALLBACK for a frame that cannot name one of
+    its own (peak 0, NaN or inf - see that function). Every other value,
+    ``VOLUME_CLIM_DEFAULT`` and an absent one included ->
+    ``_volume_abs_global_clim``, untouched: that is what makes a caller which
+    says nothing byte-identical to the layer that predates the mode.
+
+    WHY the fallback is the GLOBAL range and not a degenerate one and not
+    "draw nothing": the frame IS part of the recording, so the global range is
+    the one range that is honest about it without inventing a number. A dead
+    frame then shows as empty (it is below that floor, which is true) while the
+    layer, its cut sheets and its markers stay drawn and in agreement. None - no
+    volume at all - is passed straight through and the caller drops the layer.
+    """
+    if _volume_clim_mode(mode) == VOLUME_CLIM_PER_FRAME:
+        clim = _volume_abs_frame_clim(volume, frame)
+        if clim is not None:
+            return clim
+    return _volume_abs_global_clim(volume)
+
+
 def _volume_frame_grid(info: dict, frame, cell_mm: float, clim):
     """ONE stored |E| frame as an ``ImageData`` on this page's own node grid.
 
@@ -9670,6 +9758,15 @@ def run_web_vis(
     state.show_load_plane = True
     state.show_port_plane = True
 
+    # WHICH reference the |E| volume's colour range is measured against - the ONE
+    # state name a left-panel control will write, so the layer reads it here and
+    # nowhere else. "global" at boot is the picture this layer has always drawn:
+    # one range over the whole recording, so the recorded decay is painted as
+    # decay. "per_frame" re-references the same 60 dB window to each frame's own
+    # peak, which shows structure inside weak frames and, honestly, hides that
+    # decay - the warning the panel will carry, not this line.
+    state.volume_clim_mode = VOLUME_CLIM_DEFAULT
+
     # The Confidence & Accuracy pane: TEXT, prose rather than a picture. Its tab
     # owns its visibility, so (like the S-parameters pane) there is no style
     # string, no label and no open flag - only the caption and the rows a
@@ -10299,11 +10396,19 @@ def run_web_vis(
         WHY this is not part of ``_show``'s in-place rule: the animated sheets swap
         one scalar array because their lattice never changes, but a frame of the
         volume IS a different image - every nx*ny*nz sample on it changes - so the
-        volume is REBUILT. The rebuild is cached on ``(page, frame, load, port)``,
+        volume is REBUILT. The rebuild is cached on
+        ``(page, frame, load, port, clim mode)``,
         so a redraw that lands on the same frame (the frame slider moving inside
         one saved volume step, or the app repainting for its own reasons) removes
         and rebuilds nothing, and the actor count of this page cannot grow with the
         number of frames watched.
+
+        WHICH colour range: ``state.volume_clim_mode``, normalised through
+        ``_volume_clim_mode`` so an absent or unknown value is the DEFAULT,
+        "global". The mode is part of that cache key ON PURPOSE - the entry
+        remembers the range it was painted on, so a mode change the key cannot
+        see would be a cache HIT and the layer would keep the old mode's clim
+        until the slider moved to another stored frame.
 
         WHEN the picture appears: this is called from ``_show`` just before its
         single ``plotter.render()``, so a frame is on screen at the same moment the
@@ -10326,20 +10431,10 @@ def run_web_vis(
                 return
             entry = handles.get("volume_layer")
             same_source = isinstance(entry, dict) and entry.get("source") is volume
-            clim = entry.get("clim") if same_source else None
-            if clim is None:
-                # WHY the WHOLE volume and not the frame: the frames are one
-                # recording, and a range measured per frame would paint the
-                # recorded decay away - the exact lie the sheets refuse.
-                clim = _volume_abs_global_clim(volume)
-            if clim is None:
-                _volume_layer_drop()
-                print(
-                    "[poc_app] |E| volume layer skipped: "
-                    "the volume holds no finite sample",
-                    file=sys.stderr,
-                )
-                return
+            # The reference the range is measured against, read ONCE per draw.
+            clim_mode = _volume_clim_mode(
+                getattr(state, "volume_clim_mode", VOLUME_CLIM_DEFAULT)
+            )
             step_axis = info.get(
                 "frame_index" if mode == "ycut" else "frame_index_xcut"
             )
@@ -10365,7 +10460,11 @@ def run_web_vis(
             show_port = bool(getattr(state, "show_port_plane", True))
             # The cache key carries the TWO SWITCHES: the markers are part of this
             # layer, so toggling one must rebuild it - and nothing else.
-            key = (page.get("path"), vol_frame, show_load, show_port)
+            # WHY the MODE is part of this key: the entry remembers the range it
+            # was painted on, so a mode change the key cannot see is a cache HIT
+            # - the layer keeps the old mode's clim until the slider reaches
+            # another stored frame, and the control looks dead.
+            key = (page.get("path"), vol_frame, show_load, show_port, clim_mode)
             if same_source and entry.get("key") == key:
                 # WHY the step is rewritten on a HIT: ``step`` is the sim time this
                 # layer is showing, and MANY frame-slider positions map onto ONE
@@ -10380,6 +10479,36 @@ def run_web_vis(
                 entry["step"] = step
                 return
             _volume_layer_drop()
+            # The remembered range, reused ONLY on the reference it was measured
+            # against: the whole-recording range is one number for every frame of
+            # the recording (which is why it is remembered at all), a per-frame
+            # range belongs to the frame it came from, and a range measured under
+            # the OTHER mode is a different reference entirely. Everything else
+            # is re-resolved here, so a mode change never inherits the old mode's
+            # floor through the memo.
+            reusable = (
+                same_source
+                and entry.get("clim_mode") == clim_mode
+                and (
+                    clim_mode != VOLUME_CLIM_PER_FRAME
+                    or entry.get("frame") == vol_frame
+                )
+            )
+            # WHY the WHOLE volume in the DEFAULT mode and not the frame: the
+            # frames are one recording, and a range measured per frame would
+            # paint the recorded decay away - the exact lie the sheets refuse.
+            # "per_frame" is the SELECTABLE exception: same 60 dB span, and its
+            # reference is the frame's own peak.
+            clim = entry.get("clim") if reusable else None
+            if clim is None:
+                clim = _volume_clim_for(volume, vol_frame, clim_mode)
+            if clim is None:
+                print(
+                    "[poc_app] |E| volume layer skipped: "
+                    "the volume holds no finite sample",
+                    file=sys.stderr,
+                )
+                return
             # The |E| image FIRST: ``_cut_layout`` and ``_volume_cut_sheets`` both
             # resolve their dims through the memo this seeds, so the cuts land on
             # exactly the lattice the volume was just built on.
@@ -10409,6 +10538,7 @@ def run_web_vis(
                 ],
                 "source": volume,
                 "clim": clim,
+                "clim_mode": clim_mode,
                 "key": key,
                 "frame": vol_frame,
                 "step": step,

@@ -735,3 +735,373 @@ def test_the_layer_cannot_grow_with_the_number_of_frames_watched(volume_page):
         )
     finally:
         info["e_abs_volume"] = volume
+
+
+# ---------------------------------------------------------------------------
+# THE SELECTABLE CLIM MODE.  ``state.volume_clim_mode`` is the ONE name a
+# left-panel control will write; there is no control yet, so these tests write
+# that field themselves and then redraw - exactly what the control's handler will
+# do - and read the range back off the VOLUME ACTOR's mapper, never off a
+# promise.  "global" (the default) is today's whole-recording range;
+# "per_frame" is the same 60 dB window referenced to the current frame's peak.
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _clim_mode(live, mode):
+    """Set the page's clim mode for the block, and put the boot value back."""
+    before = getattr(live.state, "volume_clim_mode", None)
+    live.state.volume_clim_mode = mode
+    try:
+        yield
+    finally:
+        live.state.volume_clim_mode = before
+
+
+def _drawn_range(live) -> tuple:
+    """The colour range the |E| VOLUME actor is actually painted on."""
+    return tuple(float(value) for value in _volume_actor(live).mapper.scalar_range)
+
+
+def _only_the_layers_volume(live) -> None:
+    """Forget the clim memo AND take every stray volume OFF the plotter.
+
+    WHY the second half is not optional (measured on pyvista 0.49.2): a scene
+    shares ONE volume scalar range between every volume actor in it, so with two
+    volumes present ``mapper.scalar_range`` - and the transfer function the
+    renderer uploads - reads the UNION of their ranges.  A per-frame window
+    measured next to an earlier whole-clip volume therefore comes back as
+    ``(frame floor, clip peak)``: neither range, and no picture this page ever
+    draws.  ``_draw_volume_layer`` never has two volumes - ``_volume_layer_drop``
+    takes the old one off before the new one is added - so a test that pops
+    ``handles`` to force a rebuild has to take the orphan off itself.
+    """
+    import pyvista
+
+    entry = live.handles.pop("volume_layer", None)
+    if isinstance(entry, dict):
+        for actor in entry.get("actors", ()):
+            live.plotter.remove_actor(actor, render=False)
+    for actor in list(live.plotter.actors.values()):
+        if isinstance(actor, pyvista.Volume):
+            live.plotter.remove_actor(actor, render=False)
+
+
+def test_switching_the_clim_mode_repaints_the_frame_already_on_screen(volume_page):
+    """The mode is part of the cache KEY, not a field a stale entry keeps.
+
+    THE TRAP this pins: the layer caches on ``(page, volume frame, load, port)``
+    and remembers the clim it painted.  A mode that only changes the clim is
+    invisible to that key, so the second draw below would be a CACHE HIT - the
+    early return keeps the global range and the control looks dead until the
+    slider reaches another stored frame.  So the SAME frame slider position is
+    drawn twice with ``handles`` left ALONE in between: a cache hit is the
+    failure this test exists to catch.
+    """
+    live = volume_page
+    volume = live.page["info"]["e_abs_volume"]
+    peak = float(np.max(volume))
+    whole = (peak * 1e-3, peak)
+    index = 3
+    _only_the_layers_volume(live)
+
+    with _clim_mode(live, app.VOLUME_CLIM_GLOBAL):
+        live.draw(index, "ycut")
+        first = _layer_entry(live)
+        before = _drawn_range(live)
+
+    # NOTHING is popped from handles here: the only thing that changed is the
+    # mode, which is exactly the state a dead toggle leaves behind.
+    with _clim_mode(live, app.VOLUME_CLIM_PER_FRAME):
+        live.draw(index, "ycut")
+        second = _layer_entry(live)
+        after = _drawn_range(live)
+
+    assert first["frame"] == second["frame"], (
+        f"the two draws landed on volume frames {first['frame']} and "
+        f"{second['frame']}: this test needs ONE frame, so that the mode is the "
+        "only difference between the two ranges"
+    )
+    frame_peak = float(np.max(volume[first["frame"]]))
+    assert frame_peak * 100.0 < peak, (
+        f"volume frame {first['frame']} peaks at {frame_peak!r} against a clip "
+        f"peak of {peak!r}: the two ranges are too close for this test to tell "
+        "a per-frame clim from a global one"
+    )
+
+    assert first["key"] != second["key"], (
+        f"changing the clim mode left the cache key unchanged ({first['key']!r}): "
+        "the mode does not participate in the key, so the next draw of this same "
+        "frame is a HIT and keeps the old clim"
+    )
+    assert second is not first, (
+        "the second draw reused the first entry instead of rebuilding the layer: "
+        "a mode change must repaint, not repaint-nothing"
+    )
+    assert before == pytest.approx(whole, rel=1e-9), (
+        f"the global-mode draw painted {before}, expected the whole-recording "
+        f"range {whole}"
+    )
+    assert after == pytest.approx((frame_peak * 1e-3, frame_peak), rel=1e-9), (
+        f"after switching to per_frame the SAME frame is still painted on "
+        f"{after}; its own 60 dB window is {(frame_peak * 1e-3, frame_peak)}. A "
+        "cache hit keeps the global clim and the mode switch does nothing until "
+        "the slider moves"
+    )
+    assert after != pytest.approx(before), (
+        f"the clim did not change when the mode did ({before} -> {after}): the "
+        "toggle is inert on a frame that is already on screen"
+    )
+
+    # ... and back, so the mode is read on EVERY draw and not latched once.
+    with _clim_mode(live, app.VOLUME_CLIM_GLOBAL):
+        live.draw(index, "ycut")
+        assert _drawn_range(live) == pytest.approx(whole, rel=1e-9), (
+            "switching back to global did not restore the whole-recording range"
+        )
+
+
+def _zero_peak_payload() -> dict:
+    """``_payload``'s dump with one stored |E| frame that peaks at EXACTLY 0.0.
+
+    ``QUIET_FRAME`` is zeroed: per-frame scaling divides that frame by its own
+    peak, and 0/0 is the number that must never reach a clim.
+    """
+    payload = _payload(with_volume=True)
+    payload["e_abs_volume"][QUIET_FRAME] = 0.0
+    return payload
+
+
+@pytest.fixture(scope="module")
+def zero_peak_page(tmp_path_factory):
+    """A page serving a dump whose ``QUIET_FRAME`` |E| frame peaks at 0.0."""
+    with _render_doubled():
+        live = _boot(
+            tmp_path_factory.mktemp("zeropeak"),
+            with_volume=True,
+            payload=_zero_peak_payload(),
+        )
+        _silence_view(live)
+        assert float(np.max(live.page["info"]["e_abs_volume"][QUIET_FRAME])) == 0.0, (
+            "the fixture's zeroed |E| frame is not flat zero: this page cannot "
+            "test the 0/0 branch"
+        )
+        yield live
+
+
+def test_a_frame_with_no_peak_falls_back_to_the_global_range(zero_peak_page):
+    """A 0 / NaN / inf frame peak must not make a degenerate or invented clim.
+
+    THE FALLBACK, stated: ``_volume_abs_frame_clim`` answers **None** for a frame
+    that cannot name a reference (peak 0, not finite, wrong rank, index off the
+    end) and ``_volume_clim_for`` turns that None into the WHOLE-RECORDING range.
+    So a dead frame is drawn on the measured global range - on which it is
+    empty, which is the truth - instead of on ``(0.0, 0.0)`` (degenerate: every
+    voxel at the bottom of a zero-width range) or on a number this code invented.
+    """
+    live = zero_peak_page
+    volume = live.page["info"]["e_abs_volume"]
+    peak = float(np.max(volume))
+    whole = (peak * 1e-3, peak)
+    assert np.isfinite(peak) and peak > 0.0, (
+        f"the fixture's whole-clip peak is {peak!r}: this page cannot test a "
+        "frame-local fallback against a real global range"
+    )
+
+    # The resolver, directly: None - never a tuple - for a 0 peak.
+    assert app._volume_abs_frame_clim(volume, QUIET_FRAME) is None, (
+        "a frame that peaks at 0.0 was given a colour range "
+        f"{app._volume_abs_frame_clim(volume, QUIET_FRAME)!r}: 0/0 has produced "
+        "a degenerate clim instead of 'no reference'"
+    )
+    assert app._volume_clim_for(
+        volume, QUIET_FRAME, app.VOLUME_CLIM_PER_FRAME
+    ) == pytest.approx(whole, rel=1e-12), (
+        "the per_frame range for the zero-peak frame is not the whole-recording "
+        f"range {whole}: the fallback is missing, so the layer would be painted "
+        "on a degenerate range"
+    )
+
+    # A non-finite peak cannot name a reference either - no crash, no tuple.
+    for poison in (np.nan, np.inf, -np.inf):
+        poisoned = np.array(volume, dtype=float, copy=True)
+        poisoned[QUIET_FRAME] = poison
+        assert app._volume_abs_frame_clim(poisoned, QUIET_FRAME) is None, (
+            f"a frame holding a {poison!r} sample was given a colour range "
+            f"{app._volume_abs_frame_clim(poisoned, QUIET_FRAME)!r} instead of "
+            "'no reference'"
+        )
+    # A NaN poisons the global peak too, so THAT dump has no honest range at
+    # all and the caller drops the layer (``clim is None``) rather than paint.
+    nan_volume = np.array(volume, dtype=float, copy=True)
+    nan_volume[QUIET_FRAME] = np.nan
+    assert app._volume_clim_for(
+        nan_volume, QUIET_FRAME, app.VOLUME_CLIM_PER_FRAME
+    ) is None, (
+        "an all-NaN recording still produced a colour range: the fallback "
+        "invented one instead of reporting that there is none"
+    )
+
+    # The LIVE layer on the zero-peak frame: rebuilt, drawn, on the fallback.
+    with _clim_mode(live, app.VOLUME_CLIM_PER_FRAME):
+        _only_the_layers_volume(live)
+        live.draw(2, "xcut")  # step 18 -> the stored frame that peaks at 0.0
+        entry = _layer_entry(live)
+        drawn = _drawn_range(live)
+    assert entry["frame"] == QUIET_FRAME, (
+        f"this draw landed on volume frame {entry['frame']}, not the zero-peak "
+        f"frame {QUIET_FRAME}: the branch below was never reached"
+    )
+    assert entry["clim_mode"] == app.VOLUME_CLIM_PER_FRAME, (
+        f"the entry stamped clim mode {entry['clim_mode']!r}"
+    )
+    assert drawn == pytest.approx(whole, rel=1e-9), (
+        f"the zero-peak frame was painted on {drawn}, not on the fallback "
+        f"whole-recording range {whole}"
+    )
+    assert drawn[1] > drawn[0] > 0.0, (
+        f"the fallback range is degenerate or inverted: {drawn}"
+    )
+
+
+def test_a_page_that_never_touches_the_mode_draws_todays_layer(volume_page):
+    """Requirement 3: the DEFAULT draw is byte-for-byte the layer that shipped.
+
+    A page (or a caller) that never mentions the mode must get the same clim and
+    the same actors as before the mode existed - that is what makes this safe to
+    land while no control sets it.  Asserted three ways: the boot value and the
+    normaliser, the range read off the actor, and the layer compared against an
+    EXPLICIT ``"global"`` draw (which must equal it exactly).
+    """
+    live = volume_page
+    volume = live.page["info"]["e_abs_volume"]
+    peak = float(np.max(volume))
+    whole = (peak * 1e-3, peak)
+
+    assert live.state.volume_clim_mode == app.VOLUME_CLIM_DEFAULT == "global", (
+        f"the page boots with clim mode {live.state.volume_clim_mode!r}, not the "
+        "default 'global'"
+    )
+    for absent in (None, "", "GLOBAL", "per-frame", "perFrame"):
+        assert app._volume_clim_mode(absent) == "global", (
+            f"a mode of {absent!r} normalises to "
+            f"{app._volume_clim_mode(absent)!r}: an absent or misspelled mode "
+            "must not select the renormalising one"
+        )
+
+    # A plain rebuild with NOTHING set: no fixture, no explicit mode.
+    _only_the_layers_volume(live)
+    live.draw(0, "ycut")
+    default_entry = _layer_entry(live)
+    default_drawn = _drawn_range(live)
+    default_ranges = _scalar_ranges(live)
+    default_actor_count = len(live.plotter.actors)
+    assert default_drawn == pytest.approx(whole, rel=1e-9), (
+        f"the default draw painted the volume on {default_drawn}, but today's "
+        f"layer is (global_peak * 1e-3, global_peak) = {whole}"
+    )
+    assert default_entry["clim"] == pytest.approx(whole, rel=1e-12), (
+        f"the entry recorded clim {default_entry['clim']!r} for a default draw"
+    )
+    assert default_entry["clim_mode"] == "global", (
+        f"a default draw stamped clim mode {default_entry['clim_mode']!r}"
+    )
+    assert default_entry["key"][-1] == "global", (
+        f"the default draw's cache key {default_entry['key']!r} does not carry "
+        "the default mode"
+    )
+
+    # ... and that is exactly what an explicit "global" (and a state object
+    # that holds no mode at all) draws.
+    for explicit in ("global", None):
+        with _clim_mode(live, explicit):
+            _only_the_layers_volume(live)
+            live.draw(0, "ycut")
+            entry = _layer_entry(live)
+            assert _drawn_range(live) == pytest.approx(default_drawn, rel=1e-12), (
+                f"clim mode {explicit!r} painted the volume on "
+                f"{_drawn_range(live)}, not on the default draw's "
+                f"{default_drawn}: the default is not today's behaviour"
+            )
+            assert _scalar_ranges(live) == default_ranges, (
+                f"clim mode {explicit!r} drew the layer's actors on "
+                f"{sorted(_scalar_ranges(live))} instead of "
+                f"{sorted(default_ranges)}"
+            )
+            assert len(entry["actors"]) == len(default_entry["actors"]), (
+                "the layer drew "
+                f"{len(entry['actors'])} actors under {explicit!r} against "
+                f"{len(default_entry['actors'])} for the default draw"
+            )
+            assert len(live.plotter.actors) == default_actor_count, (
+                f"the scene holds {len(live.plotter.actors)} actors under "
+                f"{explicit!r}, against {default_actor_count} for the default "
+                "draw"
+            )
+
+
+def test_a_weak_frame_is_blank_in_global_mode_and_drawn_per_frame(volume_page):
+    """The behavioural payoff, both branches on ONE weak frame.
+
+    ``QUIET_FRAME`` peaks six decades below the loud one, which puts it BELOW the
+    global floor ``global_peak * 1e-3`` - the shape the real dump has on its late
+    frames (peak 0.128 against a floor of 0.1587).  Under the default mode that
+    frame is painted entirely below its own range, i.e. fully transparent, while
+    the cut sheets and markers stay drawn: the picture a PI reads as "the volume
+    was clipped away".  Under per_frame the floor is that frame's own peak / 1000,
+    so the frame renders.
+
+    The transparency is asserted on the numbers that decide it (the frame against
+    the range the mapper was given), not on pixels: this image has no OpenGL.
+    """
+    live = volume_page
+    volume = live.page["info"]["e_abs_volume"]
+    frame = volume[QUIET_FRAME]
+    frame_peak = float(np.max(frame))
+    global_clim = app._volume_abs_global_clim(volume)
+    assert global_clim is not None, "the dump's whole-recording range is missing"
+    assert frame_peak < global_clim[0], (
+        f"the quiet frame peaks at {frame_peak!r}, not below the global floor "
+        f"{global_clim[0]!r}: this dump cannot show a frame the default mode "
+        "leaves empty"
+    )
+    assert int(np.count_nonzero(frame >= global_clim[0])) == 0
+
+    _only_the_layers_volume(live)
+    live.draw(2, "xcut")  # step 18 -> the quiet stored frame
+    entry = _layer_entry(live)
+    assert entry["frame"] == QUIET_FRAME
+    drawn_global = _drawn_range(live)
+    assert drawn_global == pytest.approx(global_clim, rel=1e-9), (
+        f"the default draw painted the weak frame on {drawn_global}, not on the "
+        f"whole-recording range {global_clim}"
+    )
+    above_global = int(np.count_nonzero(frame >= drawn_global[0]))
+    assert above_global == 0, (
+        f"{above_global} of {frame.size} voxels of the weak frame are above the "
+        f"global floor {drawn_global[0]!r}: the default mode should leave this "
+        "frame empty"
+    )
+
+    with _clim_mode(live, app.VOLUME_CLIM_PER_FRAME):
+        _only_the_layers_volume(live)
+        live.draw(2, "xcut")
+        assert _layer_entry(live)["frame"] == QUIET_FRAME
+        drawn_frame = _drawn_range(live)
+    assert drawn_frame != pytest.approx(drawn_global), (
+        f"per_frame painted the weak frame on the same range as global "
+        f"({drawn_frame}): the mode changes nothing"
+    )
+    assert drawn_frame == pytest.approx((frame_peak * 1e-3, frame_peak), rel=1e-9), (
+        f"per_frame painted the weak frame on {drawn_frame}, not on its own 60 dB "
+        f"window {(frame_peak * 1e-3, frame_peak)}"
+    )
+    assert drawn_frame[0] < frame_peak, (
+        f"the per-frame floor {drawn_frame[0]!r} is not below the frame's own peak "
+        f"{frame_peak!r}: nothing on this frame can render"
+    )
+    above_frame = int(np.count_nonzero(frame >= drawn_frame[0]))
+    assert above_frame > 0.9 * frame.size, (
+        f"only {above_frame} of {frame.size} voxels of the weak frame are above "
+        f"the per-frame floor {drawn_frame[0]!r}: the frame still does not render"
+    )
