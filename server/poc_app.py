@@ -8815,6 +8815,101 @@ def _volume_frame_for_step(step_index, step):
     return max(0, min(int(steps.size) - 1, found))
 
 
+def _monotonic_axis(values):
+    """One recorded step axis as an int array, or None when it cannot be read.
+
+    None is this module's "no mapping can be defended": an absent axis, an empty
+    one, or one that runs backwards (a hand-built dump).
+    """
+    if values is None:
+        return None
+    try:
+        axis = np.asarray(values).ravel()
+        if axis.size < 1:
+            return None
+        if axis.size > 1 and np.any(np.diff(axis.astype(float)) < 0.0):
+            return None
+        return axis.astype(int)
+    except (TypeError, ValueError):
+        return None
+
+
+def _volume_player_plan(info: dict, mode: str):
+    """The ONE mapping from a player position to the two indices it draws.
+
+    WHY this exists: the dump stores ``e_abs_volume`` on a COARSER grid than the
+    planes - ``--volume-stride`` saves one volume frame every N-th y-cut frame -
+    so a timeline counted in PLANE frames paints N different cut planes over ONE
+    volume frame. That is a time desynchronisation, not a slow update: the plane
+    on screen is at step s while the volume beside it is the last capture at or
+    before s, until the volume jumps a whole stride. The answer is ONE index
+    space: while the volume is the coarser recording the player steps the
+    VOLUME's own frames, and every position resolves to the EXACT step of that
+    frame - the cut planes are drawn at the plane frame recorded at that step.
+
+    Returns None - today's behaviour, untouched - unless the volume really is
+    coarser than this family's timeline: no volume, an unreadable or
+    non-monotonic step axis, a volume with at least as many frames as the family
+    (nothing can then be stale), or a volume step this family stored no frame at
+    (the plane cannot be drawn at that instant, and showing a different instant
+    is precisely the bug). Otherwise a dict of:
+
+        ``steps``  - the recorded step of each player position, in order;
+        ``frames`` - how many positions the timeline has (== len(steps));
+        ``plane``  - position -> index into this family's stored frames;
+        ``volume`` - position -> index into ``e_abs_volume``.
+
+    THE LAST FRAME: position ``frames - 1`` is the volume's LAST frame, and the
+    plane frame it maps to is the one recorded at that same step. There is no
+    partial tail to round - the timeline IS the volume's grid, so plane frames
+    recorded AFTER the last volume capture are simply not reachable from the
+    player (they are not on the timeline at all). ``frames - 1`` is also the
+    slider's maximum (``_frame_span_max``), and both halves of the label - the
+    "frame k / n" count and the sim time printed beside it - are built from the
+    same two indices, so they cannot disagree.
+    """
+    if info.get("e_abs_volume") is None:
+        return None
+    volume_steps = _monotonic_axis(info.get("e_abs_volume_step_index"))
+    plane_steps = _monotonic_axis(
+        info.get("frame_index" if mode == "ycut" else "frame_index_xcut")
+    )
+    if volume_steps is None or plane_steps is None:
+        return None
+    if volume_steps.size >= plane_steps.size:
+        return None
+    positions = np.searchsorted(plane_steps, volume_steps, side="left")
+    if int(positions[-1]) >= plane_steps.size or not np.array_equal(
+        plane_steps[positions], volume_steps
+    ):
+        return None
+    return {
+        "steps": tuple(int(step) for step in volume_steps),
+        "frames": int(volume_steps.size),
+        "plane": tuple(int(position) for position in positions),
+        "volume": tuple(range(int(volume_steps.size))),
+    }
+
+
+def _synced_frame_counts(info: dict, nt, nt_x):
+    """``(nt, nt_x)`` with each family's clock replaced by the volume's own.
+
+    The single place the timeline LENGTH is decided, so the slider maximum, the
+    play loop and every label counted from ``nt``/``nt_x`` cannot be counted on
+    one clock while ``_show`` maps positions on another. A page with no timeline
+    (None) and a page with no volume pass straight through unchanged.
+    """
+    for mode in ("ycut", "xcut"):
+        plan = _volume_player_plan(info, mode)
+        if plan is None:
+            continue
+        if mode == "ycut":
+            nt = plan["frames"]
+        else:
+            nt_x = plan["frames"]
+    return nt, nt_x
+
+
 def _volume_abs_global_clim(volume):
     """The ONE colour range every frame of ``e_abs_volume`` is drawn on.
 
@@ -9786,6 +9881,11 @@ def run_web_vis(
     else:
         nt = None
         nt_x = None
+    # ONE clock for the slider, the player and the picture: a dump whose volume
+    # is the coarser recording is counted in ITS frames, so a position on the
+    # slider is a time step the volume actually has. See
+    # ``_synced_frame_counts``.
+    nt, nt_x = _synced_frame_counts(info, nt, nt_x)
     # The bare board and builder page ALWAYS carry a cell, so what can lack
     # one is an arbitrary caller-supplied `info` dict: this read is tolerated
     # rather than fenced, NaN being the absence every isfinite() guard knows.
@@ -10634,7 +10734,7 @@ def run_web_vis(
                     f"[poc_app] stale volume layer actor kept: {exc}", file=sys.stderr
                 )
 
-    def _draw_volume_layer(index, mode) -> None:
+    def _draw_volume_layer(index, mode, volume_frame=None) -> None:
         """Draw the |E| volume layer for the CURRENT frame, or drop it.
 
         WHY this is not part of ``_show``'s in-place rule: the animated sheets swap
@@ -10664,6 +10764,14 @@ def run_web_vis(
         ``_volume_frame_for_step``, which honours the steps actually written - a
         restart or a dropped sample leaves a non-uniform cadence behind, and
         ``step // stride`` would then point at the wrong frame.
+
+        WHEN the caller already knows the volume frame - the player does, through
+        ``_volume_player_plan``, whenever the volume is the coarser recording - it
+        hands it in as ``volume_frame`` and THAT frame is drawn. It is not
+        re-derived here on purpose: the lookup below answers "the last capture at
+        or before this step", which is a stale volume for every plane frame that
+        sits between two captures, and painting that stale volume is the very
+        desynchronisation the plan exists to remove.
         """
         try:
             info = page["info"]
@@ -10689,9 +10797,12 @@ def run_web_vis(
                     step = int(step_axis[position])
                 except (TypeError, ValueError, IndexError):
                     step = None
-            vol_frame = _volume_frame_for_step(
-                info.get("e_abs_volume_step_index"), step
-            )
+            if volume_frame is not None:
+                vol_frame = volume_frame
+            else:
+                vol_frame = _volume_frame_for_step(
+                    info.get("e_abs_volume_step_index"), step
+                )
             if vol_frame is None:
                 _volume_layer_drop()
                 print(
@@ -10851,7 +10962,12 @@ def run_web_vis(
         mode = state.mode if mode is None else mode
         mode = "xcut" if mode == "xcut" else "ycut"
         mode_changed = mode != previous_mode
-        frames = nt if mode == "ycut" else nt_x
+        # ONE clock for the volume and the cut planes. When the dump saved the
+        # volume on a coarser grid, the player's positions ARE the volume's
+        # frames, and each position maps to the plane frame saved at that same
+        # step (THE LAST FRAME rule: see ``_volume_player_plan``).
+        plan = _volume_player_plan(info, mode)
+        frames = plan["frames"] if plan is not None else (nt if mode == "ycut" else nt_x)
         try:
             index = int(round(float(frame)))
         except (TypeError, ValueError):
@@ -10865,6 +10981,11 @@ def run_web_vis(
             index = max(0, min(frames - 1, index))
         state.frame = index
         state.mode = mode
+        # The plane frame and the volume frame THIS position draws. Both fall
+        # back to the position itself when there is no plan: a dump with one
+        # timeline keeps exactly the behaviour it had.
+        plane_index = plan["plane"][index] if plan is not None else index
+        volume_frame = plan["volume"][index] if plan is not None else None
 
         for key, entry in sheets.items():
             visible = entry["family"] == mode
@@ -10881,7 +11002,7 @@ def run_web_vis(
                 continue
             data = np.abs(
                 np.asarray(
-                    array[min(index, int(array.shape[0]) - 1)], dtype=float
+                    array[min(plane_index, int(array.shape[0]) - 1)], dtype=float
                 )
             )
             try:
@@ -10987,7 +11108,7 @@ def run_web_vis(
                     file=sys.stderr,
                 )
 
-        t_ns = _vis_frame_time_ns(info, mode, index)
+        t_ns = _vis_frame_time_ns(info, mode, plane_index)
         state.t_label = (
             "sim time: not recorded"
             if not np.isfinite(t_ns)
@@ -11051,10 +11172,11 @@ def run_web_vis(
             )
         # The |E| volume layer last, and BEFORE the render: it is part of this
         # frame, so it rides the single draw the sheets already paid for - and
-        # it is handed the SAME index, so the volume, the cuts and the sheet
-        # cannot show two different frames. A page whose dump carries no volume
-        # drops a stale layer and returns: nothing else changes for it.
-        _draw_volume_layer(index, mode)
+        # it is handed the same position resolved to the two indices it paints,
+        # so the volume, the cuts and the sheet cannot show two different frames.
+        # A page whose dump carries no volume drops a stale layer and returns:
+        # nothing else changes for it.
+        _draw_volume_layer(plane_index, mode, volume_frame)
         try:
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - never take the server down
@@ -11076,8 +11198,9 @@ def run_web_vis(
         """
         nonlocal nt, nt_x, vmin, vmax, cell_mm, y_span_mm
         live = page["info"]
-        nt = int(live["nt"])
-        nt_x = int(live["nt_x"])
+        nt, nt_x = _synced_frame_counts(
+            live, int(live["nt"]), int(live["nt_x"])
+        )
         vmin, vmax = live["color_range"]
         cell_mm = _cell_mm(live)
         y_span_mm = float(int(live["ny"])) * cell_mm
@@ -12475,6 +12598,7 @@ def run_web_vis(
             else:
                 nt = None
                 nt_x = None
+            nt, nt_x = _synced_frame_counts(live_info, nt, nt_x)
             _rebuild_sheets()
             try:
                 frame = int(round(float(state.frame)))

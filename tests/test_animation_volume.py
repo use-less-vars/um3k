@@ -1105,3 +1105,281 @@ def test_a_weak_frame_is_blank_in_global_mode_and_drawn_per_frame(volume_page):
         f"only {above_frame} of {frame.size} voxels of the weak frame are above "
         f"the per-frame floor {drawn_frame[0]!r}: the frame still does not render"
     )
+
+
+
+# ---------------------------------------------------------------------------
+# THE VOLUME'S OWN CLOCK.  A dump written with ``--volume-stride`` saves the |E|
+# volume on a COARSER grid than the cut planes, and a player with two clocks in
+# it is a TIME DESYNCHRONISATION: the cut plane advanced on every position while
+# the volume held the last capture at or before that step, then jumped a whole
+# stride.  The fix is ONE index space - ``_volume_player_plan`` - and these tests
+# pin it on the player the page's own buttons call, never on a re-implementation.
+# ---------------------------------------------------------------------------
+
+#: Twelve plane frames against three |E| captures: one volume frame every 4th
+#: step.  ``frame_index`` is the IDENTITY so a mapping that is off by a stride
+#: reads as "plane step 1, volume step 0" instead of hiding behind arithmetic.
+DESYNC_NT = 12
+DESYNC_FRAME_INDEX = tuple(range(DESYNC_NT))
+DESYNC_VOLUME_STEPS = (0, 4, 8)
+DESYNC_VOLUME_STRIDE = 4
+
+
+def _desync_payload() -> dict:
+    """``_payload``'s dump with the |E| volume saved every 4th step.
+
+    The three volume frames are scaled by 1e3 apiece, so a per-frame colour
+    range NAMES the frame it was measured on: a window measured on the wrong
+    frame is a different pair of numbers, not a rounding difference.
+    """
+    payload = _payload(with_volume=False)
+    rng = np.random.default_rng(2)
+    payload["nt"] = np.array(DESYNC_NT)
+    payload["t_ns"] = np.arange(DESYNC_NT) * 2e-3
+    payload["ez_ycut"] = rng.normal(size=(DESYNC_NT, NX, NZ))
+    payload["frame_index"] = np.array(DESYNC_FRAME_INDEX)
+    payload["dump_stride"] = np.array(1)
+    payload["nsteps"] = np.array(DESYNC_FRAME_INDEX[-1] + 1)
+    volume = np.abs(rng.normal(size=(len(DESYNC_VOLUME_STEPS), NX, NY, NZ))) * 1e-3
+    for frame in range(1, len(DESYNC_VOLUME_STEPS)):
+        volume[frame] *= 1e3**frame
+    payload["e_abs_volume"] = volume.astype(np.float32)
+    payload["e_abs_volume_step_index"] = np.array(DESYNC_VOLUME_STEPS, dtype=int)
+    payload["e_abs_volume_stride"] = np.array(DESYNC_VOLUME_STRIDE)
+    return payload
+
+
+@pytest.fixture(scope="module")
+def desync_page(tmp_path_factory):
+    """A page whose |E| volume is the COARSER recording: 3 captures, 12 planes."""
+    with _render_doubled():
+        live = _boot(
+            tmp_path_factory.mktemp("desync"),
+            with_volume=True,
+            payload=_desync_payload(),
+        )
+        _silence_view(live)
+        info = live.page["info"]
+        assert info["e_abs_volume"] is not None, (
+            "the desync fixture dump lost its |E| volume: nothing below would "
+            "test the two clocks at all"
+        )
+        assert int(info["nt"]) > len(DESYNC_VOLUME_STEPS), (
+            f"the desync dump has {int(info['nt'])} plane frames against "
+            f"{len(DESYNC_VOLUME_STEPS)} volume frames: the volume is not the "
+            "coarser recording, so there is no desynchronisation to test"
+        )
+        yield live
+
+
+def _drawn_plane_frame(live, key: str = "ez_ycut") -> int:
+    """WHICH stored plane frame the sheet is showing, read off the lattice.
+
+    ``_show`` writes the selected frame into ``ez_abs`` on the sheet's own grid,
+    so the drawn array IS one of the dump's frames and the index it matches is
+    the frame on screen - the same evidence the volume layer leaves in
+    ``handles["volume_layer"]["frame"]``, taken from the other half of the pair.
+    """
+    entry = _closure_cells(live.show)["sheets"][key]
+    drawn = np.asarray(entry["grid"].point_data["ez_abs"], dtype=float)
+    stored = np.abs(np.asarray(live.page["info"][key], dtype=float))
+    for frame in range(stored.shape[0]):
+        if np.array_equal(drawn, stored[frame].ravel(order="F")):
+            return frame
+    raise AssertionError(
+        f"the {key} sheet is showing an array matching no stored frame: the "
+        "picture on screen is not one of the dump's frames at all"
+    )
+
+
+def test_every_player_position_draws_one_time_step(desync_page):
+    """Position k of the slider is ONE instant in the volume and in the cuts.
+
+    THE BUG this pins: with the plane clock in charge, positions 1..3 drew plane
+    steps 1, 2, 3 over volume frame 0 - the last capture at or before each - so
+    the cut plane advanced while the 3-D image stood still, then the volume
+    jumped four steps at once. Counted on the RECORDED steps, not on the pixels:
+    the frame the volume drew and the frame the sheet drew must name the same
+    step, and the sim-time label must name that step's time.
+    """
+    live = desync_page
+    info = live.page["info"]
+    plan = app._volume_player_plan(info, "ycut")
+    assert plan is not None, (
+        "the desync dump's volume is coarser than its timeline, so the player "
+        "must have a plan; without one the slider counts plane frames and the "
+        "two clocks split apart again"
+    )
+    steps = plan["steps"]
+    assert live.state.frame_max == len(steps) - 1, (
+        f"the slider's maximum is {live.state.frame_max}, not "
+        f"{len(steps) - 1}: it is counted on {int(info['nt'])} plane frames "
+        f"while the volume has {len(steps)} frames, so most positions have no "
+        "capture of their own to show"
+    )
+
+    frame_index = [int(value) for value in info["frame_index"]]
+    t_ns = np.asarray(info["t_ns"], dtype=float)
+    drawn = []
+    with _render_doubled():
+        for position in range(len(steps)):
+            live.show(position, "ycut")
+            plane_frame = _drawn_plane_frame(live)
+            volume_frame = int(_layer_entry(live)["frame"])
+            assert frame_index[plane_frame] == steps[volume_frame], (
+                f"position {position} drew the cut plane at step "
+                f"{frame_index[plane_frame]} beside volume frame "
+                f"{volume_frame} (step {steps[volume_frame]}): one position, "
+                "two instants"
+            )
+            assert live.state.t_label == f"sim time: t = {t_ns[plane_frame]:.6f} ns", (
+                f"position {position} printed {live.state.t_label!r} beside a "
+                f"cut plane at step {frame_index[plane_frame]} "
+                f"(t = {t_ns[plane_frame]!r}): the label is a third clock"
+            )
+            drawn.append((volume_frame, plane_frame))
+    assert [volume_frame for volume_frame, _ in drawn] == list(
+        range(len(steps))
+    ), (
+        f"the player stepped the volume through {drawn} instead of frames "
+        "0..2: some capture was shown twice and another never at all"
+    )
+
+
+def test_a_dump_without_a_volume_keeps_the_plane_clock(no_volume_page):
+    """No volume, no plan: every position is still its own plane frame.
+
+    The negative half of the fix, and the reason it can land at all - most dumps
+    carry no |E| volume (only ``--volume-stride`` writes one), and for them the
+    player must behave byte-for-byte as it did: the slider spans ``nt`` frames,
+    position k draws plane frame k, and the label names that frame's time.
+    """
+    live = no_volume_page
+    info = live.page["info"]
+    assert app._volume_player_plan(info, "ycut") is None, (
+        "a dump with no |E| volume was given a player plan: there is no second "
+        "clock to reconcile, so nothing may be remapped"
+    )
+    assert app._volume_player_plan(info, "xcut") is None
+    nt = int(info["nt"])
+    assert live.state.frame_max == nt - 1, (
+        f"the slider's maximum is {live.state.frame_max}, not {nt - 1}: a page "
+        "with no volume must keep its plane clock"
+    )
+
+    t_ns = np.asarray(info["t_ns"], dtype=float)
+    with _render_doubled():
+        for position in range(nt):
+            live.show(position, "ycut")
+            assert _drawn_plane_frame(live) == position, (
+                f"position {position} drew plane frame "
+                f"{_drawn_plane_frame(live)}: the position is no longer the frame"
+            )
+            assert live.state.t_label == (
+                f"sim time: t = {t_ns[position]:.6f} ns"
+            ), (
+                f"position {position} printed {live.state.t_label!r}, not that "
+                "frame's own recorded time"
+            )
+
+
+def test_the_plan_maps_the_boundaries_and_the_tail(desync_page):
+    """The plan's four arrays, checked at the boundaries and at the tail.
+
+    ``plane`` is the whole content of the fix: position -> the plane frame
+    recorded at that position's step. The LAST FRAME rule says the tail is not a
+    partial bucket to round - the plane frames recorded after the last capture
+    are simply not reachable from the player, so ``max(plan["plane"])`` is the
+    index of the last captured step and nothing beyond it.
+    """
+    info = desync_page.page["info"]
+    plan = app._volume_player_plan(info, "ycut")
+    assert plan is not None, (
+        "the desync dump's volume is coarser than its timeline, so a plan is "
+        "expected; None here means the player falls back to plane positions"
+    )
+    axis = [int(value) for value in info["frame_index"]]
+    assert plan["steps"] == tuple(
+        int(step) for step in DESYNC_VOLUME_STEPS
+    ), f"the plan's steps are {plan['steps']}, not the recorded {DESYNC_VOLUME_STEPS}"
+    assert plan["frames"] == len(DESYNC_VOLUME_STEPS), (
+        f"the plan counts {plan['frames']} positions for "
+        f"{len(DESYNC_VOLUME_STEPS)} volume frames: one capture would be shown "
+        "more than once"
+    )
+    assert plan["volume"] == (0, 1, 2), (
+        f"the plan walks the volume as {plan['volume']}: it must visit every "
+        "capture once, in order"
+    )
+    assert plan["plane"][0] == 0, (
+        f"the first position maps to plane frame {plan['plane'][0]}: the first "
+        f"capture is at step {plan['steps'][0]}"
+    )
+    for position, index in enumerate(plan["plane"]):
+        assert axis[index] == plan["steps"][position], (
+            f"position {position} maps to plane frame {index} (step {axis[index]}), "
+            f"but its capture is at step {plan['steps'][position]}"
+        )
+    assert max(plan["plane"]) == axis.index(DESYNC_VOLUME_STEPS[-1]), (
+        f"the last position maps to plane frame {max(plan['plane'])}, not to the "
+        f"frame recorded at the last capture's step "
+        f"({axis.index(DESYNC_VOLUME_STEPS[-1])}): the tail of the timeline is "
+        "not the last frame of the volume"
+    )
+    assert app._volume_player_plan(info, "xcut") is None, (
+        "the x-cut family has as many frames as the volume, so nothing on it "
+        "can be stale - a plan there would shorten a timeline that is not long"
+    )
+    assert app._synced_frame_counts(info, int(info["nt"]), int(info["nt_x"])) == (
+        len(DESYNC_VOLUME_STEPS),
+        int(info["nt_x"]),
+    ), (
+        "the synced counts are "
+        f"{app._synced_frame_counts(info, int(info['nt']), int(info['nt_x']))}, "
+        f"not ({len(DESYNC_VOLUME_STEPS)}, {int(info['nt_x'])}): the y-cut clock "
+        "follows the volume and the x-cut clock is untouched"
+    )
+
+
+def test_per_frame_clim_follows_the_volume_frame_the_player_is_showing(desync_page):
+    """Requirement 3, on the frame the PLAYER is showing.
+
+    A per-frame colour range is only meaningful if it is measured on the frame
+    on screen. With the two clocks split, position 1 showed volume frame 0 - so
+    the range was the range of a picture that was no longer there, and the
+    window moved a whole stride behind the slider. Asserted on the numbers the
+    mapper was given (this image has no OpenGL), for every position, plus the
+    sequence of frames the layer actually reported.
+    """
+    live = desync_page
+    info = live.page["info"]
+    volume = info["e_abs_volume"]
+    plan = app._volume_player_plan(info, "ycut")
+    assert plan is not None, "no plan: the positions below would not be the volume's"
+
+    seen = []
+    with _clim_mode(live, app.VOLUME_CLIM_PER_FRAME), _render_doubled():
+        for position in range(plan["frames"]):
+            # One volume at a time: pyvista shares ONE scalar range between the
+            # volumes in a scene, so an orphan from the previous position would
+            # widen this position's window into a union of two ranges.
+            _only_the_layers_volume(live)
+            live.show(position, "ycut")
+            frame = int(_layer_entry(live)["frame"])
+            peak = float(np.max(np.abs(volume[plan["volume"][position]])))
+            window = (peak * 1e-3, peak)
+            assert _drawn_range(live) == pytest.approx(window, rel=1e-6), (
+                f"position {position} painted volume frame {frame} on "
+                f"{_drawn_range(live)}, not on that frame's own 60 dB window "
+                f"{window}: the range is measured on a picture that is not on "
+                "screen"
+            )
+            seen.append(frame)
+
+    assert seen == list(range(len(plan["steps"]))), (
+        f"the player stepped the volume through {seen} instead of "
+        f"{list(range(len(plan['steps'])))}: the positions are counted on one "
+        "clock and painted on another"
+    )
+
