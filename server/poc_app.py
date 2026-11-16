@@ -9470,9 +9470,9 @@ def run_web_vis(
     else:
         nt = None
         nt_x = None
-    # A page with NO data at all (the bare board, _bare_board_page) carries no
-    # cell at all, so this read is tolerated rather than fenced: NaN is the
-    # absence every downstream isfinite() guard already understands.
+    # The bare board and builder page ALWAYS carry a cell, so what can lack
+    # one is an arbitrary caller-supplied `info` dict: this read is tolerated
+    # rather than fenced, NaN being the absence every isfinite() guard knows.
     try:
         cell_mm = _cell_mm(info)
     except (KeyError, TypeError, ValueError):
