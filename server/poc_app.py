@@ -8847,6 +8847,87 @@ VOLUME_CLIM_MODES = (VOLUME_CLIM_GLOBAL, VOLUME_CLIM_PER_FRAME)
 #: never mentions the mode therefore draws exactly the layer it always drew.
 VOLUME_CLIM_DEFAULT = VOLUME_CLIM_GLOBAL
 
+#: How the Clim Mode control DISPLAYS each backend token. The tokens above are what
+#: the layer reads, so a token is what the select's VALUE must be; these are what a
+#: reader sees. Keyed BY token and walked in VOLUME_CLIM_MODES order at emit time,
+#: so a mode added above with no label here raises KeyError at build time instead of
+#: showing a raw token in the UI.
+VOLUME_CLIM_TITLES = {
+    VOLUME_CLIM_GLOBAL: "Global (Absolute)",
+    VOLUME_CLIM_PER_FRAME: "Per-Frame (Relative)",
+}
+
+#: The Run Config card's warning, character for character. It sits under the
+#: select and is visible ONLY while the renormalising mode is selected: per-frame
+#: scaling is legitimate, and what it costs the picture is the one thing a reader
+#: choosing it has to be told.
+VOLUME_CLIM_PER_FRAME_WARNING = (
+    "Warning: Relative scaling normalizes each frame, masking amplitude decay."
+)
+
+
+def _volume_clim_items_literal() -> str:
+    """The Clim Mode select's items, as the JS array literal ``v_bind_items`` wants.
+
+    WHY A STRING AT ALL: a python LIST handed to ``v_bind_items`` is read by trame
+    as ``(state_name, default)`` and emitted as a bare ``:items="A"`` - the JS
+    identifier of its first element - which selects nothing (:11647 spells the trap
+    out). A str there is passed through as a JS EXPRESSION instead, so the literal
+    survives verbatim.
+
+    WHY ``repr`` AND NOT ``json.dumps``: trame re-wraps this string in DOUBLE quotes
+    before it reaches the attribute, so a ``"`` inside it would end the attribute
+    mid-array - the second half of the same comment at :11652. ``repr`` emits single
+    quotes, which Vue's expression parser accepts and which therefore survive the
+    wrapping. A python list of dicts is a valid JS array of object literals, so no
+    second serialiser is needed and none is introduced.
+    """
+    return repr(
+        [
+            {"title": VOLUME_CLIM_TITLES[token], "value": token}
+            for token in VOLUME_CLIM_MODES
+        ]
+    )
+
+
+#: The Run Config form's five controls, as ONE table: the state name the browser
+#: writes, the label it reads, and the ``emfit.config.RunConfig`` field that names
+#: the default. The emit loop, the boot values and the drift test all walk this,
+#: so a field cannot be added to the form without a default behind it.
+RUN_CONFIG_FIELDS = (
+    ("run_nsteps", "Steps", "nsteps"),
+    ("run_volume_stride", "Volume stride", "volume_stride"),
+    ("run_pulse_freq_ghz", "Pulse freq [GHz]", "pulse_freq_ghz"),
+    ("run_xcut_near_mm", "Cut near x [mm]", "xcut_near_mm"),
+    ("run_xcut_far_mm", "Cut far x [mm]", "xcut_far_mm"),
+)
+
+
+def _run_config_defaults() -> dict:
+    """``{state name: default}`` for RUN_CONFIG_FIELDS, read off ``RunConfig``.
+
+    WHY the function-local import: this module's import time is stdlib + numpy -
+    ``load_vis`` reaches ``emfit.operators`` the same way (:295) and the surface
+    reader ``emfit.ntff`` (:750) - so a machine with no ``emfit`` on ``sys.path``
+    still imports and serves the viewer. WHY ``RunConfig`` and not five literals:
+    these ARE the reference run's knobs, and a second copy of 2400/100/20.4/22.0
+    written into the UI drifts the day the reference changes. Nothing is invented
+    on any path: a build where ``emfit`` cannot be imported gets an EMPTY mapping,
+    so the five fields render blank rather than with numbers this file made up.
+    """
+    try:
+        from emfit.config import RunConfig
+    except Exception as exc:  # noqa: BLE001 - a missing emfit is not a dead page
+        print(
+            f"[poc_app] run config defaults unavailable: {exc}", file=sys.stderr
+        )
+        return {}
+    reference = RunConfig()
+    return {
+        state_name: getattr(reference, field)
+        for state_name, _label, field in RUN_CONFIG_FIELDS
+    }
+
 
 def _volume_clim_mode(value):
     """The clim mode ``value`` asks for, or the DEFAULT when it does not ask.
@@ -9766,6 +9847,22 @@ def run_web_vis(
     # peak, which shows structure inside weak frames and, honestly, hides that
     # decay - the warning the panel will carry, not this line.
     state.volume_clim_mode = VOLUME_CLIM_DEFAULT
+    # The warning flag lives BESIDE the mode it warns about, and is INITIALISED
+    # here rather than left to the first change: the card reads it on the very
+    # first paint, so a flag that only appears once somebody touches the select
+    # would make the warning either absent at boot or bound to nothing. Derived
+    # from the mode through the same normaliser, so the two cannot disagree.
+    state.clim_relative_warning = (
+        _volume_clim_mode(state.volume_clim_mode) == VOLUME_CLIM_PER_FRAME
+    )
+
+    # THE Run Config form's five numbers, at the reference run's own defaults (see
+    # ``_run_config_defaults``): the form is a STARTING POINT for a later run, so a
+    # field that started at a number this file invented would make every run that
+    # did not retype it a run nobody specified. Initialised beside the mode for the
+    # same reason - the first paint reads them.
+    for _run_state_name, _run_default in _run_config_defaults().items():
+        setattr(state, _run_state_name, _run_default)
 
     # The Confidence & Accuracy pane: TEXT, prose rather than a picture. Its tab
     # owns its visibility, so (like the S-parameters pane) there is no style
@@ -11307,6 +11404,53 @@ def run_web_vis(
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
+    # The Clim Mode select's repaint. v_model=("volume_clim_mode", ...) only
+    # WRITES state["volume_clim_mode"]: trame turns a callable into a server call
+    # for EVENT kwargs (click=, change=), never for v_model, so an
+    # @ctrl.set("volume_clim_mode") trigger would never be reached. The repaint
+    # therefore hangs off the state change itself - the rule the frame slider
+    # (:10922) and the Mode picker (:11280) already follow - and every writer of
+    # the field (the select, a proof, a future button) takes ONE path.
+    @state.change("volume_clim_mode")
+    def _on_volume_clim_mode(volume_clim_mode=None, **_kwargs) -> None:
+        """Re-reference the |E| layer's colour range and repaint it. NEVER raises.
+
+        WHY ``_show`` and not ``plotter.render()``: the range is chosen INSIDE the
+        volume-layer code path, which only ``_show`` re-enters - a bare render
+        would repaint the frame on the OLD clim and the control would look dead
+        until the slider moved. ``plotter.render()`` is then inside ``_show``, so
+        there is exactly one draw.
+
+        WHY EVERY STEP IS GUARDED: this handler fires on the first browser write
+        and can fire before a plotter exists, on a page with no volume, or on a
+        frame the page cannot name. None of those is a reason to take the server
+        down, and the flag it maintains must be right even when the repaint is not
+        possible.
+        """
+        try:
+            mode = _volume_clim_mode(
+                state.volume_clim_mode
+                if volume_clim_mode is None
+                else volume_clim_mode
+            )
+            state.clim_relative_warning = mode == VOLUME_CLIM_PER_FRAME
+            try:
+                frame = int(round(float(state.frame)))
+            except (TypeError, ValueError):
+                frame = 0  # no frame axis yet: frame 0 is the one that is drawn
+            _show(frame, getattr(state, "mode", None))
+        except Exception as exc:  # noqa: BLE001 - a control is never the page
+            print(
+                f"[poc_app] clim mode repaint skipped: {exc}", file=sys.stderr
+            )
+            return
+        view_handle = handles.get("view")
+        if view_handle is not None:
+            try:
+                view_handle.update()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+
     # The arrow overlay's toggle. The checkbox only WRITES state["show_quiver"],
     # so the redraw hangs off the state change itself - the rule the frame slider
     # and the mode picker already follow, and every writer of the flag then takes
@@ -11732,12 +11876,97 @@ def run_web_vis(
             if "VLabel" in widgets:
                 widgets["VLabel"]("{{ solve_status }}")
 
+        # WHICH PAGE has no field data: the GATED half of the Run Config card is a
+        # form for the NEXT run, so it is offered exactly where there is nothing to
+        # look at - a page already showing a field has a run behind it, and those
+        # five boxes would silently describe a job nobody is going to start.
+        # Decided HERE, at build time, off the frozen snapshot the layout builders
+        # read the same way (server/um3k_panels.py:83): a plain python branch emits
+        # the five fields or does not, so a page with data carries no hidden form
+        # and no flag that has to stay in step with the data.
+        has_field_data = bool(
+            getattr(ctx.available, "plane_stack", False)
+            or getattr(ctx.available, "volume_field", False)
+            # A one-station dump and an animation dump have a run behind them
+            # too: ``port_planes`` is one captured x-plane and ``animation`` is
+            # a frame axis, both statements about the DATA (um3k_context.py:99,
+            # :123-137).  Without them a solved vis page would offer a form whose
+            # numbers its own recording already fixed.
+            or getattr(ctx.available, "port_planes", False)
+            or getattr(ctx.available, "animation", False)
+        )
+
+        def _run_config() -> None:
+            """Emit the Run Config card: Clim Mode always, the form on a data-less page.
+
+            WHY THE CLIM SELECT IS NOT GATED: it changes how the |E| volume is
+            RENDERED, so it is meaningful exactly when a volume is on screen - it
+            is the page WITH data that needs it, and gating it on 'no data' would
+            make it dead where it matters. The five run fields are the opposite
+            kind of control (they describe a run that has not happened) and are
+            gated at build time instead.
+            """
+            clim_cls = getattr(widgets_module, "VSelect", None)
+            if clim_cls is not None:
+                # The VALUE is the backend's own token, bound straight to the ONE
+                # state name the |E| layer reads (state.volume_clim_mode): there is
+                # no shadow state to keep in step, and the @state.change handler
+                # named for it is what repaints.
+                clim_cls(
+                    v_model=("volume_clim_mode", VOLUME_CLIM_DEFAULT),
+                    v_bind_items=_volume_clim_items_literal(),
+                    item_title="title",
+                    item_value="value",
+                    label="Clim Mode",
+                    density="compact",
+                    hide_details=True,
+                    classes="mb-1",
+                )
+            # The warning, shown only while the renormalising mode is selected. The
+            # flag is maintained by the change handler and true in no other state,
+            # so the sentence cannot outlive the setting it describes.
+            alert_cls = getattr(widgets_module, "VAlert", None)
+            if alert_cls is not None:
+                alert_cls(
+                    VOLUME_CLIM_PER_FRAME_WARNING,
+                    v_if=("clim_relative_warning", False),
+                    type="warning",
+                    density="compact",
+                    classes="mb-1",
+                )
+            elif html_div is not None:
+                # The degraded path: a variant with no VAlert still SAYS it, in the
+                # page's own text idiom, under the same flag.
+                html_div(
+                    VOLUME_CLIM_PER_FRAME_WARNING,
+                    v_if=("clim_relative_warning", False),
+                    style="font-size: 11px; color: #8a1c00; padding: 2px 0;",
+                )
+            if has_field_data:
+                return  # a page that already has a run behind it: no form
+            run_field = getattr(widgets_module, "VTextField", None)
+            if run_field is None:
+                return
+            defaults = _run_config_defaults()
+            for state_name, label, _field in RUN_CONFIG_FIELDS:
+                # The same numeric-input shape the cut plane uses (:11677): the
+                # default is RunConfig's own number, never a literal here.
+                run_field(
+                    v_model=(state_name, defaults.get(state_name)),
+                    label=label,
+                    type="number",
+                    density="compact",
+                    hide_details=True,
+                    classes="mb-1",
+                )
+
         # The SOLVE form, in its OWN guarded block: a binding failure here costs
         # the solve form, never play/pause or the S-Parameters panel.
         try:
             _section("Project", _project, first=True)
             _section("Mesh & Geometry", _mesh_and_geometry)
             _section("Circuit", _emit_circuit_netlist)
+            _section("Run Config", _run_config)
             _section("Action", _action)
         except Exception as exc:  # noqa: BLE001 - solve UI is optional
             print(
