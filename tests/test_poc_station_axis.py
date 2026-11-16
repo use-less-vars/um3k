@@ -21,6 +21,12 @@ Claims pinned by this file:
 6. ``load_dump`` publishes ``info["station_x_m"]`` only when the archive holds
    exactly one finite number per captured plane; a short, long or non-finite
    array is stored as nothing at all, not as a smaller lie.
+7. The plane page frames the dump twice: the domain box - read from the
+   stored node coordinates when the dump has them, else from ``nx``/``ny``/
+   ``nz`` + ``cell_m`` as the LAST node ``(n - 1) * cell``, never ``n * cell`` -
+   drawn solid, and the captured station span drawn DASHED inside it. A window
+   that is not a box (no axis, one station, two equal stations, or the whole
+   domain) is neither drawn nor named in the legend.
 """
 
 from __future__ import annotations
@@ -456,3 +462,189 @@ def test_a_dump_axis_beats_the_record_beside_it(tmp_path):
     stations, src = poc_app._station_axis_mm(info, record)
     assert src == "station_x_m"
     assert stations == pytest.approx([2.0] * 5, abs=1e-9)
+
+
+
+# --- 7. the domain frame and the captured window ----------------------------
+#
+# Measured on the shipped dump: 62 x 212 x 22 nodes on a 0.4 mm cell, so the
+# samples sit at x 0 .. 24.4 mm, y 0 .. 84.4 mm, z 0 .. 8.4 mm, while the nine
+# captured stations cover only 10.4 .. 20.0 mm of that x range. The plane page
+# draws both boxes - the domain solid, the capture dashed - and names them.
+
+
+def _build_a_extent(build_a):
+    """``(info, stations, extent)`` for the shipped dump."""
+    info, record = build_a
+    stations, _src = poc_app._station_axis_mm(info, record)
+    return info, stations, poc_app._plane_extent_mm(info, stations)
+
+
+def test_the_domain_frame_is_the_last_node_not_the_cell_count(build_a):
+    _info, _stations, extent = _build_a_extent(build_a)
+
+    # (n - 1) * cell = 61 / 211 / 21 cells of 0.4 mm. n * cell would be
+    # 24.8 / 84.8 / 8.8 mm: a frame one cell too wide on the far side.
+    assert extent["domain"] == pytest.approx(
+        (0.0, 24.4, 0.0, 84.4, 0.0, 8.4), abs=1e-9
+    )
+    assert extent["domain"][1] != pytest.approx(62 * CELL_MM, abs=1e-9)
+    assert extent["domain"][3] != pytest.approx(212 * CELL_MM, abs=1e-9)
+
+
+def test_the_captured_window_is_the_station_span_and_the_full_slab(build_a):
+    _info, stations, extent = _build_a_extent(build_a)
+
+    assert stations[0] == pytest.approx(10.4, abs=1e-9)
+    assert stations[-1] == pytest.approx(20.0, abs=1e-9)
+    # x narrowed to the stations, y and z kept whole: a captured plane is a
+    # full y-z slice through the line, so the axis is all the capture narrows.
+    assert extent["window"] == pytest.approx(
+        (10.4, 20.0, 0.0, 84.4, 0.0, 8.4), abs=1e-9
+    )
+
+
+def test_the_window_outline_is_dashes_and_not_a_second_solid_box(build_a):
+    _info, _stations, extent = _build_a_extent(build_a)
+    window = extent["window"]
+
+    points, lines = poc_app._dashed_box_segments(window)
+    n_cells = len(lines) // 3
+    # 12 + 84 + 12 dashes on the x / y / z edges of the window.
+    assert n_cells == 108
+    assert points.shape == (2 * n_cells, 3)
+
+    dashes = points.reshape(-1, 2, 3)
+    lengths = np.linalg.norm(dashes[:, 1] - dashes[:, 0], axis=1)
+    assert np.all(lengths > 0.0)
+    # No dash may be long enough to read as an edge: the target is 4 mm and the
+    # count is rounded per edge, so the longest here is ~2.06 mm.
+    assert float(lengths.max()) <= 2.1
+
+    # Every dash is axis-aligned and lies on the window's own surface.
+    span = dashes[:, 1] - dashes[:, 0]
+    assert np.all((np.abs(span) > 0.0).sum(axis=1) == 1)
+    assert points[:, 0].min() == pytest.approx(window[0], abs=1e-9)
+    assert points[:, 0].max() == pytest.approx(window[1], abs=1e-9)
+    assert points[:, 1].min() == pytest.approx(window[2], abs=1e-9)
+    assert points[:, 1].max() == pytest.approx(window[3], abs=1e-9)
+    assert points[:, 2].min() == pytest.approx(window[4], abs=1e-9)
+    assert points[:, 2].max() == pytest.approx(window[5], abs=1e-9)
+
+    # A dash pattern that covered most of the box would read as solid again.
+    perimeter = 4.0 * (
+        (window[1] - window[0])
+        + (window[3] - window[2])
+        + (window[5] - window[4])
+    )
+    coverage = float(lengths.sum()) / perimeter
+    assert 0.5 < coverage < 0.61
+
+
+class _RecordingPlotter:
+    """Enough of a ``Plotter`` for this layer: it records the meshes, draws none."""
+
+    def __init__(self):
+        self.meshes = []
+
+    def add_mesh(self, mesh, **kwargs):
+        self.meshes.append((mesh, kwargs))
+        return mesh
+
+
+def test_the_page_draws_the_domain_solid_and_the_capture_dashed(build_a):
+    pytest.importorskip("pyvista")
+    info, stations, extent = _build_a_extent(build_a)
+    plotter = _RecordingPlotter()
+
+    drawn = poc_app._add_extent_outlines(plotter, info, grid=None, stations_mm=stations)
+    assert drawn == extent
+    assert len(plotter.meshes) == 2
+
+    domain_mesh, domain_kw = plotter.meshes[0]
+    # float32 bounds: the vertex is stored as 24.39999961853 on this box.
+    assert domain_mesh.bounds == pytest.approx(extent["domain"], abs=1e-4)
+    assert domain_kw == {"color": "black", "line_width": 1}
+    assert domain_mesh.n_cells == 12  # one box outline, no dashes
+
+    window_mesh, window_kw = plotter.meshes[1]
+    assert window_mesh.bounds == pytest.approx(extent["window"], abs=1e-9)
+    assert window_mesh.n_cells == 108
+    assert window_kw == {"color": "black", "line_width": 2, "render": False}
+
+
+def test_a_dump_with_no_extent_keeps_the_field_grid_frame():
+    pytest.importorskip("pyvista")
+
+    class _Grid:
+        def outline(self):
+            return "the field grid's own outline"
+
+    plotter = _RecordingPlotter()
+    drawn = poc_app._add_extent_outlines(
+        plotter, {poc_app.PLANE_KEY: None}, _Grid(), None
+    )
+
+    assert drawn == {"domain": None, "window": None}
+    assert len(plotter.meshes) == 1
+    mesh, kwargs = plotter.meshes[0]
+    assert mesh == "the field grid's own outline"
+    assert kwargs == {"color": "black", "line_width": 1}
+    # Nothing was measured, so the legend claims nothing.
+    assert poc_app._extent_legend(drawn) == ""
+
+
+def test_the_legend_names_both_boxes_by_their_numbers(build_a):
+    _info, _stations, extent = _build_a_extent(build_a)
+    text = poc_app._extent_legend(extent)
+
+    assert "black box = simulated domain" in text
+    assert "x = 0.0000 .. 24.4000 mm" in text
+    assert "y = 0.0000 .. 84.4000 mm" in text
+    assert "z = 0.0000 .. 8.4000 mm" in text
+    assert "dashed box = captured window" in text
+    assert "x = 10.4000 .. 20.0000 mm" in text
+
+
+def test_stored_coordinates_win_over_the_cell_count():
+    info = _fake_info()  # counts say 4 x 3 x 2 cells
+    info["x_mm"] = np.array([0.0, 0.5, 1.0])
+    info["y_mm"] = np.array([0.0, 0.9, 1.8])
+    info["z_mm"] = np.array([0.0, 0.3])
+
+    domain = poc_app._plane_extent_mm(info, None)["domain"]
+    assert domain == pytest.approx((0.0, 1.0, 0.0, 1.8, 0.0, 0.3), abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    "stations_mm",
+    [None, [], [10.4], [10.4, 10.4], [0.0, 1.2]],
+    ids=["no-axis", "empty", "one-station", "two-identical", "coincident"],
+)
+def test_a_window_that_is_not_a_box_is_not_drawn_and_not_named(stations_mm):
+    extent = poc_app._plane_extent_mm(_fake_info(), stations_mm)
+
+    # The domain is still stated - 3 x 2 x 1 cells of 0.4 mm in _fake_info.
+    assert extent["domain"] == pytest.approx((0.0, 1.2, 0.0, 0.8, 0.0, 0.4), abs=1e-12)
+    assert extent["window"] is None
+    assert "dashed" not in poc_app._extent_legend(extent)
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        {},
+        {poc_app.PLANE_KEY: np.ones((3, 3, 2))},
+        {"cell_m": CELL_M},
+        {"cell_m": None, "nx": 4, "ny": 3, "nz": 2},
+        {"cell_m": 0.0, "nx": 4, "ny": 3, "nz": 2},
+        {"cell_m": CELL_M, "nx": 0, "ny": 3, "nz": 2},
+    ],
+    ids=["empty", "plane-only", "no-counts", "no-cell", "zero-cell", "zero-count"],
+)
+def test_a_dump_that_states_no_extent_gets_no_invented_frame(info):
+    assert poc_app._plane_extent_mm(info, [0.0, 0.4]) == {
+        "domain": None,
+        "window": None,
+    }
+

@@ -4887,6 +4887,237 @@ def _draw_volume_scene(
     return cuts_drawn, cut_clims
 
 
+# --- the two boxes the plane page frames -------------------------------------
+#
+# The plane page draws TWO extents and they are NOT the same box: the DOMAIN the
+# solver ran on, and the narrower WINDOW of stations that was actually captured
+# and saved. It used to draw one black outline taken from the field grid, and
+# the field grid spans the captured stations - measured on the shipped Build A
+# dump that box was x = 10.4 .. 20.0 mm inside a domain of 0.0 .. 24.4 mm, so
+# the one line that was meant to frame the simulation framed the capture. Both
+# boxes are derived in _plane_extent_mm and nowhere else.
+
+#: How long one dash of the captured-window outline aims to be, in mm. The dash
+#: count is rounded per edge, so every edge begins and ends on a dash.
+DASH_TARGET_MM = 4.0
+
+
+def _plane_extent_mm(info: dict, stations_mm=None) -> dict:
+    """The DOMAIN box and the captured-station WINDOW, both in millimetres.
+
+    ``domain`` is ``(x0, x1, y0, y1, z0, z1)``. The visualisation dumps carry
+    the stored node coordinates ``info["x_mm"]`` / ``y_mm`` / ``z_mm`` and those
+    are read when present. The plane dumps carry only the node counts
+    ``nx``/``ny``/``nz`` plus ``cell_m``, and build_grid lays sample ``i`` at
+    ``i * cell``, so there the frame is the LAST node, ``(n - 1) * cell`` - not
+    ``n * cell``, which would be one cell too wide: on the shipped dump
+    ``nx * cell`` is 24.8 mm while the last node is 24.4 mm. Only one of the two
+    can be the frame of a picture drawn from those samples, and it is the one
+    the samples sit on. ``domain`` is None when the dump carries neither the
+    arrays nor a usable count/cell pair, and the caller then keeps the field
+    grid's own outline rather than inventing a frame.
+
+    ``window`` is the same box narrowed on x to the captured stations
+    (``stations_mm[0] .. stations_mm[-1]``). It is None when there is no station
+    axis, when the axis holds fewer than two distinct stations (a window with no
+    width is not a box), when the domain is unknown (its lateral extent would
+    then have to be guessed), or when the axis already spans the whole domain -
+    a dashed line lying on the solid one reads as an artefact, not as a fact.
+
+    The lateral (y/z) extent of the window IS the domain's: a captured plane is
+    a full y-z slice through the line, so the station axis is the only one the
+    capture narrows. That assumption is stated here because this is the one
+    place the two boxes' numbers come from.
+    """
+
+    def _span(axis):
+        try:
+            values = np.asarray(axis, dtype=float).ravel()
+        except (TypeError, ValueError):
+            return None
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            return None
+        return float(values.min()), float(values.max())
+
+    def _counts_span(source):
+        """The same box from the node COUNT and the cell size, no arrays.
+
+        Plane dumps store ``nx``/``ny``/``nz`` and ``cell_m`` only, and
+        build_grid puts sample ``i`` at ``i * cell``, so the last node is
+        ``(n - 1) * cell``. Returns None on anything missing or unusable.
+        """
+        try:
+            cell_mm = float(source.get("cell_m")) * 1e3
+            counts = [int(source[key]) for key in ("nx", "ny", "nz")]
+        except (TypeError, ValueError, KeyError):
+            return None
+        if not np.isfinite(cell_mm) or cell_mm <= 0.0:
+            return None
+        if any(count < 1 for count in counts):
+            return None
+        return tuple(
+            0.0 if index % 2 == 0 else (counts[index // 2] - 1) * cell_mm
+            for index in range(6)
+        )
+
+    domain = None
+    if isinstance(info, dict):
+        x = _span(info.get("x_mm"))
+        y = _span(info.get("y_mm"))
+        z = _span(info.get("z_mm"))
+        if x is not None and y is not None and z is not None:
+            domain = (x[0], x[1], y[0], y[1], z[0], z[1])
+        else:
+            domain = _counts_span(info)
+
+    window = None
+    if domain is not None and stations_mm is not None:
+        stations = _span(stations_mm)
+        if stations is not None and stations[1] > stations[0]:
+            candidate = (
+                stations[0],
+                stations[1],
+                domain[2],
+                domain[3],
+                domain[4],
+                domain[5],
+            )
+            # Only when it really is narrower: coincident boxes are one box.
+            if (
+                abs(candidate[0] - domain[0]) > 1e-12
+                or abs(candidate[1] - domain[1]) > 1e-12
+            ):
+                window = candidate
+    return {"domain": domain, "window": window}
+
+
+def _box_edges(box) -> list:
+    """The 12 edges of an axis-aligned box as pairs of (3,) endpoints."""
+    x0, x1, y0, y1, z0, z1 = (float(value) for value in box)
+    corners = {
+        (i, j, k): np.array(
+            [x1 if i else x0, y1 if j else y0, z1 if k else z0], dtype=float
+        )
+        for i in (0, 1)
+        for j in (0, 1)
+        for k in (0, 1)
+    }
+    edges = []
+    for (i, j, k), start in corners.items():
+        for axis in range(3):
+            key = [i, j, k]
+            if key[axis]:
+                continue
+            key[axis] = 1
+            edges.append((start, corners[tuple(key)]))
+    return edges
+
+
+def _dashed_box_segments(box, target_mm: float = DASH_TARGET_MM):
+    """The box's 12 edges as DASHES: ``(points, line cells)`` for one PolyData.
+
+    WHY dashes as geometry and not a line-stipple property: a stipple set on a
+    VTK property can be ignored by a render backend, and then the second box
+    draws solid - indistinguishable from the domain box, which is the one thing
+    this outline exists to prevent. Dashes as segments are in the buffer, so
+    they are drawn wherever the line is drawn, and their count can be measured
+    instead of believed.
+
+    Each edge is cut into ``k`` dashes separated by ``k - 1`` equal gaps, ``k``
+    rounded from that edge's own length, so every edge starts and ends on a dash
+    and a long edge is not one speck. ``target_mm`` is the dash length aimed at;
+    the rounding is what makes the pattern fill the edge exactly.
+    """
+    points = []
+    lines = []
+    target = float(target_mm)
+    for start, end in _box_edges(box):
+        length = float(np.linalg.norm(end - start))
+        if length <= 0.0:
+            continue
+        dashes = max(3, int(round(length / target))) if target > 0 else 3
+        step = length / (2 * dashes - 1)
+        for i in range(dashes):
+            first = start + (end - start) * ((2 * i) * step / length)
+            second = start + (end - start) * ((2 * i + 1) * step / length)
+            points.extend((first, second))
+            index = len(points) - 2
+            lines.extend((2, index, index + 1))
+    return np.asarray(points, dtype=float).reshape(-1, 3), lines
+
+
+def _add_extent_outlines(plotter, info: dict, grid, stations_mm=None) -> dict:
+    """Draw the domain box SOLID and the captured window DASHED inside it.
+
+    Returns what was really drawn - ``{"domain": ..., "window": ...}`` - so the
+    corner legend can name the boxes that are on screen and stay silent about a
+    window that was skipped or that pyvista refused. The two boxes come from
+    ``_plane_extent_mm``, so the picture and the legend cannot derive them
+    twice and disagree.
+    """
+    import pyvista as pv
+
+    extent = _plane_extent_mm(info, stations_mm)
+    domain = extent["domain"]
+    if domain is None:
+        # No stored axis: the field grid is the only extent this dump states.
+        plotter.add_mesh(grid.outline(), color="black", line_width=1)
+        return {"domain": None, "window": None}
+
+    x0, x1, y0, y1, z0, z1 = domain
+    # A two-point-per-axis image on the domain's own corners: its outline has
+    # exactly the domain's bounds, so the frame cannot drift from the numbers by
+    # restating them in a second constructor.
+    box = pv.ImageData()
+    box.dimensions = (2, 2, 2)
+    box.spacing = (x1 - x0, y1 - y0, z1 - z0)
+    box.origin = (x0, y0, z0)
+    plotter.add_mesh(box.outline(), color="black", line_width=1)
+
+    window = extent["window"]
+    drawn = None
+    if window is not None:
+        # Guarded like every other optional layer here: a window that cannot be
+        # built costs the window, never the domain frame, the axes, the board,
+        # the markers or the two corner labels drawn after it.
+        try:
+            points, lines = _dashed_box_segments(window)
+            plotter.add_mesh(
+                pv.PolyData(points, lines=lines),
+                color="black",
+                line_width=2,
+                render=False,
+            )
+            drawn = window
+        except Exception as exc:  # noqa: BLE001 - see comment above
+            print(
+                f"[poc_app] captured-window outline not drawn: {exc}",
+                file=sys.stderr,
+            )
+    return {"domain": domain, "window": drawn}
+
+
+def _extent_legend(extent: dict) -> str:
+    """The corner-legend sentence naming the boxes that are on screen."""
+    domain = (extent or {}).get("domain")
+    if domain is None:
+        return ""
+    text = (
+        "black box = simulated domain x = "
+        f"{domain[0]:.4f} .. {domain[1]:.4f} mm, y = {domain[2]:.4f} .. "
+        f"{domain[3]:.4f} mm, z = {domain[4]:.4f} .. {domain[5]:.4f} mm"
+    )
+    window = extent.get("window")
+    if window is not None:
+        text += (
+            "\ndashed box = captured window x = "
+            f"{window[0]:.4f} .. {window[1]:.4f} mm: the stations saved in "
+            "this dump"
+        )
+    return text
+
+
 def _draw_scene(
     plotter,
     info: dict,
@@ -5025,7 +5256,11 @@ def _draw_scene(
             cell_mm=cell_mm,
         )
 
-    plotter.add_mesh(grid.outline(), color="black", line_width=1)
+    # The ONE derivation of what this page frames: the domain box solid, the
+    # captured station window dashed inside it (_plane_extent_mm). This used to
+    # be ``grid.outline()``, and the field grid spans the CAPTURED stations, so
+    # the page framed the window and called it the domain.
+    extent = _add_extent_outlines(plotter, info, grid, planes.get("stations_mm"))
     plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")
 
     # The structure the field sits on, BEFORE the marker layer: a marker with
@@ -5055,6 +5290,10 @@ def _draw_scene(
     clim_text = _cut_clim_text(cut_clims)
     if clim_text:
         legend_lines.append(clim_text)
+    # Which box is which, from the same dict that decided what to draw.
+    extent_text = _extent_legend(extent)
+    if extent_text:
+        legend_lines.append(extent_text)
     plotter.add_text(
         _marker_text(planes, legend_lines),
         name="marker_legend",
