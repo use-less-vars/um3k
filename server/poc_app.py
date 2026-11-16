@@ -7098,7 +7098,9 @@ def _solve_netlist_slug(netlist_document) -> str:
     return slug[:40] or "custom"
 
 
-def solve_argv(structure_id, xcut_near_mm, out_npz, netlist_json="") -> list[str]:
+def solve_argv(
+    structure_id, xcut_near_mm, out_npz, netlist_json="", config=None
+) -> list[str]:
     """The argv that would run a fresh field solve. BUILT here, never run.
 
     It exists so the command line is assertable without paying for a solve: the
@@ -7124,6 +7126,15 @@ def solve_argv(structure_id, xcut_near_mm, out_npz, netlist_json="") -> list[str
     run's artefact - the solver's interface is a path, not a string - and passed
     as ``--netlist``.  The file is the caller's to delete once the child exits
     (``solve_netlist_file`` reads its path back out of the argv).
+
+    ``config`` is the Run Config form built into ONE ``RunConfig``
+    (``run_config_from_form``). When it is given it is the AUTHORITY for
+    ``--xcut-near-mm`` as well as for the flags only it can carry
+    (``--nsteps``, ``--volume-stride``, ``--xcut-far-mm`` and, when that box was
+    filled, ``--pulse-freq-ghz``): a press must run what the form says, and two
+    sources for one flag is how a page ends up solving something it never
+    displayed. ``xcut_near_mm`` stays the default for a caller with no form, and
+    the no-config command line is unchanged, byte for byte.
     """
     sid = _structure_key(structure_id)
     if not sid:
@@ -7173,6 +7184,9 @@ def solve_argv(structure_id, xcut_near_mm, out_npz, netlist_json="") -> list[str
             f"{LIVE_DUMP.parent} instead"
         )
 
+    # The form, when there is one, is what the near cut MEANS: the caller's
+    # positional is only the no-form default.
+    near_mm = float(xcut_near_mm if config is None else config.xcut_near_mm)
     argv = [
         sys.executable,
         str(SOLVER_SCRIPT),
@@ -7182,10 +7196,10 @@ def solve_argv(structure_id, xcut_near_mm, out_npz, netlist_json="") -> list[str
         # %g, so 20.4 reads as 20.4: the float's repr can carry a long tail
         # (20.400000000000002) that looks like a different number than the one
         # the user asked for.
-        f"{float(xcut_near_mm):g}",
+        f"{near_mm:g}",
         "--vis-dump",
         str(out),
-    ]
+    ] + _run_config_argv(config)
     if document is None:
         return argv + ["--out", str(artefact)]
 
@@ -8927,6 +8941,139 @@ def _run_config_defaults() -> dict:
         state_name: getattr(reference, field)
         for state_name, _label, field in RUN_CONFIG_FIELDS
     }
+
+
+def _run_config_form_shown(available) -> bool:
+    """Is the Run Config FORM (the five run fields) offered on this page?
+
+    The form describes a run that has not happened yet, so it belongs exactly
+    where there is nothing to look at - a page already showing a field has a run
+    behind it, and those five boxes would silently describe a job nobody is
+    going to start. The four flags below are that question, asked once: a
+    volume field, a plane stack, a captured port plane and a frame axis are all
+    statements about the DATA (um3k_context.py:99, :123-137), so any of them
+    means "a run behind this page".
+
+    ONE predicate, because TWO questions are answered from it - whether the
+    widgets are emitted at build time and whether a press may proceed - and two
+    copies of the same four `getattr`s are how a page ends up offering a form
+    it will not honour.
+    """
+    return not bool(
+        getattr(available, "plane_stack", False)
+        or getattr(available, "volume_field", False)
+        or getattr(available, "port_planes", False)
+        or getattr(available, "animation", False)
+    )
+
+
+def _solve_refused_page(nt, available) -> bool:
+    """Does a Solve press on this page have to be REFUSED before it spawns?
+
+    Refused only when the page has NEITHER a timeline NOR a Run Config form: no
+    frame axis (``nt`` is None - a static field snapshot, um3k_panels.py:127-140)
+    means a new run has nowhere to land, and no form means there is not even a
+    config to run one with. A data-less page has the form, so pressing Solve
+    there is the whole point of the page; an animation dump has the timeline.
+
+    Takes ``nt`` rather than reading it, so the caller passes the axis it has
+    actually swapped in (``_poll_solve`` re-reads it from the new dump) instead
+    of this asking the page a second, possibly stale, time.
+    """
+    if nt is not None:
+        return False
+    return not _run_config_form_shown(available)
+
+
+#: Which RunConfig fields are whole numbers, so the form's text is parsed as
+#: one. The other three in RUN_CONFIG_FIELDS are floats. The KIND is checked here
+#: because ``RunConfig.validate`` refuses a float where an int belongs ("a JSON
+#: 2400.0 is not 2400"), and a VTextField only ever hands over a STRING.
+_RUN_CONFIG_INT_FIELDS = ("nsteps", "volume_stride")
+
+
+def _run_config_field_value(label, field_name, raw):
+    """One RunConfig field off one form string, or ``None`` for "no opinion".
+
+    A blank box (``""``, whitespace, an absent state field) is NOT zero and NOT a
+    crash: it means the browser left that box alone, so the field is omitted and
+    ``RunConfig``'s own default stands. Everything else is parsed by KIND here,
+    and a string that is not a number raises a ``ValueError`` naming the box it
+    was typed into - the press refuses with that sentence instead of running
+    something the box did not say.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if field_name in _RUN_CONFIG_INT_FIELDS:
+        try:
+            return int(text)
+        except ValueError:
+            pass
+        try:
+            float(text)
+        except ValueError:
+            raise ValueError(
+                f"{label} ({field_name}) is not a number: {raw!r}"
+            ) from None
+        raise ValueError(
+            f"{label} ({field_name}) must be a whole number, not {raw!r}"
+        )
+    try:
+        return float(text)
+    except ValueError:
+        raise ValueError(f"{label} ({field_name}) is not a number: {raw!r}") from None
+
+
+def run_config_from_form(values) -> "RunConfig":
+    """The ONE ``RunConfig`` a press runs, built from the Run Config form.
+
+    ``values`` maps the state name the browser writes to the text it left there
+    (``{state_name: state.<state_name>}`` for RUN_CONFIG_FIELDS). WHY a config at
+    all: ``RunConfig`` is where these five knobs are validated (whole steps, a
+    positive finite pulse, the far cut beyond the near cut), so building it HERE
+    means a bad box refuses the press rather than spawning a solver that would
+    fail on its own argv or, worse, quietly run the numbers it prefers.
+
+    Blank fields fall to ``RunConfig``'s defaults (see
+    ``_run_config_field_value``), so a page nobody typed into solves exactly what
+    it solved before this form existed.
+    """
+    from emfit.config import RunConfig
+
+    kwargs = {}
+    for state_name, label, field_name in RUN_CONFIG_FIELDS:
+        value = _run_config_field_value(label, field_name, values.get(state_name))
+        if value is not None:
+            kwargs[field_name] = value
+    try:
+        return RunConfig(**kwargs)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"run config refused: {exc}") from None
+
+
+def _run_config_argv(config) -> list[str]:
+    """The solver flags ``config`` adds, in the solver's OWN spelling.
+
+    EMPTY for ``None``: a caller with no form gets the command line it has always
+    got, byte for byte. ``--pulse-freq-ghz`` is omitted when the config carries
+    ``None`` - ``None`` is the reference's own pulse, not a number to pass.
+    """
+    if config is None:
+        return []
+    flags = [
+        "--nsteps",
+        str(int(config.nsteps)),
+        "--volume-stride",
+        str(int(config.volume_stride)),
+        "--xcut-far-mm",
+        f"{float(config.xcut_far_mm):g}",
+    ]
+    if config.pulse_freq_ghz is not None:
+        flags += ["--pulse-freq-ghz", f"{float(config.pulse_freq_ghz):g}"]
+    return flags
 
 
 def _volume_clim_mode(value):
@@ -11884,17 +12031,15 @@ def run_web_vis(
         # read the same way (server/um3k_panels.py:83): a plain python branch emits
         # the five fields or does not, so a page with data carries no hidden form
         # and no flag that has to stay in step with the data.
-        has_field_data = bool(
-            getattr(ctx.available, "plane_stack", False)
-            or getattr(ctx.available, "volume_field", False)
-            # A one-station dump and an animation dump have a run behind them
-            # too: ``port_planes`` is one captured x-plane and ``animation`` is
-            # a frame axis, both statements about the DATA (um3k_context.py:99,
-            # :123-137).  Without them a solved vis page would offer a form whose
-            # numbers its own recording already fixed.
-            or getattr(ctx.available, "port_planes", False)
-            or getattr(ctx.available, "animation", False)
-        )
+        # A one-station dump and an animation dump have a run behind them too:
+        # ``port_planes`` is one captured x-plane and ``animation`` is a frame
+        # axis, both statements about the DATA (um3k_context.py:99, :123-137).
+        # Without them a solved vis page would offer a form whose numbers its own
+        # recording already fixed. WHICH flags those are lives in the ONE
+        # predicate, because the same question decides whether a press may
+        # proceed (_solve_refused_page) - the branch below must never disagree
+        # with the handler about it.
+        has_field_data = not _run_config_form_shown(ctx.available)
 
         def _run_config() -> None:
             """Emit the Run Config card: Clim Mode always, the form on a data-less page.
@@ -11953,6 +12098,14 @@ def run_web_vis(
                 # default is RunConfig's own number, never a literal here.
                 run_field(
                     v_model=(state_name, defaults.get(state_name)),
+                    # The form is for the NEXT run, and a solve ends with one on
+                    # screen: once the dump on this page is a solved one, the
+                    # boxes describe a job that has already happened. Hidden
+                    # rather than rebuilt (the layout is built once, at boot)
+                    # off ONE state flag, which starts true - the value this
+                    # branch already decided - so a page that offers the form
+                    # shows it from the first paint.
+                    v_if=("run_config_visible", True),
                     label=label,
                     type="number",
                     density="compact",
@@ -12180,7 +12333,7 @@ def run_web_vis(
     state.solve_xcut_mm = SOLVE_DEFAULT_XCUT_MM
     state.solve_status = "no solve run in this session"
     # The LABEL and the ENABLED state describe the PAGE, not the job: this shell
-    # serves a static field snapshot as well as an animation dump, and the static
+    # serves a static field snapshot as well as an animation dump, and a static
     # page (nt is None - no frame axis, um3k_panels.py:127-140) has no timeline
     # for a new run to land in. A bare "Solve" over a snapshot read as "solve
     # THIS page", which nothing here does; so the label NAMES the page it is
@@ -12189,11 +12342,21 @@ def run_web_vis(
     # "press this to refresh the picture" - the press starts a new run, it does
     # not re-read the file this page was opened from. The machinery is not
     # missing; it just does not do that.
-    static_page = nt is None
+    # REFUSED, not just greyed, only where the press would have nothing to work
+    # with: no timeline AND no Run Config form (_solve_refused_page). A data-less
+    # page has the form, so its Solve is the whole point of the page; the
+    # decision is the shared predicate's, so this boot and the press handler and
+    # the build-time form branch cannot disagree.
+    static_page = _solve_refused_page(nt, ctx.available)
     state.solve_label = (
         "Solve (static field snapshot)" if static_page else "Solve"
     )
     state.solve_disabled = static_page
+    # Whether the Run Config FORM is on screen: starts at the value the build-time
+    # branch used (so the fields it emitted are visible from the first paint),
+    # and a finished solve clears it - the dump on screen is then a run's result
+    # and those boxes would describe a job that has already happened.
+    state.run_config_visible = _run_config_form_shown(ctx.available)
     if static_page:
         state.solve_status = (
             "this page is a static field snapshot; Solve runs a new solve and "
@@ -12248,6 +12411,11 @@ def run_web_vis(
         the solve is running keeps getting the OLD page, and never a half-built
         one.
         """
+        # The frame axis is what the new dump's own file says, not what this page
+        # was opened with: the solve below replaces the data under the drawings,
+        # so the closure's nt/nt_x are re-read from the page that just landed
+        # (_rebuild_sheets and _show both draw off them).
+        nonlocal nt, nt_x
         job = solve.get("job")
         if job is None:
             return
@@ -12290,14 +12458,52 @@ def run_web_vis(
         _load_s_params_panel()
         _load_far_field_panel()
         _load_confidence_panel()
-        _rebuild_sheets()
-        # WHAT a reader must do next is part of the sentence: the swap reaches
-        # the page's own arrays and labels, but the browser's picture and the
-        # dump line still describe the page the reader opened, so "solved" alone
-        # read as "this view is now the new run" when it was not.
+        # ---- the PICTURE, on the dump that just landed ----------------------
+        # The sheets were built at boot from the page the reader opened, so the
+        # new arrays have to be drawn HERE: there is no second visit, and a
+        # "solved" sentence over the OLD picture read as "this view is now the
+        # new run" when it was not. The axis is re-read from the new page first,
+        # then one ordinary repaint - the same two steps every other handler uses
+        # (_on_volume_clim_mode, :11420) - and every step can only cost the
+        # redraw, never the solve that has already been applied.
+        refresh_note = ""
+        try:
+            live_info = page.get("info") or {}
+            if _is_vis(live_info):
+                nt = int(live_info["nt"])
+                nt_x = int(live_info["nt_x"])
+            else:
+                nt = None
+                nt_x = None
+            _rebuild_sheets()
+            try:
+                frame = int(round(float(state.frame)))
+            except (TypeError, ValueError):
+                frame = 0
+            _show(frame, getattr(state, "mode", None))
+            view_handle = handles.get("view")
+            if view_handle is not None:
+                view_handle.update()
+        except Exception as exc:  # noqa: BLE001 - the picture is not the solve
+            refresh_note = f" (the picture was not refreshed: {exc})"
+            print(f"[poc_app] solved page not redrawn: {exc}", file=sys.stderr)
+        # The page's OWN consequences, after the data: there is now a run behind
+        # this dump, so the Run Config form (a form for the NEXT run) is done
+        # with, and the press is no longer the refusal it may have been - the
+        # timeline just arrived.
+        try:
+            state.run_config_visible = False
+            state.solve_disabled = _solve_refused_page(nt, ctx.available)
+        except Exception as exc:  # noqa: BLE001 - a message is not a crash
+            print(
+                f"[poc_app] solve page state not updated: {exc}", file=sys.stderr
+            )
+        # WHAT a reader gets is part of the sentence: the swap reaches the page's
+        # own arrays, labels and picture, so the note only says what it cannot
+        # reach - the dump line and the sheet cards built at boot.
         state.solve_status = (
-            f"solved -> {Path(applied['new_path']).name}; this page was NOT "
-            "refreshed - reload it to view the new dump"
+            f"solved -> {Path(applied['new_path']).name}; result loaded"
+            f"{refresh_note}"
         )
 
     def _drop_netlist(netlist_path) -> None:
@@ -12337,13 +12543,19 @@ def run_web_vis(
         slot, ``state.solve_netlist_json``.
 
         A STATIC page refuses HERE, before anything is spawned or written: the
-        page has no timeline for a new run to land in, so a press either did
-        nothing visible or replaced the dump under a page that cannot read it.
-        The button is greyed out for the same reason (state.solve_disabled);
-        this is the same refusal for a press that arrives anyway - a stale
-        browser, or a caller driving the trigger directly.
+        page has no timeline for a new run to land in AND no Run Config form to
+        run one with (_solve_refused_page), so a press either did nothing visible
+        or replaced the dump under a page that cannot read it. The button is
+        greyed out for the same reason (state.solve_disabled); this is the same
+        refusal for a press that arrives anyway - a stale browser, or a caller
+        driving the trigger directly.
+
+        The Run Config form (RUN_CONFIG_FIELDS) is read HERE and nowhere else:
+        this one handler builds the ONE ``RunConfig`` the child is given, so the
+        five boxes reach the solver by the same path a press always took - there
+        is no second solve route for them to fall off.
         """
-        if static_page:
+        if _solve_refused_page(nt, ctx.available):
             print(
                 "[poc_app] solve refused: this page is a static field snapshot "
                 "(no timeline), so nothing was spawned and no dump was written",
@@ -12360,10 +12572,32 @@ def run_web_vis(
             state.solve_status = "a solve is already running - one at a time"
             return
         structure = str(state.solve_structure or default_arm)
+        # ---- the Run Config form, as ONE validated config --------------------
+        # Built HERE, at press time: the five boxes are whatever the browser has
+        # written by now, and RunConfig is where they are checked (whole steps, a
+        # positive pulse, a far cut beyond the near one). A box that is not a
+        # number refuses the press with a sentence and spawns nothing - the same
+        # shape as a refused netlist just below.
+        form_values = {
+            state_name: getattr(state, state_name, None)
+            for state_name, _label, _field in RUN_CONFIG_FIELDS
+        }
+        if not str(form_values.get("run_xcut_near_mm") or "").strip():
+            # A blank Run Config box has NO opinion on the near cut, so the
+            # Action card's cut plane keeps the job it has always had. Text that
+            # will not parse is NOT backfilled: run_config_from_form raises on it
+            # just below, so the press is refused with a sentence naming the box.
+            try:
+                form_values["run_xcut_near_mm"] = float(state.solve_xcut_mm)
+            except (TypeError, ValueError):
+                pass
         try:
-            xcut_mm = float(state.solve_xcut_mm)
-        except (TypeError, ValueError):
-            xcut_mm = SOLVE_DEFAULT_XCUT_MM
+            run_config = run_config_from_form(form_values)
+            xcut_mm = float(run_config.xcut_near_mm)
+        except (TypeError, ValueError) as exc:
+            print(f"[poc_app] solve refused: {exc}", file=sys.stderr)
+            state.solve_status = f"refused: {exc}"
+            return
         netlist_text = str(
             netlist_json or getattr(state, "solve_netlist_json", "") or ""
         )
@@ -12371,7 +12605,11 @@ def run_web_vis(
         # so a bad edit costs a message and no file and no child process.
         try:
             argv = solve_argv(
-                structure, xcut_mm, LIVE_DUMP, netlist_json=netlist_text
+                structure,
+                xcut_mm,
+                LIVE_DUMP,
+                netlist_json=netlist_text,
+                config=run_config,
             )
         except (ValueError, OSError) as exc:
             state.solve_status = f"refused: {exc}"
