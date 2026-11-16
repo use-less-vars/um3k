@@ -261,6 +261,17 @@ def _boot(
         with contextlib.suppress(_Stop):
             app.run_web_vis(info, "127.0.0.1", 8999, fps=FPS)
 
+    # MonkeyPatch memorised the INSTANCE attribute with ``getattr``, i.e. through
+    # the MRO: what it recorded for ``srv`` was the CLASS double installed just
+    # above, and its undo wrote that back onto the instance once the class was
+    # restored - leaving ``srv.start`` doubled forever, because an INSTANCE
+    # attribute shadows the restored class member.  Put the instance back exactly
+    # as it was found, which normally means not having a ``start`` at all.
+    if shadow is None:
+        vars(srv).pop("start", None)
+    else:
+        srv.start = shadow
+
     assert stopped, (
         "run_web_vis never reached server.start(): it returned early (missing "
         "web dependency) so the volume layer was never built"
