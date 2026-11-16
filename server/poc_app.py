@@ -4672,6 +4672,221 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
         print(f"[poc_app] marker labels not drawn: {exc}", file=sys.stderr)
 
 
+def _draw_volume_scene(
+    plotter,
+    info: dict,
+    *,
+    grid,
+    cut_layout: dict,
+    cell_mm: float,
+    clim_override=None,
+):
+    """Draw the volume view's FIELD layer: the volume and the two cut sheets.
+
+    WHY this is a function of its own with every input named: it is the part of
+    a scene that decides what the reader actually sees, and it used to be
+    reachable only through ``_draw_scene`` - which reads the plane dict, the
+    module keys and the camera flag on its way there. Nothing below reads any of
+    those. The caller hands in the grid it already built, the cut layout it
+    already resolved (so the sheets and the corner legend cannot disagree about
+    which y / z sample is on screen), the cell size the volume lattice is
+    indexed by, and - when it has one - the range to pin the volume to.
+
+    ``clim_override`` replaces the volume's own colour limits: the |E| volume's
+    measured ``(peak * 1e-3, peak)`` and the plane-stack fallback's, which has
+    no range of its own to replace. ``None`` (the default, and what
+    ``_draw_scene`` passes) leaves each volume on exactly the range it had
+    before this was extracted. It is NEVER applied to the cut sheets: each one
+    carries the range ``build_cut_sheets`` measured off the samples that sheet
+    actually holds, and one range over both would be the lie that block
+    refuses.
+
+    Returns ``(cuts_drawn, cut_clims)``: whether pyvista accepted the sheets,
+    and per axis the range each volume sheet was drawn on. Both belong to the
+    caller, because the corner legend is built from them and it must not claim
+    a sheet that was refused or a clim nobody used.
+    """
+    # Which cuts were actually drawn, and on what: the legend lives in the
+    # caller, these two are what it is allowed to say.
+    cuts_drawn = False
+    cut_clims: dict = {}
+
+    # THE WHOLE VOLUME first, when the dump carries one: |E| over every grid
+    # cell the solve produced, log-scaled (see _volume_abs_grid for the clim)
+    # and MEMOISED inside that helper, because this branch runs on every cut
+    # or station move.
+    abs_image, abs_meta = _volume_abs_grid(info, cell_mm)
+    # A caller-supplied range wins over the volume's own: that is the one
+    # thing this helper exists to be able to pin, and it is applied to the
+    # volume ACTUALLY drawn below - the |E| image when the dump carries one.
+    volume_clim = abs_meta["clim"] if clim_override is None else clim_override
+    abs_drawn = False
+    if abs_image is not None:
+        # WHY the title is not the plane stack's "|Ez| [V/m]": these are two
+        # different fields, and the FFT normalisation makes the colocated
+        # volume ~2053x smaller in V/m than the captured |Ez| planes, so one
+        # bar carrying the other's title would be read as the other's scale.
+        try:
+            plotter.add_volume(
+                abs_image,
+                scalars="e_abs",
+                cmap="turbo",
+                log_scale=True,
+                clim=volume_clim,
+                scalar_bar_args={"title": "|E| [V/m] (log)"},
+            )
+            abs_drawn = True
+        except TypeError as exc:
+            # An older pyvista accepts every one of these arguments EXCEPT
+            # ``log_scale``. The same image on the same clim is still worth
+            # showing, so it is retried ONCE without log_scale, on a title
+            # that no longer claims a log bar - and never a third time.
+            print(f"[poc_app] |E| volume not drawn: {exc}", file=sys.stderr)
+            try:
+                plotter.add_volume(
+                    abs_image,
+                    scalars="e_abs",
+                    cmap="turbo",
+                    clim=volume_clim,
+                    scalar_bar_args={"title": "|E| [V/m]"},
+                )
+                abs_drawn = True
+            except Exception as exc_again:  # noqa: BLE001 - see below
+                print(
+                    f"[poc_app] |E| volume not drawn: {exc_again}",
+                    file=sys.stderr,
+                )
+        except Exception as exc:  # noqa: BLE001 - a picture is not a crash
+            # Losing the volume must cost the VOLUME: the outline, the axes,
+            # the board, the markers and both corner labels are drawn after
+            # this branch, and an exception escaping here would take them all
+            # (``_redraw_scene`` would swallow it and keep a stale picture).
+            print(f"[poc_app] |E| volume not drawn: {exc}", file=sys.stderr)
+    # Exactly ONE volume actor: two of them over the same slab occlude each
+    # other, and the coarser nine-plane stack would read as a shell laid over
+    # the 62-station |E| field - so it is drawn only when |E| is NOT.
+    # The plane fallback has no range of its own to override, so a caller's
+    # clim is the ONLY range it can be pinned to - and it is passed to both of
+    # its draws (the direct one below and the guarded retry after it).
+    ez_style = {} if clim_override is None else {"clim": clim_override}
+    if abs_image is None:
+        plotter.add_volume(
+            grid,
+            scalars="ez_abs",
+            cmap="turbo",
+            scalar_bar_args={"title": "|Ez| [V/m]"},
+            **ez_style,
+        )
+    elif not abs_drawn:
+        # Only reached when a volume WAS available and the plotter refused
+        # it: the same fallback, guarded, because an exception escaping here
+        # would cost the outline, the axes, the board and the markers too.
+        try:
+            plotter.add_volume(
+                grid,
+                scalars="ez_abs",
+                cmap="turbo",
+                scalar_bar_args={"title": "|Ez| [V/m]"},
+                **ez_style,
+            )
+        except Exception as exc:  # noqa: BLE001 - see comment above
+            print(f"[poc_app] |Ez| volume not drawn: {exc}", file=sys.stderr)
+    # The two cut sheets: one sample each, drawn opaque enough to read the
+    # field on, each on its OWN 60 dB colour range (see below) with no bar of
+    # its own - the volume's bar stays the single one on screen, and the
+    # corner legend names what each cut was painted on. Guarded - losing the
+    # cuts must cost the cuts, not the view.
+    try:
+        for _axis, sheet, sheet_clim in build_cut_sheets(info, cut_layout):
+            # WHICH scalar: the volume sheets carry ``e_abs`` straight off the
+            # |E| image, the fallback sheets ``ez_abs``. Read off the SHEET's
+            # own arrays rather than off the layout, so a volume that refused
+            # to slice (and fell back to the plane sheets) is still drawn
+            # from the array it actually carries.
+            scalars = "e_abs" if "e_abs" in sheet.point_data else "ez_abs"
+            style = {}
+            # ``clim`` is the SHEET's own range, computed by
+            # ``build_cut_sheets`` from the samples the sheet actually
+            # carries - never the volume's, and never guessed. WHY per sheet:
+            # a cut is a subset of the field, so its peak is at most the
+            # volume's and can be far below it (measured on the shipped dump
+            # at the default cuts: 65.6 V/m on the y cut and 8.2 V/m on the z
+            # cut against 90.7 V/m in the volume), and a sheet painted on the
+            # volume's range spends the top of the bar on values it does not
+            # have. The single bar on screen is still the volume's, and its
+            # clim is untouched; the corner legend names each cut's range
+            # instead of adding a second bar over the same colours. The
+            # ``is not None`` is the belt to that brace: a sheet with no
+            # finite positive sample drops the log scale instead of inventing
+            # a range, because a fabricated clim is the kind of lie this page
+            # refuses.
+            #
+            # The range is applied to the VOLUME sheets only: the plane
+            # fallback has always been drawn linear with no range quoted, and
+            # a dump with no volume must keep the picture it had.
+            clim = sheet_clim if scalars == "e_abs" else None
+            if clim is not None:
+                # |E| spans tens of decades, so a linear sheet would show the
+                # peak and nothing else: log, on the sheet's own 60 dB span.
+                style = {"log_scale": True, "clim": clim}
+            plotter.add_mesh(
+                sheet,
+                scalars=scalars,
+                cmap="turbo",
+                opacity=0.75,
+                show_scalar_bar=False,
+                **style,
+            )
+            # What this cut was ACTUALLY painted on, for the corner legend:
+            # recorded only after the mesh is on the plotter, so a refused
+            # sheet never gets a range claimed for it - and only for the
+            # volume sheets, because the plane fallback was never on a range
+            # at all and naming one beside it would describe a bar the reader
+            # is not looking at.
+            if scalars == "e_abs":
+                cut_clims[_axis] = clim
+            # THE EDGE, the same one the port plane draws above and for the
+            # same reason: a sheet ONE SAMPLE thick has no flank for the light
+            # to fall on, so on its own it shows colour with no visible extent
+            # and the reader cannot tell where the cut stops.
+            #
+            # Taken from the sheet's OWN ``outline()`` and not rebuilt here as
+            # a rectangle: a rectangle would have to restate the origin, the
+            # spacing and the sample counts, and could then disagree with the
+            # field pyvista actually drew - the one failure this page cannot
+            # show. Measured on both volume sheets ((3,1,2) and (3,4,1) cut
+            # from a (3,4,2) image at cell 0.4 mm): ``outline()`` returns 8
+            # points and 12 line cells whose bounds equal the sheet's to
+            # SINGLE precision - VTK stores an outline's points as float32,
+            # so 0.2 comes back as 0.20000000298023224, ~3e-9 mm out - the
+            # coincident edge pairs redundant but well formed.
+            #
+            # EVERY cut, volume subset and plane fallback alike: thinness is a
+            # property of both sources, and two framings in one scene would be
+            # an inconsistency a reader has to explain.
+            #
+            # ``render=False`` exactly as the port sheet uses it: the common
+            # tail ends with the one render of a finished scene, so an edge
+            # adds no draw to a cut redraw. It sits inside this try because
+            # that is where the port sheet keeps its own edge - an edge that
+            # cannot be built costs the cuts, never the outline, the axes, the
+            # board, the markers or the two corner labels drawn after.
+            plotter.add_mesh(
+                sheet.outline(), color="black", line_width=2, render=False
+            )
+    except Exception as exc:  # noqa: BLE001 - see comment above
+        print(f"[poc_app] cut sheets not drawn: {exc}", file=sys.stderr)
+    else:
+        cuts_drawn = True
+
+    # THE TWO FACTS THE LEGEND CANNOT GUESS, handed back instead of left in
+    # this function's local scope: whether pyvista accepted the sheets at all,
+    # and the range each one was actually painted on. The corner legend below
+    # needs both, and it must never claim a sheet that was refused or a clim
+    # nobody used - so neither fact may be recomputed from the inputs here.
+    return cuts_drawn, cut_clims
+
+
 def _draw_scene(
     plotter,
     info: dict,
@@ -4796,163 +5011,19 @@ def _draw_scene(
                 f"[poc_app] port-plane view not drawn: {exc}", file=sys.stderr
             )
     else:
-        # THE WHOLE VOLUME first, when the dump carries one: |E| over every grid
-        # cell the solve produced, log-scaled (see _volume_abs_grid for the clim)
-        # and MEMOISED inside that helper, because this branch runs on every cut
-        # or station move.
-        abs_image, abs_meta = _volume_abs_grid(info, cell_mm)
-        abs_drawn = False
-        if abs_image is not None:
-            # WHY the title is not the plane stack's "|Ez| [V/m]": these are two
-            # different fields, and the FFT normalisation makes the colocated
-            # volume ~2053x smaller in V/m than the captured |Ez| planes, so one
-            # bar carrying the other's title would be read as the other's scale.
-            try:
-                plotter.add_volume(
-                    abs_image,
-                    scalars="e_abs",
-                    cmap="turbo",
-                    log_scale=True,
-                    clim=abs_meta["clim"],
-                    scalar_bar_args={"title": "|E| [V/m] (log)"},
-                )
-                abs_drawn = True
-            except TypeError as exc:
-                # An older pyvista accepts every one of these arguments EXCEPT
-                # ``log_scale``. The same image on the same clim is still worth
-                # showing, so it is retried ONCE without log_scale, on a title
-                # that no longer claims a log bar - and never a third time.
-                print(f"[poc_app] |E| volume not drawn: {exc}", file=sys.stderr)
-                try:
-                    plotter.add_volume(
-                        abs_image,
-                        scalars="e_abs",
-                        cmap="turbo",
-                        clim=abs_meta["clim"],
-                        scalar_bar_args={"title": "|E| [V/m]"},
-                    )
-                    abs_drawn = True
-                except Exception as exc_again:  # noqa: BLE001 - see below
-                    print(
-                        f"[poc_app] |E| volume not drawn: {exc_again}",
-                        file=sys.stderr,
-                    )
-            except Exception as exc:  # noqa: BLE001 - a picture is not a crash
-                # Losing the volume must cost the VOLUME: the outline, the axes,
-                # the board, the markers and both corner labels are drawn after
-                # this branch, and an exception escaping here would take them all
-                # (``_redraw_scene`` would swallow it and keep a stale picture).
-                print(f"[poc_app] |E| volume not drawn: {exc}", file=sys.stderr)
-        # Exactly ONE volume actor: two of them over the same slab occlude each
-        # other, and the coarser nine-plane stack would read as a shell laid over
-        # the 62-station |E| field - so it is drawn only when |E| is NOT.
-        if abs_image is None:
-            plotter.add_volume(
-                grid,
-                scalars="ez_abs",
-                cmap="turbo",
-                scalar_bar_args={"title": "|Ez| [V/m]"},
-            )
-        elif not abs_drawn:
-            # Only reached when a volume WAS available and the plotter refused
-            # it: the same fallback, guarded, because an exception escaping here
-            # would cost the outline, the axes, the board and the markers too.
-            try:
-                plotter.add_volume(
-                    grid,
-                    scalars="ez_abs",
-                    cmap="turbo",
-                    scalar_bar_args={"title": "|Ez| [V/m]"},
-                )
-            except Exception as exc:  # noqa: BLE001 - see comment above
-                print(f"[poc_app] |Ez| volume not drawn: {exc}", file=sys.stderr)
-        # The two cut sheets: one sample each, drawn opaque enough to read the
-        # field on, each on its OWN 60 dB colour range (see below) with no bar of
-        # its own - the volume's bar stays the single one on screen, and the
-        # corner legend names what each cut was painted on. Guarded - losing the
-        # cuts must cost the cuts, not the view.
-        try:
-            for _axis, sheet, sheet_clim in build_cut_sheets(info, cut_layout):
-                # WHICH scalar: the volume sheets carry ``e_abs`` straight off the
-                # |E| image, the fallback sheets ``ez_abs``. Read off the SHEET's
-                # own arrays rather than off the layout, so a volume that refused
-                # to slice (and fell back to the plane sheets) is still drawn
-                # from the array it actually carries.
-                scalars = "e_abs" if "e_abs" in sheet.point_data else "ez_abs"
-                style = {}
-                # ``clim`` is the SHEET's own range, computed by
-                # ``build_cut_sheets`` from the samples the sheet actually
-                # carries - never the volume's, and never guessed. WHY per sheet:
-                # a cut is a subset of the field, so its peak is at most the
-                # volume's and can be far below it (measured on the shipped dump
-                # at the default cuts: 65.6 V/m on the y cut and 8.2 V/m on the z
-                # cut against 90.7 V/m in the volume), and a sheet painted on the
-                # volume's range spends the top of the bar on values it does not
-                # have. The single bar on screen is still the volume's, and its
-                # clim is untouched; the corner legend names each cut's range
-                # instead of adding a second bar over the same colours. The
-                # ``is not None`` is the belt to that brace: a sheet with no
-                # finite positive sample drops the log scale instead of inventing
-                # a range, because a fabricated clim is the kind of lie this page
-                # refuses.
-                #
-                # The range is applied to the VOLUME sheets only: the plane
-                # fallback has always been drawn linear with no range quoted, and
-                # a dump with no volume must keep the picture it had.
-                clim = sheet_clim if scalars == "e_abs" else None
-                if clim is not None:
-                    # |E| spans tens of decades, so a linear sheet would show the
-                    # peak and nothing else: log, on the sheet's own 60 dB span.
-                    style = {"log_scale": True, "clim": clim}
-                plotter.add_mesh(
-                    sheet,
-                    scalars=scalars,
-                    cmap="turbo",
-                    opacity=0.75,
-                    show_scalar_bar=False,
-                    **style,
-                )
-                # What this cut was ACTUALLY painted on, for the corner legend:
-                # recorded only after the mesh is on the plotter, so a refused
-                # sheet never gets a range claimed for it - and only for the
-                # volume sheets, because the plane fallback was never on a range
-                # at all and naming one beside it would describe a bar the reader
-                # is not looking at.
-                if scalars == "e_abs":
-                    cut_clims[_axis] = clim
-                # THE EDGE, the same one the port plane draws above and for the
-                # same reason: a sheet ONE SAMPLE thick has no flank for the light
-                # to fall on, so on its own it shows colour with no visible extent
-                # and the reader cannot tell where the cut stops.
-                #
-                # Taken from the sheet's OWN ``outline()`` and not rebuilt here as
-                # a rectangle: a rectangle would have to restate the origin, the
-                # spacing and the sample counts, and could then disagree with the
-                # field pyvista actually drew - the one failure this page cannot
-                # show. Measured on both volume sheets ((3,1,2) and (3,4,1) cut
-                # from a (3,4,2) image at cell 0.4 mm): ``outline()`` returns 8
-                # points and 12 line cells whose bounds equal the sheet's to
-                # SINGLE precision - VTK stores an outline's points as float32,
-                # so 0.2 comes back as 0.20000000298023224, ~3e-9 mm out - the
-                # coincident edge pairs redundant but well formed.
-                #
-                # EVERY cut, volume subset and plane fallback alike: thinness is a
-                # property of both sources, and two framings in one scene would be
-                # an inconsistency a reader has to explain.
-                #
-                # ``render=False`` exactly as the port sheet uses it: the common
-                # tail ends with the one render of a finished scene, so an edge
-                # adds no draw to a cut redraw. It sits inside this try because
-                # that is where the port sheet keeps its own edge - an edge that
-                # cannot be built costs the cuts, never the outline, the axes, the
-                # board, the markers or the two corner labels drawn after.
-                plotter.add_mesh(
-                    sheet.outline(), color="black", line_width=2, render=False
-                )
-        except Exception as exc:  # noqa: BLE001 - see comment above
-            print(f"[poc_app] cut sheets not drawn: {exc}", file=sys.stderr)
-        else:
-            cuts_drawn = True
+        # The volume view's field layer is ONE call now, and it says what it
+        # drew: the |E| volume (or the plane-stack fallback) and the two cut
+        # sheets. It hands back both facts the corner legend needs - whether the
+        # sheets were really accepted, and the range each one was painted on -
+        # so the legend below still cannot claim a sheet pyvista refused or a
+        # clim nobody used.
+        cuts_drawn, cut_clims = _draw_volume_scene(
+            plotter,
+            info,
+            grid=grid,
+            cut_layout=cut_layout,
+            cell_mm=cell_mm,
+        )
 
     plotter.add_mesh(grid.outline(), color="black", line_width=1)
     plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")

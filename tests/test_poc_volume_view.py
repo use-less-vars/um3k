@@ -1468,3 +1468,308 @@ def test_on_the_shipped_dump_each_cut_is_quoted_on_its_own_peak():
             f"the {axis} cut was given the volume's {volume_clim!r}"
         )
 
+
+
+# --- (n) the field layer is a function of its ARGUMENTS ---------------------
+# The volume and its two cut sheets used to be reachable only through
+# ``_draw_scene``, which reads the plane dict, the module keys and the camera
+# flag on its way to the same lines. ``_draw_volume_scene`` takes those inputs
+# as ARGUMENTS instead: the grid the caller already built, the cut layout it
+# already resolved (so the sheets and the corner legend cannot disagree about
+# which y / z sample is on screen), the cell size the volume lattice is indexed
+# by, and - when the caller has one - the range to pin the volume to. What is
+# pinned below is exactly that: the layer draws from the arguments alone, the
+# override bites the VOLUME and nothing else, and a caller with no override
+# gets byte for byte the picture this page drew before the extraction.
+
+#: Two DIFFERENT sheet ranges, so a shared range cannot pass by coincidence.
+_CLIM_Y = (0.25, 250.0)
+_CLIM_Z = (0.5, 500.0)
+
+
+def _forbidden(name):
+    """A collaborator that must NOT be reached: the helper takes it as an arg."""
+
+    def _refuse(*_args, **_kwargs):
+        raise AssertionError(
+            f"{name} was called: the field layer rebuilds what it was handed"
+        )
+
+    return _refuse
+
+
+def _fake_volume_abs_grid(calls, image, clim):
+    """Stand in for ``_volume_abs_grid``: record the call, hand back a range."""
+
+    def _fake(info, cell_mm):
+        calls.append((info, cell_mm))
+        return image, {"clim": clim}
+
+    return _fake
+
+
+def _fake_cut_sheets(calls, sheets):
+    """Stand in for ``build_cut_sheets``: record what it was HANDED."""
+
+    def _fake(info, layout):
+        calls.append((info, layout))
+        return list(sheets)
+
+    return _fake
+
+
+def _fake_sheet(marker):
+    """A stand-in sheet: the helper reads ``point_data`` and ``outline()``."""
+    return types.SimpleNamespace(
+        point_data={"e_abs": np.ones(2)}, outline=lambda: f"edge:{marker}"
+    )
+
+
+def _layout():
+    """A cut layout the helper must take as GIVEN and never recompute."""
+    return {"y_mm": 0.2, "j": 0, "n_j": 4, "z_mm": 0.6, "k": 1, "n_k": 2}
+
+
+def _two_sheets():
+    """The two volume sheets, each on its own range, distinguishable by outline."""
+    return [
+        ("y", _fake_sheet("y"), _CLIM_Y),
+        ("z", _fake_sheet("z"), _CLIM_Z),
+    ]
+
+
+def _sheet_kwargs(plotter):
+    """The ``add_mesh`` kwargs of the sheets - the ones that carry ``scalars``."""
+    return [kwargs for _mesh, kwargs in plotter.meshes if "scalars" in kwargs]
+
+
+def test_the_field_layer_is_drawable_from_its_arguments_alone(monkeypatch):
+    """No plane dict and no ``_draw_scene``: the helper has everything it needs.
+
+    WHY this is the claim: the extraction is only worth anything if the volume
+    view can be drawn by a caller that owns a grid and a cut layout - so the
+    three things ``_draw_scene`` supplied from ITS scope (the grid it built, the
+    layout it resolved, the cell size it read off the plane dict) are arguments
+    here, and the helper must neither rebuild them nor read a plane dict to get
+    them. ``build_grid`` is therefore poisoned: a call to it fails this test.
+    """
+    info = _volume_info(_index_volume(3, 4, 2))
+    image = object()
+    abs_calls, sheet_calls = [], []
+    monkeypatch.setattr(
+        poc_app, "_volume_abs_grid", _fake_volume_abs_grid(abs_calls, image, _CLIM_Y)
+    )
+    monkeypatch.setattr(
+        poc_app, "build_cut_sheets", _fake_cut_sheets(sheet_calls, _two_sheets())
+    )
+    monkeypatch.setattr(poc_app, "build_grid", _forbidden("build_grid"))
+    grid = object()
+    layout = _layout()
+    plotter = _SheetPlotter()
+
+    cuts_drawn, cut_clims = poc_app._draw_volume_scene(
+        plotter, info, grid=grid, cut_layout=layout, cell_mm=CELL_MM
+    )
+
+    assert poc_app.PLANE_KEY not in info, (
+        "the helper read the captured plane stack: the volume view must not need one"
+    )
+    assert abs_calls == [(info, CELL_MM)], (
+        f"the volume was built from {abs_calls!r}, not from (info, cell_mm)"
+    )
+    assert sheet_calls == [(info, layout)], (
+        "the sheets were not built from the layout the caller resolved - a second "
+        "resolution is how the sheets and the corner legend start disagreeing"
+    )
+    _mesh, volume_kwargs = plotter.volumes()[0][1:]
+    assert plotter.volumes()[0][1] is image, "the helper drew a volume it did not build"
+    assert volume_kwargs["scalars"] == "e_abs"
+    assert cuts_drawn is True, f"the helper reported the sheets refused: {cut_clims!r}"
+    assert cut_clims == {"y": _CLIM_Y, "z": _CLIM_Z}, (
+        f"the ranges it handed back are {cut_clims!r}, not the sheets' own"
+    )
+    # Each sheet is framed by ITS OWN outline, immediately after it.
+    assert [mesh for mesh, kwargs in plotter.meshes if "scalars" not in kwargs] == [
+        "edge:y",
+        "edge:z",
+    ], "a cut sheet was left with no edge of its own"
+
+
+def test_the_clim_override_pins_the_volume_and_never_the_sheets(monkeypatch):
+    """``clim_override`` is the volume's range, passed through as the SAME object.
+
+    WHY identity and not equality: a range quietly rebuilt from the override
+    (say ``tuple(clim_override)``, or rounded through the image's dtype) would
+    pass an equality test while the number on the bar is no longer the one the
+    caller asked for. WHY the sheets are excluded: each sheet was measured on
+    the samples it actually holds, and one range over both fields is the lie the
+    cut block exists to refuse.
+    """
+    info = _volume_info(_index_volume(3, 4, 2))
+    sentinel = (1.5, 1500.0)
+    monkeypatch.setattr(
+        poc_app,
+        "_volume_abs_grid",
+        _fake_volume_abs_grid([], object(), (0.001, 1.0)),
+    )
+    monkeypatch.setattr(
+        poc_app, "build_cut_sheets", _fake_cut_sheets([], _two_sheets())
+    )
+    plotter = _SheetPlotter()
+
+    cuts_drawn, cut_clims = poc_app._draw_volume_scene(
+        plotter,
+        info,
+        grid=object(),
+        cut_layout=_layout(),
+        cell_mm=CELL_MM,
+        clim_override=sentinel,
+    )
+
+    assert cuts_drawn is True
+    volume_kwargs = plotter.volumes()[0][2]
+    assert volume_kwargs["clim"] is sentinel, (
+        f"the volume was drawn on {volume_kwargs['clim']!r}, not the override the "
+        "caller pinned - a rebuilt range is a different number"
+    )
+    sheet_clims = [kwargs["clim"] for kwargs in _sheet_kwargs(plotter)]
+    assert sheet_clims == [_CLIM_Y, _CLIM_Z], (
+        "the override reached the cut sheets: their own 60 dB ranges were replaced "
+        "by a range measured on the whole field"
+    )
+    assert cut_clims == {"y": _CLIM_Y, "z": _CLIM_Z}
+
+
+def test_no_override_draws_the_range_the_volume_measured_and_a_bare_fallback(
+    monkeypatch,
+):
+    """Default is byte for byte the old picture: own clim, and NO clim on |Ez|.
+
+    WHY the plane fallback must carry no ``clim`` when the caller pinned
+    nothing: it has no range of its own, and inventing one would change the
+    picture this page has always drawn for a dump with no colocated volume. WHY
+    it DOES take an override: with no range of its own, a caller's range is the
+    only one it can be pinned to.
+    """
+    info = _volume_info(_index_volume(3, 4, 2))
+    own_clim = (0.001, 1.0)
+    sentinel = (2.0, 2000.0)
+    monkeypatch.setattr(poc_app, "build_cut_sheets", _fake_cut_sheets([], []))
+
+    # (1) the |E| volume, no override: the range the helper measured, untouched.
+    monkeypatch.setattr(
+        poc_app, "_volume_abs_grid", _fake_volume_abs_grid([], object(), own_clim)
+    )
+    plotter = _SheetPlotter()
+    cuts_drawn, cut_clims = poc_app._draw_volume_scene(
+        plotter, info, grid=object(), cut_layout=_layout(), cell_mm=CELL_MM
+    )
+    assert plotter.volumes()[0][2]["clim"] is own_clim, (
+        f"with no override the volume was pinned to {plotter.volumes()[0][2]['clim']!r}"
+        f" instead of the {own_clim!r} it measured"
+    )
+    assert (cuts_drawn, cut_clims) == (True, {}), (
+        "a scene with no sheets must report no sheets: the legend is built from this"
+    )
+
+    # (2) no volume at all, no override: the |Ez| stack, still with NO clim key.
+    monkeypatch.setattr(
+        poc_app, "_volume_abs_grid", _fake_volume_abs_grid([], None, None)
+    )
+    plotter = _SheetPlotter()
+    poc_app._draw_volume_scene(
+        plotter, info, grid="grid", cut_layout=_layout(), cell_mm=CELL_MM
+    )
+    assert len(plotter.volumes()) == 1
+    assert plotter.volumes()[0][1] == "grid", "the fallback was not drawn on the grid"
+    fallback = plotter.volumes()[0][2]
+    assert fallback["scalars"] == "ez_abs"
+    assert "clim" not in fallback, (
+        f"the plane fallback invented a range: {fallback['clim']!r}"
+    )
+
+    # (3) ...but a caller's override DOES reach it: it has no range of its own.
+    plotter = _SheetPlotter()
+    poc_app._draw_volume_scene(
+        plotter,
+        info,
+        grid="grid",
+        cut_layout=_layout(),
+        cell_mm=CELL_MM,
+        clim_override=sentinel,
+    )
+    assert plotter.volumes()[0][2]["clim"] is sentinel, (
+        "the override did not reach the only volume on screen"
+    )
+
+
+def test_each_cut_sheet_is_drawn_log_on_its_own_axis_range(monkeypatch):
+    """The two sheets come back per AXIS, each log-scaled on its own range.
+
+    WHY per axis and not one number: the corner legend names each cut
+    ("y cut ... z cut ...") and the range beside each name has to be the range
+    that cut was painted on. One range for the pair would put the y cut's peak
+    beside the z cut's number and be believed.
+    """
+    info = _volume_info(_index_volume(3, 4, 2))
+    monkeypatch.setattr(
+        poc_app, "_volume_abs_grid", _fake_volume_abs_grid([], object(), (0.001, 1.0))
+    )
+    monkeypatch.setattr(
+        poc_app, "build_cut_sheets", _fake_cut_sheets([], _two_sheets())
+    )
+    plotter = _SheetPlotter()
+
+    cuts_drawn, cut_clims = poc_app._draw_volume_scene(
+        plotter, info, grid=object(), cut_layout=_layout(), cell_mm=CELL_MM
+    )
+
+    assert cuts_drawn is True
+    assert cut_clims == {"y": _CLIM_Y, "z": _CLIM_Z}, (
+        f"the ranges are {cut_clims!r}, not one per axis: a legend cannot name them"
+    )
+    assert _CLIM_Y != _CLIM_Z, "the fixture shares one range, so it proves nothing"
+    pairs = zip(_sheet_kwargs(plotter), [_CLIM_Y, _CLIM_Z], strict=True)
+    for kwargs, expected in pairs:
+        assert kwargs["scalars"] == "e_abs"
+        assert kwargs["clim"] == expected, (
+            f"a sheet was drawn on {kwargs['clim']!r}, not its own {expected!r}"
+        )
+        assert kwargs["log_scale"] is True, (
+            "a linear |E| sheet shows the peak and nothing else"
+        )
+        assert kwargs["show_scalar_bar"] is False, (
+            "a second colour bar appeared over the same field"
+        )
+
+
+def test_the_volume_and_port_views_both_still_draw_the_board_and_the_markers(
+    monkeypatch,
+):
+    """The delegation must not cost the shared tail in EITHER view.
+
+    WHY this test exists beside the extraction: the field layer is the volume's,
+    but the outline, the axes, the board and the marker layer are drawn after
+    BOTH branches by ``_draw_scene``. A refactor that moved the field layer - or
+    the marker helpers - one level down would quietly drop them from the view
+    that no longer runs that code, and a marker with no board under it is the
+    picture that started this work.
+    """
+    drawn = []
+    _stub_scene(monkeypatch)
+    monkeypatch.setattr(
+        poc_app, "_vis_geometry", lambda p, i, pl: drawn.append("board")
+    )
+    monkeypatch.setattr(
+        poc_app, "_add_markers", lambda p, i, pl: drawn.append("markers")
+    )
+
+    for mode in ("port", "volume"):
+        drawn.clear()
+        passed = dict(_volume_info(_index_volume(3, 4, 2)))
+        passed[poc_app.PLANE_KEY] = np.ones((4, 4, 5), dtype=complex)
+        poc_app._draw_scene(_SheetPlotter(), passed, _planes(4), mode, 0)
+        assert drawn == ["board", "markers"], (
+            f"the {mode} view drew {drawn!r} - the board and the marker layer are "
+            "the shared tail and belong to both views"
+        )
