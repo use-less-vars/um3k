@@ -383,8 +383,7 @@ def _draw(live, index: int, mode: str = "ycut"):
 def volume_page(tmp_path_factory):
     """A page serving a dump that CARRIES an |E| volume, booted for real."""
     with _render_doubled():
-        with contextlib.suppress(Exception):
-            live = _boot(tmp_path_factory.mktemp("vol"), with_volume=True)
+        live = _boot(tmp_path_factory.mktemp("vol"), with_volume=True)
         _silence_view(live)
         assert live.page["info"]["e_abs_volume"] is not None, (
             "the fixture dump lost its |E| volume: nothing below would test the "
