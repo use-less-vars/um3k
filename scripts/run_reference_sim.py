@@ -50,6 +50,17 @@ CW) and REFUSES to guess a path for it, because the default path IS
 script always names a JSON artefact under ``artifacts/``; there is no mode in
 which it writes into ``evidence/``.
 
+``--config`` IS THE SAME NUMBERS WITHOUT THE RETYPING.  ``--config PATH``
+reads a ``emfit.config.RunConfig`` JSON document and gives every flag this run
+did not get on the command line its value from that file (a typed flag always
+wins, so ``--config run.json --nsteps 600`` is a variant of run.json and not a
+silent conflict).  The config is not advisory: the fields it carries are the same
+ones the flags are, resolved BEFORE the plan is priced, so what it changes is
+the argv handed to the reference and therefore the mesh, the frame counts and
+the budgets printed below.  A document is validated where it is read -- unknown
+keys, a stride of 0 and a JSON ``2400.0`` are refused there and not after the
+solve.
+
 Usage (the one command to type, from the repository root):
 
     python3 scripts/run_reference_sim.py
@@ -63,6 +74,10 @@ it.  Wants to see the plan without paying for the solve:
 A cheaper real solve while you are wiring something up:
 
     python3 scripts/run_reference_sim.py --nsteps 600 --volume-stride 30
+
+the same run, stated once and then reused:
+
+    python3 scripts/run_reference_sim.py --config artifacts/run.json --dry-run
 
 and then, verbatim from the printed block:
 
@@ -161,6 +176,72 @@ def load_reference():
 
 
 # --------------------------------------------------------------------------- #
+# the run's numbers: a config file, or the flags, or the defaults above
+# --------------------------------------------------------------------------- #
+def load_config(path: str | None):
+    """Read a ``RunConfig`` document, or ``None`` when no ``--config`` was given.
+
+    Imported here and not at module top: ``emfit.config`` is only reachable once
+    ``_sys_path_guard`` has run (this file is typed as a path, so ``scripts/`` is
+    on ``sys.path`` and the repository root may not be), and the module is pure
+    stdlib so the import is cheap when it does happen.
+
+    A document that does not validate is turned into a SystemExit naming the
+    path: the failure is ``--config``'s, so the message has to say which file it
+    was, or the caller is left reading a TypeError about a field they never
+    typed.
+    """
+    if path is None:
+        return None
+    _sys_path_guard()
+    from emfit.config import RunConfig
+
+    try:
+        return RunConfig.from_json_file(path)
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit(f"REFUSED: --config {path}: {exc}")
+
+
+# Which namespace attribute comes from which config field, and what it is when
+# NEITHER the flag nor a config names it.  The fallbacks are this module's own
+# constants (or None for "the reference's default"), stated once, so a flag and
+# the config field that overrides it cannot drift apart.
+CONFIG_DRIVEN = (
+    ("npz", str(DEFAULT_NPZ)),
+    ("out", str(DEFAULT_OUT)),
+    ("nsteps", DEFAULT_NSTEPS),
+    ("volume_stride", DEFAULT_VOLUME_STRIDE),
+    ("dump_stride", DEFAULT_DUMP_STRIDE),
+    ("volume_frames", None),
+    ("pulse_freq_ghz", None),
+    ("n_line", None),
+    ("xcut_near_mm", None),
+    ("xcut_far_mm", None),
+)
+
+
+def apply_config(args: argparse.Namespace, config) -> argparse.Namespace:
+    """Resolve every CONFIG_DRIVEN flag in place: flag if typed, else config.
+
+    The flags whose value a config may supply default to ``None`` ("not given")
+    rather than to their real default, because ``--nsteps 2400`` typed by hand
+    and ``--nsteps`` absent are different statements -- the first is a choice
+    that must BEAT the config, the second is the absence a config fills.  Both
+    are None-checked here, once, and then the ordinary validation below runs on
+    plain values again.
+
+    Returns ``args`` for symmetry with the other helpers; the mutation is the
+    point (``reference_argv`` / ``plan`` / ``print_plan`` read the namespace).
+    """
+    for name, fallback in CONFIG_DRIVEN:
+        if getattr(args, name) is not None:
+            continue                      # the command line wins, always
+        value = getattr(config, name) if config is not None else None
+        setattr(args, name, fallback if value is None else value)
+    return args
+
+
+# --------------------------------------------------------------------------- #
 # the plan, taken from the reference itself
 # --------------------------------------------------------------------------- #
 def reference_argv(args: argparse.Namespace) -> list[str]:
@@ -184,6 +265,18 @@ def reference_argv(args: argparse.Namespace) -> list[str]:
         argv += ["--volume-frames", str(args.volume_frames)]
     if args.pulse_freq_ghz is not None:
         argv += ["--pulse-freq-ghz", str(args.pulse_freq_ghz)]
+    # The mesh and the two x-cut frames.  Passed whenever they are known --
+    # which, once a config is loaded, is always -- so that the values the plan
+    # is priced on are the values the solve uses.  ``--n-line`` is the one that
+    # moves the CELL COUNT (nx = n_pml + n_ref + n_line) and so the volume's
+    # price; the x-cut pair only moves which columns the two frames show, which
+    # the plan does not price but the dump does record.
+    if args.n_line is not None:
+        argv += ["--n-line", str(args.n_line)]
+    if args.xcut_near_mm is not None:
+        argv += ["--xcut-near-mm", str(args.xcut_near_mm)]
+    if args.xcut_far_mm is not None:
+        argv += ["--xcut-far-mm", str(args.xcut_far_mm)]
     return argv
 
 
@@ -374,14 +467,24 @@ def main(argv: list[str] | None = None) -> int:
                "(the server prints its URL and does not open a browser; Ctrl-C "
                "stops it).")
     ap.add_argument(
-        "--npz", default=str(DEFAULT_NPZ), metavar="PATH",
+        "--config", default=None, metavar="PATH",
+        help="read the run's numbers from an emfit.config.RunConfig JSON "
+             "document (default: none). Every flag below that was NOT typed on "
+             "this command line takes its value from the file; a typed flag "
+             "wins. The file is validated where it is read: an unknown key, a "
+             "stride of 0 and a JSON 2400.0 are refused there, before anything "
+             "is priced. --npz/--out/--nsteps/--volume-stride/--dump-stride "
+             "/--volume-frames/--pulse-freq-ghz/--n-line/--xcut-near-mm "
+             "/--xcut-far-mm are all config-driven.")
+    ap.add_argument(
+        "--npz", default=None, metavar="PATH",
         help="where the field dump goes (default: artifacts/reference_sim_volume"
              ".npz). This is the file the viewer loads, and the only argument "
              "the viewer needs. Refused if it resolves inside evidence/, because "
              "run_build_A.py does not guard this path and the tree keeps no "
              "history to restore a tracked dump from.")
     ap.add_argument(
-        "--out", default=str(DEFAULT_OUT), metavar="PATH",
+        "--out", default=None, metavar="PATH",
         help="where the run's JSON artefact goes (default: artifacts/"
              "reference_sim_run.json). ALWAYS passed explicitly: a --vis-dump "
              "run is pulse-excited, i.e. a DEVIATION from arm A's certified CW "
@@ -389,14 +492,14 @@ def main(argv: list[str] | None = None) -> int:
              "rather than risk writing another run's numbers over "
              "evidence/termination/build_A_50ohm.json.")
     ap.add_argument(
-        "--nsteps", type=int, default=DEFAULT_NSTEPS, metavar="N",
+        "--nsteps", type=int, default=None, metavar="N",
         help=f"FDTD steps (default: {DEFAULT_NSTEPS}, which is run_build_A.py's "
              "own default and the length the certified run uses). This is the "
              "knob that moves the volume's frame count, and therefore the one "
              "that can push the volume over its 48 MB budget -- the plan line "
              "says so before the solve starts.")
     ap.add_argument(
-        "--volume-stride", type=int, default=DEFAULT_VOLUME_STRIDE, metavar="N",
+        "--volume-stride", type=int, default=None, metavar="N",
         help=f"keep every Nth y-cut FRAME in the |E| volume (default: "
              f"{DEFAULT_VOLUME_STRIDE}). FRAMES, not solver steps: the counter "
              "this divides is the one --dump-stride already thins, so the steps "
@@ -413,13 +516,30 @@ def main(argv: list[str] | None = None) -> int:
              "look at'. Refused at 0: a dump with no frames is not a smaller "
              "dump, it is a file that lies about having a volume.")
     ap.add_argument(
-        "--dump-stride", type=int, default=DEFAULT_DUMP_STRIDE, metavar="N",
+        "--dump-stride", type=int, default=None, metavar="N",
         help=f"keep every Nth solver step's planes (default: "
              f"{DEFAULT_DUMP_STRIDE}). run_build_A.py RAISES this itself if the "
              "planes would not fit their 45 MB budget, so a value here is a "
              "floor and not a guarantee; the plan line shows the stride the "
              "reference actually settled on, which is also the multiplier in the "
              "volume's step cadence.")
+    ap.add_argument(
+        "--n-line", type=int, default=None, metavar="N",
+        help="line cells between the reference plane and the top of the grid "
+             "(default: run_build_A.py's own 54, i.e. a 62 column mesh; 79 "
+             "gives 87, Run E's length). nx = n_pml + n_ref + n_line, so this "
+             "is the one mesh integer that moves the CELL COUNT and therefore "
+             "the |E| volume's price -- the plan line re-prices it for you.")
+    ap.add_argument(
+        "--xcut-near-mm", type=float, default=None, metavar="MM",
+        help="x position of the near x-cut frame stored in the dump (default: "
+             "run_build_A.py's 20.4 mm, on the line just before the load). The "
+             "dump records this frame's column; the plan does not price it.")
+    ap.add_argument(
+        "--xcut-far-mm", type=float, default=None, metavar="MM",
+        help="x position of the far x-cut frame stored in the dump (default: "
+             "run_build_A.py's 22.0 mm, past the load). Must be greater than "
+             "--xcut-near-mm in the config, where the pair is validated.")
     ap.add_argument(
         "--pulse-freq-ghz", type=float, default=None, metavar="GHZ",
         help="centre of the Ricker pulse (default: run_build_A.py's "
@@ -435,6 +555,21 @@ def main(argv: list[str] | None = None) -> int:
              "--dry-run call block, so the mesh and frame counts are the ones the "
              "solve would use, not this script's opinion of them.")
     args = ap.parse_args(argv)
+
+    # A config supplies every flag that was not typed, and it does so HERE --
+    # before the validation below and before anything is priced. That ordering
+    # is what makes the file load-bearing rather than decorative: from this
+    # point on the namespace holds plain values and every downstream helper
+    # (``reference_argv``, ``plan``, ``print_plan``) is pricing the config's
+    # numbers without knowing a config was involved.
+    config = load_config(args.config)
+    apply_config(args, config)
+    if config is not None:
+        # Named in the plan, because a run whose mesh came from a file has to
+        # say which file: the flags printed below are the resolved values, and
+        # without this line the document they came from is invisible.
+        print(f"CONFIG      {Path(args.config).resolve()} "
+              f"(schema {config.schema_version})")
 
     if args.nsteps < 1:
         raise SystemExit(f"REFUSED: --nsteps {args.nsteps}: a solve needs at "
