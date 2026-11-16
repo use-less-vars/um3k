@@ -10367,6 +10367,17 @@ def run_web_vis(
             # layer, so toggling one must rebuild it - and nothing else.
             key = (page.get("path"), vol_frame, show_load, show_port)
             if same_source and entry.get("key") == key:
+                # WHY the step is rewritten on a HIT: ``step`` is the sim time this
+                # layer is showing, and MANY frame-slider positions map onto ONE
+                # stored volume frame - a bucket of ``dump_stride *
+                # volume_stride`` steps. Returning here without refreshing it left
+                # the entry naming the step of the FIRST draw in the bucket, so a
+                # readout fed from it froze for the whole bucket: a silent lie
+                # about simulation time. Nothing is rebuilt - only the one field
+                # the hit made stale is refreshed, with the SAME value the rebuild
+                # below would have stored (a lookup through ``frame_index``, never
+                # ``index + 1``).
+                entry["step"] = step
                 return
             _volume_layer_drop()
             # The |E| image FIRST: ``_cut_layout`` and ``_volume_cut_sheets`` both

@@ -85,6 +85,18 @@ QUIET_FRAME = 3
 FPS = 25
 TRIGGER_NAME = "step_fwd"
 
+#: A SECOND dump whose |E| volume is saved every 15th step, so the FIVE
+#: consecutive frame-slider positions 0..4 (steps 2, 5, 8, 11, 14) all map onto
+#: ONE stored volume frame and every draw after the first is a CACHE HIT.
+#: The steps are deliberately not ``index + 1``: the volume layer's step mapping
+#: is a lookup through ``frame_index``, and a mapping that hardcoded ``index + 1``
+#: would answer 1, 2, 3, 4, 5 here - wrong on every one of these positions.
+BUCKET_NT = 6
+BUCKET_FRAME_INDEX = (2, 5, 8, 11, 14, 17)
+BUCKET_DUMP_STRIDE = 3
+BUCKET_VOLUME_STEPS = (2, 17)
+BUCKET_VOLUME_STRIDE = 15
+
 
 class _Stop(Exception):
     """Unwinds ``run_web_vis`` just before it enters the event loop."""
@@ -145,6 +157,30 @@ def _payload(*, with_volume: bool) -> dict:
     return payload
 
 
+def _bucket_payload() -> dict:
+    """``_payload``'s dump, with ONE volume bucket spanning five slider positions.
+
+    ``e_abs_volume_step_index = (2, 17)`` at ``e_abs_volume_stride = 15`` means
+    the steps 2..16 are all shown by stored volume frame 0, so five CONSECUTIVE
+    frame-slider positions (``frame_index = 2, 5, 8, 11, 14``) share one cache
+    key.  That is the shape ``--volume-stride`` produces on a real run, and it
+    is the only shape in which the layer's early-return path is taken at all.
+    """
+    payload = _payload(with_volume=False)
+    rng = np.random.default_rng(1)
+    payload["nt"] = np.array(BUCKET_NT)
+    payload["t_ns"] = np.arange(BUCKET_NT) * 3e-3
+    payload["ez_ycut"] = rng.normal(size=(BUCKET_NT, NX, NZ))
+    payload["frame_index"] = np.array(BUCKET_FRAME_INDEX)
+    payload["dump_stride"] = np.array(BUCKET_DUMP_STRIDE)
+    payload["nsteps"] = np.array(BUCKET_FRAME_INDEX[-1] + 1)
+    volume = np.abs(rng.normal(size=(len(BUCKET_VOLUME_STEPS), NX, NY, NZ))) * 1e-3
+    payload["e_abs_volume"] = volume.astype(np.float32)
+    payload["e_abs_volume_step_index"] = np.array(BUCKET_VOLUME_STEPS, dtype=int)
+    payload["e_abs_volume_stride"] = np.array(BUCKET_VOLUME_STRIDE)
+    return payload
+
+
 def _foreign_get_server_holders() -> list:
     """Loaded modules holding a ``get_server`` that is not the real one.
 
@@ -161,7 +197,9 @@ def _foreign_get_server_holders() -> list:
     return holders
 
 
-def _boot(tmp_path: Path, *, with_volume: bool) -> SimpleNamespace:
+def _boot(
+    tmp_path: Path, *, with_volume: bool, payload: dict | None = None
+) -> SimpleNamespace:
     """Run ``run_web_vis`` up to the point it would call ``server.start``.
 
     Same recipe as artifacts/verify_wd.py and tests/test_poc_playback.py: let
@@ -183,8 +221,9 @@ def _boot(tmp_path: Path, *, with_volume: bool) -> SimpleNamespace:
     every server object and every cached reference, and it is undone
     unconditionally on the way out.
     """
+    payload = _payload(with_volume=with_volume) if payload is None else payload
     path = tmp_path / ("volume.npz" if with_volume else "no_volume.npz")
-    np.savez(path, **_payload(with_volume=with_volume))
+    np.savez(path, **payload)
     info = app.load_vis(path)
 
     stopped: list = []
@@ -392,6 +431,23 @@ def volume_page(tmp_path_factory):
         yield live
 
 
+@pytest.fixture(scope="module")
+def bucket_page(tmp_path_factory):
+    """A page whose |E| volume buckets FIVE consecutive slider positions at once."""
+    with _render_doubled():
+        live = _boot(
+            tmp_path_factory.mktemp("bucket"),
+            with_volume=True,
+            payload=_bucket_payload(),
+        )
+        _silence_view(live)
+        assert live.page["info"]["e_abs_volume"] is not None, (
+            "the bucket fixture dump lost its |E| volume: the cache-hit path "
+            "below would never be taken"
+        )
+        yield live
+
+
 @pytest.fixture
 def no_volume_page(tmp_path_factory):
     """A page serving the same dump with every ``e_abs_volume*`` key absent."""
@@ -531,6 +587,71 @@ def test_the_volume_frame_is_looked_up_not_step_over_stride(volume_page):
             f"the image on screen peaks at {on_screen!r}, but volume frame "
             f"{expected_frame} peaks at {float(np.max(volume[expected_frame]))!r} "
             "- the frame the bookkeeping named is not the frame that was drawn"
+        )
+
+
+def test_a_cache_hit_still_reports_the_step_being_asked_for(bucket_page):
+    """A CACHE HIT must still name the step the frame slider is asking for.
+
+    ``_draw_volume_layer`` caches on ``(page, volume frame, load, port)``, and
+    ONE stored volume frame covers a whole BUCKET of animation steps
+    (``dump_stride * volume_stride`` of them).  So the early return is not an
+    edge case - it is every frame of a recorded clip except one in a hundred -
+    and ``step``, which names the SIM TIME this layer is showing, has to be
+    rewritten on that path exactly as a rebuild would write it.
+
+    The bug this pins: the entry kept the step of the FIRST draw in the bucket,
+    so a readout fed from ``entry['step']`` froze while the animation advanced.
+    The assertion is on the SECOND..FIFTH draw of one bucket, all reached
+    through the early return; it fails on any implementation that returns
+    before refreshing the field.
+    """
+    live = bucket_page
+    info = live.page["info"]
+    requested = [int(step) for step in info["frame_index"][:5]]
+    assert requested == [2, 5, 8, 11, 14], requested
+
+    # The premise, stated so a fixture change cannot make this test vacuous:
+    # all five positions resolve to the SAME stored volume frame, so the draws
+    # below are one rebuild followed by four cache hits.
+    frames = {
+        app._volume_frame_for_step(info["e_abs_volume_step_index"], step)
+        for step in requested
+    }
+    assert frames == {0}, (
+        f"the five slider positions mapped to volume frames {sorted(frames)}, "
+        "not to ONE bucket: the early-return path would never be taken"
+    )
+    for index, step in enumerate(requested):
+        assert step != index + 1, (
+            f"slider {index} happens to ask for step {index + 1}: a step mapping "
+            "hardcoded to index + 1 would pass this case, so the dump cannot "
+            "tell it from the real one"
+        )
+
+    # The cache is dropped ONCE, on purpose: ``_draw`` (used elsewhere) empties
+    # it before every call, which is exactly the rebuild path and never this one.
+    live.handles.pop("volume_layer", None)
+    live.draw(0, "ycut")
+    first = _layer_entry(live)
+    assert first["step"] == requested[0], (
+        f"the first draw of the bucket recorded step {first['step']!r}, expected "
+        f"{requested[0]} (frame_index[0]); the rebuild path is wrong too"
+    )
+
+    for index in range(1, 5):
+        live.draw(index, "ycut")
+        entry = _layer_entry(live)
+        assert entry is first, (
+            f"slider {index} rebuilt the layer instead of hitting the cache (a "
+            "new entry object): this test is about the early-return path"
+        )
+        assert entry["step"] == requested[index], (
+            f"cache hit at slider {index} left entry['step'] = {entry['step']!r} "
+            f"while the frame slider asks for step {requested[index]} "
+            f"(frame_index[{index}]): a readout fed from this entry names the "
+            f"step of the FIRST draw in the bucket ({requested[0]}) instead of "
+            "the frame on screen"
         )
 
 
