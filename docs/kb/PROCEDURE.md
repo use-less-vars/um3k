@@ -360,14 +360,8 @@ then cite. If you cannot name the commit, the claim is `[UNCITED]`.
 
 ## 13. Running the gate on a git-capable host
 
-The gate is designed to be run where the repository is:
-
-```
-git add -A && git commit -m "kb: content"
-python3 scripts/repin_kb.py
-git add -A && git commit -m "kb: pins"
-python -m pytest tests/test_kb_integrity.py -q
-```
+The five commands, in order, are in `docs/kb/RUNBOOK.md`; this section says
+what each of them is for.
 
 Seven of the ten assertions — A1, A3, A5, A6, A7, A8, A9 — need only the tree
 and pass anywhere. The other three are the git-dependent trio: A2

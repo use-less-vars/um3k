@@ -2,7 +2,7 @@
   "schema": "kb-pins/1",
   "core_handoff_id": "gen13->gen14",
   "newest_commit_date": null,
-  "uncited_baseline": 0,
+  "uncited_baseline": 1,
   "budgets": {
     "core": 46080,
     "core_warn": 38912,

@@ -904,3 +904,21 @@ def test_a10_staleness():
     if warnings:
         print("WARN: " + "; ".join(warnings))
     print("A10 ok: %d source pins audited, newest_commit %s is %s days old" % (len(set(bases)), stamped[:12], age if age is not None else "?"))
+
+
+# A11 is a floor, not a count: while PINS.claims[] is empty A8 prints "0 claims
+# evaluated, 0 pinned" and passes, so a green A8 proves nothing until a claim exists.
+@pytest.mark.xfail(strict=True, reason="PINS.claims[] is empty: no registered claim, so A8 has nothing to resolve")
+def test_A11_claim_coverage_floor():
+    """PINS.claims[] holds at least one registered claim, read through the same
+    accessor A7 and A8 use, so A8 is not vacuous.  Strict xfail: the day the first
+    claim lands this test XPASSes and the suite goes red until the marker is
+    deleted - the floor is met by registering a claim, never by dropping the
+    assertion."""
+    pin = pins()
+    claims = pin.get("claims") or []
+    assert claims, (
+        "A11 FAIL: PINS.claims[] is empty, so A8 evaluates nothing; register the claim "
+        "with its pin_commit and required_token in PINS.json"
+    )
+    print("A11 ok: %d registered claims" % len(claims))

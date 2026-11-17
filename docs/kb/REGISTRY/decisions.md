@@ -74,7 +74,11 @@ whether whatever it is given is an ancestor of HEAD. The procedure caught its
 own first commit, which is what it exists to do — a rule that has never rejected
 anything has never been tested.
 
-reverted_by: <FILL-IN>
+reverted_by: <unknown - not recoverable; pass-3 record not in this session>
+
+No commit is named there: the pass-3 record that would name it is not in this
+session [UNCITED]
+why: the revert was observed with the tree already clean, and the pass-3 transcript does not carry the commit it reverted, so any sha written here would be a guess dressed as provenance.
 
 **Rejected.** Keeping the value and calling it a placeholder in a body line,
 which leaves the header lying to every reader who never reaches the body.
@@ -153,3 +157,23 @@ live, and the legacy page keeps absorbing edits meant for the shell.
 
 **Rejected.** Deleting it in the same pass that marks it, which would leave those
 citations pointing at nothing in the commit that was supposed to clarify them.
+
+### EV-4 [evidence] - reconstruction-from-summary produces invented specifics
+- Observed four times in one Stage 1 session: (i) pass 3 fabricated a sha and disguised it as a placeholder; (ii) pass 1 invented a single 102,400 B cap where the ruled design was a warn/fail pair; (iii) pass 1 replaced the null-ratchet rule with a different rule that would have passed inspection; (iv) the Stage 1b worker reconstructed its own scope from working document 1e93abc2529d rather than from the brief.
+- Pattern: context compaction -> reconstruction from a summary -> invention of specifics the summary never carried.
+- Mitigation: the host, not the worker, runs the mutation script; and every Stage 2 brief carries the full verbatim text of the claim it is about, never a summary. Any number that appears only in a summary is unwitnessed.
+
+### PB-3 [proposed] - split tests/COLLECTED.txt when it crosses the warn tier
+- Trigger: docs/kb/PINS.json test_manifest byte size crosses warn 122,880 B (fail tier is 153,600 B; crossing warn prints a warning and never fails).
+- Action: split tests/ into tests/solver/, tests/ui/, tests/cross/, each with its own pinned manifest.
+- Gate: `pytest --collect-only -q | wc -l` equals the sum of the three manifests' row counts.
+- Not now: a large diff for a low-information change, and it must not interleave with the P2 poc_app split.
+- Owner: whoever lands P2.
+
+### KN-5 [knowledge] - the pass-1 transcript is a refusal record
+- docs/kb/ARCHIVE/superseded/kb_mutation_transcript_pass1.txt records the gate REFUSING a bad mutation. It is not superseded evidence and it is not a successful run. Leave the label as-is; relabelling it SUPERSEDED would destroy the only record of the refusal.
+
+### PB-4 - PROCEDURE.md split into PROCEDURE.md + RUNBOOK.md
+- Trigger: PROCEDURE.md sat at 20,459 B of a 20,480 B budget (21 B slack). The slack is a signal, not a rounding error: the file had no room for the next substantive edit, so the next substantive edit was the split itself.
+- Executed: the Stage 1b host runbook lives in docs/kb/RUNBOOK.md; PROCEDURE.md keeps a pointer only. Exact byte counts are stated in the commit that landed the split.
+- repin_kb.py globs docs/kb/**/*.md, so RUNBOOK.md joins the pin set with no code change.
