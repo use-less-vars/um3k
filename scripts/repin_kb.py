@@ -2,11 +2,14 @@
 """Re-pin ``docs/kb`` after a content commit.
 
 Default mode rewrites ``docs/kb/PINS.json``: ``files[]`` (path, layer and the
-sha256 of that path's **HEAD blob**, read with ``git show HEAD:<path>``) and
-``newest_commit_date`` (``git log -1 --format=%cI HEAD``).  Every other key -
-``schema``, ``core_handoff_id``, ``uncited_baseline``, ``budgets``, ``claims`` -
-is preserved, and the seven keys are written in the fixed order the gate
-expects.
+sha256 of that path's **canonical HEAD blob** - ``git show HEAD:<path>`` with
+the three provenance values masked by ``scripts/kb_canonical.py``) plus
+``newest_commit`` (the full 40-character HEAD sha the pin was taken at) and
+``newest_commit_date`` (``git log -1 --format=%cI HEAD``, informational: the
+gate ratchets on ``newest_commit`` and no longer asserts this string).  Every
+other key - ``schema``, ``core_handoff_id``, ``uncited_baseline``, ``budgets``,
+``claims`` - is preserved, and the eight keys are written in the fixed order
+the gate expects.
 
 ``--check`` reports drift and writes nothing.  ``--patch-headers`` rewrites only
 the front-matter ``pinned_commit``, ``pinned_at`` and ``last_verified`` of every
@@ -22,19 +25,23 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
+#: a pin covers the canonical form, so the gate has to hash through this very
+#: module; run as a script, this file's own directory makes it importable.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from kb_canonical import canonical_sha256  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 KB = "docs/kb"
 KB_DIR = REPO / KB
 PINS_PATH = KB_DIR / "PINS.json"
 PINS_ITSELF = KB + "/PINS.json"
-KEY_ORDER = ("schema", "core_handoff_id", "newest_commit_date", "uncited_baseline", "budgets", "files", "claims")
+KEY_ORDER = ("schema", "core_handoff_id", "newest_commit", "newest_commit_date", "uncited_baseline", "budgets", "files", "claims")
 #: the root entry files declare layer root, like every file directly under docs/kb.
 ROOT_KINDS = {"docs/kb/README.md": "root", "docs/kb/PROCEDURE.md": "root"}
 EXTRA_PINNED = ("tests/COLLECTED.txt",)
@@ -81,7 +88,7 @@ def build_files(pin: dict, check_only: bool) -> list:
     out = []
     for path in pinned_paths(pin):
         try:
-            digest = hashlib.sha256(git("show", "HEAD:%s" % path)).hexdigest()
+            digest = canonical_sha256(git("show", "HEAD:%s" % path))
         except SystemExit:
             if check_only:
                 raise
@@ -107,10 +114,14 @@ def write_pins(force: bool) -> int:
         print("repin: docs/kb is dirty; commit the content first (or pass --force):\n%s" % dirty, file=sys.stderr)
         return 2
     pin["files"] = build_files(pin, check_only=False)
+    pin["newest_commit"] = head()
     pin["newest_commit_date"] = head_date()
     PINS_PATH.write_text(json.dumps(ordered(pin), indent=2) + "\n", encoding="utf-8")
-    print("repin: wrote %s (%d pins, newest_commit_date %s)" % (PINS_ITSELF, len(pin["files"]), pin["newest_commit_date"]))
-    # newest_commit_date is set from here on, so no header may keep a null pin:
+    print(
+        "repin: wrote %s (%d pins, newest_commit %s at %s)"
+        % (PINS_ITSELF, len(pin["files"]), pin["newest_commit"][:12], pin["newest_commit_date"])
+    )
+    # newest_commit is set from here on, so no header may keep a null pin:
     # patch them in the same run rather than leaving a half-pinned tree behind.
     return patch_headers(apply=True)
 
@@ -128,13 +139,15 @@ def check() -> int:
             drift.append("%s: layer %r != %r" % (entry["path"], old.get("layer"), entry["layer"]))
     for path in sorted(set(current) - {e["path"] for e in expected}):
         drift.append("%s: pinned but no longer pinnable" % path)
-    newest = head_date()
-    if pin.get("newest_commit_date") != newest:
-        drift.append("newest_commit_date %r != %r" % (pin.get("newest_commit_date"), newest))
+    newest = head()
+    # newest_commit is what the gate ratchets on; newest_commit_date is
+    # informational, so a stale date on its own is not drift.
+    if pin.get("newest_commit") != newest:
+        drift.append("newest_commit %r != HEAD %r" % (pin.get("newest_commit"), newest))
     if drift:
         print("repin --check: PINS.json is stale:\n  " + "\n  ".join(drift), file=sys.stderr)
         return 1
-    print("repin --check: no drift (%d pins, newest_commit_date %s)" % (len(expected), newest))
+    print("repin --check: no drift (%d pins, newest_commit %s)" % (len(expected), newest[:12]))
     return 0
 
 

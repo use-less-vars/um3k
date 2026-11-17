@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.kb_canonical import canonical_bytes
+
 REPO = Path(__file__).resolve().parents[1]
 KB = "docs/kb"
 KB_DIR = REPO / KB
@@ -53,6 +55,9 @@ PINS_KEYS = (
     "files",
     "claims",
 )
+#: keys ``scripts/repin_kb.py`` writes that a pre-repin PINS.json does not carry
+#: yet: A1 tolerates their presence, A10 is what requires ``newest_commit``.
+PINS_OPTIONAL_KEYS = ("newest_commit",)
 #: A1's layer enum governs markdown headers, and PINS.files[].layer reuses it
 #: verbatim - the two root entry files are "root" - plus exactly one kind for the
 #: manifest that lives outside docs/kb/.
@@ -307,8 +312,11 @@ def tags_in_tree():
 
 def pins_shape_problems(pin: dict) -> list:
     problems = []
-    if sorted(pin) != sorted(PINS_KEYS):
-        problems.append("PINS.json keys %s != exactly %s" % (sorted(pin), sorted(PINS_KEYS)))
+    if sorted(pin) not in (sorted(PINS_KEYS), sorted(PINS_KEYS + PINS_OPTIONAL_KEYS)):
+        problems.append(
+            "PINS.json keys %s != exactly %s (optionally plus %s)"
+            % (sorted(pin), sorted(PINS_KEYS), list(PINS_OPTIONAL_KEYS))
+        )
     if pin.get("schema") != SCHEMA:
         problems.append("PINS.schema %r is not the string %r" % (pin.get("schema"), SCHEMA))
     handoff = pin.get("core_handoff_id")
@@ -414,9 +422,12 @@ def test_a1_header_completeness():
 
 
 def test_a2_self_pins():
-    """PINS.files[].sha256 is the sha256 of the blob at HEAD and of the working
-    file: a pin names the bytes at a commit, so an unpinned or silently edited
-    file is red."""
+    """PINS.files[].sha256 is the sha256 of the **canonical** HEAD blob and of the
+    **canonical** working file: ``scripts/kb_canonical.py`` masks the three
+    front-matter provenance values and touches nothing else.  A pin names the
+    content at a commit - not the header ``scripts/repin_kb.py`` itself rewrites -
+    so an unpinned or silently edited file is red, and a freshly re-pinned tree is
+    not."""
     available, why = git_probe()
     if not available:
         pytest.fail(
@@ -440,24 +451,29 @@ def test_a2_self_pins():
         if not ok:
             problems.append("%s: %s" % (path, why))
             continue
-        actual = hashlib.sha256(blob).hexdigest()
+        actual = hashlib.sha256(canonical_bytes(blob)).hexdigest()
         if actual != digest:
-            problems.append("%s: HEAD blob sha256 %s != pinned %s" % (path, actual[:16], digest[:16]))
+            problems.append(
+                "%s: HEAD blob canonical sha256 %s != pinned %s - the content committed at "
+                "HEAD is not what PINS.json pinned; run scripts/repin_kb.py after the "
+                "content commit" % (path, actual[:16], digest[:16])
+            )
             continue
         target = REPO / path
         if not target.is_file():
             problems.append("%s: pinned but absent from the working tree" % path)
             continue
-        working = hashlib.sha256(target.read_bytes()).hexdigest()
+        working = hashlib.sha256(canonical_bytes(target.read_bytes())).hexdigest()
         if working != digest:
             problems.append(
-                "%s: working-tree sha256 %s != pinned %s (edited without re-pinning, or the "
-                "tree is dirty: A4)" % (path, working[:16], digest[:16])
+                "%s: working-tree canonical sha256 %s != pinned %s - the file on disk is not "
+                "what PINS.json pinned (edited without re-pinning, or the tree is dirty: A4)"
+                % (path, working[:16], digest[:16])
             )
             continue
         verified += 1
     assert not problems, "A2 FAIL: self-pin verification ran and disagreed with PINS.json:\n  " + "\n  ".join(problems)
-    print("A2 ok: %d self-pins match HEAD and the working tree" % verified)
+    print("A2 ok: %d self-pins match HEAD and the working tree (canonical form)" % verified)
 
 
 def test_a3_budgets():
@@ -735,15 +751,18 @@ def test_a9_uncited_baseline():
 
 
 def test_a10_staleness():
-    """A10 is the staleness assertion and the pin ratchet.
+    """A10 is the staleness assertion and the pin ratchet, keyed on a commit.
 
-    Once ``PINS.newest_commit_date`` names a date, no non-root header may keep
+    Once ``PINS.newest_commit`` names a commit, no non-root header may keep
     ``pinned_commit: null`` - a surviving null is a hard failure naming the
-    path - and every source pin (``claims[].pin_commit`` and each non-root
-    header's ``pinned_commit``) must be an ancestor of HEAD, the newest commit
-    must be inside the 14-day window, ``PINS.newest_commit_date`` must still
-    name it, and pin..HEAD distance warns at 20 / fails at 50.  While
-    ``PINS.newest_commit_date`` is null the pins have simply not been generated
+    path - and every source pin (``PINS.newest_commit``, ``claims[].pin_commit``
+    and each non-root header's ``pinned_commit``) must be an ancestor of HEAD,
+    inside the 14-day window measured on that commit's own committer date, with
+    pin..HEAD distance warning at 20 and failing at 50 - so a distance of 1 is a
+    normal, green state.  ``PINS.newest_commit_date`` is informational only:
+    asserting a ``%cI`` string would be unsatisfiable together with A4, since
+    re-pinning happens before the commit that makes the tree clean.  While
+    ``newest_commit`` is absent or null the pins have simply not been generated
     yet: A10 says exactly that and names the command that generates them,
     instead of reporting a stale tree."""
     available, why = git_probe()
@@ -754,12 +773,18 @@ def test_a10_staleness():
             "git-capable host." % why
         )
     pin = pins()
-    stamped = pin.get("newest_commit_date")
+    stamped = pin.get("newest_commit")
     if stamped is None:
         pytest.fail(
-            "A10 FAIL: pins have not been generated yet (PINS.newest_commit_date is null) - run "
-            "python3 scripts/repin_kb.py on a git-capable host"
+            "A10 FAIL: pins have not been generated yet (PINS.newest_commit is %r) - run "
+            "python3 scripts/repin_kb.py on a git-capable host" % (stamped,)
         )
+    if not SHA1.match(str(stamped)):
+        pytest.fail(
+            "A10 FAIL: PINS.newest_commit %r is not a 40-character lowercase hex sha - run "
+            "python3 scripts/repin_kb.py on a git-capable host" % (stamped,)
+        )
+    stamped = str(stamped)
     problems: list = []
     warnings: list = []
     ok, out, why = git_run(["rev-parse", "HEAD"], "resolve HEAD")
@@ -767,6 +792,14 @@ def test_a10_staleness():
         pytest.fail("A10 FAIL: git ran but could not resolve HEAD: %s" % why)
     head = out.decode().strip()
     bases: list = []
+    if is_ancestor(stamped, head):
+        bases.append(stamped)
+    else:
+        problems.append(
+            "PINS.newest_commit %s is not an ancestor of HEAD: the pin names a commit this "
+            "history does not contain (rewritten history, or commits landed without "
+            "scripts/repin_kb.py)" % stamped[:12]
+        )
     for claim in pin.get("claims") or []:
         cid = claim.get("id") or "<no id>"
         commit = claim.get("pin_commit") or ""
@@ -780,29 +813,36 @@ def test_a10_staleness():
         if commit is None:
             if head_fm.get("layer") != "root":
                 problems.append(
-                    "%s: header pinned_commit is null although PINS.newest_commit_date is %r; a null pin is "
+                    "%s: header pinned_commit is null although PINS.newest_commit is %s; a null pin is "
                     "legal only before the first scripts/repin_kb.py run, and that run has happened "
-                    "(scripts/repin_kb.py --patch-headers fixes it)" % (rel(path), stamped)
+                    "(scripts/repin_kb.py --patch-headers fixes it)" % (rel(path), stamped[:12])
                 )
             continue
         if is_ancestor(commit, head):
             bases.append(commit)
         else:
             problems.append("%s: header pinned_commit %r is not an ancestor of HEAD; the header names a commit this history does not contain (scripts/repin_kb.py --patch-headers fixes it)" % (rel(path), commit))
-    ok, out, why = git_run(["log", "-1", "--format=%cI", "HEAD"], "read the newest commit date")
+    ok, out, why = git_run(
+        ["log", "-1", "--format=%cI", stamped],
+        "read the committer date of PINS.newest_commit %s" % stamped[:12],
+    )
     age = None
     if not ok:
         problems.append(why)
     else:
-        newest = out.decode().strip()
+        pinned_date = out.decode().strip()
         try:
-            age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(newest)).days
+            age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(pinned_date)).days
         except ValueError:
-            problems.append("newest commit date %r is not ISO 8601" % newest)
+            problems.append(
+                "the committer date %r of PINS.newest_commit %s is not ISO 8601" % (pinned_date, stamped[:12])
+            )
         if age is not None and age > STALE_DAYS:
-            problems.append("the newest commit is %d days old (%s), past the %d-day freshness window: re-verify the KB against the code" % (age, newest, STALE_DAYS))
-        if str(stamped) != newest:
-            problems.append("PINS.newest_commit_date %r != the newest commit %r: commits landed without scripts/repin_kb.py" % (stamped, newest))
+            problems.append(
+                "PINS.newest_commit %s was committed %d days ago (%s), past the %d-day freshness "
+                "window: re-verify the KB against the code, then re-pin"
+                % (stamped[:12], age, pinned_date, STALE_DAYS)
+            )
     for commit in sorted(set(bases)):
         ok, out, why = git_run(["rev-list", "--count", "%s..HEAD" % commit], "measure the pin..HEAD distance from %s" % commit[:12])
         if not ok:
@@ -816,4 +856,4 @@ def test_a10_staleness():
     assert not problems, "A10 FAIL: staleness problems:\n  " + "\n  ".join(problems)
     if warnings:
         print("WARN: " + "; ".join(warnings))
-    print("A10 ok: %d source pins audited, newest commit %s days old" % (len(set(bases)), age if age is not None else "?"))
+    print("A10 ok: %d source pins audited, newest_commit %s is %s days old" % (len(set(bases)), stamped[:12], age if age is not None else "?"))
