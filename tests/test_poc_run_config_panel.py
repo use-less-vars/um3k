@@ -1,9 +1,9 @@
-"""The "Run Config" card: the Clim Mode select wired end to end, plus the form.
+"""The "Run Config" card: the Color Scale select wired end to end, plus the form.
 
 ``server/poc_app.py`` grew one new left-panel card between "Circuit" and
 "Action".  It carries three promises, and this module pins all of them:
 
-* the **Clim Mode** select is a real control, not decoration - it offers the
+* the **Color Scale** select is a real control, not decoration - it offers the
   two modes as readable labels bound to machine tokens;
 * it drives the state flag the warning banner is gated on, and flipping it
   repaints the frame that is already on screen (the volume layer caches on the
@@ -66,13 +66,14 @@ assert av.app is app, (
 #: user-visible strings, so a mapping that degrades to the raw tokens has to
 #: fail this test rather than move the expectation with it.
 EXPECTED_CLIM_ITEMS = [
-    {"title": "Global (Absolute)", "value": "global"},
-    {"title": "Per-Frame (Relative)", "value": "per_frame"},
+    {"title": "Global (Comparable)", "value": "global"},
+    {"title": "Per-Frame (Max Contrast)", "value": "per_frame"},
 ]
 
 #: The banner's sentence, likewise pinned as text.
 EXPECTED_WARNING = (
-    "Warning: Relative scaling normalizes each frame, masking amplitude decay."
+    "Warning: Per-Frame (Max Contrast) re-references the color scale to each "
+    "frame's own peak, so the amplitude decay between frames is not visible."
 )
 
 #: Card headings this panel must sit between.
@@ -254,7 +255,7 @@ def test_the_clim_select_offers_readable_labels_bound_to_tokens(volume_boot):
     _name, _args, kwargs = select
 
     assert _v_model(select) == ("volume_clim_mode", app.VOLUME_CLIM_DEFAULT), (
-        "the Clim Mode select is bound to "
+        "the Color Scale select is bound to "
         f"{_v_model(select)!r}, not to "
         f"{('volume_clim_mode', app.VOLUME_CLIM_DEFAULT)!r}: it must open on the "
         "page's default mode"

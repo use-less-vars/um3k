@@ -416,10 +416,13 @@ def test_the_scene_draws_the_volume_log_scaled_with_its_own_title(monkeypatch):
     # the first's. It is placed once, below, under the |E| title.
     assert kwargs["show_scalar_bar"] is False
     titles = [call["title"] for call in plotter.bar_calls]
-    assert titles == [poc_app.VOLUME_BAR_TITLE], (
-        f"expected one bar titled {poc_app.VOLUME_BAR_TITLE!r}, got {titles}"
+    # The title now ALSO states the colour-scale window in force, so it is asked
+    # of the function that builds it rather than read off the bare constant.
+    expected_title = poc_app._volume_bar_title(poc_app.VOLUME_CLIM_DEFAULT)
+    assert titles == [expected_title], (
+        f"expected one bar titled {expected_title!r}, got {titles}"
     )
-    assert titles[0] == "|E| (Log)"
+    assert titles[0].startswith("|E| (Log)")
     assert titles[0] != "|Ez| [V/m]"
     # The mesh handed over IS the memoised image, not a second build.
     assert mesh is passed[poc_app.VOLUME_ABS_KEY]["image"]

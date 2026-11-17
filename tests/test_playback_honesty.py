@@ -26,7 +26,9 @@ the dump, so this file needs no pyvista, no trame and no VTK.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
+import inspect
 import math
 import sys
 from pathlib import Path
@@ -435,3 +437,266 @@ def test_a_reference_frequency_fires_the_quarter_period_rule():
     assert report.text == app._aliasing_sentence(100), (
         f"the banner sentence is {report.text!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The volume page's Color Scale control.  The two windows are a CHOICE, so the
+# thing worth pinning is that whichever window is in force is SAID - in the
+# option the reader picked, on the colour bar they are reading, and (when it
+# costs them something) in the warning under the control.  Nothing below boots
+# the server, builds a widget or touches the plotter: the titles, the items
+# literal and the warning are pure functions of a mode token.
+# ---------------------------------------------------------------------------
+
+
+def test_the_color_scale_offers_the_two_windows_with_global_first():
+    """Two options, the global one first, and global is what a page opens on."""
+    titles = [app.VOLUME_CLIM_TITLES[token] for token in app.VOLUME_CLIM_MODES]
+    assert titles == ["Global (Comparable)", "Per-Frame (Max Contrast)"], titles
+    assert app.VOLUME_CLIM_DEFAULT == app.VOLUME_CLIM_GLOBAL
+    assert app.VOLUME_CLIM_MODES[0] == app.VOLUME_CLIM_DEFAULT, (
+        "the default window is not the first option: the select would open on an "
+        f"entry it does not list first ({app.VOLUME_CLIM_MODES!r})"
+    )
+
+
+def test_the_select_items_literal_carries_both_tokens_and_both_window_titles():
+    """The JS literal ``v_bind_items`` receives is the two {title, value} dicts."""
+    assert ast.literal_eval(app._volume_clim_items_literal()) == [
+        {"title": "Global (Comparable)", "value": "global"},
+        {"title": "Per-Frame (Max Contrast)", "value": "per_frame"},
+    ]
+
+
+def test_the_volume_bar_names_the_window_its_colours_are_referenced_to():
+    """The |E| bar says which window is in force, and the two windows differ."""
+    for token, window in (
+        (app.VOLUME_CLIM_GLOBAL, "Global (Comparable)"),
+        (app.VOLUME_CLIM_PER_FRAME, "Per-Frame (Max Contrast)"),
+    ):
+        title = app._volume_bar_title(token)
+        assert title == f"{app.VOLUME_BAR_TITLE} - {window}", title
+        assert window in title, f"the bar title {title!r} omits the window"
+    assert app._volume_bar_title(app.VOLUME_CLIM_GLOBAL) != app._volume_bar_title(
+        app.VOLUME_CLIM_PER_FRAME
+    ), "both windows carry the same bar title: the bar cannot state the window"
+
+
+def test_both_ramps_are_titled_and_an_unknown_mode_is_the_default_window():
+    """A linear retry is never titled log, and junk reads as the global window."""
+    for token in app.VOLUME_CLIM_MODES:
+        linear = app._volume_bar_title(token, log_scale=False)
+        assert linear == (
+            f"{app.VOLUME_BAR_TITLE_LINEAR} - {app.VOLUME_CLIM_TITLES[token]}"
+        ), linear
+        assert app.VOLUME_BAR_TITLE not in linear
+    default_title = app._volume_bar_title(app.VOLUME_CLIM_DEFAULT)
+    for junk in (None, "", "GLOBAL", "per frame", "per-frame", 3, ["global"]):
+        assert app._volume_bar_title(junk) == default_title, (
+            f"{junk!r} did not fall back to the default window's title"
+        )
+    titles = app._volume_bar_titles()
+    assert len(titles) == 4, titles
+    assert len(set(titles)) == 4, f"two titles collide, one bar is unremovable: {titles}"
+    assert all(title.startswith("|E| (") for title in titles), titles
+
+
+def test_the_per_frame_warning_names_the_offered_option_and_what_it_costs():
+    """Warned in the renormalising mode only, by the title the reader picked."""
+    for quiet in (app.VOLUME_CLIM_GLOBAL, None, "", "nonsense", 0):
+        assert app._volume_clim_warning(quiet) == "", quiet
+    warning = app._volume_clim_warning(app.VOLUME_CLIM_PER_FRAME)
+    assert warning == app.VOLUME_CLIM_PER_FRAME_WARNING
+    assert "Per-Frame (Max Contrast)" in warning, (
+        f"the warning does not name the option it belongs to: {warning!r}"
+    )
+    assert "not visible" in warning, (
+        f"the warning does not say what is lost, only that something is: {warning!r}"
+    )
+    assert bool(warning) is True
+    assert bool(app._volume_clim_warning(app.VOLUME_CLIM_GLOBAL)) is False
+
+
+def test_the_caption_bounds_what_comparable_is_allowed_to_mean():
+    """'Comparable' is claimed for this volume's frames and for nothing else."""
+    caption = app.VOLUME_CLIM_CAPTION
+    assert "this volume" in caption, (
+        f"the caption does not scope the claim to one volume: {caption!r}"
+    )
+    assert "cut sheet" in caption, (
+        f"the caption does not except the cut sheets, which keep their own ranges: "
+        f"{caption!r}"
+    )
+    assert "plane sheets" in caption, (
+        f"the caption does not except the |Ez| plane stack, which keeps its own "
+        f"global ceiling: {caption!r}"
+    )
+    assert "not comparable" in caption, caption
+
+
+# ---------------------------------------------------------------------------
+# The other half of the same fix: what the control OFFERS is pinned above; what
+# the layer DRAWS is pinned here.
+#
+# Two things can drift apart from the control silently, and neither would fail a
+# test that only reads the offered titles:
+#
+#   * the DEFAULT. The page must boot, and the volume path must fall back, on the
+#     whole-recording window - the reference the layer drew before the mode
+#     existed - and that window must still be the value
+#     ``_volume_abs_global_clim`` returns, compared EXACTLY (not approximately):
+#     this is the no-visual-change guarantee the shipped screenshots and every
+#     claim made about the reference picture rest on.
+#   * the DIFFERENCE between the two windows. A global range is one tuple for the
+#     whole recording; a per-frame range is not. If the second ever became the
+#     first, "Per-Frame (Max Contrast)" would be a label on the same picture, and
+#     if the first ever became the second the recorded decay would be painted
+#     away. Both are measured on the shipped volume, so the numbers are the
+#     file's own.
+#
+# Still pure: a mode token and the reference volume. No plotter, no server, no
+# widget, no browser.
+# ---------------------------------------------------------------------------
+
+
+def test_the_default_window_is_global_and_the_volume_path_defaults_to_it(real_info):
+    """The default token is the global one, and the layer falls back to it."""
+    volume = real_info["e_abs_volume"]
+    assert app.VOLUME_CLIM_DEFAULT == app.VOLUME_CLIM_GLOBAL, (
+        f"the default window token is {app.VOLUME_CLIM_DEFAULT!r}, not the "
+        "global one: a volume page that never touches the select now draws a "
+        "different reference than the one it has always drawn"
+    )
+    # The BEHAVIOUR of an absent mode - what a page with no control writes, what
+    # a misspelled token writes, what the layer's own getattr fallback yields.
+    whole = app._volume_abs_global_clim(volume)
+    assert whole is not None, "the reference volume measures no global range"
+    for frame in (0, 1, volume.shape[0] - 1):
+        drawn = app._volume_clim_for(volume, frame, None)
+        assert drawn == whole, (
+            f"an absent clim mode drew volume frame {frame} on {drawn!r}, not "
+            f"the whole-recording range {whole!r}: the default is not the "
+            "global window"
+        )
+    # ... and the two sites that CHOOSE the default name the constant rather
+    # than repeating a token, so the default has exactly one definition.
+    source = inspect.getsource(app)
+    assert 'getattr(state, "volume_clim_mode", VOLUME_CLIM_DEFAULT)' in source, (
+        "the volume layer no longer falls back to VOLUME_CLIM_DEFAULT: a page "
+        "whose state has no clim mode would draw some other window"
+    )
+    assert 'v_model=("volume_clim_mode", VOLUME_CLIM_DEFAULT)' in source, (
+        "the Color Scale select no longer opens on VOLUME_CLIM_DEFAULT"
+    )
+    for wrong in (
+        'getattr(state, "volume_clim_mode", VOLUME_CLIM_PER_FRAME)',
+        'v_model=("volume_clim_mode", VOLUME_CLIM_PER_FRAME)',
+    ):
+        assert wrong not in source, (
+            f"the default window is the renormalising one: {wrong!r} would make "
+            "a page that says nothing paint the decay away"
+        )
+
+
+def test_the_bar_title_states_the_window_for_both_ramps():
+    """The exact four titles the |E| bar can carry, log and linear."""
+    assert app._volume_bar_title(app.VOLUME_CLIM_GLOBAL) == (
+        "|E| (Log) - Global (Comparable)"
+    ), app._volume_bar_title(app.VOLUME_CLIM_GLOBAL)
+    assert app._volume_bar_title(app.VOLUME_CLIM_PER_FRAME) == (
+        "|E| (Log) - Per-Frame (Max Contrast)"
+    ), app._volume_bar_title(app.VOLUME_CLIM_PER_FRAME)
+    assert app._volume_bar_title(app.VOLUME_CLIM_GLOBAL, log_scale=False) == (
+        "|E| (Linear) - Global (Comparable)"
+    )
+    assert app._volume_bar_title(app.VOLUME_CLIM_PER_FRAME, log_scale=False) == (
+        "|E| (Linear) - Per-Frame (Max Contrast)"
+    )
+    # The bare call is the default window's title, so a caller that passes no
+    # mode cannot caption the bar with a window it did not draw.
+    assert app._volume_bar_title() == app._volume_bar_title(app.VOLUME_CLIM_DEFAULT)
+
+
+def test_the_global_window_is_one_range_for_every_frame_and_unchanged(real_info):
+    """Frame-invariant, and the same tuple the layer drew before the mode existed."""
+    volume = real_info["e_abs_volume"]
+    frames = int(volume.shape[0])
+    assert frames > 1, f"a {frames}-frame volume cannot show frame-invariance"
+    whole = app._volume_abs_global_clim(volume)
+    assert whole is not None, (
+        "the reference volume measures no whole-recording range, so the layer "
+        "would draw no |E| volume at all"
+    )
+    low, high = (float(value) for value in whole)
+    assert math.isfinite(low) and math.isfinite(high), whole
+    assert 0.0 < low < high, (
+        f"the global range is {whole!r}: it must be finite with low < high or "
+        "VTK is left guessing a clim"
+    )
+    for frame in range(frames):
+        drawn = app._volume_clim_for(volume, frame, app.VOLUME_CLIM_GLOBAL)
+        # EXACT equality, not pytest.approx: "no visual change" means the same
+        # numbers reach the mapper, not numbers close enough to look alike.
+        assert drawn == whole, (
+            f"the global window moved on frame {frame}: {drawn!r} against the "
+            f"whole-recording {whole!r} - the global window is ONE reference for "
+            "the entire recording, and it is the one the layer already used"
+        )
+    # The 60 dB span the layer has always taken: a decibel span, not a guess.
+    assert high / low == pytest.approx(1e3, rel=1e-12), (
+        f"the global window spans {high / low:.6g}x, not 1e3 (60 dB)"
+    )
+
+
+def test_the_per_frame_window_follows_the_frame_it_is_drawn_on(real_info):
+    """Not frame-invariant: it is referenced to each frame's own peak."""
+    volume = real_info["e_abs_volume"]
+    frames = int(volume.shape[0])
+    drawn = [
+        app._volume_clim_for(volume, frame, app.VOLUME_CLIM_PER_FRAME)
+        for frame in range(frames)
+    ]
+    for frame, clim in enumerate(drawn):
+        assert clim is not None, (
+            f"frame {frame} of the reference volume yielded no per-frame range"
+        )
+        low, high = (float(value) for value in clim)
+        assert math.isfinite(low) and math.isfinite(high), (frame, clim)
+        assert 0.0 < low < high, (frame, clim)
+    assert len(set(drawn)) > 1, (
+        "every frame came back on the same range: 'Per-Frame (Max Contrast)' "
+        "would be a label on the global window, i.e. a control that does nothing"
+    )
+    whole = app._volume_abs_global_clim(volume)
+    assert drawn[0] != whole, (
+        f"the quiet first frame is drawn on the recording's own window {whole!r}: "
+        "the per-frame mode is not re-referencing anything"
+    )
+    # No frame may claim MORE amplitude than the recording holds: a per-frame
+    # ceiling above the global one would be a peak this recording does not have.
+    assert max(float(high) for _, high in drawn) <= float(whole[1]), (
+        "a per-frame window outgrew the whole-recording one"
+    )
+
+
+def test_the_warning_agrees_with_the_per_frame_mode_and_never_with_global():
+    """The sentence names the option it belongs to and is silent about nothing."""
+    warning = app._volume_clim_warning(app.VOLUME_CLIM_PER_FRAME)
+    assert warning == app.VOLUME_CLIM_PER_FRAME_WARNING, warning
+    assert app.VOLUME_CLIM_TITLES[app.VOLUME_CLIM_PER_FRAME] in warning, (
+        f"the warning does not name the option the reader picked: {warning!r}"
+    )
+    assert app.VOLUME_CLIM_TITLES[app.VOLUME_CLIM_GLOBAL] not in warning, (
+        f"the warning names the COMPARABLE window it is warning against: "
+        f"{warning!r}"
+    )
+    assert "not visible" in warning, (
+        f"the warning says something is lost without saying what: {warning!r}"
+    )
+    for quiet in (app.VOLUME_CLIM_GLOBAL, None, "", "global", 0, "nonsense"):
+        assert app._volume_clim_warning(quiet) == "", (
+            f"{quiet!r} carries a per-frame warning while the page draws the "
+            "global window"
+        )
+        assert not bool(app._volume_clim_warning(quiet)), quiet
+

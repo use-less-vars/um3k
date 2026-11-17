@@ -5600,6 +5600,7 @@ def _draw_volume_scene(
     cut_layout: dict,
     cell_mm: float,
     clim_override=None,
+    clim_mode=None,
 ):
     """Draw the volume view's FIELD layer: the volume and the two cut sheets.
 
@@ -5620,6 +5621,13 @@ def _draw_volume_scene(
     carries the range ``build_cut_sheets`` measured off the samples that sheet
     actually holds, and one range over both would be the lie that block
     refuses.
+
+    ``clim_mode`` names the WINDOW that range was measured over, and is here for
+    one reason: the |E| bar's title has to state it (``_volume_bar_title``). It
+    moves no range - ``clim_override`` already IS the range - so passing it
+    changes the reading on the bar and nothing else. ``None`` (what
+    ``_draw_scene`` passes) titles the bar for the default window, which is the
+    window ``abs_meta["clim"]`` is measured over.
 
     Returns ``(cuts_drawn, cut_clims)``: whether pyvista accepted the sheets,
     and per axis the range each volume sheet was drawn on. Both belong to the
@@ -5645,7 +5653,7 @@ def _draw_volume_scene(
     # the retry below draws a LINEAR volume, and a linear ramp under a log title
     # would be the one lie a colour bar must not tell.
     abs_actor = None
-    abs_bar_title = VOLUME_BAR_TITLE
+    abs_bar_title = _volume_bar_title(clim_mode)
     if abs_image is not None:
         # WHY the bar is NOT made here: ``add_volume(show_scalar_bar=True)``
         # keys its bar on a title, and the next frame of this page re-uses that
@@ -5682,7 +5690,7 @@ def _draw_volume_scene(
                     show_scalar_bar=False,
                 )
                 abs_drawn = True
-                abs_bar_title = VOLUME_BAR_TITLE_LINEAR
+                abs_bar_title = _volume_bar_title(clim_mode, log_scale=False)
             except Exception as exc_again:  # noqa: BLE001 - see below
                 abs_actor = None
                 print(
@@ -9747,8 +9755,10 @@ def _volume_abs_global_clim(volume):
     ``_volume_abs_grid`` takes over its own image, and taken over EVERY frame on
     purpose. A range per frame would renormalise each frame to its own peak and
     paint the recorded decay away, which is the one thing an animation must not
-    do; it also puts the still cut sheets and the moving volume under one
-    ceiling for the length of the clip.
+    do. The ceiling is the VOLUME's alone: each cut sheet is drawn on the range
+    measured off its own samples (``_cut_sheet_clim``), so colours are not
+    comparable between the volume and the cuts - ``VOLUME_CLIM_CAPTION`` is what
+    says so on the page.
 
     None when there is nothing to measure - no volume, an empty one, the wrong
     rank, or a peak that is not finite and positive - and the caller then draws
@@ -9786,27 +9796,35 @@ VOLUME_CLIM_MODES = (VOLUME_CLIM_GLOBAL, VOLUME_CLIM_PER_FRAME)
 #: never mentions the mode therefore draws exactly the layer it always drew.
 VOLUME_CLIM_DEFAULT = VOLUME_CLIM_GLOBAL
 
-#: How the Clim Mode control DISPLAYS each backend token. The tokens above are what
-#: the layer reads, so a token is what the select's VALUE must be; these are what a
-#: reader sees. Keyed BY token and walked in VOLUME_CLIM_MODES order at emit time,
-#: so a mode added above with no label here raises KeyError at build time instead of
-#: showing a raw token in the UI.
+#: How the Color Scale control DISPLAYS each backend token. The tokens above are
+#: what the layer reads, so a token is what the select's VALUE must be; these are
+#: what a reader sees. Keyed BY token and walked in VOLUME_CLIM_MODES order at emit
+#: time, so a mode added above with no label here raises KeyError at build time
+#: instead of showing a raw token in the UI.
+#:
+#: WHY "Comparable" AND NOT "Absolute": the global window really does put every
+#: frame of ONE volume on one measured range, so frames can be compared with each
+#: other - that is the whole claim, and VOLUME_CLIM_CAPTION below is what bounds it
+#: (it says nothing about the plane stack or the cut sheets). "Max Contrast" names
+#: what per-frame mode buys instead of hiding it behind the neutral "Relative".
 VOLUME_CLIM_TITLES = {
-    VOLUME_CLIM_GLOBAL: "Global (Absolute)",
-    VOLUME_CLIM_PER_FRAME: "Per-Frame (Relative)",
+    VOLUME_CLIM_GLOBAL: "Global (Comparable)",
+    VOLUME_CLIM_PER_FRAME: "Per-Frame (Max Contrast)",
 }
 
 #: The Run Config card's warning, character for character. It sits under the
 #: select and is visible ONLY while the renormalising mode is selected: per-frame
 #: scaling is legitimate, and what it costs the picture is the one thing a reader
-#: choosing it has to be told.
+#: choosing it has to be told. It names the mode by the TITLE the reader just
+#: picked, so the warning and the control cannot describe two different windows.
 VOLUME_CLIM_PER_FRAME_WARNING = (
-    "Warning: Relative scaling normalizes each frame, masking amplitude decay."
+    "Warning: Per-Frame (Max Contrast) re-references the color scale to each "
+    "frame's own peak, so the amplitude decay between frames is not visible."
 )
 
 
 def _volume_clim_items_literal() -> str:
-    """The Clim Mode select's items, as the JS array literal ``v_bind_items`` wants.
+    """The Color Scale select's items, as the JS array literal ``v_bind_items`` wants.
 
     WHY A STRING AT ALL: a python LIST handed to ``v_bind_items`` is read by trame
     as ``(state_name, default)`` and emitted as a bare ``:items="A"`` - the JS
@@ -9827,6 +9845,76 @@ def _volume_clim_items_literal() -> str:
             for token in VOLUME_CLIM_MODES
         ]
     )
+
+
+#: What the Color Scale select BUYS and what it does not, character for character:
+#: the caption under it in the Run Config card. The option called "Comparable"
+#: claims exactly one thing - every frame of THIS volume is painted on one measured
+#: range, so frames of this volume can be read against each other. It does not claim
+#: comparability with the plane stack (one global p99.5 linear ceiling for every
+#: frame, see ``_vis_colour_limit``) or with the cut sheets (each sheet carries the
+#: range measured off the samples that sheet actually holds), and saying so HERE is
+#: what keeps the option's title honest instead of merely confident.
+VOLUME_CLIM_CAPTION = (
+    "Global puts every frame of this volume on one measured range, so its frames "
+    "can be compared with each other. The |Ez| plane sheets and each cut sheet "
+    "keep ranges of their own, so colors are not comparable between them and the "
+    "volume."
+)
+
+
+def _volume_bar_title(mode=VOLUME_CLIM_DEFAULT, *, log_scale: bool = True) -> str:
+    """The |E| colour bar's title for ``mode``: the WINDOW is part of the reading.
+
+    WHY the window goes in the title and not only in the control above it: the bar
+    is what a reader's eye lands on while looking at a frame, and the same frame
+    under the two modes is the same picture with a different claim about it. A bar
+    that said only "|E| (Log)" would be correct in both modes and would tell nobody
+    which of the two windows - the recording's, or this frame's own peak - the
+    colours in front of them were referenced to.
+
+    ``log_scale`` names the RAMP, which the title has always carried: the caller
+    knows whether it drew the log volume or the older-pyvista LINEAR retry, and a
+    linear ramp under a log title is the one lie a colour bar must not tell.
+
+    An unknown ``mode`` normalises to the default (``_volume_clim_mode``), so a
+    caller that passes junk gets the title of the window the layer really drew.
+    """
+    ramp = VOLUME_BAR_TITLE if log_scale else VOLUME_BAR_TITLE_LINEAR
+    return f"{ramp} - {VOLUME_CLIM_TITLES[_volume_clim_mode(mode)]}"
+
+
+def _volume_bar_titles() -> tuple:
+    """Every title ``_volume_bar_title`` can produce: both ramps, both windows.
+
+    WHY a set of them rather than the two module constants: pyvista keys a bar by
+    its title, so a stale bar is only removable under the exact title it was placed
+    with. The window is now IN that title, which means dropping the volume layer
+    has to sweep every spelling it could have left behind - see
+    ``_volume_layer_drop``.
+    """
+    return tuple(
+        _volume_bar_title(mode, log_scale=log_scale)
+        for log_scale in (True, False)
+        for mode in VOLUME_CLIM_MODES
+    )
+
+
+def _volume_clim_warning(mode) -> str:
+    """The Run Config warning for ``mode``: the text in per-frame mode, else ``""``.
+
+    WHY it returns the TEXT and not a bool: the boot value, the change handler and
+    the VAlert's condition all have to agree that the warning belongs to exactly
+    one mode, and they agree by asking this one question. ``bool("")`` is False, so
+    the same value drives both the alert's visibility and the sentence it shows.
+
+    An unknown ``mode`` normalises to the default and therefore warns about
+    nothing: the page is drawing the global window in that case, so a per-frame
+    warning would describe a picture nobody is looking at.
+    """
+    if _volume_clim_mode(mode) == VOLUME_CLIM_PER_FRAME:
+        return VOLUME_CLIM_PER_FRAME_WARNING
+    return ""
 
 
 #: The Run Config form's five controls, as ONE table: the state name the browser
@@ -10935,10 +11023,9 @@ def run_web_vis(
     # here rather than left to the first change: the card reads it on the very
     # first paint, so a flag that only appears once somebody touches the select
     # would make the warning either absent at boot or bound to nothing. Derived
-    # from the mode through the same normaliser, so the two cannot disagree.
-    state.clim_relative_warning = (
-        _volume_clim_mode(state.volume_clim_mode) == VOLUME_CLIM_PER_FRAME
-    )
+    # from the mode by the same helper the change handler and the alert use, so the
+    # three cannot disagree about which mode carries a warning.
+    state.clim_relative_warning = bool(_volume_clim_warning(state.volume_clim_mode))
 
     # THE Run Config form's five numbers, at the reference run's own defaults (see
     # ``_run_config_defaults``): the form is a STARTING POINT for a later run, so a
@@ -11576,10 +11663,13 @@ def run_web_vis(
         # volume's |E| range. Left behind it would describe a layer that is no
         # longer on screen - and, since a title is pyvista's KEY for a bar, a
         # later frame rebuilding it under the same title would UNION the two
-        # ranges instead of replacing one. Both spellings are cleared because the
-        # old-pyvista retry places the bar under an honest "Linear" title.
-        _remove_scalar_bar(plotter, VOLUME_BAR_TITLE)
-        _remove_scalar_bar(plotter, VOLUME_BAR_TITLE_LINEAR)
+        # ranges instead of replacing one. EVERY spelling is cleared, not the two
+        # constants: the title now states the window in force and the ramp, so
+        # both modes and both ramps are swept - a bar left over from the other
+        # mode would otherwise survive a mode change under a title nobody looks
+        # for. ``_remove_scalar_bar`` is a no-op for a title that is not there.
+        for stale_title in _volume_bar_titles():
+            _remove_scalar_bar(plotter, stale_title)
 
     def _draw_volume_layer(index, mode, volume_frame=None) -> None:
         """Draw the |E| volume layer for the CURRENT frame, or drop it.
@@ -11730,6 +11820,9 @@ def run_web_vis(
                 cut_layout=layout,
                 cell_mm=cell_mm,
                 clim_override=clim,
+                # The bar has to say which window this range was measured over,
+                # and the mode is the only place that knows.
+                clim_mode=clim_mode,
             )
             _draw_port_plane_markers(plotter, info, cell_mm, show_load, show_port)
             handles["volume_layer"] = {
@@ -12535,7 +12628,7 @@ def run_web_vis(
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
 
-    # The Clim Mode select's repaint. v_model=("volume_clim_mode", ...) only
+    # The Color Scale select's repaint. v_model=("volume_clim_mode", ...) only
     # WRITES state["volume_clim_mode"]: trame turns a callable into a server call
     # for EVENT kwargs (click=, change=), never for v_model, so an
     # @ctrl.set("volume_clim_mode") trigger would never be reached. The repaint
@@ -12564,7 +12657,7 @@ def run_web_vis(
                 if volume_clim_mode is None
                 else volume_clim_mode
             )
-            state.clim_relative_warning = mode == VOLUME_CLIM_PER_FRAME
+            state.clim_relative_warning = bool(_volume_clim_warning(mode))
             try:
                 frame = int(round(float(state.frame)))
             except (TypeError, ValueError):
@@ -13026,9 +13119,9 @@ def run_web_vis(
         has_field_data = not _run_config_form_shown(ctx.available)
 
         def _run_config() -> None:
-            """Emit the Run Config card: Clim Mode always, the form on a data-less page.
+            """Emit the Run Config card: Color Scale always, the form on a data-less page.
 
-            WHY THE CLIM SELECT IS NOT GATED: it changes how the |E| volume is
+            WHY THE COLOR SCALE SELECT IS NOT GATED: it changes how the |E| volume is
             RENDERED, so it is meaningful exactly when a volume is on screen - it
             is the page WITH data that needs it, and gating it on 'no data' would
             make it dead where it matters. The five run fields are the opposite
@@ -13046,10 +13139,19 @@ def run_web_vis(
                     v_bind_items=_volume_clim_items_literal(),
                     item_title="title",
                     item_value="value",
-                    label="Clim Mode",
+                    label="Color Scale:",
                     density="compact",
                     hide_details=True,
                     classes="mb-1",
+                )
+            # WHAT the chosen option buys, and what it does not, directly under the
+            # control: a caption is not a control, so it rides the same html_div the
+            # degraded warning path uses. It is the bound on the word "Comparable" -
+            # frames of this volume, not of the plane stack or the cut sheets.
+            if html_div is not None:
+                html_div(
+                    VOLUME_CLIM_CAPTION,
+                    style="font-size: 11px; color: #555; padding: 2px 0;",
                 )
             # The warning, shown only while the renormalising mode is selected. The
             # flag is maintained by the change handler and true in no other state,

@@ -796,6 +796,14 @@ def _only_the_layers_volume(live) -> None:
     for actor in list(live.plotter.actors.values()):
         if isinstance(actor, pyvista.Volume):
             live.plotter.remove_actor(actor, render=False)
+    # The bar goes with the volume: a colour bar is a reading of a volume that is
+    # no longer on the plotter, and a stale bar's TITLE now names the window in
+    # force, so it is not one the next draw replaces.  ``_volume_layer_drop`` does
+    # sweep every spelling, but only once the handle above is still there, and
+    # popping it is what this helper is for - so the orphan is this helper's to
+    # take off, exactly like the actors.
+    for stale_title in app._volume_bar_titles():
+        app._remove_scalar_bar(live.plotter, stale_title)
 
 
 def test_switching_the_clim_mode_repaints_the_frame_already_on_screen(volume_page):
@@ -1409,6 +1417,13 @@ def test_per_frame_clim_follows_the_volume_frame_the_player_is_showing(desync_pa
 # ---------------------------------------------------------------------------
 
 
+# The |E| bar's title NAMES the colour-scale window the picture was drawn under,
+# so it is no longer one fixed string.  These two are the titles of the two modes;
+# a test reading a bar asks for the one the draw in front of it used.
+VOLUME_BAR = app._volume_bar_title(app.VOLUME_CLIM_DEFAULT)
+VOLUME_BAR_PER_FRAME = app._volume_bar_title(app.VOLUME_CLIM_PER_FRAME)
+
+
 def _bar(live, title: str):
     """The bar standing under ``title``, or a failure that names what IS there."""
     bars = live.plotter.scalar_bars
@@ -1450,7 +1465,10 @@ def _volume_frame_shown(info: dict, index: int, mode: str = "ycut") -> int:
 
 
 def test_the_page_stands_exactly_two_bars_named_for_the_two_fields(tmp_path):
-    """TWO bars, titled EXACTLY "Ez (Linear)" and "|E| (Log)" - at boot and after.
+    """TWO bars, titled for the two fields - at boot and after.
+
+    The |E| bar's title also NAMES the colour-scale window in force, so the exact
+    strings asserted here are the default (global) window's.
 
     WHY the titles are written out as literals here: they are what a reader of
     the picture sees, and they are pyvista's keys.  Asserting them against the
@@ -1468,17 +1486,21 @@ def test_the_page_stands_exactly_two_bars_named_for_the_two_fields(tmp_path):
 
         assert set(live.plotter.scalar_bars.keys()) == {
             app.PLANE_BAR_TITLE,
-            app.VOLUME_BAR_TITLE,
+            VOLUME_BAR,
         }, (
             "the first picture the page draws stands "
             f"{sorted(live.plotter.scalar_bars.keys())}, not one bar for the "
             "planes and one for |E|"
         )
-        assert set(live.plotter.scalar_bars.keys()) == {"Ez (Linear)", "|E| (Log)"}, (
+        assert set(live.plotter.scalar_bars.keys()) == {
+            "Ez (Linear)",
+            "|E| (Log) - Global (Comparable)",
+        }, (
             "the bars are titled "
             f"{sorted(live.plotter.scalar_bars.keys())}, not "
-            '{"Ez (Linear)", "|E| (Log)"}: a title is the key pyvista stores a '
-            "bar under, and it is what the reader is told the colours mean"
+            '{"Ez (Linear)", "|E| (Log) - Global (Comparable)"}: a title is the '
+            "key pyvista stores a bar under, and it is what the reader is told "
+            "the colours mean"
         )
 
         for index in (0, 3):
@@ -1486,7 +1508,7 @@ def test_the_page_stands_exactly_two_bars_named_for_the_two_fields(tmp_path):
             live.draw(index, "ycut")
             assert set(live.plotter.scalar_bars.keys()) == {
                 app.PLANE_BAR_TITLE,
-                app.VOLUME_BAR_TITLE,
+                VOLUME_BAR,
             }, (
                 f"after drawing frame slider {index} the page stands "
                 f"{sorted(live.plotter.scalar_bars.keys())}: a draw added or "
@@ -1544,16 +1566,18 @@ def test_the_volume_bar_follows_the_frame_the_volume_is_painted_on(volume_page):
                 f"the resolver answers {window} for frame {frame}, not its own "
                 f"60 dB window {(peak * 1e-3, peak)}"
             )
-            drawn = _bar_range(live, app.VOLUME_BAR_TITLE)
+            drawn = _bar_range(live, VOLUME_BAR_PER_FRAME)
             assert drawn == pytest.approx(window, rel=1e-6), (
                 f"frame slider {index} (volume frame {frame}) leaves the "
-                f"\"{app.VOLUME_BAR_TITLE}\" bar grading {drawn}, not that "
+                f"\"{VOLUME_BAR_PER_FRAME}\" bar grading {drawn}, not that "
                 f"frame's own window {window}: the bar does not describe the "
                 "picture it stands over"
             )
 
-    # The LAST position drawn was the quiet frame, right after the loud one.
-    last = _bar_range(live, app.VOLUME_BAR_TITLE)
+    # The LAST position drawn was the quiet frame, right after the loud one - and
+    # nothing has been redrawn since, so the bar still stands under the per-frame
+    # title (the mode the block drew with).
+    last = _bar_range(live, VOLUME_BAR_PER_FRAME)
     assert last[1] == pytest.approx(quiet_peak, rel=1e-6), (
         f"after the loud frame {loud} the bar still reads up to {last[1]!r}, "
         f"not the quiet frame {quiet}'s peak {quiet_peak!r}: the range was "
@@ -1590,7 +1614,7 @@ def test_the_volume_bar_never_touches_the_plane_bar(volume_page):
         "volume leaves it alone"
     )
 
-    volume_bar = _bar(live, app.VOLUME_BAR_TITLE)
+    volume_bar = _bar(live, VOLUME_BAR)
     assert volume_bar is not plane, (
         "the plane and the |E| volume share ONE bar object: two fields on two "
         "scales cannot be read off one scale"
@@ -1644,7 +1668,7 @@ def test_watching_the_clip_piles_up_neither_bars_nor_actors(volume_page):
         )
         assert set(live.plotter.scalar_bars.keys()) == {
             app.PLANE_BAR_TITLE,
-            app.VOLUME_BAR_TITLE,
+            VOLUME_BAR,
         }, (
             f"after {step + 1} frame steps the page stands "
             f"{sorted(live.plotter.scalar_bars.keys())}"
@@ -1655,7 +1679,7 @@ def test_watching_the_clip_piles_up_neither_bars_nor_actors(volume_page):
         )
 
     plane_span = _bar_span(_bar(live, app.PLANE_BAR_TITLE))
-    volume_span = _bar_span(_bar(live, app.VOLUME_BAR_TITLE))
+    volume_span = _bar_span(_bar(live, VOLUME_BAR))
     assert (
         plane_span[1] <= volume_span[0] or volume_span[1] <= plane_span[0]
     ), (
@@ -1665,7 +1689,7 @@ def test_watching_the_clip_piles_up_neither_bars_nor_actors(volume_page):
     )
     for name, span in (
         (app.PLANE_BAR_TITLE, plane_span),
-        (app.VOLUME_BAR_TITLE, volume_span),
+        (VOLUME_BAR, volume_span),
     ):
         assert 0.0 <= span[0] < span[1] <= 1.0, (
             f"the bar titled {name!r} spans {span} of the viewport, which is "
