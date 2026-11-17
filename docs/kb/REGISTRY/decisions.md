@@ -158,10 +158,12 @@ live, and the legacy page keeps absorbing edits meant for the shell.
 **Rejected.** Deleting it in the same pass that marks it, which would leave those
 citations pointing at nothing in the commit that was supposed to clarify them.
 
-### EV-4 [evidence] - reconstruction-from-summary produces invented specifics
-- Observed four times in one Stage 1 session: (i) pass 3 fabricated a sha and disguised it as a placeholder; (ii) pass 1 invented a single 102,400 B cap where the ruled design was a warn/fail pair; (iii) pass 1 replaced the null-ratchet rule with a different rule that would have passed inspection; (iv) the Stage 1b worker reconstructed its own scope from working document 1e93abc2529d rather than from the brief.
-- Pattern: context compaction -> reconstruction from a summary -> invention of specifics the summary never carried.
-- Mitigation: the host, not the worker, runs the mutation script; and every Stage 2 brief carries the full verbatim text of the claim it is about, never a summary. Any number that appears only in a summary is unwitnessed.
+## Settled entries moved to `decisions_archive.md`
+
+`EV-4` (evidence), `KN-5` (knowledge) and `PB-4` (the executed PROCEDURE.md /
+RUNBOOK.md split) are settled entries, not live work, so they now live verbatim
+in `docs/kb/REGISTRY/decisions_archive.md` under the same ids. That file holds
+their full text; this paragraph is the pointer to it, not a summary of it.
 
 ### PB-3 [proposed] - split tests/COLLECTED.txt when it crosses the warn tier
 - Trigger: docs/kb/PINS.json test_manifest byte size crosses warn 122,880 B (fail tier is 153,600 B; crossing warn prints a warning and never fails).
@@ -170,16 +172,14 @@ citations pointing at nothing in the commit that was supposed to clarify them.
 - Not now: a large diff for a low-information change, and it must not interleave with the P2 poc_app split.
 - Owner: whoever lands P2.
 
-### KN-5 [knowledge] - the pass-1 transcript is a refusal record
-- docs/kb/ARCHIVE/superseded/kb_mutation_transcript_pass1.txt records the gate REFUSING a bad mutation. It is not superseded evidence and it is not a successful run. Leave the label as-is; relabelling it SUPERSEDED would destroy the only record of the refusal.
-
-### PB-4 - PROCEDURE.md split into PROCEDURE.md + RUNBOOK.md
-- Trigger: PROCEDURE.md sat at 20,459 B of a 20,480 B budget (21 B slack). The slack is a signal, not a rounding error: the file had no room for the next substantive edit, so the next substantive edit was the split itself.
-- Executed: the Stage 1b host runbook lives in docs/kb/RUNBOOK.md; PROCEDURE.md keeps a pointer only. Exact byte counts are stated in the commit that landed the split.
-- repin_kb.py globs docs/kb/**/*.md, so RUNBOOK.md joins the pin set with no code change.
-
 ### P0-boot [proposed] - boot to a page that has something on it
 - Problem: default boot loads DEFAULT_STRUCTURE build_A_50ohm, whose evidence file is a legacy single-plane dump with no time axis and no geometry keys, so the first screen prints "geometry: not drawn" and "no timeline on this page". The only volume-carrying artefact in the tree is artifacts/reference_sim_volume.npz (46 keys, 40 MB, schema emfit.vis/2), and it is not referenced by structures.json (3 entries, two of them record-only with null paths).
 - Proposal: make the reference volume the boot example - either as a fourth structures.json entry marked example, or through an explicit --input default - so a new user sees a rendered volume and a timeline on first load.
 - Blocker: the volume is gitignored (*.npz) and absent from HEAD:artifacts, so the wiring cannot land before the artefact does. The ruling to ship it once, with the regeneration script scripts/run_reference_sim.py, is recorded; the commit needs an explicit gitignore exception for that single path, because the agent's git tool surface has no force-add.
 - Not yet done because it must not interleave with the Stage 1b repin or the P2 split.
+
+### TI-1 [proposed] - test_poc_mode_picker is order-dependent
+- Symptom: test_poc_mode_picker fails when run in a batch with the other poc test files and passes when run alone. Observed while fixing the three viewer defects; not caused by those edits, and it reproduces on an unmodified checkout.
+- Class: test isolation, not product behaviour. Something in the batch mutates module-level state the test depends on.
+- Not fixed now: it is a rabbit hole with no product behaviour attached. Log it and fix it when the P2 split gives the poc tests their own fixtures.
+- Owner: whoever lands P2.
