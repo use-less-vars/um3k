@@ -69,6 +69,7 @@ import subprocess
 import sys
 import threading
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 import time
 
@@ -423,7 +424,179 @@ def _frame_span_max(nt, nt_x, mode: str):
     return None if frames is None else int(frames) - 1
 
 
-def _frame_label(index, frames):
+TIME_AXIS_KEY = "time_axis"
+
+
+@dataclass(frozen=True, eq=False)
+class TimeAxis:
+    """WHICH SOLVER STEP each position of the player stands on, as recorded.
+
+    The player steps recorded captures, not steps: on a dump whose volume was
+    saved every 100th step, one slider click moves the solver clock by 100 - and
+    a label reading "frame 4 / 24" said nothing about that, so a decimated
+    timeline could be read as one step per frame. This is the missing record,
+    kept as ONE frozen value built by :func:`build_time_axis`.
+
+    ``step_index[k]`` is the step of frame ``k`` (0-based here; the player's own
+    label is 1-based). It is the VOLUME's axis whenever the player steps the
+    volume's frames, because that IS the clock then (see
+    ``_volume_player_plan``). ``stride`` is how many steps one frame spans (100
+    on a decimated volume), ``n_steps`` the run's own step count - the
+    denominator of the step reading - and ``time_seconds`` the same axis in
+    seconds, present only when the dump recorded a REAL ``dt_s``: an invented
+    time base is precisely the dishonesty this record exists to remove, so an
+    absent, non-finite or non-positive ``dt_s`` leaves it None rather than
+    zero-filled.
+    """
+
+    step_index: np.ndarray
+    stride: int
+    n_steps: int
+    time_seconds: np.ndarray | None = None
+
+    @property
+    def n_frames(self) -> int:
+        """How many recorded frames this axis describes."""
+        return int(np.asarray(self.step_index).size)
+
+    def frame_to_step(self, frame):
+        """The recorded step of 1-based ``frame``, or None off the axis."""
+        try:
+            position = int(frame) - 1
+        except (TypeError, ValueError):
+            return None
+        if position < 0 or position >= self.n_frames:
+            return None
+        return int(self.step_index[position])
+
+    def step_to_frame(self, step):
+        """The 1-based frame recorded at the LAST step at or before ``step``.
+
+        The last one, never an interpolation: a step between two captures has no
+        picture, and the only frame that can be drawn is the earlier one. None
+        when every recorded step starts after ``step``.
+        """
+        try:
+            wanted = float(int(step))
+        except (TypeError, ValueError):
+            return None
+        steps = np.asarray(self.step_index, dtype=float)
+        if steps.size < 1:
+            return None
+        found = int(np.searchsorted(steps, wanted, side="right")) - 1
+        return None if found < 0 else found + 1
+
+    def label(self, frame):
+        """One line naming 1-based ``frame`` and the step it was taken at.
+
+        "Step 301 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100)" - the step
+        the solver had reached, the run's own step count, and the position on the
+        player. The decimation clause appears only where a frame really does span
+        more than one step, and None is returned off the axis so the caller can
+        print its own words rather than this class inventing a frame.
+
+        None too when the record is not ONE-BASED: a dump whose first capture sits
+        at step 0 numbers its steps from a base it never states, so "Step 0 / 12"
+        would present a zero-based number under a one-based denominator and misname
+        every frame on the page. Such a page keeps the frame-only sentence rather
+        than being given a step reading this record cannot defend.
+        """
+        step = self.frame_to_step(frame)
+        if step is None:
+            return None
+        if int(np.asarray(self.step_index).ravel()[0]) < 1:
+            return None
+        text = (
+            f"Step {step} / {int(self.n_steps)} "
+            f"(Frame {int(frame)} of {self.n_frames}"
+        )
+        if int(self.stride) > 1:
+            text += f", Volume Decimated \u00d7{int(self.stride)}"
+        return text + ")"
+
+
+def build_time_axis(
+    *,
+    step_index=None,
+    stride=None,
+    n_steps=None,
+    dt_s=None,
+    n_frames=None,
+) -> TimeAxis | None:
+    """Build a page's :class:`TimeAxis`, or None when nothing was recorded.
+
+    THE PRECEDENCE, in one place, so no two readers can disagree about it:
+
+    1. the frame axis - the RECORDED ``step_index`` when the dump carries one
+       (it may start at 0, or be evenly spaced at a stride of its own);
+       otherwise ``arange(1, n_frames + 1)``, i.e. "one captured frame per
+       step", the only claim a dump with no step axis supports;
+    2. ``stride`` - the RECORDED value when the dump states one, else the
+       spacing of the recorded axis when that spacing is even, else 1;
+    3. ``n_steps`` - the RECORDED run length when the dump states it, else the
+       last recorded step (a denominator below the frame count would claim a run
+       shorter than the timeline it is the denominator of).
+
+    None only when there is no frame axis at all - neither recorded steps nor a
+    frame count: a page with no timeline gets no axis, never a zero-length one.
+    """
+    axis = None
+    if step_index is not None:
+        try:
+            recorded = np.asarray(step_index, dtype=float).ravel()
+        except (TypeError, ValueError):
+            recorded = None
+        # A backwards or non-finite axis is not a shorter axis, it is an
+        # unreadable record: fall THROUGH to the frame count instead of casting
+        # an order this page cannot defend into a step sequence.
+        if recorded is not None and recorded.size > 0 and bool(
+            np.all(np.isfinite(recorded))
+        ):
+            if recorded.size < 2 or not bool(np.any(np.diff(recorded) < 0.0)):
+                axis = recorded.astype(int)
+    if axis is None:
+        try:
+            frames = 0 if n_frames is None else int(n_frames)
+        except (TypeError, ValueError):
+            frames = 0
+        if frames < 1:
+            return None
+        axis = np.arange(1, frames + 1, dtype=int)
+
+    steps_apart = None
+    if axis.size > 1:
+        diffs = np.diff(axis.astype(float))
+        if float(diffs[0]) > 0.0 and bool(np.all(diffs == diffs[0])):
+            steps_apart = int(diffs[0])
+    try:
+        stride_value = int(stride)
+    except (TypeError, ValueError):
+        stride_value = 0
+    if stride_value <= 0:
+        stride_value = steps_apart if steps_apart else 1
+
+    try:
+        total = int(n_steps)
+    except (TypeError, ValueError):
+        total = 0
+    if total <= 0:
+        total = max(int(axis[-1]), int(axis.size))
+
+    seconds = None
+    try:
+        dt = float(dt_s)
+    except (TypeError, ValueError):
+        dt = float("nan")
+    if math.isfinite(dt) and dt > 0.0:
+        seconds = axis.astype(float) * dt
+
+    return TimeAxis(
+        step_index=axis, stride=int(stride_value), n_steps=int(total),
+        time_seconds=seconds,
+    )
+
+
+def _frame_label(index, frames, time_axis=None):
     """The player's "frame k / n" label, or None on a page with no timeline.
 
     The ONE place that sentence is composed, and ``frames`` is the count the
@@ -431,9 +604,26 @@ def _frame_label(index, frames):
     denominator cannot be the dump's own plane-frame count while the slider and
     the play loop are counted on the volume's clock. None is "no timeline",
     never "frame 1 / None".
+
+    ``time_axis`` is the page's RECORDED step axis (``info["time_axis"]"). When
+    it counts the SAME frames the player steps, the sentence is read off that
+    record - "Step 301 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100)" - so a
+    decimated timeline cannot be mistaken for one step per frame. A page with no
+    axis, or one describing a different family than the player steps, keeps the
+    frame-only sentence byte for byte - which is also the legacy two-argument
+    call, unchanged.
     """
     if frames is None:
         return None
+    if time_axis is not None:
+        try:
+            same_clock = int(time_axis.n_frames) == int(frames)
+        except (AttributeError, TypeError, ValueError):
+            same_clock = False
+        if same_clock:
+            text = time_axis.label(int(index) + 1)
+            if text is not None:
+                return text
     return f"frame {int(index) + 1} / {int(frames)}"
 
 
@@ -718,6 +908,30 @@ def load_vis(path: Path) -> dict:
         for problem in problems:
             print(f"[poc_app] {path}: {problem}", file=sys.stderr)
         raise SystemExit(2)
+
+    # THE PLAYER'S STEP AXIS, built once, here, so the label the player prints is
+    # READ OFF THE DUMP instead of counted from the slider position. The axis is
+    # the VOLUME's when the volume is the coarser recording, because the player
+    # then steps the volume's own frames (``_volume_player_plan``); otherwise it
+    # is the plane family's recorded frame axis, one step per frame. What the
+    # dump does NOT record is not invented: a missing ``nsteps`` falls back to
+    # the last recorded step, and a missing or unusable ``dt_s`` leaves
+    # ``time_seconds`` None rather than making a time base up.
+    volume_steps = info["e_abs_volume_step_index"]
+    if volume_steps is not None and int(volume_steps.size) < int(info["nt"]):
+        info[TIME_AXIS_KEY] = build_time_axis(
+            step_index=volume_steps,
+            stride=info["e_abs_volume_stride"],
+            n_steps=info["nstep"],
+            dt_s=info["dt_s"],
+        )
+    else:
+        info[TIME_AXIS_KEY] = build_time_axis(
+            step_index=info["frame_index"],
+            n_steps=info["nstep"],
+            dt_s=info["dt_s"],
+            n_frames=info["nt"],
+        )
 
     # Computed once, here, from every stored frame of every plane: the viewer
     # then has no way to rescale between frames because it is never given a
@@ -11353,7 +11567,11 @@ def run_web_vis(
             if not np.isfinite(t_ns)
             else f"sim time: t = {t_ns:.6f} ns"
         )
-        state.frame_label = _frame_label(index, frames)
+        # The axis is read from the LIVE page beside the frames: a solve that
+        # swapped the dump under this page must relabel from the NEW record.
+        state.frame_label = _frame_label(
+            index, frames, info.get(TIME_AXIS_KEY)
+        )
         state.phase_label = _vis_phase_text(t_ns, info.get("t_traverse_ns"))
         if mode == "ycut":
             # The y the x-z sheet sits on is READ per draw, from the LIVE page,
