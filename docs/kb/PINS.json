@@ -1,0 +1,22 @@
+{
+  "schema": "kb-pins/1",
+  "core_handoff_id": "gen13->gen14",
+  "newest_commit_date": null,
+  "uncited_baseline": 0,
+  "budgets": {
+    "core": 46080,
+    "core_warn": 38912,
+    "per_file_core_default": 9216,
+    "registry": 30720,
+    "work": 20480,
+    "total_ingest": 100000,
+    "warn_at": 0.85
+  },
+  "files": [
+    {"path": "docs/kb/README.md", "sha256": null, "layer": "root"},
+    {"path": "docs/kb/PROCEDURE.md", "sha256": null, "layer": "root"},
+    {"path": "docs/kb/REGISTRY/decisions.md", "sha256": null, "layer": "registry"},
+    {"path": "tests/COLLECTED.txt", "sha256": null, "layer": "test-manifest"}
+  ],
+  "claims": []
+}
