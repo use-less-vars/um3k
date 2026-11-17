@@ -89,7 +89,7 @@ a debt, it is an omission.
 | file | role |
 |---|---|
 | `docs/kb/PROCEDURE.md` | the authority; this file only orients |
-| `docs/kb/PINS.json` | budgets, `files[]`, `claims[]`, `uncited_baseline` |
+| `docs/kb/PINS.json` | budgets, `newest_commit`, `files[]`, `claims[]`, `uncited_baseline` |
 | `tests/test_kb_integrity.py` | assertions A1..A10, one test each |
 | `tests/COLLECTED.txt` | the pinned node-id manifest that `[FIXED-TESTED]` resolves against |
 | `scripts/repin_kb.py` | writes `PINS.json` and patches headers; never hand-edited |
@@ -109,13 +109,24 @@ an oversight, it is the bootstrap: a file cannot contain the hash of itself plus
 its neighbours before those bytes are committed. In this state A2, A4 and A10
 are **red by construction** — they fail with a git message rather than skipping,
 because "not checked" and "checked and fine" must never look alike. The fix is
-one commit and one command:
+one command between two commits:
 
 ```
 git add -A && git commit -m "kb: content"
 python3 scripts/repin_kb.py
+git add -A && git commit -m "kb: pins"
 python -m pytest tests/test_kb_integrity.py -q
 ```
+
+A pin covers a **canonical form** of its file: the bytes with the *values* of
+`pinned_commit`, `pinned_at` and `last_verified` replaced by `<canonical>`.
+Every other byte is pinned as written, so editing a sentence, a heading or any
+other header value still moves the hash; the three masked values are
+authenticated instead by A10's ancestry check. That is what makes the second
+commit both necessary and sufficient. `repin_kb.py` rewrites those three values
+in every header, so until the pin commit lands `docs/kb` is dirty and A4 is red,
+and a pin taken over raw bytes could never match the HEAD blob and the working
+tree at the same time.
 
 A1, A3, A5, A6, A7, A8 and A9 are green here and green anywhere: they need the
 tree, not the history.

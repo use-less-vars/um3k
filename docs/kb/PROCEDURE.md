@@ -93,8 +93,8 @@ superseded_by: null
 ```
 
 `pinned_commit: null` in this example is the pre-repin state: **null is legal
-only until the first `repin_kb.py` run, which sets `PINS.newest_commit_date`;
-after that a null pin is a failed header (section 6)**.
+only until the first `repin_kb.py` run, which sets `PINS.newest_commit`; after
+that a null pin is a failed header (section 6)**.
 
 The parser is a dumb line parser, and that is a feature: it cannot silently
 accept something you did not mean. The rules it enforces:
@@ -166,8 +166,8 @@ opening `[NAME` with no closing `]` as a broken tag rather than ignoring it.
 
 | id | one line | why it exists |
 |---|---|---|
-| A1 | every markdown file has the nine-key header, a matching layer, a valid status, and `PINS.json` has exactly its seven keys | a file with no header is a file with no provenance |
-| A2 | `PINS.files[].sha256` equals the sha256 of that path's **HEAD blob** and of its working-tree bytes | a pin names committed bytes, not a promise |
+| A1 | every markdown file has the nine-key header, a matching layer, a valid status, and `PINS.json` has exactly its eight keys (`newest_commit` arrives with the first re-pin; the gate accepts seven until then) | a file with no header is a file with no provenance |
+| A2 | `PINS.files[].sha256` equals the sha256 of that path's **canonical form**, computed once from the HEAD blob and once from the working tree | a pin names committed content, not a promise |
 | A3 | per-file caps from headers, core/registry/work layer sums and total ingest against `PINS.budgets` | a knowledge base that only grows stops being read |
 | A4 | the five layer dirs exist with `.gitkeep` and no `README.md` stub, `git status --porcelain docs/kb` is empty, everything walked is tracked | a pin is only meaningful over a clean tree |
 | A5 | every tag body matches its documented shape, `[UNCITED]` carries `why:`, masking self-test passes | a malformed tag is an unverifiable claim |
@@ -175,33 +175,53 @@ opening `[NAME` with no closing `]` as a broken tag rather than ignoring it.
 | A7 | every `[measured]` matches the HEAD blob sha256 and every `[CITED]` line exists in it | evidence must be read from the commit, not from memory |
 | A8 | every `PINS.claims[]` entry names an ancestor commit and a `required_token` present in the source blob at that commit | a registered claim is a query, not a note |
 | A9 | the number of live `[UNCITED]` tags never exceeds `PINS.uncited_baseline` | debt is allowed; growing debt silently is not |
-| A10 | every source pin is still an ancestor of HEAD, no non-root header keeps `pinned_commit: null` once `PINS.newest_commit_date` is set, the newest commit is inside 14 days, `PINS.newest_commit_date` still names it, pin..HEAD distance warns at 20 and fails at 50 | pins age; a stale pin is a lie with a date on it |
+| A10 | every source pin is still an ancestor of HEAD, no non-root header keeps `pinned_commit: null` once `PINS.newest_commit` is set, that commit is inside 14 days on its own committer date, pin..HEAD distance warns at 20 and fails at 50 | pins age; a stale pin is a lie with a date on it |
 
 A2, A4, A7, A8 and A10 touch git; of those, A2, A4 and A10 are the three that
-cannot be evaluated at all without a repository. A7 and A8 pass trivially when
-there is nothing to evaluate — zero `[measured]`/`[CITED]` tags and an empty
-`claims[]` — and say so: they print `0 claims evaluated, 0 pinned`, not a green
-light that means nothing.
+cannot be evaluated at all without a repository, and where there is no `git`
+binary they fail with their own `git unavailable` message rather than skipping.
+A7 and A8 pass trivially when there is nothing to evaluate — zero
+`[measured]`/`[CITED]` tags and an empty `claims[]` — and say so: they print
+`0 claims evaluated, 0 pinned`, not a green light that means nothing.
 
 ## 6. Bootstrap, self-pins and source pins
 
 The ordering is not optional:
 
 1. commit the content;
-2. run `python3 scripts/repin_kb.py`;
-3. run the gate.
+2. run `python3 scripts/repin_kb.py` — it writes the self-pins and patches the
+   header pins;
+3. commit the pins and the header patch it produced;
+4. run the gate.
+
+Two commits, not one. Step 2 rewrites three front-matter values in every header
+and rewrites every self-pin, so between steps 2 and 3 `docs/kb` is dirty and A4
+is red. After step 3 both sides of A2 and A4 hold at the same time. Step 2 also
+refuses to run at all over a dirty `docs/kb`.
 
 `PINS.json` can never pin itself. Its bytes change every time it is written, so
 a sha256 of itself inside itself could not be true for even one commit — the
 gate rejects a `files[]` entry that names `docs/kb/PINS.json`.
 
-A **self-pin** is the sha256 of a file's blob at HEAD, recorded in
+A **self-pin** is the sha256 of a file's **canonical form**, recorded in
 `PINS.files[].sha256`; its `layer` reuses the same six layer names a header uses
 (the two root files are `root`), plus one extra kind, `test-manifest`, for
-`tests/COLLECTED.txt`, which lives outside `docs/kb/`. It is read with `git show HEAD:<path>`, which makes it
-bootstrap-free (the content commit exists before the pin does) and CRLF-immune. A2 compares the pin against the HEAD blob *and*
-against the working-tree bytes, which is what makes an edit without a re-pin
-red immediately rather than at the next commit.
+`tests/COLLECTED.txt`, which lives outside `docs/kb/`. The canonical form is the
+file's bytes with the *values* of exactly three front-matter keys —
+`pinned_commit`, `pinned_at`, `last_verified` — replaced by `<canonical>`; every
+other byte, body and header alike, is hashed as written. One side is read with
+`git show HEAD:<path>` and the other from the working tree, which makes the pin
+bootstrap-free (the content commit exists before the pin does) and CRLF-immune.
+A2 requires both sides to equal the pin, so an edit without a re-pin is red
+immediately rather than at the next commit, and a body byte, a heading or any
+other header value still breaks the pin. The writer and the gate both import
+that rewrite from `scripts/kb_canonical.py`, so they cannot drift apart.
+
+The three masked values are provenance, not content, and A10 authenticates them
+instead by reading `PINS.newest_commit` and checking that commit for ancestry
+and freshness. Masking them is what gives the ritual a fixed point: re-pinning
+rewrites all three on every header, so a pin taken over raw bytes could match
+the working tree (A4 red) or the HEAD blob (A2 red), never both.
 
 A **source pin** is `claims[].pin_commit`: an immutable commit hash naming where
 a claim's evidence lives. It never moves. A10 walks every `claims[].pin_commit`
@@ -213,13 +233,23 @@ pinned commit from another branch all fail there.
 a header's `pinned_commit`, `pinned_at` and `last_verified`: it rewrites those
 three values to HEAD and today on every header, root files included, and touches
 nothing else (a plain `python3 scripts/repin_kb.py` run patches the headers too,
-so one command re-pins the tree). Before the first run every header may carry
-`pinned_commit: null` and `PINS.newest_commit_date` is `null`; that is the only
-state in which a null pin is legal.
+so one command re-pins the tree, after which only the pin commit makes the tree
+clean again). Before the first run every header may carry
+`pinned_commit: null` and `PINS.newest_commit` is `null`; that is the only state
+in which a null pin is legal.
 
-**The ratchet.** The moment `PINS.newest_commit_date` names a date, a null
+`PINS.json` carries the eight keys `schema`, `core_handoff_id`, `newest_commit`,
+`newest_commit_date`, `uncited_baseline`, `budgets`, `files`, `claims`.
+`newest_commit` is the ratchet: the full 40-character HEAD sha at re-pin time.
+`newest_commit_date` records that commit's committer date for a human, and
+nothing asserts it.
+
+**The ratchet.** The moment `PINS.newest_commit` names a commit, a null
 `pinned_commit` on any non-root header is a failed header and A10 fails hard
-naming the path; every remaining pin must be an ancestor of HEAD. There is no
+naming the path; every remaining pin must be an ancestor of HEAD and inside the
+14-day window measured on that commit's own committer date. A pin..HEAD distance
+of 1 is the normal green state — the pin names the content commit that the pin
+commit sits on — with a warning at 20 and a failure at 50. There is no
 placeholder commit hash: a pin is either the real commit its bytes were pinned
 at, or `null` before the first re-pin. The forty-zeros value is not a
 placeholder either: it is a commit hash that cannot exist, and M5 in
@@ -268,14 +298,21 @@ node ids below that header are the only thing `[FIXED-TESTED]` resolves against.
 
 ## 10. Sequencing
 
-Four stages, and they are ordered because each one's evidence is the previous
+Five stages, and they are ordered because each one's evidence is the previous
 one's output:
 
 1. **content** — write the files, nine-key headers, tags that resolve;
 2. **commit** — the content lands, so HEAD exists to be pinned;
-3. **pin** — `repin_kb.py` writes the self-pins and `--patch-headers` moves the
-   header pins;
-4. **gate** — the ten assertions run against a clean tree.
+3. **pin** — `repin_kb.py` writes the self-pins and patches the header pins;
+   `docs/kb` is now dirty, and it has to be, because the pins describe the bytes
+   committed in stage 2;
+4. **commit the pin** — the pins and the header patch land, so the tree is clean
+   and a pin is a committed artefact rather than a pending edit;
+5. **gate** — the ten assertions run against that clean tree, and only there.
+
+One commit cannot carry stages 2 and 4 together. The pin has to be computed from
+a commit that already exists, and the bytes it describes have to be committed
+before the tree is clean. That is why the ritual has two of them.
 
 Nothing moves until the gate is green. Not a directory, not a file, not a
 citation, not an "obvious" renumbering. The whole point of an ordered ritual is
@@ -322,13 +359,15 @@ The gate is designed to be run where the repository is:
 ```
 git add -A && git commit -m "kb: content"
 python3 scripts/repin_kb.py
+git add -A && git commit -m "kb: pins"
 python -m pytest tests/test_kb_integrity.py -q
 ```
 
 Seven of the ten assertions — A1, A3, A5, A6, A7, A8, A9 — need only the tree
-and pass anywhere. The other three are the git-dependent trio: A2 (self-pin
-sha256 against HEAD blobs), A4 (`git status --porcelain docs/kb` strictly
-empty) and A10 (commit ancestry, the newest-commit date, pin..HEAD distance).
+and pass anywhere. The other three are the git-dependent trio: A2
+(canonical-form sha256 against HEAD blobs), A4 (`git status --porcelain docs/kb`
+strictly empty) and A10 (commit ancestry, the 14-day window on
+`PINS.newest_commit`, pin..HEAD distance).
 Without a repository they **fail**, each with its own "git unavailable" message
 naming what it could not check, and never skip: an unrun assertion that reports
 as green is how a knowledge base rots.

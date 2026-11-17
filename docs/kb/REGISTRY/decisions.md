@@ -40,8 +40,38 @@ authority stays in `docs/design/dispatch_log.md` and
 
 Reconstruction is Stage 3 work (`scripts/generate_open_defects.py` produces the
 defects half from `docs/design/defect_register.md`). Until then this file holds
-the schema, the rules, and zero rows — and a zero-row index is honest, while a
-guessed one is not.
+the schema, the rules, and only the rows decided inside `docs/kb` itself — the
+`docs/design/`-derived rows still pending generation, because a guessed row is
+worse than no row.
+
+`pointer` names the KB file that carries the reasoning for a decision taken
+inside this tree, since no `docs/design/` row backs it.
 
 | id | row | status | pointer |
 |---|---|---|---|
+| KB-1 | the section below | LIVE | `docs/kb/PROCEDURE.md` section 6 |
+
+## KB-1 — a pin covers a canonical form; A10 keys on a commit hash
+
+**Decision.** `PINS.files[].sha256` is the sha256 of a file's canonical form —
+its bytes with the values of exactly `pinned_commit`, `pinned_at` and
+`last_verified` replaced by `<canonical>`, every other byte as written
+(`scripts/kb_canonical.py`, imported by both `scripts/repin_kb.py` and A2).
+`PINS.newest_commit` is the full 40-character HEAD sha at re-pin time; A10
+requires it to be an ancestor of HEAD, inside 14 days on its own committer date,
+at pin..HEAD distance under 20, failing at 50. `newest_commit_date` is written
+and asserted by nothing.
+
+**Defects.** A2 demanded `sha256(HEAD blob)` and `sha256(working bytes)` equal
+one pin while `repin` rewrote three front-matter values in the working tree:
+dirty tree failed the working side, committing moved the HEAD blob and failed
+the HEAD side, re-pinning was dirty again — no fixed point. And A10 demanded
+`newest_commit_date` string-match `git log -1 --format=%cI HEAD`, satisfiable
+only while `repin`'s output was uncommitted, while A4 demands
+`git status --porcelain -- docs/kb` empty: at most one could be green.
+
+**Rejected.** Re-pinning after the header patch, which stays dirty and breaks
+A4. Trusting only the HEAD blob, which lets a dirty-tree edit through. Dropping
+header files from `PINS.files[]`, which gives up pinning on exactly the files
+most likely to be hand-edited. Keying A10 on the date string, unsatisfiable
+alongside A4 as above.
