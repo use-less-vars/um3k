@@ -1,0 +1,5 @@
+module	name	start_line	end_line	n_lines	n_methods	bases	decorators	role_guess
+server/poc_app.py	SolveJob	9640	9724	85	7			ONE solve, in a child process, driven from a worker thread.
+server/um3k_context.py	LoadedDump	39	71	33	1		dataclass	One page's loaded values, as ``reload_page`` hands them over.
+server/um3k_context.py	Available	87	143	57	1		dataclass(frozen=True)	What this page can show, decided once from the loaded data.
+server/um3k_context.py	PageContext	160	228	69	8			One page's data, its availability snapshot and its presentation state.

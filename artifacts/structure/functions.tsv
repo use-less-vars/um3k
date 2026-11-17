@@ -1,0 +1,316 @@
+module	qualname	kind	start_line	end_line	n_lines	n_args	decorators	flags	controller_decorator	docstring_first_line
+server/poc_app.py	_resolve	function	195	200	6	1				Absolute paths pass through, relative ones are taken from the repo root.
+server/poc_app.py	load_dump	function	203	319	117	3				Load the npz metadata plus the Ez plane. Exits with 2 on bad input.
+server/poc_app.py	_npz_scalar	function	330	342	13	3				One stored 0-d value, or ``default`` when the dump does not carry it.
+server/poc_app.py	_npz_text	function	345	350	6	2				One stored string, or None when the dump does not carry it.
+server/poc_app.py	_npz_int_or_none	function	353	368	16	2				One stored sample INDEX, or None when the dump does not carry it.
+server/poc_app.py	_vis_colour_limit	function	371	397	27	2				One |Ez| ceiling for EVERY frame, plus a flag for an all-zero cube.
+server/poc_app.py	_is_vis	function	400	404	5	1				True when ``info`` came from load_vis, not from load_dump.
+server/poc_app.py	_frame_span_max	function	407	417	11	3				The LAST frame index of ``mode``'s own family, or None with no timeline.
+server/poc_app.py	_frame_label	function	420	431	12	2				The player's "frame k / n" label, or None on a page with no timeline.
+server/poc_app.py	_load_series_block	function	434	517	84	2				The load's own V(t)/I(t) trace as ONE state block, or ``(None, reason)``.
+server/poc_app.py	load_vis	function	520	722	203	1				Load an ``emfit.vis/2`` animation dump. numpy only, no pyvista.
+server/poc_app.py	load_any_dump	function	725	808	84	1				Open either artefact. Dispatch on the npz ``schema`` key, nothing else.
+server/poc_app.py	_velocity_label	function	811	835	25	1				The velocity line, from the dump's OWN recorded numbers.
+server/poc_app.py	_scale_label	function	838	859	22	1				The ONE colour-limit line, from this dump's own ``color_range``.
+server/poc_app.py	_structure_readout_text	function	862	879	18	1				One line of dump provenance: ``structure: A (50 Ω)``.
+server/poc_app.py	_page_source_text	function	882	940	59	2				One line naming the FILE this page is showing, and what kind of page it is.
+server/poc_app.py	_cell_mm	function	943	944	2	1				
+server/poc_app.py	_station_text	function	947	959	13	4				Corner label for one captured station.
+server/poc_app.py	_as_float	function	979	984	6	1				float() or None, never raising. Used on optional record keys.
+server/poc_app.py	_record_candidates	function	987	1078	92	1				Candidate record paths for a dump, best first. NEVER raises.
+server/poc_app.py	load_record	function	1081	1113	33	1				Read the study record stored beside the dump; None if there is none.
+server/poc_app.py	_structure_key	function	1127	1136	10	1				The arm key for a structure id, or None when no arm was recorded.
+server/poc_app.py	_multifreq_candidates	function	1139	1179	41	2				Candidate multi-frequency summary paths for a dump, best first.
+server/poc_app.py	_absent_multifreq_reason	function	1182	1228	47	2				WHY this arm has no sweep, in the page's own words. Never empty.
+server/poc_app.py	_read_json	function	1244	1255	12	1				Read a JSON object from ``path``; None (plus a stderr note) on failure.
+server/poc_app.py	_as_int	function	1258	1261	4	1				int() or None, never raising. Used on optional integer record keys.
+server/poc_app.py	_cells_string	function	1264	1265	2	3				
+server/poc_app.py	_parse_cells	function	1268	1284	17	1				'62x212x22' -> {'nx': 62, 'ny': 212, 'nz': 22}; None when unparseable.
+server/poc_app.py	_cells_as_text	function	1287	1294	8	1				{'nx': 62, 'ny': 212, 'nz': 22} -> '62x212x22'; None when incomplete.
+server/poc_app.py	_cells_from_summary	function	1300	1312	13	1				Cell counts out of a record's summary_line, e.g. 'cells=72x212x22'.
+server/poc_app.py	_n_line	function	1315	1331	17	1		touches_render		The run's n_line as recorded (run.kwargs.n_line, then geometry.n_line).
+server/poc_app.py	_run_letter	function	1334	1344	11	2				The run label ('A', 'B') out of an entry's '<field_dump|sparams>.run'.
+server/poc_app.py	_structure_registry	function	1347	1381	35	0				The SOLVE arms, read from the solver that dispatches on them. {} if not.
+server/poc_app.py	load_structures	function	1384	1393	10	0				Every usable entry of structures.json, in file order. [] when unreadable.
+server/poc_app.py	_structure_by_id	function	1396	1401	6	2				The entry with this id, or None. Never invents one.
+server/poc_app.py	_structure_label	function	1404	1412	9	1				The entry's human label, with the id (then the default) as fallbacks.
+server/poc_app.py	_structure_dump_path	function	1415	1419	5	1				The entry's npz path as written in the registry, or None.
+server/poc_app.py	_structure_is_record_only	function	1422	1430	9	1				True when this entry's field dump is not on disk, so the case cannot open.
+server/poc_app.py	_renderable_structure_ids	function	1433	1439	7	1				The ids that can actually be opened: those with a field dump on disk.
+server/poc_app.py	_record_only_refusal	function	1442	1457	16	2				The refusal for a dump report on an entry with no dump: name the way through.
+server/poc_app.py	_structure_input_path	function	1460	1471	12	2				Resolve the npz: --input when given, else the entry's dump, else default.
+server/poc_app.py	_structure_option_label	function	1474	1503	30	1				Picker text for one entry: cells and run letters BEFORE it is opened.
+server/poc_app.py	_structure_options	function	1506	1517	12	1				Picker items: disabled EXACTLY where the entry has no field dump.
+server/poc_app.py	_git_head_short	function	1520	1561	42	0				The commit HEAD points at, read with pathlib only - no subprocess.
+server/poc_app.py	_field_record	function	1564	1569	6	1				The study record beside a dump, read quietly (the state path is a report).
+server/poc_app.py	_multifreq_point	function	1572	1603	32	1				One sweep row as a dict, or (None, why-not) when it cannot be drawn.
+server/poc_app.py	_multifreq_points	function	1606	1619	14	1				(points, skipped) for a sweep summary dict, sorted by recorded frequency.
+server/poc_app.py	load_multifreq	function	1622	1726	105	2				Read the multi-frequency |S11| / |S21| sweep for a dump and its arm.
+server/poc_app.py	_single_point_from_record	function	1729	1764	36	2				The run record's own |S11| / |S21| as ONE sweep point, or None.
+server/poc_app.py	_single_point_multifreq	function	1767	1807	41	1				The arm's own single run as a ONE-POINT sweep, or None.
+server/poc_app.py	_own_frequency_ghz	function	1810	1824	15	1		touches_render		The dump's own recorded frequency in GHz, or None.
+server/poc_app.py	_frequency_rows	function	1831	1841	11	1				The recorded rows as plain text: the fallback when no chart is drawn.
+server/poc_app.py	_frequency_caption	function	1844	1881	38	3				One line: the source file, its arm, the row count, and what was NOT done.
+server/poc_app.py	_s_params_nearest	function	1884	1906	23	2				The RECORDED point nearest a frequency: ``(point, ref_ghz, offset, why)``.
+server/poc_app.py	_s_params_number_text	function	1909	1929	21	2				One line: the |S11| of the recorded point nearest the driven frequency.
+server/poc_app.py	build_frequency_chart	function	1932	2076	145	2		touches_render		Render |S11| and |S21| vs frequency to a PNG data URI.
+server/poc_app.py	_utc_now	function	2107	2109	3	0				ISO-8601 UTC, seconds resolution: the state dump's own timestamp.
+server/poc_app.py	_fmt	function	2112	2114	3	2				A number for a text table, or 'n/a' when the record did not carry it.
+server/poc_app.py	_chart_title	function	2117	2133	17	1				The frequency chart's title, derived from the selected entry.
+server/poc_app.py	_float_list	function	2136	2146	11	1				A list of floats as recorded, or None when it is not one.
+server/poc_app.py	_port_waves_block	function	2149	2194	46	2				``s11.station_phasors`` as a state block, or ``(None, reason)``.
+server/poc_app.py	_port_wave_rows	function	2197	2206	10	1				The station phasors as plain text: the fallback when no chart is drawn.
+server/poc_app.py	_port_caption	function	2209	2219	11	2				One line naming the file, and what this panel is not.
+server/poc_app.py	_load_series_caption	function	2222	2248	27	2				One line naming the trace's file, its sample count and its element.
+server/poc_app.py	build_port_wave_chart	function	2251	2326	76	1		touches_render		Render the recorded station phasors to a PNG data URI.
+server/poc_app.py	build_port_series_chart	function	2329	2461	133	1		touches_render		Render the load's recorded V(t)/I(t) trace to a PNG data URI.
+server/poc_app.py	_structure_artifact_path	function	2464	2471	8	2				An entry's artefact path for ``key``, but only if it exists on disk.
+server/poc_app.py	_sparams_path	function	2474	2482	9	2				The S-parameter record for this page: the entry's, else the dump's own.
+server/poc_app.py	_multifreq_path	function	2485	2498	14	3				The sweep file for this page: the entry's, else the one beside the dump.
+server/poc_app.py	_field_dump_block	function	2501	2571	71	2				The field-dump half: CELLS from the array shape, the x axis from the record.
+server/poc_app.py	_sparams_block	function	2574	2609	36	1				The S-parameter half, every number read and nothing guessed.
+server/poc_app.py	_n_line_or_unknown	function	2612	2613	2	1				
+server/poc_app.py	_mismatch_block	function	2616	2642	27	4				Whether the two halves of this page are even the same solve, and why not.
+server/poc_app.py	_residual_block	function	2645	2663	19	2				One anchor and the two-wave |S11| measured against it.
+server/poc_app.py	_residuals_block	function	2666	2683	18	2				Both declared anchors against the same measurement; never 'validated'.
+server/poc_app.py	_referee_s11_path	function	2711	2716	6	0				The referee extraction's resolved path, or None when it cannot be made.
+server/poc_app.py	_confidence_mm	function	2719	2722	4	2				A recorded length in METRES printed in MILLIMETRES, or 'n/a'.
+server/poc_app.py	_confidence_ghz	function	2725	2728	4	2				A recorded frequency in HZ printed in GHZ, or 'n/a'.
+server/poc_app.py	_confidence_z0	function	2731	2738	8	2				One complex impedance in ohm, or 'n/a' when either part is missing.
+server/poc_app.py	_confidence_cells_per_lambda	function	2741	2748	8	2				(lambda_m, cells_per_lambda) for one recorded beta, or (None, None).
+server/poc_app.py	_confidence_mesh_rows	function	2751	2784	34	1		touches_render		What was SOLVED: the cell size and the grid, cross-checked against itself.
+server/poc_app.py	_confidence_resolution_rows	function	2787	2833	47	1		touches_render		Cells per wavelength at BOTH betas: the resolution the run really had.
+server/poc_app.py	_confidence_referee_rows	function	2836	2889	54	2		touches_render		The referee extraction against this record's |S11|: agreement, then trust.
+server/poc_app.py	_confidence_extraction_rows	function	2892	2963	72	1				What the extraction did NOT record, and the two counts that differ.
+server/poc_app.py	_confidence_caveat_rows	function	2966	3025	60	1		touches_render		Provenance, the frequency actually run, and the acceptance-criteria tally.
+server/poc_app.py	build_confidence_block	function	3028	3095	68	3				The Confidence & Accuracy panel as DATA: rows, caption, basis, sources.
+server/poc_app.py	_multifreq_block	function	3098	3128	31	1				The sweep as recorded, or None when no row could be read.
+server/poc_app.py	_chart_block	function	3131	3146	16	2				What the chart DOES: discrete markers at recorded frequencies only.
+server/poc_app.py	_mismatch_banner_text	function	3149	3157	9	1				The exact banner sentence, or None when there is nothing to warn about.
+server/poc_app.py	_finite	function	3160	3171	12	1				A float for JSON, or None when it is not finite.
+server/poc_app.py	_vis_cut_station_block	function	3182	3201	20	2				The x-z sheet's fixed y, in this document's own null-plus-reason form.
+server/poc_app.py	_vis_field_block	function	3204	3238	35	2				The animation's own field block: a dense cube, so the extents agree.
+server/poc_app.py	_vis_field_block.<locals>._span	function	3216	3217	2	1				
+server/poc_app.py	_animation_block	function	3241	3334	94	2				What the animation adds to the state dump: frames, time, scale, geometry.
+server/poc_app.py	build_state_dump	function	3337	3404	68	4				The whole page state as one JSON document, numpy-only.
+server/poc_app.py	_station_axis_mm	function	3407	3471	65	2				Resolve the x of each captured station, in mm, plus where the axis came from.
+server/poc_app.py	_station_axis_mm.<locals>._as_axis	function	3435	3445	11	2				``values`` times ``scale_mm`` as mm, or None if that is not an axis.
+server/poc_app.py	_station_axis_mm.<locals>._dig	function	3447	3453	7	2				``block[key0][key1]...``, or None as soon as a level is not a dict.
+server/poc_app.py	_geom_mm	function	3474	3608	135	4		touches_render		The structure's millimetres, and where each number came from.
+server/poc_app.py	_geom_mm.<locals>._num	function	3509	3514	6	1				A finite float, or None. Never raises on a string, NaN or inf.
+server/poc_app.py	_geom_mm.<locals>._take	function	3536	3542	7	3				The first finite source wins; a later source cannot overwrite it.
+server/poc_app.py	_geom_mm.<locals>._metres	function	3544	3547	4	1				A record length in METRES as millimetres, or None.
+server/poc_app.py	_page_has_board	function	3611	3620	10	1				Whether ``info`` already carries the board's own scale.
+server/poc_app.py	_builder_board	function	3623	3675	53	0				The board a page with NO data draws, from the builder that defines it.
+server/poc_app.py	_builder_page	function	3678	3688	11	1				The page dict around :func:`_builder_board`: no path, no record, no timeline.
+server/poc_app.py	_bare_board_page	function	3691	3771	81	3				A page dict for a structure whose BOARD is drawn with no dump at all.
+server/poc_app.py	_bare_board_page.<locals>._mm	function	3729	3732	4	1		touches_render		A resolved millimetre value, or NaN when neither source had it.
+server/poc_app.py	_bare_board_page.<locals>._count	function	3734	3741	8	2		touches_render		A grid count from the record's geometry, else from its grid list.
+server/poc_app.py	_plane_layout	function	3774	3885	112	2		touches_render		Resolve the x of the load, S11 port and S21 planes, in mm.
+server/poc_app.py	_s21_label	function	3888	3895	8	1				The S21 marker's text, including whether its plane is usable.
+server/poc_app.py	_marker_text	function	3898	3928	31	2				Corner legend: what each marker is, where its x came from, and its state.
+server/poc_app.py	_view_label	function	3931	3973	43	4				Browser-side label naming the view that is currently drawn.
+server/poc_app.py	_volume_grid_dims	function	4011	4066	56	2				The ``(nx, ny, nz)`` lattice the colocated volume sits on, or None.
+server/poc_app.py	_cut_layout	function	4069	4141	73	4				Resolve which y and z sample the cut sheets sit on. Numbers only.
+server/poc_app.py	_cut_text	function	4144	4161	18	1		touches_ui		The slider label: which sample, where it is in mm, and WHICH grid.
+server/poc_app.py	_cut_sheet_clim	function	4164	4189	26	2				One cut sheet's own colour range ``(peak / 1000, peak)``, or None.
+server/poc_app.py	_cut_clim_text	function	4192	4214	23	1				The corner-legend line naming the range each DRAWN cut was painted on.
+server/poc_app.py	build_cut_sheets	function	4217	4283	67	2		touches_ui		Build the two cut sheets as one-sample-thick pyvista images.
+server/poc_app.py	_volume_cut_sheets	function	4286	4317	32	2		touches_ui		The two cuts as SUBSETS of the |E| volume image, or None if it refused.
+server/poc_app.py	_marker_cut_relation	function	4320	4387	68	2		touches_ui		State, per marker, whether it lies ON a drawn cut sheet or off them.
+server/poc_app.py	_marker_cut_relation.<locals>.in_slab	function	4339	4340	2	1				
+server/poc_app.py	_marker_cut_lines	function	4390	4400	11	4				The cut sentences appended to the corner legend by _marker_text.
+server/poc_app.py	_print_vis_keys	function	4403	4521	119	1				Print the wave-animation metadata. numpy only - no pyvista, no trame.
+server/poc_app.py	print_keys	function	4524	4569	46	1				Print dump metadata. numpy only - no pyvista, no trame.
+server/poc_app.py	build_grid	function	4572	4642	71	2		touches_render		Build the volume's grid on the STATION AXIS the dump or record records.
+server/poc_app.py	create_plotter	function	4645	4682	38	1		touches_render		
+server/poc_app.py	_add_plane_marker	function	4685	4766	82	9		touches_render		Draw ONE plane normal to x, centred at ``center_x`` - as its EDGE.
+server/poc_app.py	_add_markers	function	4769	4883	115	3		touches_render		Draw the two port planes and the extraction labels.
+server/poc_app.py	plane_bar_args	function	4920	4935	16	0				``add_scalar_bar`` arguments for the plane bar, title and geometry both.
+server/poc_app.py	_remove_scalar_bar	function	4938	4948	11	2		touches_render		Remove the bar stored under ``title``, when this plotter has one.
+server/poc_app.py	_place_scalar_bar	function	4951	4977	27	4		touches_render		Stand ONE bar up under ``title``, at ``position``, reading ``mapper``.
+server/poc_app.py	_draw_volume_scene	function	4980	5227	248	6		touches_render		Draw the volume view's FIELD layer: the volume and the two cut sheets.
+server/poc_app.py	_plane_extent_mm	function	5245	5332	88	2				The DOMAIN box and the captured-station WINDOW, both in millimetres.
+server/poc_app.py	_plane_extent_mm.<locals>._span	function	5273	5281	9	1				
+server/poc_app.py	_plane_extent_mm.<locals>._counts_span	function	5283	5302	20	1				The same box from the node COUNT and the cell size, no arrays.
+server/poc_app.py	_box_edges	function	5335	5354	20	1				The 12 edges of an axis-aligned box as pairs of (3,) endpoints.
+server/poc_app.py	_dashed_box_segments	function	5357	5387	31	2				The box's 12 edges as DASHES: ``(points, line cells)`` for one PolyData.
+server/poc_app.py	_add_extent_outlines	function	5390	5438	49	4		touches_render		Draw the domain box SOLID and the captured window DASHED inside it.
+server/poc_app.py	_extent_legend	function	5441	5458	18	1				The corner-legend sentence naming the boxes that are on screen.
+server/poc_app.py	_draw_scene	function	5461	5667	207	8		touches_render		Draw one view into the single existing plotter.
+server/poc_app.py	check_web_requirements	function	5683	5717	35	0				Return pip names of web UI packages that are missing or unusable.
+server/poc_app.py	_cut_axis_counts	function	5720	5733	14	3				How many y / z samples the two cut sliders span.
+server/poc_app.py	_init_cut_state	function	5736	5759	24	6		touches_ui|touches_state		Set the opening cut, its label and the first view label.
+server/poc_app.py	_scene_planes	function	5762	5777	16	2		touches_ui|touches_state		Return ``planes`` with the two marker switches folded in.
+server/poc_app.py	_redraw_scene	function	5783	5817	35	6		touches_ui|touches_state		Rebuild the scene in the one plotter. Failure leaves the old picture.
+server/poc_app.py	_on_cut_change	function	5820	5864	45	10		touches_ui|touches_state		Clamp one cut index, store it, and rebuild the scene.
+server/poc_app.py	_emit_cut_sliders	function	5867	5919	53	8		touches_ui|touches_state		Emit the two cut sliders, or the label alone when they cannot be.
+server/poc_app.py	run_web	function	5922	6774	853	6		touches_ui|touches_state		Serve the viewer for ONE structure entry.
+server/poc_app.py	run_web.<locals>._clear_volume_quiver	function	6169	6179	11	0		touches_render		Drop this page's arrow actor. Never raises.
+server/poc_app.py	run_web.<locals>._show_volume_quiver	function	6181	6218	38	0		touches_ui|touches_state		Put the cached arrow mesh on the plotter, or take it off. Never raises.
+server/poc_app.py	run_web.<locals>._redraw	function	6220	6222	3	0		touches_ui|touches_state		Rebuild the scene in the one plotter. Failure leaves the old picture.
+server/poc_app.py	run_web.<locals>._on_toggle_view	function	6227	6243	17	1	ctrl.set('toggle_view')	touches_ui|touches_state|is_controller	ctrl.set('toggle_view')	
+server/poc_app.py	run_web.<locals>._on_cut_y	function	6246	6259	14	2	ctrl.set('cut_y')	touches_ui|touches_state|is_controller	ctrl.set('cut_y')	
+server/poc_app.py	run_web.<locals>._on_cut_z	function	6262	6275	14	2	ctrl.set('cut_z')	touches_ui|touches_state|is_controller	ctrl.set('cut_z')	
+server/poc_app.py	run_web.<locals>._on_volume_quiver_toggle	function	6278	6294	17	2	ctrl.set('show_volume_quiver')	touches_ui|touches_state|is_controller	ctrl.set('show_volume_quiver')	Tick or untick the 3-D arrows: build the mesh at most once, redraw.
+server/poc_app.py	run_web.<locals>._focus	function	6301	6328	28	1		touches_render		
+server/poc_app.py	run_web.<locals>._emit_mismatch_banner	function	6373	6400	28	0		touches_ui		The full-width warning, or nothing at all when the two runs agree.
+server/poc_app.py	run_web.<locals>._emit_volume_quiver_toggle	function	6402	6427	26	0				The 3-D vectors checkbox, or nothing when it cannot do anything.
+server/poc_app.py	run_web.<locals>._emit_structure_picker	function	6429	6501	73	0		touches_ui		The case picker: every entry, record-only ones present but disabled.
+server/poc_app.py	run_web.<locals>._emit_frequency_panel	function	6503	6536	34	0		touches_ui		Emit the |S11| / |S21| panel under the 3-D view, caption first.
+server/poc_app.py	run_web.<locals>._emit_port_wave_panel	function	6538	6582	45	0		touches_ui		Emit the recorded station phasors under the frequency panel.
+server/poc_app.py	run_web.<locals>._on_structure_change	function	6717	6734	18	2	ctrl.set('structure')	touches_ui|touches_state|is_controller	ctrl.set('structure')	Say what picking another entry would take; never half-reload the page.
+server/poc_app.py	run_web.<locals>._on_station_change	function	6737	6752	16	2	ctrl.set('station')	touches_ui|touches_state|is_controller	ctrl.set('station')	
+server/poc_app.py	_vis_frame_time_ns	function	6785	6811	27	3				Simulation time of ``frame`` on the plane family ``mode``, in ns.
+server/poc_app.py	_vis_phase_text	function	6814	6833	20	2				Where the frame sits relative to one trip along the line.
+server/poc_app.py	_vis_grid	function	6836	6886	51	3		touches_render		One frame of one plane as a single-sample-thick ImageData.
+server/poc_app.py	_vis_geometry	function	6889	7171	283	3		touches_render		The ground plane, the substrate, the strip and the two port markers.
+server/poc_app.py	_vis_geometry.<locals>._shown	function	6934	6936	3	1				The number as the diagnostic prints it; a gap is the word 'absent'.
+server/poc_app.py	_vis_geometry.<locals>._pick	function	6960	6965	6	1				geometry_mm first, the dump's own key second, None if neither.
+server/poc_app.py	_vis_geometry.<locals>._nan	function	6967	6969	3	1				The isfinite() guards need a float: an absence is NaN, never 0.0.
+server/poc_app.py	_probe_trame_ui	function	7174	7232	59	0				A usable Trame Vuetify module pair, or None after naming what failed.
+server/poc_app.py	_next_solve_run_tag	function	7242	7253	12	0				A readable - and UNIQUE - stamp for one solve's files.
+server/poc_app.py	_solve_netlist_slug	function	7256	7268	13	1				The circuit's own ``name``, flattened to something a file name can hold.
+server/poc_app.py	solve_argv	function	7271	7383	113	5				The argv that would run a fresh field solve. BUILT here, never run.
+server/poc_app.py	solve_netlist_file	function	7386	7400	15	1				The netlist FILE a ``solve_argv`` command line points at, else ``None``.
+server/poc_app.py	reload_page	function	7403	7464	62	2				Everything the page reads off disk for ONE dump, as a plain dict.
+server/poc_app.py	_mode2d	function	7513	7522	10	0				``emfit.mode2d``, imported ON USE so --list-keys never needs scipy.
+server/poc_app.py	cross_section_mesh	function	7525	7614	90	4				The (y, z) cross-section of the microstrip as a rectilinear mesh.
+server/poc_app.py	cross_section_mesh.<locals>.ground	function	7598	7600	3	1				The ground plane: the z = 0 node row.
+server/poc_app.py	cross_section_mesh.<locals>.strip	function	7602	7606	5	1				The strip: the z = h node row within |y| <= w/2.
+server/poc_app.py	cross_section_mesh.<locals>.wall	function	7608	7612	5	1				The PEC fence: the top row and both side columns (no PML here).
+server/poc_app.py	_mode_pct	function	7617	7621	5	1				``+1.07 %``-style delta, or ``n/a`` when the reference is not recorded.
+server/poc_app.py	_mode_delta_pct	function	7624	7640	17	2				``100 * (beta - reference) / reference``, or None for no reference.
+server/poc_app.py	_mode_grid_axes	function	7643	7664	22	3				The ``(y, z)`` sampling axes a mode is drawn on, in metres.
+server/poc_app.py	_mode_field_grid	function	7667	7687	21	4				|E| of the solved mode on a ``(cells, cells)`` (z, y) sampling of the box.
+server/poc_app.py	_mode_vector_grid	function	7690	7780	91	5				(E_y, E_z) of the mode on the STRIDED samples of the same box. NEVER raises.
+server/poc_app.py	_mode_caption	function	7783	7880	98	2				The one sentence set a mode panel may print, from the numbers beside it.
+server/poc_app.py	_mode_fail	function	7883	7885	3	1				The refusal shape: ``ok`` False and one short, honest cause.
+server/poc_app.py	_mode_geometry_from_dump	function	7888	7955	68	1		touches_render		Cross-section geometry from the DUMP's own metadata: ``(geometry, note)``.
+server/poc_app.py	_mode_geometry_from_dump.<locals>.recorded	function	7920	7926	7	1				The stored float, or None when it is absent or not finite.
+server/poc_app.py	_mode_view	function	7958	8127	170	5		touches_render		``mode_view``'s body, raising; the wrapper turns a raise into a reason.
+server/poc_app.py	mode_view	function	8130	8188	59	4				Solve the cross-section mode for the arm a page is showing. NEVER raises.
+server/poc_app.py	_animation_title_text	function	8203	8212	10	1				The page TITLE while the field dump is what is on screen.
+server/poc_app.py	_mode_title_text	function	8215	8227	13	2				The page TITLE while a solved mode cross-section is on screen.
+server/poc_app.py	_mode_button_label	function	8230	8248	19	1				The Mode control's LABEL for a ``mode_view`` result. NEVER raises.
+server/poc_app.py	_mode_caption_text	function	8251	8272	22	1				The Mode panel's CAPTION for a ``mode_view`` result. NEVER raises.
+server/poc_app.py	_mode_candidate_title	function	8275	8340	66	2				One picker line for a ``mode2d.candidate_records`` record. NEVER raises.
+server/poc_app.py	_mode_candidate_items	function	8350	8391	42	1				The Mode picker's items for a ``mode_view`` result. NEVER raises.
+server/poc_app.py	_mode_view_for_candidate	function	8394	8429	36	2				``result`` re-pointed at one candidate's grid, or None. NEVER raises.
+server/poc_app.py	_mode_choice_caption_text	function	8432	8464	33	2				The caption for a PICKED candidate. NEVER raises, never re-words.
+server/poc_app.py	_mode_picture_grid	function	8467	8520	54	3		touches_render		A ``mode_view`` result as ONE y-z sheet standing at ``x_mm``. NEVER raises.
+server/poc_app.py	_mode_quiver_arrows	function	8523	8601	79	3				The mode's transverse field as arrow anchors and shafts, in MILLIMETRES.
+server/poc_app.py	_volume_arrows	function	8635	8753	119	2				The colocated ``E`` volume as arrow anchors and shafts, in MILLIMETRES.
+server/poc_app.py	_volume_quiver_polydata	function	8756	8795	40	2		touches_render		``_volume_arrows`` output as ONE pyvista point cloud, or None.
+server/poc_app.py	_volume_abs_grid	function	8798	8941	144	3		touches_render		The whole colocated ``E`` volume as ONE cell-centred ``|E|`` image.
+server/poc_app.py	_volume_abs_grid.<locals>._miss	function	8842	8844	3	1				Nothing to draw, plus the sentence that says why.
+server/poc_app.py	_volume_frame_for_step	function	8944	8985	42	2				Which stored |E| frame belongs to animation ``step``, or None.
+server/poc_app.py	_monotonic_axis	function	8988	9004	17	1				One recorded step axis as an int array, or None when it cannot be read.
+server/poc_app.py	_volume_player_plan	function	9007	9061	55	2				The ONE mapping from a player position to the two indices it draws.
+server/poc_app.py	_synced_frame_counts	function	9064	9080	17	3				``(nt, nt_x)`` with each family's clock replaced by the volume's own.
+server/poc_app.py	_volume_abs_global_clim	function	9083	9110	28	1				The ONE colour range every frame of ``e_abs_volume`` is drawn on.
+server/poc_app.py	_volume_clim_items_literal	function	9148	9169	22	0				The Clim Mode select's items, as the JS array literal ``v_bind_items`` wants.
+server/poc_app.py	_run_config_defaults	function	9185	9208	24	0				``{state name: default}`` for RUN_CONFIG_FIELDS, read off ``RunConfig``.
+server/poc_app.py	_run_config_form_shown	function	9211	9232	22	1				Is the Run Config FORM (the five run fields) offered on this page?
+server/poc_app.py	_solve_refused_page	function	9235	9250	16	2				Does a Solve press on this page have to be REFUSED before it spawns?
+server/poc_app.py	_run_config_field_value	function	9260	9292	33	3				One RunConfig field off one form string, or ``None`` for "no opinion".
+server/poc_app.py	run_config_from_form	function	9295	9319	25	1				The ONE ``RunConfig`` a press runs, built from the Run Config form.
+server/poc_app.py	_run_config_argv	function	9322	9341	20	1				The solver flags ``config`` adds, in the solver's OWN spelling.
+server/poc_app.py	_volume_clim_mode	function	9344	9354	11	1				The clim mode ``value`` asks for, or the DEFAULT when it does not ask.
+server/poc_app.py	_volume_abs_frame_clim	function	9357	9388	32	2				The colour range ONE stored frame of ``e_abs_volume`` is drawn on.
+server/poc_app.py	_volume_clim_for	function	9391	9412	22	3				The |E| volume layer's colour range under clim ``mode``.
+server/poc_app.py	_volume_frame_grid	function	9415	9482	68	4		touches_render		ONE stored |E| frame as an ``ImageData`` on this page's own node grid.
+server/poc_app.py	_volume_quiver_mesh	function	9485	9559	75	2				The whole-volume arrow field as ONE glyphed mesh, or None.
+server/poc_app.py	_volume_quiver_callback	function	9562	9634	73	4				The vis page's arrow overlay, as the ``show()`` closure it needs.
+server/poc_app.py	_volume_quiver_callback.<locals>.show	function	9590	9632	43	0		touches_ui|touches_state		Put the volume arrows on the plotter, or take them off. NEVER raises.
+server/poc_app.py	SolveJob.__init__	method	9655	9662	8	2				
+server/poc_app.py	SolveJob.log	method	9665	9667	3	0	property			The TAIL of the combined stdout+stderr, newest last.
+server/poc_app.py	SolveJob._finish	method	9669	9671	3	1				
+server/poc_app.py	SolveJob._drain	method	9673	9679	7	0				Read whatever is left. Safe only once the child has exited.
+server/poc_app.py	SolveJob.start	method	9681	9700	20	0				Spawn the child. REFUSES to start a second one.
+server/poc_app.py	SolveJob.run	method	9702	9707	6	0				start(), then block until the child exits. THE WORKER THREAD'S CALL.
+server/poc_app.py	SolveJob.poll	method	9709	9724	16	0				Non-blocking: finalise here once the child has exited on its own.
+server/poc_app.py	apply_page	function	9732	9761	30	2				Make a freshly loaded page the LIVE one, in place.
+server/poc_app.py	VRow	function	9764	9777	14	2		touches_ui		A flex-row ``html.div``; trame is imported lazily, never at module load.
+server/poc_app.py	VCol	function	9780	9793	14	2		touches_ui		A flex-column ``html.div``; trame is imported lazily, never at module load.
+server/poc_app.py	build_far_field_panel	function	9796	9891	96	1				Integrate the ``--surface-dump`` archive and pick the ONE number.
+server/poc_app.py	run_web_vis	function	9894	13287	3394	8		touches_ui|touches_state		Serve the animation page for an ``emfit.vis/2`` dump.
+server/poc_app.py	run_web_vis.<locals>._redraw	function	10393	10405	13	0		touches_ui|touches_state		Rebuild the scene in the one plotter. Failure leaves the old picture.
+server/poc_app.py	run_web_vis.<locals>._on_cut_y	function	10426	10439	14	2	ctrl.set('cut_y')	touches_ui|touches_state|is_controller	ctrl.set('cut_y')	
+server/poc_app.py	run_web_vis.<locals>._on_cut_z	function	10442	10455	14	2	ctrl.set('cut_z')	touches_ui|touches_state|is_controller	ctrl.set('cut_z')	
+server/poc_app.py	run_web_vis.<locals>._redraw	function	10496	10505	10	0		touches_ui|touches_state		Rebuild the scene in the one plotter. Failure leaves the old picture.
+server/poc_app.py	run_web_vis.<locals>._set_picture_title	function	10530	10557	28	1		touches_ui|touches_state		Publish the page title for whatever the 3D view is showing. NEVER raises.
+server/poc_app.py	run_web_vis.<locals>._sync_picture_title	function	10559	10577	19	0		touches_ui|touches_state		Point the title at the field the 3D view is ACTUALLY showing.
+server/poc_app.py	run_web_vis.<locals>._swap_scalar_bar	function	10579	10618	40	1		touches_render		Leave exactly ONE PLANE bar standing, for the family now on screen.
+server/poc_app.py	run_web_vis.<locals>._clear_mode_quiver	function	10620	10637	18	0		touches_render		Drop the Mode ARROW overlay. Own handle, own actor, own removal.
+server/poc_app.py	run_web_vis.<locals>._clear_mode_picture	function	10639	10669	31	0		touches_render		Drop the Mode picture. ONE actor, OUTSIDE ``sheets``, own handle.
+server/poc_app.py	run_web_vis.<locals>._draw_mode_picture	function	10671	10831	161	2		touches_ui|touches_state		Draw a solve's 48 x 48 |E| on the cross-section plane. NEVER raises.
+server/poc_app.py	run_web_vis.<locals>._draw_mode_quiver	function	10833	10890	58	4		touches_ui|touches_state		Overlay the mode's transverse arrow field on the cross-section. NEVER raises.
+server/poc_app.py	run_web_vis.<locals>._volume_layer_drop	function	10892	10921	30	0		touches_render		Take the |E| volume layer off the plotter and forget its bookkeeping.
+server/poc_app.py	run_web_vis.<locals>._draw_volume_layer	function	10923	11088	166	3		touches_ui|touches_state		Draw the |E| volume layer for the CURRENT frame, or drop it.
+server/poc_app.py	run_web_vis.<locals>._draw_port_plane_markers	function	11090	11135	46	5				Mark the load, S11 and stub-side planes on the volume layer.
+server/poc_app.py	run_web_vis.<locals>._show	function	11137	11373	237	2		touches_ui|touches_state		Draw ONE frame of the selected family. Never rescales.
+server/poc_app.py	run_web_vis.<locals>._rebuild_sheets	function	11375	11458	84	1		touches_ui|touches_state		Re-create the three field sheets from the LIVE page's own info.
+server/poc_app.py	run_web_vis.<locals>._on_frame	function	11482	11485	4	2	state.change('frame')	touches_ui|touches_state|is_controller	state.change('frame')	
+server/poc_app.py	run_web_vis.<locals>._on_mode_toggle	function	11488	11501	14	1	ctrl.set('mode_toggle')	touches_ui|touches_state|is_controller	ctrl.set('mode_toggle')	Swap which family is animated. The two clocks are never mixed.
+server/poc_app.py	run_web_vis.<locals>._on_step_back	function	11508	11527	20	1	ctrl.set('step_back')	touches_ui|touches_state|is_controller	ctrl.set('step_back')	Ten frames back while playing, exactly one while stopped.
+server/poc_app.py	run_web_vis.<locals>._on_step_fwd	function	11530	11541	12	1	ctrl.set('step_fwd')	touches_ui|touches_state|is_controller	ctrl.set('step_fwd')	Ten frames forward while playing, exactly one while stopped.
+server/poc_app.py	run_web_vis.<locals>._on_top_view	function	11544	11559	16	1	ctrl.set('top_view')	touches_render|is_controller	ctrl.set('top_view')	Look straight down the z axis: the layout, not an animation frame.
+server/poc_app.py	run_web_vis.<locals>._on_side_view	function	11562	11572	11	1	ctrl.set('side_view')	touches_render|is_controller	ctrl.set('side_view')	Look along -y at the x-z section: the line seen from the side.
+server/poc_app.py	run_web_vis.<locals>._build_s_params	function	11574	11641	68	0				Read the sweep from disk, draw it, and pick the ONE number to quote.
+server/poc_app.py	run_web_vis.<locals>._load_s_params_panel	function	11643	11681	39	0		touches_ui|touches_state		Populate the S-parameters panel; the tab owns its visibility.
+server/poc_app.py	run_web_vis.<locals>._build_confidence	function	11683	11708	26	0				Read this page's record (and the referee) and render the panel rows.
+server/poc_app.py	run_web_vis.<locals>._load_confidence_panel	function	11710	11731	22	0		touches_ui|touches_state		Populate the Confidence & Accuracy panel; the tab owns its visibility.
+server/poc_app.py	run_web_vis.<locals>._load_far_field_panel	function	11733	11783	51	0		touches_ui|touches_state		Populate the Far Field panel; the tab owns its visibility.
+server/poc_app.py	run_web_vis.<locals>._on_mode_view	function	11786	11830	45	1	ctrl.set('mode_view_toggle')	touches_ui|touches_state|is_controller|is_async	ctrl.set('mode_view_toggle')	Solve the 2D cross-section for the page ON SCREEN, OFF the event loop.
+server/poc_app.py	run_web_vis.<locals>._on_mode_choice	function	11840	11867	28	2	state.change('mode_choice')	touches_ui|touches_state|is_controller	state.change('mode_choice')	Repaint the Mode picture for the candidate the picker names.
+server/poc_app.py	run_web_vis.<locals>._on_volume_clim_mode	function	11877	11914	38	2	state.change('volume_clim_mode')	touches_ui|touches_state|is_controller	state.change('volume_clim_mode')	Re-reference the |E| layer's colour range and repaint it. NEVER raises.
+server/poc_app.py	run_web_vis.<locals>._on_show_quiver	function	11924	11971	48	2	state.change('show_quiver')	touches_ui|touches_state|is_controller	state.change('show_quiver')	Draw or drop the Mode arrow overlay. NEVER raises.
+server/poc_app.py	run_web_vis.<locals>._redraw_for_plane_toggle	function	11977	11995	19	1		touches_ui|touches_state		Repaint the scene after a marker plane was switched. NEVER raises.
+server/poc_app.py	run_web_vis.<locals>._on_show_load_plane	function	11998	12000	3	1	state.change('show_load_plane')	is_controller	state.change('show_load_plane')	Draw or drop the red load plane. NEVER raises.
+server/poc_app.py	run_web_vis.<locals>._on_show_port_plane	function	12003	12005	3	1	state.change('show_port_plane')	is_controller	state.change('show_port_plane')	Draw or drop the purple S11 port plane. NEVER raises.
+server/poc_app.py	run_web_vis.<locals>._on_netlist_toggle	function	12010	12012	3	1	ctrl.set('netlist_toggle')	touches_ui|touches_state|is_controller	ctrl.set('netlist_toggle')	Open/close the netlist box when the build has no expansion panels.
+server/poc_app.py	run_web_vis.<locals>._emit_circuit_netlist	function	12014	12139	126	0		touches_ui|touches_state		Emit the CIRCUIT NETLIST editor: one optional multi-line box.
+server/poc_app.py	run_web_vis.<locals>._emit_load_series_panel	function	12141	12195	55	2		touches_ui		Emit the load's recorded V(t)/I(t) trace under the Circuit netlist box.
+server/poc_app.py	run_web_vis.<locals>._emit_solve_controls	function	12197	12445	249	0		touches_ui		Emit the SETUP column as a four-section engineering form.
+server/poc_app.py	run_web_vis.<locals>._emit_solve_controls.<locals>._section	function	12223	12243	21	3		touches_ui		Emit ONE section: a titled card, or the flat label fallback.
+server/poc_app.py	run_web_vis.<locals>._emit_solve_controls.<locals>._project	function	12245	12277	33	0				
+server/poc_app.py	run_web_vis.<locals>._emit_solve_controls.<locals>._mesh_and_geometry	function	12279	12320	42	0		touches_ui		
+server/poc_app.py	run_web_vis.<locals>._emit_solve_controls.<locals>._action	function	12322	12339	18	0		touches_ui		
+server/poc_app.py	run_web_vis.<locals>._emit_solve_controls.<locals>._run_config	function	12359	12429	71	0		touches_ui		Emit the Run Config card: Clim Mode always, the form on a data-less page.
+server/poc_app.py	run_web_vis.<locals>._emit_s_params_panel	function	12447	12497	51	0		touches_ui		Emit the |S11| / |S21| panel inside its TAB, caption first.
+server/poc_app.py	run_web_vis.<locals>._emit_far_field_panel	function	12499	12534	36	0		touches_ui		Emit the far-field pattern inside its TAB, number first.
+server/poc_app.py	run_web_vis.<locals>._emit_confidence_panel	function	12536	12561	26	0		touches_ui		Emit the Confidence & Accuracy panel as TEXT inside its TAB.
+server/poc_app.py	run_web_vis.<locals>._play_loop	function	12563	12578	16	1		touches_ui|touches_state|is_async		Advance one frame per wall-clock step until the trigger bumps the
+server/poc_app.py	run_web_vis.<locals>._on_play_toggle	function	12581	12604	24	1	ctrl.set('play_toggle')	touches_ui|touches_state|is_controller|is_async	ctrl.set('play_toggle')	Start or stop playback. Returns immediately.
+server/poc_app.py	run_web_vis.<locals>._on_kbd_shortcut	function	12616	12638	23	2	ctrl.trigger('kbd_shortcut')	is_controller|is_async	ctrl.trigger('kbd_shortcut')	Dispatch ONE keyboard shortcut to the handler the button uses.
+server/poc_app.py	run_web_vis.<locals>._watch_solve	function	12687	12708	22	0		is_async		THE poll driver: the ONE thing that watches the job and lands it.
+server/poc_app.py	run_web_vis.<locals>._start_watch	function	12710	12719	10	0				Start the ONE poll driver on the loop this trigger is running on.
+server/poc_app.py	run_web_vis.<locals>._poll_solve	function	12721	12823	103	0		touches_ui|touches_state		Watcher callback: watch the ONE job and, when it lands, show it.
+server/poc_app.py	run_web_vis.<locals>._drop_netlist	function	12825	12837	13	1				Delete one run's netlist FILE. Never raises: the run is over anyway.
+server/poc_app.py	run_web_vis.<locals>._run_job	function	12839	12850	12	2				Worker thread: run the solve to completion, never raising.
+server/poc_app.py	run_web_vis.<locals>._on_solve_start	function	12853	12956	104	2	ctrl.set('solve_start')	touches_ui|touches_state|is_controller	ctrl.set('solve_start')	Start a solve and return IMMEDIATELY. The watcher brings it back.
+server/poc_app.py	run_web_vis.<locals>._emit_mode_caption	function	12958	12982	25	0		touches_ui		The Mode panel's ONE caption line - the hint, the numbers or a refusal.
+server/poc_app.py	run_web_vis.<locals>._emit_mode_picker	function	12984	13030	47	0				The candidate picker: ONE VSelect over the solve's OWN candidates.
+server/poc_app.py	run_web_vis.<locals>._emit_vector_toggle	function	13032	13115	84	0		touches_ui		The overlay toggles: the arrow field and the two marker planes.
+server/poc_app.py	run_web_vis.<locals>._emit_station_readout	function	13117	13140	24	0		touches_ui		The station sentence as SHELL TEXT, inside the cut row.
+server/poc_app.py	main	function	13290	13461	172	1		touches_ui|touches_state		
+server/um3k_panels.py	build_left_panel	function	16	47	32	1		touches_ui		Fill the caller's left column with SETUP: which page, then what acts on it.
+server/um3k_panels.py	build_center_panel	function	50	231	182	1		touches_ui		Fill the caller's centre column with VIEW: the picture and its player bar.
+server/um3k_panels.py	visible_right_tabs	function	265	304	40	1				The tab values this page can fill, in :data:`RIGHT_TABS` order.
+server/um3k_panels.py	build_right_panel	function	307	499	193	1		touches_ui		Fill the caller's right column with DATA: the readout and the tabbed panels.
+server/um3k_panels.py	build_right_panel.<locals>._emit_modes_tab	function	371	380	10	0				
+server/um3k_panels.py	build_right_panel.<locals>._emit_circuit_tab	function	382	397	16	0		touches_ui		
+server/um3k_context.py	LoadedDump.from_any_dump	classmethod	55	71	17	1	classmethod			Build from the page ``reload_page`` assembles (poc_app.py:5379-5391).
+server/um3k_context.py	_stations	function	74	83	10	1				How many x-planes the page captured; 0 when it holds no plane stack.
+server/um3k_context.py	Available.compute	classmethod	112	143	32	5	classmethod			Compute every flag, once, with no I/O and no raising.
+server/um3k_context.py	choose_entry	function	146	157	12	3				Which viewer ``main`` may hand this page to: ``"vis"`` or ``"field"``.
+server/um3k_context.py	PageContext.__init__	method	168	177	10	3				
+server/um3k_context.py	PageContext.recompute_available	method	179	189	11	0				Recompute the snapshot from ``self.dump`` and make it the live one.
+server/um3k_context.py	PageContext.set_view_mode	method	191	204	14	1				Switch the drawn view, returning the mode that is now live.
+server/um3k_context.py	PageContext.register	method	206	208	3	2				Store the callable a draw path will want under ``name``.
+server/um3k_context.py	PageContext.register_handle	method	210	212	3	2				Store a drawing handle (actor, widget, whatever) under ``name``.
+server/um3k_context.py	PageContext._stored	method	214	220	7	3				``table[name]``; KeyError naming what IS stored under ``kind``.
+server/um3k_context.py	PageContext.callback	method	222	224	3	1				The callable stored under ``name``.
+server/um3k_context.py	PageContext.handle	method	226	228	3	1				The handle stored under ``name``.

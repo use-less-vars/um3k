@@ -1,0 +1,722 @@
+files: server/poc_app.py=13465 lines, server/um3k_panels.py=499 lines, server/um3k_context.py=228 lines
+defs=315 classes=4 state_keys=61 multi_writer_keys=42
+module funcs=196 ui-ish=14 (4805 lines) engine-ish=154 (5040 lines)
+unref=0 testonly=6 unreachable_from_roots=0
+
+== module docstring ==
+PoC web viewer for the Build A npz field dump (Trame + pyvista).
+
+Reads evidence/termination/build_A_50ohm_p51_ghostwave_fields.npz and serves an
+interactive 3D view of the Ez field in a browser.
+
+Run:
+    python3 server/poc_app.py
+
+Then open http://localhost:8080 in a browser.
+
+Minimum packages: pyvista and trame (with a working VTK build). Nothing beyond
+numpy is needed for the --list-keys / --help path.
+
+IMPORTANT - what this viewer actually shows:
+    The npz stores 9 CAPTURED x-planes, stacked one cell spacing apart. This is
+    NOT a dense volumetric solve. The x axis is quantised to exactly 9 station
+    positions, so the volume is those 9 slices resampled onto a 9 x 213 x 22
+    grid. Nothing between the stations exists in the input and nothing is
+    invented here.
+
+Two layers sit on top of that volume, and the comments beside each say why they
+are built the way they are:
+
+    *
+
+== imports (poc_app) ==
+59	from	__future__ import annotations
+61	import	argparse
+62	import	asyncio
+63	import	datetime
+64	import	errno
+65	import	json
+66	import	math
+67	import	re
+68	import	subprocess
+69	import	sys
+70	import	threading
+71	from	collections import deque
+72	from	pathlib import Path
+73	import	time
+75	import	numpy as np
+
+== module-level assignments (poc_app, targets=Name) ==
+93	REPO_ROOT = Path(__file__).resolve().parents[1]
+95	DEFAULT_INPUT = 'evidence/termination/build_A_50ohm_p51_ghostwave_fields.npz'
+96	PLANE_KEY = 'plane_ez'
+100	VOLUME_KEY = 'e_centres'
+106	VOLUME_ABS_KEY = 'e_abs_grid'
+112	VOLUME_RAW_KEY = 'e_raw'
+121	MULTIFREQ_BY_STRUCTURE = {'A': 'evidence/termination/build_A_50ohm_multifreq_summary.json', 'B': 'evidence/termination/build_B_100ohm_m
+125	DEFAULT_MULTIFREQ = MULTIFREQ_BY_STRUCTURE['A']
+130	SINGLE_RUN_BY_STRUCTURE = {'B': 'artifacts/vis_run_B_100ohm.json'}
+138	DEFAULT_STRUCTURE = 'build_A_50ohm'
+139	STRUCTURES_FILE = 'structures.json'
+140	DEFAULT_HOST = '127.0.0.1'
+143	DEFAULT_PORT = 8080
+149	VIS_SCHEMA = 'emfit.vis/2'
+158	VIS_LEGACY_SCHEMAS = ('emfit.wavedude/1', 'emfit.wavedude/2')
+159	VIS_SCHEMAS = (VIS_SCHEMA,) + VIS_LEGACY_SCHEMAS
+160	VIS_FORMAT = 'um3k'
+161	VIS_FORMATS = (VIS_FORMAT, 'wavedude')
+167	STATE_SCHEMA_VIS = 'emfit.poc-state/3'
+171	DEFAULT_FPS = 24
+175	COLOR_PERCENTILE = 99.5
+180	VIS_SHOW_EDGES = True
+185	SOLVER_SCRIPT = REPO_ROOT / 'evidence' / 'termination' / 'run_build_A.py'
+189	EVIDENCE_DIR = REPO_ROOT / 'evidence'
+192	LIVE_DUMP = REPO_ROOT / 'artifacts' / 'live_run.npz'
+974	FALLBACK_LOAD_MM = 20.0
+975	FALLBACK_S11_MM = 0.0
+976	FALLBACK_S21_MM = 20.4
+1297	_CELLS_IN_LINE = re.compile('cells\\s*=\\s*(\\d+)\\s*[xX]\\s*(\\d+)\\s*[xX]\\s*(\\d+)')
+1827	_AMBIGUOUS_NOTE = 'beta ambiguous - dispersion branch unresolved'
+1828	_DEFAULT_CHART_TITLE = '|S11|, |S21| per recorded frequency'
+2087	_PORT_TITLE = 'station phasors, as recorded'
+2091	_LOAD_SERIES_TITLE = "the load's own V(t) and I(t) at the cut, as recorded"
+2092	_PORT_FIELDS = ('v_re', 'v_im', 'i_re', 'i_im')
+2093	STATE_SCHEMA = 'emfit.poc-state/1'
+2094	RESIDUAL_BASIS = '50/(50 + 2*z0)'
+2099	EXTENT_BASIS = "domain_mm = nx*cell (the simulated box); sampled_mm = the span the field samples actually stored in the npz C
+2704	REFEREE_S11_FILE = 'evidence/referee/s11_extraction.json'
+2708	REFEREE_S11_KEY = 's11_abs'
+3174	VIS_EXTENT_BASIS = 'extent_domain_mm is cells x cell (the simulated box); extent_sampled_mm is the span of the stored node coordi
+4905	PLANE_BAR_TITLE = 'Ez (Linear)'
+4906	VOLUME_BAR_TITLE = '|E| (Log)'
+4910	VOLUME_BAR_TITLE_LINEAR = '|E| (Linear)'
+4914	PLANE_BAR_POSITION = (0.02, 0.28)
+4915	VOLUME_BAR_POSITION = (0.88, 0.28)
+4916	BAR_WIDTH = 0.08
+4917	BAR_HEIGHT = 0.45
+5242	DASH_TARGET_MM = 4.0
+5673	WEB_MODULES = (('trame', 'trame'), ('trame_pyvista', 'trame-pyvista'), ('trame_vtk', 'trame-vtk'), ('vtk', 'vtk'), ('pyvista
+5680	WEB_VUETIFY_MODULES = ('trame.ui.vuetify3', 'trame.ui.vuetify2')
+7238	_SOLVE_RUN_LOCK = threading.Lock()
+7239	_SOLVE_RUN_SEQ = 0
+7490	VIS_BETA_BANKED_RAD_PER_M = 231.55331672912826
+7493	MODE_GRID_CELLS = 48
+7498	MODE_QUIVER_STRIDE = 5
+7506	MODE_QUIVER_MAX_LEN_FRACTION = 0.8 * MODE_QUIVER_STRIDE / float(MODE_GRID_CELLS - 1)
+8194	MODE_PANEL_HINT = "Mode (2D cross-section) has not been run for this page yet: press the Mode button to solve the quasi-TEM mode
+8347	_MODE_REFUSED_VALUE = -1
+8609	VOLUME_QUIVER_STRIDE = 5
+8621	VOLUME_QUIVER_MAX_LEN_FRACTION = 0.9
+8632	VOLUME_QUIVER_REL_FLOOR = 1e-06
+9121	VOLUME_CLIM_GLOBAL = 'global'
+9122	VOLUME_CLIM_PER_FRAME = 'per_frame'
+9123	VOLUME_CLIM_MODES = (VOLUME_CLIM_GLOBAL, VOLUME_CLIM_PER_FRAME)
+9127	VOLUME_CLIM_DEFAULT = VOLUME_CLIM_GLOBAL
+9134	VOLUME_CLIM_TITLES = {VOLUME_CLIM_GLOBAL: 'Global (Absolute)', VOLUME_CLIM_PER_FRAME: 'Per-Frame (Relative)'}
+9143	VOLUME_CLIM_PER_FRAME_WARNING = 'Warning: Relative scaling normalizes each frame, masking amplitude decay.'
+9176	RUN_CONFIG_FIELDS = (('run_nsteps', 'Steps', 'nsteps'), ('run_volume_stride', 'Volume stride', 'volume_stride'), ('run_pulse_freq_
+9257	_RUN_CONFIG_INT_FIELDS = ('nsteps', 'volume_stride')
+9637	SOLVE_DEFAULT_XCUT_MM = 20.4
+9729	PAGE_KEYS = ('path', 'info', 'planes', 'multifreq', 'structure_id', 'record')
+
+== main guard ==
+(13464, 13465, "__name__ == '__main__'")
+
+== banner-ish comments (poc_app) ==
+322	# --- the wave-animation dump ------------------------------------------------
+962	# --- where each reported number is measured ---------------------------------
+1116	# --- the |S11| / |S21| vs frequency sweep ------------------------------------
+1231	# --- the structure registry ------------------------------------------------
+2079	# --- chart title, port waves, and the numpy-only state dump ------------------
+2686	# --- how much to trust the numbers -----------------------------------------
+3976	# --- the two Y / Z cut sheets ------------------------------------------------
+4886	# --- the two colour bars of a field page -------------------------------------
+5230	# --- the two boxes the plane page frames -------------------------------------
+6777	# --- the wave animation page ------------------------------------------------
+7467	# --- the 2D cross-section mode viewer (COMPUTE layer) ------------------------
+
+== 250-line buckets: start n_ui n_render n_engine lines_ui lines_render lines_engine ==
+1	0	0	2	0	0	123
+251	0	0	8	0	0	174
+501	0	0	2	0	0	287
+751	0	0	8	0	0	237
+1001	0	0	5	0	0	143
+1251	0	1	16	0	17	194
+1501	0	0	7	0	0	247
+1751	0	2	5	0	160	134
+2001	0	0	8	0	0	128
+2251	0	2	3	0	209	31
+2501	0	0	11	0	0	203
+2751	0	4	1	0	195	72
+3001	0	0	9	0	0	287
+3251	0	1	4	0	135	151
+3501	0	2	7	0	12	172
+3751	0	1	3	0	112	82
+4001	2	0	4	85	0	178
+4251	2	0	3	100	0	132
+4501	0	3	1	0	191	46
+4751	0	4	1	0	401	16
+5001	0	0	1	0	0	88
+5251	0	2	5	0	256	98
+5501	1	0	2	24	0	49
+5751	5	0	0	1002	0	0
+6001	4	1	0	72	11	0
+6251	4	1	1	132	28	26
+6501	4	0	0	113	0	0
+6751	0	2	5	0	334	59
+7001	0	0	2	0	0	71
+7251	0	0	4	0	0	203
+7501	0	0	10	0	0	269
+7751	0	2	3	0	238	108
+8001	0	0	4	0	0	101
+8251	0	1	5	0	54	199
+8501	0	0	2	0	0	198
+8751	0	2	3	0	184	62
+9001	0	0	7	0	0	184
+9251	0	1	7	0	68	218
+9501	1	0	9	43	0	166
+9751	3	0	1	3422	0	96
+10251	4	0	0	51	0	0
+10501	3	3	0	208	89	0
+10751	2	1	0	224	30	0
+11001	1	0	1	237	0	46
+11251	3	0	0	102	0	0
+11501	5	2	2	144	27	94
+11751	5	0	1	178	0	3
+12001	5	0	2	454	0	36
+12251	5	0	0	218	0	0
+12501	4	0	3	169	0	55
+12751	2	0	3	129	0	72
+13001	2	0	0	108	0	0
+13251	1	0	0	172	0	0
+
+== classes ==
+server/poc_app.py	SolveJob	9640-9724	methods=7	bases=[]	decos=[]
+server/um3k_context.py	LoadedDump	39-71	methods=1	bases=[]	decos=['dataclass']
+server/um3k_context.py	Available	87-143	methods=1	bases=[]	decos=['dataclass(frozen=True)']
+server/um3k_context.py	PageContext	160-228	methods=8	bases=[]	decos=[]
+
+== top 25 by size ==
+ 3394	server/poc_app.py	run_web_vis	9894-13287	args=8	ui=0	state=118	Serve the animation page for an ``emfit.vis/2`` dump.
+  853	server/poc_app.py	run_web	5922-6774	args=6	ui=0	state=17	Serve the viewer for ONE structure entry.
+  283	server/poc_app.py	_vis_geometry	6889-7171	args=3	ui=0	state=0	The ground plane, the substrate, the strip and the two port markers.
+  249	server/poc_app.py	run_web_vis.<locals>._emit_solve_controls	12197-12445	args=0	ui=0	state=0	Emit the SETUP column as a four-section engineering form.
+  248	server/poc_app.py	_draw_volume_scene	4980-5227	args=6	ui=0	state=0	Draw the volume view's FIELD layer: the volume and the two cut sheets.
+  237	server/poc_app.py	run_web_vis.<locals>._show	11137-11373	args=2	ui=0	state=22	Draw ONE frame of the selected family. Never rescales.
+  207	server/poc_app.py	_draw_scene	5461-5667	args=8	ui=0	state=0	Draw one view into the single existing plotter.
+  203	server/poc_app.py	load_vis	520-722	args=1	ui=0	state=0	Load an ``emfit.vis/2`` animation dump. numpy only, no pyvista.
+  193	server/um3k_panels.py	build_right_panel	307-499	args=1	ui=0	state=0	Fill the caller's right column with DATA: the readout and the tabbed p
+  182	server/um3k_panels.py	build_center_panel	50-231	args=1	ui=0	state=0	Fill the caller's centre column with VIEW: the picture and its player 
+  172	server/poc_app.py	main	13290-13461	args=1	ui=0	state=2	
+  170	server/poc_app.py	_mode_view	7958-8127	args=5	ui=0	state=0	``mode_view``'s body, raising; the wrapper turns a raise into a reason
+  166	server/poc_app.py	run_web_vis.<locals>._draw_volume_layer	10923-11088	args=3	ui=0	state=3	Draw the |E| volume layer for the CURRENT frame, or drop it.
+  161	server/poc_app.py	run_web_vis.<locals>._draw_mode_picture	10671-10831	args=2	ui=0	state=4	Draw a solve's 48 x 48 |E| on the cross-section plane. NEVER raises.
+  145	server/poc_app.py	build_frequency_chart	1932-2076	args=2	ui=0	state=0	Render |S11| and |S21| vs frequency to a PNG data URI.
+  144	server/poc_app.py	_volume_abs_grid	8798-8941	args=3	ui=0	state=0	The whole colocated ``E`` volume as ONE cell-centred ``|E|`` image.
+  135	server/poc_app.py	_geom_mm	3474-3608	args=4	ui=0	state=0	The structure's millimetres, and where each number came from.
+  133	server/poc_app.py	build_port_series_chart	2329-2461	args=1	ui=0	state=0	Render the load's recorded V(t)/I(t) trace to a PNG data URI.
+  126	server/poc_app.py	run_web_vis.<locals>._emit_circuit_netlist	12014-12139	args=0	ui=0	state=2	Emit the CIRCUIT NETLIST editor: one optional multi-line box.
+  119	server/poc_app.py	_print_vis_keys	4403-4521	args=1	ui=0	state=0	Print the wave-animation metadata. numpy only - no pyvista, no trame.
+  119	server/poc_app.py	_volume_arrows	8635-8753	args=2	ui=0	state=0	The colocated ``E`` volume as arrow anchors and shafts, in MILLIMETRES
+  117	server/poc_app.py	load_dump	203-319	args=3	ui=0	state=0	Load the npz metadata plus the Ez plane. Exits with 2 on bad input.
+  115	server/poc_app.py	_add_markers	4769-4883	args=3	ui=0	state=0	Draw the two port planes and the extraction labels.
+  113	server/poc_app.py	solve_argv	7271-7383	args=5	ui=0	state=0	The argv that would run a fresh field solve. BUILT here, never run.
+  112	server/poc_app.py	_plane_layout	3774-3885	args=2	ui=0	state=0	Resolve the x of the load, S11 port and S21 planes, in mm.
+
+== exact duplicate bodies (>=8 norm lines) ==
+n=13 lines=2 :: value = args[0] if args else _kwargs.get("cut_y", state.cut_y) | _on_cut_change( | "y", | value, | state, | n_j, | n_k, | info, | planes, | toggle_available, | _redraw, | handles, | )
+n=13 lines=2 :: value = args[0] if args else _kwargs.get("cut_z", state.cut_z) | _on_cut_change( | "z", | value, | state, | n_j, | n_k, | info, | planes, | toggle_available, | _redraw, | handles, | )
+n=9 lines=2 :: """Rebuild the scene in the one plotter. Failure leaves the old picture.""" | _redraw_scene( | plotter, | info, | planes, | state, | _show_volume_quiver, | station_label=False, | )
+
+== near-duplicate pairs (ratio>=0.72) ==
+
+== repeated 4-line blocks in >=3 functions ==
+in 8 funcs :: view_handle = handles.get("view") / if view_handle is not None: / try: / view_handle.update()
+in 8 funcs :: try: / view_handle.update() / except Exception as exc:  # noqa: BLE001 / print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+in 8 funcs :: if view_handle is not None: / try: / view_handle.update() / except Exception as exc:  # noqa: BLE001
+in 6 funcs :: value, / state, / n_j, / n_k,
+in 6 funcs :: toggle_available, / _redraw, / handles, / )
+in 6 funcs :: state, / n_j, / n_k, / info,
+in 6 funcs :: planes, / toggle_available, / _redraw, / handles,
+in 6 funcs :: n_k, / info, / planes, / toggle_available,
+in 6 funcs :: n_j, / n_k, / info, / planes,
+in 6 funcs :: info, / planes, / toggle_available, / _redraw,
+in 6 funcs :: density="compact", / hide_details=True, / classes="mb-1", / )
+in 6 funcs :: ) / pre_cls = getattr(html_widgets, "Pre", None) / if pre_cls is not None: / pre_cls(
+in 5 funcs :: img_cls = getattr(html_widgets, "Img", None) / if image and img_cls is not None: / img_cls( / src=image,
+in 4 funcs :: value = args[0] if args else _kwargs.get("cut_z", state.cut_z) / _on_cut_change( / "z", / value,
+in 4 funcs :: value = args[0] if args else _kwargs.get("cut_y", state.cut_y) / _on_cut_change( / "y", / value,
+in 4 funcs :: type="number", / density="compact", / hide_details=True, / classes="mb-1",
+in 4 funcs :: try: / number = float(value) / except (TypeError, ValueError): / return None
+in 4 funcs :: style="padding: 2px 0;", / ) / except Exception as exc:  # noqa: BLE001 - a toggle is never the page / print(
+in 4 funcs :: return / pre_cls = getattr(html_widgets, "Pre", None) / if pre_cls is not None: / pre_cls(
+in 4 funcs :: position="upper_left", / font_size=10, / color="black", / )
+
+== duplicated long string literals ==
+
+== unreferenced funcs ==
+
+== test-only referenced ==
+  853	run_web	5922
+    8	SolveJob.__init__	9655
+   23	run_web_vis.<locals>._on_kbd_shortcut	12616
+  104	run_web_vis.<locals>._on_solve_start	12853
+   12	choose_entry	146
+   10	PageContext.__init__	168
+
+== unreachable from roots (top 40 by size) ==
+
+== biggest engine-only module funcs ==
+  203	load_vis	520-722	args=1	Load an ``emfit.vis/2`` animation dump. numpy only, no pyvis
+  119	_print_vis_keys	4403-4521	args=1	Print the wave-animation metadata. numpy only - no pyvista, 
+  119	_volume_arrows	8635-8753	args=2	The colocated ``E`` volume as arrow anchors and shafts, in M
+  117	load_dump	203-319	args=3	Load the npz metadata plus the Ez plane. Exits with 2 on bad
+  113	solve_argv	7271-7383	args=5	The argv that would run a fresh field solve. BUILT here, nev
+  105	load_multifreq	1622-1726	args=2	Read the multi-frequency |S11| / |S21| sweep for a dump and 
+   98	_mode_caption	7783-7880	args=2	The one sentence set a mode panel may print, from the number
+   96	build_far_field_panel	9796-9891	args=1	Integrate the ``--surface-dump`` archive and pick the ONE nu
+   94	_animation_block	3241-3334	args=2	What the animation adds to the state dump: frames, time, sca
+   92	_record_candidates	987-1078	args=1	Candidate record paths for a dump, best first. NEVER raises.
+   91	_mode_vector_grid	7690-7780	args=5	(E_y, E_z) of the mode on the STRIDED samples of the same bo
+   90	cross_section_mesh	7525-7614	args=4	The (y, z) cross-section of the microstrip as a rectilinear 
+   88	_plane_extent_mm	5245-5332	args=2	The DOMAIN box and the captured-station WINDOW, both in mill
+   84	_load_series_block	434-517	args=2	The load's own V(t)/I(t) trace as ONE state block, or ``(Non
+   84	load_any_dump	725-808	args=1	Open either artefact. Dispatch on the npz ``schema`` key, no
+   81	_bare_board_page	3691-3771	args=3	A page dict for a structure whose BOARD is drawn with no dum
+   79	_mode_quiver_arrows	8523-8601	args=3	The mode's transverse field as arrow anchors and shafts, in 
+   75	_volume_quiver_mesh	9485-9559	args=2	The whole-volume arrow field as ONE glyphed mesh, or None.
+   73	_cut_layout	4069-4141	args=4	Resolve which y and z sample the cut sheets sit on. Numbers 
+   73	_volume_quiver_callback	9562-9634	args=4	The vis page's arrow overlay, as the ``show()`` closure it n
+   72	_confidence_extraction_rows	2892-2963	args=1	What the extraction did NOT record, and the two counts that 
+   71	_field_dump_block	2501-2571	args=2	The field-dump half: CELLS from the array shape, the x axis 
+   68	build_confidence_block	3028-3095	args=3	The Confidence & Accuracy panel as DATA: rows, caption, basi
+   68	build_state_dump	3337-3404	args=4	The whole page state as one JSON document, numpy-only.
+   66	_mode_candidate_title	8275-8340	args=2	One picker line for a ``mode2d.candidate_records`` record. N
+   65	_station_axis_mm	3407-3471	args=2	Resolve the x of each captured station, in mm, plus where th
+   62	reload_page	7403-7464	args=2	Everything the page reads off disk for ONE dump, as a plain 
+   59	_page_source_text	882-940	args=2	One line naming the FILE this page is showing, and what kind
+   59	_probe_trame_ui	7174-7232	args=0	A usable Trame Vuetify module pair, or None after naming wha
+   59	mode_view	8130-8188	args=4	Solve the cross-section mode for the arm a page is showing. 
+
+== call bases (top 70) == 
+261	print
+236	np
+189	int
+162	isinstance
+138	float
+68	getattr
+68	plotter
+65	info
+62	_finite
+60	str
+57	ctx
+53	_as_float
+50	len
+46	html_div
+40	record
+38	join
+36	max
+33	min
+33	widgets
+33	result
+32	handles
+28	Path
+28	round
+27	entry
+26	_npz_scalar
+23	ax
+22	rows
+21	bool
+21	pv
+18	_cell_mm
+18	ctrl
+17	line
+16	abs
+15	geometry
+15	ValueError
+14	tuple
+14	planes
+13	self
+12	range
+12	_show
+12	parser
+11	structure
+11	page
+11	state
+10	SystemExit
+10	_resolve
+10	row
+10	list
+10	_is_vis
+10	lines
+10	_miss
+9	_as_int
+9	geom
+9	dict
+9	_fmt
+9	load_series
+9	layout
+9	placeholder
+8	path
+8	recorded
+8	problems
+8	_structure_key
+8	text
+8	block
+8	importlib
+8	_read_json
+8	fig
+8	s11
+8	phasors
+8	type
+
+== unref by CALL graph only: 8 ==
+   71	run_web_vis.<locals>._emit_solve_controls.<locals>._run_config	12359	bases={'getattr': 3, 'clim_cls': 1, '_volume_clim_items_literal': 1, 'alert_cls': 1, 'html_div': 1, '_run_config_defaults': 1, 'run_field': 1, 'defaults': 1}
+   42	run_web_vis.<locals>._emit_solve_controls.<locals>._mesh_and_geometry	12279	bases={'getattr': 2, 'solve_xcut_field': 1, 'widgets': 1, 'solve_arm_field': 1}
+   33	run_web_vis.<locals>._emit_solve_controls.<locals>._project	12245	bases={'getattr': 1, 'solve_arm_field': 1, 'repr': 1, 'sorted': 1, '_structure_registry': 1, 'list': 1}
+   24	run_web_vis.<locals>._emit_station_readout	13117	bases={'html_div': 1, 'print': 1}
+   18	run_web_vis.<locals>._emit_solve_controls.<locals>._action	12322	bases={'widgets': 2}
+   16	build_right_panel.<locals>._emit_circuit_tab	382	bases={'html_div': 1, '_emit_circuit_netlist': 1, '_emit_load_series_panel': 1, 'info': 2}
+   12	run_web_vis.<locals>._run_job	12839	bases={'job': 1, 'print': 1, '_drop_netlist': 1}
+   10	build_right_panel.<locals>._emit_modes_tab	371	bases={'_emit_mode_caption': 1, '_emit_mode_picker': 1, '_emit_vector_toggle': 1}
+
+== classification totals (all defs, incl nested) ==
+ui	72 defs	7810 lines
+render	38 defs	2751 lines
+engine	205 defs	5713 lines
+== module-level only ==
+ui	14 defs	4805 lines
+render	28 defs	2554 lines
+engine	154 defs	5040 lines
+
+== engine-class funcs touching state/ui (crossing) ==
+
+== ALL module-level defs in order (line, qual, n_lines, klass, doc) ==
+   195-200       6	engine	_resolve	Absolute paths pass through, relative ones are taken from the repo root.
+   203-319     117	engine	load_dump	Load the npz metadata plus the Ez plane. Exits with 2 on bad input.
+   330-342      13	engine	_npz_scalar	One stored 0-d value, or ``default`` when the dump does not carry it.
+   345-350       6	engine	_npz_text	One stored string, or None when the dump does not carry it.
+   353-368      16	engine	_npz_int_or_none	One stored sample INDEX, or None when the dump does not carry it.
+   371-397      27	engine	_vis_colour_limit	One |Ez| ceiling for EVERY frame, plus a flag for an all-zero cube.
+   400-404       5	engine	_is_vis	True when ``info`` came from load_vis, not from load_dump.
+   407-417      11	engine	_frame_span_max	The LAST frame index of ``mode``'s own family, or None with no timeline.
+   420-431      12	engine	_frame_label	The player's "frame k / n" label, or None on a page with no timeline.
+   434-517      84	engine	_load_series_block	The load's own V(t)/I(t) trace as ONE state block, or ``(None, reason)``.
+   520-722     203	engine	load_vis	Load an ``emfit.vis/2`` animation dump. numpy only, no pyvista.
+   725-808      84	engine	load_any_dump	Open either artefact. Dispatch on the npz ``schema`` key, nothing else.
+   811-835      25	engine	_velocity_label	The velocity line, from the dump's OWN recorded numbers.
+   838-859      22	engine	_scale_label	The ONE colour-limit line, from this dump's own ``color_range``.
+   862-879      18	engine	_structure_readout_text	One line of dump provenance: ``structure: A (50 Ω)``.
+   882-940      59	engine	_page_source_text	One line naming the FILE this page is showing, and what kind of page it is.
+   943-944       2	engine	_cell_mm	
+   947-959      13	engine	_station_text	Corner label for one captured station.
+   979-984       6	engine	_as_float	float() or None, never raising. Used on optional record keys.
+   987-1078     92	engine	_record_candidates	Candidate record paths for a dump, best first. NEVER raises.
+  1081-1113     33	engine	load_record	Read the study record stored beside the dump; None if there is none.
+  1127-1136     10	engine	_structure_key	The arm key for a structure id, or None when no arm was recorded.
+  1139-1179     41	engine	_multifreq_candidates	Candidate multi-frequency summary paths for a dump, best first.
+  1182-1228     47	engine	_absent_multifreq_reason	WHY this arm has no sweep, in the page's own words. Never empty.
+  1244-1255     12	engine	_read_json	Read a JSON object from ``path``; None (plus a stderr note) on failure.
+  1258-1261      4	engine	_as_int	int() or None, never raising. Used on optional integer record keys.
+  1264-1265      2	engine	_cells_string	
+  1268-1284     17	engine	_parse_cells	'62x212x22' -> {'nx': 62, 'ny': 212, 'nz': 22}; None when unparseable.
+  1287-1294      8	engine	_cells_as_text	{'nx': 62, 'ny': 212, 'nz': 22} -> '62x212x22'; None when incomplete.
+  1300-1312     13	engine	_cells_from_summary	Cell counts out of a record's summary_line, e.g. 'cells=72x212x22'.
+  1315-1331     17	render	_n_line	The run's n_line as recorded (run.kwargs.n_line, then geometry.n_line).
+  1334-1344     11	engine	_run_letter	The run label ('A', 'B') out of an entry's '<field_dump|sparams>.run'.
+  1347-1381     35	engine	_structure_registry	The SOLVE arms, read from the solver that dispatches on them. {} if not.
+  1384-1393     10	engine	load_structures	Every usable entry of structures.json, in file order. [] when unreadable.
+  1396-1401      6	engine	_structure_by_id	The entry with this id, or None. Never invents one.
+  1404-1412      9	engine	_structure_label	The entry's human label, with the id (then the default) as fallbacks.
+  1415-1419      5	engine	_structure_dump_path	The entry's npz path as written in the registry, or None.
+  1422-1430      9	engine	_structure_is_record_only	True when this entry's field dump is not on disk, so the case cannot open.
+  1433-1439      7	engine	_renderable_structure_ids	The ids that can actually be opened: those with a field dump on disk.
+  1442-1457     16	engine	_record_only_refusal	The refusal for a dump report on an entry with no dump: name the way through.
+  1460-1471     12	engine	_structure_input_path	Resolve the npz: --input when given, else the entry's dump, else default.
+  1474-1503     30	engine	_structure_option_label	Picker text for one entry: cells and run letters BEFORE it is opened.
+  1506-1517     12	engine	_structure_options	Picker items: disabled EXACTLY where the entry has no field dump.
+  1520-1561     42	engine	_git_head_short	The commit HEAD points at, read with pathlib only - no subprocess.
+  1564-1569      6	engine	_field_record	The study record beside a dump, read quietly (the state path is a report).
+  1572-1603     32	engine	_multifreq_point	One sweep row as a dict, or (None, why-not) when it cannot be drawn.
+  1606-1619     14	engine	_multifreq_points	(points, skipped) for a sweep summary dict, sorted by recorded frequency.
+  1622-1726    105	engine	load_multifreq	Read the multi-frequency |S11| / |S21| sweep for a dump and its arm.
+  1729-1764     36	engine	_single_point_from_record	The run record's own |S11| / |S21| as ONE sweep point, or None.
+  1767-1807     41	engine	_single_point_multifreq	The arm's own single run as a ONE-POINT sweep, or None.
+  1810-1824     15	render	_own_frequency_ghz	The dump's own recorded frequency in GHz, or None.
+  1831-1841     11	engine	_frequency_rows	The recorded rows as plain text: the fallback when no chart is drawn.
+  1844-1881     38	engine	_frequency_caption	One line: the source file, its arm, the row count, and what was NOT done.
+  1884-1906     23	engine	_s_params_nearest	The RECORDED point nearest a frequency: ``(point, ref_ghz, offset, why)``.
+  1909-1929     21	engine	_s_params_number_text	One line: the |S11| of the recorded point nearest the driven frequency.
+  1932-2076    145	render	build_frequency_chart	Render |S11| and |S21| vs frequency to a PNG data URI.
+  2107-2109      3	engine	_utc_now	ISO-8601 UTC, seconds resolution: the state dump's own timestamp.
+  2112-2114      3	engine	_fmt	A number for a text table, or 'n/a' when the record did not carry it.
+  2117-2133     17	engine	_chart_title	The frequency chart's title, derived from the selected entry.
+  2136-2146     11	engine	_float_list	A list of floats as recorded, or None when it is not one.
+  2149-2194     46	engine	_port_waves_block	``s11.station_phasors`` as a state block, or ``(None, reason)``.
+  2197-2206     10	engine	_port_wave_rows	The station phasors as plain text: the fallback when no chart is drawn.
+  2209-2219     11	engine	_port_caption	One line naming the file, and what this panel is not.
+  2222-2248     27	engine	_load_series_caption	One line naming the trace's file, its sample count and its element.
+  2251-2326     76	render	build_port_wave_chart	Render the recorded station phasors to a PNG data URI.
+  2329-2461    133	render	build_port_series_chart	Render the load's recorded V(t)/I(t) trace to a PNG data URI.
+  2464-2471      8	engine	_structure_artifact_path	An entry's artefact path for ``key``, but only if it exists on disk.
+  2474-2482      9	engine	_sparams_path	The S-parameter record for this page: the entry's, else the dump's own.
+  2485-2498     14	engine	_multifreq_path	The sweep file for this page: the entry's, else the one beside the dump.
+  2501-2571     71	engine	_field_dump_block	The field-dump half: CELLS from the array shape, the x axis from the record.
+  2574-2609     36	engine	_sparams_block	The S-parameter half, every number read and nothing guessed.
+  2612-2613      2	engine	_n_line_or_unknown	
+  2616-2642     27	engine	_mismatch_block	Whether the two halves of this page are even the same solve, and why not.
+  2645-2663     19	engine	_residual_block	One anchor and the two-wave |S11| measured against it.
+  2666-2683     18	engine	_residuals_block	Both declared anchors against the same measurement; never 'validated'.
+  2711-2716      6	engine	_referee_s11_path	The referee extraction's resolved path, or None when it cannot be made.
+  2719-2722      4	engine	_confidence_mm	A recorded length in METRES printed in MILLIMETRES, or 'n/a'.
+  2725-2728      4	engine	_confidence_ghz	A recorded frequency in HZ printed in GHZ, or 'n/a'.
+  2731-2738      8	engine	_confidence_z0	One complex impedance in ohm, or 'n/a' when either part is missing.
+  2741-2748      8	engine	_confidence_cells_per_lambda	(lambda_m, cells_per_lambda) for one recorded beta, or (None, None).
+  2751-2784     34	render	_confidence_mesh_rows	What was SOLVED: the cell size and the grid, cross-checked against itself.
+  2787-2833     47	render	_confidence_resolution_rows	Cells per wavelength at BOTH betas: the resolution the run really had.
+  2836-2889     54	render	_confidence_referee_rows	The referee extraction against this record's |S11|: agreement, then trust.
+  2892-2963     72	engine	_confidence_extraction_rows	What the extraction did NOT record, and the two counts that differ.
+  2966-3025     60	render	_confidence_caveat_rows	Provenance, the frequency actually run, and the acceptance-criteria tally.
+  3028-3095     68	engine	build_confidence_block	The Confidence & Accuracy panel as DATA: rows, caption, basis, sources.
+  3098-3128     31	engine	_multifreq_block	The sweep as recorded, or None when no row could be read.
+  3131-3146     16	engine	_chart_block	What the chart DOES: discrete markers at recorded frequencies only.
+  3149-3157      9	engine	_mismatch_banner_text	The exact banner sentence, or None when there is nothing to warn about.
+  3160-3171     12	engine	_finite	A float for JSON, or None when it is not finite.
+  3182-3201     20	engine	_vis_cut_station_block	The x-z sheet's fixed y, in this document's own null-plus-reason form.
+  3204-3238     35	engine	_vis_field_block	The animation's own field block: a dense cube, so the extents agree.
+  3241-3334     94	engine	_animation_block	What the animation adds to the state dump: frames, time, scale, geometry.
+  3337-3404     68	engine	build_state_dump	The whole page state as one JSON document, numpy-only.
+  3407-3471     65	engine	_station_axis_mm	Resolve the x of each captured station, in mm, plus where the axis came from.
+  3474-3608    135	render	_geom_mm	The structure's millimetres, and where each number came from.
+  3611-3620     10	engine	_page_has_board	Whether ``info`` already carries the board's own scale.
+  3623-3675     53	engine	_builder_board	The board a page with NO data draws, from the builder that defines it.
+  3678-3688     11	engine	_builder_page	The page dict around :func:`_builder_board`: no path, no record, no timeline.
+  3691-3771     81	engine	_bare_board_page	A page dict for a structure whose BOARD is drawn with no dump at all.
+  3774-3885    112	render	_plane_layout	Resolve the x of the load, S11 port and S21 planes, in mm.
+  3888-3895      8	engine	_s21_label	The S21 marker's text, including whether its plane is usable.
+  3898-3928     31	engine	_marker_text	Corner legend: what each marker is, where its x came from, and its state.
+  3931-3973     43	engine	_view_label	Browser-side label naming the view that is currently drawn.
+  4011-4066     56	engine	_volume_grid_dims	The ``(nx, ny, nz)`` lattice the colocated volume sits on, or None.
+  4069-4141     73	engine	_cut_layout	Resolve which y and z sample the cut sheets sit on. Numbers only.
+  4144-4161     18	ui	_cut_text	The slider label: which sample, where it is in mm, and WHICH grid.
+  4164-4189     26	engine	_cut_sheet_clim	One cut sheet's own colour range ``(peak / 1000, peak)``, or None.
+  4192-4214     23	engine	_cut_clim_text	The corner-legend line naming the range each DRAWN cut was painted on.
+  4217-4283     67	ui	build_cut_sheets	Build the two cut sheets as one-sample-thick pyvista images.
+  4286-4317     32	ui	_volume_cut_sheets	The two cuts as SUBSETS of the |E| volume image, or None if it refused.
+  4320-4387     68	ui	_marker_cut_relation	State, per marker, whether it lies ON a drawn cut sheet or off them.
+  4390-4400     11	engine	_marker_cut_lines	The cut sentences appended to the corner legend by _marker_text.
+  4403-4521    119	engine	_print_vis_keys	Print the wave-animation metadata. numpy only - no pyvista, no trame.
+  4524-4569     46	engine	print_keys	Print dump metadata. numpy only - no pyvista, no trame.
+  4572-4642     71	render	build_grid	Build the volume's grid on the STATION AXIS the dump or record records.
+  4645-4682     38	render	create_plotter	
+  4685-4766     82	render	_add_plane_marker	Draw ONE plane normal to x, centred at ``center_x`` - as its EDGE.
+  4769-4883    115	render	_add_markers	Draw the two port planes and the extraction labels.
+  4920-4935     16	engine	plane_bar_args	``add_scalar_bar`` arguments for the plane bar, title and geometry both.
+  4938-4948     11	render	_remove_scalar_bar	Remove the bar stored under ``title``, when this plotter has one.
+  4951-4977     27	render	_place_scalar_bar	Stand ONE bar up under ``title``, at ``position``, reading ``mapper``.
+  4980-5227    248	render	_draw_volume_scene	Draw the volume view's FIELD layer: the volume and the two cut sheets.
+  5245-5332     88	engine	_plane_extent_mm	The DOMAIN box and the captured-station WINDOW, both in millimetres.
+  5335-5354     20	engine	_box_edges	The 12 edges of an axis-aligned box as pairs of (3,) endpoints.
+  5357-5387     31	engine	_dashed_box_segments	The box's 12 edges as DASHES: ``(points, line cells)`` for one PolyData.
+  5390-5438     49	render	_add_extent_outlines	Draw the domain box SOLID and the captured window DASHED inside it.
+  5441-5458     18	engine	_extent_legend	The corner-legend sentence naming the boxes that are on screen.
+  5461-5667    207	render	_draw_scene	Draw one view into the single existing plotter.
+  5683-5717     35	engine	check_web_requirements	Return pip names of web UI packages that are missing or unusable.
+  5720-5733     14	engine	_cut_axis_counts	How many y / z samples the two cut sliders span.
+  5736-5759     24	ui	_init_cut_state	Set the opening cut, its label and the first view label.
+  5762-5777     16	ui	_scene_planes	Return ``planes`` with the two marker switches folded in.
+  5783-5817     35	ui	_redraw_scene	Rebuild the scene in the one plotter. Failure leaves the old picture.
+  5820-5864     45	ui	_on_cut_change	Clamp one cut index, store it, and rebuild the scene.
+  5867-5919     53	ui	_emit_cut_sliders	Emit the two cut sliders, or the label alone when they cannot be.
+  5922-6774    853	ui	run_web	Serve the viewer for ONE structure entry.
+  6785-6811     27	engine	_vis_frame_time_ns	Simulation time of ``frame`` on the plane family ``mode``, in ns.
+  6814-6833     20	engine	_vis_phase_text	Where the frame sits relative to one trip along the line.
+  6836-6886     51	render	_vis_grid	One frame of one plane as a single-sample-thick ImageData.
+  6889-7171    283	render	_vis_geometry	The ground plane, the substrate, the strip and the two port markers.
+  7174-7232     59	engine	_probe_trame_ui	A usable Trame Vuetify module pair, or None after naming what failed.
+  7242-7253     12	engine	_next_solve_run_tag	A readable - and UNIQUE - stamp for one solve's files.
+  7256-7268     13	engine	_solve_netlist_slug	The circuit's own ``name``, flattened to something a file name can hold.
+  7271-7383    113	engine	solve_argv	The argv that would run a fresh field solve. BUILT here, never run.
+  7386-7400     15	engine	solve_netlist_file	The netlist FILE a ``solve_argv`` command line points at, else ``None``.
+  7403-7464     62	engine	reload_page	Everything the page reads off disk for ONE dump, as a plain dict.
+  7513-7522     10	engine	_mode2d	``emfit.mode2d``, imported ON USE so --list-keys never needs scipy.
+  7525-7614     90	engine	cross_section_mesh	The (y, z) cross-section of the microstrip as a rectilinear mesh.
+  7617-7621      5	engine	_mode_pct	``+1.07 %``-style delta, or ``n/a`` when the reference is not recorded.
+  7624-7640     17	engine	_mode_delta_pct	``100 * (beta - reference) / reference``, or None for no reference.
+  7643-7664     22	engine	_mode_grid_axes	The ``(y, z)`` sampling axes a mode is drawn on, in metres.
+  7667-7687     21	engine	_mode_field_grid	|E| of the solved mode on a ``(cells, cells)`` (z, y) sampling of the box.
+  7690-7780     91	engine	_mode_vector_grid	(E_y, E_z) of the mode on the STRIDED samples of the same box. NEVER raises.
+  7783-7880     98	engine	_mode_caption	The one sentence set a mode panel may print, from the numbers beside it.
+  7883-7885      3	engine	_mode_fail	The refusal shape: ``ok`` False and one short, honest cause.
+  7888-7955     68	render	_mode_geometry_from_dump	Cross-section geometry from the DUMP's own metadata: ``(geometry, note)``.
+  7958-8127    170	render	_mode_view	``mode_view``'s body, raising; the wrapper turns a raise into a reason.
+  8130-8188     59	engine	mode_view	Solve the cross-section mode for the arm a page is showing. NEVER raises.
+  8203-8212     10	engine	_animation_title_text	The page TITLE while the field dump is what is on screen.
+  8215-8227     13	engine	_mode_title_text	The page TITLE while a solved mode cross-section is on screen.
+  8230-8248     19	engine	_mode_button_label	The Mode control's LABEL for a ``mode_view`` result. NEVER raises.
+  8251-8272     22	engine	_mode_caption_text	The Mode panel's CAPTION for a ``mode_view`` result. NEVER raises.
+  8275-8340     66	engine	_mode_candidate_title	One picker line for a ``mode2d.candidate_records`` record. NEVER raises.
+  8350-8391     42	engine	_mode_candidate_items	The Mode picker's items for a ``mode_view`` result. NEVER raises.
+  8394-8429     36	engine	_mode_view_for_candidate	``result`` re-pointed at one candidate's grid, or None. NEVER raises.
+  8432-8464     33	engine	_mode_choice_caption_text	The caption for a PICKED candidate. NEVER raises, never re-words.
+  8467-8520     54	render	_mode_picture_grid	A ``mode_view`` result as ONE y-z sheet standing at ``x_mm``. NEVER raises.
+  8523-8601     79	engine	_mode_quiver_arrows	The mode's transverse field as arrow anchors and shafts, in MILLIMETRES.
+  8635-8753    119	engine	_volume_arrows	The colocated ``E`` volume as arrow anchors and shafts, in MILLIMETRES.
+  8756-8795     40	render	_volume_quiver_polydata	``_volume_arrows`` output as ONE pyvista point cloud, or None.
+  8798-8941    144	render	_volume_abs_grid	The whole colocated ``E`` volume as ONE cell-centred ``|E|`` image.
+  8944-8985     42	engine	_volume_frame_for_step	Which stored |E| frame belongs to animation ``step``, or None.
+  8988-9004     17	engine	_monotonic_axis	One recorded step axis as an int array, or None when it cannot be read.
+  9007-9061     55	engine	_volume_player_plan	The ONE mapping from a player position to the two indices it draws.
+  9064-9080     17	engine	_synced_frame_counts	``(nt, nt_x)`` with each family's clock replaced by the volume's own.
+  9083-9110     28	engine	_volume_abs_global_clim	The ONE colour range every frame of ``e_abs_volume`` is drawn on.
+  9148-9169     22	engine	_volume_clim_items_literal	The Clim Mode select's items, as the JS array literal ``v_bind_items`` wants.
+  9185-9208     24	engine	_run_config_defaults	``{state name: default}`` for RUN_CONFIG_FIELDS, read off ``RunConfig``.
+  9211-9232     22	engine	_run_config_form_shown	Is the Run Config FORM (the five run fields) offered on this page?
+  9235-9250     16	engine	_solve_refused_page	Does a Solve press on this page have to be REFUSED before it spawns?
+  9260-9292     33	engine	_run_config_field_value	One RunConfig field off one form string, or ``None`` for "no opinion".
+  9295-9319     25	engine	run_config_from_form	The ONE ``RunConfig`` a press runs, built from the Run Config form.
+  9322-9341     20	engine	_run_config_argv	The solver flags ``config`` adds, in the solver's OWN spelling.
+  9344-9354     11	engine	_volume_clim_mode	The clim mode ``value`` asks for, or the DEFAULT when it does not ask.
+  9357-9388     32	engine	_volume_abs_frame_clim	The colour range ONE stored frame of ``e_abs_volume`` is drawn on.
+  9391-9412     22	engine	_volume_clim_for	The |E| volume layer's colour range under clim ``mode``.
+  9415-9482     68	render	_volume_frame_grid	ONE stored |E| frame as an ``ImageData`` on this page's own node grid.
+  9485-9559     75	engine	_volume_quiver_mesh	The whole-volume arrow field as ONE glyphed mesh, or None.
+  9562-9634     73	engine	_volume_quiver_callback	The vis page's arrow overlay, as the ``show()`` closure it needs.
+  9732-9761     30	engine	apply_page	Make a freshly loaded page the LIVE one, in place.
+  9764-9777     14	ui	VRow	A flex-row ``html.div``; trame is imported lazily, never at module load.
+  9780-9793     14	ui	VCol	A flex-column ``html.div``; trame is imported lazily, never at module load.
+  9796-9891     96	engine	build_far_field_panel	Integrate the ``--surface-dump`` archive and pick the ONE number.
+  9894-13287  3394	ui	run_web_vis	Serve the animation page for an ``emfit.vis/2`` dump.
+ 13290-13461   172	ui	main	
+
+== nested defs (non-module-level) in order ==
+  3216-3217      2	engine	_vis_field_block.<locals>._span	
+  3435-3445     11	engine	_station_axis_mm.<locals>._as_axis	``values`` times ``scale_mm`` as mm, or None if that is not an axis.
+  3447-3453      7	engine	_station_axis_mm.<locals>._dig	``block[key0][key1]...``, or None as soon as a level is not a dict.
+  3509-3514      6	engine	_geom_mm.<locals>._num	A finite float, or None. Never raises on a string, NaN or inf.
+  3536-3542      7	engine	_geom_mm.<locals>._take	The first finite source wins; a later source cannot overwrite it.
+  3544-3547      4	engine	_geom_mm.<locals>._metres	A record length in METRES as millimetres, or None.
+  3729-3732      4	render	_bare_board_page.<locals>._mm	A resolved millimetre value, or NaN when neither source had it.
+  3734-3741      8	render	_bare_board_page.<locals>._count	A grid count from the record's geometry, else from its grid list.
+  4339-4340      2	engine	_marker_cut_relation.<locals>.in_slab	
+  5273-5281      9	engine	_plane_extent_mm.<locals>._span	
+  5283-5302     20	engine	_plane_extent_mm.<locals>._counts_span	The same box from the node COUNT and the cell size, no arrays.
+  6169-6179     11	render	run_web.<locals>._clear_volume_quiver	Drop this page's arrow actor. Never raises.
+  6181-6218     38	ui	run_web.<locals>._show_volume_quiver	Put the cached arrow mesh on the plotter, or take it off. Never raises
+  6220-6222      3	ui	run_web.<locals>._redraw	Rebuild the scene in the one plotter. Failure leaves the old picture.
+  6227-6243     17	ui	run_web.<locals>._on_toggle_view	
+  6246-6259     14	ui	run_web.<locals>._on_cut_y	
+  6262-6275     14	ui	run_web.<locals>._on_cut_z	
+  6278-6294     17	ui	run_web.<locals>._on_volume_quiver_toggle	Tick or untick the 3-D arrows: build the mesh at most once, redraw.
+  6301-6328     28	render	run_web.<locals>._focus	
+  6373-6400     28	ui	run_web.<locals>._emit_mismatch_banner	The full-width warning, or nothing at all when the two runs agree.
+  6402-6427     26	engine	run_web.<locals>._emit_volume_quiver_toggle	The 3-D vectors checkbox, or nothing when it cannot do anything.
+  6429-6501     73	ui	run_web.<locals>._emit_structure_picker	The case picker: every entry, record-only ones present but disabled.
+  6503-6536     34	ui	run_web.<locals>._emit_frequency_panel	Emit the |S11| / |S21| panel under the 3-D view, caption first.
+  6538-6582     45	ui	run_web.<locals>._emit_port_wave_panel	Emit the recorded station phasors under the frequency panel.
+  6717-6734     18	ui	run_web.<locals>._on_structure_change	Say what picking another entry would take; never half-reload the page.
+  6737-6752     16	ui	run_web.<locals>._on_station_change	
+  6934-6936      3	engine	_vis_geometry.<locals>._shown	The number as the diagnostic prints it; a gap is the word 'absent'.
+  6960-6965      6	engine	_vis_geometry.<locals>._pick	geometry_mm first, the dump's own key second, None if neither.
+  6967-6969      3	engine	_vis_geometry.<locals>._nan	The isfinite() guards need a float: an absence is NaN, never 0.0.
+  7598-7600      3	engine	cross_section_mesh.<locals>.ground	The ground plane: the z = 0 node row.
+  7602-7606      5	engine	cross_section_mesh.<locals>.strip	The strip: the z = h node row within |y| <= w/2.
+  7608-7612      5	engine	cross_section_mesh.<locals>.wall	The PEC fence: the top row and both side columns (no PML here).
+  7920-7926      7	engine	_mode_geometry_from_dump.<locals>.recorded	The stored float, or None when it is absent or not finite.
+  8842-8844      3	engine	_volume_abs_grid.<locals>._miss	Nothing to draw, plus the sentence that says why.
+  9590-9632     43	ui	_volume_quiver_callback.<locals>.show	Put the volume arrows on the plotter, or take them off. NEVER raises.
+  9655-9662      8	engine	SolveJob.__init__	
+  9665-9667      3	engine	SolveJob.log	The TAIL of the combined stdout+stderr, newest last.
+  9669-9671      3	engine	SolveJob._finish	
+  9673-9679      7	engine	SolveJob._drain	Read whatever is left. Safe only once the child has exited.
+  9681-9700     20	engine	SolveJob.start	Spawn the child. REFUSES to start a second one.
+  9702-9707      6	engine	SolveJob.run	start(), then block until the child exits. THE WORKER THREAD'S CALL.
+  9709-9724     16	engine	SolveJob.poll	Non-blocking: finalise here once the child has exited on its own.
+ 10393-10405    13	ui	run_web_vis.<locals>._redraw	Rebuild the scene in the one plotter. Failure leaves the old picture.
+ 10426-10439    14	ui	run_web_vis.<locals>._on_cut_y	
+ 10442-10455    14	ui	run_web_vis.<locals>._on_cut_z	
+ 10496-10505    10	ui	run_web_vis.<locals>._redraw	Rebuild the scene in the one plotter. Failure leaves the old picture.
+ 10530-10557    28	ui	run_web_vis.<locals>._set_picture_title	Publish the page title for whatever the 3D view is showing. NEVER rais
+ 10559-10577    19	ui	run_web_vis.<locals>._sync_picture_title	Point the title at the field the 3D view is ACTUALLY showing.
+ 10579-10618    40	render	run_web_vis.<locals>._swap_scalar_bar	Leave exactly ONE PLANE bar standing, for the family now on screen.
+ 10620-10637    18	render	run_web_vis.<locals>._clear_mode_quiver	Drop the Mode ARROW overlay. Own handle, own actor, own removal.
+ 10639-10669    31	render	run_web_vis.<locals>._clear_mode_picture	Drop the Mode picture. ONE actor, OUTSIDE ``sheets``, own handle.
+ 10671-10831   161	ui	run_web_vis.<locals>._draw_mode_picture	Draw a solve's 48 x 48 |E| on the cross-section plane. NEVER raises.
+ 10833-10890    58	ui	run_web_vis.<locals>._draw_mode_quiver	Overlay the mode's transverse arrow field on the cross-section. NEVER 
+ 10892-10921    30	render	run_web_vis.<locals>._volume_layer_drop	Take the |E| volume layer off the plotter and forget its bookkeeping.
+ 10923-11088   166	ui	run_web_vis.<locals>._draw_volume_layer	Draw the |E| volume layer for the CURRENT frame, or drop it.
+ 11090-11135    46	engine	run_web_vis.<locals>._draw_port_plane_markers	Mark the load, S11 and stub-side planes on the volume layer.
+ 11137-11373   237	ui	run_web_vis.<locals>._show	Draw ONE frame of the selected family. Never rescales.
+ 11375-11458    84	ui	run_web_vis.<locals>._rebuild_sheets	Re-create the three field sheets from the LIVE page's own info.
+ 11482-11485     4	ui	run_web_vis.<locals>._on_frame	
+ 11488-11501    14	ui	run_web_vis.<locals>._on_mode_toggle	Swap which family is animated. The two clocks are never mixed.
+ 11508-11527    20	ui	run_web_vis.<locals>._on_step_back	Ten frames back while playing, exactly one while stopped.
+ 11530-11541    12	ui	run_web_vis.<locals>._on_step_fwd	Ten frames forward while playing, exactly one while stopped.
+ 11544-11559    16	render	run_web_vis.<locals>._on_top_view	Look straight down the z axis: the layout, not an animation frame.
+ 11562-11572    11	render	run_web_vis.<locals>._on_side_view	Look along -y at the x-z section: the line seen from the side.
+ 11574-11641    68	engine	run_web_vis.<locals>._build_s_params	Read the sweep from disk, draw it, and pick the ONE number to quote.
+ 11643-11681    39	ui	run_web_vis.<locals>._load_s_params_panel	Populate the S-parameters panel; the tab owns its visibility.
+ 11683-11708    26	engine	run_web_vis.<locals>._build_confidence	Read this page's record (and the referee) and render the panel rows.
+ 11710-11731    22	ui	run_web_vis.<locals>._load_confidence_panel	Populate the Confidence & Accuracy panel; the tab owns its visibility.
+ 11733-11783    51	ui	run_web_vis.<locals>._load_far_field_panel	Populate the Far Field panel; the tab owns its visibility.
+ 11786-11830    45	ui	run_web_vis.<locals>._on_mode_view	Solve the 2D cross-section for the page ON SCREEN, OFF the event loop.
+ 11840-11867    28	ui	run_web_vis.<locals>._on_mode_choice	Repaint the Mode picture for the candidate the picker names.
+ 11877-11914    38	ui	run_web_vis.<locals>._on_volume_clim_mode	Re-reference the |E| layer's colour range and repaint it. NEVER raises
+ 11924-11971    48	ui	run_web_vis.<locals>._on_show_quiver	Draw or drop the Mode arrow overlay. NEVER raises.
+ 11977-11995    19	ui	run_web_vis.<locals>._redraw_for_plane_toggle	Repaint the scene after a marker plane was switched. NEVER raises.
+ 11998-12000     3	engine	run_web_vis.<locals>._on_show_load_plane	Draw or drop the red load plane. NEVER raises.
+ 12003-12005     3	engine	run_web_vis.<locals>._on_show_port_plane	Draw or drop the purple S11 port plane. NEVER raises.
+ 12010-12012     3	ui	run_web_vis.<locals>._on_netlist_toggle	Open/close the netlist box when the build has no expansion panels.
+ 12014-12139   126	ui	run_web_vis.<locals>._emit_circuit_netlist	Emit the CIRCUIT NETLIST editor: one optional multi-line box.
+ 12141-12195    55	ui	run_web_vis.<locals>._emit_load_series_panel	Emit the load's recorded V(t)/I(t) trace under the Circuit netlist box
+ 12197-12445   249	ui	run_web_vis.<locals>._emit_solve_controls	Emit the SETUP column as a four-section engineering form.
+ 12223-12243    21	ui	run_web_vis.<locals>._emit_solve_controls.<locals>._section	Emit ONE section: a titled card, or the flat label fallback.
+ 12245-12277    33	engine	run_web_vis.<locals>._emit_solve_controls.<locals>._project	
+ 12279-12320    42	ui	run_web_vis.<locals>._emit_solve_controls.<locals>._mesh_and_geometry	
+ 12322-12339    18	ui	run_web_vis.<locals>._emit_solve_controls.<locals>._action	
+ 12359-12429    71	ui	run_web_vis.<locals>._emit_solve_controls.<locals>._run_config	Emit the Run Config card: Clim Mode always, the form on a data-less pa
+ 12447-12497    51	ui	run_web_vis.<locals>._emit_s_params_panel	Emit the |S11| / |S21| panel inside its TAB, caption first.
+ 12499-12534    36	ui	run_web_vis.<locals>._emit_far_field_panel	Emit the far-field pattern inside its TAB, number first.
+ 12536-12561    26	ui	run_web_vis.<locals>._emit_confidence_panel	Emit the Confidence & Accuracy panel as TEXT inside its TAB.
+ 12563-12578    16	ui	run_web_vis.<locals>._play_loop	Advance one frame per wall-clock step until the trigger bumps the
+ 12581-12604    24	ui	run_web_vis.<locals>._on_play_toggle	Start or stop playback. Returns immediately.
+ 12616-12638    23	engine	run_web_vis.<locals>._on_kbd_shortcut	Dispatch ONE keyboard shortcut to the handler the button uses.
+ 12687-12708    22	engine	run_web_vis.<locals>._watch_solve	THE poll driver: the ONE thing that watches the job and lands it.
+ 12710-12719    10	engine	run_web_vis.<locals>._start_watch	Start the ONE poll driver on the loop this trigger is running on.
+ 12721-12823   103	ui	run_web_vis.<locals>._poll_solve	Watcher callback: watch the ONE job and, when it lands, show it.
+ 12825-12837    13	engine	run_web_vis.<locals>._drop_netlist	Delete one run's netlist FILE. Never raises: the run is over anyway.
+ 12839-12850    12	engine	run_web_vis.<locals>._run_job	Worker thread: run the solve to completion, never raising.
+ 12853-12956   104	ui	run_web_vis.<locals>._on_solve_start	Start a solve and return IMMEDIATELY. The watcher brings it back.
+ 12958-12982    25	ui	run_web_vis.<locals>._emit_mode_caption	The Mode panel's ONE caption line - the hint, the numbers or a refusal
+ 12984-13030    47	engine	run_web_vis.<locals>._emit_mode_picker	The candidate picker: ONE VSelect over the solve's OWN candidates.
+ 13032-13115    84	ui	run_web_vis.<locals>._emit_vector_toggle	The overlay toggles: the arrow field and the two marker planes.
+ 13117-13140    24	ui	run_web_vis.<locals>._emit_station_readout	The station sentence as SHELL TEXT, inside the cut row.
+
+== unref by name-or-call graph ==
+count=0
+
+== controller-decorated funcs ==
+6227-6243	run_web.<locals>._on_toggle_view	ctrl.set('toggle_view')
+6246-6259	run_web.<locals>._on_cut_y	ctrl.set('cut_y')
+6262-6275	run_web.<locals>._on_cut_z	ctrl.set('cut_z')
+6278-6294	run_web.<locals>._on_volume_quiver_toggle	ctrl.set('show_volume_quiver')
+6717-6734	run_web.<locals>._on_structure_change	ctrl.set('structure')
+6737-6752	run_web.<locals>._on_station_change	ctrl.set('station')
+10426-10439	run_web_vis.<locals>._on_cut_y	ctrl.set('cut_y')
+10442-10455	run_web_vis.<locals>._on_cut_z	ctrl.set('cut_z')
+11482-11485	run_web_vis.<locals>._on_frame	state.change('frame')
+11488-11501	run_web_vis.<locals>._on_mode_toggle	ctrl.set('mode_toggle')
+11508-11527	run_web_vis.<locals>._on_step_back	ctrl.set('step_back')
+11530-11541	run_web_vis.<locals>._on_step_fwd	ctrl.set('step_fwd')
+11544-11559	run_web_vis.<locals>._on_top_view	ctrl.set('top_view')
+11562-11572	run_web_vis.<locals>._on_side_view	ctrl.set('side_view')
+11786-11830	run_web_vis.<locals>._on_mode_view	ctrl.set('mode_view_toggle')
+11840-11867	run_web_vis.<locals>._on_mode_choice	state.change('mode_choice')
+11877-11914	run_web_vis.<locals>._on_volume_clim_mode	state.change('volume_clim_mode')
+11924-11971	run_web_vis.<locals>._on_show_quiver	state.change('show_quiver')
+11998-12000	run_web_vis.<locals>._on_show_load_plane	state.change('show_load_plane')
+12003-12005	run_web_vis.<locals>._on_show_port_plane	state.change('show_port_plane')
+12010-12012	run_web_vis.<locals>._on_netlist_toggle	ctrl.set('netlist_toggle')
+12581-12604	run_web_vis.<locals>._on_play_toggle	ctrl.set('play_toggle')
+12616-12638	run_web_vis.<locals>._on_kbd_shortcut	ctrl.trigger('kbd_shortcut')
+12853-12956	run_web_vis.<locals>._on_solve_start	ctrl.set('solve_start')
