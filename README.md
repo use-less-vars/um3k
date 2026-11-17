@@ -138,19 +138,9 @@ contraction and no reassociation are emitted, which `-ffast-math`, `-mfma` or
 ## Web UI
 
 ```
-python3 server/poc_app.py                    # serve the browser view
-python3 server/poc_app.py --list-keys        # print the dump's keys; numpy only
-python3 server/poc_app.py --station 4        # choose the station to show
+PYTHONPATH=. python3 server/poc_app.py        # from the repo root; serves http://127.0.0.1:8080/
 ```
-
-`server/poc_app.py` starts a Trame/pyvista view of a field dump; `--input` selects
-the dump, `--station` the station (default 4), `--host` and `--port` the bind
-address. **The view is currently a DEBUG SCAFFOLD, not a real field visualizer**:
-it draws marker spheres at the dump's sample points, nothing more. The browser
-view itself is **unverified here**: the Trame/pyvista/VTK
-stack is absent from the container and there is no network, so only the numpy-only
-`--list-keys` path has been exercised. `requirements-web.txt` names the six
-packages that stack needs and pins no versions.
+Flags, the `--list-keys` preflight, the headless caveat, dependencies and known-broken items: `docs/kb/WORK/run.md` is the single maintained source.
 
 ## Status and conventions
 
