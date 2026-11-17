@@ -55,6 +55,10 @@ NPZ = (
 # readable afterwards, beside the other build artefacts.
 STATE_PATH = REPO_ROOT / "build" / "pytest_state_dump.json"
 CLI_TIMEOUT_S = 120
+# The one-time release volume a bare invocation prefers. It is gitignored, so a
+# fresh clone does not have it and still boots (on the legacy dump, out loud) -
+# which is why the default-boot test skips here instead of failing.
+REFERENCE_NPZ = REPO_ROOT / "artifacts" / "reference_sim_volume.npz"
 # The stored plane_ez shape: 9 captured x-planes, then 213 rows in y - ONE MORE
 # than the 212 cells the domain record declares - and 22 in z. The sampled y
 # extent is therefore 213 * 0.4 = 85.2 mm, not the domain's 84.8 mm.
@@ -76,7 +80,19 @@ def cli_run():
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.unlink(missing_ok=True)
     proc = subprocess.run(
-        [sys.executable, str(SCRIPT), "--dump-state", str(STATE_PATH)],
+        # --structure is PINNED here. Every assertion fed by this fixture is
+        # about the legacy Build A dump (its shape, its npz, its extents), and
+        # a bare run now boots on the reference volume instead - leaving the
+        # id off would make those pins compare against a different artefact.
+        # The boot default itself is covered by test_t14 below.
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--structure",
+            "build_A_50ohm",
+            "--dump-state",
+            str(STATE_PATH),
+        ],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -509,4 +525,54 @@ def test_t13_trace_less_dump_is_null_plus_the_reason_it_is_absent(vis_states):
     assert "before the solver" in reason, (
         "the reason must say the dump PREDATES the trace rather than claiming "
         f"this run skipped it: {reason!r}"
+    )
+
+
+# --- T14: a bare run boots on the volume, not the legacy dump ----------------
+
+
+def test_t14_bare_run_boots_on_the_reference_volume(tmp_path):
+    """No ``--structure``: the id and the frame axis the boot default promises.
+
+    The change this pins is a DEFAULT, so a run that names an id proves nothing
+    about it. Both halves are asserted: the id the boot resolved to is the
+    example volume, and its document carries a frame axis (``animation``), which
+    is what distinguishes it from the legacy station dump - the page a bare run
+    used to land on, which has no time axis and prints "no timeline on this
+    page".
+    """
+    if not REFERENCE_NPZ.is_file():
+        pytest.skip(f"reference volume absent: {REFERENCE_NPZ}")
+    target = tmp_path / "bare_boot.json"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--dump-state", str(target)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=CLI_TIMEOUT_S,
+    )
+    assert proc.returncode == 0, (
+        f"a bare --dump-state exited {proc.returncode}\nstdout:\n{proc.stdout}\n"
+        f"stderr:\n{proc.stderr}"
+    )
+    document = json.loads(
+        target.read_text(encoding="utf-8"), parse_constant=_reject_constant
+    )
+    assert document["structure"]["id"] == "reference_sim", (
+        "a bare run must boot on the example volume while its npz is on disk; "
+        f"the dump resolved to {document['structure']!r} (stderr: "
+        f"{proc.stderr!r})"
+    )
+    assert document["format"] != "legacy", (
+        "the boot default must land on a dump with a time axis, not the legacy "
+        f"station dump: format is {document['format']!r}"
+    )
+    animation = document["animation"]
+    assert isinstance(animation, dict), (
+        "the boot document carries no animation block, so the page would print "
+        f"\"no timeline on this page\": {animation!r}"
+    )
+    assert animation["frames"] > 1 and animation["frames_xcut"] > 1, (
+        "a single frame is not a timeline; got "
+        f"frames={animation['frames']!r}, frames_xcut={animation['frames_xcut']!r}"
     )

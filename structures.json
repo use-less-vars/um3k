@@ -69,7 +69,7 @@
       "multifreq": null,
       "mismatch": false,
       "anchors": {},
-      "notes": "One-time release artefact, shipped once so a checkout can show a volume and a timeline without a solve. 46 keys, schema emfit.vis/2 (e_abs_volume 24x62x212x22, nt 2400), 40,407,762 B, sha256 ad7fb3692b905e6519c194e498c1e4b5ee10f21ff43c66144d7aad9b613ce7e4; regenerate with `python3 scripts/run_reference_sim.py`, which rewrites this npz and artifacts/reference_sim_run.json. Catalogue entry only - DEFAULT_STRUCTURE is unchanged. The npz records provenance structure_id \"A\"/50 ohm, so a multifreq request on this entry resolves to the Build A sweep, and there is no port-wave record for it (port_waves stays null with that reason)."
+      "notes": "One-time release artefact, shipped once so a checkout can show a volume and a timeline without a solve. 46 keys, schema emfit.vis/2 (e_abs_volume 24x62x212x22, nt 2400), 40,407,762 B, sha256 ad7fb3692b905e6519c194e498c1e4b5ee10f21ff43c66144d7aad9b613ce7e4; regenerate with `python3 scripts/run_reference_sim.py`, which rewrites this npz and artifacts/reference_sim_run.json. Catalogue entry only for the constant: `DEFAULT_STRUCTURE` remains build_A_50ohm, but the boot default of a bare invocation now resolves to this entry. The npz records provenance structure_id \"A\"/50 ohm, so a multifreq request on this entry resolves to the Build A sweep, and there is no port-wave record for it (port_waves stays null with that reason)."
     }
   ]
 }

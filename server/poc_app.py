@@ -136,6 +136,12 @@ SINGLE_RUN_BY_STRUCTURE = {
 # which cell counts each of them is on. Read from the repo root. Every entry
 # point below defaults to the entry named here.
 DEFAULT_STRUCTURE = "build_A_50ohm"
+# ... and the entry a BARE invocation boots on, so the first screen has a volume
+# and a timeline on it rather than an empty page: the example volume the registry
+# publishes under artifacts/. It is a PREFERENCE, not a promise - the entry is
+# only usable while that one-time release artefact is on disk, so
+# _boot_structure_id falls back to DEFAULT_STRUCTURE, out loud, when it is not.
+PREFERRED_STRUCTURE = "reference_sim"
 STRUCTURES_FILE = "structures.json"
 DEFAULT_HOST = "127.0.0.1"
 # Deliberately 8080, NOT 8000: 8000 is reserved for the agent's own service on
@@ -1430,6 +1436,39 @@ def _structure_is_record_only(structure) -> bool:
     return _structure_artifact_path(structure, "field_dump") is None
 
 
+def _boot_structure_id(structures=None):
+    """The entry a bare invocation boots on, and the line to say when it cannot.
+
+    Returns ``(id, note)``: the id to boot on, and the ONE sentence to print on
+    stderr when that id is not the preferred entry (``note`` is None when
+    nothing needs saying). Announcing is left to the caller because this runs
+    while the parser is being built, and only a run that actually boots on the
+    default has anything to announce.
+
+    ``PREFERRED_STRUCTURE`` is the shipped example volume, so the page a
+    no-argument run lands on has a volume and a frame axis to look at. That
+    artefact is a ONE-TIME release, though, and a checkout that predates it - or
+    one where someone deleted it - must still boot: the answer is then the
+    legacy default, stated out loud rather than substituted in silence, because
+    a boot that quietly served a different entry is the lie this module refuses
+    everywhere else.
+
+    Decided by the same rule as the picker and the CLI
+    (``_structure_is_record_only``: is the npz this entry names on disk), so an
+    entry whose dump was moved or deleted falls back here too. A registry that
+    does not carry the entry at all is the same answer for the same reason.
+    """
+    structures = load_structures() if structures is None else structures
+    preferred = _structure_by_id(PREFERRED_STRUCTURE, structures)
+    if not _structure_is_record_only(preferred):
+        return PREFERRED_STRUCTURE, None
+    return DEFAULT_STRUCTURE, (
+        f"[poc_app] {PREFERRED_STRUCTURE}: "
+        f"{_structure_dump_path(preferred) or 'its field dump'} is not on disk "
+        f"- booting on the legacy default {DEFAULT_STRUCTURE} instead."
+    )
+
+
 def _renderable_structure_ids(structures) -> list:
     """The ids that can actually be opened: those with a field dump on disk."""
     return [
@@ -2154,10 +2193,17 @@ def _port_waves_block(path, record=None):
     present part of a measurement as the whole of one. Returns
     ``(block, None)`` or ``(None, reason)`` - never raises, never truncates.
     """
-    data = record if isinstance(record, dict) else _read_json(path)
+    # A registry entry may record no S-parameters at all (sparams: null), and then
+    # there is no path to read: read NOTHING rather than handing None to _read_json,
+    # which would print a TypeError-flavoured "unreadable" line on every open.
+    data = (
+        record
+        if isinstance(record, dict)
+        else (_read_json(path) if path is not None else None)
+    )
     name = Path(path).name if path is not None else "the S-parameter record"
     if not isinstance(data, dict):
-        return None, f"no readable S-parameter record at {path}"
+        return None, f"no readable S-parameter record at {path or 'no path given'}"
     s11 = data.get("s11")
     if not isinstance(s11, dict):
         return None, f"{name} carries no s11 block"
@@ -13320,6 +13366,12 @@ def run_web_vis(
 
 
 def main(argv=None) -> int:
+    # The registry is read BEFORE the parser is built: the boot default is an
+    # answer about this checkout (see _boot_structure_id), so the help text
+    # names the entry a bare run would actually open, and the answer is
+    # computed once rather than once for the help and once for the selection.
+    structures = load_structures()
+    boot_structure, boot_note = _boot_structure_id(structures)
     parser = argparse.ArgumentParser(
         prog="poc_app.py",
         description=(
@@ -13364,10 +13416,9 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--structure",
-        default=DEFAULT_STRUCTURE,
+        default=None,
         help=(
-            "structure id from "
-            f"{STRUCTURES_FILE} (default: {DEFAULT_STRUCTURE})"
+            f"structure id from {STRUCTURES_FILE} (default: {boot_structure})"
         ),
     )
     parser.add_argument(
@@ -13406,8 +13457,13 @@ def main(argv=None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    if args.structure is None:
+        # The ONE place the boot default is chosen, so an explicit --structure
+        # never gets a sentence about a default it did not use.
+        args.structure = boot_structure
+        if boot_note:
+            print(boot_note, file=sys.stderr)
 
-    structures = load_structures()
     structure = _structure_by_id(args.structure, structures)
     if structure is None:
         valid = ", ".join(

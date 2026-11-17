@@ -102,7 +102,7 @@ false positive for them:
 | `artifacts/live_run.npz` | 43 | richest |
 
 Consequence: **no shipped NPZ carries a far-field surface-dump archive**, so the
-"Far Field" tab cannot render on any artefact in the repo (see DEFECTS A-4).
+"Far Field" tab cannot render on any artefact in the repo (see DEFECTS A-3).
 
 ## 9. Placeholder / blankness messages (each is a deliberate fallback, listed for triage)
 
