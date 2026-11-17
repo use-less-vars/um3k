@@ -160,3 +160,35 @@ So this section is genuinely thin; it is reported as thin rather than padded.
    (`12516-12532`, ~10 lines); a tab that is silently empty reads as a broken app.
 
 Total: ~16 lines of change, three files' worth of behaviour, no architecture work.
+
+---
+
+## E. Fix log (code changed after the survey above)
+
+Line numbers in sections A-C are SURVEY-TIME numbers; the insertion points below are where
+the fixes actually landed. Verified for all three rows: `python3 -c "ast.parse(...)"` clean,
+the KB gate unchanged at 3 failed / 7 passed / 1 xfailed (the three failures are the absent
+git binary, A2/A4/A10), and `--dump-state` identical before vs after except `generated_utc`
+(15 keys, same key set, same values).
+
+- **A-1 fixed** - `server/poc_app.py:11455` (inside `_rebuild_sheets`, after `velocity_note`):
+  `state.page_source_text = _page_source_text(live, nt)`. The swap now prints the dump line
+  from the same pure helper boot uses, with the page's own `nt` (synced at `:11401`).
+  Tag: fixed in code, not exercised in a browser.
+- **A-2 fixed** - `server/poc_app.py:12770-12781` (in `_poll_solve`, straight after
+  `apply_page`) plus `:12837-12844`. The fix is NOT a new `PageContext`: `ctx.dump` is
+  replaced and the documented reload path `ctx.recompute_available()`
+  (`server/um3k_context.py:179-189`) is called, so the handles and callbacks registered on
+  this context at build time survive. `solve_disabled` AND `solve_label` are then both
+  recomputed from the fresh snapshot, the label with the boot expression
+  (`"Solve (static field snapshot)" if refused else "Solve"`, cf. `:12675-12677`).
+  Tag: fixed in code, not exercised in a browser.
+- **A-3 fixed via (b) only** - `server/poc_app.py:9839-9842`: the empty-panel caption now
+  reads "this tab needs a Huygens surface dump: pass --surface-dump PATH to plot a
+  far-field pattern, and no shipped evidence file carries a surface record, so it stays
+  empty on all of them". Option (a), shipping a `--surface-dump` example artefact, was NOT
+  taken: no such artefact exists in the repo and inventing one would be a fabricated
+  example. Tag: fixed in code, not exercised in a browser.
+
+Stale cross-reference noticed, left alone: `artifacts/ui_surface/INVENTORY.md:105` points at
+"DEFECTS A-4", but the far-field row is **A-3** (there is no A-4).

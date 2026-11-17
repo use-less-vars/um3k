@@ -9837,8 +9837,9 @@ def build_far_field_panel(surface_dump) -> dict:
             "rows": [],
             "reason": "no --surface-dump archive was given",
             "caption": (
-                "no surface dump supplied: pass --surface-dump PATH to "
-                "plot a far-field pattern"
+                "this tab needs a Huygens surface dump: pass --surface-dump "
+                "PATH to plot a far-field pattern, and no shipped evidence "
+                "file carries a surface record, so it stays empty on all of them"
             ),
             "number": "",
         }
@@ -11448,6 +11449,10 @@ def run_web_vis(
         state.velocity_label = _velocity_label(live)
         state.scale_label = _scale_label(live)
         state.velocity_note = live["velocity_note"] or "velocity note: not recorded"
+        # The dump line names the FILE, and a solve changes the file too. The
+        # helper is pure over its arguments (_page_source_text, :882-920), so the
+        # swap prints the same sentence boot did, from the same code.
+        state.page_source_text = _page_source_text(live, nt)
         # A finished solve put a NEW dump on screen and this one has not had its
         # mode solved, so the panel goes back to the boot text - through the very
         # helpers that set it at boot, not by re-typing the sentence here.
@@ -12762,6 +12767,20 @@ def run_web_vis(
             state.solve_status = f"solve ok, but the new dump did not load: {exc}"
             print(f"[poc_app] solved dump not loaded: {exc}", file=sys.stderr)
             return
+        # ``ctx`` was built from the page the reader OPENED, and ``available`` is
+        # frozen at construction (um3k_context.py:179-189): every flag below -
+        # _solve_refused_page, the Run Config form - would otherwise keep
+        # answering for the dump that is no longer on screen. The dump is
+        # replaced on the SAME object and the one documented recompute path is
+        # called: a fresh PageContext would drop the handles and callbacks
+        # registered on this one while the layout was built (:13186-13218).
+        try:
+            ctx.dump = um3k_context.LoadedDump.from_any_dump(page)
+            ctx.recompute_available()
+        except BaseException as exc:  # noqa: BLE001 - a stale flag is not a crash
+            print(
+                f"[poc_app] page context not recomputed: {exc}", file=sys.stderr
+            )
         # Both panels read the OLD page's arm: drop the caches so the refill
         # below re-reads the sweep and the record that belong to the dump now on
         # screen.
@@ -12815,7 +12834,14 @@ def run_web_vis(
         # timeline just arrived.
         try:
             state.run_config_visible = False
-            state.solve_disabled = _solve_refused_page(nt, ctx.available)
+            refused_page = _solve_refused_page(nt, ctx.available)
+            state.solve_disabled = refused_page
+            # The label is the boot one, recomputed the boot way (:12671-12673):
+            # the page on screen is now THIS run's result, so the sentence over
+            # the button has to come from this page's flags, not the old page's.
+            state.solve_label = (
+                "Solve (static field snapshot)" if refused_page else "Solve"
+            )
         except Exception as exc:  # noqa: BLE001 - a message is not a crash
             print(
                 f"[poc_app] solve page state not updated: {exc}", file=sys.stderr
@@ -13305,8 +13331,8 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  python3 server/poc_app.py --list-keys\n"
-            "  python3 server/poc_app.py --host 0.0.0.0 --port 8080 --station 4\n"
+            "  PYTHONPATH=. python3 server/poc_app.py --list-keys\n"
+            "  PYTHONPATH=. python3 server/poc_app.py --host 0.0.0.0 --port 8080 --station 4\n"
         ),
     )
     parser.add_argument(
