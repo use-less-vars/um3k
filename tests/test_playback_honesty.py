@@ -1,20 +1,29 @@
 """The player's label names the STEP it is showing, not the slider's position.
 
-WHAT THIS PINS.  A dump may save its |E| volume on a COARSER grid than its
-planes (``--volume-stride``), so on that page one slider click moves the solver
-clock by N steps.  The label used to say "frame 4 / 24", which reads as if the
-fourth click were step 4 of 24 - a timeline four times shorter than the run and
-a step number nobody could recover from the picture.
+WHAT THIS PINS.  The player counts SOLVER STEPS of the PLANE family on
+screen: ``frame_index`` (2400 recorded frames, one per step at the reference
+dump) for the y-cut, ``frame_index_xcut`` (240) for the x-cuts.  A dump may also
+save its |E| volume on a COARSER grid than those planes (``--volume-stride``):
+24 captures, 100 steps apart, at the reference dump.  That volume is a
+DECIMATED LAYER on the player's clock, not the clock itself - it used to BE the
+clock, which gave 24 positions for 2400 recorded steps, a timeline four times
+shorter than the run, and a label that had to explain a gap the player itself
+had created.
 
-The record that fixes it is the dump's own: ``e_abs_volume_step_index`` beside
-``e_abs_volume_stride`` and the run's ``nsteps``.  ``TimeAxis`` is that record,
-``build_time_axis`` is the ONE place the precedence between a recorded and a
-derived axis is decided, and ``_frame_label`` prints it.  So the assertions
-below are of two kinds:
+So the label now states BOTH clocks, read off the dump's own records:
+``frame_index`` (the player's step, out of the run's ``nsteps``) and
+``e_abs_volume_step_index`` (which stored volume capture is painted, at what
+step it was taken, and how many steps one such frame spans - MEASURED from the
+axis, never the writer's inconsistent ``e_abs_volume_stride`` scalar).
+``TimeAxis`` is that record, ``build_time_axis`` is the ONE place the
+precedence between a recorded and a derived axis is decided, and
+``_frame_label`` prints it.  So the assertions below are of three kinds:
 
-    * on the SHIPPED reference volume, that the axis is the file's own step
-      axis, that the label names the recorded step of the position drawn, and
-      that the count it is out of is the count the scrubber can reach;
+    * on the SHIPPED reference volume, that the axis is the PLANE family's own
+      step axis, that the label names the recorded step of the position drawn
+      and the stored volume frame painted there, and that the count it is out of
+      is the count the scrubber can reach;
+    * that the volume's MEASURED decimation survives the file's own scalar;
     * on constructed axes, the precedence and the absences - a page with no
       axis keeps the frame-only sentence byte for byte (the legacy two-argument
       call), and a time base is NEVER invented: no real ``dt_s``, no seconds.
@@ -57,7 +66,13 @@ def real_info():
 
 
 def _recorded(path):
-    """The step axis, stride and run length exactly as the FILE states them."""
+    """The VOLUME's step axis, the file's stride scalar and the run length.
+
+    Kept as the contrast the axis assertions are made against: the published
+    axis must be the PLANE family's (2400 one-step-apart frames), not this one
+    (24 captures 100 steps apart), and the ``e_abs_volume_stride`` scalar this
+    returns is the writer's known inconsistency rather than a decimation.
+    """
     with np.load(path) as data:
         return (
             np.asarray(data["e_abs_volume_step_index"], dtype=int),
@@ -67,25 +82,39 @@ def _recorded(path):
 
 
 def test_the_loader_publishes_the_recorded_step_axis(real_info):
-    """``info["time_axis"]`` IS the file's step axis, not a re-count of it."""
-    recorded, stride, nsteps = _recorded(REFERENCE_NPZ)
+    """``info["time_axis"]`` IS the PLANE family's step axis, not the volume's."""
+    volume_steps, _stride_scalar, nsteps = _recorded(REFERENCE_NPZ)
     axis = real_info[app.TIME_AXIS_KEY]
     assert isinstance(axis, app.TimeAxis), (
         f"the loader published {type(axis).__name__}, not a TimeAxis: the label "
         "has nothing it can read a step from"
     )
-    assert np.array_equal(axis.step_index, recorded), (
-        f"the axis is {axis.step_index[:5]}..., the file records "
-        f"{recorded[:5]}...: a derived axis is not this dump's record"
+    plane_steps = np.asarray(real_info["frame_index"], dtype=int)
+    assert np.array_equal(axis.step_index, plane_steps), (
+        f"the axis is {axis.step_index[:5]}..., the plane family records "
+        f"{plane_steps[:5]}...: the player steps the PLANES, so an axis taken "
+        "from the volume names the layer's clock as the player's"
     )
-    assert axis.stride == stride, (
-        f"the axis says a frame spans {axis.stride} steps, the file says "
-        f"{stride}: the decimation clause would misname the recording"
+    assert not np.array_equal(axis.step_index, volume_steps), (
+        "the published axis is still the VOLUME's: the decimated layer has "
+        "taken the player's clock again"
+    )
+    assert axis.stride == 1, (
+        f"the axis says a frame spans {axis.stride} steps; the plane family is "
+        "recorded every step, and a stride above 1 would print the VOLUME's "
+        "decimation on the player's own clock"
     )
     assert axis.n_steps == nsteps, (
         f"the denominator is {axis.n_steps}, the run recorded {nsteps} steps"
     )
-    assert axis.n_frames == recorded.size
+    assert axis.n_frames == int(real_info["nt"]) == 2400, (
+        f"the axis counts {axis.n_frames} frames, the planes record "
+        f"{real_info['nt']}: the scrubber and the label would disagree"
+    )
+    assert axis.n_frames != volume_steps.size, (
+        "the axis counts the volume's 24 captures, so the timeline is the "
+        "layer's and not the plane family's"
+    )
 
 
 def test_the_axis_counts_the_frames_the_player_steps(real_info):
@@ -104,12 +133,16 @@ def test_the_axis_counts_the_frames_the_player_steps(real_info):
         f"the axis describes {axis.n_frames} frames, the player steps "
         f"{plan['frames']}"
     )
-    nt_synced, _nt_x_synced = app._synced_frame_counts(
+    assert axis.n_frames == 2400, (
+        f"the player steps {axis.n_frames} positions, the run recorded 2400 "
+        "steps: the volume still has a vote on the length"
+    )
+    nt_synced, nt_x_synced = app._synced_frame_counts(
         real_info, real_info["nt"], real_info["nt_x"]
     )
-    assert real_info["nt"] != nt_synced, (
-        "this fixture no longer exercises the decimated case: the volume is not "
-        "coarser than the planes"
+    assert (nt_synced, nt_x_synced) == (real_info["nt"], real_info["nt_x"]), (
+        f"the timeline is {nt_synced}/{nt_x_synced}, the planes record "
+        f"{real_info['nt']}/{real_info['nt_x']}: the volume shortened it"
     )
     assert app._frame_span_max(nt_synced, real_info["nt_x"], "ycut") == (
         axis.n_frames - 1
@@ -117,26 +150,61 @@ def test_the_axis_counts_the_frames_the_player_steps(real_info):
 
 
 def test_the_label_names_the_step_the_picture_was_taken_at(real_info):
-    """"Step 301 / 2400 (Frame 4 of 24, Volume Decimated ×100)", from the file."""
+    """Both clocks on one line, each read off the file.
+
+    "Step 301 / 2400 (Frame 4 of 24, Volume Decimated ×100 @ step 301)": the
+    PLAYER is at recorded plane frame 301 (of 2400 solver steps), and the |E|
+    layer painted there is stored volume frame 4, captured at step 301, one
+    stored frame spanning 100 steps.
+    """
     axis = real_info[app.TIME_AXIS_KEY]
-    frames = app._volume_player_plan(real_info, "ycut")["frames"]
-    for index in (0, 3, frames - 1):
+    plan = app._volume_player_plan(real_info, "ycut")
+    frames = plan["frames"]
+    for index in (0, 3, 50, 51, 300, 304, frames - 1):
         step = int(axis.step_index[index])
-        expected = (
-            f"Step {step} / {axis.n_steps} "
-            f"(Frame {index + 1} of {frames}, "
-            f"Volume Decimated \u00d7{axis.stride})"
+        layer = app._volume_layer_label(real_info, "ycut", index, plan)
+        assert layer is not None, f"position {index} named no volume layer"
+        expected = f"Step {step} / {axis.n_steps} ({layer})"
+        assert app._frame_label(index, frames, axis, layer) == expected, (
+            f"position {index} printed "
+            f"{app._frame_label(index, frames, axis, layer)!r}, not {expected!r}: "
+            "the label is not naming the recorded step on screen"
         )
-        assert app._frame_label(index, frames, axis) == expected, (
-            f"position {index} printed {app._frame_label(index, frames, axis)!r}, "
-            f"not {expected!r}: the label is counting clicks, not steps"
+    # The sentences the reference volume is here to pin: the player's own steps
+    # are 1, 301 and 2400; the layer's capture steps are 1, 301, 301 and 2301.
+    for index, expected in (
+        (0, "Step 1 / 2400 (Frame 1 of 24, Volume Decimated \u00d7100 @ step 1)"),
+        (
+            300,
+            "Step 301 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100 @ step 301)",
+        ),
+        (
+            304,
+            "Step 305 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100 @ step 301)",
+        ),
+        (
+            2399,
+            "Step 2400 / 2400 (Frame 24 of 24, Volume Decimated \u00d7100 "
+            "@ step 2301)",
+        ),
+    ):
+        layer = app._volume_layer_label(real_info, "ycut", index, plan)
+        assert app._frame_label(index, frames, axis, layer) == expected, (
+            f"position {index} printed "
+            f"{app._frame_label(index, frames, axis, layer)!r}, not {expected!r}"
         )
-    # The one sentence the reference volume is here to pin: the 4th volume frame
-    # is the capture taken at solver step 301, and the run was 2400 steps long.
-    assert int(axis.step_index[3]) == 301
-    assert app._frame_label(3, frames, axis).startswith("Step 301 / "), (
-        "the 4th recorded volume frame is no longer step 301: "
-        f"{app._frame_label(3, frames, axis)!r}"
+    assert int(axis.step_index[300]) == 301
+    assert app._frame_label(300, frames, axis).startswith("Step 301 / "), (
+        "the 300th recorded plane frame is no longer step 301: "
+        f"{app._frame_label(300, frames, axis)!r}"
+    )
+    assert app._frame_label(3, frames, axis).startswith("Step 4 / "), (
+        f"position 3 printed {app._frame_label(3, frames, axis)!r}"
+    )
+    # ... and the LAST position is the last recorded step (2400), never the last
+    # volume capture (2301): the tail of the run is reachable.
+    assert app._frame_label(2399, frames, axis).startswith("Step 2400 / "), (
+        f"the last position printed {app._frame_label(2399, frames, axis)!r}"
     )
 
 
@@ -188,17 +256,27 @@ def test_one_step_per_frame_when_the_dump_records_no_stride():
 
 
 def test_frame_and_step_map_through_the_recorded_axis(real_info):
-    """Both directions, and the off-axis answers are absent rather than 0."""
+    """Both directions on the PLANE axis, and off-axis answers are absent."""
     axis = real_info[app.TIME_AXIS_KEY]
-    assert axis.frame_to_step(4) == 301
-    assert axis.step_to_frame(301) == 4
-    assert axis.step_to_frame(300) == 3, (
-        "a step between two captures must resolve to the EARLIER recorded frame: "
-        f"{axis.step_to_frame(300)!r}"
-    )
+    assert axis.frame_to_step(1) == 1
+    assert axis.frame_to_step(4) == 4
+    assert axis.frame_to_step(2400) == 2400
+    assert axis.step_to_frame(1) == 1
+    assert axis.step_to_frame(300) == 300
+    assert axis.step_to_frame(2400) == 2400
     assert axis.step_to_frame(0) is None
     assert axis.frame_to_step(0) is None
     assert axis.frame_to_step(axis.n_frames + 1) is None
+    # The earlier-frame rule this page's clock does not need (one frame per step)
+    # is still the axis's rule, so a genuinely decimated axis is checked here
+    # rather than being left to whatever builds one next.
+    spaced = app.build_time_axis(step_index=[1, 101, 201], n_steps=300, dt_s=1e-12)
+    assert spaced.step_to_frame(100) == 1, (
+        "a step between two captures must resolve to the EARLIER recorded frame: "
+        f"{spaced.step_to_frame(100)!r}"
+    )
+    assert spaced.step_to_frame(101) == 2
+    assert spaced.frame_to_step(4) is None, "frame 4 of a 3-frame axis answered"
 
 
 def test_seconds_exist_only_when_a_dt_was_really_recorded():
@@ -243,6 +321,39 @@ def test_the_axis_is_a_frozen_record():
         axis.stride = 7  # type: ignore[misc]
 
 
+def test_the_decimation_is_measured_and_never_the_recorded_scalar(real_info):
+    """The banner and the layer clause read the AXIS, whatever the file states.
+
+    The shipped archive records ``e_abs_volume_stride = 4`` beside a step axis
+    that runs 1, 101, 201, ... - a known defect in the writer. Only the axis
+    describes the 24 frames actually on disk, so the MEASURED x100 must survive
+    every value of that scalar, including none at all.
+    """
+    axis = real_info[app.TIME_AXIS_KEY]
+    frames = app._volume_player_plan(real_info, "ycut")["frames"]
+    cases = []
+    for bogus in (4, 1, 100, 0, -1, None, "100", 1e3, float("nan")):
+        info = dict(real_info)
+        info["e_abs_volume_stride"] = bogus
+        cases.append((f"e_abs_volume_stride={bogus!r}", info))
+    absent = dict(real_info)
+    absent.pop("e_abs_volume_stride", None)
+    cases.append(("no e_abs_volume_stride", absent))
+    for label, info in cases:
+        assert app._volume_decimation(info) == 100, (
+            f"{label} changed the measured decimation to "
+            f"x{app._volume_decimation(info)}: the scalar is being read"
+        )
+        layer = app._volume_layer_label(info, "ycut", 300)
+        assert layer == (
+            "Frame 4 of 24, Volume Decimated \u00d7100 @ step 301"
+        ), f"{label} printed the layer sentence {layer!r}"
+        assert app._frame_label(300, frames, axis, layer) == (
+            "Step 301 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100 "
+            "@ step 301)"
+        ), f"{label} printed {app._frame_label(300, frames, axis, layer)!r}"
+
+
 # ---------------------------------------------------------------------------
 # The temporal-aliasing report the 3-D player's banner is built from.
 #
@@ -278,12 +389,20 @@ def test_the_reference_volume_reports_the_alias_it_really_shows(real_info):
     assert isinstance(report, app.AliasingReport), (
         f"the report is a {type(report).__name__}, not an AliasingReport"
     )
-    axis = real_info[app.TIME_AXIS_KEY]
     assert report.stride == 100, (
         f"the report names a x{report.stride} decimation, the file recorded 100"
     )
-    assert report.frames == 24 == axis.n_frames, (
-        f"the report describes {report.frames} frames, the axis {axis.n_frames}"
+    # The report counts the STORED volume frames, not the player's positions: the
+    # axis now counts plane frames (2400), and a report quoting that number would
+    # be describing a film the volume does not hold.
+    stored = int(np.asarray(real_info["e_abs_volume"]).shape[0])
+    assert report.frames == stored, (
+        f"the report describes {report.frames} frames, the volume stores {stored}"
+    )
+    assert report.frames == 24, report.frames
+    assert report.frames != real_info[app.TIME_AXIS_KEY].n_frames, (
+        "the report counted the PLAYER's positions: 2400 positions are not the "
+        "24 stored volume frames"
     )
     assert math.isfinite(report.phase_per_frame_rad), (
         f"the phase advance is {report.phase_per_frame_rad!r}: the banner would "
@@ -424,7 +543,9 @@ def test_a_reference_frequency_fires_the_quarter_period_rule():
     """
     info = {
         "e_abs_volume": np.zeros((24, 2, 2), dtype=np.float32),
-        "e_abs_volume_stride": 100,
+        # The decimation the report uses is MEASURED from this axis (24 captures,
+        # 100 steps apart), which is why the axis has to be here at all.
+        "e_abs_volume_step_index": np.arange(1, 2401, 100),
         "dt_s": 7.626299478123987e-13,
         "f_pulse_hz": None,
         "f_ref_hz": 5.82778641e9,

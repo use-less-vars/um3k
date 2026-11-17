@@ -176,6 +176,14 @@ STATE_SCHEMA_VIS = "emfit.poc-state/3"
 # is SIMULATION time, so this number is a viewing choice, and the page prints
 # both times rather than implying the animation runs at the solver's rate.
 DEFAULT_FPS = 24
+# Positions a PLAYING player advances per tick. The timeline is the SOLVER STEP
+# clock of the selected family now (2400 y-cut positions, 240 x-cut ones), and one
+# position is dt*c = 7.626e-13 s * 2.998e8 m/s ~ 0.23 mm, i.e. about ONE half of
+# the 0.4 mm cell - so one position per tick moves the wave one half-cell per
+# 1/24 s and plays 2400 positions in 100 s, a strobe. PLAY_STEPS_PER_TICK *
+# DEFAULT_FPS = 8 * 24 = 192 positions/s is ~1.8 mm (8 half-cells) per tick and
+# ~12.5 s per family: legible. A VIEWING choice like DEFAULT_FPS: no UI control.
+PLAY_STEPS_PER_TICK = 8
 # ONE colour ceiling for the whole animation, taken at this percentile of |Ez|
 # over every stored frame of every plane. Frame-local scaling would renormalise
 # on each step and make a decaying pulse look like it never decays.
@@ -438,15 +446,16 @@ class TimeAxis:
     kept as ONE frozen value built by :func:`build_time_axis`.
 
     ``step_index[k]`` is the step of frame ``k`` (0-based here; the player's own
-    label is 1-based). It is the VOLUME's axis whenever the player steps the
-    volume's frames, because that IS the clock then (see
-    ``_volume_player_plan``). ``stride`` is how many steps one frame spans (100
-    on a decimated volume), ``n_steps`` the run's own step count - the
-    denominator of the step reading - and ``time_seconds`` the same axis in
-    seconds, present only when the dump recorded a REAL ``dt_s``: an invented
-    time base is precisely the dishonesty this record exists to remove, so an
-    absent, non-finite or non-positive ``dt_s`` leaves it None rather than
-    zero-filled.
+    label is 1-based). It is the PLANE family's axis - ``frame_index``, one
+    recorded plane frame and one solver step per position, which is the clock
+    the player steps (see ``_volume_player_plan``); the |E| volume is a
+    decimated LAYER on it and no longer defines it. ``stride`` is how many steps
+    one frame of THIS axis spans (1 for a plane family recorded every step),
+    ``n_steps`` the run's own step count - the denominator of the step reading -
+    and ``time_seconds`` the same axis in seconds, present only when the dump
+    recorded a REAL ``dt_s``: an invented time base is precisely the dishonesty
+    this record exists to remove, so an absent, non-finite or non-positive
+    ``dt_s`` leaves it None rather than zero-filled.
     """
 
     step_index: np.ndarray
@@ -486,33 +495,37 @@ class TimeAxis:
         found = int(np.searchsorted(steps, wanted, side="right")) - 1
         return None if found < 0 else found + 1
 
-    def label(self, frame):
+    def label(self, frame, detail=None):
         """One line naming 1-based ``frame`` and the step it was taken at.
 
-        "Step 301 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100)" - the step
-        the solver had reached, the run's own step count, and the position on the
-        player. The decimation clause appears only where a frame really does span
-        more than one step, and None is returned off the axis so the caller can
-        print its own words rather than this class inventing a frame.
+        "Step 301 / 2400 (Frame 301 of 2400)" - the step the solver had reached
+        at this position and the run's own step count. This axis is the PLANE
+        family's, so one position is one recorded plane frame and its own step;
+        the decimation of the |E| volume is not a property of this clock any
+        more, and arrives as ``detail`` - :func:`_volume_layer_label` composes
+        it, naming the stored VOLUME frame, the measured decimation and the step
+        that frame was captured at. ``detail`` replaces the "Frame k of n" half
+        verbatim. Without it a stride above 1 still prints its own clause, so a
+        hand-built axis composes the sentence it always did.
 
-        None too when the record is not ONE-BASED: a dump whose first capture sits
-        at step 0 numbers its steps from a base it never states, so "Step 0 / 12"
-        would present a zero-based number under a one-based denominator and misname
-        every frame on the page. Such a page keeps the frame-only sentence rather
-        than being given a step reading this record cannot defend.
+        None is returned off the axis, so the caller can print its own words
+        rather than this class inventing a frame. None too when the record is not
+        ONE-BASED: a dump whose first capture sits at step 0 numbers its steps
+        from a base it never states, so "Step 0 / 12" would present a zero-based
+        number under a one-based denominator and misname every frame on the page.
+        Such a page keeps the frame-only sentence rather than being given a step
+        reading this record cannot defend.
         """
         step = self.frame_to_step(frame)
         if step is None:
             return None
         if int(np.asarray(self.step_index).ravel()[0]) < 1:
             return None
-        text = (
-            f"Step {step} / {int(self.n_steps)} "
-            f"(Frame {int(frame)} of {self.n_frames}"
-        )
-        if int(self.stride) > 1:
-            text += f", Volume Decimated \u00d7{int(self.stride)}"
-        return text + ")"
+        if detail is None:
+            detail = f"Frame {int(frame)} of {self.n_frames}"
+            if int(self.stride) > 1:
+                detail += f", Volume Decimated \u00d7{int(self.stride)}"
+        return f"Step {step} / {int(self.n_steps)} ({detail})"
 
 
 def build_time_axis(
@@ -596,22 +609,27 @@ def build_time_axis(
     )
 
 
-def _frame_label(index, frames, time_axis=None):
-    """The player's "frame k / n" label, or None on a page with no timeline.
+def _frame_label(index, frames, time_axis=None, volume_label=None):
+    """The player's step sentence, or None on a page with no timeline.
 
     The ONE place that sentence is composed, and ``frames`` is the count the
-    PLAYER steps - the synchronised one (``_synced_frame_counts``) - so the
-    denominator cannot be the dump's own plane-frame count while the slider and
-    the play loop are counted on the volume's clock. None is "no timeline",
-    never "frame 1 / None".
+    PLAYER steps (``_synced_frame_counts``, i.e. the selected family's own
+    frames) so the denominator cannot be a count the slider and the play loop
+    are not counted on. None is "no timeline", never "frame 1 / None".
 
-    ``time_axis`` is the page's RECORDED step axis (``info["time_axis"]"). When
-    it counts the SAME frames the player steps, the sentence is read off that
-    record - "Step 301 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100)" - so a
-    decimated timeline cannot be mistaken for one step per frame. A page with no
-    axis, or one describing a different family than the player steps, keeps the
-    frame-only sentence byte for byte - which is also the legacy two-argument
-    call, unchanged.
+    ``time_axis`` is the page's RECORDED step axis (``info["time_axis"]"), the
+    PLANE family's. When it counts the SAME frames the player steps the sentence
+    is read off that record - "Step 301 / 2400 (...)" - so the label names the
+    solver step on screen instead of counting clicks. ``volume_label`` is the
+    |E| layer's half, composed by :func:`_volume_layer_label`: it names the
+    stored volume frame this position draws, the measured decimation and that
+    frame's OWN step, so both clocks on the page are stated and neither can be
+    read as the other. Without a volume the half is omitted and the plane frame
+    is named instead.
+
+    A page with no axis, or one describing a different family than the player
+    steps, keeps the frame-only sentence byte for byte - which is also the
+    legacy two-argument call, unchanged.
     """
     if frames is None:
         return None
@@ -621,7 +639,7 @@ def _frame_label(index, frames, time_axis=None):
         except (AttributeError, TypeError, ValueError):
             same_clock = False
         if same_clock:
-            text = time_axis.label(int(index) + 1)
+            text = time_axis.label(int(index) + 1, volume_label)
             if text is not None:
                 return text
     return f"frame {int(index) + 1} / {int(frames)}"
@@ -667,8 +685,10 @@ def _aliasing_sentence(stride) -> str:
 class AliasingReport:
     """WHAT ONE DRAWN VOLUME FRAME DOES TO THE MOTION, read off the recording.
 
-    ``stride`` and ``frames`` are the player's own volume clock (the page's
-    :class:`TimeAxis`); ``phase_per_frame_rad`` is the angle a probe of the
+    ``stride`` is how many solver steps ONE stored volume frame spans, MEASURED
+    from the volume's own step axis by :func:`_volume_decimation` (never from the
+    recorded ``e_abs_volume_stride`` scalar), and ``frames`` is how many stored
+    volume frames there are. ``phase_per_frame_rad`` is the angle a probe of the
     field turns through between two STORED volume frames - measured, never
     assumed - and ``frames_per_period`` is the same quantity as "how many stored
     frames fit into one period", i.e. how much of the motion one frame hides.
@@ -893,25 +913,15 @@ def _volume_aliasing(info):
     volume = info.get("e_abs_volume")
     if volume is None:
         return None
-    axis = info.get(TIME_AXIS_KEY)
-    stride = 0
-    frames = 0
-    if axis is not None:
-        try:
-            stride = int(axis.stride)
-            frames = int(axis.n_frames)
-        except (AttributeError, TypeError, ValueError):
-            stride, frames = 0, 0
-    if stride <= 0:
-        try:
-            stride = int(info.get("e_abs_volume_stride") or 1)
-        except (TypeError, ValueError):
-            stride = 1
-    if frames <= 0:
-        try:
-            frames = int(np.asarray(volume).shape[0])
-        except (AttributeError, IndexError, TypeError, ValueError):
-            frames = 0
+    # MEASURED from the volume's own step axis, never from the recorded
+    # ``e_abs_volume_stride`` scalar: the shipped archive states 4 beside an axis
+    # that runs 1, 101, 201, ... and only the axis describes the frames that are
+    # actually stored (see ``_volume_decimation``).
+    stride = _volume_decimation(info)
+    try:
+        frames = int(np.asarray(volume).shape[0])
+    except (AttributeError, IndexError, TypeError, ValueError):
+        frames = 0
 
     measured = _phase_from_complex_planes(info, stride)
     if measured is None:
@@ -1265,28 +1275,20 @@ def load_vis(path: Path) -> dict:
         raise SystemExit(2)
 
     # THE PLAYER'S STEP AXIS, built once, here, so the label the player prints is
-    # READ OFF THE DUMP instead of counted from the slider position. The axis is
-    # the VOLUME's when the volume is the coarser recording, because the player
-    # then steps the volume's own frames (``_volume_player_plan``); otherwise it
-    # is the plane family's recorded frame axis, one step per frame. What the
-    # dump does NOT record is not invented: a missing ``nsteps`` falls back to
-    # the last recorded step, and a missing or unusable ``dt_s`` leaves
-    # ``time_seconds`` None rather than making a time base up.
-    volume_steps = info["e_abs_volume_step_index"]
-    if volume_steps is not None and int(volume_steps.size) < int(info["nt"]):
-        info[TIME_AXIS_KEY] = build_time_axis(
-            step_index=volume_steps,
-            stride=info["e_abs_volume_stride"],
-            n_steps=info["nstep"],
-            dt_s=info["dt_s"],
-        )
-    else:
-        info[TIME_AXIS_KEY] = build_time_axis(
-            step_index=info["frame_index"],
-            n_steps=info["nstep"],
-            dt_s=info["dt_s"],
-            n_frames=info["nt"],
-        )
+    # READ OFF THE DUMP instead of counted from the slider position. The clock is
+    # the PLANE family's - ``frame_index``, one recorded plane frame per solver
+    # step - because that is the series the player steps: the |E| volume is the
+    # coarser recording and is drawn as a DECIMATED LAYER on this clock
+    # (``_volume_player_plan``), so it no longer shortens it. What the dump does
+    # NOT record is not invented: a missing ``nsteps`` falls back to the last
+    # recorded step, and a missing or unusable ``dt_s`` leaves ``time_seconds``
+    # None rather than making a time base up.
+    info[TIME_AXIS_KEY] = build_time_axis(
+        step_index=info["frame_index"],
+        n_steps=info["nstep"],
+        dt_s=info["dt_s"],
+        n_frames=info["nt"],
+    )
 
     # Computed once, here, from every stored frame of every plane: the viewer
     # then has no way to rescale between frames because it is never given a
@@ -1473,12 +1475,13 @@ def _page_source_text(info: dict, nt=None) -> str:
     Pure over its arguments, like _structure_readout_text and _scale_label, so
     boot and a live page swap print the same sentence from the same code.
 
-    ``nt`` is the PLAYER's timeline length, which is the |E| volume's coarser
-    clock whenever that film is present (see _synced_frame_counts). The stored
-    ``ez_ycut`` array can hold more frames than that, so when the two numbers
-    differ the line quotes both - ``animation, 3 of 12 frames on ez_ycut`` -
-    rather than letting one number be read as a claim about the array it names.
-    When they agree the plain form is unchanged.
+    ``nt`` is the PLAYER's timeline length, which is the plane family's OWN
+    frame count (see _synced_frame_counts, whose answer is now that count
+    unchanged: the |E| volume is a decimated layer and does not set the
+    length). When the two numbers differ the line quotes both - ``animation, 3
+    of 12 frames on ez_ycut`` - rather than letting one number be read as a
+    claim about the array it names. When they agree the plain form is
+    unchanged.
     """
     try:
         name = Path(info.get("path")).name
@@ -3861,13 +3864,17 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
     dump's own simulation clock. Letting the two be read as one number is how a
     reader comes to believe the solver ran at 24 frames per second.
 
-    The two frame counts, and the wall clock derived from them, are the ones the
-    PLAYER steps - ``_synced_frame_counts`` - never the dump's own plane-frame
-    counts: while the |E| volume is the coarser recording the timeline is
-    counted in ITS frames, so reporting ``info["nt"]`` here would claim frames
-    the player cannot reach and a play time it never takes. The ``planes``
-    entries below keep saying how many frames each stored array HOLDS, which is
-    a fact about the file rather than about the timeline.
+    The two frame counts are the ones the PLAYER steps -
+    ``_synced_frame_counts`` - and those are, now, each family's OWN recorded
+    frames: a position is a plane frame and a solver step, so the timeline is
+    the 2400-step y-cut clock and the 240-step x-cut clock of the reference
+    recording. No series pays for a coarser neighbour any more: the |E| volume
+    is a decimated LAYER drawn on that clock and has no vote on its length.
+    ``wall_clock_s`` is those counts over ``fps``, i.e. the play time at ONE
+    POSITION PER TICK; the play loop advances ``PLAY_STEPS_PER_TICK`` positions
+    per tick, so the time the page actually takes is that divided by the
+    factor. The ``planes`` entries below keep saying how many frames each stored
+    array HOLDS, which is a fact about the file rather than about the timeline.
     """
     fps = max(1, int(fps))
     vmin, vmax = info["color_range"]
@@ -9672,39 +9679,71 @@ def _monotonic_axis(values):
         return None
 
 
+def _volume_decimation(info: dict) -> int:
+    """How many solver steps ONE stored ``e_abs_volume`` frame spans, MEASURED.
+
+    The MEDIAN difference between consecutive entries of the volume's own step
+    axis (``e_abs_volume_step_index``) - what the stored frames actually do -
+    and NEVER the recorded ``e_abs_volume_stride`` scalar: the shipped archive
+    states 4 beside an axis that runs 1, 101, 201, ... (a KNOWN DEFECT in the
+    writer), and only the axis describes the frames that are on disk - 24 of
+    them, 100 steps apart, so the honest reading is 100. A median rather than a
+    first difference or a mean so one dropped sample or one restart cannot
+    restate the cadence of the whole film.
+
+    1 when the decimation cannot be measured - no volume, no readable monotonic
+    axis, fewer than two frames. 1 is also what makes the "Volume Decimated"
+    clause DISAPPEAR rather than print "×1" over an undecimated layer.
+    """
+    if info.get("e_abs_volume") is None:
+        return 1
+    steps = _monotonic_axis(info.get("e_abs_volume_step_index"))
+    if steps is None or steps.size < 2:
+        return 1
+    diffs = np.asarray(np.diff(steps), dtype=float)
+    diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
+    if diffs.size == 0:
+        return 1
+    return max(1, int(round(float(np.median(diffs)))))
+
+
 def _volume_player_plan(info: dict, mode: str):
     """The ONE mapping from a player position to the two indices it draws.
 
-    WHY this exists: the dump stores ``e_abs_volume`` on a COARSER grid than the
-    planes - ``--volume-stride`` saves one volume frame every N-th y-cut frame -
-    so a timeline counted in PLANE frames paints N different cut planes over ONE
-    volume frame. That is a time desynchronisation, not a slow update: the plane
-    on screen is at step s while the volume beside it is the last capture at or
-    before s, until the volume jumps a whole stride. The answer is ONE index
-    space: while the volume is the coarser recording the player steps the
-    VOLUME's own frames, and every position resolves to the EXACT step of that
-    frame - the cut planes are drawn at the plane frame recorded at that step.
+    THE CLOCK IS THE PLANE FAMILY'S. One player position is one recorded frame
+    of the family on screen - ``frame_index`` (2400 at the reference recording)
+    or ``frame_index_xcut`` (240) - and therefore one solver step, which is what
+    the timeline, the slider, the play loop and the label are all counted on.
+    ``e_abs_volume`` is the COARSER recording: ``--volume-stride`` stores one
+    volume frame every N-th y-cut frame (24 of them at the reference
+    recording), so it is a DECIMATED LAYER, painted at the position's NEAREST
+    capture and never the grid the player steps.
 
-    Returns None - today's behaviour, untouched - unless the volume really is
-    coarser than this family's timeline: no volume, an unreadable or
-    non-monotonic step axis, a volume with at least as many frames as the family
-    (nothing can then be stale), or a volume step this family stored no frame at
-    (the plane cannot be drawn at that instant, and showing a different instant
-    is precisely the bug). Otherwise a dict of:
+    WHY the old design was wrong: it counted the timeline in the volume's own
+    frames. The finest series on the page then paid for the coarsest one - 24
+    positions to reach 2400 recorded steps, so the cut planes were a slideshow
+    and every plane frame between two captures was unreachable, the tail
+    included - and the label had to grow a decimation clause to explain a gap
+    the player itself had created. Stepping the plane frames needs no such
+    clause: the plane is exact at every position, and the volume states which
+    stored frame it is showing and at what step it was captured.
+
+    Returns None when no mapping can be defended: no volume, or a step axis
+    that cannot be read (absent, empty, non-monotonic) for either half. Else a
+    dict of:
 
         ``steps``  - the recorded step of each player position, in order;
         ``frames`` - how many positions the timeline has (== len(steps));
-        ``plane``  - position -> index into this family's stored frames;
+        ``plane``  - position -> this family's stored frame (the identity: the
+                     positions ARE that family's own frames);
         ``volume`` - position -> index into ``e_abs_volume``.
 
-    THE LAST FRAME: position ``frames - 1`` is the volume's LAST frame, and the
-    plane frame it maps to is the one recorded at that same step. There is no
-    partial tail to round - the timeline IS the volume's grid, so plane frames
-    recorded AFTER the last volume capture are simply not reachable from the
-    player (they are not on the timeline at all). ``frames - 1`` is also the
-    slider's maximum (``_frame_span_max``), and both halves of the label - the
-    "frame k / n" count and the sim time printed beside it - are built from the
-    same two indices, so they cannot disagree.
+    NEAREST CAPTURE, ties to the EARLIER one: the volume is painted at whichever
+    stored capture lies closest in solver step to the position, so it is never
+    more than half a decimation stale and the two pictures cannot drift apart
+    without bound. The two halves live in ONE record so every caller - the
+    viewer, the colour range, the label - resolves them through the same
+    indices and cannot disagree.
     """
     if info.get("e_abs_volume") is None:
         return None
@@ -9714,38 +9753,75 @@ def _volume_player_plan(info: dict, mode: str):
     )
     if volume_steps is None or plane_steps is None:
         return None
-    if volume_steps.size >= plane_steps.size:
-        return None
-    positions = np.searchsorted(plane_steps, volume_steps, side="left")
-    if int(positions[-1]) >= plane_steps.size or not np.array_equal(
-        plane_steps[positions], volume_steps
-    ):
-        return None
+    n_volume = int(volume_steps.size)
+    frames = int(plane_steps.size)
+    upper = np.clip(
+        np.searchsorted(volume_steps, plane_steps, side="left"), 0, n_volume - 1
+    )
+    lower = np.clip(upper - 1, 0, n_volume - 1)
+    before = np.abs(plane_steps - volume_steps[lower])
+    after = np.abs(volume_steps[upper] - plane_steps)
+    nearest = np.where(before <= after, lower, upper)
+    # Monotone inputs already give a monotone answer; the running maximum keeps
+    # that true of a hand-built dump as well, so the layer can only ever advance
+    # with the clock and never snap back.
+    nearest = np.clip(np.maximum.accumulate(nearest), 0, n_volume - 1)
     return {
-        "steps": tuple(int(step) for step in volume_steps),
-        "frames": int(volume_steps.size),
-        "plane": tuple(int(position) for position in positions),
-        "volume": tuple(range(int(volume_steps.size))),
+        "steps": tuple(int(step) for step in plane_steps),
+        "frames": frames,
+        "plane": tuple(range(frames)),
+        "volume": tuple(int(index) for index in nearest),
     }
 
 
 def _synced_frame_counts(info: dict, nt, nt_x):
-    """``(nt, nt_x)`` with each family's clock replaced by the volume's own.
+    """``(nt, nt_x)``: the timeline LENGTH, decided in ONE place.
 
-    The single place the timeline LENGTH is decided, so the slider maximum, the
-    play loop and every label counted from ``nt``/``nt_x`` cannot be counted on
-    one clock while ``_show`` maps positions on another. A page with no timeline
-    (None) and a page with no volume pass straight through unchanged.
+    It stays a single choke point - the slider maximum, the play loop, the
+    panels and every label counted from ``nt``/``nt_x`` read it here - but what
+    it now decides is that each PLANE count IS that family's timeline. The
+    player steps the selected family's own recorded frames, and
+    ``_volume_player_plan`` paints the volume as a decimated layer ON that
+    clock, so the volume has no vote on the length: it can no longer shorten the
+    run to its own captures, which is what it used to do (24 positions standing
+    in for 2400 recorded steps). A page with no timeline (None) passes through
+    unchanged.
     """
-    for mode in ("ycut", "xcut"):
-        plan = _volume_player_plan(info, mode)
-        if plan is None:
-            continue
-        if mode == "ycut":
-            nt = plan["frames"]
-        else:
-            nt_x = plan["frames"]
     return nt, nt_x
+
+
+def _volume_layer_label(info, mode, position, plan=None):
+    """The |E| LAYER's half of the label, or None when there is no volume.
+
+    The player's clock is the plane family's; this names the OTHER clock on the
+    page - the stored volume frame drawn at ``position``, its own solver step,
+    and how many steps one such frame spans - so neither can be read as the
+    other. The text is "Frame 4 of 24, Volume Decimated ×100 @ step 301": the
+    stored frame index, the decimation MEASURED by :func:`_volume_decimation`
+    (appended only above 1, so an undecimated layer is never falsely labelled),
+    and the step that frame was captured at - printed even when it equals the
+    player's own step, because a layer that names its clock is exactly what
+    stops the two being confused.
+
+    ``plan`` is the player's :func:`_volume_player_plan` when the caller already
+    has it; it is recomputed here otherwise. None means "no layer on this page".
+    """
+    if plan is None:
+        plan = _volume_player_plan(info, mode)
+    if plan is None:
+        return None
+    try:
+        index = int(plan["volume"][position])
+    except (IndexError, KeyError, TypeError, ValueError):
+        return None
+    volume_steps = _monotonic_axis(info.get("e_abs_volume_step_index"))
+    if volume_steps is None or index < 0 or index >= int(volume_steps.size):
+        return None
+    text = f"Frame {index + 1} of {int(volume_steps.size)}"
+    decimation = _volume_decimation(info)
+    if decimation > 1:
+        text += f", Volume Decimated ×{decimation} @ step {int(volume_steps[index])}"
+    return text
 
 
 def _volume_abs_global_clim(volume):
@@ -10800,10 +10876,9 @@ def run_web_vis(
     else:
         nt = None
         nt_x = None
-    # ONE clock for the slider, the player and the picture: a dump whose volume
-    # is the coarser recording is counted in ITS frames, so a position on the
-    # slider is a time step the volume actually has. See
-    # ``_synced_frame_counts``.
+    # ONE clock for the slider, the player and the picture: the selected plane
+    # family's own frames, so a position on the slider is one recorded plane
+    # frame and one solver step. See ``_synced_frame_counts``.
     nt, nt_x = _synced_frame_counts(info, nt, nt_x)
     # The bare board and builder page ALWAYS carry a cell, so what can lack
     # one is an arbitrary caller-supplied `info` dict: this read is tolerated
@@ -11695,20 +11770,22 @@ def run_web_vis(
         single ``plotter.render()``, so a frame is on screen at the same moment the
         sheets' frame is: one draw per tick, not two.
 
-        WHICH volume frame: the frame slider indexes the FRAME axis (1-based
-        samples of ``frame_index``), while the volume is saved on the STEP axis,
-        every ``e_abs_volume_stride``-th sample. The two are mapped by
-        ``_volume_frame_for_step``, which honours the steps actually written - a
+        WHICH volume frame: the slider indexes the PLANE family's own frames -
+        the player's clock - while ``e_abs_volume`` is the decimated layer, one
+        capture every N-th plane frame. The two are joined by the steps actually
+        written into each array (``frame_index``/``frame_index_xcut`` against
+        ``e_abs_volume_step_index``), never by dividing a step by a stride: a
         restart or a dropped sample leaves a non-uniform cadence behind, and
         ``step // stride`` would then point at the wrong frame.
 
         WHEN the caller already knows the volume frame - the player does, through
-        ``_volume_player_plan``, whenever the volume is the coarser recording - it
-        hands it in as ``volume_frame`` and THAT frame is drawn. It is not
-        re-derived here on purpose: the lookup below answers "the last capture at
-        or before this step", which is a stale volume for every plane frame that
-        sits between two captures, and painting that stale volume is the very
-        desynchronisation the plan exists to remove.
+        ``_volume_player_plan``, on every position it can map - it hands it in as
+        ``volume_frame`` and THAT frame is drawn: the NEAREST capture to the
+        plane frame on screen. It is not re-derived here on purpose: the fallback
+        below answers "the last capture at or before this step", which on its own
+        is a stale layer for every plane frame sitting between two captures, and
+        always painting that stale volume is the very desynchronisation the plan
+        exists to remove.
         """
         try:
             info = page["info"]
@@ -11902,10 +11979,11 @@ def run_web_vis(
         mode = state.mode if mode is None else mode
         mode = "xcut" if mode == "xcut" else "ycut"
         mode_changed = mode != previous_mode
-        # ONE clock for the volume and the cut planes. When the dump saved the
-        # volume on a coarser grid, the player's positions ARE the volume's
-        # frames, and each position maps to the plane frame saved at that same
-        # step (THE LAST FRAME rule: see ``_volume_player_plan``).
+        # ONE clock for the volume and the cut planes: the PLANE family's, so a
+        # position is one recorded plane frame and one solver step. The |E|
+        # volume is the coarser recording and is drawn as a DECIMATED LAYER at
+        # the position's nearest capture (see ``_volume_player_plan``) - it no
+        # longer decides how many positions there are.
         plan = _volume_player_plan(info, mode)
         frames = plan["frames"] if plan is not None else (nt if mode == "ycut" else nt_x)
         try:
@@ -11922,8 +12000,9 @@ def run_web_vis(
         state.frame = index
         state.mode = mode
         # The plane frame and the volume frame THIS position draws. Both fall
-        # back to the position itself when there is no plan: a dump with one
-        # timeline keeps exactly the behaviour it had.
+        # back to the position itself when there is no plan (no volume, or no
+        # readable step axis): a dump with one timeline keeps the behaviour it
+        # had.
         plane_index = plan["plane"][index] if plan is not None else index
         volume_frame = plan["volume"][index] if plan is not None else None
 
@@ -12055,9 +12134,14 @@ def run_web_vis(
             else f"sim time: t = {t_ns:.6f} ns"
         )
         # The axis is read from the LIVE page beside the frames: a solve that
-        # swapped the dump under this page must relabel from the NEW record.
+        # swapped the dump under this page must relabel from the NEW record. The
+        # detail half is the |E| layer's OWN clock, so the sentence states both
+        # clocks on the page and neither can be read as the other.
         state.frame_label = _frame_label(
-            index, frames, info.get(TIME_AXIS_KEY)
+            index,
+            frames,
+            info.get(TIME_AXIS_KEY),
+            _volume_layer_label(info, mode, index, plan),
         )
         state.phase_label = _vis_phase_text(t_ns, info.get("t_traverse_ns"))
         if mode == "ycut":
@@ -13332,8 +13416,16 @@ def run_web_vis(
             )
 
     async def _play_loop(gen: int) -> None:
-        """Advance one frame per wall-clock step until the trigger bumps the
+        """Advance one tick per wall-clock step until the trigger bumps the
         generation or state.playing is cleared.
+
+        ONE TICK IS ``PLAY_STEPS_PER_TICK`` POSITIONS, because a position is a
+        SOLVER STEP: at the reference recording (2400 y-cut steps) one step per
+        24 fps tick would run for 100 s and the motion would be imperceptible -
+        ~0.018 mm of travel per step against a 0.25 mm half-cell. Eight steps a
+        tick keeps the wall clock under ~13 s at ~1.8 mm of travel per tick.
+        That factor is deliberately NOT a UI control: it changes how fast the
+        recording is REVIEWED, not what the recording is.
 
         Runs as a background task. It must NOT be awaited from a trigger
         handler: see _on_play_toggle.
@@ -13342,7 +13434,9 @@ def run_web_vis(
             frames = nt if state.mode == "ycut" else nt_x
             handles["suppress_frame_listener"] = True
             try:
-                _show((int(state.frame) + 1) % frames, state.mode)
+                _show(
+                    (int(state.frame) + PLAY_STEPS_PER_TICK) % frames, state.mode
+                )
                 state.flush()
             finally:
                 handles["suppress_frame_listener"] = False
