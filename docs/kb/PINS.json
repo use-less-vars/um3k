@@ -9,6 +9,8 @@
     "per_file_core_default": 9216,
     "registry": 30720,
     "work": 20480,
+    "test_manifest": 153600,
+    "test_manifest_warn": 122880,
     "total_ingest": 100000,
     "warn_at": 0.85
   },

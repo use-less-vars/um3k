@@ -5927,7 +5927,13 @@ def run_web(
     structure=None,
     structures=None,
 ) -> int:
-    """Serve the viewer for ONE structure entry.
+    """Serve the viewer for ONE structure entry - LEGACY, [proposed-delete].
+
+    Nothing calls this function: ``main()`` dispatches every web path to
+    :func:`run_web_vis` (:13404, :13450), and this page is kept only because
+    comments in this module still cite its line numbers.  See
+    ``docs/kb/REGISTRY/decisions.md`` KB-4; delete it once those citations are
+    rewired.
 
     ``structure`` is the registry entry the page names, ``structures`` the list
     the picker lists; both fall back to what the registry resolves on its own, so

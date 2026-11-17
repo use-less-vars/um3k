@@ -1,0 +1,43 @@
+REFUSAL RECORD - kb_mutation_transcript_pass1.txt
+================================================
+kind:       GUARD REFUSAL.  Not a mutation transcript.
+pass:       Stage 1b, pass 1 (superseded as evidence, kept for the record).
+date:       2026-11-17
+repo:       /workspace
+commit:     none - `commit: no git available`.  No repository, no HEAD, no pins.
+mutations:  0 applied, 0 caught, 0 restored.
+verbatim:   the original output, unedited, below the separator.
+
+WHY THIS FILE IS HERE AND NOT AT THE REPO ROOT
+  It was produced by `scripts/mutate_kb_gate.sh` in a container with no git
+  binary.  The script's guard runs the unmutated gate first and refused: A4
+  and A10 were already red with "git unavailable".  Nothing was mutated, and
+  nothing below is evidence of a red being caught.  A transcript whose digest
+  is recorded as proof of five reds that never happened is a permanence claim
+  about a falsehood, so it is archived rather than cited.
+
+WHAT IT DOES AND DOES NOT PROVE
+  Proves:    the guard works - a red gate stops the run before mutation.
+  Does not prove: that any assertion is non-vacuous.  That takes a git-capable
+  host, a green unmutated gate, and the five cycles of the script.
+
+FOR THE READER WHO FINDS THIS FILE
+  A superseded record, per docs/kb/PROCEDURE.md section 1: `ARCHIVE/` keeps
+  superseded text so citations keep resolving, and must never hold the only
+  copy of anything.  The pass report that explains it is
+  artifacts/stage1b/STAGE1B.md, sections 5.1 and 6 (the exact sequence that
+  produces a real transcript).  Do not append this to
+  docs/kb/REGISTRY/decisions.md.
+
+---- verbatim output of scripts/mutate_kb_gate.sh, unedited below this line ----
+KB gate mutation transcript
+repo:   /workspace
+commit: no git available
+
+== guard: the unmutated gate must be green ==
+FAILED tests/test_kb_integrity.py::test_a4_tree_clean - AssertionError: git i...
+FAILED tests/test_kb_integrity.py::test_a10_staleness - AssertionError: git i...
+
+REFUSING: the unmutated gate is not green.
+Five reds over a red gate prove nothing. Commit docs/kb, run
+scripts/repin_kb.py so A2/A4 clear, then run this script.

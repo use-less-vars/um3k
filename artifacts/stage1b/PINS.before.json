@@ -1,0 +1,110 @@
+{
+  "snapshot_schema": "kb-stage1b/pins-before/1",
+  "purpose": "Byte-level before-state of docs/kb/PINS.json plus the digests scripts/repin_kb.py is about to write, so the post-repin diff is auditable. Written by a Stage-1b worker; read-only with respect to docs/kb.",
+  "taken_at_utc": "2026-11-17T19:30:09Z",
+  "repo": {
+    "head": "c18d945ddea09130cb5ff0abba5fd929781b8933",
+    "head_subject": "kb: correct the bootstrap ritual, record KB-1",
+    "head_source": "read via the git_read tool (containerized git backend); the executor container used for everything else in this snapshot has NO git binary, see STAGE1B.md section 1",
+    "docs_kb_git_status": "clean - `git status --porcelain` carries no path under docs/kb (only staged artifacts/* and the untracked kb_mutation_transcript.txt at repo root)"
+  },
+  "pins_file": {
+    "path": "docs/kb/PINS.json",
+    "bytes": 643,
+    "raw_sha256": "de397952a479c4a4c182a99a7e85c38aacdbf1ed394ee2ceadab996e4fa79780",
+    "mtime_utc": "2026-11-17T00:22:17Z"
+  },
+  "pins": {
+    "schema": "kb-pins/1",
+    "core_handoff_id": "gen13->gen14",
+    "newest_commit_date": null,
+    "uncited_baseline": 0,
+    "budgets": {
+      "core": 46080,
+      "core_warn": 38912,
+      "per_file_core_default": 9216,
+      "registry": 30720,
+      "work": 20480,
+      "total_ingest": 100000,
+      "warn_at": 0.85
+    },
+    "files": [
+      {"path": "docs/kb/README.md", "sha256": null, "layer": "root"},
+      {"path": "docs/kb/PROCEDURE.md", "sha256": null, "layer": "root"},
+      {"path": "docs/kb/REGISTRY/decisions.md", "sha256": null, "layer": "registry"},
+      {"path": "tests/COLLECTED.txt", "sha256": null, "layer": "test-manifest"}
+    ],
+    "claims": []
+  },
+  "pins_state_before": {
+    "newest_commit_key": "absent (repin_kb.py writes it; tests/test_kb_integrity.py lists it as PINS_OPTIONAL_KEYS)",
+    "pinned_entries": 4,
+    "null_sha256_entries": 4,
+    "consequence": "A2 fails on 'unpinned (sha256 null)' and A10 on 'pins have not been generated yet' even on a git-capable host: this tree is pre-repin by construction, not merely git-blind."
+  },
+  "working_tree_digests": {
+    "note": "sha256 over the bytes on disk (raw) and over the canonical form of scripts/kb_canonical.py. Valid as the HEAD-blob digest because docs/kb is clean.",
+    "files": [
+      {
+        "path": "docs/kb/README.md",
+        "bytes": 6845,
+        "raw_sha256": "cb1337232afa6df9b27e8a68c7e11b14e195bc8d65e91f53022990b002941026",
+        "canonical_sha256": "e358f5c3a057f095d44a4c213be48c2415c3851162935266c03a73f2708514dd"
+      },
+      {
+        "path": "docs/kb/PROCEDURE.md",
+        "bytes": 19885,
+        "raw_sha256": "f2de0dbe5e070aaea6929642491ded9b239b9f1a12c34561985551ad6035e6ac",
+        "canonical_sha256": "221e8aaa61a1c58db5af61620b5bd8c38e8568ecd7cb2f658dd38d868e480802"
+      },
+      {
+        "path": "docs/kb/CORE/00_invariants.md",
+        "bytes": 2201,
+        "raw_sha256": "24efe7cce0f56e7a766847c25c4027fe3bdcf01e47739c8d7b638defa5fc5afd",
+        "canonical_sha256": "3d1c80e1684a712f7fdb244c1e1db5f71c1aa05cdb3e579e170be8c1a668b50a"
+      },
+      {
+        "path": "docs/kb/REGISTRY/decisions.md",
+        "bytes": 3563,
+        "raw_sha256": "763f4f328112e6a9dbaa0c5c594dcdeed4a7566ac25d65245911da4a221155e8",
+        "canonical_sha256": "b4493f5d888c61e9279b3a4e67d812baa8ddb6e1c488fe28800de4826d155fd7"
+      },
+      {
+        "path": "tests/COLLECTED.txt",
+        "bytes": 98385,
+        "raw_sha256": "19000c4429abe9f9bacd38be5d2118a87c2c09f6a3b8ae24b86cdde990dc78ea",
+        "canonical_sha256": "19000c4429abe9f9bacd38be5d2118a87c2c09f6a3b8ae24b86cdde990dc78ea"
+      }
+    ]
+  },
+  "predicted_pins_after_repin": {
+    "note": "PREDICTION, nothing written. repin_kb.pinned_paths() = sorted(docs/kb/**/*.md) + tests/COLLECTED.txt, so CORE/00_invariants.md — absent from the current 4-entry list — becomes a pinned entry; newest_commit becomes HEAD c18d945. Verify against the real PINS.json after `python3 scripts/repin_kb.py`.",
+    "newest_commit": "c18d945ddea09130cb5ff0abba5fd929781b8933",
+    "files": [
+      {"path": "docs/kb/CORE/00_invariants.md", "sha256": "3d1c80e1684a712f7fdb244c1e1db5f71c1aa05cdb3e579e170be8c1a668b50a", "layer": "core"},
+      {"path": "docs/kb/PROCEDURE.md", "sha256": "221e8aaa61a1c58db5af61620b5bd8c38e8568ecd7cb2f658dd38d868e480802", "layer": "root"},
+      {"path": "docs/kb/README.md", "sha256": "e358f5c3a057f095d44a4c213be48c2415c3851162935266c03a73f2708514dd", "layer": "root"},
+      {"path": "docs/kb/REGISTRY/decisions.md", "sha256": "b4493f5d888c61e9279b3a4e67d812baa8ddb6e1c488fe28800de4826d155fd7", "layer": "registry"},
+      {"path": "tests/COLLECTED.txt", "sha256": "19000c4429abe9f9bacd38be5d2118a87c2c09f6a3b8ae24b86cdde990dc78ea", "layer": "test-manifest"}
+    ],
+    "header_patch_predicted": {
+      "fields": ["pinned_commit", "pinned_at", "last_verified"],
+      "note": "every markdown file under docs/kb gets pinned_commit=<HEAD>, pinned_at=<today>, last_verified=<today>; README.md and PROCEDURE.md and CORE/00_invariants.md currently carry pinned_at: null and all four carry pinned_commit: null. These three keys are exactly what kb_canonical masks, so the patch does not invalidate the sha256 values above."
+    }
+  },
+  "gate_state_before": {
+    "command": "python3 -m pytest tests/test_kb_integrity.py -q  (executor container, no git binary)",
+    "passed": 7,
+    "passed_nodes": [
+      "test_a1_header_completeness",
+      "test_a3_budgets",
+      "test_a5_tag_grammar",
+      "test_a6_fixed_tested_resolves",
+      "test_a7_measured_resolves",
+      "test_a8_claims_resolve",
+      "test_a9_uncited_baseline"
+    ],
+    "failed_nodes": ["test_a2_self_pins", "test_a4_tree_clean", "test_a10_staleness"],
+    "failed_reason": "all three fail with their own 'git unavailable: ... the git binary could not be executed (FileNotFoundError)' message, i.e. the designed red, not a content red; A7/A8 are green vacuously (0 [measured]/[CITED] tags, 0 PINS.claims)"
+  }
+}

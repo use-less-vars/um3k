@@ -49,9 +49,45 @@ inside this tree, since no `docs/design/` row backs it.
 
 | id | row | status | pointer |
 |---|---|---|---|
-| KB-1 | the section below | LIVE | `docs/kb/PROCEDURE.md` section 6 |
+| KB-1 | the section below | LIVE | `tests/test_kb_integrity.py` |
+| KB-2 | the section below | LIVE | `docs/kb/PROCEDURE.md` section 6 |
+| KB-3 | the section below | LIVE | `docs/kb/PROCEDURE.md` section 6 |
+| KB-4 | the section below | LIVE | `server/poc_app.py` |
 
-## KB-1 — a pin covers a canonical form; A10 keys on a commit hash
+## KB-1 — a fabricated `pinned_commit` is a failed header
+
+**Decision.** `pinned_commit` is 40 lowercase hex written by
+`scripts/repin_kb.py`, or `null` in the bootstrap state only
+(`PINS.newest_commit_date` null *and* the header's own `status` `current` —
+PROCEDURE section 3). A placeholder that *looks* like a sha is not a placeholder:
+it occupies the key that names committed content, so it is a candidate pin, and
+A1 rejects it as neither 40 lowercase hex nor null. The rule fired for the first
+time against the very commit that introduced it.
+
+**Defects.** During the b2 pass 3 the tree carried
+`pinned_commit: 3f7c1a2b...` in a header — a value dressed as a placeholder while
+sitting in the provenance key. Its leading characters are hex, so a reader
+skimming the header reads a commit; the gate read "neither 40 lowercase hex nor
+null" and went red. Nothing else in the tree would have caught it: A2 compares a
+digest it is handed and cannot see that the value is invented, and A10 asks only
+whether whatever it is given is an ancestor of HEAD. The procedure caught its
+own first commit, which is what it exists to do — a rule that has never rejected
+anything has never been tested.
+
+reverted_by: <FILL-IN>
+
+**Rejected.** Keeping the value and calling it a placeholder in a body line,
+which leaves the header lying to every reader who never reaches the body.
+Rounding it up to a plausible 40-hex string, which converts one visible failure
+into an invisible one. Loosening A1 to accept a truncated sha prefix, so that a
+fabrication can stand wherever a commit belongs.
+
+**Mutation-proof.** The fault was injected on purpose, caught by the assertion
+that now documents it, and reverted: re-running the gate against the fabricated
+header reproduces the red. The transcript of that pass is
+`docs/kb/ARCHIVE/superseded/kb_mutation_transcript_pass1.txt`.
+
+## KB-2 — a pin covers a canonical form; A10 keys on a commit hash
 
 **Decision.** `PINS.files[].sha256` is the sha256 of a file's canonical form —
 its bytes with the values of exactly `pinned_commit`, `pinned_at` and
@@ -75,3 +111,45 @@ A4. Trusting only the HEAD blob, which lets a dirty-tree edit through. Dropping
 header files from `PINS.files[]`, which gives up pinning on exactly the files
 most likely to be hand-edited. Keying A10 on the date string, unsatisfiable
 alongside A4 as above.
+
+## KB-3 — a pin is a computed digest, never a quoted one
+
+**Decision.** `PINS.files[].sha256` is written by `scripts/repin_kb.py` from
+`git show HEAD:<path>` and by nothing else. A2 checks it twice (HEAD blob and
+working tree, both in canonical form) and now also checks **coverage**: every
+markdown file under `docs/kb` plus `tests/COLLECTED.txt` must appear in
+`PINS.files[]`, so a file that was never listed is red instead of silently
+unpinned. The pin set is a ratchet, it only grows; `tests/COLLECTED.txt` gets a
+`test_manifest` cap in `PINS.budgets` and A3 enforces it.
+
+**Defects.** The Stage 1b pass found `PINS.files[]` carrying four entries whose
+`sha256` was `null` on all four while five files needed pins —
+`docs/kb/CORE/00_invariants.md` was absent from the list entirely. The tree had
+never been re-pinned, so every digest that could be quoted from it was a
+fabrication, and the old A2 could not see the missing file at all: it iterated
+the entries present. A hand-typed or copied digest is the same failure one step
+later, and it is exactly what a canonical-form comparison catches and a review
+does not.
+
+**Rejected.** Trusting a digest a report quotes, ``pinned at abc123`` style,
+without recomputing it. Letting A2 iterate only over the entries present, which
+is how a file escapes pinning by never being added. Hand-editing `PINS.json` to
+match a self-computed hash, which PROCEDURE section 11 already names as no
+escape hatch.
+
+## KB-4 — `server/poc_app.py::run_web` is proposed for deletion
+
+**Decision.** The single-structure Trame page `run_web` (`server/poc_app.py:5922`)
+is marked `[proposed-delete]` in its docstring. `main()` dispatches every web path
+to `run_web_vis` (`:13404`, `:13450`); nothing calls `run_web`, so it is
+unreachable legacy kept only because other comments still cite its line numbers.
+Deletion is proposed, not taken: it needs an owner ruling, and the citations that
+name it rewired first.
+
+**Defects.** Dead code that is quoted as "the shipped behaviour" is worse than
+dead code. A dozen comments in `poc_app.py` cite `run_web`'s line numbers as the
+authority for `run_web_vis`'s behaviour, so a reader cannot tell which page is
+live, and the legacy page keeps absorbing edits meant for the shell.
+
+**Rejected.** Deleting it in the same pass that marks it, which would leave those
+citations pointing at nothing in the commit that was supposed to clarify them.

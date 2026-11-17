@@ -68,6 +68,8 @@ BUDGET_KEYS = (
     "per_file_core_default",
     "registry",
     "work",
+    "test_manifest",
+    "test_manifest_warn",
     "total_ingest",
     "warn_at",
 )
@@ -365,9 +367,10 @@ def test_a1_header_completeness():
     """Every markdown file under docs/kb opens with the nine-key `---` front
     matter (five content layers plus the root entry files), and PINS.json
     carries exactly its seven documented keys.  `pinned_commit` is either 40
-    lowercase hex or the literal `null`, on any layer: a null pin is the
-    pre-repin bootstrap state, and A10 - not A1 - is what stops it surviving the
-    first repin_kb.py run."""
+    lowercase hex or the literal `null`, and `null` is tolerated on one state
+    only: nothing pinned yet (`PINS.newest_commit_date` is null) on a header
+    whose status is `current`.  A10 still stops a null pin surviving the first
+    repin_kb.py run; A1 stops one being manufactured while it lasts."""
     problems: list = []
     pin = pins()
     problems += pins_shape_problems(pin)
@@ -401,6 +404,17 @@ def test_a1_header_completeness():
             pass
         elif commit is not None and not SHA1.match(str(commit)):
             problems.append("%s: pinned_commit %r is neither 40 lowercase hex nor null; a header names the commit its bytes were pinned at, and null is legal only until the first repin_kb.py run" % (where, commit))
+        else:
+            # the null-tolerance is a status-keyed bootstrap, not a fallback: only a
+            # `current` header may ride the window in which nothing is pinned yet.
+            tolerates_null = {"current": pin.get("newest_commit_date") is None}
+            if commit is None and not tolerates_null.get(status, False):
+                problems.append(
+                    "%s: pinned_commit null is a fabrication on a status %r header with "
+                    "PINS.newest_commit_date %r - null is legal only in the bootstrap state "
+                    "(nothing pinned yet, status current), never as a fallback"
+                    % (where, status, pin.get("newest_commit_date"))
+                )
         budget = head.get("byte_budget")
         if budget is not None and (not str(budget).isdigit() or int(budget) <= 0):
             problems.append("%s: byte_budget %r is not a positive integer" % (where, budget))
@@ -427,7 +441,9 @@ def test_a2_self_pins():
     front-matter provenance values and touches nothing else.  A pin names the
     content at a commit - not the header ``scripts/repin_kb.py`` itself rewrites -
     so an unpinned or silently edited file is red, and a freshly re-pinned tree is
-    not."""
+    not.  The sub-case is coverage: a file that exists under ``docs/kb`` (or the
+    manifest) but was never listed in ``PINS.files[]`` is red too - iterating the
+    entries cannot see a file nobody added, which is how one escapes pinning."""
     available, why = git_probe()
     if not available:
         pytest.fail(
@@ -472,6 +488,17 @@ def test_a2_self_pins():
             )
             continue
         verified += 1
+    # Sub-case: coverage.  ``scripts/repin_kb.py`` pins every markdown file under
+    # docs/kb plus tests/COLLECTED.txt; the loop above can only see the entries
+    # that exist, so a file nobody listed is unpinned and green.  Compare the pin
+    # set against what has to be pinned.
+    pinned = {entry.get("path") for entry in entries if isinstance(entry, dict)}
+    expected = {rel(path) for path in walked()} | {rel(COLLECTED_PATH)}
+    for missing in sorted(expected - pinned):
+        problems.append(
+            "%s: exists but is not in PINS.files - an unlisted file is unpinned, and a pin that "
+            "was never written is not a pin; run scripts/repin_kb.py" % missing
+        )
     assert not problems, "A2 FAIL: self-pin verification ran and disagreed with PINS.json:\n  " + "\n  ".join(problems)
     print("A2 ok: %d self-pins match HEAD and the working tree (canonical form)" % verified)
 
@@ -479,7 +506,9 @@ def test_a2_self_pins():
 def test_a3_budgets():
     """Per-file caps come from each file's own header (the single source of
     truth); per-layer and total caps come from PINS.budgets, with archive and
-    reference deliberately unbudgeted."""
+    reference deliberately unbudgeted, plus the `test_manifest` tier for the
+    manifest that lives outside docs/kb/ and feeds A6: the same fail/warn pair
+    shape `core`/`core_warn` uses, so a growing manifest warns before it fails."""
     pin = pins()
     budgets = pin.get("budgets") or {}
     problems: list = []
@@ -507,6 +536,24 @@ def test_a3_budgets():
             default = int(budgets.get("per_file_core_default") or 0)
             if default and size > default:
                 problems.append("%s: %d B over the %d B per-file core default" % (rel(path), size, default))
+    manifest_cap = int(budgets.get("test_manifest") or 0)
+    manifest_warn = int(budgets.get("test_manifest_warn") or 0)
+    if manifest_cap:
+        if not COLLECTED_PATH.is_file():
+            problems.append("tests/COLLECTED.txt is missing: A6 resolves every [FIXED-TESTED] against it")
+        else:
+            manifest_size = len(COLLECTED_PATH.read_bytes())
+            if manifest_size > manifest_cap:
+                problems.append(
+                    "tests/COLLECTED.txt: %d B over the %d B test_manifest cap - a manifest nobody "
+                    "reads is not worth its bytes; regenerate it in the same commit that cites it"
+                    % (manifest_size, manifest_cap)
+                )
+            elif manifest_warn and manifest_size > manifest_warn:
+                warnings.append(
+                    "tests/COLLECTED.txt is %d B, past the %d B warning line"
+                    % (manifest_size, manifest_warn)
+                )
     total = sum(len((REPO / name).read_bytes()) for name in sorted(ingest))
     for layer, cap_name in (("core", "core"), ("registry", "registry"), ("work", "work")):
         cap = int(budgets.get(cap_name) or 0)

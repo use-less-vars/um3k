@@ -56,6 +56,8 @@ a human reads KiB and the gate counts bytes.
 | `per_file_core_default` | 9 KiB | 9,216 B | per-file cap for a core file with no `byte_budget` |
 | `registry` | 30 KiB | 30,720 B | hard fail |
 | `work` | 20 KiB | 20,480 B | hard fail |
+| `test_manifest` | 150 KiB | 153,600 B | hard fail; `tests/COLLECTED.txt` only |
+| `test_manifest_warn` | 120 KiB | 122,880 B | prints `WARN:` |
 | `total_ingest` | — | 100,000 B | hard fail; `warn_at` = 0.85 |
 | `archive`, `reference` | — | — | deliberately unbudgeted |
 
@@ -65,7 +67,8 @@ per-file cap — the header is the source of truth — and falls back to
 `per_file_core_default` only for a core file that omits one. `archive` and
 `reference` are unbudgeted on purpose: they are read rarely and may be large,
 and a cap nobody enforces is worse than no cap, so no `ROOT`, `ARCHIVE` or
-`REFERENCE` block may exist in `budgets` at all.
+`REFERENCE` block may exist in `budgets` at all. `test_manifest` caps the one
+pinned file outside `docs/kb/`, never part of ingest: A6 reads it, not a session.
 
 Total ingest is "what a session actually ingests": `docs/kb/README.md`,
 `docs/kb/PROCEDURE.md`, `docs/kb/PINS.json`, everything under `CORE/`, and
@@ -92,9 +95,12 @@ superseded_by: null
 ---
 ```
 
-`pinned_commit: null` in this example is the pre-repin state: **null is legal
-only until the first `repin_kb.py` run, which sets `PINS.newest_commit`; after
-that a null pin is a failed header (section 6)**.
+`pinned_commit: null` in this example is the pre-repin state. A null pin is legal
+**only in the bootstrap state**: nothing is pinned yet (`PINS.newest_commit_date` is
+`null`) *and* the header's own `status` is `current`. After `repin_kb.py` sets
+`PINS.newest_commit`, a null pin is a failed header (section 6); a header that is
+`superseded` or `stale` may never carry `null` — an erased pin on a retired header is a
+fabrication. The null-tolerance is a bootstrap state, not a fallback.
 
 The parser is a dumb line parser, and that is a feature: it cannot silently
 accept something you did not mean. The rules it enforces:
@@ -168,7 +174,7 @@ opening `[NAME` with no closing `]` as a broken tag rather than ignoring it.
 |---|---|---|
 | A1 | every markdown file has the nine-key header, a matching layer, a valid status, and `PINS.json` has exactly its eight keys (`newest_commit` arrives with the first re-pin; the gate accepts seven until then) | a file with no header is a file with no provenance |
 | A2 | `PINS.files[].sha256` equals the sha256 of that path's **canonical form**, computed once from the HEAD blob and once from the working tree | a pin names committed content, not a promise |
-| A3 | per-file caps from headers, core/registry/work layer sums and total ingest against `PINS.budgets` | a knowledge base that only grows stops being read |
+| A3 | per-file caps from headers, core/registry/work layer sums, total ingest and the `tests/COLLECTED.txt` manifest against `PINS.budgets` | a knowledge base that only grows stops being read |
 | A4 | the five layer dirs exist with `.gitkeep` and no `README.md` stub, `git status --porcelain docs/kb` is empty, everything walked is tracked | a pin is only meaningful over a clean tree |
 | A5 | every tag body matches its documented shape, `[UNCITED]` carries `why:`, masking self-test passes | a malformed tag is an unverifiable claim |
 | A6 | every `[FIXED-TESTED]` node id is a **member of `tests/COLLECTED.txt`** | membership, never a grep for `def test_`: a deleted or uncollected test cannot be cited |
