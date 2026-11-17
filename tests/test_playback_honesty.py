@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import gc
 import inspect
 import math
 import sys
@@ -820,4 +821,345 @@ def test_the_warning_agrees_with_the_per_frame_mode_and_never_with_global():
             "global window"
         )
         assert not bool(app._volume_clim_warning(quiet)), quiet
+
+
+
+# ---------------------------------------------------------------------------
+# PLAY SPEED: how many positions one tick advances, and the caption that prices
+# it. Still pure - the loop's arithmetic is three functions of (a time, a
+# position, a rate and an fps) plus one memo - so nothing here boots the server,
+# builds a layout or touches the plotter. The REJECTED alternative (advance a
+# fixed number of positions per tick and let the box decide the speed) has no
+# such representation to assert: it makes the sweep time a property of the
+# machine, which is exactly what the clock reading below replaced.
+# ---------------------------------------------------------------------------
+
+
+def test_the_play_clock_reads_a_position_off_the_wall_time():
+    """One second at 4 positions/tick and 24 fps is 96 positions, and only up.
+
+    ``_play_target`` is the whole play loop's arithmetic: ``anchor_frame`` was on
+    screen at ``anchor_time``, so the position at ``now`` is that frame plus the
+    elapsed time times ``rate * fps``. The REJECTED alternative is the old
+    advance-per-tick rule (add ``rate`` to the position each tick), which is
+    simpler to write and makes the playback speed a property of the box: a busy
+    machine plays slower, a fast one strobes, and the caption's "s per sweep"
+    stops predicting anything. So what is asserted is that the target is monotone
+    in the clock and that a second of wall time is exactly the arithmetic the
+    caption quotes.
+    """
+    rate, fps = app.DEFAULT_PLAY_RATE, 24
+    targets = [
+        app._play_target(0.0, 0, now, rate, fps)
+        for now in (0.0, 0.01, 0.02, 0.1, 0.25, 0.5, 1.0, 2.0)
+    ]
+    assert targets == sorted(targets), (
+        f"the position went backwards while the clock only ran forward: {targets}"
+    )
+    assert app._play_target(0.0, 0, 1.0, rate, fps) == rate * fps, (
+        f"one second at {rate} positions/tick and {fps} fps advanced "
+        f"{app._play_target(0.0, 0, 1.0, rate, fps)} positions, not {rate * fps}"
+    )
+    assert app._play_target(100.0, 7, 101.0, rate, fps) == 7 + rate * fps, (
+        "the advance is not measured FROM THE ANCHOR: an anchor of 7 at t=100 s "
+        f"reached {app._play_target(100.0, 7, 101.0, rate, fps)} at t=101 s, not "
+        f"{7 + rate * fps}"
+    )
+
+
+def test_a_late_tick_advances_further_instead_of_stalling():
+    """A tick the box drew slowly loses POSITIONS, never time.
+
+    Two readings of one second, anchored where the loop's previous draw landed,
+    must add up to the same second read in one go - that is what makes the
+    animation lose positions on a busy machine instead of running slow. The
+    REJECTED alternative (per-tick advance) has no such identity: ten late ticks
+    take ten times as long as ten on-time ones.
+    """
+    rate, fps = app.DEFAULT_PLAY_RATE, 24
+    whole = app._play_target(0.0, 0, 1.0, rate, fps)
+    first = app._play_target(0.0, 0, 0.5, rate, fps)
+    second = app._play_target(0.5, 0, 1.0, rate, fps)
+    assert first == rate * fps // 2, (
+        f"half a second advanced {first} positions, not {rate * fps // 2}"
+    )
+    assert first < whole, (
+        f"half a second ({first}) and a whole second ({whole}) advanced the same "
+        "distance: the position is not being read off the clock"
+    )
+    assert first + second == whole, (
+        f"{first} + {second} positions over the two halves of one second, but "
+        f"{whole} for the whole second: the loop's speed depends on when its "
+        "ticks happened to arrive"
+    )
+
+
+def test_a_rate_or_an_fps_of_zero_still_advances_one_position_a_tick():
+    """A missing rate is the SLOWEST speed, never a division by zero or a rewind.
+
+    ``rate`` and ``fps`` are floored at 1: a page built before the select
+    existed, or a select that never reached the widget table, hands over a zero.
+    The REJECTED alternative is to let the arithmetic speak for itself - a zero
+    factor freezes the player, and a negative one (an unvalidated value from a
+    URL) runs it backwards while the caption still claims a forward sweep.
+    """
+    for bad_rate in (0, -4):
+        assert app._play_target(0.0, 10, 1.0, bad_rate, 1) == 11, bad_rate
+    for bad_fps in (0, -24):
+        assert app._play_target(0.0, 10, 1.0, 1, bad_fps) == 11, bad_fps
+    assert app._play_target(0.0, 10, 1.0, 0, 0) == 11, "both factors floored"
+
+
+def test_a_clock_read_before_its_anchor_never_goes_negative():
+    """An index cannot be -9, but it CAN be past the end: the caller wraps it.
+
+    The clamp at 0 is not a second, softer clamp at the family length: whether
+    the player loops or stops is a property of the dump, not of time, so a
+    position past the last frame is answered and left to the caller's wrap.
+    """
+    assert app._play_target(5.0, 3, 1.0, 4, 24) == 0, (
+        "a clock read before its anchor produced a negative index"
+    )
+    assert app._play_target(0.0, 0, 100.0, 4, 24) == 9600, (
+        "the target was clamped at the family length: the caller wraps it, and a "
+        "clamp here would silently stop the player short"
+    )
+
+
+def test_the_loop_keeps_its_origin_when_nothing_moved():
+    """The common tick is a no-op: the anchor is returned untouched.
+
+    ``current_frame`` equal to ``drawn_frame`` means the loop's own draw is the
+    only thing that moved the position, so re-anchoring there would restart the
+    clock every tick and turn the rate into an upper bound.
+    """
+    for current in (40, 41, 0):
+        assert app._play_reanchor(12.5, 40, 13.0, current, current) == (12.5, 40), (
+            f"a tick with current == drawn == {current} moved the origin"
+        )
+
+
+def test_a_seek_becomes_the_new_origin_of_the_play_clock():
+    """A scrubber moved while playing is RESPECTED, not overwritten next tick.
+
+    ``current_frame`` differing from what the loop last drew means somebody else
+    moved the player, so that position becomes the origin AT THE CURRENT TIME -
+    and the very next target, read at the same instant, is the seek itself rather
+    than the position the old clock had reached. The REJECTED alternatives are to
+    lock the player while it plays (a dead slider) or to reuse
+    ``suppress_frame_listener`` for user seeks (silencing a real operator action
+    for a whole tick; that flag exists to hide the loop's own re-entry).
+    """
+    anchor_time, anchor_frame = app._play_reanchor(12.5, 40, 13.0, 900, 40)
+    assert (anchor_time, anchor_frame) == (13.0, 900), (
+        f"a seek to 900 at t=13 s left the origin at {(anchor_time, anchor_frame)}"
+    )
+    assert app._play_target(anchor_time, anchor_frame, 13.0, 4, 24) == 900, (
+        "the next target after a seek is not the sought position: the clock "
+        "drags the player back to where nobody asked for it"
+    )
+
+
+def test_the_caption_prices_one_sweep_in_the_arithmetic_the_loop_integrates():
+    """The sentence beside the select IS the quantity ``_play_target`` integrates.
+
+    ``frames / (rate * fps)`` is both the sweep time the caption prints and the
+    wall time the clock needs to cross the whole family, so the two cannot drift
+    apart. The REJECTED alternative is to caption the caption - state the rate
+    and leave the duration implicit - and then nothing on the page says what the
+    choice costs, which is the thing an operator changing it is deciding.
+    """
+    assert app._play_caption(2400, 4, 24) == (
+        "4 steps/tick at 24 fps - 25.0 s per sweep"
+    ), app._play_caption(2400, 4, 24)
+    for frames, rate, fps in ((240, 4, 24), (2400, 1, 24), (2400, 8, 24)):
+        sweep_s = frames / (rate * fps)
+        caption = app._play_caption(frames, rate, fps)
+        assert caption.endswith(f"- {sweep_s:.1f} s per sweep"), caption
+        assert app._play_target(0.0, 0, sweep_s, rate, fps) == frames, (
+            f"the caption quotes {sweep_s:.1f} s per sweep, but the clock needs "
+            f"{app._play_target(0.0, 0, sweep_s, rate, fps) / (rate * fps):.3f} s "
+            f"to cross {frames} positions at {rate}/{fps}"
+        )
+
+
+def test_a_page_with_no_timeline_gets_a_word_not_a_division():
+    """No frames is a WORD, and a zero rate/fps is floored rather than divided by.
+
+    The REJECTED alternative is to divide anyway: zero frames raises
+    ZeroDivisionError inside a layout builder and takes the whole column down,
+    and a non-zero denominator over no frames prints a confident "0.0 s per
+    sweep" for a page that has nothing to sweep - the same invented-answer
+    dishonesty the timeline labels refuse.
+    """
+    for frames in (None, 0, -5):
+        assert app._play_caption(frames, 4, 24) == "no timeline", frames
+    assert app._play_caption(24, 0, 0) == app._play_caption(24, 1, 1), (
+        "a zero rate/fps was divided by instead of floored at 1"
+    )
+    assert app._play_caption(24, 0, 0).endswith("- 24.0 s per sweep"), (
+        app._play_caption(24, 0, 0)
+    )
+
+
+def test_the_select_value_snaps_to_the_nearest_offered_rate():
+    """Nearest wins, ties go to the SLOWER rate, junk falls back on the default.
+
+    The speed arrives from a select, a URL or a script that set it to whatever it
+    liked, so it is never trusted to be one of ``PLAY_RATES``. The REJECTED
+    alternative is default-on-anything-unrecognised: the number on screen and the
+    number the loop uses would then disagree for the rest of the session, and the
+    caption would be the only witness. Ties go slower because a strobe is
+    unreadable and the operator asking for exactly a half-way speed has no
+    preference this can violate.
+    """
+    assert app.DEFAULT_PLAY_RATE in app.PLAY_RATES, (
+        f"the page opens on {app.DEFAULT_PLAY_RATE}, which the select does not "
+        f"offer ({app.PLAY_RATES}): it could never be put back"
+    )
+    for value, expected in ((1, 1), (4, 4), (7, 8), (5, 4), (0, 1), (2.6, 2)):
+        assert app._play_rate_near(value) == expected, (
+            f"{value} snapped to {app._play_rate_near(value)}, not to the nearest "
+            f"offered rate {expected}"
+        )
+    for tie, slower in ((3, 2), (6, 4)):
+        assert app._play_rate_near(tie) == slower, (
+            f"the tie at {tie} went to {app._play_rate_near(tie)}, not to the "
+            f"slower rate {slower}: a tie must never go to the strobe"
+        )
+    for junk in (None, "4", True, False, object(), [4]):
+        assert app._play_rate_near(junk) == app.DEFAULT_PLAY_RATE, junk
+    for value in range(-5, 20):
+        assert app._play_rate_near(value) in app.PLAY_RATES, value
+
+
+#: A tiny record the plan can be built from: two captures over four plane
+#: frames, so the mapping has a real shape without needing a file on disk.
+def _plan_info(steps=(1, 5, 9, 13)):
+    steps = np.asarray(steps, dtype=int)
+    return {
+        "e_abs_volume": np.zeros((steps.size, 2, 2), dtype=np.float32),
+        "e_abs_volume_step_index": steps,
+        "frame_index": steps,
+        "frame_index_xcut": steps,
+    }
+
+
+def test_the_player_plan_is_memoised_per_record_and_mode():
+    """Same record and mode ⇒ the SAME plan object; another record ⇒ its own.
+
+    The plan is two 2400-entry ``searchsorted`` passes and a
+    ``maximum.accumulate`` for a picture that cannot have changed between ticks,
+    so it is memoised - and the identity is what is asserted, because an
+    equal-valued SECOND object would mean the memo is doing no work at all. The
+    REJECTED alternative is to cache on the info dict's *contents*: it is a dict
+    of numpy arrays, so a content key costs a hashing pass over every frame -
+    more than the plan it saves.
+    """
+    app._VOLUME_PLAN_CACHE.clear()
+    info = _plan_info()
+    first = app._volume_player_plan(info, "ycut")
+    assert first is not None, "the tiny record carries a volume and two axes"
+    again = app._volume_player_plan(info, "ycut")
+    assert again is first, (
+        "the same record asked twice returned two plan objects: every tick "
+        "rebuilds the mapping the memo exists to avoid"
+    )
+    assert again == first, "the memoised plan is not even equal to the first one"
+    other_mode = app._volume_player_plan(info, "xcut")
+    assert other_mode == first, "the two modes disagree on an identical record"
+    assert other_mode is not first, (
+        "the MODE is not part of the memo key: one family's plan is being served "
+        "for the other"
+    )
+
+
+def test_the_plan_cache_never_serves_a_plan_built_for_another_record():
+    """A new dict is never handed the old record's plan, however equal it looks.
+
+    The entry is filed under ``id(info)`` and holds ``info`` itself, so the id
+    cannot be recycled while the entry lives, and the ``is`` check on lookup
+    rejects an entry that no longer belongs to the dict asked about. The REJECTED
+    alternative - filing under the id alone, holding no reference - lets a freed
+    record's id be reused by a dump with different arrays and serves the old
+    mapping for the new axes: a picture taken from another recording, with no
+    error anywhere.
+    """
+    app._VOLUME_PLAN_CACHE.clear()
+    info = _plan_info()
+    stale = app._volume_player_plan(info, "ycut")
+    assert stale is not None
+    del info
+    gc.collect()
+    fresh = _plan_info()
+    served = app._volume_player_plan(fresh, "ycut")
+    assert served == stale, (
+        "an equal-valued record got a different plan: the mapping depends on "
+        "something other than the record"
+    )
+    assert served is not stale, (
+        "a fresh record was served the plan built for a deleted one: the memo is "
+        "keyed on an id it does not hold the object for"
+    )
+
+
+def _play_loop_node():
+    """The ``_play_loop`` coroutine as AST, found inside ``run_web_vis``.
+
+    It is a CLOSURE, not a module attribute, so ``app._play_loop`` does not
+    exist and ``inspect.getsource`` cannot be pointed at it directly: the node
+    has to be found inside the function that defines it. Nothing here executes
+    the loop - the source is what is being read.
+    """
+    tree = ast.parse(inspect.getsource(app))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "run_web_vis":
+            for child in ast.walk(node):
+                if isinstance(child, ast.AsyncFunctionDef) and child.name == "_play_loop":
+                    return child
+    return None
+
+
+def test_the_play_loop_draws_once_per_tick_from_the_clock():
+    """One draw per tick, and the position came from the clock, not a counter.
+
+    Read off the SHIPPED source rather than a re-implementation: ``_show`` writes
+    ``state.frame``, which fires the frame listener on the flush, so a loop that
+    reached ``_show`` twice per tick would draw the same position twice and lose
+    the operand of the whole speed control. The REJECTED alternative that this
+    guards against is the removed ``PLAY_STEPS_PER_TICK`` counter - a constant
+    compiled into the loop, which no select can change and no caption can price -
+    so its absence from the module is asserted too, not just its absence here.
+    """
+    source = inspect.getsource(app)
+    assert "PLAY_STEPS_PER_TICK" not in source, (
+        "the old per-tick counter is still in the module: the speed is a UI value "
+        "now, and a constant beside it would be a second, contradictory answer"
+    )
+    loop = _play_loop_node()
+    assert loop is not None, (
+        "no async _play_loop inside run_web_vis: the player's advance cannot be "
+        "read, so nothing below is a statement about the shipped loop"
+    )
+    calls = [
+        node
+        for node in ast.walk(loop)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_show"
+    ]
+    assert len(calls) == 1, (
+        f"the play loop calls _show {len(calls)} times per tick: each call writes "
+        "state.frame and draws, so more than one draws the same position twice"
+    )
+    called = {
+        node.func.id
+        for node in ast.walk(loop)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    for helper in ("_play_target", "_play_reanchor", "_play_rate_near"):
+        assert helper in called, (
+            f"the loop does not call {helper}: the position on screen is not the "
+            "one the clock and the selected rate name"
+        )
 

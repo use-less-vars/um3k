@@ -1803,12 +1803,19 @@ def test_the_state_dump_counts_the_frames_the_player_steps(desync_page):
     ends at the last capture, i.e. throw away the nine steps after it - the
     coarse timeline the design change removed.
 
-    The wall clock is those counts over ``fps``, which is ONE POSITION PER TICK,
-    while the play loop advances ``PLAY_STEPS_PER_TICK`` positions per tick - so
-    the time the page really takes is that over the same constant. Written
-    through ``app.PLAY_STEPS_PER_TICK`` rather than a typed-in 8: the two
-    numbers describe one advance, and a change to either must fail here instead
-    of leaving the state dump quietly describing the old rate.
+    The wall clock is those counts over ``fps``, which is ONE POSITION PER TICK -
+    the BASE rate, the one reading that stays true whichever speed the player
+    bar's select is on. The loop advances ``app.DEFAULT_PLAY_RATE`` positions per
+    tick when a page opens (and whatever rate the select then holds), so the time
+    the page really takes is that base reading divided by the factor;
+    ``app._play_caption`` is the ONE place that division is written down, beside
+    the select. So the cross-check below goes through ``app.DEFAULT_PLAY_RATE``
+    and ``app._play_caption`` rather than a typed-in 8: a change to the rate or to
+    the caption's arithmetic has to fail here instead of leaving the state dump
+    quietly describing the old speed. The REJECTED alternative - publishing the
+    CURRENT rate's playing time in the dump - would make a still document depend
+    on a live UI control, so two dumps of one page would disagree about how long
+    the recording is.
     """
     info = desync_page.page["info"]
     nt, nt_x = int(info["nt"]), int(info["nt_x"])
@@ -1839,16 +1846,18 @@ def test_the_state_dump_counts_the_frames_the_player_steps(desync_page):
         f"{block['frames']} positions the player steps over {block['fps']} "
         "fps, i.e. at one position per tick"
     )
-    assert block["wall_clock_s"] == pytest.approx(
-        block["frames"]
-        / (block["fps"] * app.PLAY_STEPS_PER_TICK)
-        * app.PLAY_STEPS_PER_TICK,
-        rel=1e-12,
-    ), (
-        f"the wall clock {block['wall_clock_s']} s is not the one-position-per-"
-        f"tick reading of {block['frames']} positions at {block['fps']} fps "
-        f"over {app.PLAY_STEPS_PER_TICK} positions per tick: the state dump and "
-        "the play loop no longer describe the same advance"
+    assert app.DEFAULT_PLAY_RATE in app.PLAY_RATES, (
+        f"the page opens on {app.DEFAULT_PLAY_RATE} positions per tick, which "
+        f"the select does not offer ({app.PLAY_RATES}): a page would open on a "
+        "speed it could never be put back on"
+    )
+    sweep_s = block["frames"] / (app.DEFAULT_PLAY_RATE * block["fps"])
+    caption = app._play_caption(block["frames"], app.DEFAULT_PLAY_RATE, block["fps"])
+    assert caption.endswith(f"- {sweep_s:.1f} s per sweep"), (
+        f"the player bar prices one sweep at {sweep_s:.1f} s on this dump, but "
+        f"its caption reads {caption!r}: the dump publishes the one-position-per-"
+        "tick reading and the caption is the only place the selected speed's "
+        "division is written down, so the two no longer describe one advance"
     )
     assert block["planes"][0]["frames"] == nt, (
         "the stored ez_ycut plane is reported as holding "

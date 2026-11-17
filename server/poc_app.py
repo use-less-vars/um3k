@@ -176,14 +176,19 @@ STATE_SCHEMA_VIS = "emfit.poc-state/3"
 # is SIMULATION time, so this number is a viewing choice, and the page prints
 # both times rather than implying the animation runs at the solver's rate.
 DEFAULT_FPS = 24
-# Positions a PLAYING player advances per tick. The timeline is the SOLVER STEP
-# clock of the selected family now (2400 y-cut positions, 240 x-cut ones), and one
-# position is dt*c = 7.626e-13 s * 2.998e8 m/s ~ 0.23 mm, i.e. about ONE half of
-# the 0.4 mm cell - so one position per tick moves the wave one half-cell per
-# 1/24 s and plays 2400 positions in 100 s, a strobe. PLAY_STEPS_PER_TICK *
-# DEFAULT_FPS = 8 * 24 = 192 positions/s is ~1.8 mm (8 half-cells) per tick and
-# ~12.5 s per family: legible. A VIEWING choice like DEFAULT_FPS: no UI control.
-PLAY_STEPS_PER_TICK = 8
+# Positions a PLAYING player advances per tick: the values the player bar's speed
+# control offers, and the one it starts on. The timeline is the SOLVER STEP clock
+# of the selected family (2400 y-cut positions, 240 x-cut ones), and one position
+# is dt*c = 7.626299478123987e-13 s * 2.998e8 m/s ~ 0.229 mm, i.e. about ONE half
+# of the 0.4 mm cell - so at rate 1 the wave moves one half-cell per tick and a
+# 2400-position family takes 100 s at 24 fps, a strobe. The default 4 positions a
+# tick is 4 * 0.229 mm = 0.92 mm ~ 2 cells per tick and 4 * 24 = 96 positions/s,
+# i.e. ~25 s per family: legible. A VIEWING choice like DEFAULT_FPS, and - unlike
+# DEFAULT_FPS - one the operator can change while watching: somebody following one
+# cell fill in wants rate 1, somebody scanning a whole family wants rate 8, and
+# neither should have to restart the app at a different constant to get it.
+PLAY_RATES = (1, 2, 4, 8)
+DEFAULT_PLAY_RATE = 4
 # ONE colour ceiling for the whole animation, taken at this percentile of |Ez|
 # over every stored frame of every plane. Frame-local scaling would renormalise
 # on each step and make a decaying pulse look like it never decays.
@@ -430,6 +435,104 @@ def _frame_span_max(nt, nt_x, mode: str):
     """
     frames = nt if mode == "ycut" else nt_x
     return None if frames is None else int(frames) - 1
+
+
+def _play_rate_near(value) -> int:
+    """``value`` snapped to the NEAREST offered speed; unusable values replaced.
+
+    The speed is a UI value: it arrives from a select, from a URL, or from a script
+    that set it to whatever it liked, so it is never trusted to be one of
+    ``PLAY_RATES``. Nearest wins (7 becomes 8, 5 becomes 4) rather than
+    default-on-anything-unknown, because the latter makes the number on screen and
+    the number the loop uses disagree for the rest of the session - the caption
+    would prove it, and this is the one place that decides, so the loop, the
+    caption and the select cannot say different things.
+
+    A missing/None/non-numeric value (a page built before the control existed, a
+    select that never made it into the widget table) falls back on
+    ``DEFAULT_PLAY_RATE``: a viewing page must always play at SOME speed. Ties go
+    to the slower rate - a strobe is unreadable, and the operator asking for
+    exactly a half-way speed has no preference this can violate.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return DEFAULT_PLAY_RATE
+    rates = tuple(PLAY_RATES)
+    return min(rates, key=lambda rate: (abs(rate - value), rate))
+
+
+def _play_target(anchor_time, anchor_frame, now, rate, fps) -> int:
+    """The position the wall clock says belongs on screen at ``now``.
+
+    A PLAYING player is a clock read out as a position: ``anchor_frame`` was on
+    screen at ``anchor_time``, and every 1/(rate*fps) seconds after that the
+    position advances by one. The elapsed time is measured FROM THE ANCHOR and not
+    accumulated tick by tick, so a tick that arrives late (the box was busy drawing
+    a heavy sheet) ADVANCES FURTHER instead of stalling: the animation keeps the
+    speed the caption promises and loses positions, not time.
+
+    The REJECTED alternative is advance-by-a-fixed-number-per-tick, which is what
+    this loop used to do: it is simpler, but it makes the playback speed a property
+    of the machine - a slow box plays slowly, a fast one strobes, and the caption's
+    "s per sweep" becomes a lie - which is precisely the honest-timing rule this
+    module enforces elsewhere (sim time and wall clock are never conflated).
+
+    ``rate``/``fps`` are floored at 1 so a zero (a select that never arrived, an
+    old page) cannot divide by zero or run the position backwards. The result is
+    clamped at 0 - it is an index, and a clock read before its anchor must not go
+    negative - but NOT at the family length: the caller wraps it, because whether
+    the player loops or stops is a property of the dump, not of time.
+    """
+    rate = max(1, int(rate))
+    fps = max(1, int(fps))
+    elapsed = float(now) - float(anchor_time)
+    return max(0, int(anchor_frame) + int(elapsed * rate * fps))
+
+
+def _play_reanchor(anchor_time, anchor_frame, now, current_frame, drawn_frame):
+    """Adopt a position the loop did not choose as the new clock origin.
+
+    While the player runs the position can be moved by something else: the
+    scrubber, a << PREV / NEXT press, or a family swap that re-clamps the index.
+    ``drawn_frame`` is what the loop itself last drew, so ``current_frame``
+    differing from it means somebody else moved the player; the loop then takes
+    that position as its origin AT THE CURRENT TIME and carries on from there, so
+    the seek is respected instead of being overwritten on the very next tick (the
+    clock would drag the position back to where nobody asked for it).
+
+    The REJECTED alternative is to lock the player while it plays - to disable the
+    slider, or to reuse the ``suppress_frame_listener`` flag for user seeks. The
+    first turns a seek into a dead control; the second silences a REAL user action
+    for a whole tick, and that flag exists to hide the loop's own re-entry (its
+    ``_show`` writes ``state.frame``, which would otherwise fire the listener and
+    draw a second time), not to hide the operator's. Returns the pair unchanged
+    when nothing moved, so the common tick is a no-op.
+    """
+    if int(current_frame) == int(drawn_frame):
+        return anchor_time, anchor_frame
+    return now, int(current_frame)
+
+
+def _play_caption(frames, rate, fps) -> str:
+    """The one line of arithmetic the player bar prints under the speed select.
+
+    It states the two numbers the picture cannot: how many positions a tick jumps
+    and how long one full sweep takes at that speed. The sweep time is
+    ``frames / (rate * fps)`` - the very quantity :func:`_play_target` integrates -
+    so the sentence and the motion cannot drift apart.
+
+    ``rate``/``fps`` are floored at 1, and a page with NO TIMELINE (``frames`` None
+    or 0) gets a word instead of a duration. The REJECTED alternative is to divide
+    anyway: 0 frames would raise ZeroDivisionError inside a layout builder (taking
+    the column down), and a non-zero denominator over no frames would print a
+    confident "0.0 s per sweep" for a page that has nothing to sweep - the same
+    invented-axis dishonesty the timeline labels refuse.
+    """
+    rate = max(1, int(rate))
+    fps = max(1, int(fps))
+    if frames is None or int(frames) <= 0:
+        return "no timeline"
+    sweep_s = int(frames) / (rate * fps)
+    return f"{rate} steps/tick at {fps} fps - {sweep_s:.1f} s per sweep"
 
 
 TIME_AXIS_KEY = "time_axis"
@@ -3871,10 +3974,15 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
     recording. No series pays for a coarser neighbour any more: the |E| volume
     is a decimated LAYER drawn on that clock and has no vote on its length.
     ``wall_clock_s`` is those counts over ``fps``, i.e. the play time at ONE
-    POSITION PER TICK; the play loop advances ``PLAY_STEPS_PER_TICK`` positions
-    per tick, so the time the page actually takes is that divided by the
-    factor. The ``planes`` entries below keep saying how many frames each stored
-    array HOLDS, which is a fact about the file rather than about the timeline.
+    POSITION PER TICK - the base rate the speed control is expressed against, and
+    therefore the one reading that does not depend on where the operator left that
+    control. The loop advances ``DEFAULT_PLAY_RATE`` positions per tick when the
+    page opens (and whatever rate the player bar is on afterwards, 1 to 8), so the
+    time the page actually takes is that divided by the factor; ``_play_caption``
+    does that division on the page, beside the select, so the state dump can keep
+    publishing the reading that stays true whichever speed is selected. The
+    ``planes`` entries below keep saying how many frames each stored array HOLDS,
+    which is a fact about the file rather than about the timeline.
     """
     fps = max(1, int(fps))
     vmin, vmax = info["color_range"]
@@ -9707,6 +9815,16 @@ def _volume_decimation(info: dict) -> int:
     return max(1, int(round(float(np.median(diffs)))))
 
 
+# Memo for _volume_player_plan. A page draws on EVERY tick, and the plan is a
+# pure function of (info, mode): rebuilding it per tick would rebuild two 2400-entry
+# searchsorted passes and a maximum.accumulate for a picture that cannot have
+# changed. Capped and cleared whole rather than grown, because the entries hold the
+# info dicts themselves (see below) and a long-lived viewer that opens dump after
+# dump must not accumulate them.
+_VOLUME_PLAN_CACHE: dict = {}
+_VOLUME_PLAN_CACHE_LIMIT = 8
+
+
 def _volume_player_plan(info: dict, mode: str):
     """The ONE mapping from a player position to the two indices it draws.
 
@@ -9744,6 +9862,38 @@ def _volume_player_plan(info: dict, mode: str):
     without bound. The two halves live in ONE record so every caller - the
     viewer, the colour range, the label - resolves them through the same
     indices and cannot disagree.
+
+    MEMOISED, and the memo keeps the info DICT as well as the plan. The page draws
+    this on every tick, so the work would otherwise be redone for a record that
+    cannot have changed between ticks; but keying on ``id(info)`` alone would be
+    unsound, because a freed dict's id can be handed to a new one - and a viewer
+    that opens dump after dump frees exactly such dicts. Holding the object next to
+    the plan means the id it was filed under cannot be recycled while the entry
+    lives (the object stays alive), and the ``is`` check on lookup rejects an entry
+    that somehow no longer belongs to the dict asked about rather than serving a
+    plan for another dump's axes. The memo keeps at most
+    ``_VOLUME_PLAN_CACHE_LIMIT`` entries and is cleared when full: the number of
+    distinct (dump, mode) pairs on screen is 2, so the cap only ever bites on a
+    long session that reloaded many dumps, and that is when the strong refs the
+    entries hold should go.
+    """
+    key = (id(info), mode)
+    hit = _VOLUME_PLAN_CACHE.get(key)
+    if hit is not None and hit[0] is info:
+        return hit[1]
+    plan = _build_volume_player_plan(info, mode)
+    if len(_VOLUME_PLAN_CACHE) >= _VOLUME_PLAN_CACHE_LIMIT:
+        _VOLUME_PLAN_CACHE.clear()
+    _VOLUME_PLAN_CACHE[key] = (info, plan)
+    return plan
+
+
+def _build_volume_player_plan(info: dict, mode: str):
+    """Recompute the plan; see :func:`_volume_player_plan` for what it means.
+
+    Split out only so the memo above is the ONE way in and cannot be bypassed by
+    accident: nothing else in the module calls this, and every caller therefore
+    sees the same plan object for the same record.
     """
     if info.get("e_abs_volume") is None:
         return None
@@ -11009,6 +11159,12 @@ def run_web_vis(
     # No timeline: the scrubber's range is ABSENT (None), never 0 frames.
     state.frame_max = _frame_span_max(nt, nt_x, "ycut")
     state.play_label = "play"
+    # The PLAY SPEED: how many positions a tick advances, and the sentence beside
+    # the select that states what that rate costs per sweep. Both are viewing
+    # choices like DEFAULT_FPS, so both live in the state and both are recomputed
+    # by _on_play_rate when the select moves - the caption is never a constant.
+    state.play_rate = DEFAULT_PLAY_RATE
+    state.play_caption = _play_caption(nt, DEFAULT_PLAY_RATE, fps)
 
     # Keyboard shortcuts (Space = play/pause, arrows = step). The browser side is
     # server/web_assets/keyboard.js; it calls the very same trigger names the
@@ -12143,6 +12299,15 @@ def run_web_vis(
             info.get(TIME_AXIS_KEY),
             _volume_layer_label(info, mode, index, plan),
         )
+        # The sweep time is a property of THIS page's timeline, so it is refreshed
+        # on every draw beside the frame label rather than only when the select
+        # moves: a finished solve, a family swap or a page swap all replace the
+        # frame count under a caption that would otherwise quote the old one.
+        state.play_caption = _play_caption(
+            frames,
+            _play_rate_near(getattr(state, "play_rate", DEFAULT_PLAY_RATE)),
+            fps,
+        )
         state.phase_label = _vis_phase_text(t_ns, info.get("t_traverse_ns"))
         if mode == "ycut":
             # The y the x-z sheet sits on is READ per draw, from the LIVE page,
@@ -12329,6 +12494,31 @@ def run_web_vis(
         if handles.get("suppress_frame_listener"):
             return  # the play loop drives _show() itself
         _show(state.frame if frame is None else frame, state.mode)
+
+    @state.change("play_rate")
+    def _on_play_rate(play_rate=None, **_kwargs) -> None:
+        """Snap the selected speed to an offered one and restate its caption.
+
+        ``play_rate`` is a bound UI value, so it arrives as whatever the client
+        sent - a string from a URL, a number the select does not offer, None - and
+        the loop would then advance by a rate nobody selected. The value is
+        replaced with the nearest offered one here, at the ONE place that sees
+        every write, and written back so the select and the caption show the speed
+        actually in use.
+
+        The write-back goes through ``suppress_change_listeners`` because it is a
+        change to the very variable this listener is bound to: without it the
+        write re-enters this handler, which is the shape of a flush loop rather
+        than a redraw. The PLAYING loop needs no notification - it re-reads
+        ``state.play_rate`` on every tick - so this handler only relabels.
+        """
+        raw = state.play_rate if play_rate is None else play_rate
+        rate = _play_rate_near(raw)
+        with state.suppress_change_listeners("play_rate"):
+            state.play_rate = rate
+        state.play_caption = _play_caption(
+            nt if state.mode == "ycut" else nt_x, rate, fps
+        )
 
     @ctrl.set("mode_toggle")
     def _on_mode_toggle(**_kwargs) -> None:
@@ -13416,31 +13606,71 @@ def run_web_vis(
             )
 
     async def _play_loop(gen: int) -> None:
-        """Advance one tick per wall-clock step until the trigger bumps the
-        generation or state.playing is cleared.
+        """Advance one position per tick ON A WALL-CLOCK SCHEDULE, until the
+        trigger bumps the generation or state.playing is cleared.
 
-        ONE TICK IS ``PLAY_STEPS_PER_TICK`` POSITIONS, because a position is a
-        SOLVER STEP: at the reference recording (2400 y-cut steps) one step per
-        24 fps tick would run for 100 s and the motion would be imperceptible -
-        ~0.018 mm of travel per step against a 0.25 mm half-cell. Eight steps a
-        tick keeps the wall clock under ~13 s at ~1.8 mm of travel per tick.
-        That factor is deliberately NOT a UI control: it changes how fast the
-        recording is REVIEWED, not what the recording is.
+        ONE POSITION PER TICK, chosen by the CLOCK rather than accumulated per
+        tick. ``state.play_rate`` positions a tick is what the operator asked for,
+        so the position on screen at time t is ``anchor + (t - t_anchor) * rate *
+        fps`` (:func:`_play_target`): a slow tick then ADVANCES FURTHER instead of
+        stalling, and the caption's "s per sweep" stays true on a busy machine.
+        The REJECTED alternative - add ``rate`` to the position each tick - is what
+        this loop used to do, and it makes the playback speed a property of the
+        box: the same selected rate plays slower whenever a heavy sheet is drawn,
+        so "4 steps/tick at 24 fps" no longer predicts the sweep time it quotes.
+
+        The LOOP IS SCHEDULED ON DEADLINES (``t0 + n/fps``), not as
+        work-then-``sleep(1/fps)``: the old shape added the draw time to every
+        period, so the tick rate silently fell below DEFAULT_FPS and the wall clock
+        drifted away from the rate the caption quotes.
+
+        One draw per tick, and it is the loop's OWN draw: ``_show`` writes
+        ``state.frame``, which fires the frame listener on the flush, so
+        ``suppress_frame_listener`` is held around the show+flush pair to keep the
+        listener from drawing the same position a second time. That flag hides the
+        loop's re-entry and nothing else - a position moved by the scrubber or a
+        step button is NOT suppressed: :func:`_play_reanchor` sees it and adopts it
+        as the new origin, so a seek while playing is respected rather than undone
+        on the next tick.
 
         Runs as a background task. It must NOT be awaited from a trigger
         handler: see _on_play_toggle.
         """
+        loop = asyncio.get_running_loop()
+        # The clock origin: the position on screen NOW, at the time playback
+        # started. Everything below is measured from this pair.
+        t0 = loop.time()
+        anchor_time = t0
+        anchor_frame = int(state.frame)
+        drawn = anchor_frame
+        tick = 0
         while int(handles.get("generation", 0)) == gen and state.playing:
-            frames = nt if state.mode == "ycut" else nt_x
+            tick += 1
+            # Deadline, not period: the draw time comes out of the NEXT sleep
+            # instead of being added to it (see the docstring).
+            delay = (t0 + tick / fps) - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            # Re-checked after the sleep: a pause, a step or a mode swap during
+            # the wait may have ended this loop.
+            if int(handles.get("generation", 0)) != gen or not state.playing:
+                return
+            rate = _play_rate_near(
+                getattr(state, "play_rate", DEFAULT_PLAY_RATE)
+            )
+            frames = max(1, int(nt if state.mode == "ycut" else nt_x))
+            now = loop.time()
+            anchor_time, anchor_frame = _play_reanchor(
+                anchor_time, anchor_frame, now, int(state.frame), drawn
+            )
+            target = _play_target(anchor_time, anchor_frame, now, rate, fps)
             handles["suppress_frame_listener"] = True
             try:
-                _show(
-                    (int(state.frame) + PLAY_STEPS_PER_TICK) % frames, state.mode
-                )
+                _show(target % frames, state.mode)
                 state.flush()
             finally:
                 handles["suppress_frame_listener"] = False
-            await asyncio.sleep(1.0 / fps)
+            drawn = int(state.frame)
 
     @ctrl.set("play_toggle")
     async def _on_play_toggle(**_kwargs) -> None:
@@ -14068,6 +14298,32 @@ def run_web_vis(
                         ctx.register_handle("ctrl", ctrl)
                         ctx.register_handle("nt", nt)
                         ctx.register_handle("plotter", plotter)
+                        # The PLAY SPEED the player bar offers: the values and the
+                        # one the select starts on, as one handle the centre column
+                        # may bind. A handle rather than a literal in the panel
+                        # builder, because PLAY_RATES is the app's own viewing
+                        # choice - the column must not carry a second copy of it
+                        # that can drift from what the loop accepts.
+                        ctx.register_handle(
+                            "play_rate_options",
+                            {
+                                "items": list(PLAY_RATES),
+                                "default": DEFAULT_PLAY_RATE,
+                            },
+                        )
+                        # The speed control's widget class, resolved HERE and
+                        # registered as a handle. VSelect is deliberately not in
+                        # the probed ``widgets`` table (a Vuetify variant without
+                        # it would cost the whole column), so the centre column
+                        # cannot look it up there - and a build without it simply
+                        # registers None, which is the column's signal to leave
+                        # the control out.
+                        ctx.register_handle(
+                            "play_rate_select",
+                            getattr(widgets_module, "VSelect", None)
+                            if widgets_module is not None
+                            else None,
+                        )
                         ctx.register("html_div", html_div)
                         ctx.register("VRow", VRow)
                         ctx.register("plotter_ui", plotter_ui)

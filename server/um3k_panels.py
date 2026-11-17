@@ -202,6 +202,53 @@ def build_center_panel(ctx) -> object:
                     f"unavailable: {exc}",
                     file=sys.stderr,
                 )
+        # THE PLAY SPEED: how many positions a tick advances, and the sweep time
+        # that costs - the one control the bar was missing, because a position is a
+        # SOLVER STEP and one to eight of them a tick turns a 100 s strobe into a
+        # 12 s review. It rides in the bar beside the scrubber it changes.
+        #
+        # THE SELECT CLASS COMES IN AS A HANDLE, not out of ``widgets``: that table
+        # probes only VSpacer/VSlider/VLabel/VContainer/VBtn, and VSelect is kept
+        # out of it on purpose (a Vuetify variant without VSelect would otherwise
+        # degrade the whole column instead of costing one control). So the page
+        # resolves the class and registers it here, and the block is skipped whole
+        # when it is absent: a context that registers neither handle builds exactly
+        # the column it built before.
+        #
+        # The CAPTION is emitted only WITH the select: the sentence states what the
+        # select is set to, so alone it would be a claim about a control that is
+        # not on the page - both or neither.
+        options = ctx.handles.get("play_rate_options")
+        select_cls = ctx.handles.get("play_rate_select")
+        if (
+            nt is not None
+            and options
+            and select_cls is not None
+            and "VLabel" in widgets
+        ):
+            try:
+                # v_bind_items is a JS ARRAY LITERAL, not a Python list: trame
+                # reads a list-valued binding as (state_name, default) and would
+                # emit only its first element, and [1, 2, 4, 8] holds no string
+                # so no quoting is needed.
+                rate_items = "[" + ", ".join(
+                    str(int(rate)) for rate in options["items"]
+                ) + "]"
+                select_cls(
+                    label="steps per tick",
+                    v_model=("play_rate", options["default"]),
+                    v_bind_items=rate_items,
+                    hide_details=True,
+                    density="compact",
+                    style="max-width: 150px; flex: 0 0 auto;",
+                )
+                widgets["VLabel"]("{{ play_caption }}")
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[poc_app] play speed control "
+                    f"unavailable: {exc}",
+                    file=sys.stderr,
+                )
         if "VBtn" in widgets:
             try:
                 widgets["VBtn"](
