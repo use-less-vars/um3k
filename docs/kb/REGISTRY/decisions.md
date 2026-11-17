@@ -177,3 +177,9 @@ citations pointing at nothing in the commit that was supposed to clarify them.
 - Trigger: PROCEDURE.md sat at 20,459 B of a 20,480 B budget (21 B slack). The slack is a signal, not a rounding error: the file had no room for the next substantive edit, so the next substantive edit was the split itself.
 - Executed: the Stage 1b host runbook lives in docs/kb/RUNBOOK.md; PROCEDURE.md keeps a pointer only. Exact byte counts are stated in the commit that landed the split.
 - repin_kb.py globs docs/kb/**/*.md, so RUNBOOK.md joins the pin set with no code change.
+
+### P0-boot [proposed] - boot to a page that has something on it
+- Problem: default boot loads DEFAULT_STRUCTURE build_A_50ohm, whose evidence file is a legacy single-plane dump with no time axis and no geometry keys, so the first screen prints "geometry: not drawn" and "no timeline on this page". The only volume-carrying artefact in the tree is artifacts/reference_sim_volume.npz (46 keys, 40 MB, schema emfit.vis/2), and it is not referenced by structures.json (3 entries, two of them record-only with null paths).
+- Proposal: make the reference volume the boot example - either as a fourth structures.json entry marked example, or through an explicit --input default - so a new user sees a rendered volume and a timeline on first load.
+- Blocker: the volume is gitignored (*.npz) and absent from HEAD:artifacts, so the wiring cannot land before the artefact does. The ruling to ship it once, with the regeneration script scripts/run_reference_sim.py, is recorded; the commit needs an explicit gitignore exception for that single path, because the agent's git tool surface has no force-add.
+- Not yet done because it must not interleave with the Stage 1b repin or the P2 split.
