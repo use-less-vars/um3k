@@ -627,6 +627,361 @@ def _frame_label(index, frames, time_axis=None):
     return f"frame {int(index) + 1} / {int(frames)}"
 
 
+# ---------------------------------------------------------------------------
+# TEMPORAL ALIASING REPORT
+#
+# Fix 1 named the solver step each frame stands on. That is still not the whole
+# truth about a decimated volume: the captures are 100 steps apart, the player
+# animates them as if the field travelled continuously between them, and until
+# now it said nothing about it. When the field's own phase turns by more than a
+# period between two stored frames, the animated motion is not the motion - it
+# is an ALIAS of it.
+#
+# THE PHASE IS MEASURED. Two routes, both reading the recording:
+#
+#   1. BEST - track the complex phase of ONE probe through a plane series the
+#      dump already stores frame by frame, unwrap it, and take the median
+#      advance per recorded plane frame; then scale it by the volume's stride.
+#   2. otherwise - the RECORDED frequency times the RECORDED ``dt_s`` times the
+#      stride: phi = 2*pi*f*dt*stride. The key used is named in ``source``.
+#
+# No velocity, wavelength, permittivity or frequency is typed in here: the ones
+# that appear are read out of ``info`` and named in ``source``. When neither
+# route yields a defensible number the report says it cannot decide and NO
+# banner is drawn - an invented number is the defect, not the fix.
+# ---------------------------------------------------------------------------
+
+ALIASING_FULL_PERIOD_RAD = 2.0 * math.pi
+ALIASING_QUARTER_PERIOD_RAD = 0.5 * math.pi
+
+
+def _aliasing_sentence(stride) -> str:
+    """The banner sentence, character for character (stride substituted)."""
+    return (
+        f"Temporal Aliasing: Volume is decimated \u00d7{int(stride)}. "
+        "Wave motion is not continuous between frames."
+    )
+
+
+@dataclass(frozen=True, eq=False)
+class AliasingReport:
+    """WHAT ONE DRAWN VOLUME FRAME DOES TO THE MOTION, read off the recording.
+
+    ``stride`` and ``frames`` are the player's own volume clock (the page's
+    :class:`TimeAxis`); ``phase_per_frame_rad`` is the angle a probe of the
+    field turns through between two STORED volume frames - measured, never
+    assumed - and ``frames_per_period`` is the same quantity as "how many stored
+    frames fit into one period", i.e. how much of the motion one frame hides.
+    ``source`` names where that phase came from, so no reader has to take it on
+    trust.
+
+    ``aliased`` is True when the advance passes a QUARTER period (the motion is
+    undersampled against the quarter-wave convention) or a FULL one (consecutive
+    frames do not even continue one another); ``severity`` says which of the two
+    fired and ``reason`` states it in the measured degrees. ``text`` is the
+    banner sentence, and is None whenever the page must stay silent: not
+    aliased, or nothing measurable at all - in which case
+    ``phase_per_frame_rad`` is None rather than a guess, because a guessed phase
+    is exactly the dishonesty this record exists to remove.
+    """
+
+    stride: int
+    frames: int
+    phase_per_frame_rad: float | None
+    frames_per_period: float | None
+    source: str
+    aliased: bool
+    severity: str
+    reason: str
+    text: str | None
+
+
+def _positive_float(value):
+    """A finite, strictly positive float, or None - never a zero-filled one."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0.0 else None
+
+
+def _longest_true_run(mask):
+    """``(start, stop)`` of ``mask``'s longest unbroken True stretch, or None.
+
+    One unbroken stretch rather than "all the good samples": unwrapping a phase
+    across a gap of rejected samples would difference across the gap and report
+    the gap's own angle as if it were one frame's advance.
+    """
+    best = None
+    start = None
+    total = 0
+    for index, flag in enumerate(mask):
+        total = index + 1
+        if flag:
+            if start is None:
+                start = index
+        elif start is not None:
+            if best is None or index - start > best[1] - best[0]:
+                best = (start, index)
+            start = None
+    if start is not None and (best is None or total - start > best[1] - best[0]):
+        best = (start, total)
+    return best
+
+
+def _plane_step_spacing(info, key):
+    """How many solver steps ONE recorded frame of plane ``key`` stands for.
+
+    The y-cut is sampled on ``frame_index`` and the two x-cuts on
+    ``frame_index_xcut``; both are recorded step numbers, so their own spacing is
+    the plane's stride. A dump whose recorded axis is missing or unreadable is
+    read as one step per frame - the only claim that survives, and the same
+    fallback ``build_time_axis`` makes.
+    """
+    axis_keys = (
+        ("frame_index_xcut", "frame_index")
+        if str(key).startswith("ez_xcut")
+        else ("frame_index",)
+    )
+    for axis_key in axis_keys:
+        steps = info.get(axis_key)
+        if steps is None:
+            continue
+        try:
+            values = np.asarray(steps, dtype=float).ravel()
+        except (TypeError, ValueError):
+            continue
+        if values.size < 2:
+            continue
+        gaps = np.diff(values)
+        gaps = gaps[np.isfinite(gaps) & (gaps > 0.0)]
+        if gaps.size < 1:
+            continue
+        spacing = int(round(float(np.median(gaps))))
+        if spacing >= 1:
+            return spacing
+    return 1
+
+
+def _phase_from_complex_planes(info, stride):
+    """``(source, radians per volume frame)`` tracked through a complex plane.
+
+    A complex plane series carries the field's PHASE frame by frame, so the
+    advance is measured rather than derived from any frequency at all. The probe
+    is the brightest voxel of the middle stored frame - a point inside the
+    moving field - and the advance is the MEDIAN of ``diff(unwrap(angle))`` over
+    the probe's longest unbroken stretch of usable samples, so one noisy window
+    cannot set the answer.
+
+    A near-zero ``|Ez|`` sample has no phase, only noise, so windows below a
+    quarter of the probe's own median amplitude are rejected: reporting noise as
+    motion is the failure mode this guard exists for, and an all-zero probe is
+    rejected outright (its angle is 0 everywhere, which would read as perfectly
+    still motion).
+
+    The result is per RECORDED PLANE frame, so it is scaled by the volume's
+    stride over the plane's own stride - one measured quantity, one conversion.
+    """
+    try:
+        ratio = float(int(stride))
+    except (TypeError, ValueError):
+        return None
+    for key in ("ez_ycut", "ez_xcut_near", "ez_xcut_far"):
+        field = info.get(key)
+        if field is None:
+            continue
+        try:
+            array = np.asarray(field)
+        except (TypeError, ValueError):
+            continue
+        if not np.iscomplexobj(array) or array.ndim != 3 or array.shape[0] < 3:
+            continue
+        amplitude = np.abs(array)
+        middle = amplitude[amplitude.shape[0] // 2]
+        if middle.size < 1 or not bool(np.any(np.isfinite(middle))):
+            continue
+        j, k = np.unravel_index(int(np.nanargmax(middle)), middle.shape)
+        series = array[:, j, k]
+        magnitudes = np.abs(series)
+        usable = (
+            np.isfinite(magnitudes)
+            & np.isfinite(series.real)
+            & np.isfinite(series.imag)
+        )
+        if int(usable.sum()) < 3:
+            continue
+        floor = 0.25 * float(np.median(magnitudes[usable]))
+        if not floor > 0.0:
+            # An all-zero probe records no field, so it records no phase.
+            continue
+        run = _longest_true_run(usable & (magnitudes >= floor))
+        if run is None or run[1] - run[0] < 3:
+            continue
+        advances = np.diff(np.unwrap(np.angle(series[run[0]:run[1]])))
+        advances = advances[np.isfinite(advances)]
+        if advances.size < 2:
+            continue
+        per_interval = float(np.median(advances))
+        if not math.isfinite(per_interval) or per_interval == 0.0:
+            continue
+        plane_stride = _plane_step_spacing(info, key)
+        scale = ratio / float(plane_stride)
+        phase = per_interval * scale
+        if not math.isfinite(phase) or phase == 0.0:
+            continue
+        source = (
+            f"{key} complex phase track at probe (j={int(j)}, k={int(k)}), "
+            f"median of {int(advances.size)} unwrapped frame-to-frame advances "
+            f"over {int(run[1] - run[0])} usable frames, scaled x{scale:g} "
+            f"(volume stride over plane stride)"
+        )
+        return source, phase
+    return None
+
+
+def _phase_from_recorded_frequency(info, stride):
+    """``(source, radians per volume frame)`` from a recorded f and ``dt_s``.
+
+    phi = 2*pi*f*dt*stride, with BOTH numbers read from the dump and named in
+    ``source``. ``f_pulse_hz`` is preferred over ``f_ref_hz`` because it is the
+    recorded centre of the pulse the stored field IS: ``f_ref_hz`` is the
+    parent beta's reference frequency, quoted by this dump for its phase-velocity
+    note rather than as the carrier on screen. A missing or unusable ``dt_s``
+    yields no number at all - a time step nobody recorded cannot be assumed.
+    """
+    dt = _positive_float(info.get("dt_s"))
+    if dt is None:
+        return None
+    try:
+        steps = float(int(stride))
+    except (TypeError, ValueError):
+        return None
+    for key in ("f_pulse_hz", "f_ref_hz"):
+        hertz = _positive_float(info.get(key))
+        if hertz is None:
+            continue
+        phase = 2.0 * math.pi * hertz * dt * steps
+        if not math.isfinite(phase) or phase == 0.0:
+            continue
+        source = (
+            f"recorded {key} = {hertz:g} Hz x recorded dt_s = {dt:g} s "
+            f"x stride {int(steps)} (phi = 2*pi*f*dt*stride)"
+        )
+        return source, phase
+    return None
+
+
+def _volume_aliasing(info):
+    """The volume player's temporal-aliasing report, or None without a volume.
+
+    PURE and cheap: one probe series (or two recorded scalars), no rescaling of
+    the volume, no PyVista, no trame - so it can run once when the page is built
+    and never on a per-frame path.
+
+    None means THIS PAGE DOES NOT ANIMATE A VOLUME (a 2-D-only page, or a dump
+    with no ``|E|`` volume), and the caller therefore draws no banner: the
+    sentence names a decimation, and a page with nothing decimated has nothing
+    to say.
+
+    A report with ``phase_per_frame_rad = None`` is the other silence, and it is
+    a different claim: there IS a volume, but this recording does not contain
+    the phase advance between its frames, so the honest answer is "undecidable"
+    with the why in ``reason``.
+    """
+    if not isinstance(info, dict):
+        return None
+    volume = info.get("e_abs_volume")
+    if volume is None:
+        return None
+    axis = info.get(TIME_AXIS_KEY)
+    stride = 0
+    frames = 0
+    if axis is not None:
+        try:
+            stride = int(axis.stride)
+            frames = int(axis.n_frames)
+        except (AttributeError, TypeError, ValueError):
+            stride, frames = 0, 0
+    if stride <= 0:
+        try:
+            stride = int(info.get("e_abs_volume_stride") or 1)
+        except (TypeError, ValueError):
+            stride = 1
+    if frames <= 0:
+        try:
+            frames = int(np.asarray(volume).shape[0])
+        except (AttributeError, IndexError, TypeError, ValueError):
+            frames = 0
+
+    measured = _phase_from_complex_planes(info, stride)
+    if measured is None:
+        measured = _phase_from_recorded_frequency(info, stride)
+    if measured is None:
+        return AliasingReport(
+            stride=int(stride),
+            frames=int(frames),
+            phase_per_frame_rad=None,
+            frames_per_period=None,
+            source="undecidable from this recording",
+            aliased=False,
+            severity="undecidable",
+            reason=(
+                "cannot decide: the dump stores no complex plane series to track "
+                "a phase through, and no recorded frequency beside a usable "
+                "dt_s. The phase advance between two volume frames is not in "
+                "this recording, and it is not guessed here"
+            ),
+            text=None,
+        )
+
+    source, phase = measured
+    degrees = math.degrees(phase)
+    frames_per_period = 2.0 * math.pi / abs(phase)
+    if phase > ALIASING_FULL_PERIOD_RAD:
+        severity = "discontinuous"
+        aliased = True
+        reason = (
+            f"the field advances {degrees:.1f} deg per volume frame, more than a "
+            "full period (360 deg): consecutive stored frames do not continue "
+            "one another's motion, so the player shows an alias of it"
+        )
+    elif phase > ALIASING_QUARTER_PERIOD_RAD:
+        severity = "undersampled"
+        aliased = True
+        reason = (
+            f"the field advances {degrees:.1f} deg per volume frame, more than a "
+            "quarter period (90 deg), so the recording undersamples the motion "
+            "against the quarter-wave convention"
+        )
+    else:
+        severity = "none"
+        aliased = False
+        reason = (
+            f"the field advances {degrees:.1f} deg per volume frame, within a "
+            "quarter period (90 deg): the stored frames sample the motion"
+        )
+
+    text = None
+    if aliased and int(stride) > 1:
+        text = _aliasing_sentence(int(stride))
+    elif aliased:
+        reason += (
+            "; no banner is drawn, because the sentence names a decimation and "
+            "this volume is stored every step (stride 1)"
+        )
+    return AliasingReport(
+        stride=int(stride),
+        frames=int(frames),
+        phase_per_frame_rad=float(phase),
+        frames_per_period=float(frames_per_period),
+        source=source,
+        aliased=bool(aliased),
+        severity=severity,
+        reason=reason,
+        text=text,
+    )
+
+
 def _load_series_block(data, path: Path):
     """The load's own V(t)/I(t) trace as ONE state block, or ``(None, reason)``.
 
@@ -6366,6 +6721,12 @@ def run_web(
     page_state = build_state_dump(info, structure, structures)
     mismatch = page_state["mismatch"]
     banner_text = _mismatch_banner_text(mismatch)
+    # The temporal-aliasing report for the 3-D player, built once here from the
+    # recording itself: None on a page with no volume (a 2-D page has nothing
+    # decimated, so it has nothing to say), and a report whose text is None when
+    # the recording cannot decide or the motion is not decimated.
+    aliasing = _volume_aliasing(info)
+    aliasing_text = aliasing.text if aliasing is not None else None
     port_waves = page_state["port_waves"]
     port_reason = page_state["port_waves_reason"]
     # The toggle needs the button widget AND the toolbar that carries it: when
@@ -6665,6 +7026,36 @@ def run_web(
         ):
             html_div(banner_text)
 
+    def _emit_aliasing_banner() -> None:
+        """The temporal-aliasing warning, or nothing at all.
+
+        ``aliasing_text`` is None on a page with no 3-D volume, when the
+        recording cannot decide the frame-to-frame phase advance, and when the
+        motion is not decimated - so this block draws only when the sentence is
+        true of the field on screen. The sentence itself is built by
+        :func:`_volume_aliasing`; no number is typed here.
+        """
+        if aliasing_text is None:
+            return
+        if html_div is None:
+            if placeholder is not None:
+                placeholder(aliasing_text)
+                return
+            print(
+                "[poc_app] aliasing banner not shown: no html widgets",
+                file=sys.stderr,
+            )
+            return
+        with html_div(
+            style=(
+                "width: 100%; box-sizing: border-box; background: #fff3cd; "
+                "color: #8a1c00; border: 3px solid #b00020; "
+                "border-radius: 4px; padding: 8px 14px; margin: 6px 12px; "
+                "font-size: 15px; font-weight: 700; line-height: 1.35;"
+            )
+        ):
+            html_div(aliasing_text)
+
     def _emit_volume_quiver_toggle() -> None:
         """The 3-D vectors checkbox, or nothing when it cannot do anything.
 
@@ -6891,6 +7282,7 @@ def run_web(
             container = widgets.get("VContainer")
             if container is None:
                 _emit_mismatch_banner()
+                _emit_aliasing_banner()
                 if placeholder is not None:
                     with placeholder():
                         view = plotter_ui(plotter)
@@ -6900,6 +7292,7 @@ def run_web(
                 # No html widgets: the plotter keeps the whole content area.
                 with container(fluid=True, classes="pa-0 fill-height"):
                     _emit_mismatch_banner()
+                    _emit_aliasing_banner()
                     view = plotter_ui(plotter)
             else:
                 # Fixed slider + panel rows around a flexed plotter, so the
@@ -6929,6 +7322,7 @@ def run_web(
                         )
                     ):
                         _emit_mismatch_banner()
+                        _emit_aliasing_banner()
                         with html_div(
                             style=(
                                 "display: flex; flex-wrap: wrap; "

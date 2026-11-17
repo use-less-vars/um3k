@@ -27,6 +27,7 @@ the dump, so this file needs no pyvista, no trame and no VTK.
 from __future__ import annotations
 
 import dataclasses
+import math
 import sys
 from pathlib import Path
 
@@ -238,3 +239,199 @@ def test_the_axis_is_a_frozen_record():
     axis = app.build_time_axis(n_frames=3)
     with pytest.raises(dataclasses.FrozenInstanceError):
         axis.stride = 7  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# The temporal-aliasing report the 3-D player's banner is built from.
+#
+# The player draws volume frames at its own clock, so on a decimated dump one
+# click advances the SOLVER's clock by the stride - and if that jump turns the
+# field through more than a period, the motion on screen is an alias of the real
+# one.  ``_volume_aliasing`` is the one place that quantity is computed, and it
+# is measured from the recording, never from a typed-in wavelength: the cases
+# below are the three answers it may give (measured, undecidable, no volume) and
+# the two thresholds it applies to a measured phase.
+# ---------------------------------------------------------------------------
+
+ALIASING_SENTENCE_X100 = (
+    "Temporal Aliasing: Volume is decimated \u00d7100. "
+    "Wave motion is not continuous between frames."
+)
+
+
+def test_the_reference_volume_reports_the_alias_it_really_shows(real_info):
+    """411.820 deg between stored frames, read out of the dump's own numbers.
+
+    The reference volume is decimated x100 and stores NO complex plane series,
+    so the phase comes from the dump's recorded ``f_pulse_hz`` beside its real
+    ``dt_s``: 2*pi * 1.5e10 Hz * 7.626299478123987e-13 s * 100 = 7.1876179 rad
+    = 411.820 deg per drawn volume frame.  More than a full period, so the frames
+    do not continue one another's motion and the banner sentence is true.
+    """
+    report = app._volume_aliasing(real_info)
+    assert report is not None, (
+        "the reference volume is the decimated dump this report exists for, and "
+        "it came back as 'no volume'"
+    )
+    assert isinstance(report, app.AliasingReport), (
+        f"the report is a {type(report).__name__}, not an AliasingReport"
+    )
+    axis = real_info[app.TIME_AXIS_KEY]
+    assert report.stride == 100, (
+        f"the report names a x{report.stride} decimation, the file recorded 100"
+    )
+    assert report.frames == 24 == axis.n_frames, (
+        f"the report describes {report.frames} frames, the axis {axis.n_frames}"
+    )
+    assert math.isfinite(report.phase_per_frame_rad), (
+        f"the phase advance is {report.phase_per_frame_rad!r}: the banner would "
+        "be drawn on a number that is not a number"
+    )
+    # 411.820 deg, measured: the band is wide enough to survive a re-recorded
+    # dump at the same decimation but narrow enough that a half-period or a
+    # whole-turn error cannot hide inside it.
+    degrees = math.degrees(report.phase_per_frame_rad)
+    assert 400.0 < degrees < 425.0, (
+        f"the field advances {degrees:.3f} deg per volume frame, not the "
+        "measured 411.820"
+    )
+    assert report.frames_per_period == pytest.approx(
+        2.0 * math.pi / report.phase_per_frame_rad
+    )
+    assert 0.85 < report.frames_per_period < 0.90, (
+        f"a period lasts {report.frames_per_period:.4f} volume frames: less than "
+        "one frame means every stored frame lands at a new phase"
+    )
+    assert report.aliased is True
+    assert report.severity == "discontinuous", (
+        f"severity {report.severity!r}: past a full period the frames are not "
+        "undersampled, they are unrelated"
+    )
+    assert "full period" in report.reason, (
+        f"the reason does not name the rule that fired: {report.reason!r}"
+    )
+    assert "f_pulse_hz" in report.source, (
+        f"the source does not name the recorded frequency it used: "
+        f"{report.source!r}"
+    )
+    assert report.text == ALIASING_SENTENCE_X100, (
+        f"the banner sentence is {report.text!r}, not the page's sentence "
+        f"{ALIASING_SENTENCE_X100!r}"
+    )
+
+
+def test_an_undecimated_volume_measures_the_recorded_phase():
+    """One stored frame per step: the phase is small and NO banner is due."""
+    info = {
+        "e_abs_volume": np.zeros((4, 2, 2), dtype=np.float32),
+        "dt_s": 1e-12,
+        "f_pulse_hz": 1e9,
+        "ez_ycut": np.zeros((4, 2, 2), dtype=np.float32),
+    }
+    report = app._volume_aliasing(info)
+    assert report is not None
+    assert report.stride == 1, (
+        f"a dump with no recorded stride is stored every step, not every "
+        f"{report.stride}"
+    )
+    assert report.phase_per_frame_rad == pytest.approx(2.0 * math.pi * 1e9 * 1e-12)
+    assert report.aliased is False
+    assert report.severity == "none", f"severity {report.severity!r}"
+    assert report.text is None, (
+        f"an undecimated volume carried a banner sentence: {report.text!r}"
+    )
+
+
+def test_a_recording_with_no_phase_reference_says_it_cannot_decide():
+    """A volume, but neither a complex plane nor f+dt: the answer is silence."""
+    info = {
+        "e_abs_volume": np.zeros((4, 2, 2), dtype=np.float32),
+        "dt_s": None,
+        "f_pulse_hz": None,
+        "f_ref_hz": None,
+        "ez_ycut": np.zeros((4, 2, 2), dtype=np.float32),
+    }
+    report = app._volume_aliasing(info)
+    assert report is not None, (
+        "a volume with nothing to measure it by is 'undecidable', not 'no volume'"
+    )
+    assert report.phase_per_frame_rad is None, (
+        f"a phase was invented: {report.phase_per_frame_rad!r}"
+    )
+    assert report.frames_per_period is None
+    assert report.aliased is False
+    assert report.text is None, (
+        f"a banner was drawn on an undecidable recording: {report.text!r}"
+    )
+    assert report.reason.strip(), "the undecidable answer carries no reason"
+
+
+def test_a_complex_plane_series_measures_the_phase_frame_by_frame():
+    """Route (a): a complex field whose phase really turns 0.3 rad per frame."""
+    frames = 64
+    field = np.exp(1j * 0.3 * np.arange(frames))[:, None, None] * np.ones(
+        (frames, 4, 3)
+    )
+    info = {
+        "e_abs_volume": np.zeros((frames, 2, 2), dtype=np.float32),
+        "e_abs_volume_stride": 1,
+        "frame_index": np.arange(frames),
+        "ez_ycut": field.astype(np.complex128),
+    }
+    report = app._volume_aliasing(info)
+    assert report is not None
+    assert report.phase_per_frame_rad == pytest.approx(0.3, rel=1e-6), (
+        f"the tracked phase is {report.phase_per_frame_rad!r}, not the 0.3 rad "
+        "the field was built with"
+    )
+    assert "ez_ycut" in report.source, (
+        f"the source does not say which plane was tracked: {report.source!r}"
+    )
+    assert report.aliased is False
+    assert report.text is None
+
+
+def test_an_all_zero_plane_is_not_read_as_still_motion():
+    """A probe that records no field records no phase - it is not 'still'."""
+    frames = 8
+    info = {
+        "e_abs_volume": np.zeros((frames, 2, 2), dtype=np.float32),
+        "ez_ycut": np.zeros((frames, 4, 3), dtype=np.complex128),
+    }
+    report = app._volume_aliasing(info)
+    assert report is not None
+    assert report.phase_per_frame_rad is None, (
+        f"all-zero samples were read as a phase: {report.phase_per_frame_rad!r}"
+    )
+    assert report.aliased is False
+    assert report.text is None
+
+
+def test_a_page_with_no_volume_has_no_aliasing_report():
+    """Nothing decimated, nothing to say: the 2-D page draws no banner."""
+    assert app._volume_aliasing({"e_abs_volume": None}) is None
+
+
+def test_a_reference_frequency_fires_the_quarter_period_rule():
+    """Without ``f_pulse_hz`` the recorded ``f_ref_hz`` still decides - 160.000 deg.
+
+    2*pi * 5.82778641e9 Hz * 7.626299478123987e-13 s * 100 = 2.7925268 rad =
+    160.000 deg: past a quarter period but not a full one, so the severity is
+    'undersampled'. The SENTENCE is the decimation one either way - it is the
+    page's only aliasing sentence - which is why this case pins both.
+    """
+    info = {
+        "e_abs_volume": np.zeros((24, 2, 2), dtype=np.float32),
+        "e_abs_volume_stride": 100,
+        "dt_s": 7.626299478123987e-13,
+        "f_pulse_hz": None,
+        "f_ref_hz": 5.82778641e9,
+        "ez_ycut": np.zeros((2400, 2, 2), dtype=np.float32),
+    }
+    report = app._volume_aliasing(info)
+    assert report is not None
+    assert report.severity == "undersampled", f"severity {report.severity!r}"
+    assert report.aliased is True
+    assert report.text == app._aliasing_sentence(100), (
+        f"the banner sentence is {report.text!r}"
+    )
