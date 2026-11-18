@@ -953,12 +953,13 @@ def test_a_png_request_is_applied_where_it_can_be_and_reported_where_it_cannot()
 
 
 def test_the_rate_lines_turn_ticks_into_an_answer_about_the_target():
-    """Ten ticks 0.1s apart against 24 fps: 11.11 ticks/s is 46.3% of the target."""
+    """Ten ticks 0.1s apart against 24 fps: 11.11 paints/s is 46.3% of the cap."""
     rows = [{"t": index * 0.1, "wall_ms": 50.0} for index in range(10)]
     lines = poc_app._profile_rate_lines(rows, 24)
 
     assert lines[0] == (
-        "target: fps=24 frame=41.67 ms  achieved=11.11 ticks/s (46.3% of target)"
+        "target: fps=24 frame=41.67 ms  painted=10 over 0.90 s  "
+        "paints/s=11.11 vs cap 24.00 (46.3% of target)"
     )
     assert lines[1] == "over one frame period: 10 of 10 ticks (100.0%)"
 
@@ -966,10 +967,11 @@ def test_the_rate_lines_turn_ticks_into_an_answer_about_the_target():
 def test_the_rate_lines_count_only_the_ticks_that_overran_one_frame():
     """A tick faster than the frame period is shown, not dropped: 0 of 10."""
     rows = [{"t": index * 0.1, "wall_ms": 10.0} for index in range(10)]
-    lines = poc_app._profile_rate_lines(rows, 24, elapsed=1.0)
+    lines = poc_app._profile_rate_lines(rows, 24)
 
     assert lines[0] == (
-        "target: fps=24 frame=41.67 ms  achieved=10.00 ticks/s (41.7% of target)"
+        "target: fps=24 frame=41.67 ms  painted=10 over 0.90 s  "
+        "paints/s=11.11 vs cap 24.00 (46.3% of target)"
     )
     assert lines[1] == "over one frame period: 0 of 10 ticks (0.0%)"
 
@@ -1006,7 +1008,7 @@ def test_the_summary_header_names_the_picture_and_the_knobs(prof, renderer):
     assert lines[4] == (
         "knobs: fps=24 msaa=8 image_encoding=png image_quality=70"
     )
-    assert lines[5].startswith("target: fps=24 frame=41.67 ms  achieved=")
+    assert lines[5].startswith("target: fps=24 frame=41.67 ms  painted=")
     assert lines[6].startswith("over one frame period: ")
     assert lines[7] == "phases (ms): phase       n     p50     p95     max"
 

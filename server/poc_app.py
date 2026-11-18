@@ -1551,6 +1551,9 @@ _PROFILE_IDLE_GAP_S = 0.9
 _PROFILE_MAX_ROWS = 20000
 _PROFILE_SUMMARY_EVERY = 200
 _PROFILE_PHASES = ("reanchor", "target", "draw", "flush", "yield")
+# Counters a play-loop gate bumps when it skips a beat: the beat is skipped
+# BEFORE _show opens a tick, so the count is carried to the next written row.
+_PROFILE_GATE_COUNTS = ("paint_cap", "delivery_hold")
 
 _PROFILE = {
     "enabled": False,
@@ -1881,7 +1884,15 @@ def _profile_tick_begin(frame=None, mode=None):
         _profile_flush_pending()
         now = _profile_now()
         _PROFILE["ticks"] = int(_PROFILE["ticks"]) + 1
-        _PROFILE["tick_counts"] = {}
+        # Per-tick counts start at zero - except the ones a play-loop gate took
+        # BETWEEN ticks: those beats are skipped before _show, so they never open
+        # a tick of their own and their counts are carried to the row this tick
+        # is about to write instead of being wiped here.
+        _PROFILE["tick_counts"] = {
+            name: _PROFILE["tick_counts"][name]
+            for name in _PROFILE_GATE_COUNTS
+            if name in _PROFILE["tick_counts"]
+        }
         _PROFILE["last_tick_at"] = now
         _PROFILE["mark_at"] = now
         # The delivery totals AS THE TICK OPENS: the row reports what trame did
@@ -2023,6 +2034,9 @@ def _profile_tick_end(frame_published=None, plotter=None, mode=None):
         if mode is not None:
             tick["mode"] = mode
         tick["counts"] = dict(_PROFILE["tick_counts"])
+        # Emptied HERE as well as in _profile_tick_begin: the carry above must
+        # not hand a gate count to the row after the one it was attached to.
+        _PROFILE["tick_counts"] = {}
         # What the IMAGE-DELIVERY path did during this tick: pushes attempted,
         # pushes that reached the encoder, the stills it encoded and their cost.
         tick.update(_profile_delivery_delta())
@@ -2374,19 +2388,42 @@ def _profile_animate_record(delivery, now=None):
         return None
 
 
-def _profile_client_record(kind="animation_start", now=None):
-    """Record one interaction edge, with the time since the run started."""
+def _profile_client_record(kind="animation_start", now=None, detail=None):
+    """Record one interaction edge, with the time since the run started.
+
+    ``detail`` is an optional dict of extra facts the edge carries (a seek says
+    where it came from and where it went). It is added to the event only, never
+    to the counts, so an edge that is not one of the delivery kinds still costs
+    the summary nothing but its own line.
+    """
     try:
         end = _profile_now() if now is None else float(now)
         client = _PROFILE["client"]
-        client["events"].append(
-            {"t": round(_profile_elapsed(end), 3), "kind": str(kind)}
-        )
+        event = {"t": round(_profile_elapsed(end), 3), "kind": str(kind)}
+        if detail:
+            event.update((str(key), value) for key, value in dict(detail).items())
+        client["events"].append(event)
         if kind in _PROFILE_DELIVERY_EVENTS:
             client[kind] = int(client[kind]) + 1
         return kind
     except Exception:  # noqa: BLE001
         return None
+
+
+def _profile_seek(handles, position):
+    """Record a slider seek as a client "seek" edge - only when profiled.
+
+    ``position`` is where the slider landed; where it came FROM is added when
+    the handles already know it, so a jump of 400 frames reads as a jump rather
+    than as one more tick. Nothing is drawn differently by this.
+    """
+    if not _PROFILE["enabled"]:
+        return None
+    detail = {"to": position}
+    previous = handles.get("frame_seen")
+    if previous is not None:
+        detail["from"] = previous
+    return _profile_client_record("seek", detail=detail)
 
 
 def _profile_client_kind(default):
@@ -2606,6 +2643,20 @@ def _profile_span(value, fmt="%.3f"):
         return "default"
 
 
+def _profile_event_detail(event):
+    """The extra fields one client edge carries, as the event line spells them.
+
+    A seek carries the position it left and the position it landed on, so the
+    line reads "kind=seek from=40 to=440". An edge with neither prints exactly
+    as it did before (the string is empty).
+    """
+    parts = []
+    for name in ("from", "to"):
+        if name in event:
+            parts.append("%s=%s" % (name, _profile_span(event.get(name), "%d")))
+    return (" " + " ".join(parts)) if parts else ""
+
+
 def _profile_delivery_lines():
     """The image-delivery block: what trame was asked to ship, and what it did."""
     push = _PROFILE["push"]
@@ -2658,8 +2709,12 @@ def _profile_delivery_lines():
     if 0 < len(events) <= _PROFILE_DELIVERY_MAX_EVENTS:
         for event in events:
             out.append(
-                "ev t=%s kind=%s"
-                % (_profile_span(event.get("t")), event.get("kind"))
+                "ev t=%s kind=%s%s"
+                % (
+                    _profile_span(event.get("t")),
+                    event.get("kind"),
+                    _profile_event_detail(event),
+                )
             )
     return out
 
@@ -2755,6 +2810,23 @@ def _resolve_display_knobs(msaa=None, image_encoding=None, image_quality=None):
             raise ValueError("--image-quality must be 1..100, got %d" % value)
         resolved["image_quality"] = value
     return resolved
+
+
+def _display_knobs_or_exit(parser, args):
+    """``_resolve_display_knobs`` over parsed args, a bad knob being a USAGE error.
+
+    The refusal is the parser's (exit 2, the message names the flag and the
+    range), so a value VTK or the transport would ignore never reaches a run
+    looking like a knob that was honoured.
+    """
+    try:
+        return _resolve_display_knobs(
+            getattr(args, "msaa", None),
+            getattr(args, "image_encoding", None),
+            getattr(args, "image_quality", None),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 def _knob_text(value):
@@ -2936,21 +3008,85 @@ def _apply_msaa(plotter, multi_samples):
     return _window_multi_samples(plotter)
 
 
+def _image_view_kwargs(quality=None):
+    """The construction kwargs that ask a trame view for a still quality.
+
+    A trame widget only forwards a property it was BUILT with: assigning one
+    after the layout HTML has been generated edits this process's copy and
+    never reaches the page. So the quality has to be handed over where the view
+    is created. With no quality asked for there is nothing to pass and the
+    view's own default stands.
+    """
+    if quality is None:
+        return {}
+    return {"still_quality": int(quality), "interactive_quality": int(quality)}
+
+
+def _view_takes_prop(view, name):
+    """True when ``view`` really forwards a trame property called ``name``.
+
+    ``hasattr`` cannot answer this for a trame element: its ``__getattr__``
+    prints "<elem>.<name> is missing" and RETURNS None for a name it does not
+    know, so every name looks present. The allowed keys of the widget's impl are
+    the honest answer; a plain object without an impl is taken at face value.
+    """
+    impl = getattr(view, "_impl", None)
+    allowed = getattr(impl, "allowed_keys", None)
+    if allowed is None:
+        return hasattr(view, name)
+    try:
+        return name in allowed
+    except TypeError:
+        return False
+
+
+def _image_aware_plotter_ui(plotter_ui, quality=None):
+    """Wrap ``plotter_ui`` so every view it builds carries the still quality.
+
+    Returns ``plotter_ui`` itself when there is no quality to pass, so a run
+    that asked for nothing is wired exactly as before. A caller's own keyword
+    still wins; a trame build that refuses the kwargs costs one honest line and
+    the view is built without them rather than taken down.
+    """
+    kwargs = _image_view_kwargs(quality)
+    if not kwargs or plotter_ui is None:
+        return plotter_ui
+
+    def _ui(*args, **build_kwargs):
+        merged = dict(build_kwargs)
+        for name, value in kwargs.items():
+            merged.setdefault(name, value)
+        try:
+            return plotter_ui(*args, **merged)
+        except TypeError as exc:
+            print(
+                "[poc_app] image quality %s not applied: the trame view "
+                "refused %s (%s)" % (quality, sorted(kwargs), exc),
+                file=sys.stderr,
+            )
+            return plotter_ui(*args, **build_kwargs)
+
+    _ui.__name__ = getattr(plotter_ui, "__name__", "_ui")
+    return _ui
+
+
 def _apply_image_knobs(view, encoding=None, quality=None):
     """Put the image knobs on the trame view and say what was actually applied.
 
     ``still_quality``/``interactive_quality`` are the view's REAL properties
-    (VtkRemoteView passes them to the JS side as the quality it renders with).
-    The encoding has no such property to set - the transport writes the format
-    in its protocol module - so a png request is reported as NOT applied rather
-    than recorded as if it had been. Nothing here raises: a widget that refuses
-    a knob costs that knob, not the page.
+    (VtkRemoteView passes them to the JS side as the quality it renders with),
+    but they only reach the page when the view is CREATED with them - that is
+    ``_image_view_kwargs``' job. What is done here is the honest read-back on
+    the view that came back, plus the encoding, which has no such property: the
+    transport writes the format in its protocol module, so a png request is
+    reported as NOT applied rather than recorded as if it had been. Nothing
+    here raises: a widget that refuses a knob costs that knob, not the page.
     """
     applied = {}
     note = None
     if view is not None and quality is not None:
         for name in ("still_quality", "interactive_quality"):
-            if not hasattr(view, name):
+            if not _view_takes_prop(view, name):
                 continue
             try:
                 setattr(view, name, int(quality))
@@ -2959,7 +3095,7 @@ def _apply_image_knobs(view, encoding=None, quality=None):
             applied[name] = int(quality)
     effective = _IMAGE_TRANSPORT_ENCODING
     if encoding is not None:
-        if view is not None and hasattr(view, "image_encoding"):
+        if view is not None and _view_takes_prop(view, "image_encoding"):
             try:
                 view.image_encoding = encoding
                 applied["image_encoding"] = encoding
@@ -3188,13 +3324,51 @@ def _profile_knobs_line(knobs=None) -> str:
     )
 
 
-def _profile_rate_lines(rows, fps, elapsed=None):
+def _profile_row_painted(row):
+    """True when this tick row's picture actually reached the browser.
+
+    A tick the paint cap or the delivery hold held back counted a row but drew
+    nothing, so it is not part of the painted span. A row with no counters is
+    taken at face value (there is nothing to contradict it).
+    """
+    counts = row.get("counts")
+    if not counts:
+        return True
+    try:
+        return bool(
+            int(counts.get("render") or 0) or int(counts.get("push") or 0)
+        )
+    except (TypeError, ValueError):
+        return True
+
+
+def _profile_painted_span(rows):
+    """(paints, span seconds) over the PAINTED ticks: first painted to last.
+
+    The span is what the picture was actually being refreshed across. Measuring
+    from the first tick to the last instead would divide the paints by a stretch
+    the run spent idle or paused, and report a rate the viewer never saw.
+    """
+    times = [
+        float(row["t"])
+        for row in rows
+        if row.get("t") is not None and _profile_row_painted(row)
+    ]
+    if not times:
+        return 0, 0.0
+    span = (max(times) - min(times)) if len(times) > 1 else 0.0
+    return len(times), span
+
+
+def _profile_rate_lines(rows, fps):
     """Two DERIVED lines: achieved vs target rate, and the overrun share.
 
-    ``rows`` are tick rows. The rate is what the run actually achieved against
-    the fps it asked for, and the second line counts the ticks that took LONGER
-    than one frame period - the ones a viewer drops instead of showing. With no
-    fps recorded there is nothing to compare against, so there are no lines.
+    ``rows`` are tick rows. The rate is measured over the PAINTED span - first
+    painted tick to last - so a run that idled or paused is reported at the rate
+    it actually painted rather than divided by the wall time it sat still. The
+    second line counts the ticks that took LONGER than one frame period - the
+    ones a viewer drops instead of showing. With no fps recorded there is
+    nothing to compare against, so there are no lines.
     """
     try:
         target = float(fps)
@@ -3202,15 +3376,21 @@ def _profile_rate_lines(rows, fps, elapsed=None):
         return []
     if target <= 0:
         return []
-    if elapsed is None:
-        times = [float(row["t"]) for row in rows if row.get("t") is not None]
-        elapsed = (max(times) - min(times)) if len(times) > 1 else 0.0
-    elapsed = float(elapsed)
-    achieved = (len(rows) / elapsed) if elapsed > 0 else 0.0
+    paints, span = _profile_painted_span(rows)
+    achieved = (paints / span) if span > 0 else 0.0
     period_ms = 1000.0 / target
     lines = [
-        "target: fps=%.0f frame=%.2f ms  achieved=%.2f ticks/s (%.1f%% of target)"
-        % (target, period_ms, achieved, 100.0 * achieved / target)
+        "target: fps=%.0f frame=%.2f ms  painted=%d over %.2f s  "
+        "paints/s=%.2f vs cap %.2f (%.1f%% of target)"
+        % (
+            target,
+            period_ms,
+            paints,
+            span,
+            achieved,
+            target,
+            100.0 * achieved / target,
+        )
     ]
     walls = [float(row["wall_ms"]) for row in rows if row.get("wall_ms") is not None]
     over = len([wall for wall in walls if wall > period_ms])
@@ -3239,7 +3419,7 @@ def _profile_summary_text() -> str:
     knobs = _PROFILE["knobs"] or {}
     out.extend(_renderer_report_lines())
     out.append(_profile_knobs_line(knobs))
-    out.extend(_profile_rate_lines(rows, knobs.get("fps"), elapsed))
+    out.extend(_profile_rate_lines(rows, knobs.get("fps")))
     out.append("phases (ms): phase       n     p50     p95     max")
     for name in _PROFILE_PHASES:
         values = [
@@ -3289,11 +3469,14 @@ def _profile_summary_text() -> str:
     # image leaves the server once per push, so it is read beside ``render``.
     out.append(
         "calls: render=%d push=%d add_mesh=%d remove_actor=%d"
+        " paint_cap=%d delivery_hold=%d"
         % (
             int(counts.get("render", 0)),
             int(counts.get("push", 0)),
             int(counts.get("add_mesh", 0)),
             int(counts.get("remove_actor", 0)),
+            int(counts.get("paint_cap", 0)),
+            int(counts.get("delivery_hold", 0)),
         )
     )
     noop = sum(int(agg["noop"]) for agg in _PROFILE["sheets"].values())
@@ -15443,7 +15626,16 @@ def run_web_vis(
             # as the animation ran.
             echo = handles.get("play_echo_frame")
             if echo is not None and int(value) == int(echo):
+                # The loop drew this position itself, so it IS the position on
+                # screen: recorded as such, a later seek says where it left.
+                handles["frame_seen"] = value
                 return
+        # A seek is a CLIENT event in the delivery's own stream, so a summary can
+        # line the jump up against the paint times: from where the slider was to
+        # where it landed. Off the suite nothing is recorded; what is drawn is
+        # unchanged either way.
+        _profile_seek(handles, value)
+        handles["frame_seen"] = value
         _show(value, state.mode)
 
     @state.change("play_rate")
@@ -16669,6 +16861,10 @@ def run_web_vis(
             # it this coroutine could spin through the whole gate without ever
             # suspending and starve the websocket the frames travel on.
             if (tick - 1) % paint_every:
+                # Counted, not profiled: a gated beat never reaches _show, so it
+                # emits no tick row of its own - the count is attributed to the
+                # next row that IS written (see _profile_tick_end).
+                _profile_count("paint_cap")
                 await asyncio.sleep(0)
                 continue
             # THE CLIENT IS MID-ANIMATION: trame's push_render discards stills while
@@ -16678,6 +16874,9 @@ def run_web_vis(
             # told us") is not animating, because refusing to paint on a guess would
             # freeze a playback that is visibly stuck.
             if _delivery_animating():
+                # Same attribution as the paint cap above: a held beat has no
+                # tick row, so the count rides on the next written row.
+                _profile_count("delivery_hold")
                 await asyncio.sleep(0)
                 continue
             # The deadline this tick was DUE at, and how late it actually
@@ -17378,6 +17577,13 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - a caption is never the page
             print(f"[poc_app] station readout not emitted: {exc}", file=sys.stderr)
 
+    # The still quality only reaches the browser if the view is CREATED with it
+    # (a later assignment edits this process's copy, not the page), so every
+    # plotter_ui call below - and the one the centre column resolves through
+    # `ctx` - goes through this wrapper. With no --image-quality it is the
+    # untouched plotter_ui.
+    ui_with_image_knobs = _image_aware_plotter_ui(plotter_ui, image_quality)
+
     with SinglePageLayout(server) as layout:
         # The header is the second place the page title lives, so it is written
         # from the same helper as the browser title and re-pointed from now on
@@ -17394,7 +17600,7 @@ def run_web_vis(
                 # widgets, so on this degraded path the picture and the solve
                 # controls are all there is - the toolbar that used to hold
                 # the buttons is gone.
-                view = plotter_ui(plotter, mode="server", add_menu=False)
+                view = ui_with_image_knobs(plotter, mode="server", add_menu=False)
                 _emit_solve_controls()
             else:
                 with container(fluid=True, classes="pa-0 fill-height"):
@@ -17450,7 +17656,7 @@ def run_web_vis(
                         )
                         ctx.register("html_div", html_div)
                         ctx.register("VRow", VRow)
-                        ctx.register("plotter_ui", plotter_ui)
+                        ctx.register("plotter_ui", ui_with_image_knobs)
                         # The centre column's cut row (server/um3k_panels.py:
                         # build_center_panel): run_web's own emitter, plus the
                         # three of its arguments that are not already on `ctx`.
@@ -17743,17 +17949,10 @@ def main(argv=None) -> int:
         parser.error("--stride must be at least 1 position per painted frame")
     if args.paint_fps is not None and args.paint_fps < 1:
         parser.error("--paint-fps must be at least 1 frame per second")
-    try:
-        # ONE rule for both routes: a flag and its POC_* variable end up in the
-        # same three numbers, and a value VTK or the transport would ignore is a
-        # usage error rather than a knob that silently did nothing.
-        knobs = _resolve_display_knobs(
-            getattr(args, "msaa", None),
-            getattr(args, "image_encoding", None),
-            getattr(args, "image_quality", None),
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
+    # ONE rule for both routes: a flag and its POC_* variable end up in the same
+    # three numbers, and a value VTK or the transport would ignore is a usage
+    # error rather than a knob that silently did nothing.
+    knobs = _display_knobs_or_exit(parser, args)
     # Recorded whatever the profile suite is doing: the knobs are a fact about
     # the run, and a summary written later must not have to guess them.
     _profile_knobs(

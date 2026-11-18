@@ -394,6 +394,7 @@ def _playback_page(tmp_path_factory, frames=None):
 
     undos = []
     renders = []
+    view_updates = []
 
     # --- device double #1: the OpenGL draw -------------------------------
     real_render = pyvista.Plotter.render
@@ -433,6 +434,9 @@ def _playback_page(tmp_path_factory, frames=None):
             real_update = view.update
 
             def _no_update(*_a, **_k):
+                # With a view on the page this push IS the draw (the plotter
+                # renders nothing of its own); counted so a test can see it.
+                view_updates.append(1)  # counted, never performed
                 return None
 
             view.update = _no_update
@@ -446,6 +450,7 @@ def _playback_page(tmp_path_factory, frames=None):
             trigger=trigger,
             view=view,
             renders=renders,
+            view_updates=view_updates,
             undos=undos,
         )
     finally:
@@ -674,8 +679,19 @@ def test_the_loop_draws_its_own_echo_once_but_an_operator_seek_always(playback):
     client change (``listener(frame=<the new value>)``): this harness never
     enters the event loop, so ``state.flush()`` dispatches nothing and a
     flush-based assertion would pass for the wrong reason.
+
+    A draw is counted as the plotter's own render OR the view push: with a view
+    on the page ``_tick_render_and_push`` pushes instead of rendering (04d9658,
+    and test_poc_profile.py pins that a tick with a view renders nothing), so
+    the push is the draw here.
     """
-    handles, state, renders = playback.handles, playback.state, playback.renders
+    handles, state = playback.handles, playback.state
+    renders, view_updates = playback.renders, playback.view_updates
+
+    def drawn():
+        """How many times the picture has been pushed to the screen."""
+        return len(renders) + len(view_updates)
+
     listener = _frame_listener(state)
     assert state.playing is False, "boot already left the page playing"
     frames = int(state.frame_max) + 1
@@ -685,22 +701,22 @@ def test_the_loop_draws_its_own_echo_once_but_an_operator_seek_always(playback):
         # -- the loop's echo: the position it is about to publish, already drawn.
         echoed = (was_frame + 7) % frames
         handles["play_echo_frame"] = echoed
-        before = len(renders)
+        before = drawn()
         state.frame = echoed
         listener(frame=echoed)
-        assert len(renders) == before, (
+        assert drawn() == before, (
             "the frame listener drew the play loop's own echo: "
-            f"{len(renders) - before} extra render(s) for position {echoed}, "
+            f"{drawn() - before} extra render(s) for position {echoed}, "
             "so every tick costs two draws instead of one"
         )
         # -- an operator's seek: the echo names a DIFFERENT position, so this one
         #    is not the loop's and has to reach the picture immediately.
         handles["play_echo_frame"] = (echoed + 1) % frames
         seek = (echoed + frames // 2) % frames
-        before = len(renders)
+        before = drawn()
         state.frame = seek
         listener(frame=seek)
-        assert len(renders) - before == 1, (
+        assert drawn() - before == 1, (
             "a frame change while playing was swallowed by the play loop's own "
             "suppression: the scrubber and the step buttons then look dead until "
             "playback stops"
