@@ -235,8 +235,20 @@ def test_disabled_profile_is_a_hard_noop(tmp_path):
     assert poc_app._profile_write_summary() == ""
     assert poc_app._profile_write("ticks", "{}") is False
     assert poc_app._profile_flush_pending() is False
-    # The delivery hook is a hard no-op too: nothing is imported, nothing wrapped.
-    assert poc_app._profile_hook_delivery() is False
+    # The delivery hook is INSTALLED even with the suite off: the pump has to know
+    # whether trame is mid-animation to avoid advancing a position into a still
+    # trame discards, and that is a correctness fact, not telemetry. What stays
+    # gated is the COUNTING behind the wrappers, so an unmeasured run still
+    # records nothing at all.
+    hooked = poc_app._profile_hook_delivery()
+    assert isinstance(hooked, bool), hooked
+    assert poc_app._PROFILE["push"]["attempts"] == 0
+    assert poc_app._PROFILE["push"]["rendered"] == 0
+    assert poc_app._PROFILE["still"]["n"] == 0
+    # Put the flags back: the wrappers are idempotent and stay installed, but a
+    # later test must be able to ask the hook again as if it had not been called.
+    poc_app._PROFILE["delivery_hooked"] = False
+    poc_app._PROFILE["push"]["available"] = False
 
     assert poc_app._PROFILE["rows"] == []
     assert poc_app._PROFILE["lag"] == []
@@ -1056,25 +1068,35 @@ class _DrawingPlotter(_Reported):
         return "rendered"
 
 
-def test_a_plotter_that_pushes_on_render_is_not_pushed_again():
-    """The view pushes from its own callback: a second update is a second image."""
-    plotter = _CallbackPlotter(callbacks=[lambda *args: None])
-    view = _ViewHandle()
-    assert poc_app._plotter_pushes_on_render(plotter) is True
+def test_a_tick_with_a_view_renders_nothing_of_its_own():
+    """Trame renders the frame the view update asks for: a second draw is waste.
 
-    assert poc_app._tick_render_and_push(plotter, view) is True
-    assert plotter.renders == 1
-    assert view.updates == 0, "the same frame was pushed twice in one tick"
-
-
-def test_a_plotter_with_no_render_callback_is_pushed_by_the_tick():
-    """Nobody else will send this frame: an empty - or absent - container is us."""
-    for plotter in (_CallbackPlotter(), _Plotter()):
-        assert poc_app._plotter_pushes_on_render(plotter) is False
+    ``PublishImageDelivery.still_render`` calls the app's ``StillRenderToString``
+    (publish_image_delivery.py:196) and stamps the reply with
+    ``GetLastStillRenderToMTime()`` (:218), so ``view.update()`` IS the render.
+    A ``plotter.render()`` in front of it drew the same picture twice into a
+    window nobody reads - and, where pyvista's render callback ships the result,
+    encoded and sent it twice as well.
+    """
+    for plotter in (_CallbackPlotter(callbacks=[lambda *args: None]),
+                    _CallbackPlotter(), _Plotter()):
         view = _ViewHandle()
         assert poc_app._tick_render_and_push(plotter, view) is True
-        assert plotter.renders == 1
-        assert view.updates == 1
+        assert plotter.renders == 0, "the view update already renders this frame"
+        assert view.updates == 1, "exactly one image leaves the server per tick"
+
+
+def test_the_render_callback_question_no_longer_decides_anything():
+    """Kept as a plain fact: the tick stopped asking it, so either answer is fine.
+
+    ``_plotter_pushes_on_render`` is retained (and still answers), but the tick no
+    longer branches on it: with a view trame owns the render whatever the callback
+    container holds, so the same one-update-no-local-render path runs for both.
+    """
+    assert poc_app._plotter_pushes_on_render(
+        _CallbackPlotter(callbacks=[lambda *args: None])
+    ) is True
+    assert poc_app._plotter_pushes_on_render(_CallbackPlotter()) is False
 
 
 def test_a_tick_with_no_view_handle_still_draws():
@@ -1104,19 +1126,36 @@ def test_a_tick_with_nothing_to_push_counts_no_push(prof):
 
 
 def test_a_push_that_raises_is_swallowed_and_reported(capsys):
-    """A trame update that throws costs the frame, never the tick."""
+    """A trame update that throws costs the frame, never the tick.
+
+    False, not True: with a view there is no local render to fall back on, so a
+    tick whose only image failed painted nothing and must not be counted as one.
+    """
     plotter = _Plotter()
     view = _ViewHandle(explode=True)
-    assert poc_app._tick_render_and_push(plotter, view) is True
+    assert poc_app._tick_render_and_push(plotter, view) is False
     assert view.updates == 1
+    assert plotter.renders == 0
     assert "view update skipped: boom" in capsys.readouterr().err
 
 
 def test_a_render_that_raises_is_swallowed_and_reported(capsys):
-    """False is the honest answer: the report above the tick must not claim a draw."""
+    """False is the honest answer: the report above the tick must not claim a draw.
+
+    The raising draw is the HEADLESS path - with a view there is no local render
+    to fail, because trame's still render is the one that draws.
+    """
     plotter = _RefusingPlotter()
-    assert poc_app._tick_render_and_push(plotter, _ViewHandle()) is False
+    assert poc_app._tick_render_and_push(plotter, None) is False
     assert "render skipped: no GL" in capsys.readouterr().err
+
+
+def test_a_view_that_raises_still_reports_no_render(capsys):
+    """With a view the local render never ran, so a failed update is the whole tick."""
+    plotter = _RefusingPlotter()
+    assert poc_app._tick_render_and_push(plotter, _ViewHandle(explode=True)) is False
+    assert plotter.renders == 0
+    assert "view update skipped: boom" in capsys.readouterr().err
 
 
 def test_the_tick_row_and_the_summary_count_the_push(prof):

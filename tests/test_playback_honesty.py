@@ -1120,8 +1120,8 @@ def _play_loop_node():
     return None
 
 
-def test_the_play_loop_draws_once_per_tick_from_the_clock():
-    """One draw per tick, and the position came from the clock, not a counter.
+def test_the_play_loop_advances_by_the_pump_and_never_by_a_wall_clock_target():
+    """One draw per tick, and the position comes from the pump's stride, not a clock.
 
     Read off the SHIPPED source rather than a re-implementation: ``_show`` writes
     ``state.frame``, which fires the frame listener on the flush, so a loop that
@@ -1204,11 +1204,24 @@ def test_the_play_loop_draws_once_per_tick_from_the_clock():
         for node in ast.walk(loop)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
-    for helper in ("_play_target", "_play_reanchor", "_play_rate_near"):
+    for helper in (
+        "_play_advance",
+        "_play_stride",
+        "_play_reanchor",
+        "_play_rate_near",
+        # The delivery gate: a position advanced while trame is animating its
+        # own views is a still trame discards, so the loop must ASK.
+        "_delivery_animating",
+    ):
         assert helper in called, (
             f"the loop does not call {helper}: the position on screen is not the "
-            "one the clock and the selected rate name"
+            "one the pump chose from the selected rate"
         )
+    assert "_play_target" not in called, (
+        "the loop still integrates a wall-clock target: a tick that paints "
+        "nothing must advance nothing, or the sequence on screen is not the one "
+        "the caption describes"
+    )
 
 
 

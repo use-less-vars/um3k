@@ -192,6 +192,24 @@ DEFAULT_FPS = 24
 # neither should have to restart the app at a different constant to get it.
 PLAY_RATES = (1, 2, 4, 8)
 DEFAULT_PLAY_RATE = 4
+# Positions the player advances per PAINTED frame, at the DEFAULT speed - rate 4,
+# i.e. DEFAULT_PLAY_RATE above. The speed select scales it AROUND that anchor, not
+# around rate 1: rate 8 doubles it, rate 4 leaves it exactly as passed, and rate 1
+# divides it by four, floored at one whole position (4 -> 8, 4 -> 4, 4 -> 1).
+# The pump is paint driven: a tick that does not repaint the picture advances
+# nothing, so one unit of the stride is "one repaint's worth of motion". It exists
+# because the two clocks that used to be conflated are not the same clock - the
+# solver's step clock (what a position IS) and the display's refresh (what the
+# viewer can SEE). At 24 fps and a 96 positions/s viewing rate the loop asked for a
+# repaint every 10.4 ms, i.e. faster than trame's image delivery can round-trip a
+# still render (a still render plus encode is tens of ms), so most of those asks
+# were discarded: the sequence ON SCREEN was neither the speed the caption promised
+# nor the width the stride said. Naming the unit "positions per painted frame" puts
+# the number where it can be held: the stride times the paint cap IS the viewing
+# rate, and --stride at stride 4 reproduces the historical default exactly (4
+# positions/tick at 24 fps = 96 positions/s = the old DEFAULT_PLAY_RATE * DEFAULT_FPS).
+# A VIEWING choice like DEFAULT_FPS, not a property of the dump.
+DEFAULT_PLAY_STRIDE = 4
 # ONE colour ceiling for the whole animation, taken at this percentile of |Ez|
 # over every stored frame of every plane. Frame-local scaling would renormalise
 # on each step and make a decaying pulse look like it never decays.
@@ -505,6 +523,107 @@ def _play_frames(value) -> int:
     return max(1, frames)
 
 
+def _play_stride(base_stride, rate) -> int:
+    """The positions one PAINTED frame advances at speed ``rate``.
+
+    ``base_stride`` is the per-painted-frame step at the DEFAULT speed, which is
+    rate 4 (``DEFAULT_PLAY_RATE``, the speed the page opens on) - NOT at rate 1. The
+    offered multipliers are applied to it around that anchor, which is what makes
+    the speed select mean the same thing at every paint cap: rate 2 paints twice the
+    stride, not twice the repaint rate. That is the whole reason the mapping lives
+    in a function rather than being folded into the loop - ``base * rate /
+    DEFAULT_PLAY_RATE`` reproduces the old positions-per-tick numbers at the default
+    stride (4 * 1/4, 4 * 2/4, 4 * 4/4, 4 * 8/4 -> 1, 2, 4, 8), so the caption's "N
+    steps/tick" sentence keeps saying what the picture does, while the speed select
+    keeps offering the same four multipliers it always did.
+
+    Both arguments are floored at 1 and any unusable value (None from a page built
+    before the flag existed, a string from a URL, a bool) falls back on the module
+    defaults. The REJECTED alternative is to use ``rate`` directly as the stride and
+    let the paint cap carry the base: at --paint-fps 8 the slowest speed would then
+    advance 1 position per repaint = 8 positions/s, and the operator who asked for
+    "slower" would get a slideshow instead of a slower sweep. Rounding (not
+    truncation) keeps the four offered multipliers exact; the max(1, ...) keeps a
+    stride below one whole position - reachable with --stride 1 and a rate under the
+    default - from silently freezing the player at a still frame.
+    """
+    try:
+        base = int(base_stride)
+    except (TypeError, ValueError):
+        base = DEFAULT_PLAY_STRIDE
+    try:
+        steps = int(rate)
+    except (TypeError, ValueError):
+        steps = DEFAULT_PLAY_RATE
+    base = max(1, base)
+    steps = max(1, steps)
+    return max(1, int(round(base * steps / float(DEFAULT_PLAY_RATE))))
+
+
+def _play_advance(frame, stride, frames) -> int:
+    """The position one painted frame after ``frame``: ``frame + stride``, wrapped.
+
+    ``frames`` is the family length, so the wrap is the player's loop, and it is
+    done HERE (not left to the caller's modulo) because the advance is what a
+    painted frame IS: a position that has already wrapped is a position, whereas a
+    target the clock invented has to be clamped and wrapped by whoever reads it.
+    ``_play_frames`` floors the length at 1, so a page with no timeline wraps to its
+    single position instead of dividing by zero.
+
+    ``stride`` is floored at 1: zero or negative would stall or reverse the player,
+    and neither is a speed the control offers. The REJECTED alternative is to
+    keep :func:`_play_target`'s wall-clock integration and merely feed it a slower
+    clock - it would still advance on ticks that painted nothing, which is exactly
+    the invisible work this pump removes (the sequence on screen is what the
+    caption describes, so it must be the sequence the loop chose).
+    """
+    stride = max(1, int(stride))
+    frames = _play_frames(frames)
+    return (int(frame) + stride) % frames
+
+
+def _rate_list(rates) -> str:
+    """``rates`` as prose: "1", "1 and 2", "1, 2 and 4"."""
+    words = [str(int(rate)) for rate in rates]
+    if len(words) == 1:
+        return words[0]
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def _stride_collision_notice(base_stride) -> str:
+    """The ``[poc_app]`` line that says the speed select has lost settings, or "".
+
+    The stride is anchored at the DEFAULT speed (rate 4), so the four offered rates
+    land on four different strides only while the base is big enough to give each
+    of them its own number: ``--stride 1`` gives 1, 1, 1, 2 (rates 1, 2 and 4 all do
+    nothing) and ``--stride 2`` gives 1, 1, 2, 4 (rates 1 and 2 are one setting).
+    Nothing else on the page would ever say so - the caption quotes the stride the
+    select GOT, which is right, not the stride it could have had - so the boot
+    report says it once, on the same channel as every other honest line.
+
+    "" when every rate has its own stride, which is what the default ``--stride 4``
+    does (1, 2, 4, 8): a line that fires on the default is noise, and noise about a
+    working page is read as a fault. A printed warning rather than ``parser.error``:
+    the page is coarse, not wrong, and refusing to start would be the worse trade.
+    """
+    base = _play_stride(base_stride, DEFAULT_PLAY_RATE)
+    strides = [_play_stride(base, rate) for rate in PLAY_RATES]
+    if len(set(strides)) == len(strides):
+        return ""
+    shared = {}
+    for rate, step in zip(PLAY_RATES, strides):
+        shared.setdefault(step, []).append(rate)
+    collisions = "; ".join(
+        f"rates {_rate_list(members)} all advance {step} "
+        f"position{'' if step == 1 else 's'} per painted frame"
+        for step, members in shared.items() if len(members) > 1
+    )
+    return (
+        f"[poc_app] --stride {base} collapses the speed select: {collisions}; "
+        f"raise --stride to {DEFAULT_PLAY_STRIDE} for four distinct speeds"
+    )
+
+
 def _play_rate_items(rates=PLAY_RATES) -> list:
     """The speed select's items as Vuetify OBJECTS, ``title`` beside ``value``.
 
@@ -523,7 +642,11 @@ def _play_rate_items(rates=PLAY_RATES) -> list:
 
 
 def _play_target(anchor_time, anchor_frame, now, rate, fps) -> int:
-    """The position the wall clock says belongs on screen at ``now``.
+    """NOT ON THE PLAYBACK PATH: nothing in this module calls it any more - the pump
+    advances by painted frames now - and it survives as the documented REJECTED
+    alternative only, its arithmetic pinned by tests.
+
+    The position the wall clock says belongs on screen at ``now``.
 
     A PLAYING player is a clock read out as a position: ``anchor_frame`` was on
     screen at ``anchor_time``, and every 1/(rate*fps) seconds after that the
@@ -2312,6 +2435,47 @@ def _profile_delivery_delta():
     return out
 
 
+# The ONE delivery object trame built for this process, remembered so the pump can
+# ask it a question that is not about profiling: is the client mid-animation?
+# ``PublishImageDelivery`` keeps the views it is animating in a plain list
+# (publish_image_delivery.py:21 ``self.views_in_animations = []``), and while that
+# list is non-empty its ``push_render`` returns early (:26-35), i.e. a still the
+# server asks for now would be DISCARDED - the position it carries would be lost
+# from the sequence on screen while the pump counted it as painted. The pump reads
+# this instead of guessing, so "painted" keeps meaning "on screen".
+_DELIVERY_INSTANCE = None
+
+
+def _remember_delivery(instance):
+    """Remember ``instance`` as the delivery object the pump may consult.
+
+    Called from every wrapper, BEFORE the profiling gate, because the pump needs
+    this answer with the suite OFF - it is a correctness fact about delivery, not
+    telemetry, and a run without ``--profile`` must not animate any differently.
+    """
+    global _DELIVERY_INSTANCE
+    _DELIVERY_INSTANCE = instance
+
+
+def _delivery_animating():
+    """True/False from the live delivery's view list; None when unknowable.
+
+    ``None`` is "nobody told us" (no delivery object yet, an attribute a future
+    trame renamed, a list that will not measure) and is treated as NOT animating by
+    the pump: refusing to paint on a guess would freeze a playback the operator can
+    see is stuck. A False/True answer is used as given. Never raises - it is read
+    inside the playback loop, where an exception would end the playback.
+    """
+    instance = _DELIVERY_INSTANCE
+    if instance is None:
+        return None
+    try:
+        views = getattr(instance, "views_in_animations")
+        return len(views) > 0
+    except Exception:  # noqa: BLE001 - an unreadable list is not an answer
+        return None
+
+
 def _profile_wrap_delivery(cls):
     """Wrap the five delivery methods ON ``cls``. True once they are wrapped.
 
@@ -2329,6 +2493,7 @@ def _profile_wrap_delivery(cls):
         originals[name] = inner
 
     def push_render(self, *args, **kwargs):
+        _remember_delivery(self)
         if _PROFILE["enabled"]:
             v_id = args[0] if args else kwargs.get("v_id")
             ignore = args[1] if len(args) > 1 else kwargs.get("ignore_animation", False)
@@ -2336,6 +2501,7 @@ def _profile_wrap_delivery(cls):
         return originals["push_render"](self, *args, **kwargs)
 
     def still_render(self, *args, **kwargs):
+        _remember_delivery(self)
         if not _PROFILE["enabled"]:
             return originals["still_render"](self, *args, **kwargs)
         t0 = _profile_now()
@@ -2349,16 +2515,19 @@ def _profile_wrap_delivery(cls):
         return reply
 
     def animate(self, *args, **kwargs):
+        _remember_delivery(self)
         if _PROFILE["enabled"]:
             _profile_animate_record(self)
         return originals["animate"](self, *args, **kwargs)
 
     def start_view_animation(self, *args, **kwargs):
+        _remember_delivery(self)
         if _PROFILE["enabled"]:
             _profile_client_record(_profile_client_kind("animation_start"))
         return originals["start_view_animation"](self, *args, **kwargs)
 
     def stop_view_animation(self, *args, **kwargs):
+        _remember_delivery(self)
         if _PROFILE["enabled"]:
             _profile_client_record(_profile_client_kind("animation_stop"))
         return originals["stop_view_animation"](self, *args, **kwargs)
@@ -2395,13 +2564,20 @@ def _profile_wrap_delivery(cls):
 def _profile_hook_delivery():
     """Install the delivery wrappers. False (never an exception) when it cannot.
 
-    Called once, from ``main``, while the suite is on: an image without trame_vtk
-    has no delivery to watch, and a run that lost half its telemetry is still a
-    run. The summary then says ``available=no`` instead of reporting five zeros
-    as if the delivery had been watched and found idle.
+    Called once, from ``main``, ALWAYS - with the suite on or off. The wrappers
+    used to be installed only under ``--profile``, which quietly made the pump's
+    knowledge of delivery a side effect of a telemetry flag: with the suite off the
+    loop could not tell that the client was mid-animation and went on advancing
+    positions into stills trame discarded. What the wrappers are FOR is split in
+    two now - the "remember the delivery object" step runs either way, the counting
+    behind it stays gated on ``_PROFILE["enabled"]`` - so the pump sees the same
+    delivery in both modes while an unmeasured run pays only a global assignment
+    per call.
+
+    An image without trame_vtk has no delivery to watch, and a run that lost half
+    its telemetry is still a run. The summary then says ``available=no`` instead of
+    reporting five zeros as if the delivery had been watched and found idle.
     """
-    if not _PROFILE["enabled"]:
-        return False
     if _PROFILE["delivery_hooked"]:
         return True
     try:
@@ -2662,47 +2838,53 @@ def _plotter_pushes_on_render(plotter) -> bool:
 
 
 def _tick_render_and_push(plotter, view_handle) -> bool:
-    """Draw this tick ONCE, publish it ONCE. True when the draw worked.
+    """Draw this tick ONCE, publish it ONCE. True when the tick painted a frame.
 
-    One function because it is one decision: a plotter that pushes from its own
-    ``render()`` must NOT be pushed again by hand, and one that does not must be
-    pushed by hand. The render marks and the ``draw`` phase are closed between
-    the two halves, so a push can never be billed to the draw.
+    Trame's image delivery OWNS the render whenever a view is attached:
+    ``PublishImageDelivery.still_render`` calls the app's ``StillRenderToString``
+    (or ``StillRenderToBuffer`` when it decodes) itself and stamps the reply with
+    ``app.GetLastStillRenderToMTime()`` - publish_image_delivery.py:196 and :218. So
+    the image the client sees is the one ``view_handle.update()`` asked for, and a
+    ``plotter.render()`` in front of that update drew the SAME picture a second
+    time into a window nobody reads; where pyvista's render callback is hooked up
+    (see ``_plotter_pushes_on_render``) it also shipped that second copy, i.e. two
+    full renders and two image encodes per tick for one visible frame - exactly the
+    waste that made the pump overrun its own paint cap.
 
-    A push is COUNTED only when one really left the server: a view handle exists
-    AND the image went out through it - either by the plotter's own render
-    callback or by the explicit ``update()`` below. A tick with no view sends
-    nothing, so it counts nothing: ``calls:`` counts images, not ticks.
+    Therefore: with a view, exactly ONE ``view_handle.update()`` and NO local
+    render; with no view, nobody will ever ask for the image, and the local render
+    IS the picture (headless, or before the client connects). The render marks and
+    the ``draw`` phase are closed between the two halves, so a push can never be
+    billed to the draw, and a push is COUNTED only when one really left the server:
+    ``calls:`` counts images, not ticks.
     """
     _timing_mark("render_start")
     rendered = False
-    try:
-        plotter.render()
-        rendered = True
-    except Exception as exc:  # noqa: BLE001 - never take the server down
-        print(f"[poc_app] render skipped: {exc}", file=sys.stderr)
+    if view_handle is None:
+        # No client-side view: rendering here is the only way pixels exist.
+        try:
+            plotter.render()
+            rendered = True
+        except Exception as exc:  # noqa: BLE001 - never take the server down
+            print(f"[poc_app] render skipped: {exc}", file=sys.stderr)
     _timing_mark("render_end")
     _profile_phase("draw")
     _timing_mark("push_start")
-    # ONE image leaves the server this tick, or none: the plotter's own render
-    # callback already sent it, or the explicit update below sends it. Only that
-    # - a real send - is counted, so a tick with nothing to push adds nothing.
+    # ONE image leaves the server this tick, or none. With a view the update below
+    # IS the render (trame renders through the app), so there is nothing else to
+    # send; a real send is counted, a tick with nothing to push adds nothing.
     pushed = False
     if view_handle is not None:
-        if _plotter_pushes_on_render(plotter):
-            # The callback ran at the end of render() above: this frame is out.
+        try:
+            view_handle.update()
             pushed = True
-        else:
-            try:
-                view_handle.update()
-                pushed = True
-            except Exception as exc:  # noqa: BLE001 - a lost frame is not the loop
-                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 - a lost frame is not the loop
+            print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
     if pushed and _PROFILE["enabled"]:
         # With the suite off this costs one bool read.
         _profile_count("push")
     _timing_mark("push_end")
-    return rendered
+    return rendered or pushed
 
 
 def _gl_capabilities(render_window):
@@ -13462,6 +13644,7 @@ def run_web_vis(
     *,
     surface_dump=None, loaded_page=None,
     msaa=None, image_encoding=None, image_quality=None,
+    stride=DEFAULT_PLAY_STRIDE, paint_fps=None,
 ) -> int:
     """Serve the animation page for an ``emfit.vis/2`` dump.
 
@@ -13490,11 +13673,40 @@ def run_web_vis(
     dump, and a far-field pattern can only come from currents on a closed
     surface. It is None on every run that gives no archive, which is the
     ordinary case - the tab then says so instead of showing an empty picture.
+
+    ``stride`` and ``paint_fps`` are the pump's two knobs and are KEYWORD-ONLY for
+    the same reason: they describe how the picture is DELIVERED, not what is
+    animated. ``stride`` is positions per PAINTED frame at the default speed, rate 4, and
+    ``paint_fps`` is the ceiling on painted frames per second (None means "the same
+    as ``fps``", i.e. one repaint per animation tick). Both are resolved HERE, once,
+    so the banner, the caption, the loop body and the player clamp all quote the same
+    numbers instead of each re-deriving them.
     """
     # THE PORT IS SETTLED FIRST - see _port_for_serving. Everything below (the
     # registry, the archive load, the chart builds, the frame scan) is minutes of
     # work that a port already in use would otherwise throw away.
     port = _port_for_serving(host, port)
+    # The pump's two knobs, floored and de-junked ONCE. A bool is not a number here
+    # (True would silently mean one position per painted frame), a None stride is a
+    # page built before the flag existed, and a paint cap of 0 would divide by zero
+    # in the loop's modulus - each falls back on the module defaults rather than
+    # asking the operator to re-read a traceback.
+    try:
+        stride = int(stride)
+    except (TypeError, ValueError):
+        stride = DEFAULT_PLAY_STRIDE
+    stride = max(1, stride)
+    if paint_fps is None:
+        paint_fps = int(fps)
+    else:
+        try:
+            paint_fps = int(paint_fps)
+        except (TypeError, ValueError):
+            paint_fps = int(fps)
+    paint_fps = max(1, paint_fps)
+    # Painting faster than the loop ticks buys nothing (there is no new position to
+    # paint), so the banner quotes the cap the loop can actually honour.
+    paint_cap = min(paint_fps, max(1, int(fps)))
     # Deliberately BEFORE any import of pyvista: on a machine without the web
     # stack the missing package must be a named message and exit 1, exactly as
     # run_web does, not a ModuleNotFoundError traceback.
@@ -13756,12 +13968,17 @@ def run_web_vis(
     # No timeline: the scrubber's range is ABSENT (None), never 0 frames.
     state.frame_max = _frame_max_for(info)
     state.play_label = "play"
-    # The PLAY SPEED: how many positions a tick advances, and the sentence beside
-    # the select that states what that rate costs per sweep. Both are viewing
+    # The PLAY SPEED: how many positions ONE PAINTED FRAME advances, and the sentence
+    # beside the select that states what that rate costs per sweep. Both are viewing
     # choices like DEFAULT_FPS, so both live in the state and both are recomputed
-    # by _on_play_rate when the select moves - the caption is never a constant.
+    # by _on_play_rate when the select moves - the caption is never a constant. The
+    # caption quotes the EFFECTIVE stride (base stride x rate) and the PAINT cap, so
+    # the sentence describes the sequence on screen rather than the loop's tick grid:
+    # at the defaults (stride 4, paint cap = fps) it is the historical sentence.
     state.play_rate = DEFAULT_PLAY_RATE
-    state.play_caption = _play_caption(nt, DEFAULT_PLAY_RATE, fps)
+    state.play_caption = _play_caption(
+        nt, _play_stride(stride, DEFAULT_PLAY_RATE), paint_fps
+    )
 
     # Keyboard shortcuts (Space = play/pause, arrows = step). The browser side is
     # server/web_assets/keyboard.js; it calls the very same trigger names the
@@ -14984,8 +15201,11 @@ def run_web_vis(
         # frame count under a caption that would otherwise quote the old one.
         state.play_caption = _play_caption(
             frames,
-            _play_rate_near(getattr(state, "play_rate", DEFAULT_PLAY_RATE)),
-            fps,
+            _play_stride(
+                stride,
+                _play_rate_near(getattr(state, "play_rate", DEFAULT_PLAY_RATE)),
+            ),
+            paint_fps,
         )
         state.phase_label = _vis_phase_text(t_ns, info.get("t_traverse_ns"))
         if mode == "ycut":
@@ -15247,12 +15467,26 @@ def run_web_vis(
         rate = _play_rate_near(raw)
         with state.suppress_change_listeners("play_rate"):
             state.play_rate = rate
-        state.play_caption = _play_caption(_position_count(info), rate, fps)
+        state.play_caption = _play_caption(
+            _position_count(info), _play_stride(stride, rate), paint_fps
+        )
+        if _PROFILE["enabled"]:
+            # A speed change is a CLIENT event in the same stream as the delivery's
+            # animation start/stop: it is the one place the operator changes what the
+            # picture is about to do, so a summary that cannot line it up against the
+            # paint times would be reading half a conversation. Gated: with the suite
+            # off this appends to nobody's list.
+            _profile_client_record("speed")
 
     @ctrl.set("mode_toggle")
     def _on_mode_toggle(**_kwargs) -> None:
         """Swap which family is animated. The two clocks are never mixed."""
         mode = "xcut" if state.mode == "ycut" else "ycut"
+        if _PROFILE["enabled"]:
+            # A family swap replaces the frame count under the player and re-derives
+            # the caption, so it belongs on the client timeline: a sweep that changed
+            # length mid-run is otherwise indistinguishable from a paint stall.
+            _profile_client_record("mode")
         # The SAME maximum in both modes: the press re-aims the camera and
         # clamps, it never rescales the timeline.
         state.frame_max = _frame_max_for(info)
@@ -16337,23 +16571,49 @@ def run_web_vis(
             )
 
     async def _play_loop(gen: int) -> None:
-        """Advance one position per tick ON A WALL-CLOCK SCHEDULE, until the
-        trigger bumps the generation or state.playing is cleared.
+        """Pump ONE stride per PAINTED frame, until the trigger bumps the
+        generation or state.playing is cleared.
 
-        ONE POSITION PER TICK, chosen by the CLOCK rather than accumulated per
-        tick. ``state.play_rate`` positions a tick is what the operator asked for,
-        so the position on screen at time t is ``anchor + (t - t_anchor) * rate *
-        fps`` (:func:`_play_target`): a slow tick then ADVANCES FURTHER instead of
-        stalling, and the caption's "s per sweep" stays true on a busy machine.
-        The REJECTED alternative - add ``rate`` to the position each tick - is what
-        this loop used to do, and it makes the playback speed a property of the
-        box: the same selected rate plays slower whenever a heavy sheet is drawn,
-        so "4 steps/tick at 24 fps" no longer predicts the sweep time it quotes.
+        THE TICK IS NOT THE STEP ANY MORE. The tick grid is still the wall clock
+        (``t0 + n/fps``, one wake-up per animation tick), but a tick now means "the
+        display MIGHT paint", and only a tick that really paints advances the
+        position - by ``_play_stride`` positions, wrapped by :func:`_play_advance`.
+        That is what makes the caption true: it quotes positions per PAINTED frame,
+        so "4 steps/tick at 24 fps" describes the sequence the viewer SEES. Advance
+        on a tick whose still trame discarded and the position is spent on a frame
+        nobody saw, which is exactly the mismatch between the promised sweep time
+        and the picture that this loop is here to remove.
+
+        Two gates decide whether a tick paints, and a gated tick advances NOTHING:
+
+        * ``paint_every``, the ``--paint-fps`` cap: at most one repaint per
+          ``ceil(fps / paint_fps)`` ticks. Asking trame for a still more often than
+          it can round-trip one (render + encode is tens of ms) does not produce a
+          faster picture, it produces dropped stills, so the pump spends one repaint
+          every N beats instead of flooding delivery with asks it will refuse.
+        * ``_delivery_animating()``: while trame is animating a view client-side its
+          ``push_render`` returns early (publish_image_delivery.py:26-35), so a still
+          asked for now would be thrown away. Holding the position is the only
+          honest option - advancing would move the sequence past a frame no client
+          received.
+
+        THE REJECTED ALTERNATIVES, both of which this loop used to be: advance
+        ``rate`` positions per TICK regardless of delivery (the speed then belongs to
+        the box and the encoder rather than to the operator, so the caption is a
+        guess), and integrate a wall-clock target (:func:`_play_target` - still the
+        honest answer for a machine that paints every tick) which keeps speed a
+        property of time, so a dropped still costs a position that was never shown.
+        Paint driven is the only shape in which "advanced" and "painted" cannot
+        disagree.
 
         The LOOP IS SCHEDULED ON DEADLINES (``t0 + n/fps``), not as
         work-then-``sleep(1/fps)``: the old shape added the draw time to every
         period, so the tick rate silently fell below DEFAULT_FPS and the wall clock
         drifted away from the rate the caption quotes.
+
+        A PAUSE PAINTS NOTHING - not a skipped paint, no paint: the trigger clears
+        ``state.playing`` and bumps the generation, and both are re-checked right
+        after every sleep, so a paused player costs one iteration and no draw.
 
         One draw per tick, and it is the loop's OWN draw: ``_show`` writes
         ``state.frame``, which fires the frame listener on the flush. The loop
@@ -16386,6 +16646,11 @@ def run_web_vis(
         # The tick PERIOD is computed once and floored at 1 fps: a zero
         # would divide by zero here, before any position is drawn.
         period = 1.0 / max(1, int(fps))
+        # How many TICKS one painted frame is worth: the paint cap, rounded UP so the
+        # repaint rate never EXCEEDS what the operator asked for (an fps of 25 at a
+        # cap of 10 is one paint every 3 ticks = 8.3/s, not every 2 = 12.5/s).
+        # Computed once: fps and the cap are both fixed for the life of this task.
+        paint_every = max(1, int(math.ceil(max(1, int(fps)) / max(1, int(paint_fps)))))
         while int(handles.get("generation", 0)) == gen and state.playing:
             tick += 1
             # Deadline, not period: the draw time comes out of the NEXT sleep
@@ -16397,6 +16662,24 @@ def run_web_vis(
             # the wait may have ended this loop.
             if int(handles.get("generation", 0)) != gen or not state.playing:
                 return
+            # THE PAINT CAP. No repaint is due on this beat, so nothing advances and
+            # nothing is drawn: the position IS the picture, and a position nobody
+            # painted is a position the viewer never saw. The yield is not optional -
+            # a tick whose deadline has already passed took no sleep above, so without
+            # it this coroutine could spin through the whole gate without ever
+            # suspending and starve the websocket the frames travel on.
+            if (tick - 1) % paint_every:
+                await asyncio.sleep(0)
+                continue
+            # THE CLIENT IS MID-ANIMATION: trame's push_render discards stills while
+            # its views_in_animations list is non-empty (publish_image_delivery.py:
+            # 26-35), so a still asked for now would be dropped after the work was
+            # paid for. Hold the position and let the animation finish; None ("nobody
+            # told us") is not animating, because refusing to paint on a guess would
+            # freeze a playback that is visibly stuck.
+            if _delivery_animating():
+                await asyncio.sleep(0)
+                continue
             # The deadline this tick was DUE at, and how late it actually
             # began. Parked, not written: the tick line _show is about to
             # emit is the line these three numbers belong on.
@@ -16429,7 +16712,11 @@ def run_web_vis(
                 anchor_time, anchor_frame = _play_reanchor(
                     anchor_time, anchor_frame, now, int(state.frame), drawn
                 )
-                target = _play_target(anchor_time, anchor_frame, now, rate, fps)
+                # ONE stride per painted frame, wrapped by the family length: the
+                # clock no longer invents the position, the PAINT does.
+                target = _play_advance(
+                    anchor_frame, _play_stride(stride, rate), frames
+                )
                 # THE SUPPRESSION NAMES THE ECHO, NOT THE TICK. The position
                 # about to be published is recorded BEFORE _show writes it, so
                 # even a flush that fires the listener mid-draw can tell the
@@ -16462,6 +16749,13 @@ def run_web_vis(
                     # the next tick, which is exactly the "the scrubber and the
                     # step buttons do nothing while it plays" report.
                     drawn = wrote
+                    # THE NEXT PAINT ADVANCES FROM WHAT WAS PUBLISHED, not from what
+                    # this tick asked for and not from the wall clock: ``wrote`` is the
+                    # position _show clamped and the client received, so the stride is
+                    # measured off the sequence on screen. An operator's seek adopted
+                    # by _play_reanchor above is respected for exactly one paint, which
+                    # is why this re-anchor happens AFTER the draw and overrides it.
+                    anchor_time, anchor_frame = now, wrote
                     # Dropped BEFORE the suspension point for the same reason: a
                     # change that arrives while this coroutine is suspended is
                     # the operator's and must never be mistaken for this echo.
@@ -16506,16 +16800,25 @@ def run_web_vis(
         bug look like "the controls are dead but the picture is fine".
         The play loop is scheduled with asyncio.create_task instead; the
         generation counter stops it on the second press.
+
+        Both branches append a timestamped ``pause``/``resume`` client event when
+        the suite is on: the pause is the ONE moment the pump stops painting by
+        operator request rather than by its own cap, so a summary that could not see
+        it would blame the gap between two paints on delivery.
         """
         generation = int(handles.get("generation", 0)) + 1
         handles["generation"] = generation
         if state.playing:
             state.playing = False
             state.play_label = "play"
+            if _PROFILE["enabled"]:
+                _profile_client_record("pause")
             state.flush()
             return
         state.playing = True
         state.play_label = "pause"
+        if _PROFILE["enabled"]:
+            _profile_client_record("resume")
         state.flush()
         asyncio.create_task(_play_loop(generation))
 
@@ -17238,8 +17541,16 @@ def run_web_vis(
     else:
         print(
             f"[poc_app] animation: {nt} frames on ez_ycut, {nt_x} on each x-cut, "
-            f"played at {fps} fps (a VIEWING rate - see the sim time readout)"
+            f"painted at most {paint_cap}/s and "
+            f"{stride} position{'s' if stride != 1 else ''} per painted frame at the "
+            f"default speed, rate {DEFAULT_PLAY_RATE} "
+            f"(a VIEWING rate - see the sim time readout)"
         )
+        # The speed select is anchored at rate 4, so a small --stride gives several
+        # of its four settings the same number - say which, once, and start anyway.
+        collision_notice = _stride_collision_notice(stride)
+        if collision_notice:
+            print(collision_notice)
         print(
             "[poc_app] each frame's sim time is rebuilt from its own plane's "
             f"frame index: the x-cuts are {_xcut_cadence_clause(info)}"
@@ -17347,6 +17658,28 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
+        "--stride",
+        type=int,
+        default=DEFAULT_PLAY_STRIDE,
+        help=(
+            "positions ONE PAINTED frame advances at the default speed, rate 4 "
+            f"(default: {DEFAULT_PLAY_STRIDE}); the speed select scales it from "
+            "there - rate 8 doubles it, rate 1 divides it by four and floors at "
+            "one whole position - and 4 reproduces the historical 4 positions/tick"
+        ),
+    )
+    parser.add_argument(
+        "--paint-fps",
+        dest="paint_fps",
+        type=int,
+        default=None,
+        help=(
+            "ceiling on PAINTED frames per second, i.e. on how often the "
+            "animation asks trame for a still (default: the same as --fps, "
+            "one repaint per animation tick); a skipped paint advances nothing"
+        ),
+    )
+    parser.add_argument(
         "--msaa",
         type=int,
         default=_env_int("POC_MSAA"),
@@ -17400,6 +17733,16 @@ def main(argv=None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    # The pump's two knobs are INTS with a meaning, not free numbers: a stride of 0
+    # would freeze the picture on its first painted frame and a paint cap of 0 would
+    # divide by zero in the loop's modulus. Refused here, where the operator can read
+    # which flag said what, instead of being floored into something they did not ask
+    # for (a --stride 0 silently playing at 1 is the same class of lie as a caption
+    # that does not match the picture).
+    if args.stride < 1:
+        parser.error("--stride must be at least 1 position per painted frame")
+    if args.paint_fps is not None and args.paint_fps < 1:
+        parser.error("--paint-fps must be at least 1 frame per second")
     try:
         # ONE rule for both routes: a flag and its POC_* variable end up in the
         # same three numbers, and a value VTK or the transport would ignore is a
@@ -17429,11 +17772,15 @@ def main(argv=None) -> int:
             start_threads=True,
             register_exit=True,
         )
-        # The delivery instance does not exist yet (trame builds it in
-        # server.start()), so the CLASS is wrapped here and every later instance
-        # inherits the counters. False is not an error: the summary says
-        # available=no rather than reporting five zeros as a measured idle.
-        _profile_hook_delivery()
+    # OUTSIDE the if above, because the pump's knowledge of delivery is NOT
+    # telemetry: ``_delivery_animating()`` has to answer with the suite off too, or a
+    # plain run keeps advancing positions into stills trame discards while a profiled
+    # run does not - two different animations behind one flag. The delivery instance
+    # does not exist yet (trame builds it in server.start()), so the CLASS is wrapped
+    # here and every later instance inherits the counters AND remembers itself.
+    # False is not an error: the summary says available=no rather than reporting five
+    # zeros as a measured idle.
+    _profile_hook_delivery()
     if args.structure is None:
         # The ONE place the boot default is chosen, so an explicit --structure
         # never gets a sentence about a default it did not use.
@@ -17477,6 +17824,8 @@ def main(argv=None) -> int:
                 _resolve(args.surface_dump) if args.surface_dump else None
             ),
             loaded_page=bare_page,
+            stride=args.stride,
+            paint_fps=args.paint_fps,
             msaa=knobs["msaa"],
             image_encoding=knobs["image_encoding"],
             image_quality=knobs["image_quality"],
@@ -17526,6 +17875,8 @@ def main(argv=None) -> int:
         # must not be handed a bare relative string from a different cwd.
         surface_dump=(_resolve(args.surface_dump) if args.surface_dump else None),
         loaded_page=page,
+        stride=args.stride,
+        paint_fps=args.paint_fps,
         msaa=knobs["msaa"],
         image_encoding=knobs["image_encoding"],
         image_quality=knobs["image_quality"],
