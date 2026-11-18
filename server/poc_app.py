@@ -897,8 +897,12 @@ _TIMING_LOG_PATH = _TIMING_ROOT / "poc_timing.log"
 _TIMING_SUMMARY_PATH = _TIMING_ROOT / "poc_timing_summary.txt"
 _TIMING_FRAMES_DIR = _TIMING_ROOT / "frames"
 # A screenshot is a FULL framebuffer readback, so it is rationed twice over: one
-# every 25th tick, and never more than 60 files in a run.
-_TIMING_SHOT_EVERY = 25
+# every 100th tick, and never more than 60 files in a run.
+# WHY 100 and not 25: the readback costs 40-75 ms and is spent INSIDE the tick it
+# is measuring, so a shot every 25th tick polluted the very probe it feeds with a
+# cost no ordinary frame pays. Every 100th tick bounds the run by the same
+# 60-file cap while keeping the timing probe honest.
+_TIMING_SHOT_EVERY = 100
 _TIMING_SHOT_MAX = 60
 _TIMING_SUMMARY_EVERY = 50
 
@@ -1379,10 +1383,28 @@ def _draw_step_counter(plotter, text) -> None:
     count it cannot substantiate. The actor is NAMED, so a second call on the
     same plotter replaces it in place (the mechanism ``station_label`` already
     uses) instead of stacking a second label on every tick.
+
+    WHY the in-place path exists: ``add_text`` under a name already taken
+    REMOVES and re-adds the actor, and that path draws - so a counter that is
+    redrawn every tick paid a full render for a string that had merely changed.
+    The named actor is a ``pyvista.CornerAnnotation``, and ``set_text``
+    re-letters it without drawing anything; the tick's own render paints it.
+    Only that exact type is updated in place. Anything else under the name -
+    and any plotter without an ``actors`` mapping, as the test stubs are -
+    falls through to ``add_text`` exactly as it did before.
     """
     if not text:
         return
     try:
+        import pyvista as pv  # deferred, as everywhere else in this module
+
+        actors = getattr(plotter, "actors", None)
+        if isinstance(actors, dict):
+            existing = actors.get(STEP_COUNTER_NAME)
+            if isinstance(existing, pv.CornerAnnotation):
+                # In place: nothing is removed, added, or drawn.
+                existing.set_text(STEP_COUNTER_POSITION, text)
+                return
         plotter.add_text(
             text,
             name=STEP_COUNTER_NAME,
@@ -12755,22 +12777,43 @@ def run_web_vis(
             layout = _cut_layout(info)
             before = set(plotter.actors)
             _timing_mark("miss_actors_before", actors_before=len(before))
-            _timing_mark("miss_scene_start")
-            _draw_volume_scene(
-                plotter,
-                info,
-                grid=None,
-                cut_layout=layout,
-                cell_mm=cell_mm,
-                clim_override=clim,
-                # The bar has to say which window this range was measured over,
-                # and the mode is the only place that knows.
-                clim_mode=clim_mode,
-            )
-            _timing_mark("miss_scene_end")
-            _timing_mark("miss_markers_start")
-            _draw_port_plane_markers(plotter, info, cell_mm, show_load, show_port)
-            _timing_mark("miss_markers_end", actors_after=len(plotter.actors))
+            # WHY the two builders are MUTED here: each ends in its own
+            # ``plotter.render()`` - ``_draw_volume_scene`` issues three and
+            # ``_draw_port_plane_markers`` two - and ``_show`` draws ONCE more as
+            # soon as this returns. Unmuted, one miss paid six full frames to put
+            # one picture on screen, five of them of a half-built layer nobody
+            # ever saw. ``render`` is silenced for the duration of these two calls
+            # ONLY, restored in ``finally`` so no later path inherits the mute, and
+            # the single draw they were asking for is issued below, once the layer
+            # is whole.
+            _real_render = plotter.render
+            plotter.render = lambda *args, **kwargs: None
+            try:
+                _timing_mark("miss_scene_start")
+                _draw_volume_scene(
+                    plotter,
+                    info,
+                    grid=None,
+                    cut_layout=layout,
+                    cell_mm=cell_mm,
+                    clim_override=clim,
+                    # The bar has to say which window this range was measured over,
+                    # and the mode is the only place that knows.
+                    clim_mode=clim_mode,
+                )
+                _timing_mark("miss_scene_end")
+                _timing_mark("miss_markers_start")
+                _draw_port_plane_markers(plotter, info, cell_mm, show_load, show_port)
+                _timing_mark("miss_markers_end", actors_after=len(plotter.actors))
+            finally:
+                plotter.render = _real_render
+            # THE one draw the muted builders were asking for. Guarded like the
+            # rest of the layer: a failed render is one lost frame, not a lost
+            # server.
+            try:
+                plotter.render()
+            except Exception as exc:  # noqa: BLE001 - the layer is an EXTRA
+                print(f"[poc_app] render skipped: {exc}", file=sys.stderr)
             handles["volume_layer"] = {
                 "actors": [
                     plotter.actors[name]
