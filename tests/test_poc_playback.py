@@ -100,7 +100,7 @@ class _Stop(Exception):
 
 
 def _fixture_info(app, path: Path, *, structure_id="A", load_ohm=50.0,
-                  schema=None) -> dict:
+                  schema=None, frames=None) -> dict:
     """Minimal ``emfit.vis/2`` dump, the same field set verify_wd.py uses.
 
     ``structure_id`` / ``load_ohm`` are the dump's PROVENANCE keys; pass ``None``
@@ -108,7 +108,7 @@ def _fixture_info(app, path: Path, *, structure_id="A", load_ohm=50.0,
     default pair is Run A's own arm and load, which is what every other test
     here reads back.  ``schema`` overrides the declared version.
     """
-    nt, nx, nz = 4, 8, 5
+    nt, nx, nz = (4 if frames is None else int(frames)), 8, 5
     nt_x, ny_x = 3, 6
     rng = np.random.default_rng(0)
     payload = {
@@ -372,8 +372,23 @@ def _closure_cells(fn) -> dict:
     return dict(zip(fn.__code__.co_freevars, [c.cell_contents for c in cells]))
 
 
-@pytest.fixture(scope="module")
-def playback(tmp_path_factory):
+#: The y-cut timeline the clock tests run on.  The small dump the rest of this
+#: file uses has FOUR positions and the loop advances DEFAULT_PLAY_RATE (4)
+#: positions a tick, so 4 % 4 == 0: the clock would sit on one position for the
+#: whole sweep and "the loop carried on from the operator's position" could not
+#: be told from "the loop dragged the picture back".  96 keeps the boot cheap
+#: while a tick still moves the clock: 4 steps at 25 fps is 100 positions/s, so
+#: the CLOCK_WINDOW_S window below is 15 positions - far short of the half sweep
+#: the seek is put away from the clock.
+CLOCK_FRAMES = 96
+
+
+def _playback_page(tmp_path_factory, frames=None):
+    """Boot the animation page and yield it with its two devices doubled.
+
+    ``frames`` picks the y-cut timeline length (see :data:`CLOCK_FRAMES`); the
+    default is the small dump every non-clock test here reads.
+    """
     pyvista = pytest.importorskip("pyvista")
     import poc_app as app
 
@@ -390,7 +405,9 @@ def playback(tmp_path_factory):
     undos.append(lambda: setattr(pyvista.Plotter, "render", real_render))
 
     try:
-        info = _fixture_info(app, tmp_path_factory.mktemp("wd") / "dump.npz")
+        info = _fixture_info(
+            app, tmp_path_factory.mktemp("wd") / "dump.npz", frames=frames
+        )
         app, srv = _boot_app(info)
         state, ctrl = srv.state, srv.controller
 
@@ -434,6 +451,23 @@ def playback(tmp_path_factory):
     finally:
         for undo in reversed(undos):
             undo()
+
+
+@pytest.fixture(scope="module")
+def playback(tmp_path_factory):
+    """The playback page on the small dump the rest of this file uses."""
+    yield from _playback_page(tmp_path_factory)
+
+
+@pytest.fixture(scope="module")
+def clock_playback(tmp_path_factory):
+    """The same page on a timeline long enough for its clock to MOVE.
+
+    See :data:`CLOCK_FRAMES`: on the four-position dump a tick advances the clock
+    by exactly the timeline length, so nothing on ``state.frame`` can be watched
+    while playback runs.
+    """
+    yield from _playback_page(tmp_path_factory, frames=CLOCK_FRAMES)
 
 
 def _other_tasks() -> set:
@@ -575,6 +609,233 @@ def test_a_failed_draw_ends_playback_instead_of_hanging(playback, monkeypatch):
                     await task
 
     asyncio.run(scenario())
+
+# --- the operator's controls while the animation RUNS -------------------------
+#
+# The report these pin: "while playback runs, the pause button / frame scrubber /
+# step buttons do nothing until it stops". The loop held ONE
+# ``suppress_frame_listener`` flag across the whole tick - the draw, its flush AND
+# the yield after it - so a change that arrived while the loop was suspended was
+# swallowed by a listener that took it for the loop's own draw, and ``drawn`` was
+# then read back off ``state.frame`` (now the operator's position) so the clock no
+# longer noticed the seek either. The loop now names the ONE position it publishes
+# (``play_echo_frame``) and pins ``drawn`` from that BEFORE the yield.
+
+#: How long the clock tests watch ``state.frame`` after the operator's change.
+#: 4 steps/tick at 25 fps = 100 positions/s, so a sample can be at most
+#: ``CLOCK_STEP * CLOCK_WINDOW_S`` = 15 positions past the change - and the loop
+#: needs half a sweep (48) to catch up with a position put that far ahead of it.
+CLOCK_WINDOW_S = 0.15
+CLOCK_STEP = 4 * 25
+
+
+def _frame_listener(state):
+    """The callable trame hands a client's ``frame`` change to.
+
+    ``@state.change("frame")`` registers it on the STATE object, not on the
+    controller, so it is not reachable through a ``ctrl`` trigger - this is the
+    registration the browser's change is dispatched through.
+    """
+    entries = state._change_callbacks.get("frame") or []
+    assert len(entries) == 1, (
+        f"{len(entries)} listeners registered on 'frame'; expected exactly 1"
+    )
+    fn = entries[0][0]
+    assert fn.__qualname__.endswith("._on_frame"), (
+        f"the 'frame' listener is {fn.__qualname__!r}, not the page's _on_frame"
+    )
+    return fn
+
+
+async def _watch_clock(state, origin, frames, seconds=CLOCK_WINDOW_S):
+    """Sample ``state.frame``; return each sample's distance AHEAD of ``origin``.
+
+    ``origin`` is the operator's position, so a distance of 0 is the position
+    still on screen and a small distance is the loop having carried on from it.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    seen = []
+    while loop.time() < deadline:
+        seen.append((int(state.frame) - origin) % frames)
+        await asyncio.sleep(0.002)
+    return seen
+
+
+def test_the_loop_draws_its_own_echo_once_but_an_operator_seek_always(playback):
+    """The loop's own position is not drawn a second time; a seek is drawn.
+
+    ``_show`` writes ``state.frame``, and the position it publishes is the value
+    the frame listener is handed back: without the echo every tick would draw
+    twice - twice the GL work for one position, the second draw from inside a
+    state listener. ``playing`` is set by hand here because what is under test is
+    the LISTENER, not the clock: no loop runs, so every render counted is the
+    listener's own. The listener is called DIRECTLY, the way trame calls it on a
+    client change (``listener(frame=<the new value>)``): this harness never
+    enters the event loop, so ``state.flush()`` dispatches nothing and a
+    flush-based assertion would pass for the wrong reason.
+    """
+    handles, state, renders = playback.handles, playback.state, playback.renders
+    listener = _frame_listener(state)
+    assert state.playing is False, "boot already left the page playing"
+    frames = int(state.frame_max) + 1
+    was_frame, was_playing = int(state.frame), bool(state.playing)
+    try:
+        state.playing = True
+        # -- the loop's echo: the position it is about to publish, already drawn.
+        echoed = (was_frame + 7) % frames
+        handles["play_echo_frame"] = echoed
+        before = len(renders)
+        state.frame = echoed
+        listener(frame=echoed)
+        assert len(renders) == before, (
+            "the frame listener drew the play loop's own echo: "
+            f"{len(renders) - before} extra render(s) for position {echoed}, "
+            "so every tick costs two draws instead of one"
+        )
+        # -- an operator's seek: the echo names a DIFFERENT position, so this one
+        #    is not the loop's and has to reach the picture immediately.
+        handles["play_echo_frame"] = (echoed + 1) % frames
+        seek = (echoed + frames // 2) % frames
+        before = len(renders)
+        state.frame = seek
+        listener(frame=seek)
+        assert len(renders) - before == 1, (
+            "a frame change while playing was swallowed by the play loop's own "
+            "suppression: the scrubber and the step buttons then look dead until "
+            "playback stops"
+        )
+        assert int(state.frame) == seek, (
+            f"the seek to {seek} was rewritten to {int(state.frame)!r} by the "
+            "listener that was supposed to draw it"
+        )
+    finally:
+        handles["play_echo_frame"] = None
+        state.playing = was_playing
+        state.frame = was_frame
+        state.flush()
+
+
+def test_a_scrub_while_playing_is_carried_on_from_not_undone(clock_playback):
+    """A position sent by the scrubber MID-PLAYBACK survives the next tick.
+
+    The loop must not drag the picture back to where its clock was: it adopts the
+    scrubbed position as the new origin (``_play_reanchor``) and carries on from
+    there. The seek is put half a sweep away from where the clock is, on the
+    ``clock_playback`` timeline (see ``CLOCK_FRAMES``): a tick advances four
+    positions, so "still near the seek" and "dragged back to the clock" cannot be
+    confused. The four-position ``playback`` page cannot show this at all - a
+    four-step tick there is a whole timeline, so the clock never moves.
+    """
+
+    async def scenario() -> None:
+        handles, state, trigger = clock_playback.handles, clock_playback.state, clock_playback.trigger
+        frames = int(state.frame_max) + 1
+        was_frame = int(state.frame)
+        assert state.playing is False, "boot already left the page playing"
+
+        tasks_before = _other_tasks()
+        await asyncio.wait_for(trigger(), timeout=RETURN_TIMEOUT_S)
+        created = _other_tasks() - tasks_before
+        assert len(created) == 1, (
+            f"the play press scheduled {len(created)} tasks, expected exactly 1"
+        )
+        task = created.pop()
+        try:
+            await asyncio.sleep(0.1)  # let the clock leave the frame it started on
+            assert state.playing is True, "the play press did not start playback"
+            clock = int(state.frame)
+            # Half a sweep AWAY from the clock: inside CLOCK_WINDOW_S the loop can
+            # only cover 15 of those 48 positions by running on regardless, so a
+            # sample beside the seek is proof the seek was ADOPTED.
+            seek = (clock + frames // 2) % frames
+
+            # Exactly what the scrubber does: write the key. The listener is not
+            # called here - this test is about the CLOCK, and the clock reads the
+            # key.
+            state.frame = seek
+            state.flush()
+            assert int(state.frame) == seek, (
+                f"the scrub to {seek} was rewritten to {int(state.frame)!r} "
+                "before the loop even ran a tick"
+            )
+
+            ahead = await _watch_clock(state, seek, frames)
+            near = [d for d in ahead if 1 <= d <= CLOCK_STEP * CLOCK_WINDOW_S]
+            assert near, (
+                f"after the scrub from {clock} to {seek} the loop never carried on "
+                f"from the seek (distances ahead of it: {ahead[:20]}): it dragged "
+                "the picture back to its own clock, so the scrubber snaps back for "
+                "as long as the animation runs"
+            )
+        finally:
+            await asyncio.wait_for(trigger(), timeout=RETURN_TIMEOUT_S)  # pause
+            await _drain([task])
+            state.frame = was_frame
+            state.flush()
+
+    asyncio.run(scenario())
+
+
+def test_a_step_press_while_playing_is_carried_on_from_not_snapped_back(clock_playback):
+    """A NEXT press MID-PLAYBACK moves the picture, and the clock follows it.
+
+    Three presses (ten positions each) put the stepped position 30 positions
+    ahead of where the clock was - twice what the loop can cover inside
+    ``CLOCK_WINDOW_S`` - so "the loop carried on from the step" and "the loop
+    dragged the picture back" cannot be confused. The presses run without awaiting, so
+    they land where a real burst of clicks does: across the tick the loop is in
+    the middle of.
+    """
+
+    async def scenario() -> None:
+        handles, state, trigger = clock_playback.handles, clock_playback.state, clock_playback.trigger
+        step_fwd = _registered_trigger(clock_playback.server.controller, "step_fwd")
+        frames = int(state.frame_max) + 1
+        was_frame = int(state.frame)
+        assert state.playing is False, "boot already left the page playing"
+
+        tasks_before = _other_tasks()
+        await asyncio.wait_for(trigger(), timeout=RETURN_TIMEOUT_S)
+        created = _other_tasks() - tasks_before
+        assert len(created) == 1, (
+            f"the play press scheduled {len(created)} tasks, expected exactly 1"
+        )
+        task = created.pop()
+        try:
+            await asyncio.sleep(0.1)
+            assert state.playing is True, "the play press did not start playback"
+            start = int(state.frame)
+            presses = 3  # 30 positions ahead of where the clock was
+            for _ in range(presses):
+                step_fwd()  # exactly what the NEXT button calls
+            stepped = int(state.frame)
+            assert stepped == (start + 10 * presses) % frames, (
+                f"{presses} NEXT presses went {start} -> {stepped}, expected "
+                f"{(start + 10 * presses) % frames}: a step while playing is a "
+                "ten-frame SEEK, not a stop"
+            )
+
+            # The loop's own clock can only be 15 positions past where it was when
+            # NEXT was pressed, so a sample BESIDE the stepped position (30 ahead
+            # of that) cannot be the loop running on regardless: it can only be
+            # the loop having adopted the step.
+            ahead = await _watch_clock(state, stepped, frames)
+            near = [d for d in ahead if 1 <= d <= CLOCK_STEP * CLOCK_WINDOW_S]
+            assert near, (
+                f"the step presses left the page at {stepped} (from {start}) but "
+                f"the loop never carried on from it (distances ahead: "
+                f"{ahead[:20]}): it dragged the picture back to its own clock, so "
+                "NEXT does nothing while the animation runs"
+            )
+        finally:
+            await asyncio.wait_for(trigger(), timeout=RETURN_TIMEOUT_S)  # pause
+            await _drain([task])
+            state.frame = was_frame
+            state.flush()
+
+    asyncio.run(scenario())
+
 
 # --- the dump's own provenance, read back ------------------------------------
 #

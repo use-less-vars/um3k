@@ -13375,8 +13375,28 @@ def run_web_vis(
     @state.change("frame")
     def _on_frame(frame=None, **_kwargs) -> None:
         if handles.get("suppress_frame_listener"):
-            return  # the play loop drives _show() itself
-        _show(state.frame if frame is None else frame, state.mode)
+            return  # whoever set this flag draws the position itself
+        value = state.frame if frame is None else frame
+        if state.playing:
+            # WHILE PLAYBACK RUNS, ONLY THE OPERATOR'S POSITIONS ARE DRAWN HERE.
+            # The play loop publishes one position per tick, and its own write
+            # comes straight back through this listener on the flush; the loop
+            # names that ONE position in ``play_echo_frame`` so the echo is
+            # recognised and NOT drawn a second time. Anything else on this key
+            # while playing is a real seek - the scrubber, a << PREV / NEXT
+            # press, a family swap that re-clamps the index - and it is drawn
+            # now, so the picture matches the control a hand is on, while
+            # ``state.frame`` is left exactly where the seek put it: the loop's
+            # :func:`_play_reanchor` finds that position differs from the one it
+            # drew itself, adopts it as the new clock origin and carries on from
+            # there. The REJECTED alternative is to keep one flag over the whole
+            # tick and hide every writer of ``state.frame`` behind it, which is
+            # what made the scrubber and the step buttons look dead for as long
+            # as the animation ran.
+            echo = handles.get("play_echo_frame")
+            if echo is not None and int(value) == int(echo):
+                return
+        _show(value, state.mode)
 
     @state.change("play_rate")
     def _on_play_rate(play_rate=None, **_kwargs) -> None:
@@ -14508,13 +14528,18 @@ def run_web_vis(
         drifted away from the rate the caption quotes.
 
         One draw per tick, and it is the loop's OWN draw: ``_show`` writes
-        ``state.frame``, which fires the frame listener on the flush, so
-        ``suppress_frame_listener`` is held around the show+flush pair to keep the
-        listener from drawing the same position a second time. That flag hides the
-        loop's re-entry and nothing else - a position moved by the scrubber or a
-        step button is NOT suppressed: :func:`_play_reanchor` sees it and adopts it
-        as the new origin, so a seek while playing is respected rather than undone
-        on the next tick.
+        ``state.frame``, which fires the frame listener on the flush. The loop
+        therefore names the ONE position it is about to publish in
+        ``handles["play_echo_frame"]``, and the listener drops that position and
+        nothing else: it is the loop's own echo, already on screen. Everything
+        else on ``state.frame`` is the operator's, is drawn by the listener, and
+        is then ADOPTED here by :func:`_play_reanchor` - which is why ``drawn``
+        is pinned from what THIS tick published, before the yield below, and not
+        read back off ``state.frame`` afterwards: read back, an operator's seek
+        that landed while this coroutine was suspended looks like this loop's own
+        draw, and the clock drags the position back over it. The REJECTED
+        alternative is one ``suppress_frame_listener`` flag held across the whole
+        tick, which silences a real seek for the duration of a draw.
 
         Runs as a background task. It must NOT be awaited from a trigger
         handler: see _on_play_toggle.
@@ -14577,7 +14602,11 @@ def run_web_vis(
                     anchor_time, anchor_frame, now, int(state.frame), drawn
                 )
                 target = _play_target(anchor_time, anchor_frame, now, rate, fps)
-                handles["suppress_frame_listener"] = True
+                # THE SUPPRESSION NAMES THE ECHO, NOT THE TICK. The position
+                # about to be published is recorded BEFORE _show writes it, so
+                # even a flush that fires the listener mid-draw can tell the
+                # loop's write from an operator's.
+                handles["play_echo_frame"] = int(target % frames)
                 try:
                     # THE DRAW STAYS ON THE EVENT-LOOP THREAD, and that is not
                     # negotiable. The GL context belongs to the thread that made
@@ -14588,7 +14617,27 @@ def run_web_vis(
                     # that publishes what it wrote both run HERE, on the thread
                     # that owns the context.
                     _show(target % frames, state.mode)
+                    # _show CLAMPS the position into the timeline before it
+                    # writes ``state.frame``, so the echo has to name what it
+                    # PUBLISHED and not what this tick asked for: an echo that
+                    # disagreed with the published value would be read as an
+                    # operator's seek and drawn twice.
+                    wrote = int(state.frame)
+                    handles["play_echo_frame"] = wrote
                     state.flush()
+                    # ``drawn`` IS THIS TICK'S OWN POSITION, PINNED BEFORE THE
+                    # YIELD, and that ordering is the fix: read back off
+                    # ``state.frame`` after the yield it could already hold an
+                    # operator's seek - a scrub that arrived while this
+                    # coroutine was suspended - and _play_reanchor would then
+                    # take the seek for the loop's own draw and overwrite it on
+                    # the next tick, which is exactly the "the scrubber and the
+                    # step buttons do nothing while it plays" report.
+                    drawn = wrote
+                    # Dropped BEFORE the suspension point for the same reason: a
+                    # change that arrives while this coroutine is suspended is
+                    # the operator's and must never be mistaken for this echo.
+                    handles["play_echo_frame"] = None
                     # EVERY TICK STILL YIELDS ITS THREAD. A late tick (its
                     # deadline already passed) took no sleep above, and the
                     # synchronous draw would then let this coroutine iterate
@@ -14598,8 +14647,7 @@ def run_web_vis(
                     # the deadline sleep may not have provided.
                     await asyncio.sleep(0)
                 finally:
-                    handles["suppress_frame_listener"] = False
-                drawn = int(state.frame)
+                    handles["play_echo_frame"] = None
             except Exception as exc:  # noqa: BLE001
                 print(
                     f"[poc_app] playback stopped: {exc!r}",
