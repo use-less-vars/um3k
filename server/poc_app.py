@@ -893,8 +893,11 @@ def build_time_axis(
        (it may start at 0, or be evenly spaced at a stride of its own);
        otherwise ``arange(1, n_frames + 1)``, i.e. "one captured frame per
        step", the only claim a dump with no step axis supports;
-    2. ``stride`` - the RECORDED value when the dump states one, else the
-       spacing of the recorded axis when that spacing is even, else 1;
+    2. ``stride`` - the even spacing of the recorded axis when it has one,
+       else the RECORDED value when the dump states one, else 1: the axis being
+       DRAWN outranks the dump's single scalar, because one dump decimates its
+       families differently and a scalar quoted over this axis would name a
+       cadence the frames on screen contradict;
     3. ``n_steps`` - the RECORDED run length when the dump states it, else the
        last recorded step (a denominator below the frame count would claim a run
        shorter than the timeline it is the denominator of).
@@ -930,12 +933,24 @@ def build_time_axis(
         diffs = np.diff(axis.astype(float))
         if float(diffs[0]) > 0.0 and bool(np.all(diffs == diffs[0])):
             steps_apart = int(diffs[0])
-    try:
-        stride_value = int(stride)
-    except (TypeError, ValueError):
-        stride_value = 0
-    if stride_value <= 0:
-        stride_value = steps_apart if steps_apart else 1
+    # The spacing of the axis THIS page draws is preferred over a dump-wide
+    # scalar: one dump states ONE ``dump_stride`` while its families are
+    # decimated differently - ``artifacts/volume_s59.npz`` records
+    # ``frame_index`` spaced 1 apart and ``frame_index_xcut`` spaced 10 apart -
+    # so a scalar quoted over the drawn axis prints a cadence the frames on
+    # screen contradict ("Stride 1" beside frames that advance 10 steps). The
+    # scalar is only a fallback for an axis with no even spacing to measure,
+    # which is the rule the exporter's ``measured_stride`` and the timeline's
+    # ``Timeline.stride`` already apply.
+    if steps_apart:
+        stride_value = steps_apart
+    else:
+        try:
+            stride_value = int(stride)
+        except (TypeError, ValueError):
+            stride_value = 0
+        if stride_value <= 0:
+            stride_value = 1
 
     try:
         total = int(n_steps)

@@ -282,6 +282,39 @@ def test_a_decimated_axis_states_the_stride_it_really_runs_at():
     )
 
 
+def test_a_stated_stride_cannot_relabel_the_axis_being_drawn():
+    """The DRAWN axis decides the stride; a dump-wide scalar cannot overrule it.
+
+    ``dump_stride`` is ONE number for a dump whose families are decimated
+    differently: ``artifacts/volume_s59.npz`` records ``frame_index`` spaced 1
+    apart and ``frame_index_xcut`` spaced 10 apart, so a scalar quoted over a
+    100-spaced axis prints "Stride 1" beside frames that advance 100 steps - a
+    cadence the picture on screen contradicts. FAILS IF the stated value is
+    preferred over the measured spacing, and equally if the scalar is discarded:
+    an axis with no even spacing has nothing to measure and must fall back to
+    what the dump said, then to one step per frame.
+    """
+    axis = app.build_time_axis(
+        step_index=np.arange(1, 2401, 100), stride=1, n_steps=2400,
+        dt_s=1e-12, n_frames=24,
+    )
+    assert axis.stride == 100, (
+        "a stated stride of 1 relabelled a 100-spaced axis: "
+        f"{axis.stride}"
+    )
+    assert app._frame_label(3, 24, axis) == "Step 301 / 2400 (Stride 100)", (
+        f"stated-scalar label: {app._frame_label(3, 24, axis)!r}"
+    )
+    # No even spacing to measure: the dump's own number is the fallback ...
+    irregular = app.build_time_axis(step_index=[1, 2, 5], stride=10, n_steps=10)
+    assert irregular.stride == 10, (
+        f"an irregular axis ignored the stated stride: {irregular.stride}"
+    )
+    # ... and with no number either, one step per frame, never silence.
+    unstated = app.build_time_axis(step_index=[1, 2, 5], n_steps=10)
+    assert unstated.stride == 1
+
+
 def test_frame_and_step_map_through_the_recorded_axis(real_info):
     """Both directions on the PLANE axis, and off-axis answers are absent."""
     axis = real_info[app.TIME_AXIS_KEY]
