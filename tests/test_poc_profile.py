@@ -32,7 +32,17 @@ The claims, one per test:
 * the JSONL file gets one line per tick plus one per idle record;
 * the summary never raises - an empty run included - and stays <= 60 lines;
 * a profile directory that cannot be created costs the run its files, never its
-  records.
+  records;
+* the three display knobs have ONE validating home, so a flag and its ``POC_*``
+  variable are refused by the same rule instead of a value VTK would ignore
+  being accepted and silently dropped;
+* ``main`` hands those knobs to the shell AND records them, so the summary names
+  the knobs that produced its numbers rather than guessing them later;
+* a png request is reported as NOT applied, because the trame image transport
+  writes jpeg itself and a knob recorded as honoured when it was not is a lie;
+* the GL strings are read only from a window that has really rendered - asking an
+  unrendered off-screen window for them takes the process down here - and what
+  cannot be read is reported as pending, not guessed.
 """
 
 from __future__ import annotations
@@ -589,3 +599,374 @@ def test_a_directory_that_cannot_be_created_costs_the_files_not_the_records(
     assert poc_app._profile_summary_text().startswith("poc_app --profile summary")
     assert poc_app._profile_write_summary() != ""
     poc_app._profile_configure(False)
+
+
+# ---------------------------------------------------------------------------
+# The display knobs: --msaa, --image-encoding, --image-quality.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def knobs():
+    """An empty knob record, restored afterwards (the record is process state)."""
+    saved = dict(poc_app._PROFILE["knobs"])
+    poc_app._PROFILE["knobs"] = {}
+    try:
+        yield poc_app._PROFILE["knobs"]
+    finally:
+        poc_app._PROFILE["knobs"] = saved
+
+
+@pytest.fixture
+def renderer():
+    """The boot report, saved and restored: it is filled once per run."""
+    saved = dict(poc_app._RENDERER)
+    try:
+        yield poc_app._RENDERER
+    finally:
+        poc_app._RENDERER.clear()
+        poc_app._RENDERER.update(saved)
+
+
+class _Recorder:
+    """Stand in for a shell and remember every call."""
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def __call__(self, *args, **kwargs) -> int:
+        self.calls.append((args, kwargs))
+        return 0
+
+
+@pytest.fixture
+def wiring(monkeypatch, tmp_path):
+    """``main`` with its four seams recorded and one synthetic structure entry.
+
+    The same substitution tests/test_poc_dispatch.py uses: no trame server boots,
+    no plotter is created and no npz is opened, so what is under test is the
+    argument the routing carries.
+    """
+    entry = {"id": "s1"}
+    page = {"info": None, "path": str(tmp_path / "d.npz")}
+    monkeypatch.setattr(poc_app, "load_structures", lambda: [entry])
+    monkeypatch.setattr(
+        poc_app, "_structure_is_record_only", lambda structure: False
+    )
+    monkeypatch.setattr(
+        poc_app, "reload_page", lambda npz_path, structure_id=None: page
+    )
+    recorders = {
+        "print_keys": _Recorder(),
+        "run_web_vis": _Recorder(),
+        "run_web": _Recorder(),
+    }
+    for name, recorder in recorders.items():
+        monkeypatch.setattr(poc_app, name, recorder)
+    return {"page": page, "entry": entry, **recorders}
+
+
+def _run_main(wiring, *extra: str) -> int:
+    """``main`` on a synthetic animation page, with every seam recorded."""
+    wiring["page"]["info"] = {
+        "format": poc_app.VIS_FORMAT,
+        "nt": 4,
+        "nt_x": 2,
+    }
+    return poc_app.main(
+        ["--structure", "s1", "--input", "fake.npz", *extra]
+    )
+
+
+def test_the_display_knobs_default_to_none_and_keep_their_spelling():
+    """Unasked is None (not 0, not ""): the report spells that "default"."""
+    assert poc_app._resolve_display_knobs() == {
+        "msaa": None,
+        "image_encoding": None,
+        "image_quality": None,
+    }
+    # A flag arrives as text and a variable as text; both land on the same three
+    # values, and the encoding is normalised so " JPEG " is the same request.
+    assert poc_app._resolve_display_knobs("4", " JPEG ", "70") == {
+        "msaa": 4,
+        "image_encoding": "jpeg",
+        "image_quality": 70,
+    }
+
+
+def test_a_bad_display_knob_is_refused_by_name():
+    """A value VTK or the transport would ignore is a ValueError, not a no-op."""
+    with pytest.raises(ValueError, match="--msaa"):
+        poc_app._resolve_display_knobs(msaa=-1)
+    with pytest.raises(ValueError, match="--msaa"):
+        poc_app._resolve_display_knobs(msaa="four")
+    with pytest.raises(ValueError, match="--image-encoding"):
+        poc_app._resolve_display_knobs(image_encoding="gif")
+    with pytest.raises(ValueError, match="--image-quality"):
+        poc_app._resolve_display_knobs(image_quality=0)
+    with pytest.raises(ValueError, match="--image-quality"):
+        poc_app._resolve_display_knobs(image_quality=101)
+
+
+def test_main_hands_the_display_knobs_to_the_shell(wiring, knobs):
+    """The flags reach the one shell, and the run records what they became."""
+    rc = _run_main(
+        wiring,
+        "--msaa",
+        "4",
+        "--image-encoding",
+        "png",
+        "--image-quality",
+        "70",
+    )
+
+    assert rc == 0
+    assert len(wiring["run_web_vis"].calls) == 1, wiring["run_web_vis"].calls
+    _args, kwargs = wiring["run_web_vis"].calls[0]
+    assert kwargs["msaa"] == 4
+    assert kwargs["image_encoding"] == "png"
+    assert kwargs["image_quality"] == 70
+    # Recorded whatever the suite is doing: the summary names the knobs instead
+    # of guessing them from an argument it never saw.
+    assert poc_app._PROFILE["knobs"] == {
+        "fps": poc_app.DEFAULT_FPS,
+        "msaa": 4,
+        "image_encoding": "png",
+        "image_quality": 70,
+    }
+
+
+def test_the_knobs_can_come_from_the_environment(wiring, knobs, monkeypatch):
+    """POC_MSAA / POC_IMAGE_ENCODING / POC_IMAGE_QUALITY: same numbers, no flag."""
+    monkeypatch.setenv("POC_MSAA", "2")
+    monkeypatch.setenv("POC_IMAGE_ENCODING", "jpeg")
+    monkeypatch.setenv("POC_IMAGE_QUALITY", "55")
+
+    assert _run_main(wiring) == 0
+
+    _args, kwargs = wiring["run_web_vis"].calls[0]
+    assert kwargs["msaa"] == 2
+    assert kwargs["image_encoding"] == "jpeg"
+    assert kwargs["image_quality"] == 55
+    assert poc_app._PROFILE["knobs"]["msaa"] == 2
+    assert poc_app._PROFILE["knobs"]["image_encoding"] == "jpeg"
+    assert poc_app._PROFILE["knobs"]["image_quality"] == 55
+
+
+def test_a_bad_flag_is_a_usage_error_not_a_silently_dropped_knob(wiring):
+    """argparse reports it and exits 2; the run never reaches a plotter."""
+    with pytest.raises(SystemExit) as caught:
+        _run_main(wiring, "--msaa", "-1")
+    assert caught.value.code == 2, "a bad knob must not start a viewer"
+    assert wiring["run_web_vis"].calls == []
+
+
+# ---------------------------------------------------------------------------
+# What cannot be read is reported, never guessed.
+# ---------------------------------------------------------------------------
+
+
+class _Window:
+    """The three render-window reads the report makes, and a call counter."""
+
+    def __init__(self, caps="", never=1, size=(1024, 768), samples=8):
+        self.caps_text = caps
+        self.never = never
+        self.size = size
+        self.samples = samples
+        self.caps_reads = 0
+
+    def GetNeverRendered(self):
+        return self.never
+
+    def ReportCapabilities(self):
+        # In this image the real call SEGFAULTS on a box with no GL driver, so a
+        # test that reaches it must fail rather than quietly return nothing.
+        self.caps_reads += 1
+        return self.caps_text
+
+    def GetSize(self):
+        return self.size
+
+    def GetMultiSamples(self):
+        return self.samples
+
+
+class _Reported:
+    """A plotter, reduced to the window the boot report reads."""
+
+    def __init__(self, window):
+        self.render_window = window
+
+
+class _View:
+    """The trame view's two real quality knobs, and image_encoding when taken."""
+
+    def __init__(self, accepts_encoding=False):
+        self.still_quality = 0
+        self.interactive_quality = 0
+        if accepts_encoding:
+            self.image_encoding = None
+
+
+def test_the_gl_report_is_pending_until_the_window_has_really_rendered(renderer):
+    """An unrendered window is NOT asked: the report says pending and the run lives."""
+    window = _Window(caps="OpenGL vendor string: Mesa\n", never=1)
+    assert poc_app._gl_capabilities(window) is None
+    assert window.caps_reads == 0, "an unrendered window was asked for a GL report"
+
+    report = poc_app._renderer_report(plotter=_Reported(window), msaa=8)
+    assert report["pixels"] == (1024, 768)
+    assert report["multi_samples"] == 8
+    assert report["msaa_applied"] == 8, "applied must be what the WINDOW holds"
+    assert report["gl_mode"] == "unknown"
+    assert "not been rendered" in report["gl_note"]
+
+    line = poc_app._renderer_report_line()
+    assert line.startswith(
+        "[poc_app] renderer: gl=unknown vendor=? renderer=? version=?"
+    )
+    assert "pixels=1024x768" in line
+    assert "plotter multi_samples=8" in line
+    assert "msaa requested=8 applied=8" in line
+    assert "not been rendered" in line
+
+
+def test_the_gl_strings_are_read_in_either_spelling_vtk_prints(renderer):
+    """Both ReportCapabilities() layouts, and the mode they add up to."""
+    old = poc_app._gl_parse_capabilities(
+        "OpenGL vendor string: Mesa/X.org\n"
+        "OpenGL renderer string: llvmpipe (LLVM 15.0.7, 256 bits)\n"
+        "OpenGL version string: 4.5 (Core Profile) Mesa 23.0.4\n"
+    )
+    assert old == {
+        "vendor": "Mesa/X.org",
+        "renderer": "llvmpipe (LLVM 15.0.7, 256 bits)",
+        "version": "4.5 (Core Profile) Mesa 23.0.4",
+    }
+
+    new = poc_app._gl_parse_capabilities(
+        "Vendor: NVIDIA Corporation\n"
+        "Driver Version: 535.86.10\n"
+        "Renderer: NVIDIA GeForce RTX 3070/PCIe/SSE2\n"
+        "Version: 4.6.0 NVIDIA 535.86.10\n"
+    )
+    assert new["vendor"] == "NVIDIA Corporation"
+    assert new["renderer"] == "NVIDIA GeForce RTX 3070/PCIe/SSE2"
+    assert new["version"] == "4.6.0 NVIDIA 535.86.10", (
+        "Driver Version is the driver's number, not the GL one"
+    )
+
+    # A CPU rasteriser and a driver are named apart: the same field at llvmpipe
+    # is a different claim about the timing than the same field on a GPU.
+    assert poc_app._gl_mode("Mesa/X.org", "llvmpipe (LLVM 15.0.7)") == "software"
+    assert poc_app._gl_mode("NVIDIA Corporation", "RTX 3070/PCIe/SSE2") == "direct"
+    assert poc_app._gl_mode(None, None) == "unknown"
+
+    # A rendered window is asked ONCE, and the answer reaches the report.
+    window = _Window(
+        caps="OpenGL vendor string: Mesa/X.org\n"
+        "OpenGL renderer string: llvmpipe (LLVM 15.0.7)\n"
+        "OpenGL version string: 4.5\n",
+        never=0,
+    )
+    caps = poc_app._gl_capabilities(window)
+    assert caps["mode"] == "software"
+    assert window.caps_reads == 1
+    report = poc_app._renderer_report(plotter=_Reported(window), msaa=None)
+    assert report["gl_vendor"] == "Mesa/X.org"
+    assert report["gl_mode"] == "software"
+    assert report["gl_note"] is None
+
+
+def test_a_png_request_is_applied_where_it_can_be_and_reported_where_it_cannot():
+    """quality is a view property; the encoding is the transport's, so it is noted."""
+    view = _View()
+    image = poc_app._apply_image_knobs(view, "png", 70)
+    assert image["applied"] == {"still_quality": 70, "interactive_quality": 70}
+    assert (view.still_quality, view.interactive_quality) == (70, 70)
+    assert image["encoding_applied"] == "jpeg"
+    assert "NOT applied" in image["note"]
+    assert "png" in image["note"]
+
+    # A view that DOES take an encoding carries no note, and jpeg is the same
+    # format the transport writes anyway, so nothing is being flattered.
+    taken = _View(accepts_encoding=True)
+    accepted = poc_app._apply_image_knobs(taken, "jpeg", 55)
+    assert accepted["applied"] == {
+        "still_quality": 55,
+        "interactive_quality": 55,
+        "image_encoding": "jpeg",
+    }
+    assert accepted["encoding_applied"] == "jpeg"
+    assert accepted["note"] is None
+
+    # No view at all costs both knobs, not the page.
+    nothing = poc_app._apply_image_knobs(None, "png", 70)
+    assert nothing["applied"] == {}
+    assert nothing["encoding_applied"] == "jpeg"
+    assert "NOT applied" in nothing["note"]
+
+
+# ---------------------------------------------------------------------------
+# The derived lines: ticks turned into an answer about the target rate.
+# ---------------------------------------------------------------------------
+
+
+def test_the_rate_lines_turn_ticks_into_an_answer_about_the_target():
+    """Ten ticks 0.1s apart against 24 fps: 11.11 ticks/s is 46.3% of the target."""
+    rows = [{"t": index * 0.1, "wall_ms": 50.0} for index in range(10)]
+    lines = poc_app._profile_rate_lines(rows, 24)
+
+    assert lines[0] == (
+        "target: fps=24 frame=41.67 ms  achieved=11.11 ticks/s (46.3% of target)"
+    )
+    assert lines[1] == "over one frame period: 10 of 10 ticks (100.0%)"
+
+
+def test_the_rate_lines_count_only_the_ticks_that_overran_one_frame():
+    """A tick faster than the frame period is shown, not dropped: 0 of 10."""
+    rows = [{"t": index * 0.1, "wall_ms": 10.0} for index in range(10)]
+    lines = poc_app._profile_rate_lines(rows, 24, elapsed=1.0)
+
+    assert lines[0] == (
+        "target: fps=24 frame=41.67 ms  achieved=10.00 ticks/s (41.7% of target)"
+    )
+    assert lines[1] == "over one frame period: 0 of 10 ticks (0.0%)"
+
+
+def test_with_no_target_rate_there_is_nothing_to_compare_against():
+    """No --fps recorded (or a nonsense one): no lines, rather than a fake rate."""
+    rows = [{"t": 0.0, "wall_ms": 10.0}]
+    assert poc_app._profile_rate_lines(rows, None) == []
+    assert poc_app._profile_rate_lines(rows, 0) == []
+    assert poc_app._profile_rate_lines(rows, "fast") == []
+
+
+def test_the_summary_header_names_the_picture_and_the_knobs(prof, renderer):
+    """A number is only an answer beside the picture and the knobs that made it."""
+    prof.run.tick(frame=0)
+    poc_app._profile_knobs(fps=24, msaa=8, image_encoding="png", image_quality=70)
+    window = _Window(
+        caps="OpenGL vendor string: Mesa/X.org\n"
+        "OpenGL renderer string: llvmpipe (LLVM 15.0.7)\n"
+        "OpenGL version string: 4.5\n",
+        never=0,
+    )
+    poc_app._renderer_report(plotter=_Reported(window), msaa=8)
+
+    lines = poc_app._profile_summary_text().splitlines()
+    assert lines[0].startswith("poc_app --profile summary  run=")
+    assert lines[1].startswith("ticks=1")
+    assert lines[2] == (
+        "renderer: gl=software vendor=Mesa/X.org renderer=llvmpipe (LLVM 15.0.7) "
+        "version=4.5"
+    )
+    assert "pixels=1024x768" in lines[3]
+    assert "plotter multi_samples=8" in lines[3]
+    assert lines[4] == (
+        "knobs: fps=24 msaa=8 image_encoding=png image_quality=70"
+    )
+    assert lines[5].startswith("target: fps=24 frame=41.67 ms  achieved=")
+    assert lines[6].startswith("over one frame period: ")
+    assert lines[7] == "phases (ms): phase       n     p50     p95     max"

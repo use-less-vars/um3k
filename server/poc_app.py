@@ -1456,6 +1456,9 @@ _PROFILE = {
     "idle_prev": None,
     "thread": None,
     "stop": False,
+    # The display knobs the run was STARTED with (--fps, --msaa, --image-*), so
+    # the summary can name them beside the numbers they produced.
+    "knobs": {},
 }
 
 
@@ -1537,6 +1540,9 @@ def _profile_reset() -> None:
     _PROFILE["idle_prev"] = None
     _PROFILE["started"] = None
     _PROFILE["mark_at"] = None
+    # The knobs describe the RUN, not the recording: reset forgets them too, so a
+    # re-configured process cannot answer with the previous run's flags.
+    _PROFILE["knobs"] = {}
 
 
 def _profile_configure(
@@ -2050,6 +2056,456 @@ def _profile_stats(values):
     return stats
 
 
+# ---------------------------------------------------------------------------
+# Render knobs, and the report that says what they became.
+#
+# Three facts about a run's OWN picture that no screenshot carries:
+#
+# * which GL stack draws it - a CPU rasteriser (llvmpipe, swrast, OSMesa) paints
+#   the same field at a fraction of the speed of a GPU, so a timing that does not
+#   name the renderer is a timing a reader can draw the wrong conclusion from;
+# * how many samples the off-screen window REALLY took - a requested 8 that the
+#   driver quietly answered with 0 is not the picture the flag asked for;
+# * what the trame view does to the bytes it ships the browser - the image
+#   transport is jpeg-only (see _IMAGE_TRANSPORT_ENCODING), so a png request is
+#   RECORDED and reported as NOT applied rather than pretended.
+#
+# Every probe here degrades: what cannot be read is reported as unknown, and no
+# report line ever raises into a run.
+# ---------------------------------------------------------------------------
+_IMAGE_ENCODINGS = ("png", "jpeg")
+# trame_vtk encodes the frame itself - trame_vtk/modules/vtk/protocols/
+# publish_image_delivery.py sets reply["format"] = "jpeg" with no option beside
+# it - so JPEG is the ONE encoding this transport honours, whatever is asked.
+_IMAGE_TRANSPORT_ENCODING = "jpeg"
+# Substrings that mean "this is a CPU rasteriser, not a GPU". Lower case.
+_GL_SOFTWARE_MARKERS = (
+    "llvmpipe",
+    "softpipe",
+    "swrast",
+    "software rasterizer",
+    "softwarerasterizer",
+    "osmesa",
+    "mesa offscreen",
+    "gdi generic",
+    "microsoft basic render",
+)
+
+
+def _env_text(name, default=None):
+    """A stripped environment value, or ``default`` when it is unset or blank."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    value = str(value).strip()
+    return value or default
+
+
+def _env_int(name, default=None):
+    """An int from the environment; unset, blank or unparsable gives ``default``."""
+    value = _env_text(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _resolve_display_knobs(msaa=None, image_encoding=None, image_quality=None):
+    """Validate the three display knobs. A bad value raises ValueError, named.
+
+    Resolution is separate from the parser so the RULE has one home: a flag and
+    its POC_* variable both arrive here, and a value VTK or the transport would
+    silently ignore is refused instead of accepted and dropped.
+    """
+    resolved = {"msaa": None, "image_encoding": None, "image_quality": None}
+    if msaa is not None:
+        try:
+            value = int(msaa)
+        except (TypeError, ValueError):
+            raise ValueError("--msaa must be an integer >= 0, got %r" % (msaa,))
+        if value < 0:
+            raise ValueError("--msaa must be an integer >= 0, got %d" % value)
+        resolved["msaa"] = value
+    if image_encoding is not None:
+        value = str(image_encoding).strip().lower()
+        if value not in _IMAGE_ENCODINGS:
+            raise ValueError(
+                "--image-encoding must be one of %s, got %r"
+                % ("/".join(_IMAGE_ENCODINGS), image_encoding)
+            )
+        resolved["image_encoding"] = value
+    if image_quality is not None:
+        try:
+            value = int(image_quality)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "--image-quality must be an integer 1..100, got %r" % (image_quality,)
+            )
+        if not 1 <= value <= 100:
+            raise ValueError("--image-quality must be 1..100, got %d" % value)
+        resolved["image_quality"] = value
+    return resolved
+
+
+def _knob_text(value):
+    """A knob as the report spells it: its value, or default when not given."""
+    return "default" if value is None else str(value)
+
+
+def _value_text(value):
+    """A MEASURED value for the report: itself, or ? when it was never read."""
+    return "?" if value is None else str(value)
+
+
+def _encoding_text(report):
+    """What was ASKED for, and what the transport will actually send."""
+    applied = report.get("image_encoding_applied") or "?"
+    requested = report.get("image_encoding")
+    if requested is None:
+        return "default(%s)" % applied
+    return "%s(requested)/%s(applied)" % (requested, applied)
+
+
+def _gl_parse_capabilities(text):
+    """Pull vendor/renderer/version out of ``ReportCapabilities()`` text.
+
+    VTK has printed this table two ways (``OpenGL vendor string: X`` and a padded
+    ``Vendor:``/``Renderer:``/``Version:`` block), so both spellings are read.
+    ``Driver Version`` is deliberately NOT matched as ``Version``: it is the
+    driver's number, not the GL one this report claims to quote.
+    """
+    found = {"vendor": None, "renderer": None, "version": None}
+    labels = {
+        "opengl vendor string": "vendor",
+        "opengl renderer string": "renderer",
+        "opengl version string": "version",
+        "gl vendor": "vendor",
+        "gl renderer": "renderer",
+        "gl version": "version",
+        "vendor": "vendor",
+        "renderer": "renderer",
+        "version": "version",
+    }
+    for line in str(text or "").splitlines():
+        label, _, value = line.partition(":")
+        key = labels.get(label.strip().lower())
+        value = value.strip()
+        if key is None or not value or found[key] is not None:
+            continue
+        found[key] = value
+    return found
+
+
+def _gl_mode(vendor, renderer):
+    """``software`` for a CPU rasteriser, ``direct`` for a driver, else unknown."""
+    blob = " ".join(str(part) for part in (vendor, renderer) if part).lower()
+    if not blob.strip():
+        return "unknown"
+    for marker in _GL_SOFTWARE_MARKERS:
+        if marker in blob:
+            return "software"
+    return "direct"
+
+
+def _gl_capabilities(render_window):
+    """The GL strings plus their mode, or None when they cannot be read SAFELY.
+
+    ``ReportCapabilities()`` CREATES an OpenGL context, and on a box with no GL
+    driver at all it does not return an error - it takes the process down with it
+    (observed: "Failed to load EGL!", "libOSMesa not found", then a segfault).
+    ``GetNeverRendered()`` is the cheap question that must be answered first: an
+    unrendered window is reported as pending, and the run keeps its viewer.
+    """
+    if render_window is None:
+        return None
+    try:
+        if render_window.GetNeverRendered():
+            return None
+        text = render_window.ReportCapabilities()
+    except Exception:  # noqa: BLE001 - a probe is not the app
+        return None
+    caps = _gl_parse_capabilities(text)
+    caps["mode"] = _gl_mode(caps.get("vendor"), caps.get("renderer"))
+    return caps
+
+
+def _window_multi_samples(plotter):
+    """The off-screen window's sample count, or None when it cannot be read."""
+    window = getattr(plotter, "render_window", None)
+    try:
+        return int(window.GetMultiSamples())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _apply_msaa(plotter, multi_samples):
+    """Ask VTK for ``multi_samples`` samples and return what the window TOOK.
+
+    pyvista has no plotter-level attribute for this - MSAA is a render-window
+    setting, reached through ``enable_anti_aliasing("msaa", multi_samples=N)`` -
+    and a driver may answer with fewer samples than it was asked for, which is
+    exactly why the reply is read back instead of assumed.
+    """
+    if plotter is None or multi_samples is None:
+        return None
+    try:
+        plotter.enable_anti_aliasing("msaa", multi_samples=int(multi_samples))
+    except Exception as exc:  # noqa: BLE001 - the picture outranks the probe
+        print(f"[poc_app] msaa {multi_samples} not applied: {exc}", file=sys.stderr)
+        return None
+    return _window_multi_samples(plotter)
+
+
+def _apply_image_knobs(view, encoding=None, quality=None):
+    """Put the image knobs on the trame view and say what was actually applied.
+
+    ``still_quality``/``interactive_quality`` are the view's REAL properties
+    (VtkRemoteView passes them to the JS side as the quality it renders with).
+    The encoding has no such property to set - the transport writes the format
+    in its protocol module - so a png request is reported as NOT applied rather
+    than recorded as if it had been. Nothing here raises: a widget that refuses
+    a knob costs that knob, not the page.
+    """
+    applied = {}
+    note = None
+    if view is not None and quality is not None:
+        for name in ("still_quality", "interactive_quality"):
+            if not hasattr(view, name):
+                continue
+            try:
+                setattr(view, name, int(quality))
+            except Exception:  # noqa: BLE001 - a widget that refuses costs a knob
+                continue
+            applied[name] = int(quality)
+    effective = _IMAGE_TRANSPORT_ENCODING
+    if encoding is not None:
+        if view is not None and hasattr(view, "image_encoding"):
+            try:
+                view.image_encoding = encoding
+                applied["image_encoding"] = encoding
+                effective = encoding
+            except Exception:  # noqa: BLE001
+                pass
+        if applied.get("image_encoding") != encoding:
+            note = (
+                "image encoding %s requested but NOT applied: the trame image "
+                "transport sends jpeg (trame_vtk publish_image_delivery.py)"
+                % encoding
+            )
+    return {
+        "encoding": encoding,
+        "quality": quality,
+        "applied": applied,
+        "encoding_applied": effective,
+        "note": note,
+    }
+
+
+# The boot report, filled once per run by _renderer_report(). Read by the boot
+# line and by the profile summary header, so the two cannot disagree.
+_RENDERER = {
+    "gl_vendor": None,
+    "gl_renderer": None,
+    "gl_version": None,
+    "gl_mode": "unknown",
+    "gl_note": None,
+    "pixels": None,
+    "multi_samples": None,
+    "msaa_requested": None,
+    "msaa_applied": None,
+    "image_encoding": None,
+    "image_quality": None,
+    "image_encoding_applied": _IMAGE_TRANSPORT_ENCODING,
+    "image_applied": {},
+    "image_note": None,
+}
+
+
+def _renderer_report(plotter=None, image=None, msaa=None):
+    """Fill and return ``_RENDERER``: what draws, at what size, with which knobs.
+
+    ``multi_samples`` is the sample count the WINDOW holds, i.e. what --msaa
+    actually got, and it is quoted beside the number that was asked for. The GL
+    strings are read only through ``_gl_capabilities`` - see the segfault note
+    there - so a run that has not really drawn reports them as pending.
+    """
+    report = {
+        "gl_vendor": None,
+        "gl_renderer": None,
+        "gl_version": None,
+        "gl_mode": "unknown",
+        "gl_note": None,
+        "pixels": None,
+        "multi_samples": None,
+        "msaa_requested": msaa,
+        "msaa_applied": None,
+        "image_encoding": None,
+        "image_quality": None,
+        "image_encoding_applied": _IMAGE_TRANSPORT_ENCODING,
+        "image_applied": {},
+        "image_note": None,
+    }
+    window = getattr(plotter, "render_window", None)
+    if window is not None:
+        try:
+            size = window.GetSize()
+            report["pixels"] = (int(size[0]), int(size[1]))
+        except Exception:  # noqa: BLE001
+            report["pixels"] = None
+        report["multi_samples"] = _window_multi_samples(plotter)
+        report["msaa_applied"] = report["multi_samples"]
+        caps = _gl_capabilities(window)
+        if caps is None:
+            try:
+                never = bool(window.GetNeverRendered())
+            except Exception:  # noqa: BLE001
+                never = True
+            report["gl_note"] = (
+                "no GL report: the window has not been rendered yet"
+                if never
+                else "no GL report: ReportCapabilities() could not be read"
+            )
+        else:
+            report["gl_vendor"] = caps.get("vendor")
+            report["gl_renderer"] = caps.get("renderer")
+            report["gl_version"] = caps.get("version")
+            report["gl_mode"] = caps.get("mode") or "unknown"
+    if image is not None:
+        report["image_encoding"] = image.get("encoding")
+        report["image_quality"] = image.get("quality")
+        report["image_applied"] = dict(image.get("applied") or {})
+        report["image_encoding_applied"] = image.get("encoding_applied")
+        report["image_note"] = image.get("note")
+    _RENDERER.clear()
+    _RENDERER.update(report)
+    return _RENDERER
+
+
+def _renderer_report_line(report=None) -> str:
+    """The boot report as ONE ``[poc_app]`` line: renderer, pixels, knobs."""
+    report = _RENDERER if report is None else report
+    pixels = report.get("pixels")
+    samples = _value_text(report.get("multi_samples"))
+    return (
+        "[poc_app] renderer: gl=%s vendor=%s renderer=%s version=%s | "
+        "pixels=%s | plotter multi_samples=%s | msaa requested=%s applied=%s | "
+        "trame image encoding=%s quality=%s%s%s"
+        % (
+            report.get("gl_mode") or "unknown",
+            report.get("gl_vendor") or "?",
+            report.get("gl_renderer") or "?",
+            report.get("gl_version") or "?",
+            ("%dx%d" % (int(pixels[0]), int(pixels[1]))) if pixels else "?",
+            samples,
+            _knob_text(report.get("msaa_requested")),
+            samples,
+            _encoding_text(report),
+            _knob_text(report.get("image_quality")),
+            " | " + report["gl_note"] if report.get("gl_note") else "",
+            " | " + report["image_note"] if report.get("image_note") else "",
+        )
+    )
+
+
+def _renderer_report_lines():
+    """The same report as summary-header lines (no ``[poc_app]`` prefix)."""
+    report = _RENDERER
+    pixels = report.get("pixels")
+    lines = [
+        "renderer: gl=%s vendor=%s renderer=%s version=%s"
+        % (
+            report.get("gl_mode") or "unknown",
+            report.get("gl_vendor") or "?",
+            report.get("gl_renderer") or "?",
+            report.get("gl_version") or "?",
+        ),
+        "display: pixels=%s plotter multi_samples=%s msaa requested=%s applied=%s"
+        " | trame image encoding=%s quality=%s"
+        % (
+            ("%dx%d" % (int(pixels[0]), int(pixels[1]))) if pixels else "?",
+            _value_text(report.get("multi_samples")),
+            _knob_text(report.get("msaa_requested")),
+            _value_text(report.get("msaa_applied")),
+            _encoding_text(report),
+            _knob_text(report.get("image_quality")),
+        ),
+    ]
+    notes = [
+        note for note in (report.get("gl_note"), report.get("image_note")) if note
+    ]
+    if notes:
+        lines.append("display note: " + "; ".join(notes))
+    return lines
+
+
+def _profile_knobs(fps=None, msaa=None, image_encoding=None, image_quality=None):
+    """Record the display knobs this run was STARTED with. Returns the record.
+
+    Recorded whether or not the suite is on: the knobs are a fact about the run,
+    and the summary must not have to guess them from an argument it never saw.
+    """
+    knobs = _PROFILE["knobs"]
+    for name, value in (
+        ("fps", fps),
+        ("msaa", msaa),
+        ("image_encoding", image_encoding),
+        ("image_quality", image_quality),
+    ):
+        if value is None:
+            continue
+        try:
+            knobs[name] = str(value) if name == "image_encoding" else int(value)
+        except (TypeError, ValueError):
+            continue
+    return knobs
+
+
+def _profile_knobs_line(knobs=None) -> str:
+    """The knobs the run was started with, as the summary spells them."""
+    knobs = _PROFILE["knobs"] if knobs is None else knobs
+    return "knobs: fps=%s msaa=%s image_encoding=%s image_quality=%s" % (
+        _knob_text(knobs.get("fps")),
+        _knob_text(knobs.get("msaa")),
+        _knob_text(knobs.get("image_encoding")),
+        _knob_text(knobs.get("image_quality")),
+    )
+
+
+def _profile_rate_lines(rows, fps, elapsed=None):
+    """Two DERIVED lines: achieved vs target rate, and the overrun share.
+
+    ``rows`` are tick rows. The rate is what the run actually achieved against
+    the fps it asked for, and the second line counts the ticks that took LONGER
+    than one frame period - the ones a viewer drops instead of showing. With no
+    fps recorded there is nothing to compare against, so there are no lines.
+    """
+    try:
+        target = float(fps)
+    except (TypeError, ValueError):
+        return []
+    if target <= 0:
+        return []
+    if elapsed is None:
+        times = [float(row["t"]) for row in rows if row.get("t") is not None]
+        elapsed = (max(times) - min(times)) if len(times) > 1 else 0.0
+    elapsed = float(elapsed)
+    achieved = (len(rows) / elapsed) if elapsed > 0 else 0.0
+    period_ms = 1000.0 / target
+    lines = [
+        "target: fps=%.0f frame=%.2f ms  achieved=%.2f ticks/s (%.1f%% of target)"
+        % (target, period_ms, achieved, 100.0 * achieved / target)
+    ]
+    walls = [float(row["wall_ms"]) for row in rows if row.get("wall_ms") is not None]
+    over = len([wall for wall in walls if wall > period_ms])
+    lines.append(
+        "over one frame period: %d of %d ticks (%.1f%%)"
+        % (over, len(walls), (100.0 * over / len(walls)) if walls else 0.0)
+    )
+    return lines
+
+
 def _profile_summary_text() -> str:
     """The summary, <=60 lines. Numbers only; the report explains them."""
     if not _PROFILE["enabled"]:
@@ -2062,6 +2518,13 @@ def _profile_summary_text() -> str:
         "ticks=%d  elapsed=%.1fs  rate=%.2f ticks/s  dir=%s"
         % (len(rows), elapsed, len(rows) / elapsed, _PROFILE["dir"])
     )
+    # The header names the PICTURE the numbers belong to, then the knobs it was
+    # produced with, then the two derived lines that turn the tick count into an
+    # answer about the target rate. Same order the boot report uses.
+    knobs = _PROFILE["knobs"] or {}
+    out.extend(_renderer_report_lines())
+    out.append(_profile_knobs_line(knobs))
+    out.extend(_profile_rate_lines(rows, knobs.get("fps"), elapsed))
     out.append("phases (ms): phase       n     p50     p95     max")
     for name in _PROFILE_PHASES:
         values = [
@@ -12459,6 +12922,7 @@ def run_web_vis(
     structures=None,
     *,
     surface_dump=None, loaded_page=None,
+    msaa=None, image_encoding=None, image_quality=None,
 ) -> int:
     """Serve the animation page for an ``emfit.vis/2`` dump.
 
@@ -12642,6 +13106,11 @@ def run_web_vis(
         y_span_mm = float("nan")
 
     plotter = pv.Plotter(off_screen=True)
+    # --msaa asks the WINDOW for samples, and only when asked: a default run keeps
+    # pyvista's own default (theme.multi_samples). The boot report quotes both
+    # numbers, because a driver may answer with fewer than it was asked for.
+    if msaa is not None:
+        _apply_msaa(plotter, msaa)
     plotter.set_background("white")
     try:
         plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")
@@ -16210,6 +16679,19 @@ def run_web_vis(
 
     handles["view"] = view
 
+    # The image knobs go on the trame VIEW (its real properties), and the boot
+    # report then names every knob beside what the GL stack actually answered.
+    # The plotter is OFF-SCREEN and, on a box with no GL driver, has not really
+    # drawn: the renderer strings are reported as pending rather than guessed,
+    # and asking for them anyway would take the process down (see
+    # _gl_capabilities).
+    _image = _apply_image_knobs(view, image_encoding, image_quality)
+    print(
+        _renderer_report_line(
+            _renderer_report(plotter=plotter, image=_image, msaa=msaa)
+        )
+    )
+
     if nt is None or nt_x is None:
         # The shell: no timeline, so there is no rate and no stride to report.
         print(
@@ -16328,6 +16810,39 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
+        "--msaa",
+        type=int,
+        default=_env_int("POC_MSAA"),
+        help=(
+            "MSAA samples for the off-screen plotter (default: pyvista's own, "
+            "unchanged); POC_MSAA does the same without the flag, and the boot "
+            "report line quotes requested vs applied"
+        ),
+    )
+    parser.add_argument(
+        "--image-encoding",
+        dest="image_encoding",
+        choices=_IMAGE_ENCODINGS,
+        default=_env_text("POC_IMAGE_ENCODING"),
+        help=(
+            "encoding the browser is sent for each frame (default: the trame "
+            "transport's own jpeg); POC_IMAGE_ENCODING does the same without "
+            "the flag - the transport is jpeg-only, so a png request is "
+            "recorded and reported as NOT applied"
+        ),
+    )
+    parser.add_argument(
+        "--image-quality",
+        dest="image_quality",
+        type=int,
+        default=_env_int("POC_IMAGE_QUALITY"),
+        help=(
+            "quality 1..100 for the trame view's still and interactive renders "
+            "(default: the view's own, unchanged); POC_IMAGE_QUALITY does the "
+            "same without the flag"
+        ),
+    )
+    parser.add_argument(
         "--profile",
         action="store_true",
         dest="profile",
@@ -16348,6 +16863,25 @@ def main(argv=None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    try:
+        # ONE rule for both routes: a flag and its POC_* variable end up in the
+        # same three numbers, and a value VTK or the transport would ignore is a
+        # usage error rather than a knob that silently did nothing.
+        knobs = _resolve_display_knobs(
+            getattr(args, "msaa", None),
+            getattr(args, "image_encoding", None),
+            getattr(args, "image_quality", None),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    # Recorded whatever the profile suite is doing: the knobs are a fact about
+    # the run, and a summary written later must not have to guess them.
+    _profile_knobs(
+        fps=args.fps,
+        msaa=knobs["msaa"],
+        image_encoding=knobs["image_encoding"],
+        image_quality=knobs["image_quality"],
+    )
     if getattr(args, "profile", False) or _profile_env_enabled():
         # ONE switch for the whole suite; --profile-dir only says where it lands.
         # POC_TIMING is accepted as an alias so a run already started with it
@@ -16401,6 +16935,9 @@ def main(argv=None) -> int:
                 _resolve(args.surface_dump) if args.surface_dump else None
             ),
             loaded_page=bare_page,
+            msaa=knobs["msaa"],
+            image_encoding=knobs["image_encoding"],
+            image_quality=knobs["image_quality"],
         )
 
     # --input wins when given, then the entry's own dump, then the default - see
@@ -16447,6 +16984,9 @@ def main(argv=None) -> int:
         # must not be handed a bare relative string from a different cwd.
         surface_dump=(_resolve(args.surface_dump) if args.surface_dump else None),
         loaded_page=page,
+        msaa=knobs["msaa"],
+        image_encoding=knobs["image_encoding"],
+        image_quality=knobs["image_quality"],
     )
 
 
