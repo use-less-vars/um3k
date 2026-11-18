@@ -10,20 +10,21 @@ clock, which gave 24 positions for 2400 recorded steps, a timeline four times
 shorter than the run, and a label that had to explain a gap the player itself
 had created.
 
-So the label now states BOTH clocks, read off the dump's own records:
-``frame_index`` (the player's step, out of the run's ``nsteps``) and
-``e_abs_volume_step_index`` (which stored volume capture is painted, at what
-step it was taken, and how many steps one such frame spans - MEASURED from the
-axis, never the writer's inconsistent ``e_abs_volume_stride`` scalar).
+So the label states ONE clock, read off the dump's own records:
+``frame_index`` (the player's step, out of the run's ``nsteps``) and the stride
+that axis really runs at - MEASURED from the axis, never the writer's
+inconsistent ``e_abs_volume_stride`` scalar.  The |E| volume's decimation is a
+property of that LAYER's own clock, so it is logged beside the draw
+(``_log_volume_layer_note``) instead of being folded into the sentence.
 ``TimeAxis`` is that record, ``build_time_axis`` is the ONE place the
 precedence between a recorded and a derived axis is decided, and
 ``_frame_label`` prints it.  So the assertions below are of three kinds:
 
     * on the SHIPPED reference volume, that the axis is the PLANE family's own
-      step axis, that the label names the recorded step of the position drawn
-      and the stored volume frame painted there, and that the count it is out of
-      is the count the scrubber can reach;
-    * that the volume's MEASURED decimation survives the file's own scalar;
+      step axis, that the label names the recorded step of the position drawn,
+      and that the count it is out of is the count the scrubber can reach;
+    * that the layer's MEASURED decimation is read by the LAYER's sentence and
+      never leaks into the player's;
     * on constructed axes, the precedence and the absences - a page with no
       axis keeps the position-counted sentence (the legacy two-argument call),
       and a time base is NEVER invented: no real ``dt_s``, no seconds.
@@ -151,61 +152,57 @@ def test_the_axis_counts_the_frames_the_player_steps(real_info):
 
 
 def test_the_label_names_the_step_the_picture_was_taken_at(real_info):
-    """Both clocks on one line, each read off the file.
+    """The step on screen and the decimation in effect, read off the file.
 
-    "Step 301 / 2400 (Frame 4 of 24, Volume Decimated ×100 @ step 301)": the
-    PLAYER is at recorded plane frame 301 (of 2400 solver steps), and the |E|
-    layer painted there is stored volume frame 4, captured at step 301, one
-    stored frame spanning 100 steps.
+    "Step 301 / 2400 (Stride 1)": the PLAYER is at recorded plane frame 301 of
+    the run's 2400 solver steps, one position spanning one step.  The |E| layer
+    painted there runs on its OWN clock - stored volume frame 4 of 24, captured
+    at step 301, 100 steps per stored frame - and is asserted separately below:
+    ``_volume_layer_label`` names it and the page logs it, while
+    ``_frame_label`` states the player's clock alone.
     """
     axis = real_info[app.TIME_AXIS_KEY]
     plan = app._volume_player_plan(real_info, "ycut")
     frames = plan["frames"]
     for index in (0, 3, 50, 51, 300, 304, frames - 1):
         step = int(axis.step_index[index])
-        layer = app._volume_layer_label(real_info, "ycut", index)
-        assert layer is not None, f"position {index} named no volume layer"
-        expected = f"Step {step} / {axis.n_steps} ({layer})"
-        assert app._frame_label(index, frames, axis, layer) == expected, (
+        expected = f"Step {step} / {axis.max_step} (Stride {int(axis.stride)})"
+        assert app._frame_label(index, frames, axis) == expected, (
             f"position {index} printed "
-            f"{app._frame_label(index, frames, axis, layer)!r}, not {expected!r}: "
-            "the label is not naming the recorded step on screen"
+            f"{app._frame_label(index, frames, axis)!r}, not {expected!r}: the "
+            "label is not naming the recorded step on screen"
         )
-    # The sentences the reference volume is here to pin: the player's own steps
-    # are 1, 301 and 2400; the layer's capture steps are 1, 301, 301 and 2301.
-    for index, expected in (
-        (0, "Step 1 / 2400 (Frame 1 of 24, Volume Decimated \u00d7100 @ step 1)"),
-        (
-            300,
-            "Step 301 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100 @ step 301)",
-        ),
-        (
-            304,
-            "Step 305 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100 @ step 301)",
-        ),
-        (
-            2399,
-            "Step 2400 / 2400 (Frame 24 of 24, Volume Decimated \u00d7100 "
-            "@ step 2301)",
-        ),
+    # The LAYER's sentence, unchanged by the player's clock: which stored volume
+    # frame is painted at a position, the step it was captured at, its stride.
+    for index, layer_expected in (
+        (0, "Frame 1 of 24, Volume Decimated \u00d7100 @ step 1"),
+        (300, "Frame 4 of 24, Volume Decimated \u00d7100 @ step 301"),
+        (304, "Frame 4 of 24, Volume Decimated \u00d7100 @ step 301"),
+        (2399, "Frame 24 of 24, Volume Decimated \u00d7100 @ step 2301"),
     ):
         layer = app._volume_layer_label(real_info, "ycut", index)
-        assert app._frame_label(index, frames, axis, layer) == expected, (
-            f"position {index} printed "
-            f"{app._frame_label(index, frames, axis, layer)!r}, not {expected!r}"
+        assert layer == layer_expected, (
+            f"position {index} named the layer {layer!r}, not {layer_expected!r}"
         )
-    assert int(axis.step_index[300]) == 301
-    assert app._frame_label(300, frames, axis).startswith("Step 301 / "), (
-        "the 300th recorded plane frame is no longer step 301: "
-        f"{app._frame_label(300, frames, axis)!r}"
-    )
-    assert app._frame_label(3, frames, axis).startswith("Step 4 / "), (
-        f"position 3 printed {app._frame_label(3, frames, axis)!r}"
-    )
-    # ... and the LAST position is the last recorded step (2400), never the last
-    # volume capture (2301): the tail of the run is reachable.
-    assert app._frame_label(2399, frames, axis).startswith("Step 2400 / "), (
-        f"the last position printed {app._frame_label(2399, frames, axis)!r}"
+    # The sentences the reference volume is here to pin: the player's own steps
+    # are 1, 4, 301, 305 and 2400 - never the layer's capture steps, and never
+    # the layer's x100, which belongs to the other clock.
+    for index, expected in (
+        (0, "Step 1 / 2400 (Stride 1)"),
+        (3, "Step 4 / 2400 (Stride 1)"),
+        (300, "Step 301 / 2400 (Stride 1)"),
+        (304, "Step 305 / 2400 (Stride 1)"),
+        # ... and the LAST position is the last recorded step (2400), never the
+        # last volume capture (2301): the tail of the run is reachable.
+        (2399, "Step 2400 / 2400 (Stride 1)"),
+    ):
+        assert app._frame_label(index, frames, axis) == expected, (
+            f"position {index} printed "
+            f"{app._frame_label(index, frames, axis)!r}, not {expected!r}"
+        )
+    assert int(axis.step_index[300]) == 301, (
+        "the 300th recorded plane frame is no longer step 301: the sentences "
+        "above would not be the reference volume's"
     )
 
 
@@ -246,14 +243,43 @@ def test_an_axis_of_another_family_is_not_printed(real_info):
 
 
 def test_one_step_per_frame_when_the_dump_records_no_stride():
-    """An undecimated axis says so by OMITTING the clause, never '×1'."""
+    """An undecimated axis STATES its stride: "Stride 1", never silence.
+
+    A label that names its decimation only above 1 leaves the reader unable to
+    tell "one step per frame" from "the dump never said" - the same ambiguity
+    this page exists to remove, in the other direction.
+    """
     axis = app.build_time_axis(
         step_index=np.arange(1, 2401), n_steps=2400, dt_s=1e-12, n_frames=2400
     )
     assert axis.stride == 1
-    assert app._frame_label(300, 2400, axis) == (
-        "Step 301 / 2400 (Frame 301 of 2400)"
-    ), f"undecimated label: {app._frame_label(300, 2400, axis)!r}"
+    assert app._frame_label(300, 2400, axis) == "Step 301 / 2400 (Stride 1)", (
+        f"undecimated label: {app._frame_label(300, 2400, axis)!r}"
+    )
+
+
+def test_a_decimated_axis_states_the_stride_it_really_runs_at():
+    """A stride above 1 is named, MEASURED from the axis, never assumed at 1.
+
+    FAILS IF the stride is hardcoded to 1, if it is derived from a frame or
+    position count instead of the axis's own spacing, or if the numerator falls
+    back to the position - which would print "Step 4 / 2400" for the frame the
+    dump records at step 301.
+    """
+    axis = app.build_time_axis(
+        step_index=np.arange(1, 2401, 100), n_steps=2400, dt_s=1e-12, n_frames=24
+    )
+    assert axis.n_frames == 24 and axis.n_steps == 2400, (
+        f"the constructed axis counts {axis.n_frames} frames of {axis.n_steps} "
+        "steps: not the decimated shape this test is about"
+    )
+    assert axis.stride == 100, (
+        f"the axis measured a stride of {axis.stride} from steps 1, 101, 201..."
+    )
+    assert int(axis.step_index[3]) == 301
+    assert app._frame_label(3, 24, axis) == "Step 301 / 2400 (Stride 100)", (
+        f"decimated label: {app._frame_label(3, 24, axis)!r}"
+    )
 
 
 def test_frame_and_step_map_through_the_recorded_axis(real_info):
@@ -323,7 +349,7 @@ def test_the_axis_is_a_frozen_record():
 
 
 def test_the_decimation_is_measured_and_never_the_recorded_scalar(real_info):
-    """The banner and the layer clause read the AXIS, whatever the file states.
+    """The layer sentence reads the AXIS, whatever the file states.
 
     The shipped archive records ``e_abs_volume_stride = 4`` beside a step axis
     that runs 1, 101, 201, ... - a known defect in the writer. Only the axis
@@ -349,10 +375,11 @@ def test_the_decimation_is_measured_and_never_the_recorded_scalar(real_info):
         assert layer == (
             "Frame 4 of 24, Volume Decimated \u00d7100 @ step 301"
         ), f"{label} printed the layer sentence {layer!r}"
-        assert app._frame_label(300, frames, axis, layer) == (
-            "Step 301 / 2400 (Frame 4 of 24, Volume Decimated \u00d7100 "
-            "@ step 301)"
-        ), f"{label} printed {app._frame_label(300, frames, axis, layer)!r}"
+        # ... and the PLAYER's sentence beside it must not inherit the layer's
+        # x100: one position, one file, one clock each.
+        assert app._frame_label(300, frames, axis) == "Step 301 / 2400 (Stride 1)", (
+            f"{label} printed {app._frame_label(300, frames, axis)!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1251,3 +1278,83 @@ def test_the_speed_select_offers_titled_objects_not_bare_numbers():
     ], items
     assert [item["value"] for item in items] == [1, 2, 4, 8], items
     assert all(isinstance(item["value"], int) for item in items), items
+
+
+# ---------------------------------------------------------------------------
+# ONE indicator, checked in the SOURCE.  Every test above reads the sentence
+# itself, so none of them can see a SECOND sentence being drawn beside it: a
+# plotter-drawn counter or a second writable state field would satisfy all of
+# them and still put two different step numbers on the page.
+# ---------------------------------------------------------------------------
+
+
+def test_the_page_carries_exactly_one_step_indicator():
+    """One sentence per page, composed in one place, bound in one place.
+
+    A STRUCTURAL claim, made on the source rather than on a render: the defect
+    it guards against is a duplicate indicator, and a duplicate draws perfectly.
+    No unrelated mechanism can satisfy it, because each assertion names the ONE
+    artefact it counts - the identifiers, the assignment, the template binding:
+
+    * no ``step_counter``/``step_text`` identifier survives in
+      ``server/poc_app.py``: the plotter-drawn counter and the state field that
+      carried it are gone, not merely unused.  (``time.perf_counter`` and the
+      profile's own counters are untouched by this - the names below are the
+      step indicator's, not every name holding the word "counter".)
+    * exactly ONE assignment in the whole module writes ``state.frame_label``,
+      and its line is reported: a second writer could disagree with the player.
+    * exactly ONE template binding prints it, and it is in
+      ``server/um3k_panels.py``; ``server/poc_app.py`` binds it nowhere.
+    """
+    source_path = REPO_ROOT / "server" / "poc_app.py"
+    panels_path = REPO_ROOT / "server" / "um3k_panels.py"
+    source = source_path.read_text(encoding="utf-8")
+    panels = panels_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    #: Identifiers only - never comments or docstrings, which describe
+    #: mechanisms without being one.
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+    for gone in ("step_counter", "step_text"):
+        survivors = sorted(name for name in names if gone in name)
+        assert not survivors, (
+            f"{survivors} still name a SECOND step indicator in "
+            f"{source_path.name}: the label is the page's only one, and a "
+            "plotter-drawn counter or a second state field would print a step "
+            "number nobody reconciles with it"
+        )
+
+    writers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Attribute) and target.attr == "frame_label"
+            for target in node.targets
+        )
+    ]
+    assert len(writers) == 1, (
+        f"{len(writers)} assignments write state.frame_label "
+        f"(lines {[node.lineno for node in writers]}): the page would carry two "
+        "step indicators, and the second is free to disagree with the sentence "
+        "every test in this file pins"
+    )
+
+    bound = panels.count("{{ frame_label }}")
+    assert bound == 1, (
+        f"{panels_path.name} binds the step sentence {bound} times, not once: a "
+        "second binding is a second indicator on the same page"
+    )
+    assert source.count("{{ frame_label }}") == 0, (
+        f"{source_path.name} binds the step sentence too: the layout module is "
+        "the only place a page reads it"
+    )

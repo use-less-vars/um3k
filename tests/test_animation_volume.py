@@ -1846,6 +1846,81 @@ def test_the_frame_label_counts_the_positions_the_player_steps(desync_page):
     )
 
 
+#: A one-step-per-frame run: 2400 recorded plane frames, one solver step each,
+#: ``frame_index`` counting 1..2400, and a header claiming the same 2400 steps.
+ONE_STEP_NT = 2400
+
+
+def _one_step_payload() -> dict:
+    """``_payload``'s dump as a full, undecimated run, of the reference's length.
+
+    The frames are ONE solver step apart and ONE-BASED - the only shape in which
+    the label can name a step at all - so a sentence that counts slider
+    positions, or that takes its denominator from a frame count, has nowhere to
+    hide on this page.
+    """
+    payload = _payload(with_volume=False)
+    rng = np.random.default_rng(3)
+    payload["ez_ycut"] = rng.normal(size=(ONE_STEP_NT, NX, NZ))
+    payload["t_ns"] = np.arange(ONE_STEP_NT) * 1e-3
+    payload["frame_index"] = np.arange(1, ONE_STEP_NT + 1)
+    payload["nt"] = np.array(ONE_STEP_NT)
+    payload["nsteps"] = np.array(ONE_STEP_NT)
+    payload["dump_stride"] = np.array(1)
+    return payload
+
+
+@pytest.fixture()
+def one_step_page(tmp_path):
+    """A page whose planes are recorded once per solver step, 2400 of them."""
+    with _render_doubled():
+        live = _boot(tmp_path, with_volume=False, payload=_one_step_payload())
+        _silence_view(live)
+        assert int(live.page["info"]["nt"]) == ONE_STEP_NT, (
+            "the fixture booted a page that is not the run below: the step "
+            "sentences would be someone else's"
+        )
+        yield live
+
+
+def test_the_last_frame_of_a_one_step_run_names_the_last_solver_step(one_step_page):
+    """What a finished run leaves on screen: "Step 2400 / 2400 (Stride 1)".
+
+    THE END OF THE RUN IS THE HARD CASE, and it is read off the page's own
+    ``_show`` - the closure the player's buttons run - not off a
+    re-implementation of the sentence.  A denominator taken from the last
+    position (``max_step - 1``) ends the page at "2400 / 2399"; one taken from
+    the frame count, or a numerator that counted positions, would read the same
+    "2400" only until the first frame the dump records at a step of its own. The
+    first position is asserted too, because a zero-based numerator hides there
+    instead: it prints "Step 0 / 2400" and every later frame is off by one.
+    """
+    live = one_step_page
+    info = live.page["info"]
+    assert int(info["nstep"]) == ONE_STEP_NT, (
+        f"the header claims {int(info['nstep'])} solver steps, not "
+        f"{ONE_STEP_NT}: a denominator equal to the frame count here would be "
+        "the frame count under another name"
+    )
+    with _render_doubled():
+        live.show(0, "ycut")
+    assert live.state.frame_label == f"Step 1 / {ONE_STEP_NT} (Stride 1)", (
+        f"the first position printed {live.state.frame_label!r}: the numerator "
+        "is the step the frame was recorded at (1), not the slider position (0) "
+        "and not a one-based count of frames"
+    )
+    with _render_doubled():
+        live.show(ONE_STEP_NT - 1, "ycut")
+    assert live.state.frame_label == (
+        f"Step {ONE_STEP_NT} / {ONE_STEP_NT} (Stride 1)"
+    ), (
+        f"the LAST position printed {live.state.frame_label!r}: the denominator "
+        f"is the run's {ONE_STEP_NT} solver steps and the numerator the step "
+        "that frame was recorded at - a label ending at 2399 is counting "
+        "positions, not steps"
+    )
+
+
 def test_the_state_dump_counts_the_frames_the_player_steps(desync_page):
     """``_animation_block`` must not drift from the player's clock, ``_position_count``.
 

@@ -447,6 +447,48 @@ def _vis_colour_limit(arrays, percentile: float = COLOR_PERCENTILE):
     return 0.0, ceiling, False
 
 
+# The page's ONE colour window, memoised per recorded data set. Keyed on the
+# IDENTITY of the planes, never on their shape: two different dumps of the same
+# shape sharing a ceiling would be a per-frame rescale wearing a global label.
+# The planes are held alive beside the entry, exactly as ``_TIMELINE_CACHE``
+# holds its record, so a freed array's id cannot be recycled onto a new one.
+GLOBAL_CLIM_CACHE: dict = {}
+GLOBAL_CLIM_CACHE_LIMIT = 4
+# How many times the window was actually COMPUTED. A viewer that rescaled per
+# frame would grow this on every draw; one window for the whole animation grows
+# it once per data set and then never again.
+GLOBAL_CLIM_CALLS = 0
+
+
+def global_clim(planes, percentile: float = COLOR_PERCENTILE):
+    """The whole-animation |Ez| window for ``planes``, computed ONCE.
+
+    :func:`_vis_colour_limit` is the arithmetic; this is the ONE door the page
+    asks it through, and it answers from a memo after the first call. A redraw,
+    a mode swap or a second reader on the same dump therefore costs O(1) and
+    cannot come back with a different ceiling than the first reader got: the
+    colour scale is decided at load and never moves while the animation plays.
+
+    Returns the same ``(0.0, ceiling, empty)`` triple as
+    :func:`_vis_colour_limit`. A MISS (a new data set) is O(total samples), the
+    price of one window for the whole animation, paid exactly once per set.
+    """
+    global GLOBAL_CLIM_CALLS
+    planes = tuple(planes)
+    key = (tuple(id(plane) for plane in planes), float(percentile))
+    hit = GLOBAL_CLIM_CACHE.get(key)
+    if hit is not None and all(
+        kept is asked for kept, asked in zip(hit[0], planes)
+    ):
+        return hit[1]
+    window = _vis_colour_limit(planes, percentile)
+    GLOBAL_CLIM_CALLS += 1
+    if len(GLOBAL_CLIM_CACHE) >= GLOBAL_CLIM_CACHE_LIMIT:
+        GLOBAL_CLIM_CACHE.clear()
+    GLOBAL_CLIM_CACHE[key] = (planes, window)
+    return window
+
+
 def _is_vis(info: dict) -> bool:
     """True when ``info`` came from load_vis, not from load_dump."""
     # "format" is a serialized poc-state value, i.e. data rather than an
@@ -748,8 +790,8 @@ class TimeAxis:
     the player steps (see ``_volume_player_plan``); the |E| volume is a
     decimated LAYER on it and no longer defines it. ``stride`` is how many steps
     one frame of THIS axis spans (1 for a plane family recorded every step),
-    ``n_steps`` the run's own step count - the denominator of the step reading -
-    and ``time_seconds`` the same axis in seconds, present only when the dump
+    ``n_steps`` the run's own step count - the floor of the label's denominator
+    (:attr:`max_step`) - and ``time_seconds`` the same axis in seconds, present only when the dump
     recorded a REAL ``dt_s``: an invented time base is precisely the dishonesty
     this record exists to remove, so an absent, non-finite or non-positive
     ``dt_s`` leaves it None rather than zero-filled.
@@ -792,18 +834,32 @@ class TimeAxis:
         found = int(np.searchsorted(steps, wanted, side="right")) - 1
         return None if found < 0 else found + 1
 
-    def label(self, frame, detail=None):
+    @property
+    def max_step(self) -> int:
+        """The LAST step this record reached - the label's denominator.
+
+        ``n_steps`` is what the run's header claims; the recorded axis's last
+        entry is what the dump actually holds. The larger of the two, so a
+        recorded step can never outrun the denominator and the reader never
+        sees "Step 2401 / 2400".
+        """
+        steps = np.asarray(self.step_index).ravel()
+        recorded = int(steps[-1]) if steps.size else 0
+        return max(int(self.n_steps), recorded)
+
+    def label(self, frame):
         """One line naming 1-based ``frame`` and the step it was taken at.
 
-        "Step 301 / 2400 (Frame 301 of 2400)" - the step the solver had reached
-        at this position and the run's own step count. This axis is the PLANE
-        family's, so one position is one recorded plane frame and its own step;
-        the decimation of the |E| volume is not a property of this clock any
-        more, and arrives as ``detail`` - :func:`_volume_layer_label` composes
-        it, naming the stored VOLUME frame, the measured decimation and the step
-        that frame was captured at. ``detail`` replaces the "Frame k of n" half
-        verbatim. Without it a stride above 1 still prints its own clause, so a
-        hand-built axis composes the sentence it always did.
+        "Step 301 / 2400 (Stride 1)" - the step the solver had reached at this
+        position, the last step the record reached (:attr:`max_step`) and the
+        decimation in effect. The stride is ALWAYS stated, 1 included: a label
+        that prints its stride only above 1 leaves the reader unable to tell
+        "stride 1" from "stride not stated".
+
+        ONE clock. This axis is the PLANE family's, so one position is one
+        recorded plane frame and its own step; the |E| volume's decimation is a
+        property of that LAYER's clock, not of this sentence, and a caller that
+        draws the layer logs its reading instead (:func:`_log_volume_layer_note`).
 
         None is returned off the axis, so the caller can print its own words
         rather than this class inventing a frame. None too when the record is not
@@ -818,11 +874,7 @@ class TimeAxis:
             return None
         if int(np.asarray(self.step_index).ravel()[0]) < 1:
             return None
-        if detail is None:
-            detail = f"Frame {int(frame)} of {self.n_frames}"
-            if int(self.stride) > 1:
-                detail += f", Volume Decimated \u00d7{int(self.stride)}"
-        return f"Step {step} / {int(self.n_steps)} ({detail})"
+        return f"Step {step} / {self.max_step} (Stride {int(self.stride)})"
 
 
 def build_time_axis(
@@ -906,7 +958,7 @@ def build_time_axis(
     )
 
 
-def _frame_label(index, frames, time_axis=None, volume_label=None):
+def _frame_label(index, frames, time_axis=None):
     """The player's step sentence, or None on a page with no timeline.
 
     The ONE place that sentence is composed, and ``frames`` is the count the
@@ -917,19 +969,17 @@ def _frame_label(index, frames, time_axis=None, volume_label=None):
 
     ``time_axis`` is the page's RECORDED step axis (``info["time_axis"]"), the
     PLANE family's. When it counts the SAME frames the player steps the sentence
-    is read off that record - "Step 301 / 2400 (...)" - so the label names the
-    solver step on screen instead of counting clicks. ``volume_label`` is the
-    |E| layer's half, composed by :func:`_volume_layer_label`: it names the
-    stored volume frame this position draws, the measured decimation and that
-    frame's OWN step, so both clocks on the page are stated and neither can be
-    read as the other. Without a volume the half is omitted and the plane frame
-    is named instead.
+    is read off that record - "Step 301 / 2400 (Stride 1)" - so the label names
+    the solver step on screen instead of counting clicks, states the last step
+    the record reached and the decimation in effect.
+
+    ONE clock: the |E| layer's own reading is not folded in here, it is logged
+    (:func:`_log_volume_layer_note`).
 
     A page with no axis, or one describing a different family than the player
     steps, keeps the position-counted sentence - ``Step 3 / 12`` off the
     position, never off a step the file does not claim - which is also the
-    legacy two-argument call, unchanged, and the same words the on-canvas
-    counter draws (:func:`_step_counter_text`).
+    legacy two-argument call, unchanged, and the only indicator the page draws.
     """
     if frames is None:
         return None
@@ -939,68 +989,10 @@ def _frame_label(index, frames, time_axis=None, volume_label=None):
         except (AttributeError, TypeError, ValueError):
             same_clock = False
         if same_clock:
-            text = time_axis.label(int(index) + 1, volume_label)
+            text = time_axis.label(int(index) + 1)
             if text is not None:
                 return text
     return f"Step {int(index) + 1} / {int(frames)}"
-
-
-# The step counter drawn ON the picture: the one number a reader looks for, and
-# the corner pyvista can put it in that is neither the station sentence
-# (``upper_left``) nor the marker legend (``lower_left``). ``upper_right`` sits
-# above the |E| bar, which tops out at 0.73 of the viewport.
-STEP_COUNTER_NAME = "step_counter"
-STEP_COUNTER_POSITION = "upper_right"
-STEP_COUNTER_FONT_SIZE = 14
-
-
-def _step_counter_text(index, frames, volume_label=None) -> str | None:
-    """The counter's sentence, or None on a page with no timeline.
-
-    The same words as :func:`_frame_label`'s own fallback - ``Step 3 / 12``,
-    counted off the position - plus the |E| layer's half appended verbatim when
-    the page carries a volume, so the number on the picture and the number in
-    the shell readout cannot disagree.
-    """
-    if frames is None:
-        return None
-    text = f"Step {int(index) + 1} / {int(frames)}"
-    if volume_label is not None:
-        text = f"{text} - {volume_label}"
-    return text
-
-
-def _step_counter_for_page(info, index, mode=None) -> str | None:
-    """The counter's sentence for THIS page, read from its live record.
-
-    ``frames`` is the timeline's own length - what the player steps - and the
-    detail half is the |E| layer's, so a page with no timeline answers None and
-    draws no count rather than inventing one.
-
-    ``mode`` is the VIEW that is on screen, handed to
-    :func:`_volume_layer_label` where the caller has one; that function accepts
-    it and deliberately ignores it, so a page that cannot name a mode is not a
-    page without a counter.
-
-    NOTHING HERE MAY COST A PAGE ITS PICTURE. This runs inside a boot and inside
-    every redraw, and a redraw that raises is a redraw that drew nothing: the
-    guard is what keeps a record this function cannot read (a page with no
-    volume, a timeline that will not report its length, a frame index that will
-    not convert) dropping the COUNT instead of the scene. Same bargain as
-    :func:`_draw_step_counter` and the other decorations in this file.
-    """
-    try:
-        timeline = _timeline_for(info)
-        if timeline is None:
-            return None
-        return _step_counter_text(
-            int(index),
-            int(timeline.nsteps),
-            _volume_layer_label(info, mode, int(index)),
-        )
-    except Exception as exc:  # noqa: BLE001 - never take a boot or a redraw down
-        print(f"[poc_app] step counter skipped: {exc}", file=sys.stderr)
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1274,7 +1266,6 @@ def _timing_line(row):
         f"total_ms={_timing_num(row.get('total_ms'))}",
         f"sheet_ms={_timing_num(row.get('sheet_ms'))}",
         f"layer_ms={_timing_num(row.get('layer_ms'))}",
-        f"label_ms={_timing_num(row.get('label_ms'))}",
         f"render_ms={_timing_num(row.get('render_ms'))}",
         f"push_ms={_timing_num(row.get('push_ms'))}",
         f"other_ms={_timing_num(row.get('other_ms'))}",
@@ -1381,7 +1372,6 @@ def _timing_write_summary() -> None:
         for key in (
             "sheet_ms",
             "layer_ms",
-            "label_ms",
             "render_ms",
             "push_ms",
             "other_ms",
@@ -1472,7 +1462,6 @@ def _timing_tick_end(
         phases = {
             "sheet_ms": _timing_span("sheet_start", "sheet_end"),
             "layer_ms": _timing_span("layer_start", "layer_end"),
-            "label_ms": _timing_span("label_start", "label_end"),
             "render_ms": _timing_span("render_start", "render_end"),
             "push_ms": _timing_span("push_start", "push_end"),
         }
@@ -3620,46 +3609,6 @@ def _profile_register_exit() -> None:
         pass
 
 
-def _draw_step_counter(plotter, text) -> None:
-    """Draw, or UPDATE, the on-canvas step counter. Never raises.
-
-    ``text`` falsy -> nothing is drawn: a page with no timeline must not show a
-    count it cannot substantiate. The actor is NAMED, so a second call on the
-    same plotter replaces it in place (the mechanism ``station_label`` already
-    uses) instead of stacking a second label on every tick.
-
-    WHY the in-place path exists: ``add_text`` under a name already taken
-    REMOVES and re-adds the actor, and that path draws - so a counter that is
-    redrawn every tick paid a full render for a string that had merely changed.
-    The named actor is a ``pyvista.CornerAnnotation``, and ``set_text``
-    re-letters it without drawing anything; the tick's own render paints it.
-    Only that exact type is updated in place. Anything else under the name -
-    and any plotter without an ``actors`` mapping, as the test stubs are -
-    falls through to ``add_text`` exactly as it did before.
-    """
-    if not text:
-        return
-    try:
-        import pyvista as pv  # deferred, as everywhere else in this module
-
-        actors = getattr(plotter, "actors", None)
-        if isinstance(actors, dict):
-            existing = actors.get(STEP_COUNTER_NAME)
-            if isinstance(existing, pv.CornerAnnotation):
-                # In place: nothing is removed, added, or drawn.
-                existing.set_text(STEP_COUNTER_POSITION, text)
-                return
-        plotter.add_text(
-            text,
-            name=STEP_COUNTER_NAME,
-            position=STEP_COUNTER_POSITION,
-            font_size=STEP_COUNTER_FONT_SIZE,
-            color="black",
-        )
-    except Exception as exc:  # noqa: BLE001 - never take the server down
-        print(f"[poc_app] step counter skipped: {exc}", file=sys.stderr)
-
-
 # ---------------------------------------------------------------------------
 # TEMPORAL ALIASING REPORT
 #
@@ -4338,7 +4287,7 @@ def load_vis(path: Path) -> dict:
     # Computed once, here, from every stored frame of every plane: the viewer
     # then has no way to rescale between frames because it is never given a
     # per-frame number to rescale with.
-    vmin, vmax, empty = _vis_colour_limit((ycut, near, far))
+    vmin, vmax, empty = global_clim((ycut, near, far))
     info["color_range"] = (vmin, vmax)
     info["color_range_empty"] = empty
     return info
@@ -9486,7 +9435,6 @@ def _redraw_scene(
     state,
     _show_volume_quiver,
     station_label: bool = True,
-    step_text=None,
 ) -> None:
     """Rebuild the scene in the one plotter. Failure leaves the old picture."""
     try:
@@ -9508,14 +9456,6 @@ def _redraw_scene(
             # corner label ``_draw_scene`` has always drawn (:3889).
             station_label=station_label,
         )
-        # The counter's sentence is drawn HERE rather than handed to
-        # ``_draw_scene``: the rebuild just cleared the plotter, so the previous
-        # counter is gone and this puts it back from the SAME sentence the tick
-        # path uses, for the position this caller knows is on screen. It rides
-        # beside the scene call for one reason - so the counter cannot change
-        # what that call requires of ``_draw_scene``, and an unusable sentence
-        # costs the count and never the picture.
-        _draw_step_counter(plotter, step_text)
         # AFTER the scene, never before it: _draw_scene clears the plotter,
         # so this one call is what keeps a ticked arrow field on screen
         # across a cut or station change.
@@ -12962,6 +12902,33 @@ def _volume_layer_label(info, mode, position):
     return timeline.layer_label(_timeline.VOLUME_LAYER, timeline.clamp(position))
 
 
+
+VOLUME_LAYER_NOTES_LOGGED: dict[str, None] = {}
+VOLUME_LAYER_NOTES_LIMIT = 64
+
+
+def _log_volume_layer_note(info, mode, position) -> None:
+    """Log the |E| layer's own reading for this position, once. Never raises.
+
+    The label states ONE clock (:meth:`TimeAxis.label`), so the layer's separate
+    clock - which stored volume frame is painted, its own step, its decimation -
+    is written to the log instead of folded into the sentence. Once per distinct
+    sentence: this runs on every draw, and the same note on every tick would
+    bury the rest of the log. Capped, so a long session that sweeps many frames
+    cannot grow the dict without bound.
+    """
+    try:
+        note = _volume_layer_label(info, mode, int(position))
+        if not note or note in VOLUME_LAYER_NOTES_LOGGED:
+            return
+        if len(VOLUME_LAYER_NOTES_LOGGED) >= VOLUME_LAYER_NOTES_LIMIT:
+            return
+        VOLUME_LAYER_NOTES_LOGGED[note] = None
+        print(f"[poc_app] volume layer: {note}", file=sys.stderr)
+    except Exception:  # noqa: BLE001 - a log line never costs a draw
+        pass
+
+
 def _volume_abs_global_clim(volume):
     """The ONE colour range every frame of ``e_abs_volume`` is drawn on.
 
@@ -14415,11 +14382,6 @@ def run_web_vis(
                 state,
                 _show_volume_quiver,
                 station_label=False,
-                # The position on screen, counted on the player's clock: the
-                # rebuild clears the plotter, so the counter is re-drawn here.
-                step_text=_step_counter_for_page(
-                    info, state.frame, getattr(state, "view_mode", None)
-                ),
             )
 
         # Published so the BOOT can draw: on this page there are no ez_* sheets
@@ -14520,11 +14482,6 @@ def run_web_vis(
                 state,
                 _show_volume_quiver,
                 station_label=False,
-                # The position on screen, counted on the player's clock: the
-                # rebuild clears the plotter, so the counter is re-drawn here.
-                step_text=_step_counter_for_page(
-                    info, state.frame, getattr(state, "view_mode", None)
-                ),
             )
 
         # The boot draw and the "Show Vector Field" toggle both reach the draw
@@ -15399,25 +15356,13 @@ def run_web_vis(
             else f"sim time: t = {t_ns:.6f} ns"
         )
         # The axis is read from the LIVE page beside the frames: a solve that
-        # swapped the dump under this page must relabel from the NEW record. The
-        # detail half is the |E| layer's OWN clock, so the sentence states both
-        # clocks on the page and neither can be read as the other.
-        state.frame_label = _frame_label(
-            index,
-            frames,
-            info.get(TIME_AXIS_KEY),
-            # With the layer off the detail half names the PLANE frame the
-            # player is on and nothing else: ``TimeAxis.label`` fills a MISSING
-            # detail with the volume's decimation clause, which would name a
-            # layer this page no longer draws.
-            _volume_layer_label(info, mode, index)
-            if _volume_layer_enabled()
-            else (
-                None
-                if frames is None
-                else f"Frame {int(index) + 1} of {int(frames)}"
-            ),
-        )
+        # swapped the dump under this page must relabel from the NEW record.
+        state.frame_label = _frame_label(index, frames, info.get(TIME_AXIS_KEY))
+        # The |E| layer's own reading goes to the LOG, not into the sentence:
+        # one label states one clock, and the second clock is still stated
+        # where an operator can read it.
+        if _volume_layer_enabled():
+            _log_volume_layer_note(info, mode, index)
         # The sweep time is a property of THIS page's timeline, so it is refreshed
         # on every draw beside the frame label rather than only when the select
         # moves: a finished solve, a family swap or a page swap all replace the
@@ -15499,19 +15444,6 @@ def run_web_vis(
             # volume still costs exactly the one render below.
             _volume_layer_drop()
         _timing_mark("layer_end")
-        _timing_mark("label_start")
-        # The step counter, UPDATED rather than re-created: the same name makes
-        # this one annotation's text change, so a tick costs no new actor.
-        _draw_step_counter(
-            plotter,
-            # Off: the counter's own sentence, counted off the SAME ``frames``
-            # ``_step_counter_for_page`` reads (the timeline's length), minus
-            # the |E| half that would name a layer that is not on the page.
-            _step_counter_for_page(info, index, mode)
-            if _volume_layer_enabled()
-            else _step_counter_text(index, frames),
-        )
-        _timing_mark("label_end")
         # ONE draw and ONE push per tick, decided in one place: a trame view
         # that pushes from its own render callback must not be pushed again
         # (see _tick_render_and_push).
