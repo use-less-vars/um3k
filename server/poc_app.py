@@ -6500,7 +6500,9 @@ def _draw_volume_scene(
     # would be the one lie a colour bar must not tell.
     abs_actor = None
     abs_bar_title = _volume_bar_title(clim_mode)
-    if abs_image is not None:
+    # The |E| volume and its bar are the LAYER (`_volume_layer_enabled`): the
+    # cut sheets below are not, and are drawn either way.
+    if abs_image is not None and _volume_layer_enabled():
         # WHY the bar is NOT made here: ``add_volume(show_scalar_bar=True)``
         # keys its bar on a title, and the next frame of this page re-uses that
         # same title - which pyvista answers by MERGING into the standing bar
@@ -6586,7 +6588,7 @@ def _draw_volume_scene(
             scalar_bar_args={"title": "|Ez| [V/m]"},
             **ez_style,
         )
-    elif not abs_drawn:
+    elif not abs_drawn and _volume_layer_enabled():
         # Only reached when a volume WAS available and the plotter refused
         # it: the same fallback, guarded, because an exception escaping here
         # would cost the outline, the axes, the board and the markers too.
@@ -7057,16 +7059,17 @@ def _draw_scene(
         # sheets were really accepted, and the range each one was painted on -
         # so the legend below still cannot claim a sheet pyvista refused or a
         # clim nobody used.
-        if _volume_layer_enabled():
-            cuts_drawn, cut_clims = _draw_volume_scene(
-                plotter,
-                info,
-                grid=grid,
-                cut_layout=cut_layout,
-                cell_mm=cell_mm,
-            )
-        # The |E| layer is OPT-IN (`SHOW_VOLUME_LAYER_DEFAULT`): with it off the
-        # scene draws no |E| volume and no cut sheets, and claims neither.
+        cuts_drawn, cut_clims = _draw_volume_scene(
+            plotter,
+            info,
+            grid=grid,
+            cut_layout=cut_layout,
+            cell_mm=cell_mm,
+        )
+        # The |E| VOLUME is OPT-IN (`SHOW_VOLUME_LAYER_DEFAULT`) and is gated
+        # INSIDE `_draw_volume_scene`, not here: the two cut sheets are the
+        # page's field and are drawn with the layer off as well, so gating the
+        # whole call is what once took the operator's planes away.
 
     # The ONE derivation of what this page frames: the domain box solid, the
     # captured station window dashed inside it (_plane_extent_mm). This used to

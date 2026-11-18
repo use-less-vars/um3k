@@ -268,3 +268,105 @@ def test_main_serves_the_board_page_for_a_record_only_structure(capsys, monkeypa
         app.main(["--structure", "build_A_50ohm_100ohm", "--list-keys"])
     assert refused.value.code == 2
     assert "record only" in capsys.readouterr().err
+
+
+#: The shipped legacy dump: nine captured x-planes and NO |E| volume, so the cut
+#: sheets a page booted from it draws are the ones it builds from ``plane_ez``.
+LEGACY_NPZ = (
+    REPO_ROOT
+    / "evidence"
+    / "termination"
+    / "build_A_50ohm_p51_ghostwave_fields.npz"
+)
+
+#: ``_marker_cut_lines``'s sentence for "the sheets are not drawn".  The sheets
+#: are NOT the |E| volume layer's, so a page that draws none and blames that
+#: layer is the regression this test exists for.
+LAYER_OFF_SENTENCE = "cut sheets: not drawn - the |E| volume layer is off"
+
+
+def test_a_plane_stack_page_draws_its_cut_sheets_with_the_layer_off(monkeypatch):
+    """The two cut sheets are the page's field, not the |E| layer's.
+
+    This module is the only boot recipe in the tree that does NOT switch the |E|
+    layer on (``tests/test_poc_volume_view.py`` and
+    ``tests/test_animation_volume.py`` both patch ``SHOW_VOLUME_LAYER_DEFAULT``
+    True), which makes it the only place the layer-OFF page can be read.  The
+    page is booted from the shipped dump, which carries ``plane_ez`` and no
+    volume, so the sheets come off the plane stack: with the layer off they used
+    to be gated away with it and the corner legend said so.  What is recorded is
+    what the boot really did - the datasets it handed ``add_mesh`` and the
+    legend text it wrote - not a re-derivation of the layout.
+    """
+    if not LEGACY_NPZ.is_file():
+        pytest.skip(f"the shipped field dump is absent: {LEGACY_NPZ}")
+    import pyvista
+
+    assert app.SHOW_VOLUME_LAYER_DEFAULT is False, (
+        "this test reads the layer-OFF page, but the default layer is "
+        f"{app.SHOW_VOLUME_LAYER_DEFAULT!r}"
+    )
+    assert app._volume_layer_enabled() is False, (
+        "POC_SHOW_VOLUME is set, so this boot is not the layer-OFF page"
+    )
+
+    info = app.load_dump(LEGACY_NPZ)
+    assert app.PLANE_KEY in info, (
+        f"the shipped dump no longer carries {app.PLANE_KEY}, so this is not the "
+        "plane-stack page the cut sheets are drawn on"
+    )
+    assert app.VOLUME_RAW_KEY not in info, (
+        f"the dump now carries {app.VOLUME_RAW_KEY}: this test pins the "
+        "volume-less page, whose sheets come off the plane stack"
+    )
+
+    real_add_mesh = pyvista.Plotter.add_mesh
+    added: list = []
+
+    def _counted_add_mesh(self, dataset, *args, **kwargs):
+        added.append((dataset, kwargs))
+        return real_add_mesh(self, dataset, *args, **kwargs)
+
+    real_marker_text = app._marker_text
+    legends: list = []
+
+    def _spy_marker_text(*args, **kwargs):
+        text = real_marker_text(*args, **kwargs)
+        legends.append(text)
+        return text
+
+    monkeypatch.setattr(pyvista.Plotter, "add_mesh", _counted_add_mesh)
+    monkeypatch.setattr(app, "_marker_text", _spy_marker_text)
+    with av._render_doubled():
+        _boot(info)
+
+    # The two sheets, by the samples they carry: one row in y (the y cut) and one
+    # column in z (the z cut), each 9 stations deep and painted on the plane
+    # stack's own ``ez_abs`` (this dump has no ``e_abs`` to paint them with).
+    sheets = sorted(
+        (*tuple(int(n) for n in shot.dimensions), kwargs.get("scalars"))
+        for shot, kwargs in added
+        if kwargs.get("scalars") in ("ez_abs", "e_abs")
+    )
+    assert sheets == [(9, 1, 22, "ez_abs"), (9, 213, 1, "ez_abs")], (
+        "the layer-OFF page did not draw both cut sheets off the plane stack: "
+        f"{sheets}"
+    )
+
+    # And the legend claims them: no draw may tell the operator the sheets are
+    # missing, and the last one must place a marker ON a drawn cut.  The marker
+    # that is ON is the page's own answer for this dump (its load plane falls in
+    # the slab the sheets span), so the sentence is matched by its relation
+    # rather than by a name: any marker named "off both cuts" here would mean the
+    # legend is describing sheets that are not on screen.
+    assert legends, "the boot wrote no corner legend, so these assertions read nothing"
+    for text in legends:
+        assert LAYER_OFF_SENTENCE not in str(text), (
+            "the page drew its cut sheets and still says they are missing: "
+            f"{text!r}"
+        )
+    legend = str(legends[-1])
+    assert "marker is on the y cut" in legend, (
+        f"the closing legend places no marker on the drawn cuts: {legend!r}"
+    )
+
