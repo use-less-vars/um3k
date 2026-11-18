@@ -1,0 +1,171 @@
+path	bytes	first_heading	has_status_header	mtime	last_commit	cites_out	cited_in
+docs/HISTORY.md	31091	# A history of `emfit`	no	2026-10-26T01:41	8976249	4	2
+docs/OUTLINE.md	36705	# emfit -- living project outline	no	2026-10-28T04:57	9b04455	12	5
+docs/architecture.md	6660	# Architecture: what exists, and what is only a shape	no	2026-10-19T22:36	9884668	0	1
+docs/design/3d_ntff_te_query.md	3514	# A 3D near-to-far-field transform on a recorded Huygens box: an enquiry put to TE	yes	2026-11-14T02:42	fb97376	0	0
+docs/design/3d_ntff_te_spec.md	1001	# 3D Near-to-Far-Field Transform - Theory Engineer specification	no	2026-11-14T02:59		0	1
+docs/design/57c_acceptance.md	10118	# 57c — `Q` diagnosis: acceptance criteria	yes	2026-10-29T14:27		1	1
+docs/design/57c_closeout.md	44565	# 57c — `Q` diagnosis: close-out	no	2026-10-29T15:08		3	1
+docs/design/E11_residual_preregistration.md	46763	# E11 — The residual against the independent Z0: preregistration	yes	2026-11-09T16:36	31a48bb	6	5
+docs/design/EM_SOLVER_LEDGER.md	47690	# EM solver ledger	no	2026-11-13T01:29	74c8b9b	21	22
+docs/design/GEN12_HANDOFF.md	27138	# GEN12 HANDOFF	no	2026-11-12T18:34	a0ffd5c	12	10
+docs/design/GEN12_HANDOFF_STATE.md	48880	# GEN12 handoff — file 4 of 4: the state of the tree	yes	2026-11-12T23:46	bed7ae2	33	2
+docs/design/GEN12_HANDOFF_TRAPS.md	28240	# GEN12 handoff — traps	no	2026-11-12T18:08	bd2d9b9	5	2
+docs/design/GEN12_HANDOFF_TRAPS.superseded.md	20973	# GEN12 handoff — traps	no	2026-11-12T18:02	e01f5e5	5	2
+docs/design/GEN12_HANDOFF_WARS.md	32951	# GEN 12 HANDOFF — THE WARS	no	2026-11-12T18:34		11	4
+docs/design/GEN13_HANDOFF.md	4691	# To EM-Solver Engineer (Gen 13)	no	2026-11-14T20:44		0	2
+docs/design/TE_query_s2p_convolution.md	18766	# A behavioural S-parameter block in an explicit leapfrog loop: an enquiry	yes	2026-11-12T06:51		8	3
+docs/design/TRAME_HAZARDS.md	8054	# trame hazards	no	2026-11-16T21:38		2	0
+docs/design/UM3K_UI_ARCHITECTURE.md	40707	# UM3K UI architecture: one page, panels as data	no	2026-11-15T04:28		3	4
+docs/design/absorbing_termination_scope.md	38408	# Absorbing termination: scoping document	no	2026-10-31T22:32	ce16cdf	5	77
+docs/design/ac4_wiring_scope_2026-11-02.md	9007	# Wiring AC-4: the grader has a Gamma *model* and no Gamma *measurement*, and the bar cannot pass	no	2026-11-02T20:41		4	1
+docs/design/anchor_audit_2026-11-05.md	15617	# Anchor provenance audit — 2026-11-05	no	2026-11-05T23:06		5	11
+docs/design/anchor_note_extraction_2026-11-04.md	14093	# Anchor-note extraction from `evidence/termination/*.json`	no	2026-11-04T21:03		2	2
+docs/design/anchor_preregistration.md	51809	# Pre-registration: analytic convergence anchor for the 2D mode solver	yes	2026-10-28T17:20		0	9
+docs/design/beta_dispersion_comparison_2026-11-07.md	7979	# Beta dispersion comparison — 2026-11-07	no	2026-11-07T04:12		1	2
+docs/design/beta_drift_analysis_2026-11-05.md	13022	# Beta drift across the three load-free twins — is the `beta` vs `beta_model` gap a mesh artefact?	no	2026-11-05T18:14		0	2
+docs/design/beta_refit_test_2026-11-05.md	27654	# Beta refit test — 2026-11-05	no	2026-11-05T23:04		5	8
+docs/design/box_sweep_preregistration.md	18672	# Preregistration — the transverse-box sweep at h = 0.4 mm (lateral walls vs lid, independently)	no	2026-10-31T00:53		1	7
+docs/design/c2b_preregistration.md	17556	# `C2b` Step 0 -- the `corr_e_z` noise floor	no	2026-10-27T03:41		1	7
+docs/design/c2b_step0_plan.md	5899	# `C2b` Step 0 -- `corr_e_z` against strip-edge refinement alone	no	2026-10-27T03:45		2	2
+docs/design/closed_form_with_two_wave_beta_2026-11-02.md	10797	# The closed form with the two-wave beta: what the data select	yes	2026-11-02T22:22		1	9
+docs/design/complex_load_analysis_2026-11-04.md	12515	# Complex load analysis - 2026-11-04	no	2026-11-03T23:40	c36079d	0	11
+docs/design/component_map.md	42705	# Component map -- what is in this repository, what state it is in, and what would change that	no	2026-10-30T23:50	911b38f	19	5
+docs/design/core_contract.md	30313	# The numerical core contract	yes	2026-10-27T13:33		1	5
+docs/design/corr_ez_vv_threshold.md	21355	# `CORR_EZ_VV_MIN` — the derivation of the `|corr_ez_vv|` selection bar	no	2026-10-27T15:48	3034b0f	2	4
+docs/design/cpp-kernel-spec-2026-11-09.md	43852	# Porting the FDTD time-stepper to C++: technical spec	yes	2026-11-08T14:26		0	2
+docs/design/cpp-kernel-status-2026-11-09.md	28957	# Compiled FIT kernel: where the port actually stands (2026-11-09)	no	2026-11-08T17:35		0	10
+docs/design/cpp_full_loop_plan.md	40269	# Moving the FIT time loop into C++: the boundary as it stands (E3 preparation)	no	2026-11-11T12:20		3	1
+docs/design/cpp_solver_arch.md	43294	# A C++ architecture for the emfit 2D eigenproblem	no	2026-10-29T02:15		4	10
+docs/design/cross_check_script_2026-11-05.md	41542	# openEMS vs emfit cross-check — pre-registration and validation logic	no	2026-11-05T23:05		2	2
+docs/design/d43b_acceptance.md	4034	# Dispatch 43b acceptance criteria (Task A-close)	no	2026-10-28T15:34		1	2
+docs/design/d43b_extraction_audit.md	44064	# Dispatch 43b Task B: extraction-layer audit of `emfit/mode2d.py`	no	2026-10-29T11:48		5	4
+docs/design/d44_acceptance.md	16054	# Acceptance addendum: what the `1e-8` comparison can and cannot certify	no	2026-10-28T16:12		4	2
+docs/design/d45_acceptance.md	9247	# Acceptance addendum: what Dispatch 45 delivers, and what it does not	no	2026-10-28T16:40		4	1
+docs/design/d45_anchor_results.md	14823	# Anchor: pre-registered run against the 2D mode solver	no	2026-10-28T17:50		1	8
+docs/design/d45_negative_control_addendum.md	7569	# Negative control: dated addendum, written before the run	no	2026-10-28T19:42		1	1
+docs/design/d46_acceptance.md	1747	# Dispatch 46 acceptance criteria	no	2026-10-28T17:54		1	3
+docs/design/d47_acceptance.md	5941	# Dispatch 47 acceptance criteria	no	2026-10-28T19:16		5	3
+docs/design/d47_results.md	32402	# Dispatch 47: the deflated ladder at levels 1 to 3	yes	2026-10-28T20:19		4	3
+docs/design/d48_acceptance.md	10315	# Dispatch 48: acceptance criteria	no	2026-10-28T21:05		6	3
+docs/design/d48_results.md	20955	# Dispatch 48: classification of the slab family at beta = sqrt(eps_r) * k0	no	2026-10-28T21:31		6	1
+docs/design/d49_acceptance.md	16258	# Dispatch 49: acceptance criteria	no	2026-10-28T21:41		6	1
+docs/design/d50_acceptance.md	5091	# Dispatch 50 — acceptance criteria, recorded before any work	no	2026-10-28T23:12		1	1
+docs/design/d51_acceptance.md	4028	# Dispatch 51 — acceptance criteria	no	2026-10-28T23:50		1	1
+docs/design/d52_acceptance.md	8364	# Dispatch 52 — acceptance criteria	yes	2026-10-29T01:16		1	3
+docs/design/d52b_acceptance.md	14430	# Dispatch 52b — Acceptance criteria (verbatim), with collision report	yes	2026-10-29T02:06		17	2
+docs/design/d52b_claim_inventory.md	62375	# D52b claim inventory — raw sweep output	no	2026-11-12T22:19		17	6
+docs/design/d53_acceptance.md	28715	# Dispatch 53 — Acceptance criteria: close the cheap attacks, keep the gate unfrozen	yes	2026-10-29T03:33		9	1
+docs/design/d54_acceptance.md	19305	# Dispatch 54 -- Acceptance criteria: instrument the artefact, resolve the committed contradiction, update the ledger	no	2026-10-29T03:50		6	4
+docs/design/d57_acceptance.md	6006	# Dispatch 57 — acceptance criteria	no	2026-10-29T12:07		4	3
+docs/design/d583_straight_guide_preregistration.md	38608	# Phase 58.3 — Straight-guide (uniform through-line) pre-registration	no	2026-10-29T22:50	ba73801	0	0
+docs/design/d58_13_strip_width_decisions_block.md	30805	# D58.13 — decisions block for Agent A to merge (do not append to `decisions.md` directly)	no	2026-10-31T04:08		0	4
+docs/design/d58_acceptance.md	24410	# Dispatch 58 -- Acceptance criteria: the component map, the state it assigns, and the staleness rule that keeps it checkable	no	2026-10-29T15:28		11	4
+docs/design/d58_closeout.md	21592	# D58.1 Close-out: what R measures, why the offset is not an estimator artefact, and the interface under-jump	no	2026-10-29T16:49		6	1
+docs/design/d58_extraction_acceptance.md	66569	# Dispatch 58 — acceptance criteria	no	2026-10-29T21:53		6	2
+docs/design/defect_register.md	165357	# Defect register (DR-14 onward)	no	2026-11-13T22:41	dc9374e	27	34
+docs/design/deflation_preregistration.md	45634	# Deflation pre-registration: removing the curl-free subspace before the eigensolve	yes	2026-10-28T21:55		4	7
+docs/design/deflation_v2_preregistration.md	38773	# Deflation v2 pre-registration: extending `Z` to the slab region, and a by-order rule that can fail	no	2026-10-28T21:21	521c34f	6	10
+docs/design/direct_vi_forensics_2026-11-08.md	5120	# Direct V/I Forensics (2026-11-08)	no	2026-11-08T03:38		2	3
+docs/design/dispatch_log.md	215587	# Dispatch log	no	2026-11-09T22:01	6fb5ec4	56	34
+docs/design/dispatch_log_archive_2026-Q4.md	201130	# Dispatch log archive — 2026-Q4	no	2026-11-04T15:17	8beb9ae	29	3
+docs/design/dr43_s21_extraction_scope.md	25875	# DR-43 residual questions: what is still open after the S21 extraction repair	no	2026-11-12T17:37		6	3
+docs/design/e13_antenna_scope.md	15291	# E13 — antenna far-field post-processor: scope	yes	2026-11-13T23:42	60c111a	0	0
+docs/design/e3_baseline_benchmark.md	20942	# E3 baseline benchmark — five runs per arm in the container, and why 1.81x does not reproduce there	yes	2026-11-13T01:05		3	3
+docs/design/e3_dr42_closure_benchmark.md	13607	# E3 — DR-42 closure benchmark: the post-pin kernel on the host	no	2026-11-13T02:46		3	2
+docs/design/e3_phase2_closure.md	9911	# E3 Phase 2 — closing the kernel flag question	no	2026-11-13T18:03		5	0
+docs/design/e3_phase2_scope.md	17112	# E3 phase 2 — scope	no	2026-11-13T00:29		7	3
+docs/design/extraction_three_layer_audit_2026-11-04.md	36496	# Extraction three-layer audit — Layer 1: field measurement	no	2026-11-04T23:16		0	1
+docs/design/flux_projection_design_2026-11-03.md	13021	# Flux-projection extraction: design and five-bracket prediction	no	2026-11-03T16:54		2	2
+docs/design/flux_projection_verification_2026-11-03.md	4371	# Flux-projection renormaliser: what the source fixes, and what it does not	no	2026-11-03T14:18	c044237	0	0
+docs/design/flux_renorm_analysis_2026-11-03.md	6221	# Flux-projection renormaliser: the 0.61 level is `(1 + zc/η_eff)/2` — 2026-11-03 (read-only analysis, no code changed)	no	2026-11-04T15:06		1	2
+docs/design/gap_analysis_2026-11-03.md	14434	# Gap analysis 2026-11-03 — the 16–19 pp `s21` gap	no	2026-11-03T13:27		1	3
+docs/design/ghost_wave_analysis_2026-11-08.md	16118	# Ghost-wave analysis: what the new dump actually says	no	2026-11-08T00:43		1	4
+docs/design/ghost_wave_forensics_2026-11-07.md	10249	# Ghost-wave forensics: measuring the load plane directly	no	2026-11-07T19:56		0	2
+docs/design/graded_meshing_plan.md	33854	# Graded meshing for the lateral axes: a plan	yes	2026-11-16T22:03		2	4
+docs/design/independent_anchor_qucs_2026-11-04.md	14114	# Independent anchor cross-check: QUCS / Kirschning-Jansen-Koster gap model (dispatch 8a)	no	2026-11-04T23:56		2	1
+docs/design/job_schema.md	18584	# The emfit job schema, v1	no	2026-10-28T13:18		0	6
+docs/design/latex_structure.md	26587	## 1. The reader, stated once	no	2026-10-26T12:49		21	2
+docs/design/lessons_learned_emfit.md	7318	# Lessons learned on emfit	no	2026-11-08T17:35		6	2
+docs/design/lessons_learned_emfit_addendum.md	8988	# Lessons learned — EM fitting, addendum (generation 10)	no	2026-11-11T04:17		1	4
+docs/design/load_definition_forensics_2026-11-07.md	13032	# Load definition forensics: what the 50 ohm resistor becomes on the grid	no	2026-11-07T04:49		0	2
+docs/design/load_integration_verification_2026-11-07.md	13850	# Load integration verification	no	2026-11-07T06:21		0	1
+docs/design/m3c_gate_v2.md	105260	# The M3c gate, v2.1 — five clauses, audited against one rule	no	2026-10-28T07:10	f826e0b	6	10
+docs/design/modal_port_recon_2026-11-03.md	7512	# Modal port wiring — recon 2026-11-03	no	2026-11-03T00:29		0	1
+docs/design/modal_port_wiring_design_2026-11-03.md	11329	# Modal launch wiring — design 2026-11-03	yes	2026-11-03T02:49		2	2
+docs/design/modal_port_wiring_measurement_2026-11-03.md	37978	# Modal launch wiring — measurement and derivation 2026-11-03	yes	2026-11-03T03:04		1	1
+docs/design/modal_solver_paths.md	6336	# Modal solver paths	no	2026-10-31T22:39		1	3
+docs/design/modalport_ownership.md	32405	# Modal port measurement pipeline — ownership map (design pass 1)	no	2026-10-27T01:44		0	7
+docs/design/multifreq_beta_test_2026-11-07.md	26597	# Multifrequency station-fit beta test — `multifreq-beta-test-2026-11-07`	no	2026-11-07T02:13		3	3
+docs/design/multifreq_twin_2026-11-07.md	5889	# Twin-load multifrequency check --- 2026-11-07	no	2026-11-07T03:27		2	1
+docs/design/near_field_subset_refit_2026-11-04.md	10420	# Near-field subset refit — is the common excess load near-field contamination?	no	2026-11-04T19:11		5	2
+docs/design/nedelec_solver_review.md	31142	# Engineering recommendations making the Nédélec.txt	no	2026-10-31T16:50	04eaf64	0	0
+docs/design/normalization_scheme.md	29130	# Normalization scheme for comparing the E_z and E_y components	no	2026-10-26T18:52	87aa95e	0	6
+docs/design/onboarding/00_README.md	13419	# 00 — Start here	no	2026-11-16T23:08	46f5a2d	11	3
+docs/design/onboarding/01_ARCHITECTURE.md	17079	# 01 — Architecture	no	2026-11-16T23:06	46f5a2d	4	3
+docs/design/onboarding/02_PHYSICS_ROADMAP.md	16634	# 02 — Physics, as it actually exists in code, and what is next	no	2026-11-16T23:05	46f5a2d	5	2
+docs/design/onboarding/03_KNOWN_BUGS.md	18140	# 03 — Known bugs, and claims that turn out to be ghosts	no	2026-11-16T22:56	c89bd30	8	4
+docs/design/onboarding/STATE.json	12838		no	2026-11-16T23:06	46f5a2d	12	1
+docs/design/openems_referee_spec_2026-11-10.md	24608	# openEMS referee for termination build A — design record	no	2026-11-09T22:00		0	1
+docs/design/order_p_preregistration.md	40404	# Pre-registration: convergence order `p` of the sparse transverse eigen-solve	no	2026-10-29T13:20		2	5
+docs/design/pairing_rule_preregistration.md	113536	# Pairing rule pre-registration	no	2026-10-30T23:50	911b38f	9	8
+docs/design/passivity-resolution-2026-11-09.md	14978	# The passivity bound at the station planes: mechanism on the available evidence, reproduction outstanding	no	2026-11-08T14:20		0	4
+docs/design/passivity_ceiling_2026-11-02.md	4550	# The passivity ceiling: |s21| <= 1 for a series resistance in a shorted line	yes	2026-11-02T18:04		0	2
+docs/design/physics_invariant_layer.md	39218	# Physics Invariant Layer for the Mode-2D Solver	no	2026-10-28T16:46		3	4
+docs/design/pipeline_map.md	22093	# Pipeline map — stage-by-stage status, gates, and error bars	no	2026-10-30T23:40		2	2
+docs/design/port_normalisation_audit_2026-11-05.md	28515	# Port normalisation audit — Stage A1: the chain to `|Gamma_port|` = 0.3255649	no	2026-11-06T00:16		4	1
+docs/design/pre_termination_prep_report_2026-11-02.md	13186	# Pre-termination prep - report (2026-11-02)	no	2026-11-02T22:34		4	1
+docs/design/preservation_gate_geometry_a15_freeze.md	4286	# Preservation gate: geometry A-1.5, frozen	no	2026-10-28T23:40		0	1
+docs/design/preservation_gate_preregistration.md	13118	# The preservation gate, pre-registered	no	2026-10-28T23:17		2	7
+docs/design/preservation_gate_preregistration_a35.md	10948	# Pre-registration — preservation gate at contrast 2.5 (geometry A-3.5)	no	2026-10-28T23:56		1	2
+docs/design/preservation_gate_results_a35.md	19490	# Preservation gate: the contrast series at `eps_r` = 1.5, 2.0 and 3.5	no	2026-10-29T00:09		0	6
+docs/design/residual_vs_configuration_survey_2026-11-04.md	15269	# Residual vs configuration survey -- 2026-11-04	yes	2026-11-04T20:36		7	2
+docs/design/roadmap-next-2026-11-08.md	29038	# Roadmap after the S-parameter result (2026-11-08)	no	2026-11-08T07:32		2	9
+docs/design/s11_beta_test_brief_2026-11-04.md	2615	# s11 beta test - pre-launch brief (2026-11-04)	no	2026-11-04T11:21		2	1
+docs/design/s11_distance_and_magnitude_2026-11-04.md	9323	# s11 distance and magnitude - what the beta substitution actually moved (2026-11-04)	yes	2026-11-04T13:32		1	3
+docs/design/s11_estimator_fix_2026-11-04.md	2740	# s11 estimator fix - one beta for both de-embeds (2026-11-04)	yes	2026-11-04T12:15		3	1
+docs/design/s11_frame_pin_2026-11-04.md	4215	# s11 frame pin - is the TE phase referenced to station 0 or to the load? (2026-11-04)	yes	2026-11-04T11:21		3	4
+docs/design/s11_one_wave_vs_two_wave_2026-11-02.md	22063	# One wave or two: why the loaded termination's `beta` and its three `s11` numbers disagree, and which of the four fits to believe	no	2026-11-03T13:07		1	3
+docs/design/s11_phase_investigation_2026-11-04.md	11351	# s11 phase investigation - 2026-11-04	yes	2026-11-04T10:42		2	5
+docs/design/s11_port_forensics_2026-11-07.md	8778	# S11 port forensics — 2026-11-07	no	2026-11-07T04:24		1	5
+docs/design/s11_refit_from_phasors_2026-11-04.md	3974	# S11 refit from stored phasors	no	2026-11-04T14:06		0	1
+docs/design/s11_refit_from_phasors_2026-11-04b.md	8041	# S11 refit from the record's own station phasors	no	2026-11-04T15:14		1	5
+docs/design/session_close_gen10.md	6869	# Session close — generation 10	yes	2026-11-11T04:41		1	1
+docs/design/session_close_gen5.md	12961	# Session close, generation 5 — error taxonomy, the supervisor failure mode, and three standing rules	no	2026-10-31T00:03		1	7
+docs/design/session_close_gen6.md	29804	# Session close, generation 6 — three failures of a number's warrant, and two things the ladder arithmetic does not license	no	2026-10-31T18:50		3	6
+docs/design/session_close_gen7.md	20794	# Session close — generation 7	no	2026-10-31T23:25		5	4
+docs/design/session_close_gen8.md	12146	# Session close — generation 8	no	2026-11-04T17:05		11	2
+docs/design/session_open_gen11.md	11979	# Session open — Generation 11	no	2026-11-12T18:35		4	7
+docs/design/session_open_gen7.md	19932	# Session open — Generation 7	no	2026-11-01T15:59		7	3
+docs/design/session_open_gen8.md	16340	# Session open — Generation 8	no	2026-11-04T17:05		9	3
+docs/design/soundness.md	71318	# Soundness of the claims in `docs/design/` — tiered ledger	no	2026-10-30T23:44	911b38f	21	7
+docs/design/sparse_eigenmode.md	44001	# Sparse eigenmode solve for the mixed formulation (design pass)	no	2026-10-29T11:47	f92d36b	0	14
+docs/design/spatial_collocation_audit_2026-11-04.md	6921	# Spatial collocation audit — is Im(Z0) a Yee-staggering artefact?	no	2026-11-04T18:42		2	4
+docs/design/spice_adapter_scope.md	33538	# SPICE adapter: scope and interface (E5)	no	2026-11-11T12:21		2	4
+docs/design/strip_termination_design_2026-11-02.md	9466	# The strip reaches the far wall: making the load terminate the line	yes	2026-11-02T23:48		1	3
+docs/design/strip_termination_refuted_2026-11-03.md	6756	# Strip termination design — refuted 2026-11-03	no	2026-11-02T23:51		3	5
+docs/design/strip_termination_worker_report_2026-11-03.md	7274	# strip-termination-2026-11-03 — worker report	no	2026-11-02T23:21		1	1
+docs/design/strip_width_reconcile_2026-11-01.md	18231	# Strip width, reconciled: what the mesh contains, what the closed form was told, and what AC-7 graded	no	2026-11-01T04:22		4	2
+docs/design/t4_amp_ratio.md	114323	# T4 — the amplitude ratio: both operands are banked, and the missing piece is the bar they must agree within	no	2026-10-29T11:47	f92d36b	5	17
+docs/design/t4_s13_draft.md	14528	# §13 convergence — DRAFT, not yet part of the frozen note	no	2026-10-28T02:01	b248cd4	1	3
+docs/design/t4b_t4c_preregistration.md	50890	# T4b / T4c — two new tests and one operational invariant, pre-registered: mesh-independence of the conductor field, eigenvalue convergence, and the residual-first rule	no	2026-10-28T15:34		2	6
+docs/design/termination_build_plan.md	24371	# Termination build 2a -- the implementation plan for the absorbing termination (A1 / A2 / A3)	no	2026-10-31T23:58		7	2
+docs/design/theory_round2_memo.md	9781	# Round-2 memo: parked third-party analysis, not a project decision	no	2026-10-31T23:58		2	4
+docs/design/upstream-extraction-2026-11-08.md	11569	# Upstream Extraction (2026-11-08)	no	2026-11-08T04:15		3	5
+docs/design/visual_engine_arch.md	49924	# The visual engine: slices and isosurfaces over the result contract	no	2026-10-28T15:18		3	7
+docs/design/visualizer_architecture.md	11659	# The time-domain visualiser: the emfit-vis dump and its player	no	2026-11-11T04:41	8bb4dfe	2	8
+docs/design/voltage_integration_and_reflection_2026-11-08.md	8963	# Voltage integration and plane reflection: what the dump actually proves	no	2026-11-08T01:10		1	3
+docs/design/wave_convention_audit_2026-11-05.md	7740	# Wave-convention audit — 2026-11-05	no	2026-11-04T17:45		1	2
+docs/design/web_ui_architecture_2026-11-08.md	7052	# Web UI architecture (PoC)	no	2026-11-08T02:04		0	3
+docs/design/z0_current_and_split_2026-11-05.md	6960	# Z0 on the current record, and the factor split there - 2026-11-05	no	2026-11-04T17:44		6	5
+docs/design/z0_provenance_and_twin_2026-11-04.md	9893	# Z0 provenance and the twin record — 2026-11-04	no	2026-11-04T18:14		2	5
+docs/design/z0_quasistatic_ladder_2026-11-05.md	36435	# Quasi-static `Z0` refinement ladder — 2026-11-05 (Dispatch 10)	no	2026-11-06T00:00		4	5
+docs/design/z_eff_analysis_2026-11-03.md	7001	# Z_eff of the discretised 50 Ω series load at 5.83 GHz	no	2026-11-03T20:11		0	2
+docs/design/zfree_diagnosis.md	128464	# `z_free` diagnosis — candidate ranking, decision rules, test plan	no	2026-11-12T22:19	b0956a8	6	6
+docs/design/zfree_shape.md	61234	# `z_free` shape — why the extracted longitudinal field has no node where the reference has one	no	2026-11-12T22:19	b0956a8	4	7
+docs/figures/README.md	11963	# Figures for the report	no	2026-10-28T12:52	224336b	12	19
+docs/infra/2026-11-05_toolchain_install.md	3542	# Toolchain install: openEMS + pyvista (2026-11-05)	no	2026-11-05T09:45		1	0
+docs/pml_notes.md	4076	# PML absorber: working notes	no	2026-10-19T14:53	7f69291	0	1
+docs/prereg/d585_h_ladder.md	4536	# D58.5 — pre-registration: H ladder (transverse box clearance)	no	2026-10-30T00:33	da4fb18	0	0
+docs/report/figures/README.md	761	# `docs/report/figures/` — generator output only	no	2026-10-27T15:58	b1c0534	4	18
+docs/roadmap.md	26527	# emfit technical roadmap	no	2026-11-13T23:59	b395d39	4	9

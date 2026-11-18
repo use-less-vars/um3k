@@ -1,0 +1,171 @@
+path	bytes	class	action	budget_counted_bytes	counted_basis	has_status_header	cited_in	cites_out	rationale
+docs/HISTORY.md	31091	REFERENCE	KEEP-REF	0	n/a	no	2	4	31,091 B narrative history; high value, never mandatory reading
+docs/OUTLINE.md	36705	WORK	KEEP-WORK	0	n/a	no	5	12	36,705 B living outline; competes with 00_README as entry point (S4 overlap)
+docs/architecture.md	6660	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	0	superseded by onboarding 01_ARCHITECTURE (S3b banner)
+docs/design/3d_ntff_te_query.md	3514	REFERENCE	KEEP-REF	0	n/a	yes	0	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/3d_ntff_te_spec.md	1001	REFERENCE	KEEP-REF	0	n/a	no	1	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/57c_acceptance.md	10118	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	1	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/57c_closeout.md	44565	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	3	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/E11_residual_preregistration.md	46763	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	5	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/EM_SOLVER_LEDGER.md	47690	REGISTRY	HEADER	475	pre-H2-capped-4k	no	22	21	append-only solver history
+docs/design/GEN12_HANDOFF.md	27138	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	10	12	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/GEN12_HANDOFF_STATE.md	48880	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	2	33	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/GEN12_HANDOFF_TRAPS.md	28240	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/GEN12_HANDOFF_TRAPS.superseded.md	20973	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/GEN12_HANDOFF_WARS.md	32951	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	4	11	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/GEN13_HANDOFF.md	4691	WORK	KEEP-WORK	0	n/a	no	2	0	the current handoff; WORK/current.md must be generated FROM this
+docs/design/TE_query_s2p_convolution.md	18766	REFERENCE	KEEP-REF	0	n/a	yes	3	8	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/TRAME_HAZARDS.md	8054	REFERENCE	KEEP-REF	0	n/a	no	0	2	only non-onboarding file naming a ghost token as existing -> ghost check target
+docs/design/UM3K_UI_ARCHITECTURE.md	40707	REFERENCE	KEEP-REF	0	n/a	no	4	3	only file asserting G-1/G-3 symbols exist (S3c)
+docs/design/absorbing_termination_scope.md	38408	REFERENCE	KEEP-REF	0	n/a	no	77	5	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/ac4_wiring_scope_2026-11-02.md	9007	REFERENCE	KEEP-REF	0	n/a	no	1	4	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/anchor_audit_2026-11-05.md	15617	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	11	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/anchor_note_extraction_2026-11-04.md	14093	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/anchor_preregistration.md	51809	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	9	0	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/beta_dispersion_comparison_2026-11-07.md	7979	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/beta_drift_analysis_2026-11-05.md	13022	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	0	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/beta_refit_test_2026-11-05.md	27654	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	8	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/box_sweep_preregistration.md	18672	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	7	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/c2b_preregistration.md	17556	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	7	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/c2b_step0_plan.md	5899	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/closed_form_with_two_wave_beta_2026-11-02.md	10797	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	9	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/complex_load_analysis_2026-11-04.md	12515	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	11	0	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/component_map.md	42705	REGISTRY	HEADER	1844	pre-H2-capped-4k	no	5	19	append-only ledger; only the header is budget-counted, body is lazy-loaded
+docs/design/core_contract.md	30313	REFERENCE	KEEP-REF	0	n/a	yes	5	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/corr_ez_vv_threshold.md	21355	REFERENCE	KEEP-REF	0	n/a	no	4	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/cpp-kernel-spec-2026-11-09.md	43852	REFERENCE	KEEP-REF	0	n/a	yes	2	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/cpp-kernel-status-2026-11-09.md	28957	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	10	0	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/cpp_full_loop_plan.md	40269	WORK	KEEP-WORK	0	n/a	no	1	3	implementation plan, cited_in=0 -> orphan risk if WORK is not refreshed
+docs/design/cpp_solver_arch.md	43294	REFERENCE	KEEP-REF	0	n/a	no	10	4	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/cross_check_script_2026-11-05.md	41542	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d43b_acceptance.md	4034	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d43b_extraction_audit.md	44064	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	4	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d44_acceptance.md	16054	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	4	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d45_acceptance.md	9247	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	4	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d45_anchor_results.md	14823	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	8	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d45_negative_control_addendum.md	7569	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d46_acceptance.md	1747	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d47_acceptance.md	5941	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d47_results.md	32402	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	3	4	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d48_acceptance.md	10315	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d48_results.md	20955	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d49_acceptance.md	16258	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d50_acceptance.md	5091	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d51_acceptance.md	4028	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d52_acceptance.md	8364	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	3	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d52b_acceptance.md	14430	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	2	17	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d52b_claim_inventory.md	62375	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	6	17	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d53_acceptance.md	28715	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	1	9	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d54_acceptance.md	19305	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	4	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d57_acceptance.md	6006	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	4	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d583_straight_guide_preregistration.md	38608	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	0	0	orphan + uncited, but preregistration = forensic value -> ARCHIVE not DELETE
+docs/design/d58_13_strip_width_decisions_block.md	30805	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	4	0	"only ""decision""-named file; decisions.md absent -> reconstruction seed"
+docs/design/d58_acceptance.md	24410	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	4	11	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d58_closeout.md	21592	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/d58_extraction_acceptance.md	66569	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/defect_register.md	165357	REGISTRY	HEADER	888	pre-H2-capped-4k	no	34	27	row-per-defect ledger; header+open rows only in budget
+docs/design/deflation_preregistration.md	45634	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	7	4	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/deflation_v2_preregistration.md	38773	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	10	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/direct_vi_forensics_2026-11-08.md	5120	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/dispatch_log.md	215587	REGISTRY	HEADER	4000	pre-H2-capped-4k	no	34	56	append-only chronological log; never read whole
+docs/design/dispatch_log_archive_2026-Q4.md	201130	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	29	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/dr43_s21_extraction_scope.md	25875	WORK	KEEP-WORK	0	n/a	no	3	6	scope note, cited_in=0 -> orphan risk
+docs/design/e13_antenna_scope.md	15291	UNCERTAIN	PARK	0	n/a	yes	0	0	evidence does not decide; park under REFERENCE with an explicit TODO owner
+docs/design/e3_baseline_benchmark.md	20942	REFERENCE	KEEP-REF	0	n/a	yes	3	3	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/e3_dr42_closure_benchmark.md	13607	REFERENCE	KEEP-REF	0	n/a	no	2	3	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/e3_phase2_closure.md	9911	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	0	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/e3_phase2_scope.md	17112	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	7	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/extraction_three_layer_audit_2026-11-04.md	36496	REFERENCE	KEEP-REF	0	n/a	no	1	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/flux_projection_design_2026-11-03.md	13021	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/flux_projection_verification_2026-11-03.md	4371	REFERENCE	KEEP-REF	0	n/a	no	0	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/flux_renorm_analysis_2026-11-03.md	6221	REFERENCE	KEEP-REF	0	n/a	no	2	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/gap_analysis_2026-11-03.md	14434	REFERENCE	KEEP-REF	0	n/a	no	3	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/ghost_wave_analysis_2026-11-08.md	16118	REFERENCE	KEEP-REF	0	n/a	no	4	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/ghost_wave_forensics_2026-11-07.md	10249	REFERENCE	KEEP-REF	0	n/a	no	2	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/graded_meshing_plan.md	33854	WORK	KEEP-WORK	0	n/a	yes	4	2	sole truth for graded-mesh facts (S4 F5/F6 must cite this)
+docs/design/independent_anchor_qucs_2026-11-04.md	14114	REFERENCE	KEEP-REF	0	n/a	no	1	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/job_schema.md	18584	REFERENCE	KEEP-REF	0	n/a	no	6	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/latex_structure.md	26587	REFERENCE	KEEP-REF	0	n/a	no	2	21	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/lessons_learned_emfit.md	7318	REFERENCE	KEEP-REF	0	n/a	no	2	6	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/lessons_learned_emfit_addendum.md	8988	REFERENCE	KEEP-REF	0	n/a	no	4	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/load_definition_forensics_2026-11-07.md	13032	REFERENCE	KEEP-REF	0	n/a	no	2	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/load_integration_verification_2026-11-07.md	13850	REFERENCE	KEEP-REF	0	n/a	no	1	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/m3c_gate_v2.md	105260	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	10	6	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/modal_port_recon_2026-11-03.md	7512	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	0	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/modal_port_wiring_design_2026-11-03.md	11329	REFERENCE	KEEP-REF	0	n/a	yes	2	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/modal_port_wiring_measurement_2026-11-03.md	37978	REFERENCE	KEEP-REF	0	n/a	yes	1	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/modal_solver_paths.md	6336	UNCERTAIN	PARK	0	n/a	no	3	1	evidence does not decide; park under REFERENCE with an explicit TODO owner
+docs/design/modalport_ownership.md	32405	REFERENCE	KEEP-REF	0	n/a	no	7	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/multifreq_beta_test_2026-11-07.md	26597	REFERENCE	KEEP-REF	0	n/a	no	3	3	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/multifreq_twin_2026-11-07.md	5889	REFERENCE	KEEP-REF	0	n/a	no	1	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/near_field_subset_refit_2026-11-04.md	10420	REFERENCE	KEEP-REF	0	n/a	no	2	5	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/nedelec_solver_review.md	31142	REFERENCE	KEEP-REF	0	n/a	no	0	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/normalization_scheme.md	29130	REFERENCE	KEEP-REF	0	n/a	no	6	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/onboarding/00_README.md	13419	CORE	DISTIL	13419	full-file	no	3	11	must be read every session; today 47,112 B of prose -> distil, never copy
+docs/design/onboarding/01_ARCHITECTURE.md	17079	CORE	DISTIL	17079	full-file	no	3	4	must be read every session; today 47,112 B of prose -> distil, never copy
+docs/design/onboarding/02_PHYSICS_ROADMAP.md	16634	CORE	DISTIL	16634	full-file	no	2	5	must be read every session; today 47,112 B of prose -> distil, never copy
+docs/design/onboarding/03_KNOWN_BUGS.md	18140	REGISTRY	HEADER	716	pre-H2-capped-4k	no	4	8	18,140 B; already the de-facto ghosts+bugs registry -> source for REGISTRY/ghosts.md
+docs/design/onboarding/STATE.json	12838	REGISTRY	HEADER	4000	pre-H2-capped-4k	no	1	12	12,838 B generated snapshot; cannot be counted in 40 kB, must be regenerated
+docs/design/openems_referee_spec_2026-11-10.md	24608	REFERENCE	KEEP-REF	0	n/a	no	1	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/order_p_preregistration.md	40404	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	5	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/pairing_rule_preregistration.md	113536	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	8	9	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/passivity-resolution-2026-11-09.md	14978	REFERENCE	KEEP-REF	0	n/a	no	4	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/passivity_ceiling_2026-11-02.md	4550	REFERENCE	KEEP-REF	0	n/a	yes	2	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/physics_invariant_layer.md	39218	REFERENCE	KEEP-REF	0	n/a	no	4	3	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/pipeline_map.md	22093	REGISTRY	HEADER	744	pre-H2-capped-4k	no	2	2	append-only ledger; only the header is budget-counted, body is lazy-loaded
+docs/design/port_normalisation_audit_2026-11-05.md	28515	REFERENCE	KEEP-REF	0	n/a	no	1	4	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/pre_termination_prep_report_2026-11-02.md	13186	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	4	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/preservation_gate_geometry_a15_freeze.md	4286	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	0	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/preservation_gate_preregistration.md	13118	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	7	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/preservation_gate_preregistration_a35.md	10948	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/preservation_gate_results_a35.md	19490	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	6	0	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/residual_vs_configuration_survey_2026-11-04.md	15269	REFERENCE	KEEP-REF	0	n/a	yes	2	7	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/roadmap-next-2026-11-08.md	29038	WORK	KEEP-WORK	0	n/a	no	9	2	Grade-A stale roadmap (S3): superseded by roadmap.md, must not be a second truth
+docs/design/s11_beta_test_brief_2026-11-04.md	2615	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/s11_distance_and_magnitude_2026-11-04.md	9323	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	3	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/s11_estimator_fix_2026-11-04.md	2740	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	1	3	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/s11_frame_pin_2026-11-04.md	4215	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	4	3	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/s11_one_wave_vs_two_wave_2026-11-02.md	22063	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/s11_phase_investigation_2026-11-04.md	11351	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	5	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/s11_port_forensics_2026-11-07.md	8778	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	5	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/s11_refit_from_phasors_2026-11-04.md	3974	UNCERTAIN	PARK	0	n/a	no	1	0	evidence does not decide; park under REFERENCE with an explicit TODO owner
+docs/design/s11_refit_from_phasors_2026-11-04b.md	8041	UNCERTAIN	PARK	0	n/a	no	5	1	evidence does not decide; park under REFERENCE with an explicit TODO owner
+docs/design/session_close_gen10.md	6869	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	1	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/session_close_gen5.md	12961	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	7	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/session_close_gen6.md	29804	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	6	3	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/session_close_gen7.md	20794	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	4	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/session_close_gen8.md	12146	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	11	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/session_open_gen11.md	11979	WORK	KEEP-WORK	0	n/a	no	7	4	session artifact, not a standing doc
+docs/design/session_open_gen7.md	19932	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	7	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/session_open_gen8.md	16340	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	9	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/soundness.md	71318	REGISTRY	HEADER	703	pre-H2-capped-4k	no	7	21	append-only ledger; only the header is budget-counted, body is lazy-loaded
+docs/design/sparse_eigenmode.md	44001	REFERENCE	KEEP-REF	0	n/a	no	14	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/spatial_collocation_audit_2026-11-04.md	6921	REFERENCE	KEEP-REF	0	n/a	no	4	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/spice_adapter_scope.md	33538	REFERENCE	KEEP-REF	0	n/a	no	4	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/strip_termination_design_2026-11-02.md	9466	ARCHIVE	MOVE-ARCHIVE	0	n/a	yes	3	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/strip_termination_refuted_2026-11-03.md	6756	REFERENCE	KEEP-REF	0	n/a	no	5	3	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/strip_termination_worker_report_2026-11-03.md	7274	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	1	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/strip_width_reconcile_2026-11-01.md	18231	REFERENCE	KEEP-REF	0	n/a	no	2	4	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/t4_amp_ratio.md	114323	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	17	5	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/t4_s13_draft.md	14528	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	3	1	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/t4b_t4c_preregistration.md	50890	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	6	2	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/termination_build_plan.md	24371	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	2	7	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/design/theory_round2_memo.md	9781	REFERENCE	KEEP-REF	0	n/a	no	4	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/upstream-extraction-2026-11-08.md	11569	REFERENCE	KEEP-REF	0	n/a	no	5	3	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/visual_engine_arch.md	49924	REFERENCE	KEEP-REF	0	n/a	no	7	3	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/visualizer_architecture.md	11659	REFERENCE	KEEP-REF	0	n/a	no	8	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/voltage_integration_and_reflection_2026-11-08.md	8963	REFERENCE	KEEP-REF	0	n/a	no	3	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/wave_convention_audit_2026-11-05.md	7740	REFERENCE	KEEP-REF	0	n/a	no	2	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/web_ui_architecture_2026-11-08.md	7052	REFERENCE	KEEP-REF	0	n/a	no	3	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/z0_current_and_split_2026-11-05.md	6960	REFERENCE	KEEP-REF	0	n/a	no	5	6	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/z0_provenance_and_twin_2026-11-04.md	9893	REFERENCE	KEEP-REF	0	n/a	no	5	2	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/z0_quasistatic_ladder_2026-11-05.md	36435	REFERENCE	KEEP-REF	0	n/a	no	5	4	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/z_eff_analysis_2026-11-03.md	7001	REFERENCE	KEEP-REF	0	n/a	no	2	0	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/design/zfree_diagnosis.md	128464	WORK	KEEP-WORK	0	n/a	no	6	6	active diagnosis; promote to REFERENCE only when closed
+docs/design/zfree_shape.md	61234	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	7	4	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/figures/README.md	11963	REFERENCE	KEEP-REF	0	n/a	no	19	12	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/infra/2026-11-05_toolchain_install.md	3542	REFERENCE	KEEP-REF	0	n/a	no	0	1	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/pml_notes.md	4076	UNCERTAIN	PARK	0	n/a	no	1	0	evidence does not decide; park under REFERENCE with an explicit TODO owner
+docs/prereg/d585_h_ladder.md	4536	ARCHIVE	MOVE-ARCHIVE	0	n/a	no	0	0	point-in-time record (acceptance/prereg/handoff/forensics); frozen, read-only
+docs/report/figures/README.md	761	REFERENCE	KEEP-REF	0	n/a	no	18	4	slow-changing spec/theory/decision record; high cited_in, not onboarding
+docs/roadmap.md	26527	WORK	KEEP-WORK	0	n/a	no	9	4	current roadmap; roadmap-next-* is stale duplicate

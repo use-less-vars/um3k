@@ -1,7 +1,8 @@
 {
   "schema": "kb-pins/1",
   "core_handoff_id": "gen13->gen14",
-  "newest_commit_date": null,
+  "newest_commit": "36c71d3eaaecf9ee04857dac2d68b04ba5ab97ef",
+  "newest_commit_date": "2026-11-18T18:58:25+00:00",
   "uncited_baseline": 1,
   "budgets": {
     "core": 46080,
@@ -15,10 +16,51 @@
     "warn_at": 0.85
   },
   "files": [
-    {"path": "docs/kb/README.md", "sha256": null, "layer": "root"},
-    {"path": "docs/kb/PROCEDURE.md", "sha256": null, "layer": "root"},
-    {"path": "docs/kb/REGISTRY/decisions.md", "sha256": null, "layer": "registry"},
-    {"path": "tests/COLLECTED.txt", "sha256": null, "layer": "test-manifest"}
+    {
+      "path": "docs/kb/CORE/00_invariants.md",
+      "sha256": "3d1c80e1684a712f7fdb244c1e1db5f71c1aa05cdb3e579e170be8c1a668b50a",
+      "layer": "core"
+    },
+    {
+      "path": "docs/kb/PROCEDURE.md",
+      "sha256": "75972acc56d6d4c08956806f5b0aa6855af2ecd22c91ed49f3d50ae30c184525",
+      "layer": "root"
+    },
+    {
+      "path": "docs/kb/README.md",
+      "sha256": "e358f5c3a057f095d44a4c213be48c2415c3851162935266c03a73f2708514dd",
+      "layer": "root"
+    },
+    {
+      "path": "docs/kb/REGISTRY/decisions.md",
+      "sha256": "05e59f7c5131d487a3e69f8502b9e95bf35a8ab1a7083b8a9d0d3519cc782c0a",
+      "layer": "registry"
+    },
+    {
+      "path": "docs/kb/REGISTRY/decisions_archive.md",
+      "sha256": "03155300203c6dfedf49991b3235e77099fa03a898af4ecb0211697364a49e12",
+      "layer": "registry"
+    },
+    {
+      "path": "docs/kb/RUNBOOK.md",
+      "sha256": "1932e2f68c38e96cab8bb2d9f707265976c395761972ba6b27feb78c521d5deb",
+      "layer": "root"
+    },
+    {
+      "path": "docs/kb/WORK/poc_app_split.md",
+      "sha256": "d871d13e83522f6e03c2359d9da013ac272a038851c0ac245741a9ea3eaf1e54",
+      "layer": "work"
+    },
+    {
+      "path": "docs/kb/WORK/run.md",
+      "sha256": "9b505636e348782272bff2b767907d8f1391935382d4fe516d684ca99ea79e72",
+      "layer": "work"
+    },
+    {
+      "path": "tests/COLLECTED.txt",
+      "sha256": "19000c4429abe9f9bacd38be5d2118a87c2c09f6a3b8ae24b86cdde990dc78ea",
+      "layer": "test-manifest"
+    }
   ],
   "claims": []
 }
