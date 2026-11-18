@@ -1,10 +1,10 @@
 ---
 status: current
 layer: registry
-pinned_commit: null
-pinned_at: 2026-11-17
+pinned_commit: 36c71d3eaaecf9ee04857dac2d68b04ba5ab97ef
+pinned_at: 2026-11-18
 byte_budget: 5120
-last_verified: 2026-11-17
+last_verified: 2026-11-18
 reads_when: when a citation or a commit message names EV-4, KN-5 or PB-4, or a settled entry must be quoted
 supersedes: null
 superseded_by: null

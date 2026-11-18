@@ -1,10 +1,10 @@
 ---
 status: current
 layer: work
-pinned_commit: null
-pinned_at: null
+pinned_commit: 36c71d3eaaecf9ee04857dac2d68b04ba5ab97ef
+pinned_at: 2026-11-18
 byte_budget: 10240
-last_verified: 2026-11-17
+last_verified: 2026-11-18
 reads_when: when you are about to move code out of server/poc_app.py, when a report says the P2 split is done, or when you are adding a simulation input or output format
 supersedes: null
 superseded_by: null
