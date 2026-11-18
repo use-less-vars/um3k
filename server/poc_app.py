@@ -781,7 +781,7 @@ def _frame_label(index, frames, time_axis=None, volume_label=None):
     PLAYER steps - the timeline's own length, ``_position_count`` - so the
     slider, the play loop and this label are all counted on ONE clock, and the
     x-cut planes are a held layer on it rather than a second clock. None is
-    "no timeline", never "frame 1 / None".
+    "no timeline", never "Step 1 / None".
 
     ``time_axis`` is the page's RECORDED step axis (``info["time_axis"]"), the
     PLANE family's. When it counts the SAME frames the player steps the sentence
@@ -794,8 +794,10 @@ def _frame_label(index, frames, time_axis=None, volume_label=None):
     is named instead.
 
     A page with no axis, or one describing a different family than the player
-    steps, keeps the frame-only sentence byte for byte - which is also the
-    legacy two-argument call, unchanged.
+    steps, keeps the position-counted sentence - ``Step 3 / 12`` off the
+    position, never off a step the file does not claim - which is also the
+    legacy two-argument call, unchanged, and the same words the on-canvas
+    counter draws (:func:`_step_counter_text`).
     """
     if frames is None:
         return None
@@ -808,7 +810,87 @@ def _frame_label(index, frames, time_axis=None, volume_label=None):
             text = time_axis.label(int(index) + 1, volume_label)
             if text is not None:
                 return text
-    return f"frame {int(index) + 1} / {int(frames)}"
+    return f"Step {int(index) + 1} / {int(frames)}"
+
+
+# The step counter drawn ON the picture: the one number a reader looks for, and
+# the corner pyvista can put it in that is neither the station sentence
+# (``upper_left``) nor the marker legend (``lower_left``). ``upper_right`` sits
+# above the |E| bar, which tops out at 0.73 of the viewport.
+STEP_COUNTER_NAME = "step_counter"
+STEP_COUNTER_POSITION = "upper_right"
+STEP_COUNTER_FONT_SIZE = 14
+
+
+def _step_counter_text(index, frames, volume_label=None) -> str | None:
+    """The counter's sentence, or None on a page with no timeline.
+
+    The same words as :func:`_frame_label`'s own fallback - ``Step 3 / 12``,
+    counted off the position - plus the |E| layer's half appended verbatim when
+    the page carries a volume, so the number on the picture and the number in
+    the shell readout cannot disagree.
+    """
+    if frames is None:
+        return None
+    text = f"Step {int(index) + 1} / {int(frames)}"
+    if volume_label is not None:
+        text = f"{text} - {volume_label}"
+    return text
+
+
+def _step_counter_for_page(info, index, mode=None) -> str | None:
+    """The counter's sentence for THIS page, read from its live record.
+
+    ``frames`` is the timeline's own length - what the player steps - and the
+    detail half is the |E| layer's, so a page with no timeline answers None and
+    draws no count rather than inventing one.
+
+    ``mode`` is the VIEW that is on screen, handed to
+    :func:`_volume_layer_label` where the caller has one; that function accepts
+    it and deliberately ignores it, so a page that cannot name a mode is not a
+    page without a counter.
+
+    NOTHING HERE MAY COST A PAGE ITS PICTURE. This runs inside a boot and inside
+    every redraw, and a redraw that raises is a redraw that drew nothing: the
+    guard is what keeps a record this function cannot read (a page with no
+    volume, a timeline that will not report its length, a frame index that will
+    not convert) dropping the COUNT instead of the scene. Same bargain as
+    :func:`_draw_step_counter` and the other decorations in this file.
+    """
+    try:
+        timeline = _timeline_for(info)
+        if timeline is None:
+            return None
+        return _step_counter_text(
+            int(index),
+            int(timeline.nsteps),
+            _volume_layer_label(info, mode, int(index)),
+        )
+    except Exception as exc:  # noqa: BLE001 - never take a boot or a redraw down
+        print(f"[poc_app] step counter skipped: {exc}", file=sys.stderr)
+        return None
+
+
+def _draw_step_counter(plotter, text) -> None:
+    """Draw, or UPDATE, the on-canvas step counter. Never raises.
+
+    ``text`` falsy -> nothing is drawn: a page with no timeline must not show a
+    count it cannot substantiate. The actor is NAMED, so a second call on the
+    same plotter replaces it in place (the mechanism ``station_label`` already
+    uses) instead of stacking a second label on every tick.
+    """
+    if not text:
+        return
+    try:
+        plotter.add_text(
+            text,
+            name=STEP_COUNTER_NAME,
+            position=STEP_COUNTER_POSITION,
+            font_size=STEP_COUNTER_FONT_SIZE,
+            color="black",
+        )
+    except Exception as exc:  # noqa: BLE001 - never take the server down
+        print(f"[poc_app] step counter skipped: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -6444,6 +6526,12 @@ def _draw_scene(
         font_size=8,
         color="black",
     )
+    # NOTE: the step counter is drawn by the CALLER, not here. This function
+    # opens with ``plotter.clear()``, so a rebuild wipes the counter and it must
+    # be put back - but it is put back by the caller that knows which position
+    # is on screen (:func:`_redraw_scene`, and the tick path's own call), which
+    # keeps this function's parameters exactly the ones every caller and every
+    # observer of the draw already binds.
     # Isometric, then fit everything. The markers do not all lie inside the
     # captured slab - the S11 port plane sits at the port end of the line and the
     # S21 plane one cell past the load - so a camera framed on the slab alone
@@ -6590,6 +6678,7 @@ def _redraw_scene(
     state,
     _show_volume_quiver,
     station_label: bool = True,
+    step_text=None,
 ) -> None:
     """Rebuild the scene in the one plotter. Failure leaves the old picture."""
     try:
@@ -6611,6 +6700,14 @@ def _redraw_scene(
             # corner label ``_draw_scene`` has always drawn (:3889).
             station_label=station_label,
         )
+        # The counter's sentence is drawn HERE rather than handed to
+        # ``_draw_scene``: the rebuild just cleared the plotter, so the previous
+        # counter is gone and this puts it back from the SAME sentence the tick
+        # path uses, for the position this caller knows is on screen. It rides
+        # beside the scene call for one reason - so the counter cannot change
+        # what that call requires of ``_draw_scene``, and an unusable sentence
+        # costs the count and never the picture.
+        _draw_step_counter(plotter, step_text)
         # AFTER the scene, never before it: _draw_scene clears the plotter,
         # so this one call is what keeps a ticked arrow field on screen
         # across a cut or station change.
@@ -11475,6 +11572,11 @@ def run_web_vis(
                 state,
                 _show_volume_quiver,
                 station_label=False,
+                # The position on screen, counted on the player's clock: the
+                # rebuild clears the plotter, so the counter is re-drawn here.
+                step_text=_step_counter_for_page(
+                    info, state.frame, getattr(state, "view_mode", None)
+                ),
             )
 
         # Published so the BOOT can draw: on this page there are no ez_* sheets
@@ -11575,6 +11677,11 @@ def run_web_vis(
                 state,
                 _show_volume_quiver,
                 station_label=False,
+                # The position on screen, counted on the player's clock: the
+                # rebuild clears the plotter, so the counter is re-drawn here.
+                step_text=_step_counter_for_page(
+                    info, state.frame, getattr(state, "view_mode", None)
+                ),
             )
 
         # The boot draw and the "Show Vector Field" toggle both reach the draw
@@ -12473,6 +12580,9 @@ def run_web_vis(
         # A page whose dump carries no volume drops a stale layer and returns:
         # nothing else changes for it.
         _draw_volume_layer(plane_index, mode, volume_frame)
+        # The step counter, UPDATED rather than re-created: the same name makes
+        # this one annotation's text change, so a tick costs no new actor.
+        _draw_step_counter(plotter, _step_counter_for_page(info, index, mode))
         try:
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - never take the server down

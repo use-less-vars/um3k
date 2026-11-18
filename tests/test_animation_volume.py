@@ -1785,15 +1785,16 @@ def test_the_frame_label_counts_the_positions_the_player_steps(desync_page):
     ``_frame_label`` is the only place that sentence is composed, and it is what
     ``_show`` prints, so the denominator a reader sees must be the number of
     positions the scrubber can reach - twelve here, NOT the volume's three: a
-    label reading "frame 1 / 3" beside a slider that runs to 11 offers three
+    label reading "Step 1 / 3" beside a slider that runs to 11 offers three
     positions for twelve recorded steps, which is the coarse timeline speaking.
 
-    On THIS dump the sentence is the frame-only one, and that is the recorded
-    truth rather than a gap: ``frame_index`` is ZERO-BASED here, and a solver
-    step is 1-based in every dump on disk, so ``TimeAxis`` refuses to name a
-    step for it (0 is a broken record, not step zero) and the fallback prints
-    the frame it does stand on. Asserted, not fixed: inventing "Step 0 / 12"
-    would be this label claiming an axis the file does not record.
+    On THIS dump the sentence is the position-counted one, and that is the
+    recorded truth rather than a gap: ``frame_index`` is ZERO-BASED here, and a
+    solver step is 1-based in every dump on disk, so ``TimeAxis`` refuses to
+    name a step for it (0 is a broken record, not step zero) and the fallback
+    counts the POSITION instead. Asserted, not fixed: the first position prints
+    as "Step 1 / 12" - the count of positions on screen, never the record's
+    step 0, which the file does not claim.
     """
     live = desync_page
     nt = int(live.page["info"]["nt"])
@@ -1801,16 +1802,16 @@ def test_the_frame_label_counts_the_positions_the_player_steps(desync_page):
         f"the fixture stores {nt} plane frames, not {DESYNC_NT}: the denominator "
         "below would not be the count under test"
     )
-    assert app._frame_label(0, nt) == f"frame 1 / {nt}", (
-        f"the label composes {app._frame_label(0, nt)!r}, not 'frame 1 / {nt}'"
+    assert app._frame_label(0, nt) == f"Step 1 / {nt}", (
+        f"the label composes {app._frame_label(0, nt)!r}, not 'Step 1 / {nt}'"
     )
-    assert app._frame_label(nt - 1, nt) == f"frame {nt} / {nt}", (
+    assert app._frame_label(nt - 1, nt) == f"Step {nt} / {nt}", (
         "the LAST position no longer prints as the last frame: "
         f"{app._frame_label(nt - 1, nt)!r}"
     )
     assert app._frame_label(0, None) is None, (
         "a page with no timeline composed a label instead of leaving it ABSENT: "
-        "None is 'no timeline', never 'frame 1 / None'"
+        "None is 'no timeline', never 'Step 1 / None'"
     )
 
     with _render_doubled():
@@ -1822,7 +1823,7 @@ def test_the_frame_label_counts_the_positions_the_player_steps(desync_page):
         f"({named!r}): a step axis that starts at 0 is a broken record, so the "
         "sentence has to fall back instead of quoting it"
     )
-    assert live.state.frame_label == f"frame 1 / {nt}", (
+    assert live.state.frame_label == f"Step 1 / {nt}", (
         f"the player printed {live.state.frame_label!r} on a timeline of {nt} "
         f"positions: the denominator is the dump's {nt} plane frames - the "
         "volume's captures are a layer on that clock, not the clock"

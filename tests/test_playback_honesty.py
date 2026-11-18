@@ -25,8 +25,8 @@ precedence between a recorded and a derived axis is decided, and
       is the count the scrubber can reach;
     * that the volume's MEASURED decimation survives the file's own scalar;
     * on constructed axes, the precedence and the absences - a page with no
-      axis keeps the frame-only sentence byte for byte (the legacy two-argument
-      call), and a time base is NEVER invented: no real ``dt_s``, no seconds.
+      axis keeps the position-counted sentence (the legacy two-argument call),
+      and a time base is NEVER invented: no real ``dt_s``, no seconds.
 
 Skips: only when the reference volume itself is absent.  Nothing here boots the
 server, builds a layout or touches the plotter - the label is a pure function of
@@ -210,11 +210,11 @@ def test_the_label_names_the_step_the_picture_was_taken_at(real_info):
 
 
 def test_a_page_with_no_axis_keeps_the_frame_only_sentence():
-    """The legacy two-argument call is untouched: no axis, no new words."""
-    assert app._frame_label(0, 3) == "frame 1 / 3"
-    assert app._frame_label(2, 3) == "frame 3 / 3"
+    """The legacy two-argument call keeps the position-counted sentence."""
+    assert app._frame_label(0, 3) == "Step 1 / 3"
+    assert app._frame_label(2, 3) == "Step 3 / 3"
     assert app._frame_label(0, None) is None, (
-        "None is 'no timeline', never 'frame 1 / None'"
+        "None is 'no timeline', never 'Step 1 / None'"
     )
     assert app._frame_label(0, None, app.build_time_axis(n_frames=4)) is None
 
@@ -225,11 +225,11 @@ def test_a_zero_based_record_keeps_the_frame_only_sentence():
     A dump whose first capture sits at step 0 numbers its steps from a base it
     never states, so "Step 0 / 12" would put a zero-based numerator under a
     one-based denominator. The axis still answers ``frame_to_step``; only the
-    sentence falls back, and it falls back to the frame-only one.
+    sentence falls back, and it falls back to the position-counted one.
     """
     axis = app.build_time_axis(step_index=[0, 4, 8], n_steps=12, dt_s=1e-12)
     assert axis.n_steps == 12 and axis.frame_to_step(1) == 0
-    assert app._frame_label(0, 3, axis) == "frame 1 / 3", (
+    assert app._frame_label(0, 3, axis) == "Step 1 / 3", (
         f"a zero-based record printed {app._frame_label(0, 3, axis)!r}"
     )
 
@@ -239,7 +239,7 @@ def test_an_axis_of_another_family_is_not_printed(real_info):
     axis = real_info[app.TIME_AXIS_KEY]
     other = int(real_info["nt_x"])
     assert other != axis.n_frames
-    assert app._frame_label(0, other, axis) == f"frame 1 / {other}", (
+    assert app._frame_label(0, other, axis) == f"Step 1 / {other}", (
         "the label read an axis describing a different family than the player "
         f"steps: {app._frame_label(0, other, axis)!r}"
     )
