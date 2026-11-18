@@ -157,7 +157,10 @@ def test_a_tick_with_a_view_updates_once_and_renders_nothing(monkeypatch):
     assert app._tick_render_and_push(plotter, view) is True
     assert plotter.renders == 0, "trame rendered this frame; we drew it again"
     assert view.updates == 1
-    assert counted == ["push"], counted
+    # ONE push, counted as the total AND named by the site that asked for it: the
+    # default site is ``show``, so a caller that names nothing is still attributed
+    # (see _push_still and the summary's push_by_site line) - not counted twice.
+    assert counted == ["push", "push:show"], counted
 
 
 def test_a_tick_with_no_view_renders_itself_and_pushes_nothing(monkeypatch):

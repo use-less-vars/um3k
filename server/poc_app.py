@@ -2918,7 +2918,36 @@ def _plotter_pushes_on_render(plotter) -> bool:
         return False
 
 
-def _tick_render_and_push(plotter, view_handle) -> bool:
+def _push_still(view_handle, site) -> bool:
+    """Ship ONE still through ``view_handle``. True when an image really left.
+
+    EVERY still in the app goes through here, so the profile can say which control
+    asked for it: ``calls: push=`` stays the total (one image left the server) and
+    ``push:<site>`` says who asked. Before this the counter only saw the ticks that
+    happened to route through ``_show`` - a cut slider, a station change or a mode
+    choice pushed pictures that were never counted at all, which is why a run could
+    paint 600 ticks and still report 1330 deliveries. ``site`` is a short spelling
+    picked at the call site, never anything derived from input, so the vocabulary in
+    the summary stays fixed.
+
+    A ``None`` handle means no client has attached: nobody would ever ask for the
+    image, so nothing is sent and nothing is counted.
+    """
+    if view_handle is None:
+        return False
+    try:
+        view_handle.update()
+    except Exception as exc:  # noqa: BLE001 - a lost frame is not the loop
+        print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+        return False
+    if _PROFILE["enabled"]:
+        # With the suite off this costs one bool read.
+        _profile_count("push")
+        _profile_count("push:" + site)
+    return True
+
+
+def _tick_render_and_push(plotter, view_handle, site="show") -> bool:
     """Draw this tick ONCE, publish it ONCE. True when the tick painted a frame.
 
     Trame's image delivery OWNS the render whenever a view is attached:
@@ -2937,7 +2966,8 @@ def _tick_render_and_push(plotter, view_handle) -> bool:
     IS the picture (headless, or before the client connects). The render marks and
     the ``draw`` phase are closed between the two halves, so a push can never be
     billed to the draw, and a push is COUNTED only when one really left the server:
-    ``calls:`` counts images, not ticks.
+    ``calls:`` counts images, not ticks. ``site`` names the caller for the
+    ``push_by_site:`` breakdown (see ``_push_still``).
     """
     _timing_mark("render_start")
     rendered = False
@@ -2954,16 +2984,7 @@ def _tick_render_and_push(plotter, view_handle) -> bool:
     # ONE image leaves the server this tick, or none. With a view the update below
     # IS the render (trame renders through the app), so there is nothing else to
     # send; a real send is counted, a tick with nothing to push adds nothing.
-    pushed = False
-    if view_handle is not None:
-        try:
-            view_handle.update()
-            pushed = True
-        except Exception as exc:  # noqa: BLE001 - a lost frame is not the loop
-            print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
-    if pushed and _PROFILE["enabled"]:
-        # With the suite off this costs one bool read.
-        _profile_count("push")
+    pushed = _push_still(view_handle, site)
     _timing_mark("push_end")
     return rendered or pushed
 
@@ -3488,6 +3509,23 @@ def _profile_summary_text() -> str:
             int(counts.get("delivery_hold", 0)),
             int(counts.get("scrub_hold", 0)),
         )
+    )
+    # ``push`` above is HOW MANY stills left; this line is WHO asked for them. Every
+    # still goes through _push_still, which bumps ``push:<site>`` beside the total, so
+    # the two MUST add up - a site is a name, never a second push. Read together they
+    # answer the question a bare total cannot: why a run painted 600 ticks and shipped
+    # 1330 images (a play tick is one push, a solve is two - see solve_resend).
+    sites = sorted(
+        (
+            (name[len("push:"):], int(value))
+            for name, value in counts.items()
+            if name.startswith("push:")
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    out.append(
+        "push_by_site: "
+        + (" ".join("%s=%d" % (name, value) for name, value in sites) or "none")
     )
     noop = sum(int(agg["noop"]) for agg in _PROFILE["sheets"].values())
     repaints = sum(int(agg["repaints"]) for agg in _PROFILE["sheets"].values())
@@ -9526,12 +9564,9 @@ def _on_cut_change(
         state.view_mode, planes, toggle_available, layout
     )
     _redraw()
-    view_handle = handles.get("view")
-    if view_handle is not None:
-        try:
-            view_handle.update()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+    # One still, and the profile now says it was the CUT slider that asked (see
+    # _push_still): this push never went through _show and was invisible before.
+    _push_still(handles.get("view"), "cut")
 
 
 def _emit_cut_sliders(
@@ -10043,12 +10078,7 @@ def run_web(
             ),
         )
         _redraw()
-        view_handle = handles.get("view")
-        if view_handle is not None:
-            try:
-                view_handle.update()
-            except Exception as exc:  # noqa: BLE001
-                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+        _push_still(handles.get("view"), "toggle")
 
     @ctrl.set("cut_y")
     def _on_cut_y(*args, **_kwargs) -> None:
@@ -10591,10 +10621,7 @@ def run_web(
             idx, cell_mm, n_st, planes.get("stations_mm")
         )
         _focus(idx)
-        try:
-            view.update()
-        except Exception as exc:
-            print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+        _push_still(view, "station")
 
     print(f"[poc_app] serving on http://{host}:{port}")
     print("[poc_app] open that URL in a browser; Ctrl-C to stop")
@@ -15170,8 +15197,11 @@ def run_web_vis(
             ),
         )
 
-    def _show(frame, mode=None) -> None:
+    def _show(frame, mode=None, site="show") -> None:
         """Draw ONE frame of the selected family. Never rescales.
+
+        ``site`` is passed straight to the push (see ``_push_still``) and names the
+        control that asked for the frame in the ``push_by_site:`` breakdown.
 
         The colour limits were fixed when the sheets were added, so this only
         swaps the scalar array: there is no per-frame normalisation here that
@@ -15485,7 +15515,7 @@ def run_web_vis(
         # ONE draw and ONE push per tick, decided in one place: a trame view
         # that pushes from its own render callback must not be pushed again
         # (see _tick_render_and_push).
-        rendered = _tick_render_and_push(plotter, handles.get("view"))
+        rendered = _tick_render_and_push(plotter, handles.get("view"), site)
         if rendered:
             # The boot report could only ask about a window that had not drawn
             # yet, so on a box whose GL strings need a real render it still says
@@ -15590,11 +15620,11 @@ def run_web_vis(
             state.mode_choice_items = []
             state.mode_choice = 0
         handles["camera_framed"] = False
-        _show(0, mode or state.mode)
+        _show(0, mode or state.mode, "solve")
 
     # Initial labels, set before the layout is built so the first page a browser
     # loads already carries frame 1's own numbers.
-    _show(0, "ycut")
+    _show(0, "ycut", "boot")
 
     # THE FIRST PICTURE on a plane-stack page is the cut's own redraw. The
     # sheet loop above (:7372-7406) keys off `ez_ycut` / `ez_xcut_near` /
@@ -15660,7 +15690,7 @@ def run_web_vis(
         # unchanged either way.
         _profile_seek(handles, value)
         handles["frame_seen"] = value
-        _show(value, state.mode)
+        _show(value, state.mode, "seek")
 
     # THE SLIDER'S OWN DRAG EVENTS, and they exist for ONE reason: the hold stamped
     # above runs out on a clock, so a thumb that has been let go would keep the pump
@@ -15737,7 +15767,7 @@ def run_web_vis(
             # "Switch plane" press must never take the server down, which is
             # exactly what int(None) used to do.
             return
-        _show(min(int(state.frame), int(state.frame_max)), mode)
+        _show(min(int(state.frame), int(state.frame_max)), mode, "mode")
 
     # A step pressed while the animation RUNS is a SEEK, not a stop: ten frames
     # per press, so crossing a 100-frame dump while it plays is 10 presses
@@ -15759,11 +15789,11 @@ def run_web_vis(
         # lands on frame 0, which is the only frame there is.
         frames = _position_count(info)
         if state.playing:
-            _show((int(state.frame) - 10) % frames, state.mode)
+            _show((int(state.frame) - 10) % frames, state.mode, "step")
             return
         state.playing = False
         state.play_label = "play"
-        _show((int(state.frame) - 1) % frames, state.mode)
+        _show((int(state.frame) - 1) % frames, state.mode, "step")
 
     @ctrl.set("step_fwd")
     def _on_step_fwd(**_kwargs) -> None:
@@ -15773,11 +15803,11 @@ def run_web_vis(
         """
         frames = _position_count(info)
         if state.playing:
-            _show((int(state.frame) + 10) % frames, state.mode)
+            _show((int(state.frame) + 10) % frames, state.mode, "step")
             return
         state.playing = False
         state.play_label = "play"
-        _show((int(state.frame) + 1) % frames, state.mode)
+        _show((int(state.frame) + 1) % frames, state.mode, "step")
 
     @ctrl.set("top_view")
     def _on_top_view(**_kwargs) -> None:
@@ -16061,12 +16091,7 @@ def run_web_vis(
             print(
                 f"[poc_app] mode picture skipped: {exc}", file=sys.stderr
             )
-        view_handle = handles.get("view")
-        if view_handle is not None:
-            try:
-                view_handle.update()
-            except Exception as exc:  # noqa: BLE001
-                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+        _push_still(handles.get("view"), "mode_view")
 
     # The Mode picker's redraw. v_model=("mode_choice", ...) only WRITES
     # state["mode_choice"]: trame turns a callable into a server call for EVENT
@@ -16098,12 +16123,7 @@ def run_web_vis(
                 f"[poc_app] mode candidate picture skipped: {exc}", file=sys.stderr
             )
         state.mode_view_caption = _mode_choice_caption_text(result, index)
-        view_handle = handles.get("view")
-        if view_handle is not None:
-            try:
-                view_handle.update()
-            except Exception as exc:  # noqa: BLE001
-                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+        _push_still(handles.get("view"), "choice")
 
     # The Color Scale select's repaint. v_model=("volume_clim_mode", ...) only
     # WRITES state["volume_clim_mode"]: trame turns a callable into a server call
@@ -16139,18 +16159,16 @@ def run_web_vis(
                 frame = int(round(float(state.frame)))
             except (TypeError, ValueError):
                 frame = 0  # no frame axis yet: frame 0 is the one that is drawn
-            _show(frame, getattr(state, "mode", None))
+            _show(frame, getattr(state, "mode", None), "clim")
         except Exception as exc:  # noqa: BLE001 - a control is never the page
             print(
                 f"[poc_app] clim mode repaint skipped: {exc}", file=sys.stderr
             )
             return
-        view_handle = handles.get("view")
-        if view_handle is not None:
-            try:
-                view_handle.update()
-            except Exception as exc:  # noqa: BLE001
-                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+        # A SECOND still for one control: _show above already pushed this frame,
+        # so this one is a duplicate send - named separately so the summary shows
+        # it instead of folding it into the clim repaint's own count.
+        _push_still(handles.get("view"), "clim_resend")
 
     # The arrow overlay's toggle. The checkbox only WRITES state["show_quiver"],
     # so the redraw hangs off the state change itself - the rule the frame slider
@@ -16229,7 +16247,7 @@ def run_web_vis(
                 # volume layer - and _show is what rebuilds that layer, its
                 # cache key carrying the two switches this toggle just moved.
                 # Without this branch the checkboxes were inert on this page.
-                _show(state.frame, state.mode)
+                _show(state.frame, state.mode, "plane")
         except Exception as exc:  # noqa: BLE001 - a marker is an EXTRA
             print(f"[poc_app] {what} plane toggle skipped: {exc}", file=sys.stderr)
 
@@ -17022,7 +17040,7 @@ def run_web_vis(
                     # read, the viewer simply disappeared. So _show and the flush
                     # that publishes what it wrote both run HERE, on the thread
                     # that owns the context.
-                    _show(target % frames, state.mode)
+                    _show(target % frames, state.mode, "play")
                     # _show CLAMPS the position into the timeline before it
                     # writes ``state.frame``, so the echo has to name what it
                     # PUBLISHED and not what this tick asked for: an echo that
@@ -17319,10 +17337,16 @@ def run_web_vis(
                 frame = int(round(float(state.frame)))
             except (TypeError, ValueError):
                 frame = 0
-            _show(frame, getattr(state, "mode", None))
-            view_handle = handles.get("view")
-            if view_handle is not None:
-                view_handle.update()
+            _show(frame, getattr(state, "mode", None), "solve")
+            # A SECOND still for a frame _show has just pushed: a duplicate send. It
+            # goes through _push_still like every other still, so the summary NAMES
+            # it (push_by_site: solve_resend) instead of hiding it - before this it
+            # was a push that reached the client and no counter.
+            resend_view = handles.get("view")
+            if resend_view is not None and not _push_still(
+                resend_view, "solve_resend"
+            ):
+                refresh_note = " (the repeat frame was not sent)"
         except Exception as exc:  # noqa: BLE001 - the picture is not the solve
             refresh_note = f" (the picture was not refreshed: {exc})"
             print(f"[poc_app] solved page not redrawn: {exc}", file=sys.stderr)

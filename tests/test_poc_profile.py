@@ -49,6 +49,9 @@ The claims, one per test:
 * the push is counted where that decision is made AND only when one was really
   sent, so the tick row and the summary's ``calls:`` line name it beside
   ``render`` while a tick with no view counts nothing;
+* every still is also NAMED by the control that asked for it (``push_by_site:``
+  in the summary, ``push:<site>`` in the row), so the sites ADD UP to the
+  ``push`` total instead of a control handler's own push being invisible;
 * the renderer report is said a SECOND time, once, after the first frame has
   really drawn - the boot line cannot know the driver yet - and the prefix says
   which of the two lines it is;
@@ -1170,11 +1173,90 @@ def test_the_tick_row_and_the_summary_count_the_push(prof):
     # ``render`` is 0 here because that counter lives on the wrapper _show
     # installs around the plotter, which this tick did not; the push is counted
     # in the tick instead, so it reads 1 whether the image went out inside
-    # render() or through an explicit update().
-    assert poc_app._PROFILE["rows"][0]["counts"] == {"push": 1}
-    assert "calls: render=0 push=1 add_mesh=0 remove_actor=0" in (
-        poc_app._profile_summary_text()
+    # render() or through an explicit update(). The SITE tag rides along: one
+    # push, named once - the total and the name are not two different images.
+    assert poc_app._PROFILE["rows"][0]["counts"] == {"push": 1, "push:show": 1}
+    summary = poc_app._profile_summary_text()
+    assert "calls: render=0 push=1 add_mesh=0 remove_actor=0" in summary
+    assert "push_by_site: show=1" in summary
+
+
+def test_every_still_is_named_by_the_control_that_asked_for_it(prof):
+    """A still is counted ONCE, and it is also NAMED - the two are the same image.
+
+    The failure this rules out is the one that raised the question: a run painted
+    600 ticks and reported 1330 deliveries, because a push made from a control
+    handler (a cut slider, a station change, a mode choice) never went through
+    ``_show`` and so was never counted at all. Every still now leaves through
+    ``_push_still``, which bumps the total AND the site, so the breakdown can be
+    read as an accounting of the total - not a second, unrelated table.
+    """
+    view = _ViewHandle()
+    poc_app._profile_tick_begin(0, "ycut")
+    poc_app._tick_render_and_push(_Plotter(), view, "play")
+    poc_app._tick_render_and_push(_Plotter(), view, "play")
+    poc_app._push_still(view, "cut")
+    poc_app._profile_tick_end(0, plotter=_Plotter(), mode="ycut")
+
+    counts = poc_app._PROFILE["rows"][0]["counts"]
+    assert view.updates == 3, "each still reached the view once"
+    assert counts["push"] == 3
+    assert counts["push:play"] == 2, (
+        "the two play ticks are named as the play loop's own, not folded into a "
+        f"single anonymous total: {counts!r}"
     )
+    assert counts["push:cut"] == 1, (
+        "the cut slider pushed a picture and was counted nowhere before: "
+        f"{counts!r}"
+    )
+    assert counts["push"] == sum(
+        value for name, value in counts.items() if name.startswith("push:")
+    ), f"the sites do not add up to the push total: {counts!r}"
+
+
+def test_a_still_with_no_view_is_named_nowhere(prof):
+    """Nobody to send to is not a push: the total and the breakdown both stay empty.
+
+    A headless tick renders locally and pushes nothing, so a site name there would
+    claim a delivery that never happened - and the summary says ``none`` rather
+    than dropping the line, because an absent line reads as a suite that cannot
+    measure sites at all.
+    """
+    assert poc_app._push_still(None, "play") is False
+    assert poc_app._push_still(None, "cut") is False
+    assert poc_app._PROFILE["counts"].get("push", 0) == 0
+    assert not [
+        name
+        for name in poc_app._PROFILE["counts"]
+        if name.startswith("push:")
+    ], "a site was named for a push that never left the server"
+    assert "push_by_site: none" in poc_app._profile_summary_text()
+
+
+def test_the_site_breakdown_is_busiest_first(prof):
+    """The summary leads with the control that shipped the most stills."""
+    view = _ViewHandle()
+    for _ in range(3):
+        poc_app._push_still(view, "play")
+    poc_app._push_still(view, "cut")
+    poc_app._push_still(view, "seek")
+
+    line = [
+        text
+        for text in poc_app._profile_summary_text().splitlines()
+        if text.startswith("push_by_site: ")
+    ]
+    assert line == ["push_by_site: play=3 cut=1 seek=1"], (
+        f"the breakdown is not the busiest site first: {line!r}"
+    )
+
+
+def test_a_failed_still_is_named_neither(prof, capsys):
+    """A view that throws shipped nothing, so no site may claim it did."""
+    assert poc_app._push_still(_ViewHandle(explode=True), "play") is False
+    assert "view update skipped: boom" in capsys.readouterr().err
+    assert poc_app._PROFILE["counts"].get("push", 0) == 0
+    assert "push_by_site: none" in poc_app._profile_summary_text()
 
 
 def test_the_report_is_said_once_more_after_the_first_draw(capsys, renderer):
