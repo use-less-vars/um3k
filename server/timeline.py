@@ -251,7 +251,7 @@ class Timeline:
         """Read a viewer ``info`` dict, or None for a page with no timeline.
 
         THE PRECEDENCE, in one place: ``frame_index`` (recorded every solver
-        step), else ``frame_index_xcut`` (every tenth), else
+        step), else ``frame_index_xcut`` (a coarser recorded cadence), else
         ``e_abs_volume_step_index`` (every hundredth), else the bare frame count
         ``nt``/``nt_x`` expanded to 1..n. The finest axis wins because it is the
         only one on which a position can mean one solver step; taking a coarser

@@ -54,6 +54,23 @@ pytest.importorskip(
     reason="trame.ui.vuetify3 is what run_web_vis builds its layout with",
 )
 
+@pytest.fixture(scope="module", autouse=True)
+def _the_volume_layer_is_on():
+    """Opt this module in to the |E| volume layer its draws are about.
+
+    ``SHOW_VOLUME_LAYER_DEFAULT`` (server/poc_app.py:892) keeps the 3-D |E|
+    volume off the page by default: no volume, no cut sheets and no |E| half of
+    the step counter.  The boot, the cut row and the cut redraw asserted below
+    are all assertions ABOUT that layer, so the module turns it on through the
+    switch's own opt-in clause - the ``scope="module"`` ``field_page`` boot
+    included.  Not one assertion moves.
+    """
+    import poc_app as app
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(app, "SHOW_VOLUME_LAYER_DEFAULT", True)
+        yield
+
 FPS = 25
 TRIGGER_NAME = "play_toggle"
 RETURN_TIMEOUT_S = 1.0

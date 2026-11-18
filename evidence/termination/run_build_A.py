@@ -537,14 +537,23 @@ VIS_SCHEMA = "emfit.vis/2"
 VIS_ENGINE = "emfit.fdtd.fit-leapfrog/microstrip_wave"
 VIS_DEFAULT_OUT = "evidence/vis_dump.npz"
 VIS_SELFTEST_DEFAULT = "artifacts/vis_dump_selftest.npz"
-#: Hard size ceiling for the whole file [MB decimal].  Chosen so the artefact
-#: is small enough to hand to a browser-side viewer without a download step.
-VIS_BUDGET_MB = 45.0
+#: Hard size ceiling for the whole file [MB decimal].  Raised 45 -> 120 so the
+#: PLANES fit at stride 1 rather than being thinned to fit: on the default
+#: 62x212x22 mesh one 62x22 y-cut frame is 5.456 kB and one 212x22 x-cut frame
+#: 18.656 kB, so 2400 steps at stride 1 is ~102.7 MB with an x-cut pair on every
+#: kept frame -- the case the whole 120 MB is there for -- and only ~22.1 MB if
+#: the x-cuts were decimated 10:1.  The volume keeps its own ceiling below.
+VIS_BUDGET_MB = 120.0
 #: One x-cut pair every Nth KEPT y-cut frame.  Stated as a constant because it
 #: is a relationship and not a knob: ``ez_xcut_*`` has one frame for every
-#: ``VIS_XCUT_STRIDE`` frames of ``ez_ycut``, so ``nt_x == ceil(nt / 10)``
-#: and the two arrays share a time base without a second time array to say so.
-VIS_XCUT_STRIDE = 10
+#: ``VIS_XCUT_STRIDE`` frames of ``ez_ycut``, so
+#: ``nt_x == ceil(nt / VIS_XCUT_STRIDE)``, and the two arrays share a time base
+#: without a second time array to say so.  It is 1 -- an x-cut pair on EVERY
+#: kept frame, so all three planes are recorded at one cadence -- and a reader
+#: still follows each plane's own recorded step number (``frame_index`` /
+#: ``frame_index_xcut``) rather than dividing, because that is the only thing the
+#: file says about cadence.
+VIS_XCUT_STRIDE = 1
 #: Hard size ceiling for the OPTIONAL ``|E|`` volume inside the same file [MB
 #: decimal].  Separate from ``VIS_BUDGET_MB`` on purpose: the planes are planned
 #: -- the stride rises until they fit -- because a dump with fewer frames is
@@ -3356,6 +3365,13 @@ def main(argv: list[str] | None = None) -> int:
              "is REFUSED rather than thinned: the stride is what names the "
              "steps in the file, so the cadence is the caller's to choose.")
     ap.add_argument(
+        "--no-volume", action="store_true",
+        help="record NO |E| volume at all: the planes only, and no volume key "
+             "in the .npz. This is the march hook's off switch said on the "
+             "command line, and it writes the same file a run without "
+             "--volume-stride writes. Refused together with --volume-stride or "
+             "--volume-frames, which are requests FOR a volume.")
+    ap.add_argument(
         "--volume-frames", type=int, default=None, metavar="N",
         help="cap the |E| volume at its first N frames (default: every "
              "strided frame the run records). A shorter tail, never padding: "
@@ -3654,7 +3670,14 @@ def main(argv: list[str] | None = None) -> int:
             # cadence is counted in those frames and not in solver steps; the
             # budget check is the SAME one the writer runs, so an over-budget
             # request fails now rather than after the 1400 s solve.
-            vol_stride = (None if args.volume_stride is None
+            if args.no_volume and (args.volume_stride is not None
+                                   or args.volume_frames is not None):
+                raise SystemExit(
+                    "VIS REFUSED: --no-volume with --volume-stride/"
+                    "--volume-frames: those ask for a volume and --no-volume "
+                    "asks for none. Drop --no-volume to record one, or drop "
+                    "the cadence and cap to record the planes only.")
+            vol_stride = (None if args.no_volume or args.volume_stride is None
                           else max(1, int(args.volume_stride)))
             vol_frames = (None if args.volume_frames is None
                           else max(0, int(args.volume_frames)))

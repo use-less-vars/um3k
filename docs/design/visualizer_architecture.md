@@ -67,7 +67,7 @@ if fi % self.xcut_stride == 0:
 ```
 
 - `ez_ycut` takes **every kept step**.
-- The two x-cuts take **only every `VIS_XCUT_STRIDE` = 10th** y-cut frame (`:472`), so `nt_x == ceil(nt / 10)` (`:470-471`) — **one time base, two cadences**, with no second time array to say so.
+- The two x-cuts take **every `VIS_XCUT_STRIDE`-th** y-cut frame (`:472`), so `nt_x == ceil(nt / VIS_XCUT_STRIDE)` (`:470-471`) — **one time base, two cadences**, with no second time array to say so. The constant stands at **1**, i.e. an x-cut pair on every kept frame (~102.7 MB at 2400 steps of the 62x212x22 mesh, which is what the 120 MB planes ceiling is there for); decimating it 10:1 would cost ~22.1 MB.
 - `--dump-stride N` keeps every Nth step (`:2377-2381`, default 1) [L].
 - The stride is **planned before the solve**, never discovered afterwards: `_vis_plan_stride` prices `--nsteps` and the mesh against `VIS_BUDGET_MB = 45.0` (`:467`) and **raises the effective stride with a warning** if the arrays would exceed it (`:453-459`). It never fails for size — "a dump that refuses to exist is worse than a dump with fewer frames" — and the stride it settled on is written into the file as `dump_stride`, so **the cadence of a file is read from the file**, not assumed.
 - One hard refusal exists and is the right one: if the plan and the march disagree, the writer raises `VIS REFUSED … a dump that silently drops its tail is worse than none` (`:746-750`) [L].

@@ -62,6 +62,22 @@ import trame_server.core as trame_server  # noqa: E402  (where Server.start live
 PRISTINE_GET_SERVER = trame_app.get_server
 PRISTINE_SERVER_START = trame_server.Server.start
 
+@pytest.fixture(scope="module", autouse=True)
+def _the_volume_layer_is_on():
+    """Opt this module in to the |E| layer it exists to test.
+
+    ``SHOW_VOLUME_LAYER_DEFAULT`` (server/poc_app.py:892) keeps the 3-D |E|
+    volume off the page by default: no volume, no cut sheets, no |E| bar and no
+    |E| half of the step counter.  Every draw asserted below is an assertion
+    ABOUT that layer, so the ONE thing this module needs is the layer turned on
+    - the switch's own opt-in clause, monkeypatched for the whole module so it
+    also covers the ``scope="module"`` boots.  Not one assertion moves.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(app, "SHOW_VOLUME_LAYER_DEFAULT", True)
+        yield
+
+
 #: id(server) -> (server, the instance-level ``start`` it had before we booted),
 #: so the teardown check can look inside the very instance the page used.
 _BOOTED_SERVERS: dict = {}

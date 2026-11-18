@@ -872,6 +872,32 @@ def _step_counter_for_page(info, index, mode=None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# THE 3-D |E| VOLUME LAYER IS OFF BY DEFAULT (POC_SHOW_VOLUME)
+#
+# WHY: the |E| volume is a second, decimated clock drawn on top of the two
+# cut-plane sheets.  It is still built and still tested, but a reader who opens
+# the page gets the SHEETS - the field the dump records per plane frame - rather
+# than a translucent box over them.  The layer is one environment variable away:
+# POC_SHOW_VOLUME=1 puts it back with its cut sheets, its port planes, its |E|
+# bar and its half of the label.
+#
+# WHAT IT MAY NEVER COST: the two cut-plane heatmaps.  Those are the ``sheets``
+# the page adds ONCE and swaps one scalar array on per tick (see ``_show``);
+# they are not part of this layer, and nothing here touches them.
+#
+# READ AT CALL TIME, not once at import, so a handler (or a test) can turn the
+# layer on or off between draws without a re-import.
+# ---------------------------------------------------------------------------
+
+SHOW_VOLUME_LAYER_DEFAULT = False
+
+
+def _volume_layer_enabled() -> bool:
+    """Is the 3-D |E| volume layer to be drawn?  False unless opted in."""
+    return bool(SHOW_VOLUME_LAYER_DEFAULT) or os.environ.get("POC_SHOW_VOLUME") == "1"
+
+
+# ---------------------------------------------------------------------------
 # OPT-IN TIMING PROBE (POC_TIMING)
 #
 # WHY this exists: the viewer runs on the OPERATOR's machine, so "which part of
@@ -1849,16 +1875,46 @@ def _load_series_block(data, path: Path):
     }, None
 
 
+def _xcut_cadence_clause(info: dict) -> str:
+    """How often the two x-cut planes are written, read from the FILE.
+
+    The archive does not record the x-cut stride as a number. It records the step
+    number of every stored frame of every plane -- ``frame_index`` for
+    ``ez_ycut``, ``frame_index_xcut`` for the two x-cuts -- so the cadence is
+    whatever those steps say it is for the file in hand. That is the point of the
+    two axes sharing one time base: a reader that repeated the exporter's stride
+    as a constant here would keep printing a cadence the file no longer has, and
+    nothing would raise. One x-cut frame has no spacing to report and says so
+    rather than inventing one.
+    """
+    index = info.get("frame_index_xcut")
+    if index is None:
+        return "written at their own recorded cadence"
+    try:
+        index = np.asarray(index, dtype=np.int64).ravel()
+    except (TypeError, ValueError):
+        return "written at their own recorded cadence"
+    if index.size < 2:
+        return "written at their own recorded cadence"
+    gaps = np.diff(index)
+    if int(gaps[0]) <= 0 or not bool(np.all(gaps == gaps[0])):
+        return "written at their own recorded cadence"
+    step = int(gaps[0])
+    if step == 1:
+        return "written on every kept y-cut frame"
+    return f"written every {step} steps"
+
+
 def load_vis(path: Path) -> dict:
     """Load an ``emfit.vis/2`` animation dump. numpy only, no pyvista.
 
     Three planes are stored and they are NOT interchangeable: ``ez_ycut`` is an
     x-z sheet at one fixed y (``nt`` frames), while the two x-cuts are y-z sheets
-    at two fixed x (``nt_x`` frames, written every ``dump_stride * 10`` steps).
-    That asymmetry is why the time of a frame is rebuilt from that plane's own
-    ``frame_index`` array below instead of from a shared counter: indexing an
-    x-cut frame number into ``t_ns`` would read an instant up to ten times too
-    early and never raise.
+    at two fixed x (``nt_x`` frames, at whatever cadence their own
+    ``frame_index_xcut`` states). That asymmetry is why the time of a frame is
+    rebuilt from that plane's own ``frame_index`` array below instead of from a
+    shared counter: indexing an x-cut frame number into ``t_ns`` would read the
+    wrong instant of the march and never raise.
 
     Everything the page prints about time, position or scale is read here, so a
     missing or inconsistent axis fails with the key's own name instead of
@@ -4672,9 +4728,10 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
             "last": _finite(t_ns[-1]) if t_ns.size else None,
             "dt": _finite(dt_ns),
             "basis": (
-                "t_ns = frame_index * dt_s; the two x-cut planes are written every "
-                "dump_stride * 10 steps and carry their own frame_index_xcut, so "
-                "their frame number must never be used to index t_ns"
+                "t_ns = frame_index * dt_s; the two x-cut planes are "
+                f"{_xcut_cadence_clause(info)} and carry their own "
+                "frame_index_xcut, so their frame number must never be used to "
+                "index t_ns"
             ),
         },
         "colour": {
@@ -5796,6 +5853,10 @@ def _marker_cut_lines(
             return [
                 "cut sheets: not drawn in the port view (one station only)"
             ]
+        if not _volume_layer_enabled():
+            # The sheets are drawn BY the |E| layer: with that layer off pyvista
+            # refused nothing, and saying it did would be the false claim.
+            return ["cut sheets: not drawn - the |E| volume layer is off"]
         return ["cut sheets: not drawn - pyvista refused the sheets (see log)"]
     return _marker_cut_relation(planes, layout)
 
@@ -5845,7 +5906,7 @@ def _print_vis_keys(info: dict) -> None:
     print(f"nstep       : {info['nstep']} (dump_stride={info['dump_stride']})")
     print(
         f"frames      : {info['nt']} on ez_ycut, {info['nt_x']} on each x-cut "
-        f"(written every dump_stride*10 steps)"
+        f"({_xcut_cadence_clause(info)})"
     )
     print(f"dt_s        : {info['dt_s']:.6e} s  ({dt_ns:.6f} ns per frame)")
     if t_ns.size:
@@ -6996,13 +7057,16 @@ def _draw_scene(
         # sheets were really accepted, and the range each one was painted on -
         # so the legend below still cannot claim a sheet pyvista refused or a
         # clim nobody used.
-        cuts_drawn, cut_clims = _draw_volume_scene(
-            plotter,
-            info,
-            grid=grid,
-            cut_layout=cut_layout,
-            cell_mm=cell_mm,
-        )
+        if _volume_layer_enabled():
+            cuts_drawn, cut_clims = _draw_volume_scene(
+                plotter,
+                info,
+                grid=grid,
+                cut_layout=cut_layout,
+                cell_mm=cell_mm,
+            )
+        # The |E| layer is OPT-IN (`SHOW_VOLUME_LAYER_DEFAULT`): with it off the
+        # scene draws no |E| volume and no cut sheets, and claims neither.
 
     # The ONE derivation of what this page frames: the domain box solid, the
     # captured station window dashed inside it (_plane_extent_mm). This used to
@@ -7969,6 +8033,10 @@ def run_web(
         true of the field on screen. The sentence itself is built by
         :func:`_volume_aliasing`; no number is typed here.
         """
+        if not _volume_layer_enabled():
+            # The sentence names the decimation of a volume this page is not
+            # drawing, so on a layer-off page it would describe nothing.
+            return
         if aliasing_text is None:
             return
         if html_div is None:
@@ -8369,10 +8437,10 @@ def _vis_frame_time_ns(info: dict, mode: str, frame) -> float:
 
     ``mode`` is "ycut" or "xcut", and the two families do NOT share a clock:
     ez_ycut is written every step with frame_index 1..nt, while the x-cuts are
-    written every dump_stride * 10 steps with frame_index_xcut 1..nt_x. Indexing
-    t_ns with an x-cut frame number looks perfectly well formed and reads an
-    instant up to ten times too early, which is why this function exists instead
-    of a bare ``t_ns[frame]`` at every call site.
+    written at their own, usually coarser cadence with frame_index_xcut 1..nt_x.
+    Indexing t_ns with an x-cut frame number looks perfectly well formed and
+    reads the wrong instant, which is why this function exists instead of a bare
+    ``t_ns[frame]`` at every call site.
     """
     try:
         frame = int(round(float(frame)))
@@ -10588,7 +10656,8 @@ def _volume_player_plan(info: dict, mode: str):
 
     THE CLOCK IS THE PLANE FAMILY'S. One player position is one recorded frame
     of the family on screen - ``frame_index`` (2400 at the reference recording)
-    or ``frame_index_xcut`` (240) - and therefore one solver step, which is what
+    or ``frame_index_xcut`` (its own count, at the cadence it was recorded) -
+    and therefore one solver step, which is what
     the timeline, the slider, the play loop and the label are all counted on.
     ``e_abs_volume`` is the COARSER recording: ``--volume-stride`` stores one
     volume frame every N-th y-cut frame (24 of them at the reference
@@ -13064,7 +13133,17 @@ def run_web_vis(
             index,
             frames,
             info.get(TIME_AXIS_KEY),
-            _volume_layer_label(info, mode, index),
+            # With the layer off the detail half names the PLANE frame the
+            # player is on and nothing else: ``TimeAxis.label`` fills a MISSING
+            # detail with the volume's decimation clause, which would name a
+            # layer this page no longer draws.
+            _volume_layer_label(info, mode, index)
+            if _volume_layer_enabled()
+            else (
+                None
+                if frames is None
+                else f"Frame {int(index) + 1} of {int(frames)}"
+            ),
         )
         # The sweep time is a property of THIS page's timeline, so it is refreshed
         # on every draw beside the frame label rather than only when the select
@@ -13135,12 +13214,27 @@ def run_web_vis(
         # A page whose dump carries no volume drops a stale layer and returns:
         # nothing else changes for it.
         _timing_mark("layer_start")
-        _draw_volume_layer(plane_index, mode, volume_frame)
+        if _volume_layer_enabled():
+            _draw_volume_layer(plane_index, mode, volume_frame)
+        else:
+            # OFF: whatever layer an earlier tick drew is taken OFF the plotter
+            # rather than orphaned, and its |E| bar with it. The drop removes
+            # its own actors with ``render=False``, so a tick that draws no
+            # volume still costs exactly the one render below.
+            _volume_layer_drop()
         _timing_mark("layer_end")
         _timing_mark("label_start")
         # The step counter, UPDATED rather than re-created: the same name makes
         # this one annotation's text change, so a tick costs no new actor.
-        _draw_step_counter(plotter, _step_counter_for_page(info, index, mode))
+        _draw_step_counter(
+            plotter,
+            # Off: the counter's own sentence, counted off the SAME ``frames``
+            # ``_step_counter_for_page`` reads (the timeline's length), minus
+            # the |E| half that would name a layer that is not on the page.
+            _step_counter_for_page(info, index, mode)
+            if _volume_layer_enabled()
+            else _step_counter_text(index, frames),
+        )
         _timing_mark("label_end")
         _timing_mark("render_start")
         try:
@@ -15247,8 +15341,7 @@ def run_web_vis(
         )
         print(
             "[poc_app] each frame's sim time is rebuilt from its own plane's "
-            "frame index: the x-cuts are written every "
-            f"{int(info['dump_stride']) * 10} steps"
+            f"frame index: the x-cuts are {_xcut_cadence_clause(info)}"
         )
     print(f"[poc_app] serving on http://{host}:{port}")
     print("[poc_app] open that URL in a browser; Ctrl-C to stop")

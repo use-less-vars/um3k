@@ -56,6 +56,22 @@ if _VENV_SITE.is_dir() and str(_VENV_SITE) not in sys.path:
 
 import poc_app  # noqa: E402  (sys.path above is why this import is not at the top)
 
+@pytest.fixture(scope="module", autouse=True)
+def _the_volume_layer_is_on():
+    """Opt this module in to the |E| layer it exists to test.
+
+    ``SHOW_VOLUME_LAYER_DEFAULT`` (server/poc_app.py:892) keeps the 3-D |E|
+    volume off the page by default: no volume, no cut sheets, no |E| bar and no
+    |E| half of the step counter.  Every draw asserted below is an assertion
+    ABOUT that layer, so the ONE thing this module needs is the layer turned on
+    - the switch's own opt-in clause, monkeypatched for the whole module so it
+    also covers the ``scope="module"`` boots.  Not one assertion moves.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(poc_app, "SHOW_VOLUME_LAYER_DEFAULT", True)
+        yield
+
+
 #: Sub-millimetre cells keep every coordinate in this file easy to read.
 CELL_MM = 0.4
 

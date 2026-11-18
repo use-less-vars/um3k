@@ -255,12 +255,18 @@ def reference_argv(args: argparse.Namespace) -> list[str]:
         "--nsteps", str(args.nsteps),
         "--vis-dump", str(Path(args.npz).resolve()),
         "--dump-stride", str(args.dump_stride),
-        "--volume-stride", str(args.volume_stride),
         # ALWAYS explicit: a --vis-dump run deviates from arm A's certified
         # configuration, and the reference refuses to guess a path for it rather
         # than risk overwriting evidence/termination/build_A_50ohm.json.
         "--out", str(Path(args.out).resolve()),
     ]
+    # The cadence is only passed when a volume was asked for: --no-volume is
+    # the reference's own off switch, so it is STATED rather than left to be
+    # inferred from an absent flag.
+    if args.no_volume:
+        argv += ["--no-volume"]
+    else:
+        argv += ["--volume-stride", str(args.volume_stride)]
     if args.volume_frames is not None:
         argv += ["--volume-frames", str(args.volume_frames)]
     if args.pulse_freq_ghz is not None:
@@ -375,7 +381,9 @@ def print_plan(p: dict, kwargs: dict, args: argparse.Namespace,
     pulse_hz = (float(args.pulse_freq_ghz) * 1e9 if args.pulse_freq_ghz
                 else float(reference.VIS_F_PULSE_HZ))
     print(f"PLAN - the reference simulation (arm {STRUCTURE}, 50 ohm series_r at "
-          f"p2) with a 3-D |E| volume")
+          f"p2) with "
+          + ("NO |E| volume (cut planes only)" if args.no_volume
+             else "a 3-D |E| volume"))
     print(f"  mesh        {geo['nx']} x {geo['ny']} x {geo['nz']} = "
           f"{cells:,} cells at {geo['cell_m'] * 1e3:.3f} mm")
     print(f"  solve       excite='pulse' at {pulse_hz / 1e9:.3f} GHz, "
@@ -384,11 +392,16 @@ def print_plan(p: dict, kwargs: dict, args: argparse.Namespace,
           f"{geo['nx']}x{geo['nz']} on the j={geo['j_cut']} z-cut + {p['nt_x']} "
           f"frames of two {geo['ny']}x{geo['nz']} x-cuts, ~{p['est_mb']:.1f} MB "
           f"of a {p['planes_budget_mb']:.0f} MB budget (thinned to fit)")
-    print(f"  |E| volume  {p['n_vol']} frames of "
-          f"{geo['nx']}x{geo['ny']}x{geo['nz']} float32, one every "
-          f"{args.volume_stride} y-cut frames = every {p['steps_between']} "
-          f"solver step(s), ~{p['vol_mb']:.1f} MB of a "
-          f"{p['vol_budget_mb']:.1f} MB budget (refused if over, not thinned)")
+    if args.no_volume:
+        print("  |E| volume  NONE - --no-volume: no volume array, no volume key "
+              "in the .npz, and nothing for the "
+              f"{p['vol_budget_mb']:.0f} MB volume budget to refuse")
+    else:
+        print(f"  |E| volume  {p['n_vol']} frames of "
+              f"{geo['nx']}x{geo['ny']}x{geo['nz']} float32, one every "
+              f"{args.volume_stride} y-cut frames = every {p['steps_between']} "
+              f"solver step(s), ~{p['vol_mb']:.1f} MB of a "
+              f"{p['vol_budget_mb']:.1f} MB budget (refused if over, not thinned)")
     print(f"  npz         {Path(args.npz).resolve()}")
     print(f"  artefact    {Path(args.out).resolve()}")
 
@@ -398,8 +411,8 @@ def viewer_command(npz: Path) -> str:
     return f"python3 server/poc_app.py --input {npz}"
 
 
-def summarise_dump(npz: Path) -> None:
-    """Report the keys the viewer will find, and refuse if the volume is absent.
+def summarise_dump(npz: Path, want_volume: bool = True) -> None:
+    """Report the keys the viewer will find; refuse only if a REQUESTED volume is absent.
 
     The solve can succeed and still hand back a planes-only file if the volume
     flags never reach the recorder -- a stride is a stride whether or not
@@ -416,9 +429,26 @@ def summarise_dump(npz: Path) -> None:
                  "e_abs_volume_step_index" in keys else None)
         cadence = (int(data["e_abs_volume_stride"]) if
                    "e_abs_volume_stride" in keys else None)
+        ycut = data["ez_ycut"].shape if "ez_ycut" in keys else None
+        near = data["ez_xcut_near"].shape if "ez_xcut_near" in keys else None
+        far = data["ez_xcut_far"].shape if "ez_xcut_far" in keys else None
+        plane_stride = (int(data["dump_stride"]) if "dump_stride" in keys
+                        else None)
 
     print(f"WROTE {npz} ({npz.stat().st_size / 1e6:.1f} MB, "
           f"{len(keys)} keys)")
+    if shape is None and not want_volume:
+        # --no-volume: the planes ARE the record, so what is checked is the
+        # plane families and the stride they were recorded at. The viewer opens
+        # a volume-less dump already (it drops a stale layer and keeps the
+        # plane clock).
+        print("  e_abs_volume            absent (--no-volume: planes only)")
+        print(f"  ez_ycut                 {ycut} float32 [V/m], dump_stride "
+              f"{plane_stride}")
+        print(f"  ez_xcut_near            {near} float32 [V/m]")
+        print(f"  ez_xcut_far             {far} float32 [V/m]")
+        print(f"  keys                    {', '.join(keys)}")
+        return
     if shape is None:
         raise SystemExit(
             "REFUSED: the dump has no e_abs_volume, so there is no volume to "
@@ -508,6 +538,15 @@ def main(argv: list[str] | None = None) -> int:
              "here -- the plan line prints both rather than letting the "
              "coincidence stand in for the definition.")
     ap.add_argument(
+        "--no-volume", action="store_true",
+        help="record the two cut-plane families and NO 3-D |E| volume. This is "
+             "the flag that makes the planes the whole picture: it passes "
+             "--no-volume to the reference, which allocates no volume, samples "
+             "none during the march and writes no volume key, so the 48 MB "
+             "volume budget has nothing to refuse. A --volume-stride typed on "
+             "this command line is a contradiction and is refused; a cadence a "
+             "--config supplied is simply turned off (the flag wins).")
+    ap.add_argument(
         "--volume-frames", type=int, default=None, metavar="N",
         help="cap the volume at N frames (default: no cap). A cap shortens the "
              "recorded tail rather than thinning the whole march, so it is the "
@@ -555,6 +594,10 @@ def main(argv: list[str] | None = None) -> int:
              "--dry-run call block, so the mesh and frame counts are the ones the "
              "solve would use, not this script's opinion of them.")
     args = ap.parse_args(argv)
+    # Captured BEFORE a --config can fill it: a cadence TYPED here and
+    # --no-volume together are a contradiction, while one a config supplied is
+    # not -- a flag beats a document, so the flag simply turns it off.
+    typed_volume_stride = args.volume_stride is not None
 
     # A config supplies every flag that was not typed, and it does so HERE --
     # before the validation below and before anything is priced. That ordering
@@ -574,12 +617,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.nsteps < 1:
         raise SystemExit(f"REFUSED: --nsteps {args.nsteps}: a solve needs at "
                          "least one step.")
-    if args.volume_stride is None or args.volume_stride < 1:
+    if args.no_volume:
+        if typed_volume_stride:
+            raise SystemExit(
+                f"REFUSED: --no-volume with --volume-stride "
+                f"{args.volume_stride}: one asks for no volume and the other "
+                "for one every N frames. Drop one of them.")
+        if args.volume_frames is not None:
+            raise SystemExit(
+                f"REFUSED: --no-volume with --volume-frames "
+                f"{args.volume_frames}: there is no volume to cap. Drop one of "
+                "them.")
+        args.volume_stride = None
+    if not args.no_volume and (args.volume_stride is None
+                               or args.volume_stride < 1):
         raise SystemExit(
             f"REFUSED: --volume-stride {args.volume_stride}: the cadence is a "
-            "count of frames, so it must be at least 1. This script exists to "
-            "produce a volume; to record planes only, run "
-            f"{REFERENCE_REL} directly without the flag.")
+            "count of frames, so it must be at least 1. For the cut planes "
+            "only, pass --no-volume.")
     if args.volume_frames is not None and args.volume_frames < 1:
         raise SystemExit(
             f"REFUSED: --volume-frames {args.volume_frames}: a dump with no "
@@ -620,7 +675,7 @@ def main(argv: list[str] | None = None) -> int:
             "to serve; check the VIS lines above for where the dump actually "
             "went.")
 
-    summarise_dump(npz)
+    summarise_dump(npz, want_volume=not args.no_volume)
     print("OPEN IT WITH (- the server prints its URL and does not open a "
           "browser; Ctrl-C stops it):")
     print(f"  {viewer_command(npz)}")
