@@ -5638,7 +5638,6 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
             y_span,
             z_span,
             "red",
-            render=False,
         )
     if planes.get("show_port_plane", True):
         _add_plane_marker(
@@ -5650,10 +5649,11 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
             y_span,
             z_span,
             "purple",
-            # render=False on BOTH discs: the rebuild ends with one render of
-            # its own, and a flush per disc would draw a scene that has just
-            # been cleared and is not finished yet (and one draw is the unit
-            # the page's draw count is measured in).
+            # render=False on the SECOND disc: the first one already flushes
+            # the frame, the rebuild ends with one render of its own, and a
+            # flush per disc would draw a scene that has just been cleared and
+            # is not finished yet (and one draw is the unit the page's draw
+            # count is measured in).
             render=False,
         )
 
@@ -5673,9 +5673,7 @@ def _add_markers(plotter, info: dict, planes: dict) -> None:
         _s21_label(planes),
     ]
     try:
-        plotter.add_point_labels(
-            points, labels, font_size=9, text_color="black", render=False
-        )
+        plotter.add_point_labels(points, labels, font_size=9, text_color="black")
     except Exception as exc:  # noqa: BLE001 - the corner legend still says it
         print(f"[poc_app] marker labels not drawn: {exc}", file=sys.stderr)
 
@@ -5848,10 +5846,6 @@ def _draw_volume_scene(
         # smaller in V/m than the captured |Ez| planes, so one bar carrying the
         # other's title would be read as the other's scale.
         try:
-            # WHY nothing in this helper renders: it only BUILDS the scene, and
-            # the caller draws once when it is finished - so a volume-capture
-            # change repaints atomically instead of building structure, then
-            # planes, then markers, in front of the operator.
             abs_actor = plotter.add_volume(
                 abs_image,
                 scalars="e_abs",
@@ -5859,7 +5853,6 @@ def _draw_volume_scene(
                 log_scale=True,
                 clim=volume_clim,
                 show_scalar_bar=False,
-                render=False,
             )
             abs_drawn = True
         except TypeError as exc:
@@ -5875,7 +5868,6 @@ def _draw_volume_scene(
                     cmap="turbo",
                     clim=volume_clim,
                     show_scalar_bar=False,
-                    render=False,
                 )
                 abs_drawn = True
                 abs_bar_title = _volume_bar_title(clim_mode, log_scale=False)
@@ -5926,7 +5918,6 @@ def _draw_volume_scene(
             scalars="ez_abs",
             cmap="turbo",
             scalar_bar_args={"title": "|Ez| [V/m]"},
-            render=False,
             **ez_style,
         )
     elif not abs_drawn:
@@ -5939,7 +5930,6 @@ def _draw_volume_scene(
                 scalars="ez_abs",
                 cmap="turbo",
                 scalar_bar_args={"title": "|Ez| [V/m]"},
-                render=False,
                 **ez_style,
             )
         except Exception as exc:  # noqa: BLE001 - see comment above
@@ -5988,7 +5978,6 @@ def _draw_volume_scene(
                 cmap="turbo",
                 opacity=0.75,
                 show_scalar_bar=False,
-                render=False,
                 **style,
             )
             # What this cut was ACTUALLY painted on, for the corner legend:
@@ -11693,7 +11682,7 @@ def run_web_vis(
             if entry is None:
                 return
             plotter.add_scalar_bar(
-                mapper=entry["actor"].mapper, render=False, **plane_args
+                mapper=entry["actor"].mapper, **plane_args
             )
         except Exception as exc:  # noqa: BLE001 - decoration only
             print(
