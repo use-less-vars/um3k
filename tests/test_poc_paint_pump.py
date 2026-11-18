@@ -557,7 +557,7 @@ def test_a_scrub_stops_the_pump_until_the_window_runs_out(scrub_page, harness):
             # Half a sweep away from the loop's own clock: a tick carries four
             # positions, so "the seek" and "the clock" cannot be the same number.
             seek = (clock + frames // 2) % frames
-            _seek(page, harness._frame_listener(state), seek)
+            _seek(page, harness._frame_listener(state, page.handles), seek)
             drawn = _drawn(page)
             seen = await _sample_positions(state, 0.2)
             assert seen, "the sampler saw nothing at all"
@@ -610,7 +610,7 @@ def test_the_pump_carries_on_from_the_seek_and_never_from_its_own_clock(
             clock = int(state.frame)
             seek = (clock + frames // 2) % frames
             at_seek = asyncio.get_running_loop().time()
-            _seek(page, harness._frame_listener(state), seek)
+            _seek(page, harness._frame_listener(state, page.handles), seek)
             # The hold plus 0.12 s: at 100 positions/s that is at most twelve
             # positions of resumed playback, i.e. three strides.
             ahead = await _watch_ahead(
@@ -669,7 +669,7 @@ def test_every_new_seek_re_stamps_the_hold(scrub_page, harness):
         task = await _start_playing(page, harness)
         try:
             await asyncio.sleep(4 * (1.0 / harness.FPS))
-            listener = harness._frame_listener(state)
+            listener = harness._frame_listener(state, page.handles)
             clock = int(state.frame)
             first = (clock + frames // 2) % frames
             _seek(page, listener, first)
@@ -714,7 +714,7 @@ def test_a_held_beat_is_counted_as_a_scrub_hold_and_not_as_a_paint_cap(
             await asyncio.sleep(4 * (1.0 / harness.FPS))
             clock = int(state.frame)
             seek = (clock + frames // 2) % frames
-            _seek(page, harness._frame_listener(state), seek)
+            _seek(page, harness._frame_listener(state, page.handles), seek)
             # Let a beat that was already past the gate land before the baseline
             # is read: the only yield between the gate and the paint is a
             # sleep(0)/sleep(0.012), so nothing is still pending on this side of

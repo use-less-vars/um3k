@@ -195,6 +195,21 @@ def _titles(records) -> list:
     return [text for text in (_text(r) for r in records if r[0] == "VCardTitle") if text]
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _the_volume_layer_is_on():
+    """Opt this module in to the |E| layer its boot asserts on.
+
+    ``SHOW_VOLUME_LAYER_DEFAULT`` (server/poc_app.py:1031) keeps the 3-D |E|
+    volume off the page by default, so ``handles["volume_layer"]`` does not exist
+    and ``_layer_entry`` refuses - yet the repaint test below is an assertion
+    ABOUT that layer.  Monkeypatched for the whole module rather than inside the
+    test because the boot is ``scope="module"`` and has already drawn by then.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(app, "SHOW_VOLUME_LAYER_DEFAULT", True)
+        yield
+
+
 @pytest.fixture(scope="module")
 def volume_boot(tmp_path_factory):
     """One dump-backed boot: its live page AND everything the page emitted."""
