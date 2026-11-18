@@ -778,9 +778,10 @@ def _frame_label(index, frames, time_axis=None, volume_label=None):
     """The player's step sentence, or None on a page with no timeline.
 
     The ONE place that sentence is composed, and ``frames`` is the count the
-    PLAYER steps (``_synced_frame_counts``, i.e. the selected family's own
-    frames) so the denominator cannot be a count the slider and the play loop
-    are not counted on. None is "no timeline", never "frame 1 / None".
+    PLAYER steps - the timeline's own length, ``_position_count`` - so the
+    slider, the play loop and this label are all counted on ONE clock, and the
+    x-cut planes are a held layer on it rather than a second clock. None is
+    "no timeline", never "frame 1 / None".
 
     ``time_axis`` is the page's RECORDED step axis (``info["time_axis"]"), the
     PLANE family's. When it counts the SAME frames the player steps the sentence
@@ -1641,9 +1642,9 @@ def _page_source_text(info: dict, nt=None) -> str:
     boot and a live page swap print the same sentence from the same code.
 
     ``nt`` is the PLAYER's timeline length, which is the plane family's OWN
-    frame count (see _synced_frame_counts, whose answer is now that count
-    unchanged: the |E| volume is a decimated layer and does not set the
-    length). When the two numbers differ the line quotes both - ``animation, 3
+    count, ``_position_count``, unchanged for both views: the |E| volume is a
+    decimated layer and the x-cut planes a held one, neither sets the length.
+    When the two numbers differ the line quotes both - ``animation, 3
     of 12 frames on ez_ycut`` - rather than letting one number be read as a
     claim about the array it names. When they agree the plain form is
     unchanged.
@@ -4029,13 +4030,13 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
     dump's own simulation clock. Letting the two be read as one number is how a
     reader comes to believe the solver ran at 24 frames per second.
 
-    The two frame counts are the ones the PLAYER steps -
-    ``_synced_frame_counts`` - and those are, now, each family's OWN recorded
-    frames: a position is a plane frame and a solver step, so the timeline is
-    the 2400-step y-cut clock and the 240-step x-cut clock of the reference
-    recording. No series pays for a coarser neighbour any more: the |E| volume
-    is a decimated LAYER drawn on that clock and has no vote on its length.
-    ``wall_clock_s`` is those counts over ``fps``, i.e. the play time at ONE
+    The two frame counts returned here are FACTS ABOUT THE FILE - how many
+    frames each stored array holds - not the length of the player's clock: that
+    is the timeline's, ``_position_count``, and on a recorded dump a position is
+    one recorded plane frame. There is ONE clock: the x-cut planes are a LAYER
+    on it, held between their own captures, exactly as the |E| volume is, so
+    neither can shorten it nor rescale it when the view is switched.
+    ``wall_clock_s`` is the timeline's count over ``fps``, i.e. the play time at ONE
     POSITION PER TICK - the base rate the speed control is expressed against, and
     therefore the one reading that does not depend on where the operator left that
     control. The loop advances ``DEFAULT_PLAY_RATE`` positions per tick when the
@@ -4049,9 +4050,11 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
     fps = max(1, int(fps))
     vmin, vmax = info["color_range"]
     dt_ns = float(info["dt_s"]) * 1e9
-    nt, nt_x = _synced_frame_counts(
-        info, int(info["nt"]), int(info["nt_x"])
-    )
+    # Facts about the FILE, not about the player's clock: how many frames each
+    # stored array holds. The clock is ``_position_count``; on a recorded dump
+    # the two agree, because a position is one recorded plane frame.
+    nt = int(info["nt"])
+    nt_x = int(info["nt_x"])
     t_ns = info["t_ns"]
     cell_mm = _cell_mm(info)
     return {
@@ -10035,24 +10038,7 @@ def _build_volume_player_plan(info: dict, mode: str):
         return None
     return timeline.plan(mode)
 
-
-def _synced_frame_counts(info: dict, nt, nt_x):
-    """``(nt, nt_x)``: the timeline LENGTH, decided in ONE place.
-
-    It stays a single choke point - the slider maximum, the play loop, the
-    panels and every label counted from ``nt``/``nt_x`` read it here - but what
-    it now decides is that each PLANE count IS that family's timeline. The
-    player steps the selected family's own recorded frames, and
-    ``_volume_player_plan`` paints the volume as a decimated layer ON that
-    clock, so the volume has no vote on the length: it can no longer shorten the
-    run to its own captures, which is what it used to do (24 positions standing
-    in for 2400 recorded steps). A page with no timeline (None) passes through
-    unchanged.
-    """
-    return nt, nt_x
-
-
-def _volume_layer_label(info, mode, position, plan=None):
+def _volume_layer_label(info, mode, position):
     """The |E| LAYER's half of the label, or None when there is no volume.
 
     The player's clock is the plane family's; this names the OTHER clock on the
@@ -10065,8 +10051,11 @@ def _volume_layer_label(info, mode, position, plan=None):
     player's own step, because a layer that names its clock is exactly what
     stops the two being confused.
 
-    ``plan`` is the player's :func:`_volume_player_plan` when the caller already
-    has it; it is recomputed here otherwise. None means "no layer on this page".
+    ``mode`` is accepted and deliberately ignored: it names a VIEW, and no
+    argument of this function may make a label describe a different clock (the
+    same reason ``Timeline.plan`` ignores it). Nothing is recomputed here - the
+    layer is read off the page's one timeline - so no caller passes a plan in and
+    none can pass a different one.
     """
     timeline = _timeline_for(info)
     if timeline is None:
@@ -11130,10 +11119,11 @@ def run_web_vis(
     else:
         nt = None
         nt_x = None
-    # ONE clock for the slider, the player and the picture: the selected plane
-    # family's own frames, so a position on the slider is one recorded plane
-    # frame and one solver step. See ``_synced_frame_counts``.
-    nt, nt_x = _synced_frame_counts(info, nt, nt_x)
+    # ONE clock for the slider, the player and the picture: the timeline's, so a
+    # position on the slider is one recorded plane frame and one solver step.
+    # ``nt``/``nt_x`` above are the counts of the FILED arrays - what the dump
+    # holds, quoted by the panels that describe the file - and the slider's own
+    # maximum is ``_frame_max_for``, never these.
     # The bare board and builder page ALWAYS carry a cell, so what can lack
     # one is an arbitrary caller-supplied `info` dict: this read is tolerated
     # rather than fenced, NaN being the absence every isfinite() guard knows.
@@ -12412,7 +12402,7 @@ def run_web_vis(
             index,
             frames,
             info.get(TIME_AXIS_KEY),
-            _volume_layer_label(info, mode, index, plan),
+            _volume_layer_label(info, mode, index),
         )
         # The sweep time is a property of THIS page's timeline, so it is refreshed
         # on every draw beside the frame label rather than only when the select
@@ -12504,9 +12494,7 @@ def run_web_vis(
         """
         nonlocal nt, nt_x, vmin, vmax, cell_mm, y_span_mm
         live = page["info"]
-        nt, nt_x = _synced_frame_counts(
-            live, int(live["nt"]), int(live["nt_x"])
-        )
+        nt, nt_x = int(live["nt"]), int(live["nt_x"])
         vmin, vmax = live["color_range"]
         cell_mm = _cell_mm(live)
         y_span_mm = float(int(live["ny"])) * cell_mm
@@ -13783,7 +13771,14 @@ def run_web_vis(
                 rate = _play_rate_near(
                     getattr(state, "play_rate", DEFAULT_PLAY_RATE)
                 )
-                frames = _play_frames(nt if state.mode == "ycut" else nt_x)
+                # ONE clock, whichever family is drawn: the timeline's. The
+                # REJECTED alternative - the selected family's own array length -
+                # made a plane toggle rescale the clock by ten (2400 positions on
+                # the y-cut against 240 on the x-cut), so the same selected speed
+                # played ten times faster after the switch. Read off the LIVE page
+                # every tick, because a finished solve swaps the dump underneath
+                # this closure.
+                frames = _play_frames(_position_count(page.get("info") or info))
                 now = loop.time()
                 anchor_time, anchor_frame = _play_reanchor(
                     anchor_time, anchor_frame, now, int(state.frame), drawn
@@ -14052,7 +14047,6 @@ def run_web_vis(
             else:
                 nt = None
                 nt_x = None
-            nt, nt_x = _synced_frame_counts(live_info, nt, nt_x)
             _rebuild_sheets()
             try:
                 frame = int(round(float(state.frame)))

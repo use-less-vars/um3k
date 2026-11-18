@@ -138,12 +138,9 @@ def test_the_axis_counts_the_frames_the_player_steps(real_info):
         f"the player steps {axis.n_frames} positions, the run recorded 2400 "
         "steps: the volume still has a vote on the length"
     )
-    nt_synced, nt_x_synced = app._synced_frame_counts(
-        real_info, real_info["nt"], real_info["nt_x"]
-    )
-    assert (nt_synced, nt_x_synced) == (real_info["nt"], real_info["nt_x"]), (
-        f"the timeline is {nt_synced}/{nt_x_synced}, the planes record "
-        f"{real_info['nt']}/{real_info['nt_x']}: the volume shortened it"
+    assert app._position_count(real_info) == real_info["nt"], (
+        f"the timeline holds {app._position_count(real_info)} positions where "
+        f"the planes record {real_info['nt']}: the volume shortened it"
     )
     # OBSOLETE as written: ``_frame_span_max`` took the family on screen and was
     # deleted by the refactor. The maximum is the axis's last position, read
@@ -166,7 +163,7 @@ def test_the_label_names_the_step_the_picture_was_taken_at(real_info):
     frames = plan["frames"]
     for index in (0, 3, 50, 51, 300, 304, frames - 1):
         step = int(axis.step_index[index])
-        layer = app._volume_layer_label(real_info, "ycut", index, plan)
+        layer = app._volume_layer_label(real_info, "ycut", index)
         assert layer is not None, f"position {index} named no volume layer"
         expected = f"Step {step} / {axis.n_steps} ({layer})"
         assert app._frame_label(index, frames, axis, layer) == expected, (
@@ -192,7 +189,7 @@ def test_the_label_names_the_step_the_picture_was_taken_at(real_info):
             "@ step 2301)",
         ),
     ):
-        layer = app._volume_layer_label(real_info, "ycut", index, plan)
+        layer = app._volume_layer_label(real_info, "ycut", index)
         assert app._frame_label(index, frames, axis, layer) == expected, (
             f"position {index} printed "
             f"{app._frame_label(index, frames, axis, layer)!r}, not {expected!r}"

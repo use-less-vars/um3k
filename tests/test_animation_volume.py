@@ -1417,10 +1417,11 @@ def test_the_plan_maps_the_boundaries_and_the_tail(desync_page):
         f"last capture {len(DESYNC_VOLUME_STEPS) - 1}: the end of the film is "
         "never shown"
     )
-    assert app._synced_frame_counts(info, nt, nt_x) == (nt, nt_x), (
-        f"the synced counts are {app._synced_frame_counts(info, nt, nt_x)}, "
-        f"not ({nt}, {nt_x}): each family's timeline is its own recorded "
-        "frames, so the coarser |E| volume can no longer shorten the y-cut clock"
+    assert app._position_count(info) == nt == plan["frames"], (
+        f"the timeline holds {app._position_count(info)} positions where the "
+        f"file stores {nt} plane frames and the plan walks {plan['frames']}: "
+        "one clock, the plane family's, and the coarser |E| volume shortens "
+        "nothing"
     )
 
 
@@ -1829,7 +1830,7 @@ def test_the_frame_label_counts_the_positions_the_player_steps(desync_page):
 
 
 def test_the_state_dump_counts_the_frames_the_player_steps(desync_page):
-    """``_animation_block`` must not drift from ``_synced_frame_counts``.
+    """``_animation_block`` must not drift from the player's clock, ``_position_count``.
 
     The state document is what an operator reads to check what the page
     believes, so its two counts - and the wall clock built from them - are
@@ -1855,10 +1856,10 @@ def test_the_state_dump_counts_the_frames_the_player_steps(desync_page):
     """
     info = desync_page.page["info"]
     nt, nt_x = int(info["nt"]), int(info["nt_x"])
-    synced = app._synced_frame_counts(info, nt, nt_x)
-    assert synced == (nt, nt_x), (
-        f"the fixture no longer reports its own frames: synced {synced} against "
-        f"({nt}, {nt_x}), so the counts below cannot be read as the player's"
+    assert app._position_count(info) == nt, (
+        f"the timeline holds {app._position_count(info)} positions where the "
+        f"fixture stores {nt} plane frames, so the counts below cannot be read "
+        "as the player's"
     )
     assert nt == DESYNC_NT > len(DESYNC_VOLUME_STEPS), (
         f"the fixture stores {nt} plane frames over "
@@ -1867,12 +1868,12 @@ def test_the_state_dump_counts_the_frames_the_player_steps(desync_page):
     )
 
     block = app._animation_block(info)
-    assert block["frames"] == synced[0] == nt, (
+    assert block["frames"] == nt, (
         f"the state dump says the animation has {block['frames']} frames, not "
         f"{nt}: the y-cut timeline is that family's own recorded frames"
     )
-    assert block["frames_xcut"] == synced[1], (
-        f"the x-cut count is {block['frames_xcut']}, not {synced[1]}: each "
+    assert block["frames_xcut"] == nt_x, (
+        f"the x-cut count is {block['frames_xcut']}, not {nt_x}: each "
         "family's count is its own, and the volume touches neither"
     )
     assert block["wall_clock_s"] == pytest.approx(
@@ -1909,8 +1910,9 @@ def test_the_left_panel_header_counts_the_frames_the_player_steps(tmp_path):
     ``run_web_vis`` fills it from ``_page_source_text(info, nt)`` with the ``nt``
     the timeline fence has already re-synced (poc_app.py:10047, then 10292) - a
     DIFFERENT expression from the state dump's ``_animation_block``, so the two
-    can drift apart. What ``_synced_frame_counts`` now answers, and therefore
-    what both must say on the desync dump, is the PLANE family's twelve frames:
+    can drift apart. What the timeline answers - ``_position_count`` - and
+    therefore what both must say on the desync dump, is the PLANE family's
+    twelve frames:
     the player steps one plane position per step, and the |E| volume's three
     captures are a decimated layer ON that clock, not a clock of their own
     (``_volume_player_plan`` reports the same twelve). A header reading "3 of
@@ -1939,10 +1941,10 @@ def test_the_left_panel_header_counts_the_frames_the_player_steps(tmp_path):
             "frames: the volume is not the coarser recording, so there is no "
             "desynchronisation to test"
         )
-        assert app._synced_frame_counts(info, nt, nt_x) == (nt, nt_x), (
-            f"the timeline fence answers {app._synced_frame_counts(info, nt, nt_x)}, "
-            f"not ({nt}, {nt_x}): the header below would then be quoting a "
-            "clock the plane family does not hold"
+        assert app._position_count(info) == nt, (
+            f"the timeline holds {app._position_count(info)} positions, not the "
+            f"{nt} the plane family records: the header below would then be "
+            "quoting a clock the plane family does not hold"
         )
         assert app._volume_player_plan(info, "ycut")["frames"] == nt, (
             "the player does not step the plane family's frames on this dump, "
