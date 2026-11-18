@@ -80,3 +80,6 @@ tools/host/*/out/
 *.so
 .logs/
 .log_*
+
+# Timing probe output (written by server/poc_app.py; regenerable)
+artifacts/timing/

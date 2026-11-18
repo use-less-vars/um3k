@@ -871,6 +871,507 @@ def _step_counter_for_page(info, index, mode=None) -> str | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# OPT-IN TIMING PROBE (POC_TIMING)
+#
+# WHY this exists: the viewer runs on the OPERATOR's machine, so "which part of
+# a tick is slow" cannot be profiled from here. This probe writes a per-tick
+# timing line, a rolling summary and a few frames into the WORKSPACE, so the
+# answer can be read off a file afterwards instead of guessed from a symptom.
+#
+# WHAT IT MAY NEVER DO: change what the viewer draws, raise into the app, or
+# cost anything while disabled. Every entry point returns EARLY when the probe
+# is off, every body is wrapped in try/except, and this block adds NO render
+# call and changes NO existing call's arguments.
+#
+# ENABLEMENT: ON by default; off only when POC_TIMING is exactly "0", read ONCE
+# here at import.
+#
+# WHERE: <repo>/artifacts/timing/, anchored on the repository root rather than
+# the cwd, and never inside the source tree.
+# ---------------------------------------------------------------------------
+
+_TIMING_ENABLED = os.environ.get("POC_TIMING") != "0"
+_TIMING_ROOT = Path(__file__).resolve().parent.parent / "artifacts" / "timing"
+_TIMING_LOG_PATH = _TIMING_ROOT / "poc_timing.log"
+_TIMING_SUMMARY_PATH = _TIMING_ROOT / "poc_timing_summary.txt"
+_TIMING_FRAMES_DIR = _TIMING_ROOT / "frames"
+# A screenshot is a FULL framebuffer readback, so it is rationed twice over: one
+# every 25th tick, and never more than 60 files in a run.
+_TIMING_SHOT_EVERY = 25
+_TIMING_SHOT_MAX = 60
+_TIMING_SUMMARY_EVERY = 50
+
+# The one mutable probe state. Everything below reads and writes THIS, so a
+# tick in progress is one dict and cannot be half-reset by a second caller.
+_TIMING = {
+    "tick": 0,
+    "t0": None,
+    "index": None,
+    "mode": None,
+    "marks": {},
+    "fields": {},
+    "rows": [],
+    "open": False,
+    "started": False,
+    "prev_tick_start": None,
+    "gap_ms": None,
+    "play": {},
+    "pending_play": {},
+    "shot_count": 0,
+    "shots_ok": True,
+    "shot_error_logged": False,
+    "boot_done": False,
+}
+
+
+def _timing_ensure_dirs() -> None:
+    """Create the artifact directories (never inside the source tree)."""
+    _TIMING_FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _timing_num(value, digits=3):
+    """Format one millisecond figure, or ``-`` when it was not measured."""
+    try:
+        if value is None:
+            return "-"
+        return f"{float(value):.{digits}f}"
+    except Exception:  # noqa: BLE001 - a log line is not the app
+        return "-"
+
+
+def _timing_stats(values):
+    """``n``/mean/median/p95/max over the measured values, or None if none."""
+    try:
+        data = sorted(float(v) for v in values if v is not None)
+    except Exception:  # noqa: BLE001 - a summary is not the app
+        return None
+    if not data:
+        return None
+    count = len(data)
+    middle = count // 2
+    median = data[middle] if count % 2 else 0.5 * (data[middle - 1] + data[middle])
+    tail = min(count - 1, int(round(0.95 * (count - 1))))
+    return {
+        "n": count,
+        "mean": sum(data) / count,
+        "median": median,
+        "p95": data[tail],
+        "max": data[-1],
+    }
+
+
+def _timing_mean(values):
+    """Mean of the measured values, or None when none were measured."""
+    try:
+        data = [float(v) for v in values if v is not None]
+    except Exception:  # noqa: BLE001 - a summary is not the app
+        return None
+    return (sum(data) / len(data)) if data else None
+
+
+def _timing_span(name_a, name_b):
+    """Milliseconds between two marks of THIS tick, or None if either is absent."""
+    try:
+        marks = _TIMING["marks"]
+        first, second = marks.get(name_a), marks.get(name_b)
+        if first is None or second is None:
+            return None
+        return (second - first) * 1000.0
+    except Exception:  # noqa: BLE001 - a log line is not the app
+        return None
+
+
+def _timing_write(line) -> None:
+    """Append ONE line, TRUNCATING the log on this process's first write.
+
+    WHY open-per-line: the operator may kill the viewer outright, and a line
+    that is already closed and on disk survives that. The truncate is keyed on
+    a flag rather than the file, so a restart cannot append to the previous
+    run's numbers.
+    """
+    try:
+        if not _TIMING_ENABLED:
+            return
+        _timing_ensure_dirs()
+        mode = "a" if _TIMING.get("started") else "w"
+        with open(_TIMING_LOG_PATH, mode, encoding="utf-8") as handle:
+            handle.write(str(line) + "\n")
+            handle.flush()
+        _TIMING["started"] = True
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return
+
+
+def _timing_tick_begin(index=None, mode=None) -> None:
+    """Start a tick: one perf_counter origin, plus the gap since the last one."""
+    try:
+        if not _TIMING_ENABLED:
+            return
+        now = time.perf_counter()
+        probe = _TIMING
+        previous = probe.get("prev_tick_start")
+        probe["gap_ms"] = None if previous is None else (now - previous) * 1000.0
+        probe["prev_tick_start"] = now
+        probe["t0"] = now
+        probe["tick"] = int(probe.get("tick", 0)) + 1
+        probe["index"] = index
+        probe["mode"] = None if mode is None else str(mode)
+        probe["marks"] = {"t0": now}
+        probe["fields"] = {}
+        # The play loop measures its tick BEFORE _show begins this one; the
+        # numbers it parked belong to THIS line.
+        probe["play"] = probe.get("pending_play") or {}
+        probe["pending_play"] = {}
+        probe["open"] = True
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return
+
+
+def _timing_mark(name, **fields) -> None:
+    """Record a perf_counter mark (and optional scalar fields) for THIS tick."""
+    try:
+        if not _TIMING_ENABLED:
+            return
+        probe = _TIMING
+        if not probe.get("open"):
+            return
+        probe["marks"][name] = time.perf_counter()
+        if fields:
+            probe["fields"].update(fields)
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return
+
+
+def _timing_play_tick(period_ms, interval_ms, slip_ms) -> None:
+    """Park the PLAY loop's deadline arithmetic for the next tick's line.
+
+    WHY parked rather than written: the loop measures its tick before ``_show``
+    begins the tick this row belongs to. Parking lets ONE line carry both the
+    loop's slip and the draw's phases, so the two halves cannot be read out of
+    step - which is the whole point of comparing them.
+    """
+    try:
+        if not _TIMING_ENABLED:
+            return
+        _TIMING["pending_play"] = {
+            "period_ms": period_ms,
+            "interval_ms": interval_ms,
+            "slip_ms": slip_ms,
+        }
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return
+
+
+def _timing_screenshot(plotter):
+    """Time ONE viewport screenshot. Returns its ms, or None when not taken.
+
+    WHY it runs AFTER the tick's phases are frozen: a readback costs tens of
+    milliseconds, and folding it into any phase would indict the wrong code.
+    WHY the guard disables the whole feature: a plotter that cannot screenshot
+    (a headless backend, a test double) would otherwise raise on every ration
+    tick, and the operator would be reading a log full of the same error.
+    """
+    try:
+        probe = _TIMING
+        if plotter is None or not probe.get("shots_ok"):
+            return None
+        tick = int(probe.get("tick", 0))
+        if tick % _TIMING_SHOT_EVERY != 0:
+            return None
+        if int(probe.get("shot_count", 0)) >= _TIMING_SHOT_MAX:
+            return None
+        try:
+            _timing_ensure_dirs()
+            started = time.perf_counter()
+            plotter.screenshot(str(_TIMING_FRAMES_DIR / ("tick_%06d.png" % tick)))
+            elapsed = (time.perf_counter() - started) * 1000.0
+        except Exception as exc:  # noqa: BLE001 - a picture is not the run
+            probe["shots_ok"] = False
+            if not probe.get("shot_error_logged"):
+                probe["shot_error_logged"] = True
+                print(
+                    f"[poc_app] timing screenshots disabled: {exc}",
+                    file=sys.stderr,
+                )
+                _timing_write(f"SCREENSHOT disabled at tick {tick}: {exc!r}")
+            return None
+        probe["shot_count"] = int(probe.get("shot_count", 0)) + 1
+        return elapsed
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return None
+
+
+def _timing_line(row):
+    """One log line for one tick. Every phase is present, ``-`` if unmeasured."""
+    parts = [
+        f"tick={row.get('tick')}",
+        f"index={row.get('index')}",
+        f"mode={row.get('mode')}",
+        f"layer={row.get('layer')}",
+        f"total_ms={_timing_num(row.get('total_ms'))}",
+        f"sheet_ms={_timing_num(row.get('sheet_ms'))}",
+        f"layer_ms={_timing_num(row.get('layer_ms'))}",
+        f"label_ms={_timing_num(row.get('label_ms'))}",
+        f"render_ms={_timing_num(row.get('render_ms'))}",
+        f"push_ms={_timing_num(row.get('push_ms'))}",
+        f"other_ms={_timing_num(row.get('other_ms'))}",
+        f"actors={row.get('actors')}",
+        f"gap_ms={_timing_num(row.get('gap_ms'))}",
+        f"screenshot_ms={_timing_num(row.get('screenshot_ms'))}",
+        f"period_ms={_timing_num(row.get('period_ms'))}",
+        f"interval_ms={_timing_num(row.get('interval_ms'))}",
+        f"slip_ms={_timing_num(row.get('slip_ms'))}",
+    ]
+    if row.get("layer") == "MISS":
+        parts.extend(
+            [
+                f"drop_ms={_timing_num(row.get('drop_ms'))}",
+                f"scene_ms={_timing_num(row.get('scene_ms'))}",
+                f"markers_ms={_timing_num(row.get('markers_ms'))}",
+                f"actors_before={row.get('actors_before')}",
+                f"actors_after={row.get('actors_after')}",
+            ]
+        )
+    return " ".join(parts)
+
+
+def _timing_boot(plotter, info, timeline, fps, play_rate) -> None:
+    """Write the run's BOOT line, once: what versions and what dump."""
+    try:
+        probe = _TIMING
+        if probe.get("boot_done"):
+            return
+        probe["boot_done"] = True
+        pv_version = "unavailable"
+        try:
+            import pyvista as _pv
+
+            pv_version = str(getattr(_pv, "__version__", "unavailable"))
+        except Exception:  # noqa: BLE001 - the boot line is still useful
+            pv_version = "unavailable"
+        dump_path = None
+        try:
+            dump_path = info.get("path") if isinstance(info, dict) else None
+        except Exception:  # noqa: BLE001 - the boot line is still useful
+            dump_path = None
+        nsteps = None
+        try:
+            nsteps = int(timeline.nsteps) if timeline is not None else None
+        except Exception:  # noqa: BLE001 - the boot line is still useful
+            nsteps = None
+        captures = None
+        try:
+            volume = info.get("e_abs_volume") if isinstance(info, dict) else None
+            if volume is not None and getattr(volume, "ndim", 0) >= 1:
+                captures = int(volume.shape[0])
+        except Exception:  # noqa: BLE001 - the boot line is still useful
+            captures = None
+        viewport = None
+        try:
+            size = plotter.window_size
+            viewport = f"{int(size[0])}x{int(size[1])}"
+        except Exception:  # noqa: BLE001 - the boot line is still useful
+            viewport = None
+        python_version = (
+            f"{sys.version_info.major}.{sys.version_info.minor}."
+            f"{sys.version_info.micro}"
+        )
+        _timing_write(
+            "BOOT "
+            f"python={python_version} pyvista={pv_version} dump={dump_path} "
+            f"timeline_nsteps={nsteps} e_abs_captures={captures} "
+            f"fps={fps} play_rate={play_rate} viewport={viewport}"
+        )
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return
+
+
+def _timing_write_summary() -> None:
+    """Rewrite the aggregate table for the run SO FAR. Never raises."""
+    try:
+        if not _TIMING_ENABLED:
+            return
+        rows = list(_TIMING.get("rows") or [])
+        miss_rows = [r for r in rows if r.get("layer") == "MISS"]
+        hit_rows = [r for r in rows if r.get("layer") == "HIT"]
+        lines = ["POC TIMING SUMMARY", ""]
+        lines.append(
+            f"ticks={len(rows)}  miss={len(miss_rows)}  hit={len(hit_rows)}  "
+            f"screenshots={int(_TIMING.get('shot_count', 0) or 0)}"
+        )
+        lines.append(f"log={_TIMING_LOG_PATH}")
+        lines.append("")
+        for label, subset in (("all ", rows), ("MISS", miss_rows), ("HIT ", hit_rows)):
+            stats = _timing_stats([r.get("total_ms") for r in subset])
+            if stats is None:
+                lines.append(f"total_ms {label}  n=0  (nothing measured)")
+                continue
+            lines.append(
+                f"total_ms {label}  n={stats['n']}  "
+                f"mean={_timing_num(stats['mean'])}  "
+                f"median={_timing_num(stats['median'])}  "
+                f"p95={_timing_num(stats['p95'])}  "
+                f"max={_timing_num(stats['max'])}"
+            )
+        lines.append("")
+        lines.append("mean of each phase over ALL ticks (ms):")
+        for key in (
+            "sheet_ms",
+            "layer_ms",
+            "label_ms",
+            "render_ms",
+            "push_ms",
+            "other_ms",
+            "gap_ms",
+            "screenshot_ms",
+        ):
+            value = _timing_mean([r.get(key) for r in rows])
+            lines.append(f"  {key:<15}{_timing_num(value)}")
+        lines.append("mean of the MISS-only phases over MISS ticks (ms):")
+        for key in ("drop_ms", "scene_ms", "markers_ms"):
+            value = _timing_mean([r.get(key) for r in miss_rows])
+            lines.append(f"  {key:<15}{_timing_num(value)}")
+        lines.append("")
+        slip = _timing_stats([r.get("slip_ms") for r in rows])
+        periods = [r.get("period_ms") for r in rows if r.get("period_ms") is not None]
+        late = 0
+        for r in rows:
+            value, period = r.get("slip_ms"), r.get("period_ms")
+            if value is not None and period is not None and value > period:
+                late += 1
+        lines.append("deadline slip from _play_loop (ms):")
+        if slip is None:
+            lines.append("  no playback tick was measured")
+        else:
+            lines.append(
+                f"  n={slip['n']}  mean={_timing_num(slip['mean'])}  "
+                f"median={_timing_num(slip['median'])}  "
+                f"p95={_timing_num(slip['p95'])}  max={_timing_num(slip['max'])}  "
+                f"late_ticks(slip>period)={late}"
+            )
+            lines.append(
+                f"  period_ms={_timing_num(periods[-1] if periods else None)}  "
+                "interval_ms mean="
+                f"{_timing_num(_timing_mean([r.get('interval_ms') for r in rows]))}"
+            )
+        lines.append("")
+        lines.append("worst 10 ticks (tick, index, total_ms, layer):")
+        ranked = sorted(
+            (r for r in rows if r.get("total_ms") is not None),
+            key=lambda r: r["total_ms"],
+            reverse=True,
+        )[:10]
+        if not ranked:
+            lines.append("  none")
+        for r in ranked:
+            lines.append(
+                f"  tick={str(r.get('tick')):>6} index={str(r.get('index')):>6} "
+                f"total_ms={_timing_num(r.get('total_ms')):>9} "
+                f"layer={r.get('layer')}"
+            )
+        _TIMING_SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _TIMING_SUMMARY_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return
+
+
+def _timing_tick_end(
+    plotter=None,
+    index=None,
+    mode=None,
+    info=None,
+    timeline=None,
+    fps=None,
+    play_rate=None,
+) -> None:
+    """Finish a tick: freeze the phases, ration a screenshot, write ONE line.
+
+    ORDER MATTERS: every phase is measured from the marks and the row is frozen
+    BEFORE the screenshot is timed, so the readback's cost lands in its own
+    column and never inside ``render_ms`` or ``other_ms``.
+    """
+    try:
+        if not _TIMING_ENABLED:
+            return
+        probe = _TIMING
+        if not probe.get("open"):
+            return
+        probe["open"] = False
+        now = time.perf_counter()
+        t0 = probe.get("t0")
+        total_ms = None if t0 is None else (now - t0) * 1000.0
+        if index is not None:
+            probe["index"] = index
+        if mode is not None:
+            probe["mode"] = str(mode)
+        marks = probe["marks"]
+        fields = probe.get("fields") or {}
+        phases = {
+            "sheet_ms": _timing_span("sheet_start", "sheet_end"),
+            "layer_ms": _timing_span("layer_start", "layer_end"),
+            "label_ms": _timing_span("label_start", "label_end"),
+            "render_ms": _timing_span("render_start", "render_end"),
+            "push_ms": _timing_span("push_start", "push_end"),
+        }
+        measured = sum(v for v in phases.values() if v is not None)
+        # The remainder is REPORTED, not hidden: a phase this probe does not
+        # name yet still shows up in the total, so the columns add up.
+        phases["other_ms"] = None if total_ms is None else total_ms - measured
+        if "layer_hit" in marks:
+            layer_state = "HIT"
+        elif "miss_start" in marks:
+            layer_state = "MISS"
+        else:
+            layer_state = "-"
+        play = probe.get("play") or {}
+        row = dict(
+            phases,
+            tick=probe.get("tick"),
+            index=probe.get("index"),
+            mode=probe.get("mode"),
+            layer=layer_state,
+            total_ms=total_ms,
+            gap_ms=probe.get("gap_ms"),
+            actors=None,
+            screenshot_ms=None,
+            period_ms=play.get("period_ms"),
+            interval_ms=play.get("interval_ms"),
+            slip_ms=play.get("slip_ms"),
+            drop_ms=_timing_span("miss_start", "miss_drop"),
+            scene_ms=_timing_span("miss_scene_start", "miss_scene_end"),
+            markers_ms=_timing_span("miss_markers_start", "miss_markers_end"),
+            actors_before=fields.get("actors_before"),
+            actors_after=fields.get("actors_after"),
+        )
+        try:
+            row["actors"] = len(plotter.actors)
+        except Exception:  # noqa: BLE001 - a count is not the run
+            row["actors"] = None
+        row["screenshot_ms"] = _timing_screenshot(plotter)
+        _timing_boot(plotter, info, timeline, fps, play_rate)
+        _timing_write(_timing_line(row))
+        probe["rows"].append(row)
+        if int(probe.get("tick", 0)) % _TIMING_SUMMARY_EVERY == 0:
+            _timing_write_summary()
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return
+
+
+def _timing_register_exit() -> None:
+    """Rewrite the summary when the process ends: the run's "at the end"."""
+    try:
+        import atexit
+
+        atexit.register(_timing_write_summary)
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return
+
+
+if _TIMING_ENABLED:
+    _timing_register_exit()
+
+
 def _draw_step_counter(plotter, text) -> None:
     """Draw, or UPDATE, the on-canvas step counter. Never raises.
 
@@ -12206,8 +12707,11 @@ def run_web_vis(
                 # below would have stored (a lookup through ``frame_index``, never
                 # ``index + 1``).
                 entry["step"] = step
+                _timing_mark("layer_hit")
                 return
+            _timing_mark("miss_start")
             _volume_layer_drop()
+            _timing_mark("miss_drop")
             # The remembered range, reused ONLY on the reference it was measured
             # against: the whole-recording range is one number for every frame of
             # the recording (which is why it is remembered at all), a per-frame
@@ -12250,6 +12754,8 @@ def run_web_vis(
                 return
             layout = _cut_layout(info)
             before = set(plotter.actors)
+            _timing_mark("miss_actors_before", actors_before=len(before))
+            _timing_mark("miss_scene_start")
             _draw_volume_scene(
                 plotter,
                 info,
@@ -12261,7 +12767,10 @@ def run_web_vis(
                 # and the mode is the only place that knows.
                 clim_mode=clim_mode,
             )
+            _timing_mark("miss_scene_end")
+            _timing_mark("miss_markers_start")
             _draw_port_plane_markers(plotter, info, cell_mm, show_load, show_port)
+            _timing_mark("miss_markers_end", actors_after=len(plotter.actors))
             handles["volume_layer"] = {
                 "actors": [
                     plotter.actors[name]
@@ -12332,6 +12841,7 @@ def run_web_vis(
         swaps the scalar array: there is no per-frame normalisation here that
         could paint the recorded decay away.
         """
+        _timing_tick_begin(frame, mode)
         # The LIVE page, read on every draw: a finished solve swaps the dump
         # under this closure, and the readouts below must follow it.
         info = page["info"]
@@ -12374,6 +12884,7 @@ def run_web_vis(
                 plane_index = int(held)
         volume_frame = plan["volume"][index] if plan is not None else None
 
+        _timing_mark("sheet_start")
         for key, entry in sheets.items():
             visible = entry["family"] == mode
             try:
@@ -12404,6 +12915,7 @@ def run_web_vis(
                     file=sys.stderr,
                 )
 
+        _timing_mark("sheet_end")
         # The Mode picture is NOT one of the three sheets and must never be
         # treated as one: it is a still cross-section, so it is shown only for
         # its OWN family (the y-z plane the x-cuts are drawn in - edge-on to the
@@ -12579,20 +13091,38 @@ def run_web_vis(
         # so the volume, the cuts and the sheet cannot show two different frames.
         # A page whose dump carries no volume drops a stale layer and returns:
         # nothing else changes for it.
+        _timing_mark("layer_start")
         _draw_volume_layer(plane_index, mode, volume_frame)
+        _timing_mark("layer_end")
+        _timing_mark("label_start")
         # The step counter, UPDATED rather than re-created: the same name makes
         # this one annotation's text change, so a tick costs no new actor.
         _draw_step_counter(plotter, _step_counter_for_page(info, index, mode))
+        _timing_mark("label_end")
+        _timing_mark("render_start")
         try:
             plotter.render()
         except Exception as exc:  # noqa: BLE001 - never take the server down
             print(f"[poc_app] render skipped: {exc}", file=sys.stderr)
+        _timing_mark("render_end")
+        _timing_mark("push_start")
         view_handle = handles.get("view")
         if view_handle is not None:
             try:
                 view_handle.update()
             except Exception as exc:  # noqa: BLE001
                 print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+
+        _timing_mark("push_end")
+        _timing_tick_end(
+            plotter,
+            index=index,
+            mode=mode,
+            info=info,
+            timeline=timeline,
+            fps=fps,
+            play_rate=getattr(state, "play_rate", DEFAULT_PLAY_RATE),
+        )
 
     def _rebuild_sheets(mode=None) -> None:
         """Re-create the three field sheets from the LIVE page's own info.
@@ -13857,6 +14387,9 @@ def run_web_vis(
         anchor_frame = int(state.frame)
         drawn = anchor_frame
         tick = 0
+        # Wall clock of the PREVIOUS tick's deadline, so the log can show the
+        # interval this loop actually achieved beside the one it asked for.
+        _last_tick_at = None
         # The tick PERIOD is computed once and floored at 1 fps: a zero
         # would divide by zero here, before any position is drawn.
         period = 1.0 / max(1, int(fps))
@@ -13871,6 +14404,16 @@ def run_web_vis(
             # the wait may have ended this loop.
             if int(handles.get("generation", 0)) != gen or not state.playing:
                 return
+            # The deadline this tick was DUE at, and how late it actually
+            # began. Parked, not written: the tick line _show is about to
+            # emit is the line these three numbers belong on.
+            _now = loop.time()
+            _timing_play_tick(
+                period * 1000.0,
+                None if _last_tick_at is None else (_now - _last_tick_at) * 1000.0,
+                (_now - (t0 + tick * period)) * 1000.0,
+            )
+            _last_tick_at = _now
             # A FAILED TICK ENDS PLAYBACK, IT DOES NOT SILENTLY KEEP PLAYING.
             # This task is never awaited, so an exception escaping here would
             # only surface as "Task exception was never retrieved" at GC time:
