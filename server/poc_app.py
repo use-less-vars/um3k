@@ -1459,6 +1459,44 @@ _PROFILE = {
     # The display knobs the run was STARTED with (--fps, --msaa, --image-*), so
     # the summary can name them beside the numbers they produced.
     "knobs": {},
+    # The IMAGE-DELIVERY path (trame's vtkWebPublishImageDelivery), counted where
+    # trame decides to encode a frame rather than where the app asks for one, so a
+    # push it drops on its own behalf is visible instead of looking like a tick
+    # that forgot to push.
+    "push": {
+        "attempts": 0,
+        "rendered": 0,
+        "dropped_animation": 0,
+        "dropped_untracked": 0,
+        "dropped_disabled": 0,
+        # True only once the wrappers are really installed: the summary then says
+        # "available=no" rather than reporting a zero it could not measure.
+        "available": False,
+    },
+    "still": {
+        "n": 0,
+        "ms": [],
+        "total_ms": 0.0,
+        "bytes": [],
+        "total_bytes": 0,
+    },
+    "animate": {
+        "calls": 0,
+        "last_target_fps": None,
+        "in_animation_s": 0.0,
+        "last_at": None,
+    },
+    "client": {
+        "events": [],
+        "start_interaction": 0,
+        "end_interaction": 0,
+        "animation_start": 0,
+        "animation_stop": 0,
+    },
+    # The delivery totals the OPEN tick started from, so a tick row reports what
+    # THAT tick shipped instead of the run's running total.
+    "tick_snap": None,
+    "delivery_hooked": False,
 }
 
 
@@ -1543,6 +1581,30 @@ def _profile_reset() -> None:
     # The knobs describe the RUN, not the recording: reset forgets them too, so a
     # re-configured process cannot answer with the previous run's flags.
     _PROFILE["knobs"] = {}
+    # The delivery records are reset IN PLACE: the hook holds a reference to the
+    # same dictionaries, so a reset that rebound them would leave the wrappers
+    # counting into an orphan nobody reads.
+    _PROFILE["push"].update(
+        attempts=0,
+        rendered=0,
+        dropped_animation=0,
+        dropped_untracked=0,
+        dropped_disabled=0,
+        available=False,
+    )
+    _PROFILE["still"].update(n=0, ms=[], total_ms=0.0, bytes=[], total_bytes=0)
+    _PROFILE["animate"].update(
+        calls=0, last_target_fps=None, in_animation_s=0.0, last_at=None
+    )
+    _PROFILE["client"].update(
+        events=[],
+        start_interaction=0,
+        end_interaction=0,
+        animation_start=0,
+        animation_stop=0,
+    )
+    _PROFILE["tick_snap"] = None
+    _PROFILE["delivery_hooked"] = False
 
 
 def _profile_configure(
@@ -1699,6 +1761,9 @@ def _profile_tick_begin(frame=None, mode=None):
         _PROFILE["tick_counts"] = {}
         _PROFILE["last_tick_at"] = now
         _PROFILE["mark_at"] = now
+        # The delivery totals AS THE TICK OPENS: the row reports what trame did
+        # between this snapshot and the one taken when the tick closes.
+        _PROFILE["tick_snap"] = _profile_delivery_snapshot()
         tick = {
             "kind": "tick",
             "n": _PROFILE["ticks"],
@@ -1835,6 +1900,9 @@ def _profile_tick_end(frame_published=None, plotter=None, mode=None):
         if mode is not None:
             tick["mode"] = mode
         tick["counts"] = dict(_PROFILE["tick_counts"])
+        # What the IMAGE-DELIVERY path did during this tick: pushes attempted,
+        # pushes that reached the encoder, the stills it encoded and their cost.
+        tick.update(_profile_delivery_delta())
         try:
             tick["actors"] = len(plotter.actors) if plotter is not None else None
         except Exception:  # noqa: BLE001
@@ -2054,6 +2122,370 @@ def _profile_stats(values):
     if stats is None:
         return {"n": 0, "mean": 0.0, "median": 0.0, "p95": 0.0, "max": 0.0}
     return stats
+
+
+# ---------------------------------------------------------------------------
+# --profile: the IMAGE-DELIVERY path.
+#
+# The tick block above answers what OUR loop cost. It cannot see the other half
+# of a frame's journey: trame's vtkWebPublishImageDelivery runs its own VTK
+# observers, decides for itself whether an update becomes an encoded jpeg, and
+# DROPS the update outright while a view is animating - it schedules a callback
+# instead. From here, a tick that pushed and a tick whose image was thrown away
+# look identical, so the counters live where that decision is made.
+#
+# The delivery instance is built inside ``server.start()`` (trame registers the
+# link protocol from a configure callback, which runs at wslink server creation),
+# so there is no instance to wrap when the boot code runs. The CLASS is wrapped
+# instead: whichever instance the server later builds inherits the counters, and
+# every wrapper DELEGATES to the bound method it replaced, so a run without
+# --profile executes trame's own functions untouched.
+# ---------------------------------------------------------------------------
+_PROFILE_DELIVERY_METHODS = (
+    "push_render",
+    "still_render",
+    "animate",
+    "start_view_animation",
+    "stop_view_animation",
+)
+_PROFILE_DELIVERY_EVENTS = (
+    "start_interaction",
+    "end_interaction",
+    "animation_start",
+    "animation_stop",
+)
+_PROFILE_DELIVERY_MAX_EVENTS = 40
+
+
+def _profile_push_record(delivery, v_id, ignore_animation=False):
+    """Count ONE push_render attempt, and WHY it did or did not reach the encoder.
+
+    The three early returns in ``push_render`` are replayed here, in its own
+    order, against the state it reads: ``rendered`` therefore counts the attempts
+    that really got to ``still_render``, and each drop is attributed to the reason
+    the library would have given rather than to "no image came out".
+    """
+    try:
+        push = _PROFILE["push"]
+        push["attempts"] = int(push["attempts"]) + 1
+        tracking = getattr(delivery, "tracking_views", None)
+        if not isinstance(tracking, dict) or v_id not in tracking:
+            push["dropped_untracked"] = int(push["dropped_untracked"]) + 1
+            return "dropped_untracked"
+        info = tracking.get(v_id) or {}
+        try:
+            enabled = bool(info["enabled"])
+        except (KeyError, TypeError):
+            enabled = True
+        if not enabled:
+            push["dropped_disabled"] = int(push["dropped_disabled"]) + 1
+            return "dropped_disabled"
+        if not ignore_animation and getattr(delivery, "views_in_animations", None):
+            push["dropped_animation"] = int(push["dropped_animation"]) + 1
+            return "dropped_animation"
+        push["rendered"] = int(push["rendered"]) + 1
+        return "rendered"
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return None
+
+
+def _profile_image_bytes(reply):
+    """The encoded frame in a still_render reply, in bytes - None when there is none.
+
+    ``decode=False`` is how this app's delivery is built, so ``reply["image"]``
+    is already bytes and its length IS the payload. A reply with no image has no
+    size, which is counted as no size rather than as a zero-byte frame.
+    """
+    if not isinstance(reply, dict):
+        return None
+    image = reply.get("image")
+    if image is None:
+        return None
+    try:
+        return len(image)
+    except TypeError:
+        return None
+
+
+def _profile_still_record(t0, reply, now=None):
+    """Record one still_render: how long the encode took, and how big it came out."""
+    try:
+        end = _profile_now() if now is None else float(now)
+        still = _PROFILE["still"]
+        ms = (end - float(t0)) * 1000.0
+        still["n"] = int(still["n"]) + 1
+        still["ms"].append(ms)
+        still["total_ms"] = float(still["total_ms"]) + ms
+        size = _profile_image_bytes(reply)
+        if size is not None:
+            still["bytes"].append(size)
+            still["total_bytes"] = int(still["total_bytes"]) + size
+        return ms
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_animate_record(delivery, now=None):
+    """Record one animate() call: the rate it settled on, and the animated span.
+
+    ``in_animation_s`` is the wall time between consecutive animate() calls WHILE
+    a view is animating - the stretch in which trame drops every push it did not
+    ask for. A parked frame belongs beside that number, not beside the tick rate.
+    """
+    try:
+        end = _profile_now() if now is None else float(now)
+        anim = _PROFILE["animate"]
+        anim["calls"] = int(anim["calls"]) + 1
+        try:
+            anim["last_target_fps"] = float(delivery.target_frame_rate)
+        except (AttributeError, TypeError, ValueError):
+            anim["last_target_fps"] = None
+        previous = anim["last_at"]
+        if previous is not None and getattr(delivery, "views_in_animations", None):
+            span = end - float(previous)
+            if span > 0:
+                anim["in_animation_s"] = float(anim["in_animation_s"]) + span
+        anim["last_at"] = end
+        return end
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_client_record(kind="animation_start", now=None):
+    """Record one interaction edge, with the time since the run started."""
+    try:
+        end = _profile_now() if now is None else float(now)
+        client = _PROFILE["client"]
+        client["events"].append(
+            {"t": round(_profile_elapsed(end), 3), "kind": str(kind)}
+        )
+        if kind in _PROFILE_DELIVERY_EVENTS:
+            client[kind] = int(client[kind]) + 1
+        return kind
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_client_kind(default):
+    """start_/end_interaction when a VTK observer called us, else ``default``.
+
+    The delivery registers named closures on Start/EndInteractionEvent, so a drag
+    the USER began in the view is told apart from an animation a client asked for
+    over the wire by the caller's code name. Anything unreadable keeps
+    ``default``: guessing here would invent a fact about where the edge came from.
+    """
+    try:
+        name = sys._getframe(2).f_code.co_name
+    except Exception:  # noqa: BLE001 - no frames to look at
+        return default
+    if name == "start_callback":
+        return "start_interaction"
+    if name == "stop_callback":
+        return "end_interaction"
+    return default
+
+
+def _profile_delivery_snapshot():
+    """The five running delivery totals a tick row reports the DELTA of."""
+    try:
+        return {
+            "push_attempts": int(_PROFILE["push"]["attempts"]),
+            "push_rendered": int(_PROFILE["push"]["rendered"]),
+            "push_dropped_animation": int(_PROFILE["push"]["dropped_animation"]),
+            "still_ms": float(_PROFILE["still"]["total_ms"]),
+            "in_animation_s": float(_PROFILE["animate"]["in_animation_s"]),
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_delivery_delta():
+    """What the delivery path did DURING the tick that is closing."""
+    snap = _PROFILE["tick_snap"]
+    now = _profile_delivery_snapshot()
+    if not isinstance(snap, dict) or now is None:
+        return {}
+    out = {}
+    for key, value in now.items():
+        change = value - snap.get(key, 0)
+        out[key] = round(float(change), 3) if isinstance(value, float) else int(change)
+    return out
+
+
+def _profile_wrap_delivery(cls):
+    """Wrap the five delivery methods ON ``cls``. True once they are wrapped.
+
+    Idempotent (the class carries the marker) and signature-agnostic: each wrapper
+    forwards ``*args, **kwargs`` untouched, so a trame release that changes a
+    signature changes nothing here except how much is measured.
+    """
+    if getattr(cls, "_tm_profile_wrapped", False):
+        return True
+    originals = {}
+    for name in _PROFILE_DELIVERY_METHODS:
+        inner = getattr(cls, name, None)
+        if not callable(inner):
+            return False
+        originals[name] = inner
+
+    def push_render(self, *args, **kwargs):
+        if _PROFILE["enabled"]:
+            v_id = args[0] if args else kwargs.get("v_id")
+            ignore = args[1] if len(args) > 1 else kwargs.get("ignore_animation", False)
+            _profile_push_record(self, v_id, ignore)
+        return originals["push_render"](self, *args, **kwargs)
+
+    def still_render(self, *args, **kwargs):
+        if not _PROFILE["enabled"]:
+            return originals["still_render"](self, *args, **kwargs)
+        t0 = _profile_now()
+        reply = None
+        try:
+            reply = originals["still_render"](self, *args, **kwargs)
+        finally:
+            # Recorded even when the encode raised: a still that took 400 ms and
+            # then failed is not a still that took no time.
+            _profile_still_record(t0, reply)
+        return reply
+
+    def animate(self, *args, **kwargs):
+        if _PROFILE["enabled"]:
+            _profile_animate_record(self)
+        return originals["animate"](self, *args, **kwargs)
+
+    def start_view_animation(self, *args, **kwargs):
+        if _PROFILE["enabled"]:
+            _profile_client_record(_profile_client_kind("animation_start"))
+        return originals["start_view_animation"](self, *args, **kwargs)
+
+    def stop_view_animation(self, *args, **kwargs):
+        if _PROFILE["enabled"]:
+            _profile_client_record(_profile_client_kind("animation_stop"))
+        return originals["stop_view_animation"](self, *args, **kwargs)
+
+    for name, wrapper in (
+        ("push_render", push_render),
+        ("still_render", still_render),
+        ("animate", animate),
+        ("start_view_animation", start_view_animation),
+        ("stop_view_animation", stop_view_animation),
+    ):
+        wrapper.__name__ = name
+        wrapper.__doc__ = originals[name].__doc__
+        # wslink finds its RPCs by a marker in the FUNCTION's own __dict__ and
+        # reads the CLASS attribute (protocol.py: ``"_wslinkuris" in
+        # proc.__dict__``), so a wrapper that dropped it would silently
+        # unregister viewport.image.animation.start / .stop. The metadata is
+        # carried over verbatim; everything else about the wrapper is ours.
+        try:
+            wrapper.__dict__.update(getattr(originals[name], "__dict__", {}))
+        except Exception:  # noqa: BLE001 - metadata that will not copy is not fatal
+            pass
+        try:
+            setattr(cls, name, wrapper)
+        except Exception:  # noqa: BLE001 - a class that refuses is not fatal
+            return False
+    try:
+        cls._tm_profile_wrapped = True
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def _profile_hook_delivery():
+    """Install the delivery wrappers. False (never an exception) when it cannot.
+
+    Called once, from ``main``, while the suite is on: an image without trame_vtk
+    has no delivery to watch, and a run that lost half its telemetry is still a
+    run. The summary then says ``available=no`` instead of reporting five zeros
+    as if the delivery had been watched and found idle.
+    """
+    if not _PROFILE["enabled"]:
+        return False
+    if _PROFILE["delivery_hooked"]:
+        return True
+    try:
+        from trame_vtk.modules.vtk.protocols.publish_image_delivery import (
+            vtkWebPublishImageDelivery,
+        )
+    except Exception:  # noqa: BLE001 - a trame that is not installed is not an error
+        _PROFILE["push"]["available"] = False
+        return False
+    try:
+        wrapped = _profile_wrap_delivery(vtkWebPublishImageDelivery)
+    except Exception:  # noqa: BLE001
+        wrapped = False
+    _PROFILE["delivery_hooked"] = bool(wrapped)
+    _PROFILE["push"]["available"] = bool(wrapped)
+    return bool(wrapped)
+
+
+def _profile_span(value, fmt="%.3f"):
+    """A measured span as the delivery lines spell it; None is "default"."""
+    if value is None:
+        return "default"
+    try:
+        return fmt % float(value)
+    except (TypeError, ValueError):
+        return "default"
+
+
+def _profile_delivery_lines():
+    """The image-delivery block: what trame was asked to ship, and what it did."""
+    push = _PROFILE["push"]
+    still = _PROFILE["still"]
+    anim = _PROFILE["animate"]
+    client = _PROFILE["client"]
+    ms = _profile_stats([float(value) for value in still["ms"]])
+    sizes = _profile_stats([float(value) for value in still["bytes"]])
+    events = client["events"]
+    out = [
+        "push: attempts=%d rendered=%d dropped_animation=%d dropped_untracked=%d "
+        "dropped_disabled=%d available=%s"
+        % (
+            int(push["attempts"]),
+            int(push["rendered"]),
+            int(push["dropped_animation"]),
+            int(push["dropped_untracked"]),
+            int(push["dropped_disabled"]),
+            "yes" if push["available"] else "no",
+        ),
+        "still: n=%d p50=%.2f p95=%.2f max=%.2f bytes_p50=%.0f bytes_total=%d"
+        % (
+            int(still["n"]),
+            ms["median"],
+            ms["p95"],
+            ms["max"],
+            sizes["median"],
+            int(still["total_bytes"]),
+        ),
+        "animate: calls=%d last_target_fps=%s in_animation_s=%.3f"
+        % (
+            int(anim["calls"]),
+            _profile_span(anim["last_target_fps"], "%.1f"),
+            float(anim["in_animation_s"]),
+        ),
+        "client: events=%d start_interaction=%d end_interaction=%d "
+        "animation_start=%d animation_stop=%d first_t=%s last_t=%s"
+        % (
+            len(events),
+            int(client["start_interaction"]),
+            int(client["end_interaction"]),
+            int(client["animation_start"]),
+            int(client["animation_stop"]),
+            _profile_span(events[0].get("t") if events else None),
+            _profile_span(events[-1].get("t") if events else None),
+        ),
+    ]
+    # A long session has thousands of edges: the per-event lines are carried only
+    # while the list is short enough to read, and the counts above say how many.
+    if 0 < len(events) <= _PROFILE_DELIVERY_MAX_EVENTS:
+        for event in events:
+            out.append(
+                "ev t=%s kind=%s"
+                % (_profile_span(event.get("t")), event.get("kind"))
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -2688,6 +3120,9 @@ def _profile_summary_text() -> str:
         "no-op sheet repaints (index unchanged): %d of %d (%.1f%%)"
         % (noop, repaints, (100.0 * noop / repaints) if repaints else 0.0)
     )
+    # The OTHER half of a frame's journey: what trame shipped, encoded and threw
+    # away. Read beside the calls above, not instead of them.
+    out.extend(_profile_delivery_lines())
     lag = _profile_stats([float(value) for value in _PROFILE["lag"]])
     if lag["n"]:
         out.append(
@@ -16994,6 +17429,11 @@ def main(argv=None) -> int:
             start_threads=True,
             register_exit=True,
         )
+        # The delivery instance does not exist yet (trame builds it in
+        # server.start()), so the CLASS is wrapped here and every later instance
+        # inherits the counters. False is not an error: the summary says
+        # available=no rather than reporting five zeros as a measured idle.
+        _profile_hook_delivery()
     if args.structure is None:
         # The ONE place the boot default is chosen, so an explicit --structure
         # never gets a sentence about a default it did not use.

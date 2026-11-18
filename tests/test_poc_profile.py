@@ -51,7 +51,21 @@ The claims, one per test:
   ``render`` while a tick with no view counts nothing;
 * the renderer report is said a SECOND time, once, after the first frame has
   really drawn - the boot line cannot know the driver yet - and the prefix says
-  which of the two lines it is.
+  which of the two lines it is;
+* the image-delivery wrappers count each of trame's five calls AND still delegate
+  to them, once however often the class is wrapped;
+* a push trame would drop is attributed to the reason IT would have given -
+  untracked, disabled, or dropped while a view animates - so a hundred attempted
+  pushes that shipped nothing cannot be read as a hundred frames;
+* a still is a measured encode: its milliseconds and its payload bytes, and a
+  still that raised still reports the time it burned;
+* the animated span is the wall time between animate() calls while a view really
+  animates, and a client's start/stop is told apart from a user's drag by the
+  observer that made the call;
+* a tick row carries the delivery's DELTA over that tick, so a parked frame is
+  read beside the tick that parked it rather than beside the run's total;
+* without trame_vtk the hook says so (``available=no``) instead of reporting five
+  zeros as if the delivery had been watched and found idle.
 """
 
 from __future__ import annotations
@@ -221,6 +235,8 @@ def test_disabled_profile_is_a_hard_noop(tmp_path):
     assert poc_app._profile_write_summary() == ""
     assert poc_app._profile_write("ticks", "{}") is False
     assert poc_app._profile_flush_pending() is False
+    # The delivery hook is a hard no-op too: nothing is imported, nothing wrapped.
+    assert poc_app._profile_hook_delivery() is False
 
     assert poc_app._PROFILE["rows"] == []
     assert poc_app._PROFILE["lag"] == []
@@ -1196,4 +1212,363 @@ def test_a_boot_report_that_already_knew_is_not_said_again(capsys, renderer):
     assert poc_app._renderer_report_after_render(_Reported(window), handles) is False
     assert capsys.readouterr().out == ""
     assert handles["renderer_reported"] is True, "the flag still guards later ticks"
+
+
+
+# ---------------------------------------------------------------------------
+# The image-delivery path: what trame was asked to ship, and what it did.
+#
+# The tick block above can only see OUR loop. The other half of a frame's
+# journey happens inside vtkWebPublishImageDelivery, which decides for itself
+# whether an update becomes an encoded still and DROPS the update outright while
+# a view is animating. Nothing here imports trame_vtk: a fake class with the same
+# five methods is wrapped, so a failure names the bookkeeping and not a server.
+# ---------------------------------------------------------------------------
+
+_DELIVERY_IMAGE = b"jpeg-still" * 10
+
+
+class _Delivery:
+    """vtkWebPublishImageDelivery, reduced to the five calls the suite watches.
+
+    ``tracking_views`` and ``views_in_animations`` are the two pieces of STATE
+    that decide whether a push reaches the encoder or is thrown away, so they are
+    plain attributes a test can move. The five methods only remember that they
+    ran and hand back a sentinel - which is how delegation is checked.
+    """
+
+    IMAGE = _DELIVERY_IMAGE
+    tracking_views = {"v1": {"enabled": True, "quality": 100}}
+
+    def __init__(
+        self,
+        animated=False,
+        fps=30.0,
+        clock=None,
+        still_ms=0.0,
+        image=_DELIVERY_IMAGE,
+        explode=False,
+    ):
+        self.views_in_animations = {"v1": True} if animated else {}
+        self.target_frame_rate = fps
+        self.clock = clock
+        self.still_ms = float(still_ms)
+        self.image = image
+        self.explode = explode
+        self.seen = []
+
+    def push_render(self, v_id, ignore_animation=False, stale_count=0):
+        self.seen.append(("push_render", v_id, ignore_animation))
+        return "pushed"
+
+    def still_render(self, options):
+        self.seen.append(("still_render", options))
+        if self.clock is not None:
+            self.clock["t"] += self.still_ms / 1000.0
+        if self.explode:
+            raise RuntimeError("encoder died")
+        return {"image": self.image, "format": "jpeg"}
+
+    def animate(self):
+        self.seen.append(("animate",))
+        return "animated"
+
+    def start_view_animation(self, view_id="-1"):
+        self.seen.append(("start_view_animation", view_id))
+        return "started"
+
+    def stop_view_animation(self, view_id="-1"):
+        self.seen.append(("stop_view_animation", view_id))
+        return "stopped"
+
+
+def _wrapped(base=_Delivery, **kwargs):
+    """A FRESH subclass with the wrappers installed, instantiated.
+
+    The subclass is what makes the idempotence claim truthful: the wrapped marker
+    lives on the class, so wrapping ``_Delivery`` itself would leave every later
+    test looking at an already-wrapped class.
+    """
+    klass = type("_DeliveryUnderTest", (base,), {})
+    assert poc_app._profile_wrap_delivery(klass) is True
+    return klass(**kwargs)
+
+
+def test_the_wrappers_count_each_call_and_still_delegate(prof):
+    """Every wrapped method forwards, returns what it got, AND is counted once."""
+    delivery = _wrapped()
+    assert poc_app._profile_wrap_delivery(type(delivery)) is True, "idempotent"
+    assert poc_app._profile_wrap_delivery(type(delivery)) is True
+
+    assert delivery.push_render("v1") == "pushed"
+    assert delivery.still_render({"quality": 90})["image"] == _Delivery.IMAGE
+    assert delivery.animate() == "animated"
+    assert delivery.start_view_animation() == "started"
+    assert delivery.stop_view_animation() == "stopped"
+
+    push = poc_app._PROFILE["push"]
+    assert push["attempts"] == 1, "the second wrap must not count the same call twice"
+    assert push["rendered"] == 1
+    assert poc_app._PROFILE["still"]["n"] == 1
+    assert poc_app._PROFILE["animate"]["calls"] == 1
+    client = poc_app._PROFILE["client"]
+    assert (client["animation_start"], client["animation_stop"]) == (1, 1)
+    # The delegate really ran: the fake remembers its own calls, in order.
+    assert delivery.seen == [
+        ("push_render", "v1", False),
+        ("still_render", {"quality": 90}),
+        ("animate",),
+        ("start_view_animation", "-1"),
+        ("stop_view_animation", "-1"),
+    ]
+
+
+def test_every_dropped_push_is_attributed_to_its_own_reason(prof):
+    """The three early returns of push_render, replayed: no drop is anonymous."""
+    delivery = _wrapped()
+
+    assert delivery.push_render("nope") == "pushed"  # untracked view
+    delivery.tracking_views = {"v1": {"enabled": False, "quality": 100}}
+    delivery.push_render("v1")  # disabled view
+    delivery.tracking_views = {"v1": {"enabled": True, "quality": 100}}
+    delivery.views_in_animations = {"v1": True}
+    delivery.push_render("v1")  # a view is animating: trame drops it
+    delivery.push_render("v1", ignore_animation=True)  # ... unless asked for
+
+    push = poc_app._PROFILE["push"]
+    assert push["attempts"] == 4
+    assert push["dropped_untracked"] == 1
+    assert push["dropped_disabled"] == 1
+    assert push["dropped_animation"] == 1
+    assert push["rendered"] == 1
+
+
+def test_a_still_records_its_encode_time_and_the_bytes_it_carried(prof):
+    """A still is a measured encode, not just a count: ms AND payload size."""
+    delivery = _wrapped(clock=prof.clock, still_ms=37.5, image=b"z" * 1234)
+    reply = delivery.still_render({"quality": 100})
+
+    still = poc_app._PROFILE["still"]
+    assert reply["image"] == b"z" * 1234
+    assert still["n"] == 1
+    assert still["ms"] == pytest.approx([37.5])
+    assert still["total_ms"] == pytest.approx(37.5)
+    assert still["bytes"] == [1234]
+    assert still["total_bytes"] == 1234
+
+    # A reply with NO image has no size: counted as a still, never as 0 bytes.
+    delivery.image = None
+    assert delivery.still_render({})["image"] is None
+    assert still["n"] == 2
+    assert still["bytes"] == [1234]
+    assert still["total_bytes"] == 1234
+
+
+def test_a_still_that_raises_still_reports_the_time_it_took(prof):
+    """A still that took 12 ms and then failed is not a still that took no time."""
+    delivery = _wrapped(clock=prof.clock, still_ms=12.0, explode=True)
+    with pytest.raises(RuntimeError, match="encoder died"):
+        delivery.still_render({})
+
+    still = poc_app._PROFILE["still"]
+    assert still["n"] == 1
+    assert still["ms"] == pytest.approx([12.0])
+    assert still["total_bytes"] == 0
+
+
+def test_animate_records_the_target_rate_and_the_animated_span(prof):
+    """``in_animation_s`` is the wall time BETWEEN animate() calls, while animating."""
+    delivery = _wrapped(animated=True, fps=24.0, clock=prof.clock)
+    delivery.animate()  # the baseline: no span to add yet
+
+    anim = poc_app._PROFILE["animate"]
+    assert anim["calls"] == 1
+    assert anim["last_target_fps"] == pytest.approx(24.0)
+    assert anim["in_animation_s"] == pytest.approx(0.0)
+
+    prof.run.advance(500.0)  # 0.5 s in which every unasked push was dropped
+    delivery.animate()
+    assert anim["calls"] == 2
+    assert anim["in_animation_s"] == pytest.approx(0.5)
+
+    # A delivery whose views are NOT animating adds no animated span.
+    idle = _wrapped(animated=False, fps=12.0, clock=prof.clock)
+    idle.animate()
+    prof.run.advance(500.0)
+    idle.animate()
+    assert anim["in_animation_s"] == pytest.approx(0.5)
+    assert anim["calls"] == 4
+    assert anim["last_target_fps"] == pytest.approx(12.0)
+
+
+def test_an_interaction_edge_is_told_apart_from_an_animation(prof):
+    """A drag the USER started is not an animation a client asked for over the wire."""
+
+    delivery = _wrapped(clock=prof.clock)
+
+    def start_callback():  # the name vtkWebPublishImageDelivery registers
+        return delivery.start_view_animation()
+
+    def stop_callback():
+        return delivery.stop_view_animation()
+
+    assert start_callback() == "started"
+    prof.run.advance(100.0)
+    assert stop_callback() == "stopped"
+    prof.run.advance(100.0)
+    assert delivery.start_view_animation() == "started"  # an RPC, not an observer
+    assert delivery.stop_view_animation() == "stopped"
+
+    client = poc_app._PROFILE["client"]
+    assert client["start_interaction"] == 1
+    assert client["end_interaction"] == 1
+    assert client["animation_start"] == 1
+    assert client["animation_stop"] == 1
+    assert [event["kind"] for event in client["events"]] == [
+        "start_interaction",
+        "end_interaction",
+        "animation_start",
+        "animation_stop",
+    ]
+    assert client["events"][1]["t"] == pytest.approx(0.1)
+
+
+def test_a_tick_row_carries_what_the_delivery_did_during_it(prof):
+    """The row reports the DELTA of the run's delivery totals, not the total."""
+    delivery = _wrapped(fps=30.0, clock=prof.clock, still_ms=20.0)
+
+    poc_app._profile_tick_begin(0, "ycut")
+    delivery.push_render("v1")  # reaches the encoder
+    delivery.still_render({})  # 20 ms of encode, inside this tick
+    prof.run.advance(10.0)
+    poc_app._profile_tick_end(0, plotter=None, mode="ycut")
+
+    row = poc_app._PROFILE["rows"][0]
+    assert row["push_attempts"] == 1
+    assert row["push_rendered"] == 1
+    assert row["push_dropped_animation"] == 0
+    assert row["still_ms"] == pytest.approx(20.0)
+    assert row["in_animation_s"] == pytest.approx(0.0)
+
+    poc_app._profile_tick_begin(1, "ycut")
+    delivery.views_in_animations = {"v1": True}
+    delivery.push_render("v1")  # DROPPED: a view is animating
+    delivery.animate()
+    prof.run.advance(250.0)
+    delivery.animate()
+    poc_app._profile_tick_end(1, plotter=None, mode="ycut")
+
+    row = poc_app._PROFILE["rows"][1]
+    assert row["push_attempts"] == 1
+    assert row["push_rendered"] == 0
+    assert row["push_dropped_animation"] == 1
+    assert row["still_ms"] == pytest.approx(0.0), "no still was encoded this tick"
+    assert row["in_animation_s"] == pytest.approx(0.25)
+
+    # A tick that touched neither reports zeros, not the run's running total.
+    poc_app._profile_tick_begin(2, "ycut")
+    poc_app._profile_tick_end(2, plotter=None, mode="ycut")
+    row = poc_app._PROFILE["rows"][2]
+    assert row["push_attempts"] == 0
+    assert row["still_ms"] == pytest.approx(0.0)
+    assert row["in_animation_s"] == pytest.approx(0.0)
+
+
+def test_the_summary_names_the_delivery_and_every_edge(prof):
+    """Four lines beside ``calls:``, plus one line per edge while the list is short."""
+    delivery = _wrapped(
+        animated=True, fps=24.0, clock=prof.clock, still_ms=5.0, image=b"q" * 800
+    )
+
+    def start_callback():
+        return delivery.start_view_animation()
+
+    start_callback()
+    delivery.still_render({})
+    delivery.push_render("v1")  # dropped_animation: a view is animating
+    poc_app._PROFILE["push"]["available"] = True
+
+    text = poc_app._profile_summary_text()
+    assert (
+        "push: attempts=1 rendered=0 dropped_animation=1 dropped_untracked=0 "
+        "dropped_disabled=0 available=yes"
+    ) in text
+    assert "still: n=1 p50=" in text
+    assert "bytes_total=800" in text
+    assert "animate: calls=0 last_target_fps=default in_animation_s=0.000" in text
+    assert "client: events=1 start_interaction=1 end_interaction=0" in text
+    assert "animation_start=0 animation_stop=0" in text
+    assert "first_t=0.000 last_t=0.000" in text
+    assert "ev t=0.000 kind=start_interaction" in text
+
+    # Unhooked is said, not implied: the same run reports available=no.
+    poc_app._PROFILE["push"]["available"] = False
+    assert "available=no" in poc_app._profile_summary_text()
+
+
+def test_per_event_lines_stop_when_the_session_gets_long(prof):
+    """Thousands of drags would bury the summary: the counts above still say how many."""
+    for index in range(poc_app._PROFILE_DELIVERY_MAX_EVENTS + 1):
+        poc_app._profile_client_record("animation_start", now=index * 0.5)
+
+    text = poc_app._profile_summary_text()
+    assert "ev t=" not in text
+    assert "client: events=41" in text
+    assert "animation_start=41" in text
+
+
+def test_without_trame_vtk_the_hook_says_so_and_never_raises(prof, monkeypatch):
+    """An image without the delivery has no counters to watch; the run is not lost."""
+    monkeypatch.setitem(
+        sys.modules, "trame_vtk.modules.vtk.protocols.publish_image_delivery", None
+    )
+
+    assert poc_app._profile_hook_delivery() is False
+    assert poc_app._PROFILE["delivery_hooked"] is False
+    assert poc_app._PROFILE["push"]["available"] is False
+    text = poc_app._profile_summary_text()
+    assert "push: attempts=0 rendered=0 dropped_animation=0" in text
+    assert "available=no" in text
+
+
+def test_a_wrapped_delivery_records_nothing_while_the_suite_is_off(tmp_path):
+    """Off is off even for an INSTALLED wrapper: it forwards, and counts nothing."""
+    poc_app._profile_configure(False)
+    poc_app._profile_reset()
+
+    delivery = _wrapped(animated=True, still_ms=9.0)
+    assert delivery.push_render("v1") == "pushed"
+    assert delivery.still_render({})["image"] == _Delivery.IMAGE
+    assert delivery.animate() == "animated"
+    assert delivery.start_view_animation() == "started"
+    assert delivery.stop_view_animation() == "stopped"
+
+    assert poc_app._PROFILE["push"]["attempts"] == 0
+    assert poc_app._PROFILE["still"]["n"] == 0
+    assert poc_app._PROFILE["animate"]["calls"] == 0
+    assert poc_app._PROFILE["client"]["events"] == []
+    assert poc_app._profile_summary_text() == ""
+
+
+
+def test_a_wrapper_keeps_the_marker_wslink_finds_its_rpcs_by(prof):
+    """The RPC URIs live in the method's own __dict__: the wrapper must carry them."""
+
+    class _Rpc(_Delivery):
+        def start_view_animation(self, view_id="-1"):
+            return "started"
+
+    _Rpc.start_view_animation._wslinkuris = [
+        {"uri": "viewport.image.animation.start"}
+    ]
+    klass = type("_RpcUnderTest", (_Rpc,), {})
+    assert poc_app._profile_wrap_delivery(klass) is True
+
+    wrapped = klass.start_view_animation
+    assert wrapped is not _Rpc.start_view_animation, "the class attribute is wrapped"
+    assert wrapped.__dict__["_wslinkuris"] == [
+        {"uri": "viewport.image.animation.start"}
+    ], "an unregistered RPC is a broken app, not a lost counter"
+    # And the base class it was reading from is untouched.
+    assert _Rpc.start_view_animation.__dict__["_wslinkuris"]
 
