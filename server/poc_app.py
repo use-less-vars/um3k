@@ -1037,6 +1037,47 @@ def _volume_layer_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# THE PICTURE IS RENDERED BY THE SERVER UNLESS ASKED OTHERWISE (POC_LOCAL_VIEW)
+#
+# WHY: mode="server" (PyVistaRemoteView) renders here and streams the image, so
+# the page does not depend on the client's WebGL context surviving inside a
+# flexed container - that is the DEFAULT and the only behaviour a plain run has.
+# mode="client" (PyVistaLocalView) moves the rendering to the BROWSER instead,
+# which is what a host with no GL to render WITH wants: the server then
+# suppresses its own rendering (trame_pyvista sets suppress_rendering from the
+# mode) instead of pushing stills nobody can produce.
+#
+# WHAT IT MAY NEVER COST: the default page. Off, the mode string is "server",
+# add_menu is False and the layout is built in the same order as before - one
+# flag away and byte-identical, and a test pins that.
+#
+# READ AT CALL TIME, not once at import, so the answer handed to the layout is
+# the one in force when the page is BUILT (see run_web_vis): a test can set it
+# between draws without a re-import.
+# ---------------------------------------------------------------------------
+
+LOCAL_VIEW_DEFAULT = False
+
+
+def _local_view_enabled(flag: bool = False) -> bool:
+    """Render the centre plotter in the BROWSER?  False unless opted in.
+
+    ``flag`` is the parsed ``--local-view``; ``POC_LOCAL_VIEW`` does the same
+    without the flag (``1``/``true``). The flag WINS over the variable, because
+    a run that named a mode on its command line must not be overridden by a
+    leftover export.
+    """
+    if flag:
+        return True
+    if bool(LOCAL_VIEW_DEFAULT):
+        return True
+    value = os.environ.get("POC_LOCAL_VIEW")
+    if value is None:
+        return False
+    return value.strip().lower() in ("1", "true")
+
+
+# ---------------------------------------------------------------------------
 # OPT-IN TIMING PROBE (POC_TIMING)
 #
 # WHY this exists: the viewer runs on the OPERATOR's machine, so "which part of
@@ -13847,6 +13888,7 @@ def run_web_vis(
     surface_dump=None, loaded_page=None,
     msaa=None, image_encoding=None, image_quality=None,
     stride=DEFAULT_PLAY_STRIDE, paint_fps=None,
+    local_view=False,
 ) -> int:
     """Serve the animation page for an ``emfit.vis/2`` dump.
 
@@ -17647,6 +17689,19 @@ def run_web_vis(
     # untouched plotter_ui.
     ui_with_image_knobs = _image_aware_plotter_ui(plotter_ui, image_quality)
 
+    # WHICH VIEW the centre plotter is built as, decided HERE at LAYOUT time from
+    # what the page was started with (see _local_view_enabled): --local-view, or
+    # POC_LOCAL_VIEW, or neither. It is read ONCE and handed to the centre column
+    # as a `local_view` handle below, so the panel builder carries neither
+    # argparse nor os.environ - the same seam every other page fact uses
+    # (plotter, state, info), and the reason a fake context can still build the
+    # column.
+    #
+    # NAME: `render_local`, not `local_view`, so the parameter of that name stays
+    # the thing the CALLER asked and this stays the ANSWER (flag or env) the page
+    # is actually built with.
+    render_local = _local_view_enabled(local_view)
+
     with SinglePageLayout(server) as layout:
         # The header is the second place the page title lives, so it is written
         # from the same helper as the browser title and re-pointed from now on
@@ -17663,7 +17718,15 @@ def run_web_vis(
                 # widgets, so on this degraded path the picture and the solve
                 # controls are all there is - the toolbar that used to hold
                 # the buttons is gone.
-                view = ui_with_image_knobs(plotter, mode="server", add_menu=False)
+                # The mode the page was asked for, the same answer the centre
+                # column gets: a host with no GL to render WITH is exactly the
+                # case this degraded path exists for, so --local-view must not
+                # go quiet here. add_menu stays False either way.
+                view = ui_with_image_knobs(
+                    plotter,
+                    mode="client" if render_local else "server",
+                    add_menu=False,
+                )
                 _emit_solve_controls()
             else:
                 with container(fluid=True, classes="pa-0 fill-height"):
@@ -17691,6 +17754,14 @@ def run_web_vis(
                         ctx.register_handle("nt", nt)
                         ctx.register_handle("frame_max", _frame_max_for(info))
                         ctx.register_handle("plotter", plotter)
+                        # Browser or server rendering for that plotter, resolved
+                        # above from --local-view/POC_LOCAL_VIEW. A handle like
+                        # the rest: the centre column reads it instead of
+                        # reaching for the environment or the argument parser
+                        # itself. ABSENT (a fake context, any caller that does
+                        # not register it) the column keeps mode="server", so
+                        # nothing that leaves it out changes.
+                        ctx.register_handle("local_view", render_local)
                         # The PLAY SPEED the player bar offers: the values and the
                         # one the select starts on, as one handle the centre column
                         # may bind. A handle rather than a literal in the panel
@@ -18001,6 +18072,16 @@ def main(argv=None) -> int:
             f"{_PROFILE_DEFAULT_DIR})"
         ),
     )
+    parser.add_argument(
+        "--local-view",
+        action="store_true",
+        dest="local_view",
+        help=(
+            "render the centre plotter in the BROWSER (trame PyVistaLocalView) "
+            "instead of on the server; POC_LOCAL_VIEW=1 does the same without "
+            "the flag."
+        ),
+    )
     args = parser.parse_args(argv)
     # The pump's two knobs are INTS with a meaning, not free numbers: a stride of 0
     # would freeze the picture on its first painted frame and a paint cap of 0 would
@@ -18091,6 +18172,7 @@ def main(argv=None) -> int:
             msaa=knobs["msaa"],
             image_encoding=knobs["image_encoding"],
             image_quality=knobs["image_quality"],
+            local_view=args.local_view,
         )
 
     # --input wins when given, then the entry's own dump, then the default - see
@@ -18142,6 +18224,7 @@ def main(argv=None) -> int:
         msaa=knobs["msaa"],
         image_encoding=knobs["image_encoding"],
         image_quality=knobs["image_quality"],
+        local_view=args.local_view,
     )
 
 

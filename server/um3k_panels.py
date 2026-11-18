@@ -74,6 +74,18 @@ def build_center_panel(ctx) -> object:
     VRow = ctx.callback("VRow")
     plotter_ui = ctx.callback("plotter_ui")
 
+    # THE MODE SEAM: WHO renders the picture is the PAGE's decision, not this
+    # column's. By default the SERVER renders it and streams the image
+    # (mode="server"); a page opened with --local-view / POC_LOCAL_VIEW asks for
+    # the BROWSER to draw it instead (mode="client"). The page resolves those
+    # two into ONE bool and registers it here as the `local_view` HANDLE
+    # (poc_app.py:17764), so this module reads no environment and stays
+    # trame-free and fakeable: a test sets the flag by registering the handle.
+    # Read LENIENTLY (``.get``) because it is an OPT-IN - a context that never
+    # registers it (every header fake, every page built before the flag) must
+    # build exactly the server-rendered view it always built.
+    view_mode = "client" if ctx.handles.get("local_view") else "server"
+
     # THE CUT SHEETS: a page that captured more than one x-plane has a stack to
     # cut through, and the two sliders that move the cut belong with the
     # picture they move - in this column, above it, rather than in the toolbar.
@@ -131,8 +143,9 @@ def build_center_panel(ctx) -> object:
         # trame/client/server/wasm) and
         # default_server_rendering only applies to
         # mode="trame", so both are left alone.
+        # `local_view` (read above) is the flag that switches this to "client".
         view = plotter_ui(
-            plotter, mode="server", add_menu=False
+            plotter, mode=view_mode, add_menu=False
         )
     # PLAYER BAR: the frame scrubber and the playback
     # buttons, out of the toolbar and under the

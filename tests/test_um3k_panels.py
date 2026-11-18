@@ -664,6 +664,80 @@ def test_build_center_panel_without_a_timeline_leaves_the_player_out():
     assert "\n" not in reason, f"the reason is not one line: {reason!r}"
 
 
+def test_the_centre_view_is_server_rendered_when_nothing_asks_otherwise():
+    """If this fails, the DEFAULT page changed which machine renders it.
+
+    The page renders on the server and streams the image: ``mode="server"`` and
+    ``add_menu=False``, exactly the two keywords the column has always passed.
+    The fixture registers no ``local_view`` handle at all, which is also the
+    shape of every context built before the flag existed - the flag is read
+    leniently, so an absent one must mean the server view.
+    """
+    ctx, _log, built, _view = _fake_center_context()
+
+    um3k_panels.build_center_panel(ctx)
+
+    kwargs = built["plotter_ui"][0].kwargs
+    assert kwargs == {"mode": "server", "add_menu": False}, (
+        f"the default page built its view with {kwargs!r}"
+    )
+
+
+def test_the_centre_view_is_browser_rendered_when_the_page_asks_for_it():
+    """If this fails, --local-view reaches the page but not the picture.
+
+    One handle flips it: ``local_view`` is what ``run_web_vis`` registers from
+    ``--local-view``/``POC_LOCAL_VIEW`` (poc_app.py:17764), and the column must
+    build the SAME view with the same other keyword - only the mode changes.
+    """
+    ctx, log, built, view = _fake_center_context()
+    ctx.register_handle("local_view", True)  # the whole of --local-view
+
+    result = um3k_panels.build_center_panel(ctx)
+
+    assert result is view
+    kwargs = built["plotter_ui"][0].kwargs
+    assert kwargs == {"mode": "client", "add_menu": False}, (
+        f"the local-view page built its view with {kwargs!r}"
+    )
+    assert log == [
+        ("callback", "html_div"),
+        ("callback", "plotter_ui"),
+        ("callback", "VRow"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VSlider"),
+        ("widget", "VLabel"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VBtn"),
+        ("widget", "VSpacer"),
+    ], f"the flag changed what the column BUILT, not just the mode: {log!r}"
+
+
+def test_the_centre_view_mode_is_read_when_the_column_is_built():
+    """If this fails, the mode was decided once and toggling it does nothing.
+
+    The handle is set between two builds of the SAME context: the second must
+    follow it. That is what makes the flag usable at all - the page registers
+    ``local_view`` at the layout that builds the column, so the value read has
+    to be the value in force at that moment, not at import.
+    """
+    ctx, _log, built, _view = _fake_center_context()
+
+    um3k_panels.build_center_panel(ctx)
+    ctx.register_handle("local_view", True)
+    um3k_panels.build_center_panel(ctx)
+    ctx.handles.pop("local_view")
+    um3k_panels.build_center_panel(ctx)
+
+    modes = [made.kwargs["mode"] for made in built["plotter_ui"]]
+    assert modes == ["server", "client", "server"], (
+        f"the three builds asked for {modes!r}"
+    )
+
+
 RIGHT_CALLBACKS = (
     "_load_s_params_panel", "_load_far_field_panel", "_load_confidence_panel",
     "_emit_s_params_panel", "_emit_far_field_panel", "_emit_confidence_panel",

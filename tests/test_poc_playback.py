@@ -5515,3 +5515,203 @@ def test_a_busy_port_is_reported_in_one_line_naming_the_port(
         "the run never prints its own pid: a busy port cannot be traced back to "
         f"the process that holds it. lines={printed}"
     )
+
+
+# =============================================================================
+# WHICH VIEW THE CENTRE PLOTTER IS BUILT AS (--local-view / POC_LOCAL_VIEW)
+# =============================================================================
+# Default OFF, and off is exactly the page that shipped before: the centre
+# column builds its plotter_ui with mode="server" and the view the page caches
+# on handles["view"] is the REMOTE one.  The flag - or POC_LOCAL_VIEW, combined
+# inside run_web_vis - moves the rendering into the BROWSER instead, which is
+# what a host with no GL to render WITH needs.
+#
+# The switch and the page it produces are pinned here.  WHICH mode string
+# reaches plotter_ui is pinned in tests/test_um3k_panels.py, where the centre
+# column is built against a fake context and no server is needed at all.
+
+
+def test_local_view_is_off_unless_asked_and_the_env_is_read_at_call_time(
+    monkeypatch,
+) -> None:
+    """If this fails, a plain run renders in the browser or ignores the variable.
+
+    ``POC_LOCAL_VIEW`` is set AFTER the import on purpose: the switch has to
+    answer with the environment as it is when the page is built, not as it was
+    when the module was read - a captured value would make a run started with
+    the variable set behave exactly like one started without it.
+    """
+    import poc_app as app
+
+    monkeypatch.delenv("POC_LOCAL_VIEW", raising=False)
+    assert app.LOCAL_VIEW_DEFAULT is False, (
+        "the shipped default is not off: every run would render the centre "
+        "plotter in the browser"
+    )
+    assert app._local_view_enabled() is False, (
+        "with no flag and no variable the page is no longer server-rendered"
+    )
+    monkeypatch.setenv("POC_LOCAL_VIEW", "1")
+    assert app._local_view_enabled() is True, (
+        "POC_LOCAL_VIEW was set after import and had no effect: the variable is "
+        "being captured somewhere other than call time"
+    )
+    monkeypatch.setenv("POC_LOCAL_VIEW", " TRUE ")
+    assert app._local_view_enabled() is True, (
+        "a padded/uppercase 'true' is refused, so a documented spelling of the "
+        "variable silently does nothing"
+    )
+    for said in ("0", "", "   "):
+        monkeypatch.setenv("POC_LOCAL_VIEW", said)
+        assert app._local_view_enabled() is False, (
+            f"POC_LOCAL_VIEW={said!r} turned the local view ON: anything that is "
+            "not 1/true must leave the default page alone"
+        )
+    monkeypatch.setenv("POC_LOCAL_VIEW", "0")
+    assert app._local_view_enabled(True) is True, (
+        "the flag lost to a variable that says no: --local-view is the explicit "
+        "ask, so it must win"
+    )
+
+
+def test_the_local_view_default_is_the_switch_the_switch_reads(monkeypatch) -> None:
+    """``LOCAL_VIEW_DEFAULT`` is the module-level default, not a dead constant."""
+    import poc_app as app
+
+    monkeypatch.delenv("POC_LOCAL_VIEW", raising=False)
+    monkeypatch.setattr(app, "LOCAL_VIEW_DEFAULT", True)
+    assert app._local_view_enabled() is True, (
+        "LOCAL_VIEW_DEFAULT was flipped and nothing changed: the switch does not "
+        "read the module constant"
+    )
+
+
+class _Shell:
+    """Stand-in for ``run_web_vis``: records the call, boots nothing."""
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def __call__(self, *args, **kwargs) -> int:
+        self.calls.append((args, kwargs))
+        return 0
+
+
+def _main_kwargs_for(monkeypatch, tmp_path: Path, *extra: str) -> dict:
+    """The keyword arguments ``main`` hands the shell, with its seams recorded.
+
+    Same recipe as tests/test_poc_dispatch.py: the registry, the record-only
+    probe and the dump read are replaced, so no trame server boots and no npz is
+    opened - the argument ``main`` carries is the whole subject here.
+    """
+    import poc_app as app
+
+    page = {
+        "info": {"format": app.VIS_FORMAT, "nt": 4},
+        "path": str(tmp_path / "d.npz"),
+    }
+    monkeypatch.setattr(app, "load_structures", lambda: [{"id": "s1"}])
+    monkeypatch.setattr(app, "_structure_is_record_only", lambda structure: False)
+    monkeypatch.setattr(
+        app, "reload_page", lambda npz_path, structure_id=None: page
+    )
+    shell = _Shell()
+    monkeypatch.setattr(app, "run_web_vis", shell)
+    monkeypatch.setattr(app, "run_web", _Shell())
+    monkeypatch.setattr(app, "print_keys", _Shell())
+
+    assert app.main(["--structure", "s1", "--input", "fake.npz", *extra]) == 0
+    assert len(shell.calls) == 1, (
+        "main did not hand this dump to the unified shell once: "
+        f"{shell.calls}"
+    )
+    return shell.calls[0][1]
+
+
+def test_the_shell_is_told_local_view_only_when_the_flag_was_given(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """If this fails, --local-view never reaches the page or is always on."""
+    assert _main_kwargs_for(monkeypatch, tmp_path)["local_view"] is False, (
+        "a plain run asks the shell for the local view: the default page moved "
+        "the rendering into the browser"
+    )
+    assert (
+        _main_kwargs_for(monkeypatch, tmp_path, "--local-view")["local_view"]
+        is True
+    ), "--local-view was given and the shell was not told"
+
+
+def test_the_env_alone_does_not_reach_the_shell_as_a_flag(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """``POC_LOCAL_VIEW`` is combined INSIDE the shell, never by ``main``.
+
+    ``main`` passes what was typed on the command line; the variable is read by
+    ``_local_view_enabled`` when the page is built.  Asserting the env on the
+    keyword would pin the wrong seam - and a ``main`` that folded the variable
+    in itself would be a second place to keep in step.
+    """
+    monkeypatch.setenv("POC_LOCAL_VIEW", "1")
+    assert _main_kwargs_for(monkeypatch, tmp_path)["local_view"] is False, (
+        "main folded POC_LOCAL_VIEW into the argument it passes: the variable "
+        "belongs to the switch inside run_web_vis"
+    )
+
+
+def _view_handle(info) -> object:
+    """``handles["view"]`` off the live page, after the layout was built.
+
+    The dict comes off the play trigger's closure: it is the page's own dict,
+    and a stand-in would prove nothing about what the boot really built.
+    """
+    app, srv = _boot_app(info)
+    trigger = _registered_trigger(srv.controller, TRIGGER_NAME)
+    cells = _closure_cells(trigger)
+    assert "handles" in cells, (
+        "the play trigger is not closed over the page's `handles` "
+        f"(freevars: {sorted(cells)}), so the built view cannot be asserted on"
+    )
+    handles = cells["handles"]
+    assert "view" in handles, (
+        "no handles['view'] after the layout was built: the centre column "
+        "returned nothing, or the boot returned before the row was laid out"
+    )
+    return handles["view"]
+
+
+def test_the_default_page_renders_its_picture_on_the_server(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """If this fails, a plain run renders in the BROWSER - the default moved."""
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    monkeypatch.delenv("POC_LOCAL_VIEW", raising=False)
+    with _counted_render():
+        view = _view_handle(_fixture_info(app, tmp_path / "default.npz"))
+
+    assert type(view).__name__ == "PyVistaRemoteView", (
+        "the default page did not build the server-rendered view: "
+        f"{type(view).__name__} was built instead, so a plain run now depends on "
+        "the client's WebGL context"
+    )
+
+
+def test_local_view_builds_the_browser_rendered_view(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """If this fails, --local-view reaches the page but not the picture."""
+    pytest.importorskip("pyvista")
+    import poc_app as app
+
+    monkeypatch.setenv("POC_LOCAL_VIEW", "1")
+    with _counted_render():
+        view = _view_handle(_fixture_info(app, tmp_path / "local.npz"))
+
+    assert type(view).__name__ == "PyVistaLocalView", (
+        "POC_LOCAL_VIEW=1 did not move the rendering into the browser: "
+        f"{type(view).__name__} was built, so a host with no GL to render WITH "
+        "still gets nothing"
+    )
+
