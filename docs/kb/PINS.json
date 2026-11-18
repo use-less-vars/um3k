@@ -3,7 +3,7 @@
   "core_handoff_id": "gen13->gen14",
   "newest_commit": "36c71d3eaaecf9ee04857dac2d68b04ba5ab97ef",
   "newest_commit_date": "2026-11-18T18:58:25+00:00",
-  "uncited_baseline": 1,
+  "uncited_baseline": 2,
   "budgets": {
     "core": 46080,
     "core_warn": 38912,
