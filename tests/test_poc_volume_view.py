@@ -1109,7 +1109,7 @@ def test_a_cut_redraw_adds_no_render_for_the_edges(monkeypatch):
     plane already uses - is what keeps an edge from flushing a draw of a picture
     that is still being built, so the common tail's one render is still the only
     draw of a rebuild. That is why ``_CUT_REDRAW_RENDERS`` in
-    tests/test_poc_playback.py stays 9 and must never be relaxed to ``>= 1``.
+    tests/test_poc_playback.py stays 4 and must never be relaxed to ``>= 1``.
 
     A count of four also catches the OTHER failure: an edge that quietly stopped
     being drawn would leave two calls and a picture with no extents, and every

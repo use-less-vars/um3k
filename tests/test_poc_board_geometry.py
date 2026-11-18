@@ -647,8 +647,11 @@ def test_add_markers_sizes_its_discs_from_the_field_grid():
     assert all("opacity" not in kw for _n, _m, kw in plotter.meshes), (
         f"a marker was drawn with an opacity: {[kw for _n, _m, kw in plotter.meshes]}"
     )
-    # Only the first disc flushes the frame; the second one is drawn next.
-    assert [kw.get("render") for _n, _m, kw in plotter.meshes] == [True, False]
+    # NEITHER disc flushes the frame: both are handed over silent and the one
+    # render the pair needs is the CALLER's - ``_redraw_scene``'s tail after
+    # ``_draw_scene``, ``_show``'s after ``_draw_port_plane_markers`` - so a
+    # disc never draws the scene while the other one is still missing.
+    assert [kw.get("render") for _n, _m, kw in plotter.meshes] == [False, False]
 
 
 def test_add_markers_read_the_volumes_grid_when_the_dump_carries_a_volume():

@@ -3954,34 +3954,39 @@ def test_vis_cut_state_opens_on_the_middle_sample(field_page):
 #: How many ``pyvista.Plotter.render`` calls ONE cut change produces.
 #:
 #: ``_redraw_scene``'s own ``plotter.render()`` is only ONE of them: it calls
-#: ``_draw_scene``, which re-adds every actor, and pyvista draws from inside
-#: those internals - 8 from ``renderer.add_actor`` on top of the explicit
-#: render.  The camera contributes NOTHING here, and that is the point: a cut
-#: change rebuilds a plotter the page's BOOT already framed (``_draw_scene``
-#: frames on its first build only, through its own ``_poc_camera_framed`` guard),
-#: so this path never reaches
-#: ``view_isometric`` (measured: 1 draw) or ``reset_camera`` (measured: 2
-#: draws).  Those 3 are what the boot pays and every slider tick no longer does;
-#: re-pinning this to 12 would re-pin the view snapping back under the
-#: operator's hand.
+#: ``_draw_scene``, which re-adds the actors, and pyvista draws from inside those
+#: adds - 3 ``add_actor`` draws on top of the explicit render.  The three, in the
+#: order the rebuild makes them, are:
+#:
+#: * the extent-box outline (``_add_extent_outlines``'s ``add_mesh``);
+#: * ``_vis_geometry``'s GROUND PLANE: the field snapshot carries no board
+#:   geometry of its own, so the vis page draws the board under the field
+#:   instead of leaving the field floating in empty space;
+#: * the station text: ``Plotter.add_text`` passes ``render=True`` down to
+#:   ``add_actor`` (pyvista/plotting/plotter.py:5725), and this path draws it.
+#:
+#: The camera contributes NOTHING here, and that is the point: a cut change
+#: rebuilds a plotter the page's BOOT already framed (``_draw_scene`` frames on
+#: its first build only, through its own ``_poc_camera_framed`` guard), so this
+#: path never reaches ``view_isometric`` (measured: 1 draw) or ``reset_camera``
+#: (measured: 2 draws).  Those 3 are what the boot pays and every slider tick no
+#: longer does; re-pinning this to 7 (4 + 3) would re-pin the view snapping back
+#: under the operator's hand.
 #:
 #: The count is asserted EXACTLY, not as ``>= 1``: fewer means ``_redraw_scene``
 #: soft-failed (it swallows its exception, leaving the label already moved),
 #: more means the scene was built twice.  Both handlers are measured against
 #: this one constant, so they must produce the same delta.
 #:
-#: The eighth ``add_actor`` is ``_vis_geometry``'s GROUND PLANE: the field
-#: snapshot carries no board geometry of its own, so the vis page draws the board
-#: under the field instead of leaving the field floating in empty space.  The
-#: station text still costs nothing - ``_draw_scene(..., station_label=False)``
-#: skips it, and ``Plotter.add_text`` passes ``render=True`` down to
-#: ``add_actor`` (pyvista/plotting/plotter.py:5725), so a text that WERE drawn
-#: would cost one draw - which leaves 8 + 1 draws per cut change.
-#:
 #: The number stays EXACT on purpose: a silent extra redraw (one more actor, a
 #: camera that went back to re-framing) is real work on every slider tick and
 #: must fail here rather than be absorbed, so never relax it to ``>= 1``.
-_CUT_REDRAW_RENDERS = 9
+#:
+#: This constant was 9 while the adds still carried pyvista's ``render`` default:
+#: the 8 ``add_actor`` draws it counted were pyvista flushing the frame once per
+#: actor added.  They are silent now and ``_redraw_scene``'s own
+#: ``plotter.render()`` carries the frame, which is the 4 measured here.
+_CUT_REDRAW_RENDERS = 4
 
 
 def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
@@ -4006,8 +4011,10 @@ def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
     )
     assert len(renders) - before == _CUT_REDRAW_RENDERS, (
         f"cut_y(9) rebuilt the scene {len(renders) - before} times (expected "
-        f"exactly {_CUT_REDRAW_RENDERS}): _redraw_scene soft-fails silently, so "
-        "0 here means the cut is dead even though the label moved"
+        f"exactly {_CUT_REDRAW_RENDERS}: the extent box, the ground plane and "
+        "the station text each flush nothing as they are added, and "
+        "_redraw_scene renders once at the end - so 0 here means _redraw_scene "
+        "soft-failed silently and the cut is dead even though the label moved)"
     )
     assert int(state.cut_z) == 2, (
         f"moving the y cut moved the z cut too: cut_z={state.cut_z!r}"
@@ -4025,7 +4032,8 @@ def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
     assert len(renders) - before == _CUT_REDRAW_RENDERS, (
         f"cut_z(4) rebuilt the scene {len(renders) - before} times (expected "
         f"exactly {_CUT_REDRAW_RENDERS}, the count cut_y(9) produced: both "
-        "handlers must take the same redraw path)"
+        "handlers must take the same redraw path - one explicit "
+        "plotter.render() behind three silent adds)"
     )
     assert int(state.cut_y) == 9, (
         f"moving the z cut reset the y cut: cut_y={state.cut_y!r}"
