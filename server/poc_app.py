@@ -2209,6 +2209,70 @@ def _gl_mode(vendor, renderer):
     return "direct"
 
 
+def _plotter_pushes_on_render(plotter) -> bool:
+    """Whether this plotter's own ``render()`` already publishes the image.
+
+    ``VtkRemoteView`` does not wait to be told: it registers a callback in
+    pyvista's ``_on_render_callbacks``, and pyvista runs that container at the
+    END of every ``render()``. On such a plotter an explicit ``view.update()``
+    would ship the SAME frame a second time - one more readback and image encode
+    per tick, which is nearly the whole cost of a push, for a picture the client
+    already has. The container is read defensively: a pyvista that renames it has
+    to cost us a duplicate push, never a tick.
+    """
+    callbacks = getattr(plotter, "_on_render_callbacks", None)
+    if callbacks is None:
+        return False
+    try:
+        return len(callbacks) > 0
+    except Exception:  # noqa: BLE001 - an unreadable container means no
+        return False
+
+
+def _tick_render_and_push(plotter, view_handle) -> bool:
+    """Draw this tick ONCE, publish it ONCE. True when the draw worked.
+
+    One function because it is one decision: a plotter that pushes from its own
+    ``render()`` must NOT be pushed again by hand, and one that does not must be
+    pushed by hand. The render marks and the ``draw`` phase are closed between
+    the two halves, so a push can never be billed to the draw.
+
+    A push is COUNTED only when one really left the server: a view handle exists
+    AND the image went out through it - either by the plotter's own render
+    callback or by the explicit ``update()`` below. A tick with no view sends
+    nothing, so it counts nothing: ``calls:`` counts images, not ticks.
+    """
+    _timing_mark("render_start")
+    rendered = False
+    try:
+        plotter.render()
+        rendered = True
+    except Exception as exc:  # noqa: BLE001 - never take the server down
+        print(f"[poc_app] render skipped: {exc}", file=sys.stderr)
+    _timing_mark("render_end")
+    _profile_phase("draw")
+    _timing_mark("push_start")
+    # ONE image leaves the server this tick, or none: the plotter's own render
+    # callback already sent it, or the explicit update below sends it. Only that
+    # - a real send - is counted, so a tick with nothing to push adds nothing.
+    pushed = False
+    if view_handle is not None:
+        if _plotter_pushes_on_render(plotter):
+            # The callback ran at the end of render() above: this frame is out.
+            pushed = True
+        else:
+            try:
+                view_handle.update()
+                pushed = True
+            except Exception as exc:  # noqa: BLE001 - a lost frame is not the loop
+                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
+    if pushed and _PROFILE["enabled"]:
+        # With the suite off this costs one bool read.
+        _profile_count("push")
+    _timing_mark("push_end")
+    return rendered
+
+
 def _gl_capabilities(render_window):
     """The GL strings plus their mode, or None when they cannot be read SAFELY.
 
@@ -2383,16 +2447,23 @@ def _renderer_report(plotter=None, image=None, msaa=None):
     return _RENDERER
 
 
-def _renderer_report_line(report=None) -> str:
-    """The boot report as ONE ``[poc_app]`` line: renderer, pixels, knobs."""
+def _renderer_report_line(report=None, after_render=False) -> str:
+    """The boot report as ONE ``[poc_app]`` line: renderer, pixels, knobs.
+
+    ``after_render`` marks the SECOND printing of the same report - the one made
+    once the first frame has really drawn - in the prefix, so a log reader can
+    tell the boot line (which cannot know the driver yet) from the line that can.
+    The rest of the line is byte-identical, because it is the same report.
+    """
     report = _RENDERER if report is None else report
     pixels = report.get("pixels")
     samples = _value_text(report.get("multi_samples"))
     return (
-        "[poc_app] renderer: gl=%s vendor=%s renderer=%s version=%s | "
+        "[poc_app] renderer%s: gl=%s vendor=%s renderer=%s version=%s | "
         "pixels=%s | plotter multi_samples=%s | msaa requested=%s applied=%s | "
         "trame image encoding=%s quality=%s%s%s"
         % (
+            " (after first render)" if after_render else "",
             report.get("gl_mode") or "unknown",
             report.get("gl_vendor") or "?",
             report.get("gl_renderer") or "?",
@@ -2438,6 +2509,36 @@ def _renderer_report_lines():
     if notes:
         lines.append("display note: " + "; ".join(notes))
     return lines
+
+
+def _renderer_report_after_render(plotter, handles) -> bool:
+    """Say the renderer report AGAIN, once, after the first frame has drawn.
+
+    The boot line can only report what is safe to ask BEFORE anything is drawn,
+    and on a box with no GL driver that is nothing (see ``_gl_capabilities``): it
+    says ``gl=unknown`` and "the window has not been rendered yet". So the SAME
+    report is rebuilt - same plotter, same image record, same msaa request - once
+    a tick has really rendered, and printed ONCE. The flag lives on ``handles``
+    because that is the per-run record the tick can see; later ticks read one key
+    and pay nothing. Never raises: a report is not the tick.
+    """
+    if handles is None or handles.get("renderer_reported"):
+        return False
+    handles["renderer_reported"] = True
+    if _RENDERER.get("gl_mode") != "unknown":
+        # The boot line already answered: a second reading adds nothing.
+        return False
+    try:
+        report = _renderer_report(
+            plotter=plotter,
+            image=handles.get("renderer_image"),
+            msaa=handles.get("renderer_msaa"),
+        )
+        print(_renderer_report_line(report, after_render=True))
+        return True
+    except Exception as exc:  # noqa: BLE001 - a report is not the tick
+        print(f"[poc_app] renderer report skipped: {exc}", file=sys.stderr)
+        return False
 
 
 def _profile_knobs(fps=None, msaa=None, image_encoding=None, image_quality=None):
@@ -2570,10 +2671,13 @@ def _profile_summary_text() -> str:
             )
         )
     counts = _PROFILE["counts"]
+    # ``push`` is here because it is the number that decides the tick rate: an
+    # image leaves the server once per push, so it is read beside ``render``.
     out.append(
-        "calls: render=%d add_mesh=%d remove_actor=%d"
+        "calls: render=%d push=%d add_mesh=%d remove_actor=%d"
         % (
             int(counts.get("render", 0)),
+            int(counts.get("push", 0)),
             int(counts.get("add_mesh", 0)),
             int(counts.get("remove_actor", 0)),
         )
@@ -14530,22 +14634,15 @@ def run_web_vis(
             else _step_counter_text(index, frames),
         )
         _timing_mark("label_end")
-        _timing_mark("render_start")
-        try:
-            plotter.render()
-        except Exception as exc:  # noqa: BLE001 - never take the server down
-            print(f"[poc_app] render skipped: {exc}", file=sys.stderr)
-        _timing_mark("render_end")
-        _profile_phase("draw")
-        _timing_mark("push_start")
-        view_handle = handles.get("view")
-        if view_handle is not None:
-            try:
-                view_handle.update()
-            except Exception as exc:  # noqa: BLE001
-                print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
-
-        _timing_mark("push_end")
+        # ONE draw and ONE push per tick, decided in one place: a trame view
+        # that pushes from its own render callback must not be pushed again
+        # (see _tick_render_and_push).
+        rendered = _tick_render_and_push(plotter, handles.get("view"))
+        if rendered:
+            # The boot report could only ask about a window that had not drawn
+            # yet, so on a box whose GL strings need a real render it still says
+            # "unknown". Say it again now, once (see _renderer_report_after_render).
+            _renderer_report_after_render(plotter, handles)
         _timing_tick_end(
             plotter,
             index=index,
@@ -16686,6 +16783,11 @@ def run_web_vis(
     # and asking for them anyway would take the process down (see
     # _gl_capabilities).
     _image = _apply_image_knobs(view, image_encoding, image_quality)
+    # Parked on ``handles`` for the post-render report: that line must name the
+    # SAME image record and msaa request this one does, and it runs from a tick
+    # closure that never saw these locals.
+    handles["renderer_image"] = _image
+    handles["renderer_msaa"] = msaa
     print(
         _renderer_report_line(
             _renderer_report(plotter=plotter, image=_image, msaa=msaa)

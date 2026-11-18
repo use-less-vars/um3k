@@ -42,7 +42,16 @@ The claims, one per test:
   writes jpeg itself and a knob recorded as honoured when it was not is a lie;
 * the GL strings are read only from a window that has really rendered - asking an
   unrendered off-screen window for them takes the process down here - and what
-  cannot be read is reported as pending, not guessed.
+  cannot be read is reported as pending, not guessed;
+* ONE draw and ONE push per tick: a plotter whose own ``render()`` already pushes
+  (a trame view registers a render callback) is NOT pushed again - that would
+  ship the same picture twice - and a plotter without one still is;
+* the push is counted where that decision is made AND only when one was really
+  sent, so the tick row and the summary's ``calls:`` line name it beside
+  ``render`` while a tick with no view counts nothing;
+* the renderer report is said a SECOND time, once, after the first frame has
+  really drawn - the boot line cannot know the driver yet - and the prefix says
+  which of the two lines it is.
 """
 
 from __future__ import annotations
@@ -505,7 +514,9 @@ def test_attach_counts_the_three_calls_on_the_instance(prof):
     poc_app._profile_tick_end(0, plotter=plotter, mode="ycut")
 
     assert poc_app._PROFILE["rows"][0]["counts"] == {"render": 1, "add_mesh": 1}
-    assert "calls: render=2 add_mesh=2 remove_actor=2" in poc_app._profile_summary_text()
+    assert "calls: render=2 push=0 add_mesh=2 remove_actor=2" in (
+        poc_app._profile_summary_text()
+    )
 
 
 def test_a_mute_that_replaces_render_is_not_counted(prof):
@@ -970,3 +981,219 @@ def test_the_summary_header_names_the_picture_and_the_knobs(prof, renderer):
     assert lines[5].startswith("target: fps=24 frame=41.67 ms  achieved=")
     assert lines[6].startswith("over one frame period: ")
     assert lines[7] == "phases (ms): phase       n     p50     p95     max"
+
+
+# ---------------------------------------------------------------------------
+# ONE draw and ONE push per tick.
+# ---------------------------------------------------------------------------
+
+
+class _CallbackPlotter(_Plotter):
+    """A plotter carrying pyvista's render-callback container.
+
+    pyvista iterates that container at the END of ``render()``, so a fake that
+    holds it but does not run it still poses the question the tick must answer:
+    will somebody else push this frame, or must we?
+    """
+
+    def __init__(self, callbacks=()):
+        super().__init__()
+        self._on_render_callbacks = set(callbacks)
+
+
+class _ViewHandle:
+    """A trame remote view, reduced to the one call a tick makes on it."""
+
+    def __init__(self, explode=False):
+        self.updates = 0
+        self.explode = explode
+
+    def update(self):
+        self.updates += 1
+        if self.explode:
+            raise RuntimeError("boom")
+
+
+class _RefusingPlotter(_Plotter):
+    """A plotter whose draw throws: a tick has to survive that."""
+
+    def render(self):
+        self.renders += 1
+        raise RuntimeError("no GL")
+
+
+class _DrawingPlotter(_Reported):
+    """A plotter that has REALLY drawn once its ``render()`` has run.
+
+    ``GetNeverRendered()`` is the flag ``_gl_capabilities`` obeys, so a fake that
+    clears it on ``render()`` reproduces the ONLY sequence in which the GL strings
+    are safe to ask for: after a draw.
+    """
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.renders = 0
+
+    def render(self):
+        self.renders += 1
+        self.render_window.never = 0
+        return "rendered"
+
+
+def test_a_plotter_that_pushes_on_render_is_not_pushed_again():
+    """The view pushes from its own callback: a second update is a second image."""
+    plotter = _CallbackPlotter(callbacks=[lambda *args: None])
+    view = _ViewHandle()
+    assert poc_app._plotter_pushes_on_render(plotter) is True
+
+    assert poc_app._tick_render_and_push(plotter, view) is True
+    assert plotter.renders == 1
+    assert view.updates == 0, "the same frame was pushed twice in one tick"
+
+
+def test_a_plotter_with_no_render_callback_is_pushed_by_the_tick():
+    """Nobody else will send this frame: an empty - or absent - container is us."""
+    for plotter in (_CallbackPlotter(), _Plotter()):
+        assert poc_app._plotter_pushes_on_render(plotter) is False
+        view = _ViewHandle()
+        assert poc_app._tick_render_and_push(plotter, view) is True
+        assert plotter.renders == 1
+        assert view.updates == 1
+
+
+def test_a_tick_with_no_view_handle_still_draws():
+    """A headless page: the draw happens and there is simply nothing to push."""
+    plotter = _Plotter()
+    assert poc_app._tick_render_and_push(plotter, None) is True
+    assert plotter.renders == 1
+
+
+def test_a_tick_with_nothing_to_push_counts_no_push(prof):
+    """``calls:`` counts images that left the server, not ticks that ran.
+
+    No view and no render callback means nothing was sent, so a push recorded
+    here would be an image the client never received - and, being the number the
+    tick rate is read against, a lie.
+    """
+    plotter = _Plotter()
+    poc_app._profile_tick_begin(0, "ycut")
+    assert poc_app._tick_render_and_push(plotter, None) is True
+    poc_app._profile_tick_end(0, plotter=plotter, mode="ycut")
+
+    assert plotter.renders == 1, "the draw still happened"
+    assert "push" not in poc_app._PROFILE["rows"][0]["counts"]
+    assert "calls: render=0 push=0 add_mesh=0 remove_actor=0" in (
+        poc_app._profile_summary_text()
+    )
+
+
+def test_a_push_that_raises_is_swallowed_and_reported(capsys):
+    """A trame update that throws costs the frame, never the tick."""
+    plotter = _Plotter()
+    view = _ViewHandle(explode=True)
+    assert poc_app._tick_render_and_push(plotter, view) is True
+    assert view.updates == 1
+    assert "view update skipped: boom" in capsys.readouterr().err
+
+
+def test_a_render_that_raises_is_swallowed_and_reported(capsys):
+    """False is the honest answer: the report above the tick must not claim a draw."""
+    plotter = _RefusingPlotter()
+    assert poc_app._tick_render_and_push(plotter, _ViewHandle()) is False
+    assert "render skipped: no GL" in capsys.readouterr().err
+
+
+def test_the_tick_row_and_the_summary_count_the_push(prof):
+    """One push per tick, counted once, where the decision is made."""
+    plotter = _CallbackPlotter(callbacks=[lambda *args: None])
+    poc_app._profile_tick_begin(0, "ycut")
+    poc_app._tick_render_and_push(plotter, _ViewHandle())
+    poc_app._profile_tick_end(0, plotter=plotter, mode="ycut")
+
+    # ``render`` is 0 here because that counter lives on the wrapper _show
+    # installs around the plotter, which this tick did not; the push is counted
+    # in the tick instead, so it reads 1 whether the image went out inside
+    # render() or through an explicit update().
+    assert poc_app._PROFILE["rows"][0]["counts"] == {"push": 1}
+    assert "calls: render=0 push=1 add_mesh=0 remove_actor=0" in (
+        poc_app._profile_summary_text()
+    )
+
+
+def test_the_report_is_said_once_more_after_the_first_draw(capsys, renderer):
+    """gl=unknown at boot is the pending answer, not the answer."""
+    window = _Window(
+        caps="OpenGL vendor string: Mesa/X.org\n"
+        "OpenGL renderer string: llvmpipe (LLVM 15.0.7)\n"
+        "OpenGL version string: 4.5\n",
+        never=1,
+    )
+    plotter = _DrawingPlotter(window)
+    image = poc_app._apply_image_knobs(_View(), None, 55)
+    handles = {"renderer_image": image, "renderer_msaa": 8}
+
+    # Boot: nothing has drawn, so the line says pending and the caps are NOT read.
+    poc_app._renderer_report(plotter=plotter, image=image, msaa=8)
+    assert poc_app._RENDERER["gl_mode"] == "unknown"
+    assert window.caps_reads == 0
+
+    # The first tick really draws, and only then is the SAME report said again.
+    assert poc_app._tick_render_and_push(plotter, None) is True
+    assert poc_app._renderer_report_after_render(plotter, handles) is True
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 1, "the post-render report is one line, not a spray"
+    assert out[0].startswith("[poc_app] renderer (after first render): gl=software")
+    assert "vendor=Mesa/X.org" in out[0]
+    assert "renderer=llvmpipe (LLVM 15.0.7)" in out[0]
+    assert "pixels=1024x768" in out[0]
+    assert "msaa requested=8 applied=8" in out[0]
+    assert "quality=55" in out[0]
+    assert "not been rendered" not in out[0]
+    assert window.caps_reads == 1
+
+    # The second tick is silent, and does not ask the window for its caps again.
+    poc_app._tick_render_and_push(plotter, None)
+    assert poc_app._renderer_report_after_render(plotter, handles) is False
+    assert capsys.readouterr().out == ""
+    assert window.caps_reads == 1
+
+
+def test_the_second_report_names_a_direct_gl_renderer(capsys, renderer):
+    """The mode word is what a log is scanned for: a real driver says direct."""
+    window = _Window(
+        caps="OpenGL vendor string: NVIDIA Corporation\n"
+        "OpenGL renderer string: NVIDIA GeForce RTX 3070/PCIe/SSE2\n"
+        "OpenGL version string: 4.6.0 NVIDIA 535.104.05\n",
+        never=1,
+    )
+    plotter = _DrawingPlotter(window)
+    # The stash the boot site makes: the second reading must quote the SAME msaa
+    # request, so a report that says "default" here would be a lost knob.
+    handles = {"renderer_msaa": 4}
+    poc_app._renderer_report(plotter=plotter, msaa=4)
+    assert poc_app._RENDERER["gl_mode"] == "unknown"
+
+    assert poc_app._tick_render_and_push(plotter, None) is True
+    assert poc_app._renderer_report_after_render(plotter, handles) is True
+    line = capsys.readouterr().out
+    assert line.startswith("[poc_app] renderer (after first render): gl=direct")
+    assert "vendor=NVIDIA Corporation" in line
+    assert "msaa requested=4 applied=8" in line
+
+
+def test_a_boot_report_that_already_knew_is_not_said_again(capsys, renderer):
+    """Nothing to add: a window that had drawn at boot already answered."""
+    window = _Window(
+        caps="OpenGL vendor string: Mesa/X.org\n"
+        "OpenGL renderer string: llvmpipe (LLVM 15.0.7)\n"
+        "OpenGL version string: 4.5\n",
+        never=0,
+    )
+    poc_app._renderer_report(plotter=_Reported(window), msaa=8)
+    assert poc_app._RENDERER["gl_mode"] == "software"
+
+    handles = {}
+    assert poc_app._renderer_report_after_render(_Reported(window), handles) is False
+    assert capsys.readouterr().out == ""
+    assert handles["renderer_reported"] is True, "the flag still guards later ticks"
+
