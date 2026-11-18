@@ -61,10 +61,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
-import errno
 import json
 import math
+import os
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -6692,6 +6693,128 @@ def _emit_cut_sliders(
             placeholder("{{ cut_label }}")
 
 
+def _port_is_free(host: str, port: int) -> bool:
+    """True when NOTHING is listening on ``host:port`` - a test bind succeeds.
+
+    SO_REUSEADDR is set because the real server sets it: without it a port left
+    in TIME_WAIT by the previous run reads as busy here, while the server itself
+    would have bound it and the run would move a port for no reason. It does NOT
+    make a port with a live listener bindable, which is the case this exists to
+    detect. A probe that cannot even open a socket counts as busy, so the caller
+    moves on instead of starting a server that would fail the same way.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((host, int(port)))
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return True
+
+
+def _port_holder(port: int) -> str | None:
+    """``"pid 1234 python3 server/poc_app.py"`` for whoever holds ``port``.
+
+    BEST EFFORT, and deliberately /proc-only: the kernel is the one thing that
+    knows both the listening socket and the process that owns it, and the two
+    alternatives both cost what this module does not otherwise pay - psutil is a
+    dependency, and shelling out to ss/lsof is a subprocess that minimal images
+    and containers do not carry. Every failure returns None, so the caller's
+    message stays one line; naming the holder is the whole point, because "port
+    8080 is busy" on its own leaves the operator guessing which of their own
+    processes to go and kill.
+    """
+    inode = None
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table, encoding="utf-8", errors="replace") as rows:
+                next(rows, None)  # the column header
+                for row in rows:
+                    fields = row.split()
+                    # field 3 is the socket state: 0A is TCP_LISTEN.
+                    if len(fields) < 10 or fields[3] != "0A":
+                        continue
+                    local = fields[1]
+                    if int(local.rsplit(":", 1)[1], 16) != int(port):
+                        continue
+                    inode = fields[9]
+                    break
+        except (OSError, ValueError, IndexError):
+            continue
+        if inode is not None:
+            break
+    if inode in (None, "0"):
+        return None
+    target = f"socket:[{inode}]"
+    pid = None
+    for fd in Path("/proc").glob("[0-9]*/fd/*"):
+        try:
+            if os.readlink(fd) == target:
+                pid = int(fd.parts[2])
+                break
+        except OSError:
+            continue
+    if pid is None:
+        return None
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as raw:
+            cmdline = (
+                raw.read().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+            )
+    except OSError:
+        cmdline = ""
+    return f"pid {pid} {cmdline}".strip() if cmdline else f"pid {pid}"
+
+
+def _pick_port(requested: int, is_free) -> int:
+    """``requested`` when that port is free, else the next free one above it.
+
+    A BUSY PORT IS NOT AN ERROR. It used to be reported as one: the bind was
+    attempted at the very END of a boot, after the archive was loaded, every
+    chart built and the animation scanned - so a port someone else held threw
+    minutes of work away to print one line and exit 1. Moving up one port starts
+    the same page, and the caller says in ONE line which port it left behind and
+    which it took instead. ``is_free`` is injected so the scan is testable
+    without binding anything.
+
+    When nothing above is free the requested port comes back unchanged: the bind
+    then fails and reports the OS error, which is the honest answer.
+    """
+    requested = int(requested)
+    if is_free(requested):
+        return requested
+    candidate = requested + 1
+    while candidate <= 65535:
+        if is_free(candidate):
+            return candidate
+        candidate += 1
+    return requested
+
+
+def _port_for_serving(host: str, port: int) -> int:
+    """The port this run will actually serve on, settled BEFORE any other work.
+
+    Called FIRST in both serve loops - ahead of the registry read, the archive
+    load, the chart builds and the frame scan - because the port is the one
+    thing that can make all of that pointless. It prints ``[poc_app] pid N`` so a
+    listing of listening sockets can be matched back to this run, and ONE line
+    when the requested port is taken: the port, the /proc best-effort holder and
+    the port this run moved to instead.
+    """
+    print(f"[poc_app] pid {os.getpid()}")
+    requested = int(port)
+    port = _pick_port(requested, lambda candidate: _port_is_free(host, candidate))
+    if port != requested:
+        holder = _port_holder(requested)
+        print(
+            f"[poc_app] port {requested} busy "
+            f"({holder or 'holder unknown'}); using {port} instead"
+        )
+    return port
+
+
 def run_web(
     info: dict,
     host: str,
@@ -6712,6 +6835,10 @@ def run_web(
     the picker lists; both fall back to what the registry resolves on its own, so
     a caller that passes only the dump still gets a page.
     """
+    # THE PORT IS SETTLED FIRST - see _port_for_serving. Everything below (the
+    # registry, the archive load, the chart builds, the frame scan) is minutes of
+    # work that a port already in use would otherwise throw away.
+    port = _port_for_serving(host, port)
     structures = load_structures() if structures is None else structures
     if structure is None:
         structure = _structure_by_id(DEFAULT_STRUCTURE, structures)
@@ -7571,24 +7698,12 @@ def run_web(
 
     print(f"[poc_app] serving on http://{host}:{port}")
     print("[poc_app] open that URL in a browser; Ctrl-C to stop")
-    try:
-        server.start(host=host, port=port, open_browser=False)
-    except OSError as exc:
-        in_use = getattr(exc, "errno", None) == errno.EADDRINUSE or (
-            "Address already in use" in str(exc)
-        )
-        if not in_use:
-            raise
-        print(f"[poc_app] port {port} is already in use.", file=sys.stderr)
-        print(
-            f"[poc_app] something else is listening on {host}:{port}.",
-            file=sys.stderr,
-        )
-        print(
-            f"[poc_app] fix: python3 server/poc_app.py --port {port + 1}",
-            file=sys.stderr,
-        )
-        return 1
+    # NO PORT CHECK HERE: the port was settled at the TOP of this function, before
+    # the archive was read and every chart built. Reaching this line with the
+    # port taken means another process won a race in between, and the bind error
+    # is then the truthful report - there is nothing to say here that the
+    # pre-flight line did not already say, minus the work it saved.
+    server.start(host=host, port=port, open_browser=False)
     return 0
 
 
@@ -10939,6 +11054,10 @@ def run_web_vis(
     surface. It is None on every run that gives no archive, which is the
     ordinary case - the tab then says so instead of showing an empty picture.
     """
+    # THE PORT IS SETTLED FIRST - see _port_for_serving. Everything below (the
+    # registry, the archive load, the chart builds, the frame scan) is minutes of
+    # work that a port already in use would otherwise throw away.
+    port = _port_for_serving(host, port)
     # Deliberately BEFORE any import of pyvista: on a machine without the web
     # stack the missing package must be a named message and exit 1, exactly as
     # run_web does, not a ModuleNotFoundError traceback.
@@ -13711,21 +13830,24 @@ def run_web_vis(
                 target = _play_target(anchor_time, anchor_frame, now, rate, fps)
                 handles["suppress_frame_listener"] = True
                 try:
-                    # THE DRAW LEAVES THE EVENT LOOP. _show renders a sheet and
-                    # costs far more than one tick, and on a late tick
-                    # (delay <= 0) there is no sleep above at all - so drawing on
-                    # this thread let the coroutine iterate without ever
-                    # yielding, starving the websocket: the client stops
-                    # receiving state and the viewer freezes while the picture
-                    # keeps moving. to_thread gives EVERY tick a suspension point.
-                    await asyncio.to_thread(_show, target % frames, state.mode)
-                    # THE DRAW IS THE ONLY THING ON THE WORKER THREAD: _show
-                    # writes state.frame/state.mode (trame State is not
-                    # documented thread-safe) and flush is what pushes state to
-                    # the client, so both stay here. sleep(0) is what makes the
-                    # tick suspend even when no sleep above happened.
-                    await asyncio.sleep(0)
+                    # THE DRAW STAYS ON THE EVENT-LOOP THREAD, and that is not
+                    # negotiable. The GL context belongs to the thread that made
+                    # it: rendering it from a worker thread (asyncio.to_thread)
+                    # aborted the process inside X_GLXMakeCurrent with "X Error:
+                    # BadAccess" - no traceback, no exception, no exit code to
+                    # read, the viewer simply disappeared. So _show and the flush
+                    # that publishes what it wrote both run HERE, on the thread
+                    # that owns the context.
+                    _show(target % frames, state.mode)
                     state.flush()
+                    # EVERY TICK STILL YIELDS ITS THREAD. A late tick (its
+                    # deadline already passed) took no sleep above, and the
+                    # synchronous draw would then let this coroutine iterate
+                    # without ever suspending: the websocket starves, the client
+                    # stops receiving state and the picture freezes while the
+                    # animation keeps advancing. sleep(0) is the suspension point
+                    # the deadline sleep may not have provided.
+                    await asyncio.sleep(0)
                 finally:
                     handles["suppress_frame_listener"] = False
                 drawn = int(state.frame)
@@ -14478,24 +14600,12 @@ def run_web_vis(
         )
     print(f"[poc_app] serving on http://{host}:{port}")
     print("[poc_app] open that URL in a browser; Ctrl-C to stop")
-    try:
-        server.start(host=host, port=port, open_browser=False)
-    except OSError as exc:
-        in_use = getattr(exc, "errno", None) == errno.EADDRINUSE or (
-            "Address already in use" in str(exc)
-        )
-        if not in_use:
-            raise
-        print(f"[poc_app] port {port} is already in use.", file=sys.stderr)
-        print(
-            f"[poc_app] something else is listening on {host}:{port}.",
-            file=sys.stderr,
-        )
-        print(
-            f"[poc_app] fix: python3 server/poc_app.py --port {port + 1}",
-            file=sys.stderr,
-        )
-        return 1
+    # NO PORT CHECK HERE: the port was settled at the TOP of this function, before
+    # the archive was read and every chart built. Reaching this line with the
+    # port taken means another process won a race in between, and the bind error
+    # is then the truthful report - there is nothing to say here that the
+    # pre-flight line did not already say, minus the work it saved.
+    server.start(host=host, port=port, open_browser=False)
     return 0
 
 

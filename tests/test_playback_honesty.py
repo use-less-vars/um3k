@@ -1151,23 +1151,53 @@ def test_the_play_loop_draws_once_per_tick_from_the_clock():
         "writes state.frame and draws, so more than one draws the same position "
         "twice"
     )
-    # THE DRAW IS HANDED TO A WORKER THREAD. A late tick (its deadline already
-    # passed) has no await above it, so a synchronous draw let this coroutine
-    # iterate without ever yielding and starved the websocket - the freeze.
-    dispatched = [
+    # THE DRAW IS *NOT* HANDED TO A WORKER THREAD, AND THIS PINS THAT. The GL
+    # context belongs to the thread that created it: handing _show to
+    # asyncio.to_thread aborted the process inside X_GLXMakeCurrent with "X
+    # Error: BadAccess" - no traceback, no exception, the viewer vanished.
+    off_thread = [
         node
         for node in ast.walk(loop)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "to_thread"
-        and any(
-            isinstance(arg, ast.Name) and arg.id == "_show" for arg in node.args
+        if (
+            isinstance(node, ast.Name)
+            and node.id in {"to_thread", "run_in_executor", "Thread", "threading"}
         )
+        or (
+            isinstance(node, ast.Attribute)
+            and node.attr in {"to_thread", "run_in_executor", "Thread"}
+        )
+        or (
+            isinstance(node, ast.Import)
+            and any(alias.name == "threading" for alias in node.names)
+        )
+        or (isinstance(node, ast.ImportFrom) and node.module == "threading")
     ]
-    assert len(dispatched) == 1, (
-        "the loop's draw is not handed to asyncio.to_thread: a tick whose "
-        "deadline already passed has no await in it, so drawing on the event "
-        "loop thread starves the websocket and freezes the viewer"
+    assert not off_thread, (
+        "the play loop hands its draw to a worker thread again: the GL context "
+        "is made on the event-loop thread, and rendering it off that thread "
+        "kills the process inside X_GLXMakeCurrent ('X Error: BadAccess'), with "
+        "no traceback to explain the vanishing viewer"
+    )
+    # ... AND THE TICK STILL YIELDS. The draw is synchronous now, so a tick whose
+    # deadline already passed owns no sleep of its own: without an unconditional
+    # sleep(0) the loop iterates without ever suspending, starves the websocket
+    # and freezes the picture while the position keeps advancing.
+    tick_loops = [node for node in ast.walk(loop) if isinstance(node, ast.While)]
+    assert len(tick_loops) == 1, (
+        f"the play loop has {len(tick_loops)} while loops, not one: the body "
+        "read below cannot be identified as the loop that advances the frame"
+    )
+    tick_awaits = [
+        node
+        for statement in tick_loops[0].body
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Await)
+    ]
+    assert tick_awaits, (
+        "the tick body has no await at all: a late tick (its deadline already "
+        "passed) takes no sleep, so a synchronous draw lets the loop iterate "
+        "without ever suspending - the websocket starves and the viewer freezes "
+        "while the picture keeps moving"
     )
     called = {
         node.func.id

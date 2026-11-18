@@ -5149,3 +5149,70 @@ def test_the_mode_caption_is_drawn_as_small_print(
         "the Mode caption is not drawn as small print: it inherits the body "
         f"size and reads as the panel's headline. style={captions[0]['style']!r}"
     )
+
+
+def test_a_busy_port_moves_the_server_up_instead_of_failing() -> None:
+    """A port someone else holds must NOT end the run: it moves one up.
+
+    The bind used to be attempted at the very END of a boot - after the archive
+    was loaded, every chart built and the animation scanned - so a busy port
+    threw minutes of work away to print one line and exit 1. ``is_free`` is
+    injected, so the scan is asserted here without binding a socket.
+    """
+    import poc_app as app
+
+    taken = {8080}
+
+    def is_free(port: int) -> bool:
+        return port not in taken
+
+    assert app._pick_port(8080, is_free) == 8081, (
+        "a busy port was not stepped over: the run would fail on a bind it could "
+        "have seen coming before loading anything"
+    )
+    taken.add(8081)
+    assert app._pick_port(8080, is_free) == 8082, (
+        "the scan stopped at the first neighbour instead of finding the next "
+        "free port above it"
+    )
+    assert app._pick_port(9000, is_free) == 9000, (
+        "a free port was abandoned for a free port: the request must be honoured "
+        "as given"
+    )
+    assert app._pick_port(8080, lambda _p: False) == 8080, (
+        "with nothing free above, the requested port must come back unchanged so "
+        "the bind error names the port that was actually asked for"
+    )
+
+
+def test_a_busy_port_is_reported_in_one_line_naming_the_port(
+    capsys, monkeypatch
+) -> None:
+    """ONE line: the port, who holds it, and what this run took instead.
+
+    The old report was three stderr lines after all the work was done, and it
+    said nothing about who was on the port: the operator was left to find their
+    own stray server. ``_port_holder`` is doubled here (it reads /proc), the port
+    probe too - the shipped formatter is what is asserted.
+    """
+    import poc_app as app
+
+    monkeypatch.setattr(app, "_port_is_free", lambda _host, port: port != 8080)
+    monkeypatch.setattr(
+        app, "_port_holder", lambda _port: "pid 4321 python3 other_viewer.py"
+    )
+
+    assert app._port_for_serving("127.0.0.1", 8080) == 8081
+    printed = capsys.readouterr().out.splitlines()
+    busy = [line for line in printed if "busy" in line]
+    assert busy == [
+        "[poc_app] port 8080 busy (pid 4321 python3 other_viewer.py); "
+        "using 8081 instead"
+    ], (
+        "the busy port is not reported as ONE line naming the port, the holder "
+        f"and the port actually used. lines={printed}"
+    )
+    assert any(line.startswith("[poc_app] pid ") for line in printed), (
+        "the run never prints its own pid: a busy port cannot be traced back to "
+        f"the process that holds it. lines={printed}"
+    )
