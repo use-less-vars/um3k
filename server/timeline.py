@@ -369,20 +369,82 @@ class Timeline:
             return None
         return layer.index_for(int(self.steps[self.clamp(position)]))
 
-    def caption(self, position) -> str:
-        """The clock half of the label: "step 1001 / 2400 - t = 0.763 ns".
+    @property
+    def max_step(self) -> int:
+        """The LAST solver step this recording reached - the label's denominator.
 
-        The step and its denominator come from the recording, so the sentence
-        cannot be read as a click count; the time is the recorded one, and
-        "not recorded" is printed rather than a zero that would look like a
-        measurement.
+        The same rule as ``poc_app.TimeAxis.max_step``: the larger of the frame
+        count and the last entry of the recorded axis, so a recorded step can
+        never outrun the denominator. ``nsteps`` alone is a COUNT of positions,
+        and on a decimated master axis - 24 positions spanning steps 1, 101,
+        ..., 2301 - using that count as the denominator is what printed
+        "step 2301 / 24": a numerator larger than its own denominator.
         """
-        frame = self.resolve(position)
-        if math.isfinite(frame.t_ns):
-            tail = f"t = {frame.t_ns:.3f} ns"
+        if not self.steps:
+            return 0
+        return max(int(self.nsteps), int(self.steps[-1]))
+
+    @property
+    def stride(self) -> int:
+        """How many solver steps ONE position spans, measured off the axis.
+
+        The even spacing of the recorded axis, else 1 - the rule
+        ``poc_app.build_time_axis`` applies when the dump states no stride of
+        its own. 1 is also what a restart or a dropped capture yields, because
+        an axis with two different spacings has no single cadence to quote, and
+        a layer that quoted one anyway (:attr:`Layer.decimation` takes a median)
+        would be measuring the cadence of a film it does not play.
+        """
+        steps = self.steps
+        if len(steps) < 2:
+            return 1
+        spacing = int(steps[1]) - int(steps[0])
+        if spacing <= 0:
+            return 1
+        if any(int(following) - int(previous) != spacing
+               for previous, following in zip(steps, steps[1:])):
+            return 1
+        return spacing
+
+    def caption(self, position) -> str:
+        """The clock half of the label: "Step 1001 / 2400 (Stride 1) \u00b7 t = ...".
+
+        The step sentence is the VIEWER'S, character for character:
+        :meth:`_step_sentence` composes it from the recorded step,
+        :attr:`max_step` and :attr:`stride`. The REJECTED alternative is the one
+        that shipped - ``f"step {frame.step} / {self.nsteps}"``, a RECORDED step
+        divided by a COUNT of positions - which printed "step 2301 / 24" on the
+        decimated archive: a numerator larger than its own denominator, the one
+        reading a label may never produce.
+
+        The time is the recorded one, and "not recorded" is printed rather than
+        a zero that would look like a measurement. It is read through
+        ``_seconds`` rather than ``resolve`` so that a page with no recorded axis
+        at all still answers instead of indexing an empty tuple.
+        """
+        index = self.clamp(position)
+        sentence = self._step_sentence(index)
+        t_ns = self._seconds(index) * 1e9
+        if math.isfinite(t_ns):
+            tail = f"t = {t_ns:.3f} ns"
         else:
             tail = "t = not recorded"
-        return f"step {frame.step} / {int(self.nsteps)} \u00b7 {tail}"
+        return f"{sentence} \u00b7 {tail}"
+
+    def _step_sentence(self, index: int) -> str:
+        """The caption's step sentence: the recorded one, else the frame count.
+
+        Degraded to exactly ``poc_app._frame_label``'s fallback - "Step {i} /
+        {n}", no parenthetical and no stride - for the two cases in which no
+        step can be named: a timeline with no recorded axis at all, and a record
+        whose first capture sits at step 0, a base the dump never states, so
+        "Step 0 / 12" would put a zero-based number under a one-based
+        denominator and misname every frame on the page. A stride printed there
+        would be an invented one: nothing was recorded to measure it from.
+        """
+        if not self.steps or int(self.steps[0]) < 1:
+            return f"Step {int(index) + 1} / {int(self.nsteps)}"
+        return f"Step {int(self.steps[index])} / {self.max_step} (Stride {self.stride})"
 
     def layer_label(self, name: str, position) -> str | None:
         """The named layer's half of the label, or None when there is no such layer."""

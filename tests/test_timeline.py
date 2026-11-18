@@ -261,7 +261,9 @@ def test_layer_index_and_layer_label_are_none_for_an_absent_layer():
 def test_the_caption_names_the_recorded_step_and_time():
     timeline = _timeline(steps=(1, 2, 3), dt_s=7.626299478123987e-13)
     caption = timeline.caption(1)
-    assert "step 2 / 3" in caption, f"the caption lost its step reading: {caption}"
+    assert "Step 2 / 3 (Stride 1)" in caption, (
+        f"the caption lost its step reading, or left the stride unstated: {caption}"
+    )
     assert "ns" in caption, f"the caption lost its time reading: {caption}"
 
 
@@ -271,7 +273,100 @@ def test_the_caption_says_so_when_no_time_was_recorded():
     assert "not recorded" in caption, (
         f"an absent time base was printed as a number: {caption}"
     )
-    assert "step 1 / 3" in caption
+    assert "Step 1 / 3 (Stride 1)" in caption
+
+
+# The reference archive's volume cadence: one capture every hundred solver
+# steps, 1, 101, 201, ..., 2301 - 24 positions spanning 2301 steps.
+DECIMATED_STEPS = tuple(range(1, 2400, 100))
+
+
+def test_a_decimated_caption_ends_on_the_last_step_not_on_the_position_count():
+    """The denominator is the last STEP, never the number of positions.
+
+    The shipped caption was ``f"step {frame.step} / {self.nsteps}"``: a RECORDED
+    step divided by a COUNT of positions, so this axis printed "step 2301 / 24" -
+    a numerator larger than its own denominator, and a reading that names a
+    denominator which cannot exist. Every position is checked, not only the last
+    one, because the defect scales with the stride and the first frame is the one
+    that made "1 / 24" look plausible.
+    """
+    steps = DECIMATED_STEPS
+    assert len(steps) == 24 and steps[-1] == 2301, steps
+    timeline = _timeline(steps=steps)
+    assert timeline.caption(len(steps) - 1).startswith("Step 2301 / 2301 (Stride 100)"), (
+        f"the last position does not name the step it ends on: "
+        f"{timeline.caption(len(steps) - 1)}"
+    )
+    assert timeline.caption(0).startswith("Step 1 / 2301 (Stride 100)"), (
+        f"the first position does not name its step and the whole axis: "
+        f"{timeline.caption(0)}"
+    )
+    for position in range(len(steps)):
+        caption = timeline.caption(position)
+        assert "/ 24" not in caption, (
+            f"position {position} divided a recorded step by the COUNT of "
+            f"positions: {caption}"
+        )
+    legacy = f"step {int(steps[-1])} / {int(timeline.nsteps)} \u00b7 t = not recorded"
+    assert legacy.startswith("step 2301 / 24"), legacy
+    assert [p for p in range(len(steps)) if legacy == timeline.caption(p)] == [], (
+        "the old expression is still what the decimated axis prints"
+    )
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        tuple(range(1, 2401)),  # the plane family: one capture per solver step
+        DECIMATED_STEPS,  # the volume cadence: one capture every hundred steps
+        (1, 2, 3),  # a three-position record
+    ],
+)
+def test_the_caption_speaks_the_viewers_step_sentence_byte_for_byte(steps):
+    """One grammar, two modules: the caption may not paraphrase the page's label.
+
+    ``poc_app.TimeAxis.label`` is the sentence the page draws and
+    ``Timeline.caption`` is the same clock read from the other side of the port,
+    so they are compared BYTE FOR BYTE against the axis built from the SAME
+    fabricated record. The expected text is deliberately not written here: a
+    hand-copied "Step 1 / 2301 (Stride 100)" would pin this test to whatever the
+    author typed, and the two implementations could then drift together.
+    """
+    from server.poc_app import build_time_axis
+
+    timeline = _timeline(steps=tuple(steps))
+    axis = build_time_axis(step_index=np.asarray(steps, dtype=int), n_steps=len(steps))
+    assert axis is not None, "the viewer got no axis for a record the timeline read"
+    for position in range(len(steps)):
+        drawn = axis.label(position + 1)
+        assert drawn is not None, (
+            f"the viewer refused a step reading the timeline states: {timeline.caption(position)}"
+        )
+        sentence = timeline.caption(position).split(f" \u00b7 ")[0]
+        assert sentence == drawn, (
+            f"position {position}: the caption says {sentence!r} and the page says "
+            f"{drawn!r} - one clock, two grammars"
+        )
+
+
+def test_a_page_without_a_recorded_step_says_only_which_frame_it_is_on():
+    """No step recorded means no step sentence - and no stride invented.
+
+    ``poc_app._frame_label`` degrades to "Step {i} / {n}" for a page with no
+    axis, and to the same sentence when the record's numbering cannot be
+    defended; the caption degrades the same way and for the same two reasons.
+    """
+    zero_based = _timeline(steps=(0, 1, 2))
+    empty = Timeline(nsteps=0, steps=())
+    for timeline, position in ((zero_based, 2), (empty, 0)):
+        caption = timeline.caption(position)
+        assert "Stride" not in caption, (
+            f"a record with no measurable stride printed one anyway: {caption}"
+        )
+        assert caption == f"Step {position + 1} / {int(timeline.nsteps)} \u00b7 t = not recorded", (
+            f"the degraded sentence is not the viewer's frame-counted one: {caption}"
+        )
 
 
 def test_the_dumped_time_array_wins_over_dt_s():
@@ -374,7 +469,7 @@ def test_the_shipped_archive_pins_the_whole_contract(real_info):
         239,
     ]
     caption = timeline.caption(1000)
-    assert "step 1001" in caption and "ns" in caption, (
+    assert "Step 1001 / 2400 (Stride 1)" in caption and "ns" in caption, (
         f"the caption of position 1000 does not state the recorded step: {caption}"
     )
     label = timeline.layer_label(VOLUME_LAYER, 100)
