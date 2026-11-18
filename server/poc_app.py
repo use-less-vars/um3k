@@ -1402,6 +1402,809 @@ if _TIMING_ENABLED:
     _timing_register_exit()
 
 
+# ---------------------------------------------------------------------------
+# --profile: WHERE the per-tick time goes.
+#
+# The block above (_timing_*) answers "how long did this tick take". This block
+# answers the next question - "and of that, how much was re-anchoring the
+# clock, how much a GL draw, how many of the three cut sheets were repainted
+# with the SAME plane index they already held". It EXTENDS the probe above and
+# reuses its _timing_stats(); it does not replace anything.
+#
+# OFF BY DEFAULT. On with --profile (artefacts in --profile-dir, default
+# artifacts/profile/) or with POC_PROFILE=1 / POC_TIMING=1 in the environment:
+# POC_TIMING stays the alias, so one variable turns on both probes.
+#
+# Every hook is wrapped: telemetry that raises must never surface as a draw
+# that raises, the same rule the _timing_* block follows.
+_PROFILE_ENV_KEYS = ("POC_PROFILE", "POC_TIMING")
+_PROFILE_DEFAULT_DIR = (
+    Path(__file__).resolve().parent.parent / "artifacts" / "profile"
+)
+_PROFILE_LAG_EVERY_S = 0.05
+_PROFILE_STACK_EVERY_S = 0.20
+_PROFILE_IDLE_EVERY_S = 1.0
+_PROFILE_IDLE_GAP_S = 0.9
+_PROFILE_MAX_ROWS = 20000
+_PROFILE_SUMMARY_EVERY = 200
+_PROFILE_PHASES = ("reanchor", "target", "draw", "flush", "yield")
+
+_PROFILE = {
+    "enabled": False,
+    "dir": None,
+    "stamp": None,
+    "files": {},
+    "clock": time.perf_counter,
+    "process_clock": time.process_time,
+    "rusage": None,
+    "started": None,
+    "mark_at": None,
+    "tick": None,
+    "pending": None,
+    "rows": [],
+    "ticks": 0,
+    "counts": {},
+    "tick_counts": {},
+    "sheets": {},
+    "lag": [],
+    "idle": [],
+    "stacks": None,
+    "last_tick_at": None,
+    "lag_at": None,
+    "stack_at": None,
+    "idle_at": None,
+    "idle_prev": None,
+    "thread": None,
+    "stop": False,
+}
+
+
+def _profile_env_enabled() -> bool:
+    """True when the ENVIRONMENT asks for the suite (--profile is separate)."""
+    for key in _PROFILE_ENV_KEYS:
+        value = os.environ.get(key)
+        if value is not None and value.strip() not in ("", "0"):
+            return True
+    return False
+
+
+def _profile_enabled() -> bool:
+    """True while the profile suite is recording. The ONE gate the hooks use."""
+    return bool(_PROFILE["enabled"])
+
+
+def _profile_now() -> float:
+    """Monotonic seconds. Swappable, so the tests can drive a fake clock."""
+    try:
+        return float(_PROFILE["clock"]())
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return 0.0
+
+
+def _profile_rusage() -> tuple:
+    """(utime, stime) of THIS process in seconds. Stdlib, never raises."""
+    fn = _PROFILE.get("rusage")
+    if fn is not None:
+        try:
+            pair = fn()
+            return float(pair[0]), float(pair[1])
+        except Exception:  # noqa: BLE001
+            return 0.0, 0.0
+    try:
+        import resource
+
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        return float(usage.ru_utime), float(usage.ru_stime)
+    except Exception:  # noqa: BLE001 - no resource module (or no permission)
+        return 0.0, 0.0
+
+
+def _profile_elapsed(now=None) -> float:
+    """Seconds since the run started. Explicit None check: 0.0 is a legal clock."""
+    if now is None:
+        now = _profile_now()
+    started = _PROFILE["started"]
+    if started is None:
+        return 0.0
+    return float(now) - float(started)
+
+
+def _profile_since_mark(now) -> float:
+    """Seconds since the last phase mark, and moves the mark to ``now``."""
+    previous = _PROFILE["mark_at"]
+    _PROFILE["mark_at"] = now
+    if previous is None:
+        return 0.0
+    return float(now) - float(previous)
+
+
+def _profile_reset() -> None:
+    """Forget everything recorded so far. For the tests, and for a re-run."""
+    _PROFILE["tick"] = None
+    _PROFILE["pending"] = None
+    _PROFILE["rows"] = []
+    _PROFILE["ticks"] = 0
+    _PROFILE["counts"] = {}
+    _PROFILE["tick_counts"] = {}
+    _PROFILE["sheets"] = {}
+    _PROFILE["lag"] = []
+    _PROFILE["idle"] = []
+    _PROFILE["stacks"] = None
+    _PROFILE["last_tick_at"] = None
+    _PROFILE["lag_at"] = None
+    _PROFILE["stack_at"] = None
+    _PROFILE["idle_at"] = None
+    _PROFILE["idle_prev"] = None
+    _PROFILE["started"] = None
+    _PROFILE["mark_at"] = None
+
+
+def _profile_configure(
+    enabled=True,
+    directory=None,
+    clock=None,
+    process_clock=None,
+    rusage=None,
+    start_threads=True,
+    register_exit=False,
+):
+    """Turn the suite on and open its files. Returns the run directory or None.
+
+    A directory that cannot be created costs the run its telemetry, never the
+    viewer: the in-memory records keep working with no files behind them.
+    """
+    if clock is not None:
+        _PROFILE["clock"] = clock
+    if process_clock is not None:
+        _PROFILE["process_clock"] = process_clock
+    if rusage is not None:
+        _PROFILE["rusage"] = rusage
+    _PROFILE["enabled"] = bool(enabled)
+    if not _PROFILE["enabled"]:
+        _PROFILE["dir"] = None
+        _PROFILE["files"] = {}
+        return None
+    import collections
+
+    if _PROFILE["stacks"] is None:
+        _PROFILE["stacks"] = collections.Counter()
+    if _PROFILE["started"] is None:
+        _PROFILE["started"] = _profile_now()
+    _PROFILE["mark_at"] = _PROFILE["started"]
+    if _PROFILE["stamp"] is None:
+        _PROFILE["stamp"] = time.strftime("%Y%m%dT%H%M%S")
+    root = Path(directory) if directory is not None else _PROFILE_DEFAULT_DIR
+    try:
+        if not root.is_absolute():
+            root = (Path(__file__).resolve().parent.parent / root).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        stamp = _PROFILE["stamp"]
+        _PROFILE["dir"] = root
+        _PROFILE["files"] = {
+            "ticks": root / f"ticks_{stamp}.jsonl",
+            "stacks": root / f"stacks_{stamp}.txt",
+            "summary": root / f"summary_{stamp}.txt",
+        }
+    except Exception:  # noqa: BLE001 - no directory is not a crash
+        _PROFILE["dir"] = None
+        _PROFILE["files"] = {}
+    if register_exit:
+        _profile_register_exit()
+    if start_threads:
+        _profile_start_thread()
+    return _PROFILE["dir"]
+
+
+def _profile_write(kind, line) -> bool:
+    """Append ONE line to one of the run's files. Never raises."""
+    path = _PROFILE["files"].get(kind)
+    if path is None:
+        return False
+    try:
+        text = line if line.endswith("\n") else line + "\n"
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(text)
+        return True
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return False
+
+
+def _profile_count(name, n=1) -> None:
+    """Count one instrumented call: render / add_mesh / remove_actor."""
+    try:
+        _PROFILE["counts"][name] = int(_PROFILE["counts"].get(name, 0)) + int(n)
+        _PROFILE["tick_counts"][name] = (
+            int(_PROFILE["tick_counts"].get(name, 0)) + int(n)
+        )
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _profile_attach(plotter) -> bool:
+    """Wrap render/add_mesh/remove_actor ON THE INSTANCE so every call counts.
+
+    pyvista renders for itself - ``add_mesh`` draws unless told not to - so a
+    counter at OUR call sites would report one draw where the library started
+    three. The wrappers are instance attributes, so they shadow the class
+    methods on this plotter only. A layer that swaps ``plotter.render`` for a
+    mute while it builds bypasses the wrapper for the muted calls, which is the
+    honest reading: those calls never reached the GL draw.
+    """
+    if plotter is None or getattr(plotter, "_tm_profile_hooked", False):
+        return False
+    for name in ("render", "add_mesh", "remove_actor"):
+        try:
+            inner = getattr(plotter, name, None)
+        except Exception:  # noqa: BLE001
+            inner = None
+        if not callable(inner):
+            continue
+
+        def _make(inner=inner, name=name):
+            def _wrapped(*args, **kwargs):
+                _profile_count(name)
+                return inner(*args, **kwargs)
+
+            _wrapped.__name__ = name
+            return _wrapped
+
+        try:
+            setattr(plotter, name, _make())
+        except Exception:  # noqa: BLE001 - a plotter that refuses is not fatal
+            return False
+    try:
+        plotter._tm_profile_hooked = True
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def _profile_flush_pending() -> bool:
+    """Write the closed-but-unwritten tick row. Called by the NEXT tick."""
+    row = _PROFILE["pending"]
+    if row is None:
+        return False
+    _PROFILE["pending"] = None
+    try:
+        return _profile_write("ticks", json.dumps(row, separators=(",", ":")))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _profile_num(value):
+    """JSON-safe number: int when it is one, else float, else None."""
+    if value is None or isinstance(value, bool):
+        return None if value is None else value
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _profile_tick_begin(frame=None, mode=None):
+    """Open a tick record. Called BEFORE anything else the tick does."""
+    if not _PROFILE["enabled"]:
+        return None
+    try:
+        _profile_flush_pending()
+        now = _profile_now()
+        _PROFILE["ticks"] = int(_PROFILE["ticks"]) + 1
+        _PROFILE["tick_counts"] = {}
+        _PROFILE["last_tick_at"] = now
+        _PROFILE["mark_at"] = now
+        tick = {
+            "kind": "tick",
+            "n": _PROFILE["ticks"],
+            "t": round(_profile_elapsed(now), 3),
+            "frame_asked": _profile_num(frame),
+            "frame_published": None,
+            "mode": mode,
+            "wall_ms": None,
+            "phases": {},
+            "sheets": [],
+            "assigned": [],
+            "in_place": [],
+            "counts": {},
+            "actors": None,
+            "_t0": now,
+        }
+        _PROFILE["tick"] = tick
+        return tick
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_phase(name) -> float:
+    """Close the open phase: its wall time is the time since the last mark."""
+    if not _PROFILE["enabled"]:
+        return 0.0
+    try:
+        now = _profile_now()
+        ms = _profile_since_mark(now) * 1000.0
+        tick = _PROFILE["tick"]
+        if tick is not None:
+            phases = tick["phases"]
+            phases[name] = round(float(phases.get(name, 0.0)) + ms, 3)
+        return ms
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _profile_sheet_begin(key, mesh=None):
+    """Open one cut sheet's record: the clock, and the array it holds now."""
+    if not _PROFILE["enabled"]:
+        return None
+    buf = None
+    try:
+        if mesh is not None and "ez_abs" in mesh.point_data:
+            buf = mesh.point_data["ez_abs"]
+    except Exception:  # noqa: BLE001
+        buf = None
+    return {"key": key, "t0": _profile_now(), "buf": buf}
+
+
+def _profile_sheet_end(rec, index=None, mesh=None):
+    """Close one sheet's record: ms, the index drawn, and WHICH kind of write.
+
+    ``changed`` is the waste metric: a sheet repainted at the index it already
+    held costs a full array upload and shows the operator the identical picture.
+    ``in_place`` separates ``point_data[k] = fresh_array`` (rebinds, what the
+    sheet loop does) from ``point_data[k][:] = data`` (writes the buffer that is
+    already there) - the two cost very different things.
+    """
+    if not _PROFILE["enabled"] or rec is None:
+        return None
+    try:
+        now = _profile_now()
+        ms = (now - rec["t0"]) * 1000.0
+        agg = _PROFILE["sheets"].get(rec["key"])
+        if agg is None:
+            agg = {
+                "key": rec["key"],
+                "repaints": 0,
+                "ms": 0.0,
+                "noop": 0,
+                "index_changes": 0,
+                "assigned": 0,
+                "in_place": 0,
+                "last_index": None,
+            }
+            _PROFILE["sheets"][rec["key"]] = agg
+        changed = agg["last_index"] is None or index != agg["last_index"]
+        old_buf = rec.get("buf")
+        new_buf = old_buf
+        try:
+            if mesh is not None and "ez_abs" in mesh.point_data:
+                new_buf = mesh.point_data["ez_abs"]
+        except Exception:  # noqa: BLE001
+            new_buf = old_buf
+        # Which KIND of write this was - and, when there is no buffer to compare,
+        # UNKNOWN: an unreadable buffer must never be counted as in-place.
+        in_place = None
+        if old_buf is not None and new_buf is not None:
+            in_place = bool(new_buf is old_buf)
+        agg["repaints"] += 1
+        agg["ms"] += ms
+        agg["last_index"] = index
+        if changed:
+            agg["index_changes"] += 1
+        else:
+            agg["noop"] += 1
+        if in_place is True:
+            agg["in_place"] += 1
+        elif in_place is False:
+            agg["assigned"] += 1
+        row = {
+            "key": rec["key"],
+            "ms": round(ms, 3),
+            "index": _profile_num(index),
+            "changed": bool(changed),
+            "in_place": in_place,
+        }
+        tick = _PROFILE["tick"]
+        if tick is not None:
+            tick["sheets"].append(row)
+            if in_place is True:
+                tick["in_place"].append(rec["key"])
+            elif in_place is False:
+                tick["assigned"].append(rec["key"])
+        return row
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_tick_end(frame_published=None, plotter=None, mode=None):
+    """Close the tick. Its row is PARKED until the yield mark has been seen."""
+    if not _PROFILE["enabled"]:
+        return None
+    try:
+        tick = _PROFILE["tick"]
+        if tick is None:
+            return None
+        now = _profile_now()
+        tick["wall_ms"] = round(_profile_tick_wall(now), 3)
+        if frame_published is not None:
+            tick["frame_published"] = _profile_num(frame_published)
+        if mode is not None:
+            tick["mode"] = mode
+        tick["counts"] = dict(_PROFILE["tick_counts"])
+        try:
+            tick["actors"] = len(plotter.actors) if plotter is not None else None
+        except Exception:  # noqa: BLE001
+            tick["actors"] = None
+        # ONE row object, shared by the in-memory list and the parked write: the
+        # yield mark lands in the file only if it lands in the same row the
+        # write will serialise.
+        row = {key: val for key, val in tick.items() if not key.startswith("_")}
+        _PROFILE["rows"].append(row)
+        if len(_PROFILE["rows"]) > _PROFILE_MAX_ROWS:
+            del _PROFILE["rows"][: len(_PROFILE["rows"]) - _PROFILE_MAX_ROWS]
+        _PROFILE["tick"] = None
+        _PROFILE["pending"] = row
+        if int(_PROFILE["ticks"]) % _PROFILE_SUMMARY_EVERY == 0:
+            _profile_write_summary()
+        return tick
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_tick_wall(now=None) -> float:
+    """Wall time of the OPEN tick, ms, from its begin to ``now``.
+
+    The WHOLE tick, not the sum of the named phases: the difference between the
+    two is the time that went somewhere the marks do not cover, and hiding it
+    would make the phases look like they add up when they do not.
+    """
+    tick = _PROFILE["tick"]
+    if tick is None:
+        return 0.0
+    start = tick.get("_t0")
+    if start is None:
+        return 0.0
+    return ((_profile_now() if now is None else float(now)) - start) * 1000.0
+
+
+def _profile_yield() -> float:
+    """Record the publish -> sleep-return span on the tick that just closed."""
+    if not _PROFILE["enabled"]:
+        return 0.0
+    try:
+        now = _profile_now()
+        ms = _profile_since_mark(now) * 1000.0
+        row = _PROFILE["pending"]
+        if row is None and _PROFILE["rows"]:
+            row = _PROFILE["rows"][-1]
+        if row is not None:
+            phases = row.setdefault("phases", {})
+            phases["yield"] = round(float(phases.get("yield", 0.0)) + ms, 3)
+        return ms
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _profile_lag_sample(now=None):
+    """One loop-lag sample: how LATE the 50 ms sampler woke, in ms.
+
+    A thread that must reacquire the GIL to wake is a fair proxy for an event
+    loop that cannot hand a frame to the websocket: both are blocked by the same
+    synchronous draw under the same GIL.
+    """
+    if not _PROFILE["enabled"]:
+        return None
+    try:
+        now = _profile_now() if now is None else float(now)
+        last = _PROFILE["lag_at"]
+        _PROFILE["lag_at"] = now
+        if last is None:
+            return None
+        lag = max(0.0, (now - last) * 1000.0 - _PROFILE_LAG_EVERY_S * 1000.0)
+        _PROFILE["lag"].append(round(lag, 3))
+        return lag
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_stack_sample(now=None, frames=None):
+    """Aggregate every live thread's INNERMOST frame into the stack counter."""
+    if not _PROFILE["enabled"]:
+        return None
+    try:
+        if frames is None:
+            frames = sys._current_frames()
+        if _PROFILE["stacks"] is None:
+            import collections
+
+            _PROFILE["stacks"] = collections.Counter()
+        now = _profile_now() if now is None else float(now)
+        leaves = {}
+        for _ident, frame in list(frames.items()):
+            try:
+                code = frame.f_code
+            except Exception:  # noqa: BLE001
+                continue
+            key = f"{os.path.basename(code.co_filename)}:{code.co_name}"
+            leaves[key] = leaves.get(key, 0) + 1
+            _PROFILE["stacks"][key] += 1
+        stamp = _profile_elapsed(now)
+        top = sorted(leaves.items(), key=lambda kv: (-kv[1], kv[0]))[:6]
+        _profile_write(
+            "stacks",
+            "t=%.2fs threads=%d %s"
+            % (stamp, len(leaves), ", ".join(f"{n}x {k}" for k, n in top)),
+        )
+        return leaves
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_idle_sample(now=None, cpu=None, utime=None, stime=None, counts=None):
+    """One IDLE record: the CPU this process burned while it drew nothing.
+
+    Only recorded when NO tick has run for _PROFILE_IDLE_GAP_S - that is the
+    window in which an idle viewer should be free.
+    """
+    if not _PROFILE["enabled"]:
+        return None
+    try:
+        now = _profile_now() if now is None else float(now)
+        last_tick = _PROFILE["last_tick_at"]
+        if last_tick is not None and (now - last_tick) < _PROFILE_IDLE_GAP_S:
+            return None
+        if cpu is None:
+            cpu = float(_PROFILE["process_clock"]())
+        if utime is None or stime is None:
+            utime, stime = _profile_rusage()
+        current = dict(_PROFILE["counts"] if counts is None else counts)
+        prev = _PROFILE["idle_prev"]
+        if prev is None:
+            _PROFILE["idle_prev"] = {
+                "t": now,
+                "cpu": cpu,
+                "utime": utime,
+                "stime": stime,
+                "counts": current,
+            }
+            return None
+        span = now - prev["t"]
+        delta = {
+            key: int(value) - int(prev["counts"].get(key, 0))
+            for key, value in current.items()
+        }
+        row = {
+            "kind": "idle",
+            "t": round(_profile_elapsed(now), 3),
+            "idle_s": round(span, 3),
+            "process_s": round(cpu - prev["cpu"], 4),
+            "utime_s": round(utime - prev["utime"], 4),
+            "stime_s": round(stime - prev["stime"], 4),
+            "cpu_per_s": round((cpu - prev["cpu"]) / span, 4) if span > 0 else None,
+            "counts": delta,
+        }
+        _PROFILE["idle_prev"] = {
+            "t": now,
+            "cpu": cpu,
+            "utime": utime,
+            "stime": stime,
+            "counts": current,
+        }
+        _PROFILE["idle"].append(row)
+        # The file is read in order: a parked tick row goes out FIRST, or the
+        # idle record of an idle stretch would appear above the tick that ended
+        # it.
+        _profile_flush_pending()
+        _profile_write("ticks", json.dumps(row, separators=(",", ":")))
+        return row
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_start_thread():
+    """Start the ONE sampler thread: lag 50 ms, stacks 200 ms, idle 1 s."""
+    try:
+        import threading
+
+        if _PROFILE["thread"] is not None and _PROFILE["thread"].is_alive():
+            return _PROFILE["thread"]
+        _PROFILE["stop"] = False
+        _PROFILE["lag_at"] = _profile_now()
+        _PROFILE["stack_at"] = _PROFILE["lag_at"]
+        _PROFILE["idle_at"] = _PROFILE["lag_at"]
+
+        def _run():
+            while not _PROFILE["stop"]:
+                try:
+                    time.sleep(_PROFILE_LAG_EVERY_S)
+                    now = _profile_now()
+                    _profile_lag_sample(now)
+                    stack_at = _PROFILE["stack_at"]
+                    if stack_at is None or now - stack_at >= _PROFILE_STACK_EVERY_S:
+                        _PROFILE["stack_at"] = now
+                        _profile_stack_sample(now)
+                    idle_at = _PROFILE["idle_at"]
+                    if idle_at is None or now - idle_at >= _PROFILE_IDLE_EVERY_S:
+                        _PROFILE["idle_at"] = now
+                        _profile_idle_sample(now)
+                except Exception:  # noqa: BLE001 - a sampler that dies is silent
+                    continue
+
+        thread = threading.Thread(target=_run, name="tm-profile", daemon=True)
+        thread.start()
+        _PROFILE["thread"] = thread
+        return thread
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _profile_stop_thread() -> None:
+    """Ask the sampler thread to stop. It is a daemon; this only tidies."""
+    _PROFILE["stop"] = True
+    _PROFILE["thread"] = None
+
+
+def _profile_stats(values):
+    """_timing_stats() with an empty bucket spelled out, so a summary never raises."""
+    stats = _timing_stats(values)
+    if stats is None:
+        return {"n": 0, "mean": 0.0, "median": 0.0, "p95": 0.0, "max": 0.0}
+    return stats
+
+
+def _profile_summary_text() -> str:
+    """The summary, <=60 lines. Numbers only; the report explains them."""
+    if not _PROFILE["enabled"]:
+        return ""
+    rows = [row for row in _PROFILE["rows"] if row.get("kind") == "tick"]
+    now = _profile_now()
+    elapsed = max(1e-9, _profile_elapsed(now))
+    out = [f"poc_app --profile summary  run={_PROFILE['stamp']}"]
+    out.append(
+        "ticks=%d  elapsed=%.1fs  rate=%.2f ticks/s  dir=%s"
+        % (len(rows), elapsed, len(rows) / elapsed, _PROFILE["dir"])
+    )
+    out.append("phases (ms): phase       n     p50     p95     max")
+    for name in _PROFILE_PHASES:
+        values = [
+            float(row["phases"][name])
+            for row in rows
+            if row.get("phases", {}).get(name) is not None
+        ]
+        stats = _profile_stats(values)
+        if stats["n"]:
+            out.append(
+                "  %-9s %5d %7.2f %7.2f %7.2f"
+                % (name, stats["n"], stats["median"], stats["p95"], stats["max"])
+            )
+    wall = _profile_stats(
+        [float(row["wall_ms"]) for row in rows if row.get("wall_ms")]
+    )
+    if wall["n"]:
+        out.append(
+            "tick wall (ms): n=%d p50=%.2f p95=%.2f max=%.2f"
+            % (wall["n"], wall["median"], wall["p95"], wall["max"])
+        )
+    out.append("sheets: key            repaints  p50    p95    max   no-op  assigned/in-place")
+    for key in sorted(_PROFILE["sheets"]):
+        agg = _PROFILE["sheets"][key]
+        per = [
+            float(sheet["ms"])
+            for row in rows
+            for sheet in row.get("sheets", [])
+            if sheet.get("key") == key
+        ]
+        stats = _profile_stats(per)
+        out.append(
+            "  %-14s %8d %6.2f %6.2f %6.2f %6d %6d/%d"
+            % (
+                key,
+                agg["repaints"],
+                stats["median"],
+                stats["p95"],
+                stats["max"],
+                agg["noop"],
+                agg["assigned"],
+                agg["in_place"],
+            )
+        )
+    counts = _PROFILE["counts"]
+    out.append(
+        "calls: render=%d add_mesh=%d remove_actor=%d"
+        % (
+            int(counts.get("render", 0)),
+            int(counts.get("add_mesh", 0)),
+            int(counts.get("remove_actor", 0)),
+        )
+    )
+    noop = sum(int(agg["noop"]) for agg in _PROFILE["sheets"].values())
+    repaints = sum(int(agg["repaints"]) for agg in _PROFILE["sheets"].values())
+    out.append(
+        "no-op sheet repaints (index unchanged): %d of %d (%.1f%%)"
+        % (noop, repaints, (100.0 * noop / repaints) if repaints else 0.0)
+    )
+    lag = _profile_stats([float(value) for value in _PROFILE["lag"]])
+    if lag["n"]:
+        out.append(
+            "loop lag (ms): n=%d mean=%.2f p95=%.2f max=%.2f"
+            % (lag["n"], lag["mean"], lag["p95"], lag["max"])
+        )
+    idle = _PROFILE["idle"]
+    if idle:
+        per_s = [
+            float(row["cpu_per_s"])
+            for row in idle
+            if row.get("cpu_per_s") is not None
+        ]
+        stats = _profile_stats(per_s)
+        out.append(
+            "idle: records=%d cpu_per_s p50=%.4f max=%.4f total_process_s=%.3f"
+            % (
+                len(idle),
+                stats["median"],
+                stats["max"],
+                sum(float(row.get("process_s") or 0.0) for row in idle),
+            )
+        )
+    stacks = _PROFILE["stacks"]
+    if stacks:
+        total = sum(int(value) for value in stacks.values()) or 1
+        out.append("top functions (stack samples, all threads):")
+        for name, count in stacks.most_common(15):
+            out.append("  %5d %5.1f%%  %s" % (count, 100.0 * count / total, name))
+    return "\n".join(out[:60]) + "\n"
+
+
+def _profile_write_summary() -> str:
+    """Rewrite summary_<stamp>.txt. Returns the text either way."""
+    if not _PROFILE["enabled"]:
+        return ""
+    try:
+        text = _profile_summary_text()
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return ""
+    try:
+        if _PROFILE["files"].get("summary") is not None:
+            _PROFILE["files"]["summary"].write_text(text, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return text
+
+
+def _profile_shutdown() -> None:
+    """Flush what is pending and write the summary. Safe to call twice."""
+    if not _PROFILE["enabled"]:
+        return
+    try:
+        _profile_flush_pending()
+        _profile_write_summary()
+        _profile_stop_thread()
+    except Exception:  # noqa: BLE001 - the last breath is not the app either
+        return
+
+
+def _profile_register_exit() -> None:
+    """Write the summary on exit AND on SIGTERM (a killed run still answers)."""
+    try:
+        import atexit
+
+        atexit.register(_profile_shutdown)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import signal
+
+        previous = signal.getsignal(signal.SIGTERM)
+
+        def _on_term(signum, frame):
+            _profile_shutdown()
+            if callable(previous) and previous not in (signal.SIG_DFL, signal.SIG_IGN):
+                return previous(signum, frame)
+            raise SystemExit(128 + int(signum))
+
+        signal.signal(signal.SIGTERM, _on_term)
+    except Exception:  # noqa: BLE001 - not the main thread, or no signals
+        pass
+
+
 def _draw_step_counter(plotter, text) -> None:
     """Draw, or UPDATE, the on-canvas step counter. Never raises.
 
@@ -12957,6 +13760,12 @@ def run_web_vis(
         could paint the recorded decay away.
         """
         _timing_tick_begin(frame, mode)
+        if _profile_enabled():
+            # ONE wrapper on the plotter INSTANCE: pyvista renders for itself
+            # (add_mesh draws unless told not to), so a counter at our own call
+            # sites would report one draw where the library started three.
+            _profile_attach(plotter)
+        _profile_tick_begin(frame, mode)
         # The LIVE page, read on every draw: a finished solve swaps the dump
         # under this closure, and the readouts below must follow it.
         info = page["info"]
@@ -12985,6 +13794,9 @@ def run_web_vis(
             index = timeline.clamp(index)
         state.frame = index
         state.mode = mode
+        # Phase "reanchor": everything up to the position being written - the
+        # page read, the mode resolve and the clamp into the timeline.
+        _profile_phase("reanchor")
         # The plane frame and the volume frame THIS position draws. Both fall
         # back to the position itself when there is no plan (no volume, or no
         # readable step axis): a dump with one timeline keeps the behaviour it
@@ -12998,6 +13810,8 @@ def run_web_vis(
             if held is not None:
                 plane_index = int(held)
         volume_frame = plan["volume"][index] if plan is not None else None
+        # Phase "target": the two indices this tick will paint, resolved.
+        _profile_phase("target")
 
         _timing_mark("sheet_start")
         for key, entry in sheets.items():
@@ -13013,6 +13827,7 @@ def run_web_vis(
             array = info[key]
             if array.shape[0] == 0:
                 continue
+            _psheet = _profile_sheet_begin(key, entry.get("grid"))
             data = np.abs(
                 np.asarray(
                     array[min(plane_index, int(array.shape[0]) - 1)], dtype=float
@@ -13029,6 +13844,13 @@ def run_web_vis(
                     f"[poc_app] frame update skipped for {key}: {exc}",
                     file=sys.stderr,
                 )
+            # Closed HERE, inside the loop: the per-sheet number is this sheet's
+            # own upload, not the three sheets' total.
+            _profile_sheet_end(
+                _psheet,
+                min(plane_index, int(array.shape[0]) - 1),
+                entry.get("grid"),
+            )
 
         _timing_mark("sheet_end")
         # The Mode picture is NOT one of the three sheets and must never be
@@ -13245,6 +14067,7 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - never take the server down
             print(f"[poc_app] render skipped: {exc}", file=sys.stderr)
         _timing_mark("render_end")
+        _profile_phase("draw")
         _timing_mark("push_start")
         view_handle = handles.get("view")
         if view_handle is not None:
@@ -13263,6 +14086,10 @@ def run_web_vis(
             fps=fps,
             play_rate=getattr(state, "play_rate", DEFAULT_PLAY_RATE),
         )
+        # Published, not asked: _show CLAMPS the position before writing it, so
+        # a row that reported the request would hide the clamp.
+        _profile_phase("flush")
+        _profile_tick_end(state.frame, plotter=plotter, mode=mode)
 
     def _rebuild_sheets(mode=None) -> None:
         """Re-create the three field sheets from the LIVE page's own info.
@@ -14646,6 +15473,10 @@ def run_web_vis(
                     # animation keeps advancing. sleep(0) is the suspension point
                     # the deadline sleep may not have provided.
                     await asyncio.sleep(0)
+                    # Phase "yield": from the push mark to the sleep returning -
+                    # what the loop spends between publishing a frame and being
+                    # ready for the next one, the suspension included.
+                    _profile_yield()
                 finally:
                     handles["play_echo_frame"] = None
             except Exception as exc:  # noqa: BLE001
@@ -15496,7 +16327,37 @@ def main(argv=None) -> int:
             "a legacy station dump has no time axis and ignores it"
         ),
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        dest="profile",
+        help=(
+            "record the --profile measurement suite (per-tick JSONL, loop-lag "
+            "and stack samples, a summary) into --profile-dir; POC_PROFILE=1 "
+            "or POC_TIMING=1 does the same without the flag"
+        ),
+    )
+    parser.add_argument(
+        "--profile-dir",
+        dest="profile_dir",
+        metavar="PATH",
+        default=None,
+        help=(
+            "directory for the --profile artefacts (default: "
+            f"{_PROFILE_DEFAULT_DIR})"
+        ),
+    )
     args = parser.parse_args(argv)
+    if getattr(args, "profile", False) or _profile_env_enabled():
+        # ONE switch for the whole suite; --profile-dir only says where it lands.
+        # POC_TIMING is accepted as an alias so a run already started with it
+        # gets the profile artefacts too, instead of needing a second variable.
+        _profile_configure(
+            True,
+            getattr(args, "profile_dir", None),
+            start_threads=True,
+            register_exit=True,
+        )
     if args.structure is None:
         # The ONE place the boot default is chosen, so an explicit --structure
         # never gets a sentence about a default it did not use.
