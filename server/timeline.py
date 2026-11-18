@@ -168,7 +168,7 @@ class Layer:
             last = first + self.decimation - 1
         return (first, max(first, last))
 
-    def label(self, index: int, step: int | None = None) -> str:
+    def label(self, index: int) -> str:
         """The layer's half of the on-screen sentence, e.g. "Frame 2 of 24".
 
         The wording is the viewer's existing one, preserved byte for byte because
@@ -177,11 +177,11 @@ class Layer:
         rides ONLY on a decimated layer, so an undecimated one is never labelled
         with a cadence it does not have.
 
-        ``step`` is the position's own step, and it is what makes " (held)" mean
-        something: a stored frame is HELD at every position after its capture
-        until the next one, and the suffix says so only when asked about such a
-        position. Without ``step`` there is no claim to make, so none is added -
-        which is also the legacy two-argument call.
+        The label names the SAMPLE and its capture step, and nothing else. A
+        stored sample is HELD from its capture until the next one, and
+        :meth:`span` is what states that window: the hold is a fact about the
+        recording, not a footnote about one position, and the sentence this
+        label completes already prints the player's step beside the capture's.
         """
         if not self.steps:
             return "Frame 0 of 0"
@@ -191,13 +191,6 @@ class Layer:
         if decimation > 1:
             noun = "Volume Decimated" if self.name == VOLUME_LAYER else "Decimated"
             text += f", {noun} \u00d7{decimation} @ step {int(self.steps[position])}"
-        if step is not None:
-            try:
-                held = int(step) > int(self.steps[position])
-            except (TypeError, ValueError):
-                held = False
-            if held:
-                text += " (held)"
         return text
 
 
@@ -397,8 +390,7 @@ class Timeline:
         if layer is None:
             return None
         index = self.clamp(position)
-        step = int(self.steps[index])
-        return layer.label(layer.index_for(step), step)
+        return layer.label(layer.index_for(int(self.steps[index])))
 
     def plan(self, mode: str) -> dict | None:
         """The LEGACY position-to-indices dict, or None when there is no volume.

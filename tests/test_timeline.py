@@ -127,10 +127,34 @@ def test_an_undecimated_layer_prints_no_decimation_clause():
     assert layer.label(0) == "Frame 1 of 3"
 
 
-def test_held_is_said_only_when_the_frame_is_held_past_its_capture():
-    layer = _volume_layer()
-    assert layer.label(1, 101) == layer.label(1), "not held at its own capture"
-    assert layer.label(1, 150).endswith(" (held)")
+def test_a_stored_sample_owns_the_window_until_the_next_capture():
+    """The hold is one fact about the recording, and :meth:`span` states it.
+
+    A stored sample is HELD from its capture until the next one, which is why
+    ``Layer.span`` exists and why this case reads the window instead of a suffix
+    on the label: the label names the sample and the step it was captured at,
+    and the sentence it completes already prints the player's step beside the
+    capture's, so a per-position " (held)" said the same thing twice.
+    """
+    layer = _volume_layer()  # captures at 1, 101 and 201; decimation 100
+    assert layer.span(1) == (101, 200), (
+        "the sample captured at step 101 must own 101..(next capture - 1), not "
+        "only the instant it was taken"
+    )
+    assert layer.span(0) == (1, 100), "the step-1 sample must own 1..100"
+    assert layer.span(2) == (201, 300), (
+        "the LAST sample has no successor to bound it; it must own exactly one "
+        "decimation window rather than an invented infinity"
+    )
+    label = layer.label(1)
+    assert label == "Frame 2 of 3, Volume Decimated \u00d7100 @ step 101", (
+        f"the label drifted from the shipped wording: {label!r}"
+    )
+    assert "held" not in label.lower(), (
+        f"the hold leaked back into the label ({label!r}); it is stated by "
+        "span() alone"
+    )
+
 
 
 # --------------------------------------------------------------------------

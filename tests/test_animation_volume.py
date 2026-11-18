@@ -78,9 +78,22 @@ FRAME_INDEX_XCUT = (0, 9, 18)
 VOLUME_STEPS = (1, 3, 7, 11)
 VOLUME_STRIDE = 3
 
-#: The frame whose |E| peak is 1e3 above the rest, and the one 1e6 below it.
+#: The stored |E| frame whose peak is 1e3 above the rest, and the one 1e6 below
+#: it.  BOTH are frames the player can actually HOLD, which is what keeps the two
+#: colour-range branches reachable from a drawable position: a stored sample is
+#: on screen from its capture until the next one, so the position axis this dump
+#: runs (steps 0, 3, 6, 9) holds samples 0, 1, 1 and 2 of the recorded axis
+#: (1, 3, 7, 11) - the last capture at or before the step, never the next.  The
+#: quiet sample is therefore 2 (captured at step 7, held at the last position,
+#: step 9), while sample 3 was captured at step 11, past the end of the film: no
+#: position can honestly show it.
 LOUD_FRAME = 1
-QUIET_FRAME = 3
+QUIET_FRAME = 2
+
+#: The player POSITION whose held sample IS ``QUIET_FRAME`` - step 9 holds the
+#: capture taken at step 7.  A position and a sample index are two different
+#: numbers once the volume is a held layer, and the draws below need the former.
+QUIET_POSITION = 3
 
 FPS = 25
 TRIGGER_NAME = "step_fwd"
@@ -625,10 +638,15 @@ def test_a_cache_hit_still_reports_the_step_being_asked_for(bucket_page):
     # The premise, stated so a fixture change cannot make this test vacuous:
     # all five positions resolve to the SAME stored volume frame, so the draws
     # below are one rebuild followed by four cache hits.
-    frames = {
-        app._volume_frame_for_step(info["e_abs_volume_step_index"], step)
-        for step in requested
-    }
+    # OBSOLETE as written: this used to call ``_volume_frame_for_step``, which
+    # no longer exists. The mapping is the timeline's volume layer, and its
+    # sample-and-hold is the one and only answer to "which stored frame shows
+    # at this step".
+    layer = app._timeline_for(info).layer(app._timeline.VOLUME_LAYER)
+    assert layer is not None, (
+        "the dump carries an |E| volume, so the timeline must carry its axis"
+    )
+    frames = {layer.index_for(step) for step in requested}
     assert frames == {0}, (
         f"the five slider positions mapped to volume frames {sorted(frames)}, "
         "not to ONE bucket: the early-return path would never be taken"
@@ -964,7 +982,7 @@ def test_a_frame_with_no_peak_falls_back_to_the_global_range(zero_peak_page):
     # The LIVE layer on the zero-peak frame: rebuilt, drawn, on the fallback.
     with _clim_mode(live, app.VOLUME_CLIM_PER_FRAME):
         _only_the_layers_volume(live)
-        live.draw(2, "xcut")  # step 18 -> the stored frame that peaks at 0.0
+        live.draw(QUIET_POSITION, "xcut")  # step 9 -> held sample 2, the frame that peaks at 0.0
         entry = _layer_entry(live)
         drawn = _drawn_range(live)
     assert entry["frame"] == QUIET_FRAME, (
@@ -1072,6 +1090,13 @@ def test_a_weak_frame_is_blank_in_global_mode_and_drawn_per_frame(volume_page):
 
     The transparency is asserted on the numbers that decide it (the frame against
     the range the mapper was given), not on pixels: this image has no OpenGL.
+
+    WHY the draw is position 3 and not a position the volume's own numbering
+    suggests: the player's clock is the plane family's, so the last position of
+    this dump is step 9, and under sample-and-hold that step shows the LAST
+    sample captured at or before it - sample 2, captured at step 7. The weak
+    frame is sample 2 for that reason; sample 3 was captured at step 11, beyond
+    the end of a 12-step film, and a viewer must never be shown it.
     """
     live = volume_page
     volume = live.page["info"]["e_abs_volume"]
@@ -1087,7 +1112,7 @@ def test_a_weak_frame_is_blank_in_global_mode_and_drawn_per_frame(volume_page):
     assert int(np.count_nonzero(frame >= global_clim[0])) == 0
 
     _only_the_layers_volume(live)
-    live.draw(2, "xcut")  # step 18 -> the quiet stored frame
+    live.draw(QUIET_POSITION, "xcut")  # step 9 -> held sample 2, the quiet stored frame
     entry = _layer_entry(live)
     assert entry["frame"] == QUIET_FRAME
     drawn_global = _drawn_range(live)
@@ -1104,7 +1129,7 @@ def test_a_weak_frame_is_blank_in_global_mode_and_drawn_per_frame(volume_page):
 
     with _clim_mode(live, app.VOLUME_CLIM_PER_FRAME):
         _only_the_layers_volume(live)
-        live.draw(2, "xcut")
+        live.draw(QUIET_POSITION, "xcut")  # the same held sample, so only the mode changed
         assert _layer_entry(live)["frame"] == QUIET_FRAME
         drawn_frame = _drawn_range(live)
     assert drawn_frame != pytest.approx(drawn_global), (
@@ -1132,7 +1157,7 @@ def test_a_weak_frame_is_blank_in_global_mode_and_drawn_per_frame(volume_page):
 # ``--volume-stride`` saves the |E| volume on a COARSER grid than the cut planes,
 # so the page carries two clocks - and the timeline is the PLANE family's: one
 # position is one recorded plane frame, i.e. one solver step, and the volume is a
-# decimated LAYER painted at the position's NEAREST capture.  The rejected
+# decimated LAYER painted at the position's HELD capture.  The rejected
 # alternative - counting positions in the volume's frames - offered this dump
 # three positions for twelve recorded steps and left nine of them, the tail
 # included, unreachable.  Both halves come out of ONE index space,
@@ -1148,11 +1173,12 @@ DESYNC_FRAME_INDEX = tuple(range(DESYNC_NT))
 DESYNC_VOLUME_STEPS = (0, 4, 8)
 DESYNC_VOLUME_STRIDE = 4
 #: Position -> stored |E| capture, now that the positions ARE the twelve plane
-#: steps: step 1 is nearest capture 0, steps 2 and 6 are EXACT ties between two
-#: captures and the earlier one wins.  Written out because it is the evidence - a
-#: layer that rounded to the NEXT capture instead would read 0, 1, 1, 1, 2, ...
-#: and be half a stride early from step 2 onwards.
-DESYNC_VOLUME_NEAREST = (0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2)
+#: steps, under SAMPLE AND HOLD: capture k owns every step from the one it was
+#: taken at up to the step before capture k+1, so steps 0..3 show capture 0,
+#: 4..7 capture 1 and 8..11 capture 2.  Written out because it is the evidence:
+#: a layer that rounded to the NEAREST capture would read 0, 1, 1, 1, 2, ...
+#: (and, from step 2 on, be half a stride early - data from the future).
+DESYNC_VOLUME_HOLD = (0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2)
 
 
 def _desync_payload() -> dict:
@@ -1230,7 +1256,11 @@ def test_every_player_position_draws_one_time_step(desync_page):
     recorded steps, so nine plane frames - the tail included - could be reached
     by no slider position at all. The position is the plane family's own frame
     now, so every stored step is reachable, and the volume answers a DIFFERENT
-    question: which stored capture is NEAREST this step. That is why the two
+    question: which stored capture the clock is HOLDING at this step - the last
+    one taken at or before it. A viewer reading physics off the picture must
+    not be shown a capture from the future, and the price of that honesty is
+    that a coarse layer lags the clock by up to one decimation window: that is
+    the truth about a decimated layer, not a defect. That is why the two
     indices are checked against the PLAN, never against each other - the old
     ``frame_index[plane] == steps[volume]`` would demand that the decimated layer
     advance in lockstep with the clock, i.e. hand the coarse grid the timeline
@@ -1256,21 +1286,21 @@ def test_every_player_position_draws_one_time_step(desync_page):
         "it is counted on the volume's captures, so most of the dump's steps "
         "cannot be reached from the input"
     )
-    assert app._frame_span_max(plan["frames"], int(info["nt_x"]), "ycut") == (
-        DESYNC_NT - 1
-    ), (
-        "the scrubber's range is "
-        f"{app._frame_span_max(plan['frames'], int(info['nt_x']), 'ycut')}, not "
-        f"{DESYNC_NT - 1}: the range is the y-cut family's own last frame"
+    # OBSOLETE as written: ``_frame_span_max`` took the family on screen and the
+    # refactor deleted it. The range is the timeline's last position, ONE number
+    # for both families.
+    assert app._frame_max_for(info) == DESYNC_NT - 1, (
+        f"the scrubber's range is {app._frame_max_for(info)!r}, not "
+        f"{DESYNC_NT - 1}: it is the timeline's last position"
     )
     assert plan["plane"] == tuple(range(DESYNC_NT)), (
         f"the plan maps the positions onto plane frames {plan['plane']}: the "
         "position IS that family's stored frame, so the map is the identity"
     )
-    assert plan["volume"] == DESYNC_VOLUME_NEAREST, (
+    assert plan["volume"] == DESYNC_VOLUME_HOLD, (
         f"the plan paints the volume as {plan['volume']}, not "
-        f"{DESYNC_VOLUME_NEAREST}: the layer is the capture NEAREST the "
-        "position's step (ties to the earlier one), never the position itself"
+        f"{DESYNC_VOLUME_HOLD}: the layer is the capture HELD at the position's "
+        "step - the last one taken at or before it, never a later one"
     )
     assert list(plan["volume"]) == sorted(plan["volume"]), (
         f"the layer visits the volume as {plan['volume']}: it may hold one "
@@ -1292,7 +1322,7 @@ def test_every_player_position_draws_one_time_step(desync_page):
             )
             assert volume_frame == plan["volume"][position], (
                 f"position {position} painted volume frame {volume_frame}, not "
-                f"the nearest capture {plan['volume'][position]}: the layer and "
+                f"the held capture {plan['volume'][position]}: the layer and "
                 "the clock disagree about which capture this instant is"
             )
             assert live.state.t_label == f"sim time: t = {t_ns[plane_frame]:.6f} ns", (
@@ -1498,9 +1528,10 @@ def _bar_span(bar) -> tuple:
 def _volume_frame_shown(info: dict, index: int, mode: str = "ycut") -> int:
     """The stored |E| frame animation position ``index`` maps onto."""
     axis = info["frame_index" if mode == "ycut" else "frame_index_xcut"]
-    frame = app._volume_frame_for_step(
-        info.get("e_abs_volume_step_index"), int(axis[index])
-    )
+    # OBSOLETE as written: ``_volume_frame_for_step`` is gone; the |E| frame for
+    # a step is the timeline volume layer's sample-and-hold.
+    layer = app._timeline_for(info).layer(app._timeline.VOLUME_LAYER)
+    frame = None if layer is None else layer.index_for(int(axis[index]))
     assert frame is not None, (
         f"animation position {index} (step {int(axis[index])}) maps onto no "
         "stored |E| frame, so the assertions below would have nothing to read"
@@ -1583,7 +1614,12 @@ def test_the_volume_bar_follows_the_frame_the_volume_is_painted_on(volume_page):
     volume = info["e_abs_volume"]
 
     loud = _volume_frame_shown(info, LOUD_FRAME)
-    quiet = _volume_frame_shown(info, QUIET_FRAME)
+    quiet = _volume_frame_shown(info, QUIET_POSITION)
+    assert quiet == QUIET_FRAME, (
+        f"the last player position holds volume frame {quiet}, not the quiet "
+        f"sample {QUIET_FRAME}: this dump has no weak frame at a drawable "
+        "position, so the readings below would be about another picture"
+    )
     loud_peak = float(np.max(volume[loud]))
     quiet_peak = float(np.max(volume[quiet]))
     assert loud_peak > quiet_peak * 100.0, (

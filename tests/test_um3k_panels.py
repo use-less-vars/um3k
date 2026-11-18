@@ -334,8 +334,15 @@ class _FakeController:
 CENTER_WIDGETS = ("VBtn", "VLabel", "VSlider", "VSpacer")
 
 
+_UNSET = object()
+
+
 def _fake_center_context(
-    widget_names=CENTER_WIDGETS, nt=7, available=ANIMATION_PAGE, dump=None
+    widget_names=CENTER_WIDGETS,
+    nt=7,
+    available=ANIMATION_PAGE,
+    dump=None,
+    frame_max=_UNSET,
 ):
     """A real page context carrying recording fakes, and what they recorded.
 
@@ -371,6 +378,14 @@ def _fake_center_context(
     ctx.register_handle("widgets", widgets)
     ctx.register_handle("ctrl", _FakeController(log))
     ctx.register_handle("nt", nt)
+    # The scrubber's range is the page's ONE clock, published as the `frame_max`
+    # handle (the timeline's LAST INDEX) - not a frame count read off `nt`. A
+    # page with `nt` positions has last index ``nt - 1``; a page with no
+    # timeline publishes None. `frame_max` can be overridden to model a dump
+    # whose recorded steps and position count disagree.
+    if frame_max is _UNSET:
+        frame_max = None if nt is None else int(nt) - 1
+    ctx.register_handle("frame_max", frame_max)
     ctx.register_handle("plotter", object())
     ctx.register("html_div", _fake("callback", "html_div"))
     ctx.register("VRow", _fake("callback", "VRow"))

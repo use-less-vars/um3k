@@ -81,13 +81,15 @@ import numpy as np
 # resolve; package form (`import server.poc_app` or `-m server.poc_app`) has no
 # such entry and needs the relative form. Both hold state and layout only.
 try:
+    import timeline as _timeline
     import um3k_context
     from um3k_panels import build_center_panel, build_left_panel, build_right_panel
 except ModuleNotFoundError as exc:
     # Narrow, on purpose: only OUR two names may be re-routed. A dependency
     # missing inside them must surface as itself, not as a relative import.
-    if exc.name not in ("um3k_context", "um3k_panels"):
+    if exc.name not in ("timeline", "um3k_context", "um3k_panels"):
         raise
+    from . import timeline as _timeline
     from . import um3k_context
     from .um3k_panels import build_center_panel, build_left_panel, build_right_panel
 
@@ -425,17 +427,41 @@ def _is_vis(info: dict) -> bool:
     return info.get("format") in VIS_FORMATS
 
 
-def _frame_span_max(nt, nt_x, mode: str):
-    """The LAST frame index of ``mode``'s own family, or None with no timeline.
+def _timeline_for(info: dict):
+    """The page's clock, built once per record and shared by every reader.
 
-    The two clocks are different lengths - ``nt`` counts ez_ycut, ``nt_x`` each
-    of the x-cut sheets - so the range handed to the scrubber is always the
-    selected family's own, never the other one's. Both counts are None on a page
-    that claims no timeline (a bare field dump records no frame axis), and there
-    the range is ABSENT: None is "no timeline", never "0 frames".
+    :mod:`server.timeline` is the ONE place that decides how many positions the
+    timeline has and which stored sample a layer shows; nothing here recomputes
+    either. MEMOISED on ``id(info)`` with the record held alive beside the entry
+    (see ``_volume_player_plan``): a draw asks for this on EVERY tick and the
+    build is the expensive half of a tick, but keying on ``id`` alone would be
+    unsound once a freed dict's id is recycled onto a new dump.
     """
-    frames = nt if mode == "ycut" else nt_x
-    return None if frames is None else int(frames) - 1
+    key = id(info)
+    hit = _TIMELINE_CACHE.get(key)
+    if hit is not None and hit[0] is info:
+        return hit[1]
+    built = _timeline.Timeline.from_dump(info)
+    if len(_TIMELINE_CACHE) >= _TIMELINE_CACHE_LIMIT:
+        _TIMELINE_CACHE.clear()
+    _TIMELINE_CACHE[key] = (info, built)
+    return built
+
+
+def _frame_max_for(info: dict):
+    """The scrubber's LAST position, or None on a page with no timeline.
+
+    ONE number for both modes: switching plane re-aims the camera and clamps the
+    position, it never rescales the timeline (that was the 10x speed change).
+    """
+    timeline = _timeline_for(info)
+    return None if timeline is None else int(timeline.last_index)
+
+
+def _position_count(info: dict) -> int:
+    """How many positions the timeline has, floored at 1 for the step modulo."""
+    timeline = _timeline_for(info)
+    return 1 if timeline is None else max(1, int(timeline.nsteps))
 
 
 def _play_rate_near(value) -> int:
@@ -466,7 +492,7 @@ def _play_frames(value) -> int:
 
     The loop divides a target position by this, so it must be a positive int.
     ``value`` is a frame COUNT, and either clock is None on a page that claims no
-    timeline (see ``_frame_span_max``: None is "no timeline", never "0 frames").
+    timeline (see ``_frame_max_for``: None is "no timeline", never "0 frames").
     The REJECTED alternative - ``int(value)`` directly - raised TypeError inside a
     task nobody awaits: the exception was collected at GC, so the page stayed
     ``playing`` with nothing advancing and no trace to explain it. A page with no
@@ -9874,50 +9900,6 @@ def _volume_abs_grid(info, cell_mm, grid_hint=None):
         return _miss(f"the |E| volume could not be built: {exc}")
 
 
-def _volume_frame_for_step(step_index, step):
-    """Which stored |E| frame belongs to animation ``step``, or None.
-
-    ``e_abs_volume`` does not hold one frame per animation step: the writer
-    stores every ``e_abs_volume_stride``-th step and records WHICH steps those
-    are in ``e_abs_volume_step_index`` - a slice of the very ``frame_index``
-    array the plane sheets are indexed by, so the two axes are one record and
-    not two. The mapping is therefore a LOOKUP in that array and never
-    ``step // stride``: the two agree only while the steps are 1-based,
-    consecutive and complete, and a dump that starts at a later step, skips one,
-    or was written at a cadence the loader did not see would silently draw the
-    wrong slice of time - which is the one failure this function exists to make
-    impossible.
-
-    The answer is the LAST frame stored at or before ``step``
-    (``searchsorted`` with ``side="right"``, minus one): the nearest capture in
-    the past, clamped to both ends of the array, so a step before the first
-    capture reads the first frame and a step after the last reads the last and a
-    page can never index off the end.
-
-    None means "no mapping this page can defend": no step axis, an empty one, a
-    non-monotonic one (a hand-built dump), or a step that is not a number.
-    """
-    if step_index is None or step is None:
-        return None
-    try:
-        steps = np.asarray(step_index).ravel()
-    except Exception:  # noqa: BLE001 - an axis we cannot read is a None
-        return None
-    if steps.size < 1:
-        return None
-    try:
-        wanted = int(step)
-    except (TypeError, ValueError):
-        return None
-    try:
-        if steps.size > 1 and np.any(np.diff(steps.astype(float)) < 0.0):
-            return None
-        found = int(np.searchsorted(steps, wanted, side="right")) - 1
-    except (TypeError, ValueError):
-        return None
-    return max(0, min(int(steps.size) - 1, found))
-
-
 def _monotonic_axis(values):
     """One recorded step axis as an int array, or None when it cannot be read.
 
@@ -9964,6 +9946,9 @@ def _volume_decimation(info: dict) -> int:
         return 1
     return max(1, int(round(float(np.median(diffs)))))
 
+
+_TIMELINE_CACHE: dict = {}
+_TIMELINE_CACHE_LIMIT = 8
 
 # Memo for _volume_player_plan. A page draws on EVERY tick, and the plan is a
 # pure function of (info, mode): rebuilding it per tick would rebuild two 2400-entry
@@ -10045,33 +10030,10 @@ def _build_volume_player_plan(info: dict, mode: str):
     accident: nothing else in the module calls this, and every caller therefore
     sees the same plan object for the same record.
     """
-    if info.get("e_abs_volume") is None:
+    timeline = _timeline_for(info)
+    if timeline is None:
         return None
-    volume_steps = _monotonic_axis(info.get("e_abs_volume_step_index"))
-    plane_steps = _monotonic_axis(
-        info.get("frame_index" if mode == "ycut" else "frame_index_xcut")
-    )
-    if volume_steps is None or plane_steps is None:
-        return None
-    n_volume = int(volume_steps.size)
-    frames = int(plane_steps.size)
-    upper = np.clip(
-        np.searchsorted(volume_steps, plane_steps, side="left"), 0, n_volume - 1
-    )
-    lower = np.clip(upper - 1, 0, n_volume - 1)
-    before = np.abs(plane_steps - volume_steps[lower])
-    after = np.abs(volume_steps[upper] - plane_steps)
-    nearest = np.where(before <= after, lower, upper)
-    # Monotone inputs already give a monotone answer; the running maximum keeps
-    # that true of a hand-built dump as well, so the layer can only ever advance
-    # with the clock and never snap back.
-    nearest = np.clip(np.maximum.accumulate(nearest), 0, n_volume - 1)
-    return {
-        "steps": tuple(int(step) for step in plane_steps),
-        "frames": frames,
-        "plane": tuple(range(frames)),
-        "volume": tuple(int(index) for index in nearest),
-    }
+    return timeline.plan(mode)
 
 
 def _synced_frame_counts(info: dict, nt, nt_x):
@@ -10106,22 +10068,10 @@ def _volume_layer_label(info, mode, position, plan=None):
     ``plan`` is the player's :func:`_volume_player_plan` when the caller already
     has it; it is recomputed here otherwise. None means "no layer on this page".
     """
-    if plan is None:
-        plan = _volume_player_plan(info, mode)
-    if plan is None:
+    timeline = _timeline_for(info)
+    if timeline is None:
         return None
-    try:
-        index = int(plan["volume"][position])
-    except (IndexError, KeyError, TypeError, ValueError):
-        return None
-    volume_steps = _monotonic_axis(info.get("e_abs_volume_step_index"))
-    if volume_steps is None or index < 0 or index >= int(volume_steps.size):
-        return None
-    text = f"Frame {index + 1} of {int(volume_steps.size)}"
-    decimation = _volume_decimation(info)
-    if decimation > 1:
-        text += f", Volume Decimated ×{decimation} @ step {int(volume_steps[index])}"
-    return text
+    return timeline.layer_label(_timeline.VOLUME_LAYER, timeline.clamp(position))
 
 
 def _volume_abs_global_clim(volume):
@@ -11311,7 +11261,7 @@ def run_web_vis(
     state.playing = False
     state.frame = 0
     # No timeline: the scrubber's range is ABSENT (None), never 0 frames.
-    state.frame_max = _frame_span_max(nt, nt_x, "ycut")
+    state.frame_max = _frame_max_for(info)
     state.play_label = "play"
     # The PLAY SPEED: how many positions a tick advances, and the sentence beside
     # the select that states what that rate costs per sweep. Both are viewing
@@ -12111,21 +12061,18 @@ def run_web_vis(
             clim_mode = _volume_clim_mode(
                 getattr(state, "volume_clim_mode", VOLUME_CLIM_DEFAULT)
             )
-            step_axis = info.get(
-                "frame_index" if mode == "ycut" else "frame_index_xcut"
-            )
-            step = None
-            if step_axis is not None:
-                try:
-                    position = max(0, min(len(step_axis) - 1, int(index)))
-                    step = int(step_axis[position])
-                except (TypeError, ValueError, IndexError):
-                    step = None
+            # The |E| frame for this position comes from the player when a
+            # caller hands one in, and otherwise from the timeline's ONE
+            # sample-and-hold - the same lookup the label uses, so the picture
+            # and the caption can never disagree about which capture this is.
+            timeline = _timeline_for(info)
             if volume_frame is not None:
                 vol_frame = volume_frame
+            elif timeline is None:
+                vol_frame = None
             else:
-                vol_frame = _volume_frame_for_step(
-                    info.get("e_abs_volume_step_index"), step
+                vol_frame = timeline.layer_index(
+                    _timeline.VOLUME_LAYER, timeline.clamp(index)
                 )
             if vol_frame is None:
                 _volume_layer_drop()
@@ -12135,6 +12082,12 @@ def run_web_vis(
                     file=sys.stderr,
                 )
                 return
+            # The dump's OWN step at this position, read off the timeline's axis
+            # (``frame_index``), never ``position + 1``: the slider indexes
+            # recorded frames, and a restart or a dropped dump leaves the two
+            # disagreeing. This is what the layer's readout reports, so it is
+            # refreshed on a cache HIT as well as on a rebuild.
+            step = None if timeline is None else int(timeline.steps[timeline.clamp(index)])
             show_load = bool(getattr(state, "show_load_plane", True))
             show_port = bool(getattr(state, "show_port_plane", True))
             # The cache key carries the TWO SWITCHES: the markers are part of this
@@ -12295,7 +12248,8 @@ def run_web_vis(
         # the position's nearest capture (see ``_volume_player_plan``) - it no
         # longer decides how many positions there are.
         plan = _volume_player_plan(info, mode)
-        frames = plan["frames"] if plan is not None else (nt if mode == "ycut" else nt_x)
+        timeline = _timeline_for(info)
+        frames = None if timeline is None else int(timeline.nsteps)
         try:
             index = int(round(float(frame)))
         except (TypeError, ValueError):
@@ -12303,17 +12257,24 @@ def run_web_vis(
         # A page with no timeline has no frame axis to clamp into: nothing was
         # indexed (no sheet was drawn), and the label below stays ABSENT rather
         # than claiming frame 1 of None.
-        if frames is None:
+        if timeline is None:
             index = 0
         else:
-            index = max(0, min(frames - 1, index))
+            index = timeline.clamp(index)
         state.frame = index
         state.mode = mode
         # The plane frame and the volume frame THIS position draws. Both fall
         # back to the position itself when there is no plan (no volume, or no
         # readable step axis): a dump with one timeline keeps the behaviour it
         # had.
-        plane_index = plan["plane"][index] if plan is not None else index
+        plane_index = index
+        if timeline is not None:
+            held = timeline.layer_index(
+                _timeline.XCUT_LAYER if mode == "xcut" else _timeline.YCUT_LAYER,
+                index,
+            )
+            if held is not None:
+                plane_index = int(held)
         volume_frame = plan["volume"][index] if plan is not None else None
 
         for key, entry in sheets.items():
@@ -12595,7 +12556,7 @@ def run_web_vis(
         # what drops the stale bar's claim on the title, so the new limit is
         # the one the bar reads. Never touches the |E| volume bar.
         _swap_scalar_bar(mode or state.mode)
-        state.frame_max = _frame_span_max(nt, nt_x, mode or state.mode)
+        state.frame_max = _frame_max_for(live)
         # The prose lines that name THIS dump's numbers are rebuilt from `live`
         # rather than kept from boot: a solve can change the arm, the velocity
         # record and the colour ceiling all at once.
@@ -12670,15 +12631,15 @@ def run_web_vis(
         rate = _play_rate_near(raw)
         with state.suppress_change_listeners("play_rate"):
             state.play_rate = rate
-        state.play_caption = _play_caption(
-            nt if state.mode == "ycut" else nt_x, rate, fps
-        )
+        state.play_caption = _play_caption(_position_count(info), rate, fps)
 
     @ctrl.set("mode_toggle")
     def _on_mode_toggle(**_kwargs) -> None:
         """Swap which family is animated. The two clocks are never mixed."""
         mode = "xcut" if state.mode == "ycut" else "ycut"
-        state.frame_max = _frame_span_max(nt, nt_x, mode)
+        # The SAME maximum in both modes: the press re-aims the camera and
+        # clamps, it never rescales the timeline.
+        state.frame_max = _frame_max_for(info)
         if state.frame_max is None:
             # NO TIMELINE: this page carries ONE static picture and no second
             # family to swap to (both counts are None), so the press changes
@@ -12708,7 +12669,7 @@ def run_web_vis(
         # zero-frame guard - an empty axis would otherwise raise
         # ZeroDivisionError in the modulo, and on a one-frame axis every step
         # lands on frame 0, which is the only frame there is.
-        frames = max(1, nt if state.mode == "ycut" else nt_x)
+        frames = _position_count(info)
         if state.playing:
             _show((int(state.frame) - 10) % frames, state.mode)
             return
@@ -12722,7 +12683,7 @@ def run_web_vis(
 
         See _on_step_back: same split, same reason, same frame count.
         """
-        frames = max(1, nt if state.mode == "ycut" else nt_x)
+        frames = _position_count(info)
         if state.playing:
             _show((int(state.frame) + 10) % frames, state.mode)
             return
@@ -14489,6 +14450,7 @@ def run_web_vis(
                         ctx.register_handle("widgets", widgets)
                         ctx.register_handle("ctrl", ctrl)
                         ctx.register_handle("nt", nt)
+                        ctx.register_handle("frame_max", _frame_max_for(info))
                         ctx.register_handle("plotter", plotter)
                         # The PLAY SPEED the player bar offers: the values and the
                         # one the select starts on, as one handle the centre column

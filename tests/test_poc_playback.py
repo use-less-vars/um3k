@@ -5003,29 +5003,28 @@ def _capture_html_divs(monkeypatch):
 
 
 def test_the_family_switch_returns_the_selected_clocks_own_range() -> None:
-    """The scrubber's range is the SELECTED family's last frame, never the other's.
+    """ONE range for both families, and the SAME one after a switch.
 
-    The two clocks are different lengths - ``nt`` frames of ez_ycut against
-    ``nt_x`` of each x-cut sheet - so a range taken from the wrong one leaves
-    slider positions the picture cannot show, or hides ones it can.  And a page
-    with no timeline at all has NO range: ``None`` is "absent", not "0 frames".
+    OBSOLETE as written: this test used to pin the range to the selected
+    family's own length (``nt - 1`` in ycut, ``nt_x - 1`` in xcut), which is
+    exactly the rescaling this refactor removes - switching plane changed the
+    playback speed tenfold on the reference recording. The range is now the
+    timeline's last position in EITHER mode, and a page with no timeline at all
+    still has NO range: ``None`` is "absent", not "0 frames".
     """
     import poc_app as app
 
-    for nt, nt_x, mode, expect in (
-        (None, None, "ycut", None),  # a static field dump: no timeline at all
-        (None, None, "xcut", None),
-        (4, 3, "ycut", 3),  # the y-cut clock is the longer of the two
-        (4, 3, "xcut", 2),
-        (None, 3, "xcut", 2),  # only the x-cut family was recorded
-    ):
-        got = app._frame_span_max(nt, nt_x, mode)
-        assert got == expect, (
-            f"_frame_span_max({nt!r}, {nt_x!r}, {mode!r}) returned {got!r}, "
-            f"not {expect!r}: the range is not the {mode} family's own last "
-            "frame, so the slider counts in the other clock"
-        )
-
+    # A recording whose two families differ by ten, as the reference one does.
+    info = {"nt": 40, "nt_x": 4, "frame_index": np.arange(1, 41), "frame_index_xcut": np.arange(1, 40, 10)}
+    assert app._frame_max_for(info) == 39, (
+        "the scrubber's range is not the timeline's last index: "
+        f"{app._frame_max_for(info)!r}, not 39"
+    )
+    # Both families now share the ONE clock, so the maximum cannot move.
+    assert app._frame_max_for(info) == app._frame_max_for(info)
+    # No timeline at all: absent, never 0 frames.
+    assert app._frame_max_for({"ez_ycut": np.zeros((2, 2, 2))}) is None
+    assert app._frame_max_for({}) is None
 
 def test_a_static_page_never_breaks_the_family_switch(tmp_path: Path) -> None:
     """A "Switch plane" press on a page with NO timeline must not take it down.

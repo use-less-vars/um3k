@@ -66,7 +66,9 @@ def build_center_panel(ctx) -> object:
     """
     widgets = ctx.handle("widgets")
     ctrl = ctx.handle("ctrl")
-    nt = ctx.handle("nt")
+    # The scrubber's range is the timeline's last index, published by the page as
+    # `frame_max`; no frame COUNT is read here any more (one clock, one maximum).
+    frame_max = ctx.handle("frame_max")
     plotter = ctx.handle("plotter")
     html_div = ctx.callback("html_div")
     VRow = ctx.callback("VRow")
@@ -154,10 +156,10 @@ def build_center_panel(ctx) -> object:
         # what the boot log prints as its
         # "[poc_app] no timeline on this page:" line, which is where a
         # reader goes to ask WHY.
-        if nt is None:
+        if frame_max is None:
             if "VLabel" in widgets:
                 widgets["VLabel"]("Static field snapshot - no timeline")
-        if nt is not None and "VBtn" in widgets:
+        if frame_max is not None and "VBtn" in widgets:
             try:
                 widgets["VBtn"](
                     "<< PREV", click=ctrl.step_back
@@ -180,12 +182,12 @@ def build_center_panel(ctx) -> object:
                         "playback unavailable "
                         "(button binding failed)"
                     )
-        if nt is not None and "VSlider" in widgets and "VLabel" in widgets:
+        if frame_max is not None and "VSlider" in widgets and "VLabel" in widgets:
             try:
                 widgets["VSlider"](
                     v_model=("frame", 0),
                     min=0,
-                    max=("frame_max", nt - 1),
+                    max=("frame_max", 0),
                     step=1,
                     thumb_label=True,
                     hide_details=True,
@@ -221,7 +223,7 @@ def build_center_panel(ctx) -> object:
         options = ctx.handles.get("play_rate_options")
         select_cls = ctx.handles.get("play_rate_select")
         if (
-            nt is not None
+            frame_max is not None
             and options
             and select_cls is not None
             and "VLabel" in widgets

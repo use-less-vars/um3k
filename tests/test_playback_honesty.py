@@ -145,9 +145,12 @@ def test_the_axis_counts_the_frames_the_player_steps(real_info):
         f"the timeline is {nt_synced}/{nt_x_synced}, the planes record "
         f"{real_info['nt']}/{real_info['nt_x']}: the volume shortened it"
     )
-    assert app._frame_span_max(nt_synced, real_info["nt_x"], "ycut") == (
-        axis.n_frames - 1
-    ), "the scrubber's maximum is not the axis's last frame"
+    # OBSOLETE as written: ``_frame_span_max`` took the family on screen and was
+    # deleted by the refactor. The maximum is the axis's last position, read
+    # straight off the timeline and identical in either mode.
+    assert app._frame_max_for(real_info) == axis.n_frames - 1, (
+        "the scrubber's maximum is not the axis's last frame"
+    )
 
 
 def test_the_label_names_the_step_the_picture_was_taken_at(real_info):
