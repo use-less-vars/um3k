@@ -53,6 +53,7 @@ inside this tree, since no `docs/design/` row backs it.
 | KB-2 | the section below | LIVE | `docs/kb/PROCEDURE.md` section 6 |
 | KB-3 | the section below | LIVE | `docs/kb/PROCEDURE.md` section 6 |
 | KB-4 | the section below | LIVE | `server/poc_app.py` |
+| ADR-004 | the section below | LIVE | `docs/design/3d_ntff_te_spec.md` |
 
 ## KB-1 — a fabricated `pinned_commit` is a failed header
 
@@ -183,3 +184,47 @@ their full text; this paragraph is the pointer to it, not a summary of it.
 - Class: test isolation, not product behaviour. Something in the batch mutates module-level state the test depends on.
 - Not fixed now: it is a rabbit hole with no product behaviour attached. Log it and fix it when the P2 split gives the poc tests their own fixtures.
 - Owner: whoever lands P2.
+
+## ADR-004 — Non-linear FIT and modal excitation
+
+**Decision.** Three lock-ins, taken together because splitting them produces a
+kernel that cannot be extended later without a rewrite.
+
+1. Non-linear materials evolve B, not M_mu. The kernel gains a
+   `nonlinear_magnetic_dofs` index list; cells outside it keep the existing
+   linear path and its cost. Cells inside it are advanced by a local Newton
+   iteration, or by a lookup table where the constitutive law is monotonic in
+   |B|. Simple saturation is an admissible first increment; it is not full
+   hysteresis and must never be described as such.
+
+2. Modal excitation injects J_s and M_s together (Huygens equivalent
+   currents), reusing the NTFF machinery already validated in this repository.
+   E-only injection is forbidden: it launches a mode whose complementary
+   equivalent current is missing, so the launch error does not shrink with
+   mesh refinement.
+
+3. Duties are separated: `mode_profile.py` (2-D eigenmode solver) →
+   `ModeProfile` (data contract, no FIT types inside it) → `ModalSource`
+   (3-D injection). The 2-D solver does not import the 3-D kernel; the
+   injector does not solve for a profile.
+
+**Defects.** What this entry fixes: (a) a linear-only material model, which
+cannot represent a saturating core at all; (b) an excitation path that injects
+the electric field alone, whose error is not bounded by refinement; (c) a
+missing seam between the 2-D mode solver and the 3-D kernel, which is why the
+two have been rewritten against each other. Known limits accepted on purpose:
+the Newton path is local per cell, so it does not capture hysteretic memory;
+the lookup table is only admissible for monotonic laws; and the modal launch is
+validated for the modes that `mode_profile.py` can actually solve.
+
+**Rejected.** Evolving M_mu instead of B (ill-conditioned at saturation and it
+puts the Newton residual on the wrong variable). E-only modal injection, for
+the reason in Decision 2. A single monolithic solver that both finds the mode
+and injects it, because it makes the launch untestable in isolation. Full
+hysteresis in this increment, because it needs a state variable the kernel has
+nowhere to keep yet.
+
+**Provenance.** The architectural ruling recorded here is the host's, taken on
+advice; no simulation, test or command has been executed against it, so no
+VERIFIED-BY-RUN tag can honestly be asserted [UNCITED]
+why: the ruling arrived as chat text and was never written to disk, so any VERIFIED-BY-RUN or measured tag written here would cite a run that does not exist. A full-tree search on 2026-11-18 for `ModalSource`, `nonlinear_magnetic_dofs` and `hysteresis` returns no file, and the only theory-engineering artefacts on disk are `docs/design/3d_ntff_te_spec.md` (NTFF formulas, cited in Decision 2) and `docs/design/theory_round2_memo.md`. If the arbitration memo is to be citable it must be committed as a file.
