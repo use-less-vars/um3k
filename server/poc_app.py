@@ -460,6 +460,41 @@ def _play_rate_near(value) -> int:
     return min(rates, key=lambda rate: (abs(rate - value), rate))
 
 
+def _play_frames(value) -> int:
+    """How many positions ``value``'s family holds, floored at 1.
+
+    The loop divides a target position by this, so it must be a positive int.
+    ``value`` is a frame COUNT, and either clock is None on a page that claims no
+    timeline (see ``_frame_span_max``: None is "no timeline", never "0 frames").
+    The REJECTED alternative - ``int(value)`` directly - raised TypeError inside a
+    task nobody awaits: the exception was collected at GC, so the page stayed
+    ``playing`` with nothing advancing and no trace to explain it. A page with no
+    timeline simply holds its one position.
+    """
+    try:
+        frames = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, frames)
+
+
+def _play_rate_items(rates=PLAY_RATES) -> list:
+    """The speed select's items as Vuetify OBJECTS, ``title`` beside ``value``.
+
+    Vuetify renders a row's visible text from ``item.title``, so a bare array of
+    numbers (``[1, 2, 4, 8]``) leaves every row labelled by whatever fallback
+    runs - the operator reported garbage ("st 1", "st 2", "8") on a control whose
+    own label reads "steps per tick". The wording lives here, beside the value the
+    loop and the caption use, so the three cannot disagree.
+    """
+    items = []
+    for rate in rates:
+        steps = int(rate)
+        unit = "step/tick" if steps == 1 else "steps/tick"
+        items.append({"title": f"{steps} {unit}", "value": steps})
+    return items
+
+
 def _play_target(anchor_time, anchor_frame, now, rate, fps) -> int:
     """The position the wall clock says belongs on screen at ``now``.
 
@@ -13644,33 +13679,68 @@ def run_web_vis(
         anchor_frame = int(state.frame)
         drawn = anchor_frame
         tick = 0
+        # The tick PERIOD is computed once and floored at 1 fps: a zero
+        # would divide by zero here, before any position is drawn.
+        period = 1.0 / max(1, int(fps))
         while int(handles.get("generation", 0)) == gen and state.playing:
             tick += 1
             # Deadline, not period: the draw time comes out of the NEXT sleep
             # instead of being added to it (see the docstring).
-            delay = (t0 + tick / fps) - loop.time()
+            delay = (t0 + tick * period) - loop.time()
             if delay > 0:
                 await asyncio.sleep(delay)
             # Re-checked after the sleep: a pause, a step or a mode swap during
             # the wait may have ended this loop.
             if int(handles.get("generation", 0)) != gen or not state.playing:
                 return
-            rate = _play_rate_near(
-                getattr(state, "play_rate", DEFAULT_PLAY_RATE)
-            )
-            frames = max(1, int(nt if state.mode == "ycut" else nt_x))
-            now = loop.time()
-            anchor_time, anchor_frame = _play_reanchor(
-                anchor_time, anchor_frame, now, int(state.frame), drawn
-            )
-            target = _play_target(anchor_time, anchor_frame, now, rate, fps)
-            handles["suppress_frame_listener"] = True
+            # A FAILED TICK ENDS PLAYBACK, IT DOES NOT SILENTLY KEEP PLAYING.
+            # This task is never awaited, so an exception escaping here would
+            # only surface as "Task exception was never retrieved" at GC time:
+            # state.playing would stay True, the button would still read
+            # "pause" and nothing would ever advance - the same dead viewer as
+            # a starved event loop, with no trace to explain it.
             try:
-                _show(target % frames, state.mode)
-                state.flush()
-            finally:
-                handles["suppress_frame_listener"] = False
-            drawn = int(state.frame)
+                rate = _play_rate_near(
+                    getattr(state, "play_rate", DEFAULT_PLAY_RATE)
+                )
+                frames = _play_frames(nt if state.mode == "ycut" else nt_x)
+                now = loop.time()
+                anchor_time, anchor_frame = _play_reanchor(
+                    anchor_time, anchor_frame, now, int(state.frame), drawn
+                )
+                target = _play_target(anchor_time, anchor_frame, now, rate, fps)
+                handles["suppress_frame_listener"] = True
+                try:
+                    # THE DRAW LEAVES THE EVENT LOOP. _show renders a sheet and
+                    # costs far more than one tick, and on a late tick
+                    # (delay <= 0) there is no sleep above at all - so drawing on
+                    # this thread let the coroutine iterate without ever
+                    # yielding, starving the websocket: the client stops
+                    # receiving state and the viewer freezes while the picture
+                    # keeps moving. to_thread gives EVERY tick a suspension point.
+                    await asyncio.to_thread(_show, target % frames, state.mode)
+                    # THE DRAW IS THE ONLY THING ON THE WORKER THREAD: _show
+                    # writes state.frame/state.mode (trame State is not
+                    # documented thread-safe) and flush is what pushes state to
+                    # the client, so both stay here. sleep(0) is what makes the
+                    # tick suspend even when no sleep above happened.
+                    await asyncio.sleep(0)
+                    state.flush()
+                finally:
+                    handles["suppress_frame_listener"] = False
+                drawn = int(state.frame)
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[poc_app] playback stopped: {exc!r}",
+                    file=sys.stderr,
+                )
+                state.playing = False
+                state.play_label = "play"
+                try:
+                    state.flush()
+                except Exception:  # noqa: BLE001
+                    pass
+                return
 
     @ctrl.set("play_toggle")
     async def _on_play_toggle(**_kwargs) -> None:
@@ -14307,7 +14377,7 @@ def run_web_vis(
                         ctx.register_handle(
                             "play_rate_options",
                             {
-                                "items": list(PLAY_RATES),
+                                "items": _play_rate_items(PLAY_RATES),
                                 "default": DEFAULT_PLAY_RATE,
                             },
                         )

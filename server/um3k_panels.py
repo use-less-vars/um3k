@@ -227,17 +227,29 @@ def build_center_panel(ctx) -> object:
             and "VLabel" in widgets
         ):
             try:
-                # v_bind_items is a JS ARRAY LITERAL, not a Python list: trame
-                # reads a list-valued binding as (state_name, default) and would
-                # emit only its first element, and [1, 2, 4, 8] holds no string
-                # so no quoting is needed.
-                rate_items = "[" + ", ".join(
-                    str(int(rate)) for rate in options["items"]
-                ) + "]"
+                # v_bind_items takes a JS ARRAY LITERAL, not a Python list:
+                # trame reads a list-valued binding as (state_name, default) and
+                # would emit only its first element. The entries are Vuetify
+                # OBJECTS (title beside value) because a row's visible text comes
+                # from item.title: bare numbers left the rows showing the garbage
+                # the operator reported ("st 1", "st 2", "8"). The items arrive
+                # pre-shaped from the page (poc_app._play_rate_items), so this
+                # column carries no second copy of the wording.
+                #
+                # repr, NOT json.dumps: trame re-wraps this string in DOUBLE
+                # quotes, so a `"` inside it ends the attribute mid-array - the
+                # trap poc_app._volume_clim_items_literal documents. repr emits
+                # single quotes, which Vue's expression parser accepts.
+                rate_items = repr(list(options["items"]))
                 select_cls(
                     label="steps per tick",
                     v_model=("play_rate", options["default"]),
                     v_bind_items=rate_items,
+                    # The item keys are named, not inferred: the select reads
+                    # item.title for the row text and item.value for the bound
+                    # value, and the page's items spell exactly those keys.
+                    item_title="title",
+                    item_value="value",
                     hide_details=True,
                     density="compact",
                     style="max-width: 150px; flex: 0 0 auto;",

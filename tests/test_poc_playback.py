@@ -505,6 +505,60 @@ def test_play_trigger_returns_and_schedules_exactly_one_task(playback):
     asyncio.run(scenario())
 
 
+
+def test_a_failed_draw_ends_playback_instead_of_hanging(playback, monkeypatch):
+    """A draw that raises leaves the viewer PAUSED, not silently dead.
+
+    The play loop runs as a task nobody awaits, so before the guard an exception
+    in a tick surfaced only as "Task exception was never retrieved" at GC time:
+    ``state.playing`` stayed True, the button still read "pause" and nothing ever
+    advanced - indistinguishable from the freeze this fix is about, with no trace
+    to explain it. ``_volume_player_plan`` is the module-level draw step ``_show``
+    resolves at call time, so patching it reaches the shipped ``_show``.
+    """
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("draw failed")
+
+    monkeypatch.setattr(playback.app, "_volume_player_plan", _boom)
+
+    async def scenario() -> None:
+        handles, state, trigger = playback.handles, playback.state, playback.trigger
+        assert state.playing is False, "boot already left the page playing"
+
+        tasks_before = _other_tasks()
+        await asyncio.wait_for(trigger(), timeout=RETURN_TIMEOUT_S)
+        created = _other_tasks() - tasks_before
+        assert len(created) == 1, (
+            f"the play press scheduled {len(created)} tasks, expected exactly 1"
+        )
+        task = created.pop()
+        try:
+            deadline = asyncio.get_running_loop().time() + LOOP_EXIT_TIMEOUT_S
+            while not task.done() and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(0.01)
+            assert task.done(), (
+                "the play loop was still running "
+                f"{LOOP_EXIT_TIMEOUT_S}s after the draw raised: a failed tick must "
+                "stop playback, not spin on the same failure"
+            )
+            exc = None if task.cancelled() else task.exception()
+            assert exc is None, f"the play loop leaked an unhandled {exc!r}"
+            assert state.playing is False, (
+                "the draw raised but state.playing is still True: the button reads "
+                "'pause' over a picture that will never advance again"
+            )
+            assert state.play_label == "play", (
+                f"the label says {state.play_label!r} after a failed draw, so the "
+                "operator cannot tell playback stopped"
+            )
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+    asyncio.run(scenario())
+
 # --- the dump's own provenance, read back ------------------------------------
 #
 # The .npz records WHICH arm wrote it (``structure_id``) and what it was

@@ -1141,16 +1141,33 @@ def test_the_play_loop_draws_once_per_tick_from_the_clock():
         "no async _play_loop inside run_web_vis: the player's advance cannot be "
         "read, so nothing below is a statement about the shipped loop"
     )
-    calls = [
+    draws = [
+        node
+        for node in ast.walk(loop)
+        if isinstance(node, ast.Name) and node.id == "_show"
+    ]
+    assert len(draws) == 1, (
+        f"the play loop references _show {len(draws)} times per tick: each call "
+        "writes state.frame and draws, so more than one draws the same position "
+        "twice"
+    )
+    # THE DRAW IS HANDED TO A WORKER THREAD. A late tick (its deadline already
+    # passed) has no await above it, so a synchronous draw let this coroutine
+    # iterate without ever yielding and starved the websocket - the freeze.
+    dispatched = [
         node
         for node in ast.walk(loop)
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_show"
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "to_thread"
+        and any(
+            isinstance(arg, ast.Name) and arg.id == "_show" for arg in node.args
+        )
     ]
-    assert len(calls) == 1, (
-        f"the play loop calls _show {len(calls)} times per tick: each call writes "
-        "state.frame and draws, so more than one draws the same position twice"
+    assert len(dispatched) == 1, (
+        "the loop's draw is not handed to asyncio.to_thread: a tick whose "
+        "deadline already passed has no await in it, so drawing on the event "
+        "loop thread starves the websocket and freezes the viewer"
     )
     called = {
         node.func.id
@@ -1163,3 +1180,31 @@ def test_the_play_loop_draws_once_per_tick_from_the_clock():
             "one the clock and the selected rate name"
         )
 
+
+
+def test_a_page_with_no_timeline_still_hands_the_loop_a_frame_count():
+    """None is "no timeline", not a crash: the loop divides by this count.
+
+    ``nt``/``nt_x`` are None on a page that claims no timeline, and the shipped
+    loop called ``int(None)`` inside a task nobody awaits - the TypeError was
+    collected at GC, so the page stayed ``playing`` with nothing advancing.
+    """
+    assert app._play_frames(None) == 1
+    assert app._play_frames(0) == 1
+    assert app._play_frames(-5) == 1
+    assert app._play_frames("junk") == 1
+    assert app._play_frames(2400) == 2400
+
+
+def test_the_speed_select_offers_titled_objects_not_bare_numbers():
+    """Every offered rate, with the wording beside the value it selects.
+
+    Bare numbers left the rows showing garbage ("st 1", "st 2", "8"): the row
+    text of a Vuetify select comes from ``item.title``, which a number has not.
+    """
+    items = app._play_rate_items(app.PLAY_RATES)
+    assert [item["title"] for item in items] == [
+        "1 step/tick", "2 steps/tick", "4 steps/tick", "8 steps/tick",
+    ], items
+    assert [item["value"] for item in items] == [1, 2, 4, 8], items
+    assert all(isinstance(item["value"], int) for item in items), items
