@@ -210,6 +210,15 @@ DEFAULT_PLAY_RATE = 4
 # positions/tick at 24 fps = 96 positions/s = the old DEFAULT_PLAY_RATE * DEFAULT_FPS).
 # A VIEWING choice like DEFAULT_FPS, not a property of the dump.
 DEFAULT_PLAY_STRIDE = 4
+# How long a PLAYING loop keeps its hands off the timeline after the operator moved
+# it. A scrub is not one event but a BURST of them - the frame slider writes
+# ``state.frame`` on every mouse move, and the listener draws each of those writes -
+# so a loop that published on the next tick would draw over the hand's own picture
+# and drag the position back to where the animation was, one still render per move.
+# Half a second is longer than the gap between two drag steps, so a drag is held from
+# its first move to its last, and short enough that a single press of << PREV / NEXT
+# resumes visibly at once. A VIEWING choice, like the two constants above.
+SCRUB_HOLD_S = 0.5
 # ONE colour ceiling for the whole animation, taken at this percentile of |Ez|
 # over every stored frame of every plane. Frame-local scaling would renormalise
 # on each step and make a decaying pulse look like it never decays.
@@ -1553,7 +1562,7 @@ _PROFILE_SUMMARY_EVERY = 200
 _PROFILE_PHASES = ("reanchor", "target", "draw", "flush", "yield")
 # Counters a play-loop gate bumps when it skips a beat: the beat is skipped
 # BEFORE _show opens a tick, so the count is carried to the next written row.
-_PROFILE_GATE_COUNTS = ("paint_cap", "delivery_hold")
+_PROFILE_GATE_COUNTS = ("paint_cap", "delivery_hold", "scrub_hold")
 
 _PROFILE = {
     "enabled": False,
@@ -3469,7 +3478,7 @@ def _profile_summary_text() -> str:
     # image leaves the server once per push, so it is read beside ``render``.
     out.append(
         "calls: render=%d push=%d add_mesh=%d remove_actor=%d"
-        " paint_cap=%d delivery_hold=%d"
+        " paint_cap=%d delivery_hold=%d scrub_hold=%d"
         % (
             int(counts.get("render", 0)),
             int(counts.get("push", 0)),
@@ -3477,6 +3486,7 @@ def _profile_summary_text() -> str:
             int(counts.get("remove_actor", 0)),
             int(counts.get("paint_cap", 0)),
             int(counts.get("delivery_hold", 0)),
+            int(counts.get("scrub_hold", 0)),
         )
     )
     noop = sum(int(agg["noop"]) for agg in _PROFILE["sheets"].values())
@@ -15630,6 +15640,20 @@ def run_web_vis(
                 # screen: recorded as such, a later seek says where it left.
                 handles["frame_seen"] = value
                 return
+            # EVERYTHING ELSE ON THIS KEY WHILE PLAYING IS THE OPERATOR'S, and it
+            # holds the loop off the timeline for a moment: ``scrub_until`` is
+            # stamped here, on the ONE path every real seek takes, and the pump
+            # publishes nothing until it has passed (see the scrub gate in
+            # _play_loop). WHY a stamp that EXPIRES and not a "dragging" flag: the
+            # release of the drag is not reported by anything the server is
+            # guaranteed to see - a client that goes away mid-drag never sends one -
+            # so the hold has to run out on its own rather than wait to be lifted.
+            # WHY inside ``state.playing``: with the animation stopped there is no
+            # loop to hold off, and the seek below is the only draw the press needs.
+            # ``time.monotonic`` and not the loop's own clock, because this listener
+            # also runs on trame's server thread, where there is no running loop to
+            # ask for one.
+            handles["scrub_until"] = time.monotonic() + SCRUB_HOLD_S
         # A seek is a CLIENT event in the delivery's own stream, so a summary can
         # line the jump up against the paint times: from where the slider was to
         # where it landed. Off the suite nothing is recorded; what is drawn is
@@ -15637,6 +15661,28 @@ def run_web_vis(
         _profile_seek(handles, value)
         handles["frame_seen"] = value
         _show(value, state.mode)
+
+    # THE SLIDER'S OWN DRAG EVENTS, and they exist for ONE reason: the hold stamped
+    # above runs out on a clock, so a thumb that has been let go would keep the pump
+    # waiting for the rest of SCRUB_HOLD_S with nobody touching anything. ``start``
+    # holds from the moment the thumb goes down (before it has moved), ``end`` lifts
+    # the hold, so playback carries on from where the hand left it on the next beat.
+    # A build whose VSlider carries no such events binds neither and loses nothing:
+    # the hold then expires by itself, which is exactly the behaviour without them.
+    # An ``end`` that arrives BEFORE the last frame write is followed by that write's
+    # own stamp - the hold then expires by itself as well. Neither method moves the
+    # position: the frame listener already drew the seek, and drawing over it is what
+    # the hold is there to prevent.
+    @ctrl.set("frame_scrub_start")
+    def _on_frame_scrub_start(**_kwargs) -> None:
+        """The thumb went down: keep the pump off the timeline from here."""
+        if state.playing:
+            handles["scrub_until"] = time.monotonic() + SCRUB_HOLD_S
+
+    @ctrl.set("frame_scrub_end")
+    def _on_frame_scrub_end(**_kwargs) -> None:
+        """The thumb came up: let the pump carry on from where it was left."""
+        handles["scrub_until"] = None
 
     @state.change("play_rate")
     def _on_play_rate(play_rate=None, **_kwargs) -> None:
@@ -16776,8 +16822,13 @@ def run_web_vis(
         nobody saw, which is exactly the mismatch between the promised sweep time
         and the picture that this loop is here to remove.
 
-        Two gates decide whether a tick paints, and a gated tick advances NOTHING:
+        Three gates decide whether a tick paints, and a gated tick advances NOTHING:
 
+        * ``handles["scrub_until"]``: the operator moved the timeline and the frame
+          listener drew it, so the loop keeps its hands off until the hold expires -
+          a drag is a burst of seeks and this loop would answer every one of them
+          with a paint of its own. In production the slider's ``end`` event lifts
+          the hold as well; without it the hold runs out on its own.
         * ``paint_every``, the ``--paint-fps`` cap: at most one repaint per
           ``ceil(fps / paint_fps)`` ticks. Asking trame for a still more often than
           it can round-trip one (render + encode is tens of ms) does not produce a
@@ -16854,6 +16905,47 @@ def run_web_vis(
             # the wait may have ended this loop.
             if int(handles.get("generation", 0)) != gen or not state.playing:
                 return
+            # THE OPERATOR HAS THE TIMELINE IN HAND, so this beat publishes NOTHING.
+            # A seek draws itself - the frame listener did it - and a loop that drew
+            # over it would undo the scrub or fight the hand for the position, one
+            # still render per mouse move, which is precisely the report "the
+            # scrubber does nothing while it plays". Nothing here touches
+            # ``play_echo_frame`` or ``drawn``: both still describe the loop's OWN
+            # last paint, and that is exactly what the resumption needs -
+            # :func:`_play_reanchor` finds ``state.frame`` differing from ``drawn``,
+            # adopts the operator's position as the new clock origin and carries on
+            # FROM WHERE THE HAND LEFT IT, so resuming costs no code of its own.
+            # The hold has no ceiling: every new seek re-stamps ``scrub_until``, so a
+            # long drag is held for as long as the hand is on the control.
+            if time.monotonic() < float(handles.get("scrub_until") or 0.0):
+                # Counted, not profiled, for the reason the two gates below give: a
+                # held beat never reaches _show, so it emits no tick row of its own.
+                _profile_count("scrub_hold")
+                # THE DEADLINE GRID IS REBASED HERE, and that is not cosmetic:
+                # ``tick`` keeps counting through the hold, so ``t0 + tick * period``
+                # would run ahead of the wall clock by one period per held beat -
+                # half a second of holding banks about 1.2 s of deadlines already
+                # past, and the first thing a released playback would do is burn them
+                # off in one burst of fast frames. Moving ``t0`` with the clock keeps
+                # the grid one period away from now, so playback resumes on the next
+                # beat, from the operator's position, at the rate it was asked for.
+                t0 = loop.time() - tick * period
+                # THE INTERVAL BASELINE IS RESET WITH IT, for the same reason: the
+                # ``interval_ms`` this loop parks below is ``(_now - _last_tick_at)
+                # * 1000``, and ``_last_tick_at`` is only written on a PAINTED
+                # beat. Left at the last paint, the first row after a hold would
+                # charge the whole stand-off to the resumed tick as one ~0.5 s
+                # interval - a deliberate wait logged as a stalled loop, and the
+                # row a reader uses to judge the loop against ``period_ms``.
+                # Measured from the beat that lifted the hold, that row reports the
+                # period the loop actually resumed at. ``drawn`` and
+                # ``play_echo_frame`` are deliberately NOT touched: they describe
+                # the loop's own last paint, which is what resuming needs.
+                _last_tick_at = loop.time()
+                # The yield is not optional, for the paint cap's reason: a beat whose
+                # deadline has already passed took no sleep above.
+                await asyncio.sleep(0.012)
+                continue
             # THE PAINT CAP. No repaint is due on this beat, so nothing advances and
             # nothing is drawn: the position IS the picture, and a position nobody
             # painted is a position the viewer never saw. The yield is not optional -

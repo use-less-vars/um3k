@@ -184,6 +184,14 @@ def build_center_panel(ctx) -> object:
                     )
         if frame_max is not None and "VSlider" in widgets and "VLabel" in widgets:
             try:
+                # THE THUMB'S OWN TWO EVENTS, bound beside the value: ``start`` /
+                # ``end`` are VSlider's own (trame_vuetify3 VSlider._event_names),
+                # and they are what tells the page the hand has taken the timeline
+                # and let it go again - a scrub draws itself and holds the playing
+                # pump off the timeline, and WITHOUT ``end`` that hold would have to
+                # run out on its clock after the thumb is up. Without either the
+                # control still builds and still scrubs: the hold just expires on
+                # its own, which is what it did before these two existed.
                 widgets["VSlider"](
                     v_model=("frame", 0),
                     min=0,
@@ -191,6 +199,8 @@ def build_center_panel(ctx) -> object:
                     step=1,
                     thumb_label=True,
                     hide_details=True,
+                    start=ctrl.frame_scrub_start,
+                    end=ctrl.frame_scrub_end,
                     style=(
                         "flex: 1 1 auto; "
                         "min-width: 120px; "
