@@ -634,16 +634,30 @@ CLOCK_WINDOW_S = 0.15
 CLOCK_STEP = 4 * 25
 
 
-def _frame_listener(state):
+def _frame_listener(state, handles):
     """The callable trame hands a client's ``frame`` change to.
 
     ``@state.change("frame")`` registers it on the STATE object, not on the
     controller, so it is not reachable through a ``ctrl`` trigger - this is the
     registration the browser's change is dispatched through.
+
+    ``handles`` picks THIS page's registration out of the list.  trame's
+    ``change()`` APPENDS to ``state._change_callbacks['frame']`` and exposes no
+    unregister, while ``get_server()`` hands every boot in this process the SAME
+    server, so the tests here that boot the page a second time leave their own
+    ``_on_frame`` registered as well (see :func:`_kbd_binding`, which walks the
+    closure chain for the same reason).  Every boot closes over a FRESH
+    ``handles`` dict, so the listener whose closure cell IS this page's dict is
+    the one the fixture's draw doubles count.
     """
-    entries = state._change_callbacks.get("frame") or []
+    entries = [
+        entry
+        for entry in (state._change_callbacks.get("frame") or [])
+        if _closure_cells(entry[0]).get("handles") is handles
+    ]
     assert len(entries) == 1, (
-        f"{len(entries)} listeners registered on 'frame'; expected exactly 1"
+        f"{len(entries)} listeners registered on 'frame' for this page; "
+        "expected exactly 1"
     )
     fn = entries[0][0]
     assert fn.__qualname__.endswith("._on_frame"), (
@@ -692,7 +706,7 @@ def test_the_loop_draws_its_own_echo_once_but_an_operator_seek_always(playback):
         """How many times the picture has been pushed to the screen."""
         return len(renders) + len(view_updates)
 
-    listener = _frame_listener(state)
+    listener = _frame_listener(state, handles)
     assert state.playing is False, "boot already left the page playing"
     frames = int(state.frame_max) + 1
     was_frame, was_playing = int(state.frame), bool(state.playing)
