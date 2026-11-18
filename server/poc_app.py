@@ -9283,12 +9283,12 @@ def _draw_scene(
         font_size=8,
         color="black",
     )
-    # NOTE: the step counter is drawn by the CALLER, not here. This function
-    # opens with ``plotter.clear()``, so a rebuild wipes the counter and it must
-    # be put back - but it is put back by the caller that knows which position
-    # is on screen (:func:`_redraw_scene`, and the tick path's own call), which
-    # keeps this function's parameters exactly the ones every caller and every
-    # observer of the draw already binds.
+    # The step indicator is NOT drawn here, and no longer on the canvas at all:
+    # the ONE indicator is ``state.frame_label``, composed by
+    # :func:`_frame_label` and rendered once by the side panel
+    # (``server/um3k_panels.py``). A label added here would be a SECOND clock
+    # beside that one - and the ``plotter.clear()`` this function opens with
+    # would wipe it on the next rebuild anyway.
     # Isometric, then fit everything. The markers do not all lie inside the
     # captured slab - the S11 port plane sits at the port end of the line and the
     # S21 plane one cell past the load - so a camera framed on the slab alone
