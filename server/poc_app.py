@@ -1875,6 +1875,13 @@ _STALL = {
     "lines_suppressed": 0,
     "last_tick_at": None,
     "tick": None,
+    "flush": None,  # the breakdown of the push in flight
+    "flush_last": None,  # the last completed one; the flush phase reads it
+    "flush_phases": {},  # flush_render/flush_pub/flush_other -> samples
+    "still_calls": 0,  # still_render calls, summed over every flush
+    "stills_max": 0,  # worst single tick, in renders
+    "protocol": (None, None, None),  # (delivery, still_render, publish) while hooked
+    "protocol_hooked": False,
 }
 
 
@@ -1902,6 +1909,213 @@ def _stall_env_threshold() -> float:
 def _stall_enabled() -> bool:
     """True while the probe is installed. The ONE gate the hooks use."""
     return bool(_STALL["enabled"])
+
+
+# --- the flush breakdown ---------------------------------------------------
+# The flush phase is where an image actually leaves the server, and it was ONE
+# number. Two of its parts can be timed honestly from Python, and the rest is
+# named as what it is - the residual:
+#
+#   flush_render - time inside the DELIVERY's ``still_render``, i.e.
+#                  vtkWebApplication.StillRenderToBuffer: the render, the MSAA
+#                  resolve, the framebuffer readback and the JPEG encode, all in
+#                  C++. It is not divisible further from here - no Python line
+#                  sees between readback and encode - so it keeps that one name.
+#   flush_pub    - time inside the delivery's ``publish`` on OUR stack. The wire
+#                  cost is deferred (wslink/publish.py:26-40 -> schedule_coroutine),
+#                  so this is payload bookkeeping, not the socket.
+#   flush_other  - the residual: the trame/pyvista shims, the renderer report, the
+#                  timing tick-end and anything else inside the flush phase.
+#
+# Because flush_other is the residual, render + pub + other == flush by
+# construction, which is the invariant the tests assert.
+#
+# ``still=N`` is the number of still_render CALLS in the tick. It is not always
+# 1: push_render retries a stale image up to three times
+# (publish_image_delivery.py:195-215), so a tick that reports still=3 paid for
+# three renders. That is why the time ACCUMULATES and the count is reported.
+_STALL_FLUSH_PARTS = (
+    ("flush_render", "render"),
+    ("flush_pub", "pub"),
+    ("flush_other", "other"),
+)
+
+
+def _stall_flush_begin():
+    """Open the breakdown for ONE push. None, and no clock, when the probe is off."""
+    if not _STALL["enabled"]:
+        return None
+    try:
+        rec = {"t0": _profile_now(), "ms": 0.0, "render_ms": 0.0, "pub_ms": 0.0, "stills": 0}
+        _STALL["flush"] = rec
+        return rec
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _stall_flush_cancel(rec) -> None:
+    """A push that RAISED leaves half a breakdown behind; drop it."""
+    if rec is None:
+        return
+    if _STALL["flush"] is rec:
+        _STALL["flush"] = None
+
+
+def _stall_flush_end(rec):
+    """Close the breakdown: how long the push took. Kept for the flush phase."""
+    if rec is None:
+        return None
+    try:
+        rec["ms"] = max(0.0, (_profile_now() - float(rec["t0"])) * 1000.0)
+        _STALL["flush_last"] = rec
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        if _STALL["flush"] is rec:
+            _STALL["flush"] = None
+    return rec
+
+
+def _stall_flush_close(ms_total) -> None:
+    """Split the flush phase into render/pub/other on the OPEN tick."""
+    if not _STALL["enabled"]:
+        return
+    try:
+        total = max(0.0, float(ms_total))
+        parts = _STALL["flush_last"]
+        if not isinstance(parts, dict):
+            parts = {}
+        render = max(0.0, float(parts.get("render_ms") or 0.0))
+        pub = max(0.0, float(parts.get("pub_ms") or 0.0))
+        other = max(0.0, total - render - pub)
+        stills = int(parts.get("stills") or 0)
+        tick = _STALL["tick"]
+        if tick is not None:
+            tick["flush"] = {
+                "render": round(render, 3),
+                "pub": round(pub, 3),
+                "other": round(other, 3),
+                "stills": stills,
+            }
+        for name, key in _STALL_FLUSH_PARTS:
+            value = {"render": render, "pub": pub, "other": other}[key]
+            bucket = _STALL["flush_phases"].get(name)
+            if bucket is None:
+                bucket = []
+                _STALL["flush_phases"][name] = bucket
+            bucket.append(round(value, 3))
+            if len(bucket) > _STALL_MAX_PHASE:
+                del bucket[: len(bucket) - _STALL_MAX_PHASE]
+        _STALL["still_calls"] = int(_STALL["still_calls"]) + stills
+        _STALL["stills_max"] = max(int(_STALL["stills_max"]), stills)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _stall_delivery_for(view_handle=None):
+    """The trame image-delivery object - the only thing that owns still_render.
+
+    ``still_render`` is a method of vtkWebPublishImageDelivery
+    (publish_image_delivery.py:10,159), NOT of the root protocol, so the root
+    protocol is only the way to reach it: getLinkProtocols() is the very list
+    getRPCMethod walks to build its dispatch table (trame_server/protocol.py:131).
+    Nothing here raises; an unreachable delivery is a thinner report, not a crash.
+    """
+    protocols = []
+    try:
+        from trame.app import get_server
+
+        protocols.append(getattr(get_server(), "protocol", None))
+    except Exception:  # noqa: BLE001 - no server up (headless tests)
+        pass
+    try:
+        protocols.append(getattr(getattr(view_handle, "_helper", None), "_root_protocol", None))
+    except Exception:  # noqa: BLE001
+        pass
+    for protocol in protocols:
+        if protocol is None:
+            continue
+        try:
+            for link in protocol.getLinkProtocols():
+                if callable(getattr(link, "still_render", None)):
+                    return link
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _stall_hook_protocol(view_handle=None) -> bool:
+    """Wrap the delivery's still_render/publish so the flush can be split.
+
+    INSTANCE attributes, not a class patch: the wrap dies with the delivery, and
+    ``_stall_unhook_protocol`` puts the originals back, so a probe switched off
+    leaves an object indistinguishable from a fresh one. Instance attributes also
+    never enter ``rpcMethods`` (built from ``__class__`` members), so RPC dispatch
+    is untouched. Only ever installed while the probe is on.
+    """
+    if not _STALL["enabled"] or _STALL["protocol_hooked"]:
+        return False
+    delivery = _stall_delivery_for(view_handle)
+    if delivery is None:
+        return False
+    try:
+        still = getattr(delivery, "still_render", None)
+        publish = getattr(delivery, "publish", None)
+        if not callable(still):
+            return False
+
+        def probe_still_render(options, _still=still):
+            rec = _STALL["flush"]
+            if rec is None:
+                return _still(options)
+            started = _profile_now()
+            try:
+                return _still(options)
+            finally:
+                # Accumulate: one push can render three times over a stale image.
+                rec["render_ms"] = float(rec.get("render_ms") or 0.0) + max(
+                    0.0, (_profile_now() - started) * 1000.0
+                )
+                rec["stills"] = int(rec.get("stills") or 0) + 1
+
+        def probe_publish(topic, data, *args, _publish=publish, **kwargs):
+            rec = _STALL["flush"]
+            started = _profile_now()
+            try:
+                return _publish(topic, data, *args, **kwargs)
+            finally:
+                if rec is not None:
+                    rec["pub_ms"] = float(rec.get("pub_ms") or 0.0) + max(
+                        0.0, (_profile_now() - started) * 1000.0
+                    )
+
+        delivery.still_render = probe_still_render
+        if callable(publish):
+            delivery.publish = probe_publish
+        _STALL["protocol"] = (delivery, still, publish)
+        _STALL["protocol_hooked"] = True
+        return True
+    except Exception:  # noqa: BLE001 - an unhookable delivery is a thinner report
+        return False
+
+
+def _stall_unhook_protocol() -> bool:
+    """Put the two methods back. Idempotent."""
+    if not _STALL["protocol_hooked"]:
+        return False
+    delivery, still, publish = _STALL["protocol"] or (None, None, None)
+    try:
+        if delivery is not None:
+            if still is not None:
+                delivery.still_render = still
+            if publish is not None:
+                delivery.publish = publish
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        _STALL["protocol"] = None
+        _STALL["protocol_hooked"] = False
+    return True
 
 
 def _stall_threshold_ms() -> float:
@@ -1950,6 +2164,11 @@ def _stall_reset() -> None:
     _STALL["lines_suppressed"] = 0
     _STALL["last_tick_at"] = None
     _STALL["tick"] = None
+    _STALL["flush"] = None
+    _STALL["flush_last"] = None
+    _STALL["flush_phases"] = {}
+    _STALL["still_calls"] = 0
+    _STALL["stills_max"] = 0
 
 
 def _stall_gc_start(info=None) -> None:
@@ -2025,6 +2244,7 @@ def _stall_install_gc() -> bool:
 def _stall_uninstall_gc() -> bool:
     """Turn the probe off and unhook gc. Idempotent."""
     hooked = bool(_STALL["gc_hooked"])
+    _stall_unhook_protocol()
     _STALL["enabled"] = False
     _STALL["gc_t0"] = None
     if not hooked:
@@ -2049,6 +2269,8 @@ def _stall_tick_begin(frame=None, mode=None):
         previous = _STALL["last_tick_at"]
         _STALL["last_tick_at"] = now
         _STALL["ticks"] = int(_STALL["ticks"]) + 1
+        # A tick that pushes nothing must NOT inherit the previous tick's parts.
+        _STALL["flush_last"] = None
         tick = {
             "n": _STALL["ticks"],
             "frame": frame,
@@ -2058,6 +2280,7 @@ def _stall_tick_begin(frame=None, mode=None):
             # also long says the loop was asleep, not that the draw cost it.
             "gap_ms": (None if previous is None else round((now - previous) * 1000.0, 3)),
             "phases": {},
+            "flush": None,
             "gc_ms0": float(_STALL["gc_ms_total"]),
         }
         _STALL["tick"] = tick
@@ -2110,6 +2333,7 @@ def _stall_tick_end(row=None):
             "total_ms": round(total, 3),
             "gap_ms": tick["gap_ms"],
             "phases": dict(tick["phases"]),
+            "flush": tick.get("flush"),
             "gc_ms": round(float(_STALL["gc_ms_total"]) - float(tick["gc_ms0"]), 3),
             "counts": counts,
         }
@@ -2144,6 +2368,13 @@ def _stall_line(record, threshold) -> str:
     ]
     for name in names:
         parts.append("%s=%.1fms" % (name, float(phases[name])))
+    flush = record.get("flush") or {}
+    for name, key in _STALL_FLUSH_PARTS:
+        if key in flush:
+            parts.append("%s=%.1fms" % (name, float(flush[key])))
+    if "stills" in flush:
+        # How many renders the push actually cost: a stale image is retried.
+        parts.append("still=%d" % int(flush["stills"]))
     counts = record.get("counts") or {}
     for name in ("render", "push", "add_mesh"):
         if name in counts:
@@ -2209,6 +2440,25 @@ def _stall_summary_text() -> str:
             out.append(
                 "  %-10s %6d %7.1f %7.1f %7.1f"
                 % (name, int(stats["n"]), stats["median"], stats["p95"], stats["max"])
+            )
+        # Only printed when something pushed: an empty table is noise, and the
+        # summary is capped at 40 lines.
+        flushes = len(_STALL["flush_phases"].get("flush_other") or [])
+        if flushes:
+            out.append("")
+            out.append("flush breakdown (ms)      n     p50     p95     max")
+            for name, _key in _STALL_FLUSH_PARTS:
+                bucket = _STALL["flush_phases"].get(name)
+                if not bucket:
+                    continue
+                stats = _profile_stats(bucket)
+                out.append(
+                    "  %-12s %6d %7.1f %7.1f %7.1f"
+                    % (name, int(stats["n"]), stats["median"], stats["p95"], stats["max"])
+                )
+            out.append(
+                "  stills/flush: mean %.2f max %d"
+                % (float(_STALL["still_calls"]) / float(flushes), int(_STALL["stills_max"]))
             )
         out.append("")
         out.append("gc (ms)           n   total     max")
@@ -2475,6 +2725,9 @@ def _profile_phase(name) -> float:
             phases[name] = round(float(phases.get(name, 0.0)) + ms, 3)
         # The same ms, to the probe that asks which phase a slow tick burned.
         _stall_phase(name, ms)
+        if name == "flush":
+            # The push recorded its own parts; split the phase with them.
+            _stall_flush_close(ms)
         return ms
     except Exception:  # noqa: BLE001
         return 0.0
@@ -3475,11 +3728,19 @@ def _push_still(view_handle, site) -> bool:
     """
     if view_handle is None:
         return False
+    # The probe clocks the push and, while it is on, wraps the delivery's
+    # still_render/publish so the flush phase can be split (see
+    # _stall_hook_protocol). Both are no-ops with the probe off.
+    stall = _stall_flush_begin()
+    if stall is not None:
+        _stall_hook_protocol(view_handle)
     try:
         view_handle.update()
     except Exception as exc:  # noqa: BLE001 - a lost frame is not the loop
+        _stall_flush_cancel(stall)
         print(f"[poc_app] view update skipped: {exc}", file=sys.stderr)
         return False
+    _stall_flush_end(stall)
     if _PROFILE["enabled"]:
         # With the suite off this costs one bool read.
         _profile_count("push")

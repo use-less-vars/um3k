@@ -1780,6 +1780,12 @@ def test_the_stall_probe_is_off_unless_asked(tmp_path, monkeypatch):
     assert poc_app._STALL["ticks"] == 0
     assert poc_app._STALL["slow"] == 0
     assert poc_app._STALL["worst"] == []
+    # The flush breakdown rides the same switch: no clock, no hook, no bucket.
+    assert poc_app._stall_flush_begin() is None
+    assert poc_app._stall_hook_protocol(None) is False
+    assert poc_app._STALL["protocol_hooked"] is False
+    poc_app._stall_flush_close(999.0)
+    assert poc_app._STALL["flush_phases"] == {}, "an off probe records nothing"
 
     # And a configured run that did not ask still leaves not one file behind.
     off = tmp_path / "off"
@@ -1841,6 +1847,10 @@ def test_a_slow_tick_prints_one_line_naming_what_it_did(stall, capsys):
         "reanchor=20.0ms",
         "draw=210.0ms",
         "flush=5.0ms",
+        "flush_render=0.0ms",
+        "flush_pub=0.0ms",
+        "flush_other=5.0ms",
+        "still=0",
         "render=1",
         "push=1",
     ):
@@ -1939,6 +1949,9 @@ def test_the_summary_names_the_phases_the_generations_and_the_worst_ticks(stall)
     assert len(lines) <= 40
     assert "ticks: 2  slow(>=100.0ms): 2  lines suppressed: 0" in text
     assert "phase (ms)" in text
+    # These ticks never pushed, so there is no breakdown to print - an empty
+    # table would only eat one of the 40 lines.
+    assert "flush breakdown (ms)" not in text, text
     assert any(line.startswith("  draw") for line in lines), text
     # gc is per GENERATION: "gen0" alone would hide a gen2 pause entirely.
     assert any(line.startswith("  gen0") for line in lines), text
@@ -1954,3 +1967,141 @@ def test_the_summary_names_the_phases_the_generations_and_the_worst_ticks(stall)
     assert stall.summary.read_text(encoding="utf-8") == text
     assert poc_app._stall_path() == stall.summary
     assert poc_app._stall_log_path() == stall.log
+
+
+class _FakeDelivery:
+    """Stands in for vtkWebPublishImageDelivery on the push path.
+
+    ``still_render`` is the C++ render/readback/encode and ``publish`` the
+    payload bookkeeping; both are driven off the same fake clock the probe reads,
+    so what the probe reports is what the call really cost.
+    """
+
+    def __init__(self, run, render_ms=30.0, pub_ms=2.0):
+        self.run = run
+        self.render_ms = render_ms
+        self.pub_ms = pub_ms
+        self.renders = 0
+        self.publishes = 0
+
+    def still_render(self, options):
+        self.renders += 1
+        self.run.advance(self.render_ms)
+        return {"stale": 0, "image": b"jpeg"}
+
+    def publish(self, topic, data, **kwargs):
+        self.publishes += 1
+        self.run.advance(self.pub_ms)
+
+
+def _push(delivery, run, retries=0):
+    """One push exactly as _push_still does it, driven by the fake delivery."""
+    rec = poc_app._stall_flush_begin()
+    assert rec is not None
+    assert poc_app._stall_hook_protocol(None) is True
+    for _ in range(1 + retries):
+        delivery.still_render({})  # a stale image is retried, and paid for again
+    delivery.publish("viewport.image.push.subscription", {})
+    poc_app._stall_flush_end(rec)
+    return rec
+
+
+def test_a_push_is_split_into_the_render_the_publish_and_the_rest(stall, monkeypatch, capsys):
+    """flush_render + flush_pub + flush_other == flush, and still counts the renders."""
+    poc_app._STALL["threshold_ms"] = 50.0
+    delivery = _FakeDelivery(stall.run)
+    monkeypatch.setattr(poc_app, "_stall_delivery_for", lambda *a, **k: delivery)
+
+    poc_app._profile_tick_begin(3, "xcut")
+    stall.run.advance(10.0)
+    poc_app._profile_phase("draw")
+    # A stale image is rendered TWICE: the time accumulates, the count says so.
+    _push(delivery, stall.run, retries=1)
+    stall.run.advance(1.0)  # the trame/pyvista shims around the push
+    poc_app._profile_phase("flush")
+    poc_app._profile_tick_end(3, mode="xcut")
+
+    record = poc_app._STALL["worst"][0]
+    parts = record["flush"]
+    assert parts["render"] == pytest.approx(60.0)
+    assert parts["pub"] == pytest.approx(2.0)
+    assert parts["stills"] == 2
+    # The residual is the phase minus what the two hooks saw, so the three parts
+    # add back up to the phase they came out of.
+    assert parts["other"] == pytest.approx(1.0)
+    total = record["phases"]["flush"]
+    assert parts["render"] + parts["pub"] + parts["other"] == pytest.approx(total)
+
+    text = capsys.readouterr().err.strip()
+    for field in (
+        "flush=63.0ms",
+        "flush_render=60.0ms",
+        "flush_pub=2.0ms",
+        "flush_other=1.0ms",
+        "still=2",
+    ):
+        assert field in text, (field, text)
+
+    # The summary carries the same three parts, plus the renders per flush.
+    summary = poc_app._stall_summary_text()
+    assert "flush breakdown (ms)" in summary, summary
+    for name in ("flush_render", "flush_pub", "flush_other"):
+        assert any(line.startswith("  " + name) for line in summary.splitlines()), summary
+    assert "stills/flush: mean 2.00 max 2" in summary, summary
+
+
+def test_a_tick_that_pushes_nothing_does_not_inherit_the_last_breakdown(stall, monkeypatch):
+    """flush_last belongs to ONE tick: a tick with no push is all residual."""
+    poc_app._STALL["threshold_ms"] = 1.0
+    delivery = _FakeDelivery(stall.run, render_ms=40.0)
+    monkeypatch.setattr(poc_app, "_stall_delivery_for", lambda *a, **k: delivery)
+
+    poc_app._profile_tick_begin(1, "xcut")
+    stall.run.advance(5.0)
+    poc_app._profile_phase("draw")
+    _push(delivery, stall.run)
+    stall.run.advance(1.0)
+    poc_app._profile_phase("flush")
+    poc_app._profile_tick_end(1, mode="xcut")
+    assert poc_app._STALL["worst"][0]["flush"]["render"] == pytest.approx(40.0)
+
+    # No client, no push: nothing to bill, and nothing borrowed from tick 1.
+    poc_app._profile_tick_begin(2, "xcut")
+    stall.run.advance(5.0)
+    poc_app._profile_phase("draw")
+    stall.run.advance(7.0)  # the renderer report and the tick-end, all residual
+    poc_app._profile_phase("flush")
+    poc_app._profile_tick_end(2, mode="xcut")
+
+    second = [rec for rec in poc_app._STALL["worst"] if rec["n"] == 2][0]
+    assert second["flush"]["render"] == pytest.approx(0.0), "no borrowed render"
+    assert second["flush"]["pub"] == pytest.approx(0.0), "no borrowed publish"
+    assert second["flush"]["stills"] == 0
+    assert second["flush"]["other"] == pytest.approx(second["phases"]["flush"])
+
+
+def test_the_delivery_hook_is_instance_level_and_undone(stall, monkeypatch):
+    """Instance attributes only, idempotent, and put back exactly as they were."""
+    delivery = _FakeDelivery(stall.run)
+    monkeypatch.setattr(poc_app, "_stall_delivery_for", lambda *a, **k: delivery)
+    still_before = delivery.still_render
+    publish_before = delivery.publish
+
+    assert poc_app._stall_hook_protocol(None) is True
+    assert poc_app._stall_hook_protocol(None) is False, "wrapped once, never twice"
+    assert poc_app._STALL["protocol_hooked"] is True
+    assert poc_app._STALL["protocol"][0] is delivery
+    assert delivery.still_render != still_before, "the instance attribute is wrapped"
+    assert delivery.publish != publish_before
+    # Nothing class-level moved: the delivery's own methods are untouched.
+    assert type(delivery).still_render is still_before.__func__
+
+    assert poc_app._stall_unhook_protocol() is True
+    assert delivery.still_render == still_before, "the ORIGINAL method is back"
+    assert delivery.publish == publish_before
+    assert poc_app._STALL["protocol_hooked"] is False
+    assert poc_app._stall_unhook_protocol() is False, "idempotent"
+    # A delivery out of reach leaves the hook OFF rather than half-wrapped.
+    monkeypatch.setattr(poc_app, "_stall_delivery_for", lambda *a, **k: None)
+    assert poc_app._stall_hook_protocol(None) is False
+    assert poc_app._STALL["protocol_hooked"] is False
