@@ -97,6 +97,16 @@ class Available:
     #: carries, cell-centred (poc_app.py:100) or still staggered (:106), the two
     #: ``_volume_quiver_mesh`` tests before it draws anything (:6751-6762).
     volume_field: bool = False
+    #: The |E| animation layer: the page carries ``e_abs_volume`` itself, which is
+    #: what ``_draw_volume_layer`` paints (:16671) and what its two cut sheets are
+    #: extracted from (:9139). Independent of ``plane_stack``: a vis dump has no
+    #: ``plane_ez`` stack at all, and a plane-stack page need not carry a volume.
+    volume_layer: bool = False
+    #: The same layer, actually DRAWN: the data half above AND the page's policy
+    #: half (poc_app.py:1109-1111, ``POC_SHOW_VOLUME``). Data alone cannot answer
+    #: it - a vis dump carries ``e_abs_volume`` and still draws no layer, and its
+    #: cut sliders would then move sheets that are not on screen.
+    volume_layer_shown: bool = False
     #: The stacked-cut-plane case: MORE THAN ONE captured x-plane, which is what
     #: the volume view stacks (poc_app.py:3295-3296). Not the volume: a one-station
     #: dump can carry ``e_centres`` and a nine-station one can carry nothing.
@@ -110,7 +120,8 @@ class Available:
 
     @classmethod
     def compute(
-        cls, info=None, planes=None, multifreq=None, record=None, is_vis=None
+        cls, info=None, planes=None, multifreq=None, record=None, is_vis=None,
+        layer_shown: bool = False
     ) -> "Available":
         """Compute every flag, once, with no I/O and no raising.
 
@@ -122,6 +133,12 @@ class Available:
         ``volume_field`` asks which KEYS the info holds (:100, :106) and
         ``plane_stack`` how many stations it captured (:3295-3296); the two are
         independent, so neither may be derived from the other.
+
+        ``layer_shown`` is the POLICY half of the |E| layer - whether the page is
+        switched to draw it (poc_app.py:1109-1111) - and is passed in rather than
+        read here, so this module keeps no dependency on the app. ``volume_layer``
+        is the data half alone; ``volume_layer_shown`` is the two ANDed, which is
+        the question a cut slider asks.
         """
         info = info if isinstance(info, dict) else {}
         planes = planes if isinstance(planes, dict) else {}
@@ -129,9 +146,14 @@ class Available:
             bool(is_vis) if is_vis is not None else info.get("format") in VIS_FORMATS
         )
         stations = _stations(info)
+        volume_layer = info.get("e_abs_volume") is not None
         return cls(
             # The keys, not the station count (poc_app.py:100, :106, :6751-6762).
             volume_field=VOLUME_KEY in info or VOLUME_RAW_KEY in info,
+            # The |E| animation volume, keyed literally like its loader (:5389).
+            volume_layer=volume_layer,
+            # ...and the page draws it (above AND poc_app.py:1109-1111).
+            volume_layer_shown=volume_layer and bool(layer_shown),
             plane_stack=stations > 1,  # stacks x-planes (poc_app.py:3295-3296)
             port_planes=stations > 0,  # one station (poc_app.py:3182-3185)
             multifreq=multifreq is not None,  # None is real (:5385, :981)
@@ -167,9 +189,12 @@ class PageContext:
 
     def __init__(
         self, dump: Optional[LoadedDump] = None, view_mode: str = DEFAULT_VIEW_MODE,
-        plotter: Any = None
+        plotter: Any = None, layer_shown: bool = False
     ) -> None:
         self.dump = dump if dump is not None else LoadedDump()
+        #: Kept, not folded in: ``recompute_available`` must answer the same way
+        #: after a page swap, so the policy half outlives the snapshot it shaped.
+        self.layer_shown = layer_shown
         self.available = self.recompute_available()
         self.set_view_mode(view_mode)
         self.plotter = plotter
@@ -184,7 +209,8 @@ class PageContext:
         """
         dump = self.dump
         self.available = Available.compute(
-            dump.info, dump.planes, dump.multifreq, dump.record, dump.is_vis
+            dump.info, dump.planes, dump.multifreq, dump.record, dump.is_vis,
+            layer_shown=self.layer_shown
         )
         return self.available
 

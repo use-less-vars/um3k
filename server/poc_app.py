@@ -8868,6 +8868,16 @@ def _volume_grid_dims(info: dict, grid_hint=None):
     carries no field. A volume has to be PRESENT first; the counts are read
     after it.
 
+    The ANIMATION page's ``e_abs_volume`` is the THIRD route in: a real volume,
+    one the loader checked against these very ``nx``/``ny``/``nz``
+    (poc_app.py:5452-5475). It is read here, and not only through the memo, for
+    a timing reason: that page writes the memo when it first DRAWS
+    (``_volume_frame_grid``, :14690), while its cut sliders are wired before any
+    draw (:15846), so the memo alone would leave them no grid at boot - and no
+    grid means the ``plane_ez`` fallback below, which is a KeyError on a dump
+    that has no plane stack. The answer is the same either way, which is the
+    point: before and after the first draw the cuts index ONE lattice.
+
     Cheap on purpose - dict reads, no colocation, no pyvista import - because it
     runs on every slider construction and every redraw.
     """
@@ -8884,8 +8894,10 @@ def _volume_grid_dims(info: dict, grid_hint=None):
         if dims is not None and len(dims) == 3 and min(dims) > 0:
             return dims
     raw = info.get(VOLUME_RAW_KEY)
-    if info.get(VOLUME_KEY) is None and not (
-        isinstance(raw, dict) and raw.get("e") is not None
+    if (
+        info.get(VOLUME_KEY) is None
+        and not (isinstance(raw, dict) and raw.get("e") is not None)
+        and info.get("e_abs_volume") is None
     ):
         return None
     # The dump's own metadata first, then the record's ``geometry.grid``, and
@@ -15810,6 +15822,10 @@ def run_web_vis(
     # it for a second copy of an answer.
     ctx = um3k_context.PageContext(
         dump=um3k_context.LoadedDump.from_any_dump(page),
+        # The POLICY half of the |E| layer (:1109-1111), which the context ANDs
+        # with the dump's ``e_abs_volume``: ``volume_layer_shown`` means "drawn",
+        # and the reload path re-asks it (:19326).
+        layer_shown=_volume_layer_enabled(),
     )
 
     # --- the Y / Z cut sheets: STATE and TRIGGERS, no widgets yet -------------
@@ -15819,7 +15835,7 @@ def run_web_vis(
     # (_plane_layout :3166, _cut_layout :3369) - which an animation dump does not
     # carry at all, so calling any of them on a vis page is KeyError('plane_ez').
     # ``ctx.available.plane_stack`` is the page's own answer to "did this page
-    # capture more than one x-plane" (um3k_context.py:130-145), computed once
+    # capture more than one x-plane" (um3k_context.py:143-165), computed once
     # from the data at boot; this does not re-read the format to guess it.
     #
     # WHY the widgets are NOT here: the two VSliders belong to the layout, built
@@ -15827,6 +15843,76 @@ def run_web_vis(
     # browser reach - the state the sliders will bind to, the two redraw pieces
     # ``_redraw_scene`` insists on, and the two triggers those sliders will fire -
     # so the cut machinery is complete and drivable before any widget exists.
+    # --- the SAME cut sliders on an animation page ---------------------------
+    #
+    # WHY a second branch: a vis dump carries no ``plane_ez`` stack, so the
+    # block below cannot run on it - but its |E| layer draws the SAME two cut
+    # sheets (``_volume_cut_sheets`` :9139, added by ``_draw_volume_scene``
+    # :9838), and those sheets were frozen at the middle j/k because
+    # ``_draw_volume_layer`` asked ``_cut_layout`` with no arguments (:16848).
+    # So the sliders are wired here exactly as there, and only three pieces
+    # differ: ``_redraw_scene`` / ``_view_label`` are plane-stack-only (both
+    # read ``planes[...]``, which this page has none of), so the redraw is
+    # ``_show`` - the same call ``_redraw_for_plane_toggle`` already makes for
+    # this page kind (:18078) - and the view label is not emitted on this
+    # page at all (:11640 belongs to the dead run_web page), so it is not set.
+    #
+    # WHY ``volume_layer_shown`` and not the KEY alone: carrying the volume is
+    # not drawing it - a vis dump holds ``e_abs_volume`` and still paints no
+    # |E| picture while ``POC_SHOW_VOLUME`` is off (:1109-1111), so a pair of
+    # sliders gated on the key would offer to move sheets that are not on
+    # screen. The context ANDs the two halves at construction
+    # (um3k_context.py:105-109, from the flag handed to it above).
+    if not ctx.available.plane_stack and ctx.available.volume_layer_shown:
+        n_j, n_k = _cut_axis_counts(info, 0, 0)
+        # Opening cut = the middle, the same place the layer drew it before the
+        # sliders could move it, so nothing jumps when the page loads.
+        _cut_open = _cut_layout(info, n_j // 2, n_k // 2)
+        state.cut_y = _cut_open["j"]
+        state.cut_z = _cut_open["k"]
+        state.cut_label = _cut_text(_cut_open)
+        # No x-plane stack means no station sentence to show.
+        state.station_readout = ""
+        ctx.register_handle("cut_shape", (n_j, n_k))
+
+        def _redraw() -> None:
+            # ``_show`` is bound far below (:16953), so it is looked up at call
+            # time, not captured here.
+            _show(getattr(state, "frame", 0), getattr(state, "mode", None), "cut")
+
+        def _redraw_cut(axis, value) -> None:
+            # The same clamp ``_on_cut_change`` applies (:10717-10724), minus the
+            # two calls that need a plane stack.
+            limit = (n_j if axis == "y" else n_k) - 1
+            try:
+                idx = int(round(float(value)))
+            except (TypeError, ValueError):
+                idx = int(state.cut_y if axis == "y" else state.cut_z)
+            idx = max(0, min(limit, idx))
+            if axis == "y":
+                state.cut_y = idx
+            else:
+                state.cut_z = idx
+            state.cut_label = _cut_text(
+                _cut_layout(info, int(state.cut_y), int(state.cut_z))
+            )
+            _redraw()
+
+        # WHY no ``handles["cut_redraw"]``: this page has none on purpose (see
+        # ``_redraw_for_plane_toggle``, :18078) - its boot draw is ``_show``
+        # (:16953, issued once for real at boot :17450), so there is
+        # nothing here that a repaint would add; installing the handle would
+        # only draw the layer twice at boot.
+        @ctrl.set("cut_y")
+        def _on_cut_y(*args, **_kwargs) -> None:
+            value = args[0] if args else _kwargs.get("cut_y", state.cut_y)
+            _redraw_cut("y", value)
+
+        @ctrl.set("cut_z")
+        def _on_cut_z(*args, **_kwargs) -> None:
+            value = args[0] if args else _kwargs.get("cut_z", state.cut_z)
+            _redraw_cut("z", value)
+
     if ctx.available.plane_stack:
         plane = info[PLANE_KEY]
         # The same three reads run_web makes on its own stack (:4232-4235), so a
@@ -16685,7 +16771,19 @@ def run_web_vis(
             # was painted on, so a mode change the key cannot see is a cache HIT
             # - the layer keeps the old mode's clim until the slider reaches
             # another stored frame, and the control looks dead.
-            key = (page.get("path"), vol_frame, show_load, show_port, clim_mode)
+            # WHY the CUT is part of this key too: the two sheets are actors of
+            # this layer, so a moved cut must rebuild it - a HIT would leave the
+            # sheets where the previous draw put them and the slider would look
+            # dead.
+            key = (
+                page.get("path"),
+                vol_frame,
+                show_load,
+                show_port,
+                getattr(state, "cut_y", None),
+                getattr(state, "cut_z", None),
+                clim_mode,
+            )
             if same_source and entry.get("key") == key:
                 # WHY the step is rewritten on a HIT: ``step`` is the sim time this
                 # layer is showing, and MANY frame-slider positions map onto ONE
@@ -16743,7 +16841,13 @@ def run_web_vis(
                     file=sys.stderr,
                 )
                 return
-            layout = _cut_layout(info)
+            # The cut follows the page's sliders (``state.cut_y`` / ``cut_z``,
+            # wired at :15830). ``None`` - a page that never set them - means the
+            # middle, and ``_cut_layout`` clamps both itself (:8958-8967), so a
+            # stale index cannot reach the subset.
+            layout = _cut_layout(
+                info, getattr(state, "cut_y", None), getattr(state, "cut_z", None)
+            )
             before = set(plotter.actors)
             _timing_mark("miss_actors_before", actors_before=len(before))
             # WHY the two builders are MUTED here: each ends in its own

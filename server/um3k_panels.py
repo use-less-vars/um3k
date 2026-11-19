@@ -89,12 +89,27 @@ def build_center_panel(ctx) -> object:
     # THE CUT SHEETS: a page that captured more than one x-plane has a stack to
     # cut through, and the two sliders that move the cut belong with the
     # picture they move - in this column, above it, rather than in the toolbar.
-    # `cut_shape` and the emitter are registered by the page ONLY behind the
-    # same `plane_stack` gate (poc_app.py:7572), so on any other page this block
-    # does not run and neither handle is ever asked for. `placeholder` is None
-    # on purpose: there is no placeholder div in this layout, and the emitter
-    # falls back to the row's own html_div for the label (poc_app.py:4049-4064).
-    if ctx.available.plane_stack:
+    # An ANIMATION page reaches the same two sheets by the other route: its |E|
+    # layer draws them itself (`_volume_cut_sheets`), so `volume_layer_shown`
+    # opens this row for it as well - the sliders move the very sheets already
+    # on screen. Its station sentence stays empty (the page sets
+    # `state.station_readout` to "") because it has no station axis.
+    #
+    # WHY `volume_layer_shown` and not `volume_layer`: the data half says the
+    # dump CARRIES `e_abs_volume`, which is not the same as the page DRAWING it
+    # - the |E| layer is off unless `POC_SHOW_VOLUME=1` (poc_app.py:1109-1111).
+    # Offered on the key alone, a layer-OFF animation page would get two sliders
+    # that move sheets nobody can see, so the page hands the policy half to its
+    # context and the context ANDs the two (um3k_context.py:105-109).
+    #
+    # `cut_shape` is registered by the page behind EACH of its two gates
+    # (poc_app.py:15876 animation, :15992 plane stack), while `_emit_cut_sliders`
+    # is registered unconditionally with the rest of the widgets hand
+    # (poc_app.py:19909), so on any other page this block does not run and the
+    # shape handle is never asked for. `placeholder` is None on purpose: there
+    # is no placeholder div in this layout, and the emitter falls back to the
+    # row's own html_div for the label (poc_app.py:4049-4064).
+    if ctx.available.plane_stack or ctx.available.volume_layer_shown:
         n_j, n_k = ctx.handle("cut_shape")
         # THE STATION SENTENCE: ordinary page text naming the plane this stack is
         # drawn at, inside the row whose sliders choose it (poc_app.py:9630).
