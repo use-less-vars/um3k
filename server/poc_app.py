@@ -16565,6 +16565,63 @@ def run_web_vis(
         _profile_phase("flush")
         _profile_tick_end(state.frame, plotter=plotter, mode=mode)
 
+    def _draw_extent_outlines() -> None:
+        """Frame the sheets: domain box SOLID, captured window DASHED. NEVER raises.
+
+        WHY this page needs it at all: the vis page drew no outline of any kind,
+        so the sheets floated with no statement of the simulated domain - the one
+        fact that makes a plane read as a CUT through something (page A draws the
+        same frame in ``_draw_scene``, :10322, through the same helper).
+
+        WHY it is redrawn by ``_rebuild_sheets`` and not once at boot: a finished
+        solve puts a NEW dump on screen, whose counts need not be the old ones,
+        so a frame kept from boot would box the domain that is no longer there.
+        The previous actors are removed first (their names are remembered in
+        ``handles["extent_actors"]``), so the frame is REPLACED, never stacked -
+        two coincident black boxes would just be one box with two edges.
+
+        WHY the volume layer does not own it: the box is framing, not field, so it
+        must survive ``_volume_layer_drop``. It does - that drop only removes the
+        actors the layer itself added.
+        """
+        for _actor in handles.pop("extent_actors", None) or ():
+            try:
+                plotter.remove_actor(_actor, render=False)
+            except Exception as exc:  # noqa: BLE001 - a stale frame is invisible
+                print(
+                    f"[poc_app] stale extent outline kept: {exc}", file=sys.stderr
+                )
+        live = page.get("info") or {}
+        # The grid is only read when the dump states NO axis at all (the helper
+        # then frames what pyvista actually drew), so a missing sheet is not fatal.
+        try:
+            entry = sheets.get("ez_ycut") or next(iter(sheets.values()), None)
+            grid = entry.get("grid") if isinstance(entry, dict) else None
+            if grid is None:
+                grid = _vis_grid(live, "ez_ycut", 0)
+        except Exception as exc:  # noqa: BLE001 - the frame is decoration
+            print(f"[poc_app] extent frame skipped: {exc}", file=sys.stderr)
+            return
+        before = set(plotter.actors)
+        try:
+            _add_extent_outlines(
+                plotter,
+                live,
+                grid,
+                # A vis dump records no station list, so this is None and only
+                # the solid domain box is drawn - the shape of the picture the
+                # dump actually states, never an invented window.
+                live.get("stations_mm"),
+            )
+        except Exception as exc:  # noqa: BLE001 - the frame is decoration
+            print(f"[poc_app] extent frame not drawn: {exc}", file=sys.stderr)
+            return
+        handles["extent_actors"] = [
+            plotter.actors[name]
+            for name in plotter.actors
+            if name not in before
+        ]
+
     def _rebuild_sheets(mode=None) -> None:
         """Re-create the three field sheets from the LIVE page's own info.
 
@@ -16650,7 +16707,16 @@ def run_web_vis(
             state.mode_choice_items = []
             state.mode_choice = 0
         handles["camera_framed"] = False
+        # The frame belongs to the DUMP, so it is rebuilt with the sheets (see
+        # _draw_extent_outlines): a solve changes the counts under it.
+        _draw_extent_outlines()
         _show(0, mode or state.mode, "solve")
+
+    # The frame, BEFORE the first frame of field: page A draws it in the same
+    # place of its own draw order (after the field layer, before axes/markers),
+    # and here it must exist before the volume layer takes its "actors before"
+    # snapshot (:16152) so dropping that layer cannot take the box with it.
+    _draw_extent_outlines()
 
     # Initial labels, set before the layout is built so the first page a browser
     # loads already carries frame 1's own numbers.
@@ -17261,6 +17327,27 @@ def run_web_vis(
     # only WRITES the flag, and the redraw hangs off the state change, so every
     # writer of the flag takes one path - and the picture that answers is the
     # scene rebuilt, which is what a redraw already does.
+    def _plane_toggles_available() -> bool:
+        """Can this page really HIDE a marker plane? NEVER raises.
+
+        The ONE answer both the emitter and the toggle's repaint use, so a box
+        cannot be offered on a page whose repaint would ignore it (nor withheld
+        from one that would repaint). Two ways a page can answer:
+
+        * it bound ``cut_redraw`` - the shared redraw rebuilds the marker layer
+          with the scene (``_draw_scene`` -> ``_add_markers``);
+        * it holds an |E| VOLUME - the discs are part of that volume layer and
+          ``_show`` rebuilds it, its cache key carrying the two switches.
+
+        A page with neither has no marker to hide, and the box would lie.
+        """
+        if callable(handles.get("cut_redraw")):
+            return True
+        try:
+            return (page.get("info") or {}).get("e_abs_volume") is not None
+        except Exception:  # noqa: BLE001 - a page dict is never a crash
+            return False
+
     def _redraw_for_plane_toggle(what: str) -> None:
         """Repaint the scene after a marker plane was switched. NEVER raises."""
         try:
@@ -18664,7 +18751,17 @@ def run_web_vis(
             print(
                 f"[poc_app] vector field toggle unavailable: {exc}", file=sys.stderr
             )
-        if not callable(handles.get("cut_redraw")):
+        # WHAT THIS GUARD GATES, and what it must NOT: the two MARKER boxes
+        # only. The original guard asked ``cut_redraw`` and meant "a page with no
+        # plane stack has no plane to hide" - true of the stack, FALSE of the |E|
+        # volume page, whose marker discs are part of the volume layer and are
+        # repainted by ``_show`` (``_redraw_for_plane_toggle``, :17274). On that
+        # page the boxes existed in the scene with no way to switch them, which
+        # is the regression this replaces. The predicate is shared with the
+        # repaint so the two cannot disagree about what is hideable; a page with
+        # neither a redraw nor a volume still gets nothing, because there the box
+        # would hide nothing and the control would lie.
+        if not _plane_toggles_available():
             return
         for plane_state, plane_label in (
             ("show_load_plane", "Show Load Plane (red)"),
