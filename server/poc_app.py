@@ -15444,6 +15444,25 @@ def run_web_vis(
     plane_args = plane_bar_args()
     scalar_bar_title = plane_args["title"]
 
+    # The Grid box in the view panel writes this flag, and ``_cell_edges_on``
+    # below is the ONE reader of it - so the sheets built at boot, the sheets
+    # rebuilt after a solve and the y-cut overlay in ``_show`` cannot disagree
+    # about whether the cell grid is drawn. A plain dict and not the state
+    # attribute itself because the boot sheets are built BEFORE ``server.state``
+    # exists (see below): a reader that reached into state would NameError on the
+    # very first frame.
+    edges_state = {"on": VIS_SHOW_EDGES}
+
+    def _cell_edges_on() -> bool:
+        """Whether the field sheets carry their cell grid RIGHT NOW.
+
+        ``VIS_SHOW_EDGES`` is the module default and the box's initial value;
+        ``edges_state`` is what the box has written since. AND, not OR: a page
+        built with the grid off must not draw it because a box defaulted to
+        True asked for it.
+        """
+        return bool(VIS_SHOW_EDGES) and bool(edges_state["on"])
+
     # Three sheets, added ONCE. clim is the dump's single ceiling for every one
     # of them, so no later frame has a scale of its own to renormalise with.
     # smooth_shading=False plus the cell edges are the same statement twice: this
@@ -15467,7 +15486,7 @@ def run_web_vis(
                 # a surface normal must not shade it - light would dim the very
                 # colour the reader is being asked to compare against the bar.
                 lighting=False,
-                show_edges=VIS_SHOW_EDGES,
+                show_edges=_cell_edges_on(),
                 # Light and thin: the cell grid is here so the reader can see
                 # WHERE the field is sampled, not to be read as a lattice.
                 edge_color=VIS_EDGE_COLOR,
@@ -16953,7 +16972,7 @@ def run_web_vis(
                         # would cover the field it is meant to annotate, so it is
                         # dimmed (and outlined) only for this family.
                         actor.prop.opacity = 0.08
-                        actor.prop.show_edges = VIS_SHOW_EDGES
+                        actor.prop.show_edges = _cell_edges_on()
                     else:
                         actor.prop.opacity = drawn_opacity
                 except Exception as exc:  # noqa: BLE001 - decoration only
@@ -17160,7 +17179,7 @@ def run_web_vis(
                     # Same flat field as the boot sheets above, so the same
                     # statement: a rebuilt dump must not arrive lit.
                     lighting=False,
-                    show_edges=VIS_SHOW_EDGES,
+                    show_edges=_cell_edges_on(),
                     # Same light mesh as the boot sheets: a rebuilt dump must
                     # not come back as a black lattice over the field.
                     edge_color=VIS_EDGE_COLOR,
@@ -17893,6 +17912,34 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - a second sheet is an EXTRA
             print(
                 f"[poc_app] other family toggle skipped: {exc}", file=sys.stderr
+            )
+
+    # The Grid box. The same rule a fourth time: the box only WRITES the flag,
+    # and the grid it switches is applied HERE, to the sheets already on screen,
+    # so the picture changes without a re-cut, a rebuild or a re-solve.
+    @state.change("show_cell_edges")
+    def _on_show_cell_edges(**_kwargs) -> None:
+        """Add or drop the cell grid on every sheet on screen. NEVER raises.
+
+        WHY the actors and not a redraw: the edges are a DRAWING property of the
+        mesh that is already there, so nothing about the data, the camera or the
+        colour bar changes - only whether the grid under the field is painted.
+        """
+        edges_state["on"] = bool(_kwargs.get("show_cell_edges", VIS_SHOW_EDGES))
+        try:
+            for entry in sheets.values():
+                entry["actor"].prop.show_edges = _cell_edges_on()
+        except Exception as exc:  # noqa: BLE001 - a grid is never the picture
+            print(
+                f"[poc_app] cell edge toggle skipped: {exc}",
+                file=sys.stderr,
+            )
+        try:
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - one frame is not the page
+            print(
+                f"[poc_app] cell edge redraw skipped: {exc}",
+                file=sys.stderr,
             )
 
     # The fallback expander's handler. Only the VBtn path binds it: the panels
@@ -19367,6 +19414,21 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - a toggle is never the page
             print(
                 f"[poc_app] other plane toggle unavailable: {exc}", file=sys.stderr
+            )
+        # The cell grid's box. Same (state_name, default) binding as the two
+        # above, but the default is the NAME the sheets were built with rather
+        # than a literal: the box must start telling the truth about the picture
+        # it is beside, whatever that module flag says.
+        try:
+            checkbox_cls(
+                v_model=("show_cell_edges", VIS_SHOW_EDGES),
+                label="Grid (cell edges)",
+                hide_details=True,
+                style="padding: 2px 0;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a toggle is never the page
+            print(
+                f"[poc_app] cell edge toggle unavailable: {exc}", file=sys.stderr
             )
         # WHAT THIS GUARD GATES, and what it must NOT: the two MARKER boxes
         # only. The original guard asked ``cut_redraw`` and meant "a page with no
