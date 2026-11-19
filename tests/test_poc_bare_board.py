@@ -194,7 +194,7 @@ def test_a_bare_page_carries_no_field_volume_or_cut_sheet(bare_live):
 
 
 def test_the_camera_is_framed_once_for_the_board(bare_live):
-    assert bare_live.handles["camera_framed"] is True
+    assert bare_live.handles["camera_framed_for"] == ()
     assert bare_live.plotter._poc_camera_framed is True
 
 

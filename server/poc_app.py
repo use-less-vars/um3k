@@ -15732,14 +15732,18 @@ def run_web_vis(
         # archive resolved, so there is no cut to redraw and no sheet to frame:
         # all the page holds is what _vis_geometry drew over the board. Framing
         # it here, once, is what makes that board a picture instead of an empty
-        # centre column; camera_framed is published so _show() does not replace
-        # this view with its flat x-cut framing (which would also dim the board
-        # to the overlay opacity meant for a field sheet).
+        # centre column; camera_framed_for is published so _show() does not
+        # replace this view with its flat x-cut framing (which would also dim
+        # the board to the overlay opacity meant for a field sheet).
         try:
             plotter.view_isometric()
             plotter.reset_camera()
             plotter._poc_camera_framed = True
-            handles["camera_framed"] = True
+            # No sheet on this page, so the set of families the camera was
+            # framed for is EMPTY - and an empty set does not change when the
+            # family flag does, which is what keeps this isometric view from
+            # being replaced by _show()'s flat plane framing later.
+            handles["camera_framed_for"] = ()
         except Exception as exc:  # noqa: BLE001 - decoration only
             print(f"[poc_app] bare board not framed: {exc}", file=sys.stderr)
 
@@ -16462,10 +16466,12 @@ def run_web_vis(
         # Phase "reanchor": everything up to the position being written - the
         # page read, the mode resolve and the clamp into the timeline.
         _profile_phase("reanchor")
-        # The plane frame and the volume frame THIS position draws. Both fall
-        # back to the position itself when there is no plan (no volume, or no
-        # readable step axis): a dump with one timeline keeps the behaviour it
-        # had.
+        # The PRIMARY family's plane frame and the volume frame THIS position
+        # draws: the two single indices the rest of the tick still reads (the
+        # sim-time label and the |E| layer). Both fall back to the position
+        # itself when there is no plan (no volume, or no readable step axis): a
+        # dump with one timeline keeps the behaviour it had. The CUT SHEETS no
+        # longer read it - each resolves its OWN family's stored sample below.
         plane_index = index
         if timeline is not None:
             held = timeline.layer_index(
@@ -16489,13 +16495,33 @@ def run_web_vis(
                 )
             if not visible:
                 continue
+            # EACH sheet maps its OWN layer: its family's recorded step axis,
+            # sample and hold, is the only thing its scalars may be read at.
+            # This lookup used to happen ONCE above the loop, for the primary
+            # family alone, so a second family drawn in the same tick would be
+            # handed the primary's stored sample - another family's frame. The
+            # family NAMES the layer (server/timeline.py defines those two
+            # constants for exactly these two families); a family with no layer
+            # keeps the position, because no mapping is defensible for it.
+            layer_name = {
+                "ycut": _timeline.YCUT_LAYER,
+                "xcut": _timeline.XCUT_LAYER,
+            }.get(str(entry.get("family")))
+            sheet_index = index
+            if timeline is not None and layer_name is not None:
+                held = timeline.layer_index(layer_name, index)
+                if held is not None:
+                    sheet_index = int(held)
             array = info[key]
+            # A sheet is BUILT from a non-empty array at boot (_vis_grid reads
+            # frame 0), so this can only skip a sheet this dump never had: it
+            # must never be the reason a VISIBLE sheet goes without scalars.
             if array.shape[0] == 0:
                 continue
             _psheet = _profile_sheet_begin(key, entry.get("grid"))
             data = np.abs(
                 np.asarray(
-                    array[min(plane_index, int(array.shape[0]) - 1)], dtype=float
+                    array[min(sheet_index, int(array.shape[0]) - 1)], dtype=float
                 )
             )
             try:
@@ -16513,7 +16539,7 @@ def run_web_vis(
             # own upload, not the three sheets' total.
             _profile_sheet_end(
                 _psheet,
-                min(plane_index, int(array.shape[0]) - 1),
+                min(sheet_index, int(array.shape[0]) - 1),
                 entry.get("grid"),
             )
 
@@ -16559,15 +16585,34 @@ def run_web_vis(
         if mode_changed:
             _swap_scalar_bar(mode)
 
-        if mode_changed or not handles.get("camera_framed"):
-            # Frame the sheet that is about to be drawn, not the whole 3-D box:
-            # with all three sheets plus the substrate in view the animated field
-            # was a sliver in the middle of the picture. view_xz looks along -y
-            # (the y-cut sheet's own plane), view_yz along -x (the plane both
-            # x-cut sheets sit in).
+        # The camera is framed for a SET of families, not for the mode alone:
+        # with the second plane switched on, twice as much field has to fit, and
+        # a camera framed for the first plane is the wrong camera. The set is
+        # recorded beside the view and re-compared on EVERY tick, because the
+        # flag can change on a tick where the mode did not. It is the families
+        # of the sheets actually ON this page - the same set the bounds below are
+        # unioned over - so a page holding no sheet frames the empty set and is
+        # never re-framed by a flag it does not draw.
+        framed_for = tuple(
+            sorted(
+                {
+                    entry["family"]
+                    for entry in sheets.values()
+                    if entry["family"] in _visible_families(mode)
+                }
+            )
+        )
+        if mode_changed or handles.get("camera_framed_for") != framed_for:
+            # Frame the sheets that are about to be drawn, not the whole 3-D
+            # box: with all three sheets plus the substrate in view the animated
+            # field was a sliver in the middle of the picture. view_xz looks
+            # along -y (the y-cut sheet's own plane), view_yz along -x (the
+            # plane both x-cut sheets sit in): the PRIMARY family still chooses
+            # the ANGLES, and an oblique "two planes in a cross" view is a
+            # later, separate decision that this latch does not invent.
             bounds = None
             for entry in sheets.values():
-                if entry["family"] != mode:
+                if entry["family"] not in framed_for:
                     continue
                 b = entry["grid"].bounds
                 bounds = (
@@ -16602,7 +16647,7 @@ def run_web_vis(
                     plotter.view_xz(bounds=bounds, render=False)
                 else:
                     plotter.view_yz(bounds=bounds, render=False)
-                handles["camera_framed"] = True
+                handles["camera_framed_for"] = framed_for
             except Exception as exc:  # noqa: BLE001 - keep the previous camera
                 print(
                     f"[poc_app] camera reframe skipped: {exc}",
@@ -16881,7 +16926,9 @@ def run_web_vis(
         with state.suppress_change_listeners("mode_choice"):
             state.mode_choice_items = []
             state.mode_choice = 0
-        handles["camera_framed"] = False
+        # The new dump needs its own framing, and None matches no family set,
+        # so the next _show() tick re-frames (see camera_framed_for).
+        handles["camera_framed_for"] = None
         # The frame belongs to the DUMP, so it is rebuilt with the sheets (see
         # _draw_extent_outlines): a solve changes the counts under it.
         _draw_extent_outlines()

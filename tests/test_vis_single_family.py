@@ -278,12 +278,12 @@ def test_every_family_visibility_write_asks_the_helper():
             "pinned to the function that applies it."
         )
 
-    # One definition plus the six sites above.
+    # One definition plus the six sites above, plus the camera latch.
     total = source.count("_visible_families(")
-    assert total == 7, (
-        f"'_visible_families(' appears {total} time(s): one definition and the "
+    assert total == 8, (
+        f"'_visible_families(' appears {total} time(s): one definition, the "
         "six write sites (sheet loop, mode picture, quiver, two draw helpers, "
-        "plane-bar pick)."
+        "plane-bar pick) and the camera latch's family set."
     )
 
     # The sweep: no OTHER actor visibility write keeps a family opinion.
@@ -371,3 +371,161 @@ def test_the_boot_sheets_still_join_one_plane_bar():
             f"field picture at line {line} builds a bar of its own: the page "
             "leaves exactly one plane bar standing (_swap_scalar_bar)."
         )
+
+
+# ---------------------------------------------------------------------------
+# The sheet loop itself: EVERY sheet paints its OWN family's stored frame.
+# The loop is sliced out of ``_show`` by AST rather than by line number - the
+# module is 19k lines and a loop that MOVED must not let a pin below pass by
+# accident, nor fail for the wrong reason.
+# ---------------------------------------------------------------------------
+def _sheet_loop_code(source: str) -> str:
+    """The sheet loop's code, comment lines dropped.
+
+    The loop is the ``for`` over ``sheets.items()`` inside ``_show``: found by
+    AST so a pin cannot be satisfied by an unrelated line elsewhere in the
+    module, and quoted from the ORIGINAL source (not ``ast.unparse``) so a
+    needle written here is a needle in the file. Comments are dropped because
+    they QUOTE the old expressions while explaining why they are gone.
+    """
+    tree = ast.parse(source)
+    shows = _function_defs(tree, "_show")
+    assert len(shows) == 1, (
+        f"{POC_APP.name} defines '_show' {len(shows)} time(s): the sheet loop "
+        "these pins slice lives in the one function that draws a tick."
+    )
+    loops = [
+        node
+        for node in ast.walk(shows[0])
+        if isinstance(node, ast.For) and "sheets.items()" in ast.unparse(node.iter)
+    ]
+    assert len(loops) == 1, (
+        f"'_show' has {len(loops)} loop(s) over 'sheets.items()': every field "
+        "frame is placed by that ONE loop, and the pins below assume one."
+    )
+    raw = ast.get_source_segment(source, loops[0]) or ""
+    return "\n".join(
+        line for line in raw.splitlines() if not line.strip().startswith("#")
+    )
+
+
+def test_each_sheet_paints_its_own_family_layer():
+    """(f) The per-sheet frame comes from the sheet's OWN family's layer."""
+    code = _sheet_loop_code(_source())
+    assert 'entry.get("family")' in code, (
+        "the sheet loop no longer reads the sheet's own family, so it cannot "
+        "resolve a layer per family.\n" + code
+    )
+    assert "timeline.layer_index(" in code, (
+        "the sheet loop does not ask the timeline for the sheet's own layer: "
+        "that lookup is what maps a position to THIS family's stored sample, "
+        "and resolving it once above the loop is how a second family is handed "
+        "another family's frame.\n" + code
+    )
+    for private in ('["family"] == mode', 'get("family") == mode'):
+        assert private not in code, (
+            "the sheet loop answers 'is this family drawn?' privately with "
+            f"{private!r} instead of asking _visible_families().\n" + code
+        )
+
+
+def test_both_frame_picks_in_the_sheet_loop_use_the_sheet_index():
+    """(g) ``plane_index`` is the PRIMARY family's frame and must not leak."""
+    code = _sheet_loop_code(_source())
+    assert "plane_index" not in code, (
+        "the sheet loop reads ``plane_index``: that index is the PRIMARY "
+        "family's frame (the one the sim-time label and the |E| layer read), "
+        "so a sheet of the second family would be painted from the primary's "
+        "position. Each sheet resolves ``sheet_index`` for itself.\n" + code
+    )
+    picks = code.count("min(sheet_index,")
+    assert picks == 2, (
+        f"the sheet loop picks a frame with ``min(sheet_index, ...)`` {picks} "
+        "time(s), expected 2 - the scalars it uploads and the number its "
+        "profile row reports: both must clamp the SAME per-sheet index.\n"
+        + code
+    )
+
+
+def test_the_sheet_loop_skips_only_what_it_cannot_paint():
+    """(h) Two ``continue``s, each the whole body of a named guard."""
+    code = _sheet_loop_code(_source())
+    lines = code.splitlines()
+    continues = [number for number, text in enumerate(lines) if text.strip() == "continue"]
+    assert len(continues) == 2, (
+        f"the sheet loop continues {len(continues)} time(s), expected 2: a "
+        "sheet whose family is not on screen, and a dump with no frame for it. "
+        "An extra one is a VISIBLE sheet going without scalars.\n" + code
+    )
+    guards = []
+    for number in continues:
+        before = [text.strip() for text in lines[:number] if text.strip()]
+        guards.append(before[-1])
+    assert guards == ["if not visible:", "if array.shape[0] == 0:"], (
+        f"the sheet loop's ``continue``s are guarded by {guards}: the only two "
+        "reasons a sheet may be skipped are that its family is not on screen "
+        "and that the dump holds no frame for it.\n" + code
+    )
+
+
+# ---------------------------------------------------------------------------
+# The camera latch: the view is framed for a SET of families, not for a flag.
+# ---------------------------------------------------------------------------
+def _assigned_value(source: str, function: str, name: str) -> str:
+    """The source of the expression assigned to ``name`` inside ``function``."""
+    tree = ast.parse(source)
+    for node in _function_defs(tree, function):
+        for child in ast.walk(node):
+            if isinstance(child, ast.Assign) and any(
+                getattr(target, "id", None) == name for target in child.targets
+            ):
+                return ast.get_source_segment(source, child.value) or ""
+    return ""
+
+
+def test_the_camera_latch_names_the_families_it_framed():
+    """(i) ``camera_framed_for`` records WHICH families the view was framed for.
+
+    A boolean says the camera was framed for *something*: switch the second
+    plane on and the first plane's framing quietly stays, leaving half the
+    field outside the picture. The latch is the family SET, so the flag and
+    the mode are both compared on every tick - and the bare board records the
+    empty set, which no flag can change.
+    """
+    source = _source()
+    assert 'handles["camera_framed"]' not in source, (
+        "a bare ``handles[\"camera_framed\"]`` flag survives at "
+        f"{_lines_with(source, 'handles[\"camera_framed\"]')}: a boolean "
+        "cannot say which families the camera was framed for, so a second "
+        "plane would be drawn outside the view."
+    )
+    writes = _lines_with(source, 'handles["camera_framed_for"]')
+    assert len(writes) == 3, (
+        f"``handles[\"camera_framed_for\"]`` is written at {writes}: exactly "
+        "three places own it - the bare board's empty set, the successful "
+        "reframe, and the solve's reset."
+    )
+    reads = _lines_with(source, 'handles.get("camera_framed_for")')
+    assert len(reads) == 1, (
+        f"``handles.get(\"camera_framed_for\")`` is read at {reads}: the "
+        "reframe guard is the ONE place that decides, and a second reader "
+        "would be a second opinion about the camera."
+    )
+    guard = source.splitlines()[reads[0] - 1]
+    assert "mode_changed" in guard, (
+        "the reframe guard no longer re-frames on a mode change, which is the "
+        f"one case a stale latch cannot cover:\n{guard}"
+    )
+    value = _assigned_value(source, "_show", "framed_for")
+    assert "_visible_families(" in value, (
+        "the family set the camera latches is not derived from "
+        f"_visible_families():\n{value}"
+    )
+    assert "sheets" in value, (
+        "the latched set is not the families of the sheets on this page, so a "
+        f"page with no sheet would be re-framed by a flag it cannot draw:\n{value}"
+    )
+    assert "framed_for" in source.splitlines()[reads[0] - 1], (
+        "the reframe guard compares something other than the latched set at "
+        f"line {reads[0]}:\n{guard}"
+    )
