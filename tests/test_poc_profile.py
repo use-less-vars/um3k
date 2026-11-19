@@ -1695,3 +1695,251 @@ def test_a_wrapper_keeps_the_marker_wslink_finds_its_rpcs_by(prof):
     # And the base class it was reading from is untouched.
     assert _Rpc.start_view_animation.__dict__["_wslinkuris"]
 
+
+# ---------------------------------------------------------------------------
+# POC_TICK_STALL: WHICH tick stalled, and what was running when it did.
+#
+# The two suites above answer "how long did this tick take" and "where did that
+# time go on average".  This probe answers the operator's question instead -
+# WHICH tick was it, and was the second spent re-anchoring, drawing, flushing,
+# or in a gc nothing else here can see.  The claims, one per test:
+#
+# * off is a HARD no-op: no gc hook, no record, no file, every hook inert -
+#   a run that never asked for the probe pays nothing for it;
+# * ``1`` is how one writes ON, so anything above it is a threshold in ms, and
+#   an unreadable value falls back to the default rather than crashing;
+# * a slow tick prints ONE field=value line - also appended to the run's log -
+#   naming its phases, its gc, its render/push counts and its frame;
+# * the lines are BOUNDED while every slow tick is still counted, so a run that
+#   stalls on every tick cannot bury itself in stderr;
+# * a gc pause is measured INTO the tick that paid for it, from gc.callbacks,
+#   which is the one sample no phase mark can see;
+# * the summary is <= 40 lines - per-phase percentiles, gc per GENERATION, and
+#   the worst ticks - and the file IS that text, in the run directory.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stall(tmp_path, monkeypatch):
+    """The stall probe on, on the same fake clock, in its own run directory."""
+    saved_threshold = poc_app._STALL["threshold_ms"]
+    monkeypatch.setenv("POC_TICK_STALL", "1")
+    poc_app._profile_configure(False)
+    poc_app._stall_uninstall_gc()
+    poc_app._profile_reset()
+    clock = {"t": 0.0}
+    run = tmp_path / "stall"
+    # _profile_configure installs the probe: it is the block that takes the
+    # marks this one rides, so POC_TICK_STALL alone must not claim to be on.
+    poc_app._profile_configure(
+        True, run, clock=lambda: clock["t"], start_threads=False
+    )
+    try:
+        yield types.SimpleNamespace(
+            clock=clock,
+            run=_Run(clock),
+            dir=run,
+            summary=run / "poc_tick_stall.txt",
+            log=run / "poc_tick_stall.log",
+        )
+    finally:
+        poc_app._profile_configure(False)
+        poc_app._stall_uninstall_gc()
+        poc_app._stall_reset()
+        poc_app._STALL["threshold_ms"] = saved_threshold
+        poc_app._PROFILE["files"] = {}
+
+
+def test_the_stall_probe_is_off_unless_asked(tmp_path, monkeypatch):
+    """No POC_TICK_STALL: no hook, no record, no file - and every hook inert."""
+    monkeypatch.delenv("POC_TICK_STALL", raising=False)
+    poc_app._profile_configure(False)
+    poc_app._stall_uninstall_gc()
+    poc_app._stall_reset()
+
+    assert poc_app._stall_env_enabled() is False
+    assert poc_app._stall_install_gc() is False, "the env is the ONLY switch"
+    assert poc_app._stall_enabled() is False
+    assert poc_app._stall_tick_begin(0, "ycut") is None
+    assert poc_app._stall_phase("draw", 999.0) is None
+    assert poc_app._stall_tick_end({"counts": {"render": 1}}) is None
+    assert poc_app._stall_gc_stop({"generation": 0}) == 0.0
+    assert poc_app._stall_summary_text() == ""
+    assert poc_app._stall_write_summary() == ""
+    assert poc_app._STALL["ticks"] == 0
+    assert poc_app._STALL["slow"] == 0
+    assert poc_app._STALL["worst"] == []
+
+    # And a configured run that did not ask still leaves not one file behind.
+    off = tmp_path / "off"
+    poc_app._profile_configure(True, off, start_threads=False)
+    try:
+        assert poc_app._STALL["enabled"] is False
+        assert sorted(p.name for p in off.iterdir()) == []
+    finally:
+        poc_app._profile_configure(False)
+
+
+def test_the_env_value_is_the_threshold_not_just_a_switch(monkeypatch):
+    """"1" is how one writes ON; anything above it is a threshold in ms."""
+    assert poc_app._STALL_DEFAULT_MS == pytest.approx(150.0)
+    for raw, want in (
+        ("1", 150.0),        # on, at the default
+        ("400", 400.0),      # on, at 400 ms
+        ("12.5", 12.5),      # fractional ms is a number, not a mistake
+        ("yes", 150.0),      # unreadable: the default, never a crash
+        ("", 150.0),         # blank is off, but still a readable default
+        ("  ", 150.0),
+    ):
+        monkeypatch.setenv("POC_TICK_STALL", raw)
+        assert poc_app._stall_env_threshold() == pytest.approx(want), raw
+    for raw in ("", "0", "   "):
+        monkeypatch.setenv("POC_TICK_STALL", raw)
+        assert poc_app._stall_env_enabled() is False, raw
+    monkeypatch.setenv("POC_TICK_STALL", "1")
+    assert poc_app._stall_env_enabled() is True
+
+
+def test_a_slow_tick_prints_one_line_naming_what_it_did(stall, capsys):
+    """One field=value line, in a fixed order, to stderr AND to the run's log."""
+    poc_app._STALL["threshold_ms"] = 100.0
+
+    poc_app._profile_tick_begin(7, "xcut")
+    for name, ms in (("reanchor", 20.0), ("draw", 210.0), ("flush", 5.0)):
+        stall.run.advance(ms)
+        poc_app._profile_phase(name)
+    # The counts a tick row carries are what the line reports: the probe reads
+    # the ROW, so it cannot disagree with the profile suite about that tick.
+    poc_app._PROFILE["tick_counts"] = {"render": 1, "push": 1}
+    poc_app._profile_tick_end(7, mode="xcut")
+
+    record = poc_app._STALL["worst"][0]
+    assert record["n"] == 1
+    assert record["total_ms"] == pytest.approx(235.0)
+    assert record["slow"] is True
+    assert poc_app._STALL["slow"] == 1
+
+    text = capsys.readouterr().err.strip()
+    assert text.startswith("[poc_app] slow tick 1/1"), text
+    for field in (
+        "total=235.0ms",
+        "threshold=100.0ms",
+        "gc=0.0ms",
+        "frame=7",
+        "mode=xcut",
+        "reanchor=20.0ms",
+        "draw=210.0ms",
+        "flush=5.0ms",
+        "render=1",
+        "push=1",
+    ):
+        assert field in text, (field, text)
+    # The gap is the beat BEFORE this tick; the first tick has none, and an
+    # invented 0.0 would read as a loop that never slept.
+    assert "gap=" not in text, text
+    # The log is the same one line, in the run directory and nowhere else.
+    assert _lines(stall.log) == [text]
+
+
+def test_a_run_that_stalls_every_tick_suppresses_lines_but_counts_every_tick(stall, capsys):
+    """A probe that buries stderr is a probe an operator turns off."""
+    poc_app._STALL["threshold_ms"] = 1.0
+    assert poc_app._STALL_MAX_LINES == 200
+
+    poc_app._profile_tick_begin(0, "ycut")
+    for frame in range(205):
+        if frame:
+            poc_app._profile_tick_begin(frame, "ycut")
+        stall.run.advance(5.0)
+        poc_app._profile_phase("draw")
+        poc_app._profile_tick_end(frame, mode="ycut")
+
+    assert poc_app._STALL["ticks"] == 205
+    assert poc_app._STALL["slow"] == 205, "every slow tick is COUNTED"
+    assert poc_app._STALL["lines_printed"] == 200
+    assert poc_app._STALL["lines_suppressed"] == 5
+    assert len(capsys.readouterr().err.strip().splitlines()) == 200
+    # Worst-first and bounded: the 20 slowest records survive the run.
+    assert len(poc_app._STALL["worst"]) == poc_app._STALL_MAX_WORST
+    assert all(rec["slow"] for rec in poc_app._STALL["worst"])
+    # The 200-tick beat rewrote the summary without anyone asking for it.
+    assert stall.summary.exists()
+    assert "ticks: 200" in stall.summary.read_text(encoding="utf-8")
+    assert "ticks: 205" in poc_app._stall_write_summary()
+
+
+def test_a_gc_pause_lands_inside_the_tick_that_paid_for_it(stall):
+    """gc.callbacks is the one sample no phase mark can see, so it is hooked."""
+    import gc as _gc
+
+    assert poc_app._STALL["gc_hooked"] is True
+    was_enabled = _gc.isenabled()
+    _gc.disable()  # a REAL collection mid-test would steal the manual start
+    try:
+        poc_app._profile_tick_begin(0, "ycut")
+        poc_app._stall_gc_callback("start", {"generation": 0})
+        stall.run.advance(4.0)  # 4 ms of gc inside a tick that did nothing else
+        poc_app._stall_gc_callback("stop", {"generation": 0})
+        poc_app._profile_tick_end(0, mode="ycut")
+    finally:
+        if was_enabled:
+            _gc.enable()
+
+    record = poc_app._STALL["worst"][0]
+    assert record["total_ms"] == pytest.approx(4.0)
+    assert record["gc_ms"] == pytest.approx(4.0), "the pause is INSIDE the tick"
+    agg = poc_app._STALL["gc"][0]
+    assert agg["n"] == 1
+    assert agg["total_ms"] == pytest.approx(4.0)
+    assert agg["max_ms"] == pytest.approx(4.0)
+    assert poc_app._STALL["gc_ms_total"] == pytest.approx(4.0)
+    # Nested collections keep the outer start rather than double-counting it.
+    poc_app._stall_gc_callback("start", {"generation": 2})
+    started = poc_app._STALL["gc_t0"]
+    poc_app._stall_gc_callback("start", {"generation": 2})
+    assert poc_app._STALL["gc_t0"] == started
+    # Unhooking is idempotent, and the probe is off either way.
+    assert poc_app._stall_uninstall_gc() is True
+    assert poc_app._stall_uninstall_gc() is False
+    assert poc_app._stall_enabled() is False
+
+
+def test_the_summary_names_the_phases_the_generations_and_the_worst_ticks(stall):
+    """<= 40 lines: per-phase percentiles, gc per generation, the worst ticks."""
+    import gc as _gc
+
+    poc_app._STALL["threshold_ms"] = 100.0
+    stall.run.tick(frame=1, phases=(("draw", 210.0),))
+    stall.run.tick(frame=2, phases=(("draw", 400.0),))
+
+    was_enabled = _gc.isenabled()
+    _gc.disable()
+    try:
+        poc_app._stall_gc_callback("start", {"generation": 0})
+        stall.run.advance(2.0)
+        poc_app._stall_gc_callback("stop", {"generation": 0})
+    finally:
+        if was_enabled:
+            _gc.enable()
+
+    text = poc_app._stall_summary_text()
+    lines = text.splitlines()
+    assert lines[0] == "POC_TICK_STALL - slow-tick probe"
+    assert len(lines) <= 40
+    assert "ticks: 2  slow(>=100.0ms): 2  lines suppressed: 0" in text
+    assert "phase (ms)" in text
+    assert any(line.startswith("  draw") for line in lines), text
+    # gc is per GENERATION: "gen0" alone would hide a gen2 pause entirely.
+    assert any(line.startswith("  gen0") for line in lines), text
+    assert "worst ticks:" in text
+    # Worst FIRST, so the tick worth reading is the one at the top.
+    worst_rows = [line for line in lines if line.strip()[:1] in ("1", "2")]
+    assert worst_rows, text
+    assert "400.0" in worst_rows[0], worst_rows[0]
+    assert "210.0" in worst_rows[1], worst_rows[1]
+
+    # The file IS that text, in the run directory - never the source tree.
+    assert poc_app._stall_write_summary() == text
+    assert stall.summary.read_text(encoding="utf-8") == text
+    assert poc_app._stall_path() == stall.summary
+    assert poc_app._stall_log_path() == stall.log

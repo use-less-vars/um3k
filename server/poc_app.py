@@ -1622,10 +1622,13 @@ if _TIMING_ENABLED:
 # OFF BY DEFAULT. On with --profile (artefacts in --profile-dir, default
 # artifacts/profile/) or with POC_PROFILE=1 / POC_TIMING=1 in the environment:
 # POC_TIMING stays the alias, so one variable turns on both probes.
+# POC_TICK_STALL is the third key for the same reason the second one is here: the
+# stall probe below takes no marks of its own - it rides the marks this block
+# takes - so switching it on must switch this block on, or it measures nothing.
 #
 # Every hook is wrapped: telemetry that raises must never surface as a draw
 # that raises, the same rule the _timing_* block follows.
-_PROFILE_ENV_KEYS = ("POC_PROFILE", "POC_TIMING")
+_PROFILE_ENV_KEYS = ("POC_PROFILE", "POC_TIMING", "POC_TICK_STALL")
 _PROFILE_DEFAULT_DIR = (
     Path(__file__).resolve().parent.parent / "artifacts" / "profile"
 )
@@ -1816,6 +1819,452 @@ def _profile_reset() -> None:
     )
     _PROFILE["tick_snap"] = None
     _PROFILE["delivery_hooked"] = False
+    # The stall probe's samples are per-run too, but its SWITCH is not a sample:
+    # a reset forgets the numbers and leaves the probe installed.
+    _stall_reset()
+
+
+# ---------------------------------------------------------------------------
+# POC_TICK_STALL: WHICH tick stalled, and what was running when it did.
+#
+# The two blocks above answer "how long did this tick take" and "where did that
+# time go on average". Neither answers the question an operator asks when the
+# picture freezes for a second: WHICH tick was it, and was that second spent
+# re-anchoring, drawing, flushing, or in a garbage collection nothing else here
+# can see.
+#
+# So this probe rides the SAME marks the profile suite already takes
+# (_profile_tick_begin / _profile_phase / _profile_yield / _profile_tick_end):
+# no draw path learns that it is being measured, and the phases it sums are the
+# ones that block already paid for. It adds the one sample Python cannot hand
+# the profile suite directly - gc pauses, from gc.callbacks.
+#
+# OFF BY DEFAULT. On with POC_TICK_STALL=1 in the environment, which also turns
+# the profile suite on (see _PROFILE_ENV_KEYS: the marks are taken there). A
+# value greater than 1 is read as the slow-tick threshold in MILLISECONDS -
+# POC_TICK_STALL=400 flags ticks at or over 400 ms - because "1" is how one
+# writes "on", and reading it as a 1 ms threshold would flag every tick.
+#
+# A tick at or over the threshold prints ONE line to stderr and appends the same
+# line to poc_tick_stall.log; the summary is poc_tick_stall.txt, rewritten every
+# _STALL_SUMMARY_EVERY ticks and on exit. Both live in the run directory the
+# profile suite opened (artifacts/profile/ without --profile-dir), so this probe
+# never writes into the source tree.
+_STALL_DEFAULT_MS = 150.0
+_STALL_MAX_WORST = 20  # tick records kept, worst first
+_STALL_MAX_PHASE = 20000  # samples kept per phase
+_STALL_MAX_GC = 4096  # gc events kept
+_STALL_MAX_LINES = 200  # stderr lines; the rest are COUNTED, not printed
+_STALL_SUMMARY_EVERY = 200  # ticks between summary rewrites
+# Fixed order for the phase columns, so two runs are read side by side.
+_STALL_PHASE_ORDER = ("reanchor", "target", "draw", "flush", "yield")
+
+_STALL = {
+    "enabled": False,
+    "threshold_ms": _STALL_DEFAULT_MS,
+    "ticks": 0,
+    "slow": 0,
+    "worst": [],
+    "phases": {},
+    "gc": {},  # generation -> {"n", "total_ms", "max_ms"}
+    "gc_events": [],
+    "gc_ms_total": 0.0,
+    "gc_t0": None,
+    "gc_hooked": False,
+    "lines_printed": 0,
+    "lines_suppressed": 0,
+    "last_tick_at": None,
+    "tick": None,
+}
+
+
+def _stall_env_enabled() -> bool:
+    """True when POC_TICK_STALL asks for the probe (blank and "0" do not)."""
+    value = os.environ.get("POC_TICK_STALL")
+    return value is not None and value.strip() not in ("", "0")
+
+
+def _stall_env_threshold() -> float:
+    """The threshold POC_TICK_STALL names, in ms; the default when it only
+    switches the probe on ("1") or names something unreadable."""
+    raw = os.environ.get("POC_TICK_STALL")
+    if raw is None:
+        return _STALL_DEFAULT_MS
+    try:
+        value = float(raw.strip())
+    except (TypeError, ValueError):
+        return _STALL_DEFAULT_MS
+    if value <= 1.0:
+        return _STALL_DEFAULT_MS
+    return value
+
+
+def _stall_enabled() -> bool:
+    """True while the probe is installed. The ONE gate the hooks use."""
+    return bool(_STALL["enabled"])
+
+
+def _stall_threshold_ms() -> float:
+    """The threshold this run flags at, in ms."""
+    try:
+        return float(_STALL["threshold_ms"])
+    except (TypeError, ValueError):
+        return _STALL_DEFAULT_MS
+
+
+def _stall_dir():
+    """The run directory: the profile suite's, so the artefacts stay together."""
+    directory = _PROFILE.get("dir")
+    if directory is not None:
+        return directory
+    return _PROFILE_DEFAULT_DIR
+
+
+def _stall_path():
+    """Where the summary is rewritten. None only if no path can be built."""
+    try:
+        return Path(_stall_dir()) / "poc_tick_stall.txt"
+    except Exception:  # noqa: BLE001 - telemetry is not the app
+        return None
+
+
+def _stall_log_path():
+    """Where the per-slow-tick lines are appended."""
+    try:
+        return Path(_stall_dir()) / "poc_tick_stall.log"
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _stall_reset() -> None:
+    """Forget every sample. For the tests, and for a re-run."""
+    _STALL["ticks"] = 0
+    _STALL["slow"] = 0
+    _STALL["worst"] = []
+    _STALL["phases"] = {}
+    _STALL["gc"] = {}
+    _STALL["gc_events"] = []
+    _STALL["gc_ms_total"] = 0.0
+    _STALL["gc_t0"] = None
+    _STALL["lines_printed"] = 0
+    _STALL["lines_suppressed"] = 0
+    _STALL["last_tick_at"] = None
+    _STALL["tick"] = None
+
+
+def _stall_gc_start(info=None) -> None:
+    """gc "start": take the clock. A NESTED collection keeps the outer one's."""
+    if not _STALL["enabled"]:
+        return
+    if _STALL["gc_t0"] is not None:
+        return
+    _STALL["gc_t0"] = _profile_now()
+
+
+def _stall_gc_stop(info=None, now=None) -> float:
+    """gc "stop": how long that collection held the interpreter, in ms."""
+    if not _STALL["enabled"]:
+        return 0.0
+    started = _STALL["gc_t0"]
+    _STALL["gc_t0"] = None
+    if started is None:
+        return 0.0
+    now = _profile_now() if now is None else float(now)
+    ms = max(0.0, (float(now) - float(started)) * 1000.0)
+    generation = None
+    try:
+        if info is not None:
+            generation = int(info.get("generation"))
+    except Exception:  # noqa: BLE001 - an info dict we do not recognise
+        generation = None
+    _STALL["gc_ms_total"] = float(_STALL["gc_ms_total"]) + ms
+    if generation is not None:
+        agg = _STALL["gc"].get(generation)
+        if agg is None:
+            agg = {"n": 0, "total_ms": 0.0, "max_ms": 0.0}
+            _STALL["gc"][generation] = agg
+        agg["n"] = int(agg["n"]) + 1
+        agg["total_ms"] = round(float(agg["total_ms"]) + ms, 3)
+        agg["max_ms"] = round(max(float(agg["max_ms"]), ms), 3)
+    events = _STALL["gc_events"]
+    events.append({"gen": generation, "ms": round(ms, 3)})
+    if len(events) > _STALL_MAX_GC:
+        del events[: len(events) - _STALL_MAX_GC]
+    return ms
+
+
+def _stall_gc_callback(phase, info=None) -> None:
+    """One gc.callbacks entry: "start", "stop", and nothing else."""
+    try:
+        if phase == "start":
+            _stall_gc_start(info)
+        elif phase == "stop":
+            _stall_gc_stop(info)
+    except Exception:  # noqa: BLE001 - a gc callback that raises aborts the gc
+        return
+
+
+def _stall_install_gc() -> bool:
+    """Turn the probe on and hook gc. Idempotent; POC_TICK_STALL is the switch."""
+    if not _stall_env_enabled():
+        return False
+    _STALL["enabled"] = True
+    _STALL["threshold_ms"] = _stall_env_threshold()
+    if _STALL["gc_hooked"]:
+        return True
+    try:
+        import gc as _gc
+
+        _gc.callbacks.append(_stall_gc_callback)
+        _STALL["gc_hooked"] = True
+    except Exception:  # noqa: BLE001 - no hook is a thinner report, not a crash
+        _STALL["gc_hooked"] = False
+    return bool(_STALL["gc_hooked"])
+
+
+def _stall_uninstall_gc() -> bool:
+    """Turn the probe off and unhook gc. Idempotent."""
+    hooked = bool(_STALL["gc_hooked"])
+    _STALL["enabled"] = False
+    _STALL["gc_t0"] = None
+    if not hooked:
+        return False
+    try:
+        import gc as _gc
+
+        while _stall_gc_callback in _gc.callbacks:
+            _gc.callbacks.remove(_stall_gc_callback)
+        _STALL["gc_hooked"] = False
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _stall_tick_begin(frame=None, mode=None):
+    """Open a stall record. Called from _profile_tick_begin, never by a draw."""
+    if not _STALL["enabled"]:
+        return None
+    try:
+        now = _profile_now()
+        previous = _STALL["last_tick_at"]
+        _STALL["last_tick_at"] = now
+        _STALL["ticks"] = int(_STALL["ticks"]) + 1
+        tick = {
+            "n": _STALL["ticks"],
+            "frame": frame,
+            "mode": mode,
+            "t0": now,
+            # The GAP is the beat BETWEEN two ticks. A long tick whose gap is
+            # also long says the loop was asleep, not that the draw cost it.
+            "gap_ms": (None if previous is None else round((now - previous) * 1000.0, 3)),
+            "phases": {},
+            "gc_ms0": float(_STALL["gc_ms_total"]),
+        }
+        _STALL["tick"] = tick
+        return tick
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _stall_phase(name, ms) -> None:
+    """Add one phase sample: to the OPEN tick, and to the run's per-phase bucket."""
+    if not _STALL["enabled"]:
+        return
+    try:
+        value = float(ms)
+    except (TypeError, ValueError):
+        return
+    try:
+        tick = _STALL["tick"]
+        if tick is not None:
+            phases = tick["phases"]
+            phases[name] = round(float(phases.get(name, 0.0)) + value, 3)
+        bucket = _STALL["phases"].get(name)
+        if bucket is None:
+            bucket = []
+            _STALL["phases"][name] = bucket
+        bucket.append(round(value, 3))
+        if len(bucket) > _STALL_MAX_PHASE:
+            del bucket[: len(bucket) - _STALL_MAX_PHASE]
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _stall_tick_end(row=None):
+    """Close the record: total ms, the gc inside it, and whether it was slow."""
+    if not _STALL["enabled"]:
+        return None
+    tick = _STALL["tick"]
+    _STALL["tick"] = None
+    if tick is None:
+        return None
+    try:
+        total = max(0.0, (_profile_now() - tick["t0"]) * 1000.0)
+        counts = {}
+        if isinstance(row, dict):
+            counts = dict(row.get("counts") or {})
+        record = {
+            "n": tick["n"],
+            "frame": tick["frame"],
+            "mode": tick["mode"],
+            "total_ms": round(total, 3),
+            "gap_ms": tick["gap_ms"],
+            "phases": dict(tick["phases"]),
+            "gc_ms": round(float(_STALL["gc_ms_total"]) - float(tick["gc_ms0"]), 3),
+            "counts": counts,
+        }
+        threshold = _stall_threshold_ms()
+        record["slow"] = bool(total >= threshold)
+        if record["slow"]:
+            _STALL["slow"] = int(_STALL["slow"]) + 1
+            _stall_note(record, threshold)
+        worst = _STALL["worst"]
+        worst.append(record)
+        worst.sort(key=lambda item: item["total_ms"], reverse=True)
+        del worst[_STALL_MAX_WORST:]
+        if int(_STALL["ticks"]) % _STALL_SUMMARY_EVERY == 0:
+            _stall_write_summary()
+        return record
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _stall_line(record, threshold) -> str:
+    """The slow-tick line: field=value in a fixed order, so grep works on it."""
+    phases = record.get("phases") or {}
+    names = [name for name in _STALL_PHASE_ORDER if name in phases]
+    names += [name for name in phases if name not in names]
+    parts = [
+        "[poc_app] slow tick %d/%d" % (record["n"], int(_STALL["ticks"])),
+        "total=%.1fms" % float(record["total_ms"]),
+        "threshold=%.1fms" % float(threshold),
+        "gc=%.1fms" % float(record.get("gc_ms") or 0.0),
+        "frame=%s" % (record.get("frame"),),
+        "mode=%s" % (record.get("mode"),),
+    ]
+    for name in names:
+        parts.append("%s=%.1fms" % (name, float(phases[name])))
+    counts = record.get("counts") or {}
+    for name in ("render", "push", "add_mesh"):
+        if name in counts:
+            parts.append("%s=%d" % (name, int(counts[name])))
+    gap = record.get("gap_ms")
+    if gap is not None:
+        parts.append("gap=%.1fms" % float(gap))
+    return " ".join(parts)
+
+
+def _stall_note(record, threshold) -> bool:
+    """Print ONE bounded line for a slow tick, and append it to the run's log."""
+    try:
+        text = _stall_line(record, threshold)
+    except Exception:  # noqa: BLE001
+        return False
+    if int(_STALL["lines_printed"]) >= _STALL_MAX_LINES:
+        # A run that stalls on every tick would otherwise bury itself in stderr.
+        # The summary still COUNTS every slow tick; only the lines are dropped.
+        _STALL["lines_suppressed"] = int(_STALL["lines_suppressed"]) + 1
+        return False
+    _STALL["lines_printed"] = int(_STALL["lines_printed"]) + 1
+    try:
+        sys.stderr.write(text + "\n")
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        path = _stall_log_path()
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(text + "\n")
+    except Exception:  # noqa: BLE001 - no log file is not a crash
+        pass
+    return True
+
+
+def _stall_summary_text() -> str:
+    """<= 40 lines: the header, per-phase percentiles, gc per generation, worst."""
+    if not _STALL["enabled"]:
+        return ""
+    try:
+        threshold = _stall_threshold_ms()
+        out = ["POC_TICK_STALL - slow-tick probe", "-" * 60]
+        out.append("run dir: %s" % (_stall_dir(),))
+        out.append(
+            "ticks: %d  slow(>=%.1fms): %d  lines suppressed: %d"
+            % (
+                int(_STALL["ticks"]),
+                threshold,
+                int(_STALL["slow"]),
+                int(_STALL["lines_suppressed"]),
+            )
+        )
+        out.append("")
+        out.append("phase (ms)         n     p50     p95     max")
+        for name in _STALL_PHASE_ORDER:
+            bucket = _STALL["phases"].get(name)
+            if not bucket:
+                continue
+            stats = _profile_stats(bucket)
+            out.append(
+                "  %-10s %6d %7.1f %7.1f %7.1f"
+                % (name, int(stats["n"]), stats["median"], stats["p95"], stats["max"])
+            )
+        out.append("")
+        out.append("gc (ms)           n   total     max")
+        for generation in sorted(_STALL["gc"]):
+            agg = _STALL["gc"][generation]
+            out.append(
+                "  gen%-8d %6d %7.1f %7.1f"
+                % (
+                    generation,
+                    int(agg["n"]),
+                    float(agg["total_ms"]),
+                    float(agg["max_ms"]),
+                )
+            )
+        if not _STALL["gc"]:
+            out.append(
+                "  (none recorded - gc hook %s)" % ("on" if _STALL["gc_hooked"] else "OFF")
+            )
+        worst = _STALL["worst"][:10]
+        if worst:
+            out.append("")
+            out.append("worst ticks:       n    total     gap      gc   frame mode")
+            for record in worst:
+                gap = record.get("gap_ms")
+                out.append(
+                    "  %14d %8.1f %7s %7.1f  %5s %s"
+                    % (
+                        int(record["n"]),
+                        float(record["total_ms"]),
+                        "-" if gap is None else "%.1f" % float(gap),
+                        float(record.get("gc_ms") or 0.0),
+                        record.get("frame"),
+                        record.get("mode"),
+                    )
+                )
+        return "\n".join(out[:40]) + "\n"
+    except Exception:  # noqa: BLE001 - a summary is not the app
+        return ""
+
+
+def _stall_write_summary() -> str:
+    """Rewrite poc_tick_stall.txt. Returns the text either way."""
+    if not _STALL["enabled"]:
+        return ""
+    try:
+        text = _stall_summary_text()
+    except Exception:  # noqa: BLE001
+        return ""
+    try:
+        path = _stall_path()
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return text
 
 
 def _profile_configure(
@@ -1842,6 +2291,8 @@ def _profile_configure(
     if not _PROFILE["enabled"]:
         _PROFILE["dir"] = None
         _PROFILE["files"] = {}
+        # The stall probe leans on this block's marks, so it cannot outlive it.
+        _stall_uninstall_gc()
         return None
     import collections
 
@@ -1867,6 +2318,9 @@ def _profile_configure(
     except Exception:  # noqa: BLE001 - no directory is not a crash
         _PROFILE["dir"] = None
         _PROFILE["files"] = {}
+    # Installed HERE and nowhere else: POC_TICK_STALL is the switch, this block is
+    # the carrier, and a probe whose marks are never taken must not claim to be on.
+    _stall_install_gc()
     if register_exit:
         _profile_register_exit()
     if start_threads:
@@ -2000,6 +2454,9 @@ def _profile_tick_begin(frame=None, mode=None):
             "_t0": now,
         }
         _PROFILE["tick"] = tick
+        # The stall probe opens its own record at the SAME instant, so the two
+        # totals describe one tick rather than two neighbouring ones.
+        _stall_tick_begin(frame, mode)
         return tick
     except Exception:  # noqa: BLE001
         return None
@@ -2016,6 +2473,8 @@ def _profile_phase(name) -> float:
         if tick is not None:
             phases = tick["phases"]
             phases[name] = round(float(phases.get(name, 0.0)) + ms, 3)
+        # The same ms, to the probe that asks which phase a slow tick burned.
+        _stall_phase(name, ms)
         return ms
     except Exception:  # noqa: BLE001
         return 0.0
@@ -2138,6 +2597,8 @@ def _profile_tick_end(frame_published=None, plotter=None, mode=None):
             del _PROFILE["rows"][: len(_PROFILE["rows"]) - _PROFILE_MAX_ROWS]
         _PROFILE["tick"] = None
         _PROFILE["pending"] = row
+        # Handed the SAME row, so a slow-tick line can say whether that tick drew.
+        _stall_tick_end(row)
         if int(_PROFILE["ticks"]) % _PROFILE_SUMMARY_EVERY == 0:
             _profile_write_summary()
         return tick
@@ -2174,6 +2635,9 @@ def _profile_yield() -> float:
         if row is not None:
             phases = row.setdefault("phases", {})
             phases["yield"] = round(float(phases.get("yield", 0.0)) + ms, 3)
+        # The yield is the one phase that lands AFTER the tick closed, so the
+        # stall row was already written: the sample goes to the run's buckets.
+        _stall_phase("yield", ms)
         return ms
     except Exception:  # noqa: BLE001
         return 0.0
@@ -3667,6 +4131,7 @@ def _profile_shutdown() -> None:
     try:
         _profile_flush_pending()
         _profile_write_summary()
+        _stall_write_summary()
         _profile_stop_thread()
     except Exception:  # noqa: BLE001 - the last breath is not the app either
         return
