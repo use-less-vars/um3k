@@ -18544,10 +18544,10 @@ def run_web_vis(
                     hide_details=True,
                     classes="mb-1",
                 )
-            # The board the LAST box must stay on, under the boxes it annotates:
-            # the same sentence the refusal and the change handler produce, so the
-            # range shown is the range enforced. Under the SAME flag the boxes
-            # carry, so a page that has put the form away keeps no note about it.
+            # What the n_line box BUYS, under the boxes it annotates: the same
+            # sentence the refusal and the change handler produce, so the range
+            # shown is the range enforced. It rides the boxes' own flag, so a page
+            # that has put the form away keeps no note about it.
             if html_div is not None:
                 html_div(
                     "{{ run_n_line_note }}",
