@@ -14808,18 +14808,87 @@ class SolveJob:
         self._tail: deque = deque(maxlen=self.LOG_TAIL_LINES)
         self._proc = None
         self._lock = threading.Lock()
+        # THE reader thread (:_read_loop) and the two clock stamps. ``None``
+        # until start(): a job that was never spawned has no duration and no
+        # reader, and ``elapsed_seconds`` says so rather than printing 0 s.
+        self._reader = None
+        self.started_at = None
+        self.ended_at = None
 
     @property
     def log(self) -> str:
         """The TAIL of the combined stdout+stderr, newest last."""
         return "".join(self._tail)[-self.LOG_TAIL_CHARS:]
 
+    @property
+    def elapsed_seconds(self):
+        """Wall-clock seconds since start(), or since the end once it ended.
+
+        ``None`` until start(): a job that was never spawned has no duration,
+        and a made-up 0.0 would read as "finished instantly".
+        """
+        if self.started_at is None:
+            return None
+        end = self.ended_at if self.ended_at is not None else time.monotonic()
+        return end - self.started_at
+
+    @property
+    def last_line(self) -> str:
+        """The last non-blank output line, trimmed - what the child is doing."""
+        for line in reversed(list(self._tail)):
+            text = line.strip()
+            if text:
+                return text[-160:]
+        return ""
+
+    def _read_loop(self) -> None:
+        """THE reader: drain the child's pipe for as long as the child lives.
+
+        This is what makes the pipe safe. The child's stdout and stderr are
+        the SAME pipe, and an unread pipe fills at ~64 KiB: the child then
+        blocks on write and never exits, so the watcher waits forever on a
+        solve that is only waiting for us. Reading here also turns the tail
+        into a live log instead of a thing that exists and is never shown.
+        """
+        stream = getattr(self._proc, "stdout", None)
+        if stream is None:
+            return
+        try:
+            for line in stream:
+                with self._lock:
+                    self._tail.append(line)
+        except (ValueError, OSError) as exc:  # noqa: BLE001 - a closed pipe
+            print(  # a dead handle ends the reading, never the solve
+                f"[poc_app] solve output not read to the end: {exc}",
+                file=sys.stderr,
+            )
+
     def _finish(self, returncode) -> None:
         self.returncode = returncode
+        self.ended_at = time.monotonic()
+        # The child's pipe is closed now, so the reader reaches EOF and returns
+        # in microseconds; the timeout only bounds a handle that never closes.
+        # It runs once per solve, which is why a join is affordable here.
+        self._drain()
         self.status = "ok" if returncode == 0 else "failed"
 
     def _drain(self) -> None:
-        """Read whatever is left. Safe only once the child has exited."""
+        """Read whatever is left. Safe only once the child has exited.
+
+        With a reader thread the pipe is ALREADY being read (_read_loop), so
+        there is nothing left to take here: joining the reader IS "read
+        whatever is left", because once the child has exited the reader hits
+        EOF and returns. The loop below stays as the fallback for a job that
+        has no reader.
+        """
+        if self._reader is not None:
+            # A reader thread owns the pipe from start() on; reading it here
+            # too would steal lines from it. Joining is the whole of "read
+            # whatever is left": once the child has exited the reader hits EOF
+            # and returns, and the timeout only bounds a handle that never
+            # closes.
+            self._reader.join(timeout=2.0)
+            return
         stream = getattr(self._proc, "stdout", None)
         if stream is None:
             return
@@ -14844,7 +14913,17 @@ class SolveJob:
                 text=True,
                 bufsize=1,
             )
+            self.started_at = time.monotonic()
+            self.ended_at = None
             self.status = "running"
+            # INSIDE the lock on purpose: the reader cannot take a line
+            # before the lock is released, so no start-up output is lost.
+            self._reader = threading.Thread(
+                target=self._read_loop,
+                daemon=True,
+                name="poc-solve-reader",
+            )
+            self._reader.start()
         return self
 
     def run(self) -> str:
@@ -18692,6 +18771,28 @@ def run_web_vis(
     state.solve_netlist_json = ""
     solve: dict = {}
 
+    def _tick_solve_status(job) -> None:
+        """Say what the running solve is doing: elapsed time and last line.
+
+        The old sentence was written once at press and once at the single
+        final poll, so a twenty-minute march displayed second-one text the
+        whole way. It never raises: a status line is worth nothing next to a
+        solve.
+        """
+        try:
+            elapsed = job.elapsed_seconds
+            if elapsed is None:
+                head = f"solving {state.solve_structure} ..."
+            else:
+                head = (
+                    f"solving {state.solve_structure} - {elapsed:.0f} s "
+                    "elapsed"
+                )
+            tail = job.last_line
+            state.solve_status = f"{head}\n{tail}" if tail else head
+        except Exception as exc:  # noqa: BLE001 - never take the page down
+            print(f"[poc_app] solve status not updated: {exc}", file=sys.stderr)
+
     async def _watch_solve() -> None:
         """THE poll driver: the ONE thing that watches the job and lands it.
 
@@ -18707,11 +18808,16 @@ def run_web_vis(
         "finished" reported ``solve idle (rc=None)`` for a solve that was just
         starting. The thread always leaves "idle" (run() sets the status), so
         waiting on it cannot spin forever.
+
+        It also RE-PUBLISHES the status every half second (_tick_solve_status),
+        which is the only reason a long solve is legible at all: that tick is
+        itself wrapped, so a bad status write cannot end the watch.
         """
         while True:
             job = solve.get("job")
             if job is None or job.status not in ("idle", "running"):
                 break
+            _tick_solve_status(job)
             await asyncio.sleep(0.5)
         _poll_solve()
 
@@ -18745,16 +18851,24 @@ def run_web_vis(
         status = job.poll()
         if status in ("idle", "running"):
             # "idle" is a child that has not been spawned yet, not a failure.
-            state.solve_status = (
-                f"solving {state.solve_structure} at x_cut = "
-                f"{float(state.solve_xcut_mm):g} mm ..."
-            )
+            _tick_solve_status(job)
             return
+        # ONE duration for both outcome sentences below: the failure and the
+        # success must not each read the clock (the second read would be a
+        # different number, and neither of them is the interesting one).
+        try:
+            elapsed = (
+                "?" if job.elapsed_seconds is None
+                else f"{job.elapsed_seconds:.1f}"
+            )
+        except Exception:  # noqa: BLE001 - a clock is not the answer
+            elapsed = "?"
         if status != "ok":
             # The OLD page stays live and drawable: a failed solve is a message,
             # not a broken viewer.
             state.solve_status = (
-                f"solve {status} (rc={job.returncode}) - the page on screen is "
+                f"solve {status} after {elapsed} s (rc={job.returncode}) - "
+                f"the page on screen is "
                 f"still the previous dump\n{job.log[-400:]}"
             )
             return
@@ -18852,7 +18966,8 @@ def run_web_vis(
         # own arrays, labels and picture, so the note only says what it cannot
         # reach - the dump line and the sheet cards built at boot.
         state.solve_status = (
-            f"solved -> {Path(applied['new_path']).name}; result loaded"
+            f"solved -> {Path(applied['new_path']).name} in {elapsed} s; "
+            f"result loaded"
             f"{refresh_note}"
         )
 
