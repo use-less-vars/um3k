@@ -11141,6 +11141,12 @@ def run_web(
     record = load_record(info["path"])
     planes = _plane_layout(info, record)
 
+    # The page opens on `station` and labels it from the same index, so the two
+    # cannot disagree.  A plain write: this line is not what makes the change
+    # listener below (:11838) run at boot.  The slider's own v_model default is
+    # (state.py:298-306 setdefault registers the key for listeners whatever the
+    # write's context was), and that one call is handed the station already
+    # shown, so it repeats the draw below (:11363) once, before the port opens.
     state.station = int(station)
     state.station_label = _station_text(
         int(station), cell_mm, n_st, planes["stations_mm"]
@@ -11828,7 +11834,7 @@ def run_web(
             f"(still showing {structure_label})"
         )
 
-    @ctrl.set("station")
+    @state.change("station")
     def _on_station_change(*args, **_kwargs):
         value = args[0] if args else _kwargs.get("station", state.station)
         try:
@@ -11836,7 +11842,14 @@ def run_web(
         except (TypeError, ValueError):
             idx = int(state.station)
         idx = max(0, min(n_st - 1, idx))
-        state.station = idx
+        # A clamped or coerced index CHANGES the very variable this listener is
+        # bound to: an out-of-range drag, a float or a string from the client
+        # differs from the value just pushed, so the write is a new pending key
+        # (state.py:225-236) and the flush loop (state.py:454-469) runs this
+        # handler again - two _focus and two _push_still for one drag. Same
+        # guard, same reason as the play_rate write-back (:17665).
+        with state.suppress_change_listeners("station"):
+            state.station = idx
         state.station_label = _station_text(
             idx, cell_mm, n_st, planes.get("stations_mm")
         )
