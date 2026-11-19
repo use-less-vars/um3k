@@ -22,6 +22,14 @@ python -m pytest tests/test_kb_integrity.py -q
 Everything below answers one question: *which bytes may I rely on, and as of
 which commit?*
 
+## What this tree is working on now
+
+Phase 1, the truthful UI: DR-47 re-baseline, so that a Trame `@state.change`
+handler actually fires under `_boot_app` and a slider move provably redraws
+instead of silently changing nothing. The order of what follows is in
+`docs/design/defect_register.md` and `docs/kb/REGISTRY/decisions.md`; this
+paragraph is the pointer, not the plan.
+
 ## The six layers
 
 Five content layers, each a fixed directory name, plus the root entry files.

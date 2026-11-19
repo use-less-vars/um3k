@@ -54,6 +54,8 @@ inside this tree, since no `docs/design/` row backs it.
 | KB-3 | the section below | LIVE | `docs/kb/PROCEDURE.md` section 6 |
 | KB-4 | the section below | LIVE | `server/poc_app.py` |
 | ADR-004 | the section below | LIVE | `docs/design/3d_ntff_te_spec.md` |
+| ADR-005 | the section below | LIVE | `server/poc_app.py` |
+| ADR-006 | the section below | LIVE | `server/um3k_context.py` |
 
 ## KB-1 — a fabricated `pinned_commit` is a failed header
 
@@ -228,3 +230,41 @@ nowhere to keep yet.
 advice; no simulation, test or command has been executed against it, so no
 VERIFIED-BY-RUN tag can honestly be asserted [UNCITED]
 why: the ruling arrived as chat text and was never written to disk, so any VERIFIED-BY-RUN or measured tag written here would cite a run that does not exist. A full-tree search on 2026-11-18 for `ModalSource`, `nonlinear_magnetic_dofs` and `hysteresis` returns no file, and the only theory-engineering artefacts on disk are `docs/design/3d_ntff_te_spec.md` (NTFF formulas, cited in Decision 2) and `docs/design/theory_round2_memo.md`. If the arbitration memo is to be citable it must be committed as a file.
+
+## ADR-005 — a cut that draws one stored plane says which plane
+
+**Decision.** y and z have no station axis: the page captures nine
+x-stations (`server/poc_app.py:8289`) and a y/z cut draws one of them
+(`_volume_cut_sheets` `:9202`, `build_cut_sheets` `:9157`), no `np.interp`
+or `interp1d`. So the cut row says one stored plane, the x-station count, no
+interpolation (`_cut_text`, `:9031`), and a snapped millimetre reads
+nearest saved station, not the value asked for (`_station_text` `:5769`,
+`:8734`, `:11824`).
+
+**Defects.** The row ended "one sample each, no interpolation" (`:9044`),
+yet one plane or many went unsaid, so a y/z cut read as resampled; and the
+1.2 mm snap from 10.4 mm (`:8731-8732`) printed a station's x unlabelled.
+
+**Rejected.** Interpolating between stations so the label becomes true,
+which invents fields no solve produced. Or a bare millimetre, the snap
+unspoken.
+
+## ADR-006 — boot draws the volume only where there is no plane stack
+
+**Decision.** `volume_layer` (`server/um3k_context.py:104`, default `False`)
+records that the page carries `e_abs_volume`, independent of `plane_stack`
+by construction (`:157`, docstring `:102-103`). `volume_layer_shown`
+(`:109`) is the effective switch, `volume_layer and policy`, `policy` being
+`stations <= 1` unless the operator moved the switch (`:160`). `plane_stack`
+(`:113`) is a plain bool, `stations > 1` (`:169`), False with no captured
+stack. So a boot page draws the volume; a page holding a plane stack does
+not.
+
+**Defects.** P0-boot above records the symptom: the default structure's
+evidence file is a legacy single-plane dump, so the first screen printed
+"geometry: not drawn". Always-on paints an unreconciled field over stacked
+planes; never-on leaves the first screen empty.
+
+**Rejected.** Making `volume_layer` depend on `plane_stack`, which the
+docstring at `:102-103` rejects: a vis dump carries no `plane_ez` stack, and
+a plane-stack page need not carry a volume.
