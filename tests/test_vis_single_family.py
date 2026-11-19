@@ -170,7 +170,7 @@ FAMILY_SITES = (
         ("_draw_mode_picture", "_draw_mode_quiver"),
     ),
     (
-        'if item["family"] in _visible_families(mode)',
+        'visible = _visible_families(mode)',
         1,
         ("_swap_scalar_bar",),
     ),
@@ -226,9 +226,18 @@ def test_the_other_family_is_a_flag_not_a_second_name():
     source = _source()
     tree = ast.parse(source)
 
-    private = _lines_with(source, '["family"] == mode') + _lines_with(
-        source, 'get("family") == mode'
-    )
+    # ONE comparison of a sheet's family to ``mode`` survives, and it is not a
+    # visibility question: the plane bar reads from the PRIMARY family's sheet,
+    # and "which family is primary" is ``mode`` by definition. Everywhere else
+    # the two are compared only to ask "is this family drawn?", which has one
+    # author - so this reports a stray, not that pick (pinned by
+    # test_the_plane_legend_is_the_primary_family_s_own).
+    private = [
+        line
+        for line in _lines_with(source, '["family"] == mode')
+        + _lines_with(source, 'get("family") == mode')
+        if _enclosing_name(tree, line) != "_swap_scalar_bar"
+    ]
     assert private == [], (
         "these line(s) still answer 'is this family drawn?' privately instead "
         f"of asking _visible_families(): {private}"
@@ -278,12 +287,13 @@ def test_every_family_visibility_write_asks_the_helper():
             "pinned to the function that applies it."
         )
 
-    # One definition plus the six sites above, plus the camera latch.
+    # One definition plus the six sites above, plus the camera latch and the
+    # plane bar's own latch.
     total = source.count("_visible_families(")
-    assert total == 8, (
+    assert total == 9, (
         f"'_visible_families(' appears {total} time(s): one definition, the "
         "six write sites (sheet loop, mode picture, quiver, two draw helpers, "
-        "plane-bar pick) and the camera latch's family set."
+        "plane-bar pick), the camera latch's family set and the plane bar's."
     )
 
     # The sweep: no OTHER actor visibility write keeps a family opinion.
@@ -528,4 +538,129 @@ def test_the_camera_latch_names_the_families_it_framed():
     assert "framed_for" in source.splitlines()[reads[0] - 1], (
         "the reframe guard compares something other than the latched set at "
         f"line {reads[0]}:\n{guard}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The plane legend: ONE bar, for the PRIMARY family, rebuilt when the SET moves.
+# ---------------------------------------------------------------------------
+def _code_text(source: str, node) -> str:
+    """The node's statements quoted from the FILE, docstring and comments gone.
+
+    The docstring QUOTES the handles the pins below count, and a comment can
+    name a line that was replaced, so a count taken over the whole body would
+    pass on prose. What is left here is code the interpreter runs.
+    """
+    body = list(node.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    raw = "\n".join(
+        ast.get_source_segment(source, statement) or "" for statement in body
+    )
+    return "\n".join(
+        text for text in raw.splitlines() if not text.strip().startswith("#")
+    )
+
+
+def test_the_plane_legend_is_the_primary_family_s_own():
+    """(j) The bar reads the PRIMARY family's sheet, and the latch is honest.
+
+    The bar used to take the FIRST sheet whose family was visible. With the
+    second plane switched on that is not a decision at all - the order of
+    ``sheets`` decides it - so the legend described a plane picked by dict
+    insertion. ``mode`` is the plane the view is turned to, so ``mode`` is the
+    family the bar describes. The latch records the SET that was described and
+    is written AFTER the bar is standing: a rebuild that raises records nothing,
+    so the next tick tries again instead of believing a bar that was never
+    built.
+    """
+    source = _source()
+    defs = _function_defs(ast.parse(source), "_swap_scalar_bar")
+    assert len(defs) == 1, (
+        f"{POC_APP.name} defines '_swap_scalar_bar' {len(defs)} time(s): the "
+        "page leaves exactly ONE plane bar standing, so there is one place "
+        "that rebuilds it."
+    )
+    code = _code_text(source, defs[0])
+    assert "next(" not in code, (
+        "the bar is still the FIRST sheet whose family is visible: with a "
+        "second family switched on, which sheet that is depends on the order "
+        "of ``sheets``, not on the plane the view is turned to.\n" + code
+    )
+    assert 'item["family"] == mode' in code, (
+        "the bar no longer picks the PRIMARY family's sheet, so the numbers "
+        "it shows belong to whichever sheet happened to come first.\n" + code
+    )
+    recorded = code.count('handles["bar_for"]')
+    assert recorded == 2, (
+        f"``handles[\"bar_for\"]`` is written {recorded} time(s), expected 2 - "
+        "the settled no-sheet answer and the bar actually standing - so one "
+        "of the two branches leaves the latch claiming a set it did not "
+        "draw.\n" + code
+    )
+    tail = code.rsplit("except", 1)[-1]
+    assert 'handles["bar_for"]' not in tail, (
+        "the failure branch records the family set: a bar that could not be "
+        "built would then be believed for the rest of the session, and the "
+        "rebuild that would fix it never happens.\n" + code
+    )
+
+
+def test_the_plane_legend_is_rebuilt_when_the_family_set_changes():
+    """(k) The guard compares the SET, not only the mode.
+
+    Switching the second family on changes what is drawn WITHOUT changing
+    ``mode``, so a guard that only knew ``mode_changed`` would leave a bar
+    describing a set that is no longer on screen. The guard reads the same
+    ``_visible_families(mode)`` that ``_swap_scalar_bar`` writes, so the two
+    cannot disagree about when the bar is current.
+    """
+    source = _source()
+    tree = ast.parse(source)
+    lines = source.splitlines()
+
+    calls = [
+        number
+        for number, text in enumerate(lines, start=1)
+        if "_swap_scalar_bar(mode)" in text
+    ]
+    assert len(calls) == 1, (
+        f"'_swap_scalar_bar(mode)' is called at {calls}, expected once: the "
+        "_show() guard is the ONE decision about a mode change, and the "
+        "solve's rebuild passes ``mode or state.mode``."
+    )
+    owner = _enclosing_name(tree, calls[0])
+    assert owner == "_show", (
+        f"the guarded rebuild at line {calls[0]} is inside {owner!r}, not "
+        "'_show': the bar is part of drawing a tick."
+    )
+    guard = ""
+    for text in reversed(lines[: calls[0] - 1]):
+        if text.strip().startswith("if "):
+            guard = text.strip()
+            break
+    assert "bar_for" in guard, (
+        "the rebuild guard names nothing about the family SET, so switching "
+        "the second plane on would leave the old bar standing:\n" + guard
+    )
+    assert "mode_changed" in guard, (
+        "the rebuild guard no longer re-builds on a mode change:\n" + guard
+    )
+
+    # The boot sheets must still let ONE family build the plane bar: the
+    # rebuild above replaces that bar, it does not hand every sheet its own.
+    boot = [
+        segment
+        for _line, segment in _add_mesh_segments(source)
+        if 'show_scalar_bar=(family == "ycut")' in segment
+    ]
+    assert len(boot) == 1, (
+        f"{len(boot)} add_mesh call(s) build the plane bar at boot, expected "
+        "exactly one: with none, the first tick has no bar to replace; with "
+        "more, the page starts with bars for families it is not drawing."
     )

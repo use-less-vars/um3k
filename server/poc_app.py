@@ -15816,16 +15816,35 @@ def run_web_vis(
 
         The y-cut sheet makes its bar at add_mesh time and the x-cut sheets make
         none, so a plane switch would otherwise keep the y-cut's bar over a field
-        it does not describe. The replacement is built from the ACTIVE sheet's
-        own mapper: every sheet was added with the same fixed (vmin, vmax), so
+        it does not describe. The replacement is built from the PRIMARY family's
+        own sheet: every sheet was added with the same fixed (vmin, vmax), so
         the numbers do not move, only the actor the bar reads from does. A bar
         is decoration, so every step here degrades to a stderr line.
+
+        WHY the primary family's sheet and not whichever sheet is "on screen":
+        all three sheets carry the same field over the same fixed range, so the
+        numbers on the bar are identical whichever one it reads from - the only
+        thing the view varies is WHICH PLANE is drawn, and that is ``mode``. The
+        x-cut family owns two sheets (near and far) with identical numbers; the
+        first one in ``sheets`` order wins, deterministically, so the bar does
+        not flip mapper as the sliders move.
+
+        WHY the family SET is recorded and not just the mode: hiding the second
+        family changes which sheets are drawn WITHOUT changing ``mode``, and a
+        bar that only re-checks ``mode`` would keep claiming a set that is no
+        longer on screen. ``handles["bar_for"]`` is written AFTER the bar is
+        standing, so a rebuild that raises records nothing and the next tick
+        tries again; the no-sheet branch records the set too, because "no bar is
+        correct for these families" is a settled answer and not a failure - a
+        stale bar that could not be removed would be worse than none, and this
+        keeps it from being retried every frame as well.
 
         WHY the title is the plane's alone: this bar and the |E| volume's are
         two different fields on two different scales, and a title is the KEY
         pyvista stores a bar under - so this function removes and rebuilds the
         PLANE bar by name and never touches the volume's.
         """
+        visible = _visible_families(mode)
         try:
             _remove_scalar_bar(plotter, scalar_bar_title)
         except Exception as exc:  # noqa: BLE001 - decoration only
@@ -15833,18 +15852,24 @@ def run_web_vis(
                 f"[poc_app] stale scalar bar kept: {exc}", file=sys.stderr
             )
         try:
-            entry = next(
-                (
-                    item
-                    for item in sheets.values()
-                    if item["family"] in _visible_families(mode)
-                ),
-                None,
-            )
+            entry = None
+            for item in sheets.values():
+                if item["family"] == mode:
+                    entry = item
+                    break
             if entry is None:
+                # Nothing of this family is drawn, so no bar is the right
+                # answer: record the set and stop rebuilding for it every tick.
+                handles["bar_for"] = visible
                 return
             plotter.add_scalar_bar(
                 mapper=entry["actor"].mapper, **plane_args
+            )
+            handles["bar_for"] = visible
+            print(
+                f"[poc_app] plane legend describes {scalar_bar_title!r} "
+                f"for families {sorted(visible)}",
+                file=sys.stderr,
             )
         except Exception as exc:  # noqa: BLE001 - decoration only
             print(
@@ -16582,7 +16607,11 @@ def run_web_vis(
         # hidden (or came back), and the title names the field now on screen.
         _sync_picture_title()
 
-        if mode_changed:
+        # The bar describes a SET of families for the same reason the camera
+        # does: switching the second family on changes what is drawn without
+        # changing ``mode``, so the mode alone cannot say the bar is current.
+        bar_for = _visible_families(mode)
+        if mode_changed or handles.get("bar_for") != bar_for:
             _swap_scalar_bar(mode)
 
         # The camera is framed for a SET of families, not for the mode alone:
