@@ -701,7 +701,7 @@ def test_the_cut_layout_indexes_the_volumes_own_lattice_when_there_is_one():
 
 
 def test_the_cut_label_says_which_grid_its_millimetres_are_on():
-    """The volume row APPENDS the grid; the plane row is unchanged to the byte."""
+    """The volume row APPENDS the grid; the plane row APPENDS the count."""
     info = _volume_info(_index_volume(3, 4, 2))
 
     text = poc_app._cut_text(poc_app._cut_layout(info, 2, 1))
@@ -719,7 +719,8 @@ def test_the_cut_label_says_which_grid_its_millimetres_are_on():
     plane_text = poc_app._cut_text(poc_app._cut_layout(plane_info, 1, 3))
     assert plane_text == (
         "cut y = 2/4 (y = 0.4000 mm)   cut z = 4/5 (z = 1.2000 mm)   "
-        "one sample each, no interpolation"
+        "one sample each   "
+        "(one stored x-plane of 2 captured stations, no interpolation)"
     ), f"the plane row changed: {plane_text!r}"
 
 

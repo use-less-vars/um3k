@@ -9031,21 +9031,37 @@ def _cut_layout(info: dict, j_cut=None, k_cut=None, stations_mm=None) -> dict:
 def _cut_text(layout: dict) -> str:
     """The slider label: which sample, where it is in mm, and WHICH grid.
 
-    The plane sentence is byte for byte the one this row has always shown; the
-    volume path APPENDS why its millimetres are cell centres and not cell
-    corners, so an operator reading ``y = 42.6000 mm`` can tell which of the two
-    lattices that number is on. ``.get`` because a fake layout may predate the
-    key.
+    A y or z cut has no axis to resample along: the sheet is ONE of the
+    captured x-planes, taken slice-of-one in ``build_cut_sheets``
+    (server/poc_app.py:9120; ``plane[:, j : j + 1, :]`` at :9173 and
+    ``plane[:, :, k : k + 1]`` at :9181), so the planes row names that stored
+    plane AND how many were captured.  Without the count the row understates
+    how little the cut shows.  ``n_st`` is the captured station count ONLY on
+    the planes branch (:8992, ``n_st, n_j, n_k = plane.shape``); on the volume
+    branch it is the |E| volume's own ``nx`` (:8985), a different number, so
+    the volume row must never print it and says instead that its millimetres
+    are cell centres.  Both rows end in "no interpolation" because neither
+    resamples anything.  ``.get`` because a fake layout may predate a key.
     """
     text = (
         f"cut y = {layout['j'] + 1}/{layout['n_j']} "
         f"(y = {layout['y_mm']:.4f} mm)   "
         f"cut z = {layout['k'] + 1}/{layout['n_k']} "
-        f"(z = {layout['z_mm']:.4f} mm)   one sample each, no interpolation"
+        f"(z = {layout['z_mm']:.4f} mm)   one sample each"
     )
     if layout.get("source") == "volume":
-        text += "   (|E| volume cells, cell centres)"
-    return text
+        return text + "   (|E| volume cells, cell centres, no interpolation)"
+    n_st = layout.get("n_st")
+    # A guessed count is exactly the defect this row is fixing, so anything
+    # that is not a positive int drops the clause instead of printing a number.
+    # ``isinstance(True, int)`` is True, hence the bool test: "True stations"
+    # would be worse than no count at all.
+    if not isinstance(n_st, int) or isinstance(n_st, bool) or n_st < 1:
+        return text + "   (one stored x-plane, no interpolation)"
+    return text + (
+        f"   (one stored x-plane of {n_st} captured station"
+        f"{'' if n_st == 1 else 's'}, no interpolation)"
+    )
 
 
 def _cut_sheet_clim(sheet, scalars: str):
