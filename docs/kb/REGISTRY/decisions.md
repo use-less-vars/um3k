@@ -235,7 +235,7 @@ why: the ruling arrived as chat text and was never written to disk, so any VERIF
 
 **Decision.** y and z have no station axis: the page captures nine
 x-stations (`server/poc_app.py:8289`) and a y/z cut draws one of them
-(`_volume_cut_sheets` `:9202`, `build_cut_sheets` `:9157`), no `np.interp`
+(`build_cut_sheets` `:9104`, slices `:9157` and `:9165`), no `np.interp`
 or `interp1d`. So the cut row says one stored plane, the x-station count, no
 interpolation (`_cut_text`, `:9031`), and a snapped millimetre reads
 nearest saved station, not the value asked for (`_station_text` `:5769`,
