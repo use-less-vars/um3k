@@ -245,6 +245,17 @@ VIS_SHOW_EDGES = True
 # the default mesh they were tuned for.
 VIS_EDGE_COLOR = "#b8c4d0"
 VIS_EDGE_WIDTH = 0.4
+# How opaque the dielectric slab is drawn, and the ONE number the slider in the
+# view panel moves. 0.10, not 0.3: at 0.3 the box read as a PALE SLAB that
+# dimmed the ground plane and the field inside the dielectric, not as a casing.
+# The slider starts here, so the shipped picture is unchanged.
+VIS_SUBSTRATE_OPACITY = 0.10
+# The extra dimming the slab gets square-on in the y-cut, as a FRACTION of the
+# slider's value rather than an absolute opacity: at the default that is 0.08,
+# the number that was there before, and it stays 0.8x whatever the slider is set
+# to - an absolute second constant would win over the slider every time that
+# family is selected.
+VIS_SUBSTRATE_YCUT_SCALE = 0.8
 
 # The solver that writes a fresh wave dump. It is NOT at the repo root: it lives
 # beside the study that produced the dumps this viewer opens, and is run from
@@ -12050,7 +12061,7 @@ def _vis_geometry(plotter, info: dict, planes=None) -> None:
             plotter.add_mesh(
                 pv.Box(bounds=(0.0, x_span, 0.0, y_span, 0.0, substrate_h)),
                 color="steelblue",
-                opacity=0.10,
+                opacity=VIS_SUBSTRATE_OPACITY,
                 name="substrate",
             )
         except Exception as exc:  # noqa: BLE001 - losing one box is survivable
@@ -15463,6 +15474,30 @@ def run_web_vis(
         """
         return bool(VIS_SHOW_EDGES) and bool(edges_state["on"])
 
+    # The Substrate box, the same way round: the widget writes this flag and
+    # ``_substrate_drawn`` is the ONE reader, so the slab drawn at boot, the one
+    # re-stamped by ``_show`` on every family swap and the one the slider moves
+    # cannot disagree. A dict, not state, for ``edges_state``'s reason: the
+    # geometry is added before ``server.state`` is bound in this function.
+    substrate_state = {"opacity": VIS_SUBSTRATE_OPACITY}
+
+    def _substrate_drawn(mode=None) -> float:
+        """The slab's opacity RIGHT NOW, for the view it is being drawn in.
+
+        ONE reader for the geometry, the slider and ``_show``'s re-stamp. The
+        y-cut is the one view that dims it further (the slab is edge-on there
+        and would otherwise cover the field it annotates), and it dims it as a
+        FRACTION of the slider - see ``VIS_SUBSTRATE_YCUT_SCALE``. Never raises:
+        a slab at the wrong opacity is worth less than the page.
+        """
+        try:
+            value = float(substrate_state["opacity"])
+            if mode == "ycut":
+                return value * VIS_SUBSTRATE_YCUT_SCALE
+            return value
+        except Exception:  # noqa: BLE001 - a slab is never the picture
+            return VIS_SUBSTRATE_OPACITY
+
     # Three sheets, added ONCE. clim is the dump's single ceiling for every one
     # of them, so no later frame has a scale of its own to renormalise with.
     # smooth_shading=False plus the cell edges are the same statement twice: this
@@ -16967,14 +17002,26 @@ def run_web_vis(
                 )
             for actor, drawn_opacity in overlay:
                 try:
-                    if mode == "ycut":
+                    if actor is plotter.actors.get("substrate"):
+                        # The slab is the ONE overlay the operator can dim: it is
+                        # read against the field it sits under, so its opacity is
+                        # the slider's (dimmed further square-on, where it is
+                        # edge-on - _substrate_drawn owns that rule).
+                        actor.prop.opacity = _substrate_drawn(mode)
+                    elif mode == "ycut":
                         # Square on to the x-z sheet the substrate is edge-on and
                         # would cover the field it is meant to annotate, so it is
                         # dimmed (and outlined) only for this family.
                         actor.prop.opacity = 0.08
-                        actor.prop.show_edges = _cell_edges_on()
                     else:
                         actor.prop.opacity = drawn_opacity
+                    if mode == "ycut":
+                        # The outline is the y-cut's alone, and it is applied
+                        # OUTSIDE the opacity chain above on purpose: the slab now
+                        # takes the first branch there, so a line left inside the
+                        # elif would stop outlining the very box it was written
+                        # for. Still ONE call, so the panel's Grid box owns it.
+                        actor.prop.show_edges = _cell_edges_on()
                 except Exception as exc:  # noqa: BLE001 - decoration only
                     print(
                         f"[poc_app] overlay opacity skipped: {exc}",
@@ -17939,6 +17986,38 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - one frame is not the page
             print(
                 f"[poc_app] cell edge redraw skipped: {exc}",
+                file=sys.stderr,
+            )
+
+    # The Substrate slider. Same rule as the Grid box above it: the widget only
+    # WRITES the flag, and the slab on screen is moved HERE, so a tick never
+    # re-cuts, rebuilds or re-solves anything.
+    @state.change("substrate_opacity")
+    def _on_substrate_opacity(**_kwargs) -> None:
+        """Dim or solidify the dielectric slab on the page already drawn.
+
+        NOT a redraw: opacity is a property of an actor that is already there,
+        and the camera, the colour bar and the data are untouched. NEVER raises.
+        """
+        try:
+            substrate_state["opacity"] = float(
+                _kwargs.get("substrate_opacity", VIS_SUBSTRATE_OPACITY)
+            )
+        except (TypeError, ValueError) as exc:  # noqa: BLE001 - a bad tick
+            print(
+                f"[poc_app] substrate opacity ignored: {exc}", file=sys.stderr
+            )
+            return
+        try:
+            actor = plotter.actors.get("substrate")
+            if actor is not None:
+                actor.prop.opacity = _substrate_drawn(
+                    getattr(state, "mode", None)
+                )
+            plotter.render()
+        except Exception as exc:  # noqa: BLE001 - the page stays up
+            print(
+                f"[poc_app] substrate opacity not applied: {exc}",
                 file=sys.stderr,
             )
 
@@ -19429,6 +19508,29 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - a toggle is never the page
             print(
                 f"[poc_app] cell edge toggle unavailable: {exc}", file=sys.stderr
+            )
+        # The substrate's opacity. A SLIDER and not a box: the slab is drawn over
+        # the field it annotates, so how far it is seen THROUGH is a matter of
+        # degree, and the operator is the one reading it. Probed and wrapped like
+        # every sibling here: a build without VSlider loses the slider, not the
+        # panel.
+        try:
+            slider_cls = getattr(widgets_module, "VSlider", None)
+            if slider_cls is None:
+                raise RuntimeError("this build has no VSlider")
+            slider_cls(
+                v_model=("substrate_opacity", VIS_SUBSTRATE_OPACITY),
+                min=0.0,
+                max=1.0,
+                step=0.02,
+                label="Substrate opacity",
+                hide_details=True,
+                style="padding: 2px 0;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a slider is never the page
+            print(
+                f"[poc_app] substrate opacity slider unavailable: {exc}",
+                file=sys.stderr,
             )
         # WHAT THIS GUARD GATES, and what it must NOT: the two MARKER boxes
         # only. The original guard asked ``cut_redraw`` and meant "a page with no
