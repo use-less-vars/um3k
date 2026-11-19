@@ -177,6 +177,9 @@ def _namespace(config_path):
         npz=None, out=None, nsteps=None, volume_stride=None, dump_stride=None,
         volume_frames=None, pulse_freq_ghz=None, n_line=None, xcut_near_mm=None,
         xcut_far_mm=None,
+        # --no-volume is action="store_true" (scripts/run_reference_sim.py:541),
+        # so the parser's own default is False; reference_argv reads it (:266).
+        no_volume=False,
     )
 
 

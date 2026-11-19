@@ -45,6 +45,7 @@ threshold: the same sweep's 1200-step run fails too (``:840``).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -56,6 +57,30 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "evidence" / "termination" / "run_build_A.py"
+
+
+def _load_run_build_a():
+    """Import ``evidence/termination/run_build_A.py`` by path, as a module.
+
+    The house loader (``tests/test_extraction_plane_default.py:37-44``): the
+    driver is a script, not a package member, and loading it by path reads the
+    driver's OWN ``MEM_CEILING_MB_DEFAULT`` and ``cgroup_limit_mb`` (:157)
+    instead of re-implementing either here -- a duplicated cgroup probe can
+    disagree with the code under test.  Cheap: the module's top-level imports
+    are standard library only, and ``if __name__ == "__main__":`` keeps
+    ``main()`` from running on import.
+    """
+    evidence = SCRIPT.parent
+    if str(evidence) not in sys.path:
+        sys.path.insert(0, str(evidence))
+    spec = importlib.util.spec_from_file_location("run_build_A", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("run_build_A", module)
+    spec.loader.exec_module(module)
+    return module
+
+
+RUN_BUILD_A = _load_run_build_a()
 
 # The eight keys ``published_s21_block`` writes as null rather than dropping
 # (``evidence/termination/run_build_A.py:2284``, ``:2302``).
@@ -89,6 +114,23 @@ def _env_with_repo_on_path() -> dict:
 @pytest.mark.slow
 def test_a_pulse_run_names_no_plane_so_nothing_is_published(tmp_path):
     """A plane-less pulse run writes nulls that say so, and no verdict."""
+    # WHY A SKIP AND NOT A LOWER --mem-ceiling-mb.  Dropping the flag to fit this
+    # box would tune the test to the box: the run would then be asserted to
+    # SURVIVE a trip set below the container's own limit, i.e. it would pin a
+    # 2400-step 3-D solve on a few hundred MB of headroom that this mesh may
+    # legitimately exceed -- replacing one environment-dependent red with a
+    # flaky one.  REJECTED ALTERNATIVE: pass ``--mem-ceiling-mb`` below the
+    # container limit (e.g. 400) so the guard lets the run through.  The flag is
+    # not what this file tests (a pulse run names no plane), so the refusal is
+    # reported, measured, and skipped rather than worked around.
+    limit_mb = RUN_BUILD_A.cgroup_limit_mb()
+    if limit_mb is not None and limit_mb < RUN_BUILD_A.MEM_CEILING_MB_DEFAULT:
+        pytest.skip(
+            f"this container's memory limit is {limit_mb:.1f} MB, below the "
+            f"default --mem-ceiling-mb {RUN_BUILD_A.MEM_CEILING_MB_DEFAULT:.1f}, "
+            "so the trip-vs-container guard (run_build_A.py:3766) refuses the "
+            "run before it starts; the refusal is correct behaviour and cannot "
+            "be tested around without changing the flag it is testing")
     out_json = tmp_path / "dr43_pulse.json"
     out_npz = tmp_path / "dr43_pulse.npz"
 

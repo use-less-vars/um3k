@@ -578,14 +578,14 @@ VIS_VOLUME_BUDGET_MB = 48.0
 #: A number to obey, not a budget to tune.  Rejected alternative: reuse
 #: ``MEM_CEILING_MB_DEFAULT`` 2000 (the ``--mem-ceiling-mb`` trip).  That is the
 #: TRIP's number, crossed at run time with the banked runs peaking at 298 MB
-#: against it (:1905-1912); treating it as a fit-for-the-host limit would either
+#: against it (:2064-2066); treating it as a fit-for-the-host limit would either
 #: refuse every run this file has ever made or force the trip up to a figure
 #: nobody measured.
 MEM_SAFE_LIMIT_MB = 12000.0
 #: Everything the dtype count in ``_solve_estimate_mb`` does NOT contain, as one
 #: term [MB decimal]: the interpreter, numpy, scipy and emfit's import-time
 #: state.  A MEASURED RESIDUAL, not a guess: Run A recorded 297.82 MB peak RSS
-#: on a 280,984-cell mesh (:1905-1912, ``build_A_50ohm.json``) and the count
+#: on a 280,984-cell mesh (:2064-2066, ``build_A_50ohm.json``) and the count
 #: below prices that same mesh at ~149 MB, so ~149 MB of the measurement is not
 #: arrays; rounded up to 150 because the measurement is a high-water mark that
 #: includes the allocator's own slack.  Rejected alternative: a per-cell
@@ -1068,7 +1068,7 @@ def _solve_estimate_mb(nx: int, ny: int, nz: int) -> float:
 
     CHECKED against the one measured figure this file owns: on the banked Run A
     mesh, 62 x 206 x 22 = 280,984 cells, this returns ~149 MB, and the run's
-    recorded peak RSS is 297.82 MB (:1905-1912, ``build_A_50ohm.json``) -- the
+    recorded peak RSS is 297.82 MB (:2064-2066, ``build_A_50ohm.json``) -- the
     difference being ``MEM_PROCESS_OVERHEAD_MB``, which is how that constant's
     number was obtained.  It is deliberately NOT tuned until it equals 297.82:
     a fit is not an estimate.
