@@ -121,7 +121,7 @@ class Available:
     @classmethod
     def compute(
         cls, info=None, planes=None, multifreq=None, record=None, is_vis=None,
-        layer_shown: bool = False
+        layer_shown: Optional[bool] = None
     ) -> "Available":
         """Compute every flag, once, with no I/O and no raising.
 
@@ -139,6 +139,14 @@ class Available:
         read here, so this module keeps no dependency on the app. ``volume_layer``
         is the data half alone; ``volume_layer_shown`` is the two ANDed, which is
         the question a cut slider asks.
+
+        ``layer_shown=None`` is AUTOMATIC, not "off", and both halves of the reason
+        are real: a vis dump carries ``e_abs_volume`` and no station axis at all, so
+        declining to draw the box drew a blank page; a stacked-plane page has its own
+        cut sheets, so a translucent volume box over them would show through sheets
+        that already carry the field. The rule is therefore ``stations <= 1``, which
+        is the same station count ``plane_stack`` is read from. An explicit True or
+        False is the switch speaking and is obeyed as given.
         """
         info = info if isinstance(info, dict) else {}
         planes = planes if isinstance(planes, dict) else {}
@@ -147,13 +155,17 @@ class Available:
         )
         stations = _stations(info)
         volume_layer = info.get("e_abs_volume") is not None
+        # None = AUTOMATIC (see the docstring): the page's own shape answers,
+        # because neither half of the policy can be read off the data alone.
+        policy = (stations <= 1) if layer_shown is None else bool(layer_shown)
         return cls(
             # The keys, not the station count (poc_app.py:100, :106, :6751-6762).
             volume_field=VOLUME_KEY in info or VOLUME_RAW_KEY in info,
             # The |E| animation volume, keyed literally like its loader (:5389).
             volume_layer=volume_layer,
-            # ...and the page draws it (above AND poc_app.py:1109-1111).
-            volume_layer_shown=volume_layer and bool(layer_shown),
+            # ...and the page draws it (above AND poc_app.py:1109-1111), with
+            # ``policy`` having already turned None into the automatic answer.
+            volume_layer_shown=volume_layer and policy,
             plane_stack=stations > 1,  # stacks x-planes (poc_app.py:3295-3296)
             port_planes=stations > 0,  # one station (poc_app.py:3182-3185)
             multifreq=multifreq is not None,  # None is real (:5385, :981)
@@ -189,11 +201,14 @@ class PageContext:
 
     def __init__(
         self, dump: Optional[LoadedDump] = None, view_mode: str = DEFAULT_VIEW_MODE,
-        plotter: Any = None, layer_shown: bool = False
+        plotter: Any = None, layer_shown: Optional[bool] = None
     ) -> None:
         self.dump = dump if dump is not None else LoadedDump()
         #: Kept, not folded in: ``recompute_available`` must answer the same way
         #: after a page swap, so the policy half outlives the snapshot it shaped.
+        #: Stored VERBATIM, ``None`` included - the auto answer depends on the
+        #: dump (``stations``), and a page swap replaces the dump, so folding that
+        #: answer into a bool here would pin the old page's shape onto the new one.
         self.layer_shown = layer_shown
         self.available = self.recompute_available()
         self.set_view_mode(view_mode)

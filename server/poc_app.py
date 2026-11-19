@@ -1105,10 +1105,44 @@ def _frame_label(index, frames, time_axis=None):
 
 SHOW_VOLUME_LAYER_DEFAULT = False
 
+# The runtime switch's own cell: the checkbox (:19816) binds to it and its
+# handler (:18205) writes it. A PLAIN DICT and not a ``state`` attribute, for the
+# very reason the Grid layer's box keeps one (:15525-15531): the boot sheets are
+# built BEFORE ``server.state`` exists, and a reader that reached into state
+# would NameError on the very first frame. What is NOT duplicated is the reader -
+# every consumer still asks ``_volume_layer_enabled`` below, so there is exactly
+# one place that answers the question.
+#
+# ``"on"`` is None until the box speaks, and None is NOT False. False would mean
+# "somebody switched it off" and would have to beat both the environment variable
+# and the page's own answer; None means "no opinion yet", so a draw that happens
+# before any widget exists still gets the page policy below.
+#
+# ``"page"`` is the context's answer to the two-halves question
+# (``Available.volume_layer_shown``, um3k_context.py:105-109): does THIS page
+# carry the volume AND want it drawn. ``run_web_vis`` publishes it once, right
+# after the context is built (:15873), long before the first draw.
+_VOLUME_LAYER_STATE: dict = {"on": None, "page": False}
+
 
 def _volume_layer_enabled() -> bool:
-    """Is the 3-D |E| volume layer to be drawn?  False unless opted in."""
-    return bool(SHOW_VOLUME_LAYER_DEFAULT) or os.environ.get("POC_SHOW_VOLUME") == "1"
+    """Is the 3-D |E| volume layer to be drawn?
+
+    THE ONE READER of that question - do not add a second. The order below is
+    what lets a runtime checkbox exist without moving the boot default:
+
+    1. the switch, if it has spoken (``None`` = it has not, see above);
+    2. ``POC_SHOW_VOLUME=1``, the documented opt-in;
+    3. the page's own answer, published by ``run_web_vis`` before the first draw;
+    4. the module constant, which stays False so a bare run is unchanged.
+    """
+    if _VOLUME_LAYER_STATE["on"] is not None:
+        return bool(_VOLUME_LAYER_STATE["on"])
+    if os.environ.get("POC_SHOW_VOLUME") == "1":
+        return True
+    if _VOLUME_LAYER_STATE["page"]:
+        return True
+    return bool(SHOW_VOLUME_LAYER_DEFAULT)
 
 
 # ---------------------------------------------------------------------------
@@ -15822,11 +15856,21 @@ def run_web_vis(
     # it for a second copy of an answer.
     ctx = um3k_context.PageContext(
         dump=um3k_context.LoadedDump.from_any_dump(page),
-        # The POLICY half of the |E| layer (:1109-1111), which the context ANDs
-        # with the dump's ``e_abs_volume``: ``volume_layer_shown`` means "drawn",
-        # and the reload path re-asks it (:19326).
-        layer_shown=_volume_layer_enabled(),
+        # NO ``layer_shown`` on purpose, so the context runs its own AUTOMATIC
+        # policy (um3k_context.py:143-152) and answers the two-halves question
+        # from the page's shape: the volume AND at most one station. Handing it
+        # ``_volume_layer_enabled()`` would feed the module's boot answer into the
+        # very computation that is supposed to produce that answer, and the
+        # context's answer would then be stuck at whatever the switch said first.
     )
+    # Publish the context's answer for the module-level draw path. ``_draw_volume_scene``
+    # (:9838) and ``_draw_volume_layer`` (:16671) are module functions and cannot
+    # see this context, so this cell (:1125) is the only way they learn what
+    # THIS page decided - the draw path asks ``_volume_layer_enabled``, which reads it.
+    # ORDER MATTERS: it is set here, before anything reads that reader - and it is,
+    # because the first draw is the boot sheet build far below (:9461) and the frame
+    # handler after it, not the two cut-slider steps that run in between.
+    _VOLUME_LAYER_STATE["page"] = bool(ctx.available.volume_layer_shown)
 
     # --- the Y / Z cut sheets: STATE and TRIGGERS, no widgets yet -------------
     #
@@ -18153,6 +18197,59 @@ def run_web_vis(
                 file=sys.stderr,
             )
 
+    # The |E| volume layer's box. NOT the Grid box's rule a fourth time: a grid is
+    # a DRAWING property of a sheet already on screen, but this layer is a picture
+    # built and thrown away WHOLE (:16694, :16728), so switching it costs a real
+    # redraw - through ``_show``, which is exactly where the layer is drawn or
+    # dropped (:17292-17299) and what every other toggle on this page already uses.
+    @state.change("show_volume_layer")
+    def _on_show_volume_layer(**_kwargs) -> None:
+        """Draw or drop the 3-D |E| volume layer. NEVER raises.
+
+        Three steps, each guarded on its own because each can fail without the
+        other two being wrong: the flag, the layer's cached entry, the redraw.
+        """
+        # 1. The flag. ``None`` in the cell means "the box has not spoken", so the
+        #    fallback is the reader itself rather than a literal default.
+        try:
+            _VOLUME_LAYER_STATE["on"] = bool(
+                _kwargs.get("show_volume_layer", _volume_layer_enabled())
+            )
+        except Exception as exc:  # noqa: BLE001 - a flag is never the page
+            print(
+                f"[poc_app] volume layer toggle ignored: {exc}", file=sys.stderr
+            )
+        # 2. The layer's cached entry. The cache is this HANDLE and not a module
+        #    dict: the entry carries the key ``_draw_volume_layer`` compares before
+        #    it paints (:16822-16831) and a HIT returns without touching the screen.
+        #    Clearing the KEY - and NOT popping the entry - makes the next draw a
+        #    MISS, and the miss path drops the old actors before rebuilding
+        #    (:16846), so nothing is orphaned on the plotter. Without this a later
+        #    ON can HIT an entry whose actors the OFF branch (:17294) already took
+        #    off the plotter, and a HIT paints nothing: the switch would look dead
+        #    in exactly one direction.
+        try:
+            entry = handles.get("volume_layer")
+            if isinstance(entry, dict):
+                entry["key"] = None
+        except Exception as exc:  # noqa: BLE001 - a cache is never the picture
+            print(
+                f"[poc_app] volume layer cache not invalidated: {exc}",
+                file=sys.stderr,
+            )
+        # 3. The redraw, in BOTH directions: ON rebuilds the layer, OFF lets the
+        #    existing ``else:`` (:17294) take the stale layer and its |E| bar off
+        #    the plotter. ``site`` is only the ``push_by_site:`` TIMING label the
+        #    frame is accounted to (:17000-17001); this page redraws itself
+        #    through the same repaint its cut sliders use, which accounts as "cut"
+        #    (:15925).
+        try:
+            _show(getattr(state, "frame", 0), getattr(state, "mode", None), "cut")
+        except Exception as exc:  # noqa: BLE001 - one frame is not the page
+            print(
+                f"[poc_app] volume layer redraw skipped: {exc}", file=sys.stderr
+            )
+
     # n_line: the board-size note under the box. Same shape as the Grid box above.
     @state.change("run_n_line")
     def _on_run_n_line(**_kwargs) -> None:
@@ -19699,6 +19796,33 @@ def run_web_vis(
             print(
                 f"[poc_app] cell edge toggle unavailable: {exc}", file=sys.stderr
             )
+        # The |E| volume layer's box: the first control on this panel that changes
+        # what a MODULE-level draw function paints, rather than what one closure
+        # paints. Same (state_name, default) binding as the three above, but the
+        # default is asked of the ONE reader (:1128) at EMIT time rather than
+        # taken from the module constant: the box must start telling the truth
+        # about the picture it is beside, and that picture is whatever the page
+        # policy and the environment decided.
+        #
+        # Emitted ONLY where the dump carries a volume: ``_draw_volume_layer``
+        # (:16728) drops whatever layer is on screen and paints nothing when
+        # ``e_abs_volume`` is absent, so a page without one must not be handed a
+        # switch for a picture it cannot draw. ``info`` is ``run_web_vis``'s own
+        # dump parameter (:15310), rebound to the live page at :15484, so at
+        # emit time it IS the page's dump.
+        if info.get("e_abs_volume") is not None:
+            try:
+                checkbox_cls(
+                    v_model=("show_volume_layer", _volume_layer_enabled()),
+                    label="|E| volume (3-D)",
+                    hide_details=True,
+                    style="padding: 2px 0;",
+                )
+            except Exception as exc:  # noqa: BLE001 - a toggle is never the page
+                print(
+                    f"[poc_app] volume layer toggle unavailable: {exc}",
+                    file=sys.stderr,
+                )
         # The substrate's opacity. A SLIDER and not a box: the slab is drawn over
         # the field it annotates, so how far it is seen THROUGH is a matter of
         # degree, and the operator is the one reading it. Probed and wrapped like
