@@ -4316,6 +4316,76 @@ def _renderer_report_after_render(plotter, handles) -> bool:
         return False
 
 
+#: Is the one-shot actor dump asked for?  Resolved ONCE, at import, like
+#: ``_TIMING_ENABLED``: a diagnostic that could change its mind mid-run would
+#: describe a scene that never existed at any one instant.  Asked through
+#: ``_actor_dump_wanted`` so the reason has one home.
+_ACTOR_DUMP_WANTED = (os.environ.get("POC_DUMP_ACTORS") or "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def _actor_dump_wanted() -> bool:
+    """True when POC_DUMP_ACTORS asks for the one-shot actor dump."""
+    return _ACTOR_DUMP_WANTED
+
+
+def _dump_actors_once(plotter, handles, info=None) -> bool:
+    """Print every actor on the plotter ONCE, on the first frame that drew.
+
+    WHAT THIS IS FOR: a picture whose sheets come out dim, flat or invisible is
+    argued about over a screenshot. The screenshot says the colour is wrong; it
+    cannot say whether the actor is lit, half-transparent, hidden, or missing.
+    One dump of the scene answers all four at once - name, class, visibility,
+    opacity, colour, lighting and world bounds per actor, plus the domain box
+    the frame is supposed to show - so the next report can quote numbers instead
+    of adjectives.
+
+    WHY IT RIDES THE RENDER GATE: it is called from the same ``if rendered:``
+    branch as ``_renderer_report_after_render``, because a scene dumped before a
+    frame has drawn is a half-built scene - the very state that makes a real
+    defect look like a timing artefact. Like that report it is ONE-SHOT: the
+    ``actors_dumped`` flag is set BEFORE the first line is printed, so a dump
+    that raises halfway is still spent, and no tick ever prints it twice.
+
+    OFF unless POC_DUMP_ACTORS=1/true/yes (see ``_actor_dump_wanted``), which is
+    resolved at import rather than per call. NEVER raises: a dump is not the
+    tick. Returns True only on the call that spoke.
+    """
+    if not _actor_dump_wanted() or handles is None or handles.get("actors_dumped"):
+        return False
+    # Spent HERE: a dump that fails below must not be retried on every tick.
+    handles["actors_dumped"] = True
+    try:
+        actors = getattr(plotter.renderer, "actors", None) or {}
+        print(f"[poc_app] actor dump: {len(actors)} actor(s)")
+        for index, (name, actor) in enumerate(actors.items()):
+            prop = getattr(actor, "prop", None)
+            print(
+                f"[poc_app]   {index}: name={name!r}"
+                f" class={type(actor).__name__}"
+                f" visibility={getattr(actor, 'visibility', None)}"
+                f" opacity={getattr(prop, 'opacity', None)}"
+                f" color={getattr(prop, 'color', None)}"
+                f" lighting={getattr(prop, 'lighting', None)}"
+                f" bounds={tuple(actor.GetBounds())}"
+            )
+        # Its OWN try: the domain is what the frame is judged against, and a
+        # page whose info carries no extents must still list its actors.
+        try:
+            print(
+                "[poc_app]   domain="
+                f"{_plane_extent_mm(info or {}).get('domain')}"
+            )
+        except Exception as exc:  # noqa: BLE001 - the domain is not the dump
+            print(f"[poc_app]   domain unknown: {exc}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - a dump is not the tick
+        print(f"[poc_app] actor dump skipped: {exc}", file=sys.stderr)
+    return True
+
+
 def _profile_knobs(fps=None, msaa=None, image_encoding=None, image_quality=None):
     """Record the display knobs this run was STARTED with. Returns the record.
 
@@ -15179,6 +15249,10 @@ def run_web_vis(
                 cmap="turbo",
                 clim=(vmin, vmax),
                 smooth_shading=False,
+                # Page A never lit its sheets: this is a FLAT field of values, so
+                # a surface normal must not shade it - light would dim the very
+                # colour the reader is being asked to compare against the bar.
+                lighting=False,
                 show_edges=VIS_SHOW_EDGES,
                 show_scalar_bar=(family == "ycut"),
                 # A FRESH mapping per call: ``add_mesh`` fills in defaults on the
@@ -15875,6 +15949,9 @@ def run_web_vis(
             # meaningless colour. No bar either, for the same reason.
             clim=(0.0, ceiling if ceiling > 0.0 else 1.0),
             smooth_shading=False,
+            # A value map like the sheets, not a lit surface: the |E| mode is
+            # read off the colour, and light would modulate it.
+            lighting=False,
             show_edges=False,
             show_scalar_bar=False,
             name="mode_picture",
@@ -16551,6 +16628,11 @@ def run_web_vis(
             # first tick that finds the window rendered, once (see
             # _renderer_report_after_render).
             _renderer_report_after_render(plotter, handles)
+            # The scene dump rides the SAME "a frame really drew" gate, and for
+            # the same reason: an actor listed before the draw is a half-built
+            # scene. One-shot, and off unless POC_DUMP_ACTORS asks for it (see
+            # _dump_actors_once). ``info`` is the page's own, already live here.
+            _dump_actors_once(plotter, handles, info)
         _timing_tick_end(
             plotter,
             index=index,
@@ -16669,6 +16751,9 @@ def run_web_vis(
                     cmap="turbo",
                     clim=(vmin, vmax),
                     smooth_shading=False,
+                    # Same flat field as the boot sheets above, so the same
+                    # statement: a rebuilt dump must not arrive lit.
+                    lighting=False,
                     show_edges=VIS_SHOW_EDGES,
                     show_scalar_bar=False,
                 )

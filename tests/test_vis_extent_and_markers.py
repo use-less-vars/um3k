@@ -33,6 +33,19 @@ The claims, one per test:
     callable(handles.get("cut_redraw")):`` early return is GONE from the file -
     the box emission is no longer gated on the stack it was written for;
 (d) both marker boxes are still emitted, once each, by ``_emit_vector_toggle``.
+
+The four claims appended below are the P2b repair, made on the same terms:
+
+(e) the flat field sheets are drawn UNLIT - every ``add_mesh`` call that is a
+    turbo, flat-shaded field sheet passes ``lighting=False``;
+(f) those calls are the three the page really draws (the boot sheets, the mode
+    picture and the rebuilt sheets), and NOT the |E| volume layer's translucent
+    cut sheets, which are a different picture and are tuned by opacity;
+(g) the one-shot actor dump is defined once and called once, from inside an
+    ``if rendered:`` branch - a scene listed before the draw is half-built;
+(h) that dump is opt-in through ``POC_DUMP_ACTORS``, resolved ONCE at import,
+    and it spends its one-shot flag BEFORE it prints, so a dump that raises
+    halfway is never retried on every tick.
 """
 
 from __future__ import annotations
@@ -198,3 +211,235 @@ def test_both_marker_plane_boxes_are_still_emitted():
             "'_emit_vector_toggle', which is the only entry point registered and "
             "called for these controls"
         )
+
+
+# ---------------------------------------------------------------------------
+# P2b: the flat field sheets are drawn UNLIT, and the scene can be dumped ONCE.
+#
+# Every claim below is structural, for the reason in the module docstring: the
+# module cannot be imported here, so the FILE TEXT is the only evidence there
+# is. The two behaviours are invisible to the other suites - a lit sheet is a
+# valid ``add_mesh`` call and a dump that never fires raises nothing.
+# ---------------------------------------------------------------------------
+
+
+def _add_mesh_segments(source: str) -> list:
+    """Every ``add_mesh(`` call as ``(line_number, segment_text)``.
+
+    The segment is cut with a balanced-paren scan from the call's OWN opening
+    bracket, so a claim about "this call" cannot be satisfied by an argument
+    that belongs to the NEXT call - which is exactly what a whole-file search
+    for the token would allow.
+    """
+    segments = []
+    token = "add_mesh("
+    index = 0
+    while True:
+        found = source.find(token, index)
+        if found == -1:
+            return segments
+        depth = 0
+        for position in range(found + len(token) - 1, len(source)):
+            char = source[position]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    line = source.count("\n", 0, found) + 1
+                    segments.append((line, source[found : position + 1]))
+                    index = position + 1
+                    break
+        else:  # an unbalanced call: report what was read, do not loop forever
+            return segments
+
+
+def _scalar_sheets(source: str) -> list:
+    """The FIELD sheets: a turbo, FLAT-SHADED ``add_mesh`` call.
+
+    The filter is the claim, not a line range. The |E| volume layer's cut
+    sheets are ``add_mesh`` calls too, but they carry ``opacity=0.75`` and no
+    ``smooth_shading`` at all - they are a translucent VOLUME slice, tuned by
+    that opacity, and they are not what P2b is about. ``smooth_shading=False``
+    is the same statement as "this is a field of values on a grid", so it is
+    what tells the two pictures apart.
+    """
+    return [
+        (line, segment)
+        for line, segment in _add_mesh_segments(source)
+        if 'cmap="turbo"' in segment and "smooth_shading=False" in segment
+    ]
+
+
+def _enclosing_name(tree: ast.Module, line: int):
+    """The name of the INNERMOST function whose span contains ``line``."""
+    spans = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            spans.append(
+                (
+                    (node.end_lineno or node.lineno) - node.lineno,
+                    node.lineno,
+                    node.end_lineno or node.lineno,
+                    node.name,
+                )
+            )
+    spans.sort()
+    for _size, start, end, name in spans:
+        if start <= line <= end:
+            return name
+    return None
+
+
+def test_the_flat_field_sheets_are_drawn_unlit():
+    """(e) Every field sheet passes ``lighting=False``, on its own call.
+
+    Page A never lit its sheets: the value is read off the COLOUR against the
+    bar, and a surface normal in the light path dims exactly that colour. A lit
+    sheet is not an error, which is why nothing else catches it.
+    """
+    source = _source()
+    sheets = _scalar_sheets(source)
+    assert len(sheets) == 3, (
+        f"{len(sheets)} flat field sheets found at lines "
+        f"{[line for line, _ in sheets]}, not three: the boot sheets, the mode "
+        "picture and the rebuilt sheets are the three the page draws, so a "
+        "different number means the selection has drifted off them"
+    )
+    missing = [line for line, segment in sheets if "lighting=False" not in segment]
+    assert not missing, (
+        f"the field sheet call(s) at line(s) {missing} are drawn LIT: page A "
+        "paints a flat field, and light would dim the colour the reader is "
+        "being asked to compare against the bar"
+    )
+
+
+def test_the_unlit_sheets_are_the_three_the_page_draws():
+    """(f) Those calls are the boot sheets, the mode picture, the rebuild.
+
+    Named by their ENCLOSING function rather than by line number, so the claim
+    survives unrelated edits above them - and so that a fourth scenic
+    ``add_mesh`` slipping into the selection is caught by where it lives.
+    """
+    source = _source()
+    tree = ast.parse(source)
+    owners = [_enclosing_name(tree, line) for line, _ in _scalar_sheets(source)]
+    assert owners == ["run_web_vis", "_draw_mode_picture", "_rebuild_sheets"], (
+        f"the unlit sheets are drawn by {owners}, not by the page's three field "
+        "sites: the boot sheets live directly in 'run_web_vis', the mode picture "
+        "in '_draw_mode_picture' and the rebuilt dump in '_rebuild_sheets'"
+    )
+    assert not any("volume" in (name or "") for name in owners), (
+        f"a |E| volume layer draw ({owners}) is in the selection: its translucent "
+        "cut sheets are a different picture, tuned by opacity=0.75, and lighting "
+        "was never what they were judged by"
+    )
+
+
+def test_the_actor_dump_is_called_once_from_the_rendered_tick():
+    """(g) One definition, one call, inside ``if rendered:``.
+
+    The gate is the point: ``_tick_render_and_push`` only QUEUES the draw, so a
+    dump taken anywhere else can list a half-built scene and make a real defect
+    look like a timing artefact.
+    """
+    source = _source()
+    tree = ast.parse(source)
+
+    dumps = _function_defs(tree, "_dump_actors_once")
+    assert len(dumps) == 1, (
+        f"{len(dumps)} 'def _dump_actors_once' in {POC_APP.name} at lines "
+        f"{[node.lineno for node in dumps]}, not one"
+    )
+
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_dump_actors_once"
+    ]
+    assert len(calls) == 1, (
+        f"{len(calls)} call(s) to '_dump_actors_once' at lines "
+        f"{[node.lineno for node in calls]}, not one: a second call site is a "
+        "second description of the scene, free to disagree with the first"
+    )
+    call = calls[0]
+
+    gates = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "rendered"
+        and node.lineno <= call.lineno <= (node.end_lineno or node.lineno)
+    ]
+    assert gates, (
+        f"the actor dump at line {call.lineno} is not inside an 'if rendered:' "
+        "branch: it would describe a scene whose first frame has not drawn yet"
+    )
+
+
+def test_the_actor_dump_is_opt_in_at_import_and_spent_before_it_prints():
+    """(h) ``POC_DUMP_ACTORS`` resolved once, and the flag set before the print.
+
+    Both halves matter. An environment read INSIDE the helper is a switch that
+    can change its answer between ticks; a flag set AFTER the first line is a
+    dump that repeats for ever if it ever raises halfway.
+    """
+    source = _source()
+    tree = ast.parse(source)
+
+    wanted = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_ACTOR_DUMP_WANTED"
+            for target in node.targets
+        )
+    ]
+    assert len(wanted) == 1, (
+        f"{len(wanted)} MODULE-LEVEL '_ACTOR_DUMP_WANTED' assignment(s) at lines "
+        f"{[node.lineno for node in wanted]}, not one: the switch is resolved "
+        "once, at import, so no two ticks can describe different scenes"
+    )
+    assert "POC_DUMP_ACTORS" in _body(source, wanted[0]), (
+        "the module-level switch does not read POC_DUMP_ACTORS: the dump is "
+        "either unreachable or reachable through a name nothing sets"
+    )
+
+    predicates = _function_defs(tree, "_actor_dump_wanted")
+    assert len(predicates) == 1, (
+        f"{len(predicates)} 'def _actor_dump_wanted' in {POC_APP.name}"
+    )
+    predicate_body = _body(source, predicates[0])
+    assert "_ACTOR_DUMP_WANTED" in predicate_body, (
+        "'_actor_dump_wanted' does not answer from the module constant: the "
+        "environment would be read per call"
+    )
+    assert "os.environ" not in predicate_body, (
+        "'_actor_dump_wanted' reads os.environ: the switch must be resolved once"
+    )
+
+    dumps = _function_defs(tree, "_dump_actors_once")
+    assert len(dumps) == 1, (
+        f"{len(dumps)} 'def _dump_actors_once' in {POC_APP.name}"
+    )
+    body = _body(source, dumps[0])
+    assert "os.environ" not in body, (
+        "the dump re-reads the environment: POC_DUMP_ACTORS is resolved once at "
+        "import (see _ACTOR_DUMP_WANTED), and a per-call read is a switch that "
+        "can turn itself off between the gate and the print"
+    )
+    assert 'handles["actors_dumped"]' in body, (
+        "the dump has no once-flag: it would print the scene on every tick that "
+        "draws a frame"
+    )
+    spent = body.index('handles["actors_dumped"] = True')
+    first_print = body.index("print(")
+    assert spent < first_print, (
+        "the once-flag is set AFTER the first line is printed: a dump that "
+        "raises halfway is retried on every tick, at full volume"
+    )
+
