@@ -1,6 +1,6 @@
 """The other half of the run-form gate: a page with NO field data gets the form.
 
-``server/poc_app.py``'s Run Config card draws its five fields only on a page
+``server/poc_app.py``'s Run Config card draws its eight fields only on a page
 that carries no field data at all - a page with a recording behind it already
 knows those numbers.  ``tests/test_poc_run_config_panel.py`` pins the "absent"
 half on a dump-backed page; this module pins the arriving half on the bare
@@ -148,8 +148,8 @@ def test_the_page_really_has_no_field_data(bare_boot):
     )
 
 
-def test_the_five_run_fields_arrive_at_the_run_config_defaults(bare_boot):
-    """All five, once each, on the numbers the reference run would start from."""
+def test_the_eight_run_fields_arrive_at_the_run_config_defaults(bare_boot):
+    """All eight, once each, on the numbers the reference run would start from."""
     from emfit.config import RunConfig
 
     _live, records, _page = bare_boot
@@ -176,6 +176,87 @@ def test_the_five_run_fields_arrive_at_the_run_config_defaults(bare_boot):
             f"{getattr(defaults, field)!r}: the form must start where the run "
             "would start"
         )
+
+
+#: The three rows the form grew when the dump budget became visible: state name,
+#: and the ``RunConfig`` field each one edits. Named here because every other
+#: test in the suite WALKS ``RUN_CONFIG_FIELDS``: a row quietly deleted takes its
+#: own assertion with it, so row presence has to be pinned by name.
+BUDGET_ROWS = (
+    ("run_dump_stride", "dump_stride"),
+    ("run_volume_frames", "volume_frames"),
+    ("run_n_line", "n_line"),
+)
+
+
+def test_the_dump_budget_rows_are_on_the_form():
+    """The three budget boxes exist, and each edits the field of the same name."""
+    from emfit.config import RunConfig
+
+    reference = RunConfig()
+    table = {state_name: field for state_name, _label, field in app.RUN_CONFIG_FIELDS}
+    for state_name, field in BUDGET_ROWS:
+        assert table.get(state_name) == field, (
+            f"{state_name!r} maps to {table.get(state_name)!r} in "
+            f"RUN_CONFIG_FIELDS, not to {field!r}: the box that decides how big "
+            "this run's output is is not on the form"
+        )
+        assert hasattr(reference, field), (
+            f"the {state_name!r} box edits {field!r}, which RunConfig does not "
+            "have: the form would offer a knob no run can carry, and the boot "
+            "value behind it would be an invention rather than the reference's"
+        )
+
+
+def test_the_int_and_float_kinds_split_the_table_exactly():
+    """Every row is declared whole-number or float, and the split is honest.
+
+    ``_RUN_CONFIG_INT_FIELDS`` is what decides how a typed string is parsed, and
+    ``RunConfig`` refuses a float where an int belongs - so a row on the WRONG
+    side of the split is a box that either refuses a number the user typed or
+    quietly rounds one. Both directions are asserted: the tuple names no field
+    the table does not have (and no field twice), and every field the table DOES
+    have parses as the kind the split claims for it.
+    """
+    rows = list(app.RUN_CONFIG_FIELDS)
+    known = {field for _state_name, _label, field in rows}
+    int_fields = set(app._RUN_CONFIG_INT_FIELDS)
+
+    assert len(int_fields) == len(app._RUN_CONFIG_INT_FIELDS), (
+        "_RUN_CONFIG_INT_FIELDS names a field twice: "
+        f"{app._RUN_CONFIG_INT_FIELDS!r}"
+    )
+    assert int_fields <= known, (
+        f"_RUN_CONFIG_INT_FIELDS names {sorted(int_fields - known)!r}, which is "
+        f"not one of the form's fields {sorted(known)!r}: the kind of that box "
+        "is decided nowhere, so nothing stops it being parsed as a float"
+    )
+    for _state_name, label, field in rows:
+        whole = app._run_config_field_value(label, field, "7")
+        if field in int_fields:
+            assert whole == 7 and isinstance(whole, int), (
+                f"the {label!r} box is declared a whole number but read 7 as "
+                f"{whole!r} ({type(whole).__name__}): RunConfig refuses a float "
+                "where an int belongs"
+            )
+            with pytest.raises(ValueError) as refused:
+                app._run_config_field_value(label, field, "7.5")
+            assert "whole number" in str(refused.value), (
+                f"the {label!r} box took 7.5 for {field!r} with "
+                f"{str(refused.value)!r}: a fractional value in a whole-number "
+                "box has to refuse the press, not be rounded"
+            )
+        else:
+            assert whole == 7.0 and isinstance(whole, float), (
+                f"the {label!r} box is not in the int split but read 7 as "
+                f"{whole!r} ({type(whole).__name__}): a float box parsed as a "
+                "whole number loses the fraction the user typed"
+            )
+            assert app._run_config_field_value(label, field, "7.5") == 7.5, (
+                f"the {label!r} box read 7.5 as "
+                f"{app._run_config_field_value(label, field, '7.5')!r}: it is "
+                "a float field"
+            )
 
 
 def test_the_clim_select_is_on_this_page_too(bare_boot):

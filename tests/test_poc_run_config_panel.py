@@ -9,8 +9,9 @@
   repaints the frame that is already on screen (the volume layer caches on the
   frame, so a mode that only changes the clim is invisible to that key - the
   repaint is the whole point);
-* the **run form** (steps, volume stride, pulse frequency, both cut planes) is
-  absent on a dump-backed page: the recording already fixed those numbers, so
+* the **run form** (steps, volume stride, dump stride, volume frames, pulse
+  frequency, both cut planes, line cells) is absent on a dump-backed page: the
+  recording already fixed those numbers, so
   the fields are left off rather than offered-and-ignored.  The other half of
   that gate - the form ARRIVING on a page with no field data - is
   ``tests/test_poc_run_config_form.py``: one boot per process is what emits the

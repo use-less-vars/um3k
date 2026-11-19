@@ -1,10 +1,10 @@
-"""The Run Config form drives the solve: five boxes, ONE child, auto-loaded.
+"""The Run Config form drives the solve: eight boxes, ONE child, auto-loaded.
 
-``server/poc_app.py``'s Run Config card is the five ``run_*`` states; the two
+``server/poc_app.py``'s Run Config card is the eight ``run_*`` states; the two
 halves of the gate that draws it are pinned in
 ``tests/test_poc_run_config_form.py`` (arrives on a no-data page) and
 ``tests/test_poc_run_config_panel.py`` (absent on a dump-backed one).  This
-module pins the FAR end of the same wire: a press of Solve reads those five
+module pins the FAR end of the same wire: a press of Solve reads those eight
 values, builds the ONE ``emfit.config.RunConfig`` the child is given, and hands
 it to the ONE argv builder the viewer has always used - so the form has no
 second route into a solve that could drift away from the button's.
@@ -122,7 +122,7 @@ def viewer(tmp_path_factory):
 
     WHY once for the module: ``trame.app.get_server`` hands back ONE server per
     process, so a second boot would serve the same state again while paying for
-    the whole layout a second time.  The five boxes are the same five states on
+    the whole layout a second time.  The eight boxes are the same eight states on
     every page, and the child stand-in is stateless, so nothing below depends on
     which test ran first.
     """
@@ -231,12 +231,12 @@ def viewer(tmp_path_factory):
 
 
 def _write_boxes(state, **boxes) -> None:
-    """Put the five boxes where the browser would, then press.
+    """Put the eight boxes where the browser would, then press.
 
     ``boxes`` uses the short names (``nsteps``, ``volume_stride``, ...); a box
     NOT named is written BLANK, which is exactly what an untouched VTextField
     hands over.  Written through ``state`` because RUN_CONFIG_FIELDS IS the
-    binding: there is no other place a press could read these five from.
+    binding: there is no other place a press could read these eight from.
     """
     for state_name, _label, _field in app.RUN_CONFIG_FIELDS:
         setattr(state, state_name, str(boxes.get(state_name[len("run_"):], "")))
@@ -255,24 +255,29 @@ def _press(viewer, **boxes):
     return viewer.solve.get("job")
 
 
-def test_the_five_form_values_reach_the_solver(viewer) -> None:
+def test_the_eight_form_values_reach_the_solver(viewer) -> None:
     """Every box the user typed is in the child's command line, as typed.
 
     WHY the argv and not a config object: the argv is the last thing this process
     writes before the child owns the run, so it is the widest place the values
     could be lost.  ``--nsteps``/``--volume-stride`` are INTEGER flags, so a
-    ``600.0`` that the solver would reject must not appear either.
+    ``600.0`` that the solver would reject must not appear either - and the same
+    holds for the three budget boxes (``--dump-stride``, ``--n-line``,
+    ``--volume-frames``), which the same kind split parses as whole numbers.
     """
     job = _press(
         viewer,
         nsteps="600",
         volume_stride="5",
+        dump_stride="3",
+        volume_frames="7",
         pulse_freq_ghz="10",
         xcut_near_mm="18",
         xcut_far_mm="21",
+        n_line="40",
     )
     assert job is not None, (
-        "the press spawned nothing, so the five boxes went nowhere: "
+        "the press spawned nothing, so the eight boxes went nowhere: "
         f"{viewer.state.solve_status!r}"
     )
     argv = list(job.argv)
@@ -282,6 +287,9 @@ def test_the_five_form_values_reach_the_solver(viewer) -> None:
         ("--pulse-freq-ghz", "10"),
         ("--xcut-near-mm", "18"),
         ("--xcut-far-mm", "21"),
+        ("--dump-stride", "3"),
+        ("--n-line", "40"),
+        ("--volume-frames", "7"),
     ):
         assert flag in argv, (
             f"the child was never told {flag}: the Run Config box behind it is "
@@ -294,6 +302,78 @@ def test_the_five_form_values_reach_the_solver(viewer) -> None:
     assert "600.0" not in argv and "5.0" not in argv, (
         f"a whole-number box reached the solver as a float ({argv!r}): "
         "RunConfig refuses a float where an int belongs, and so does the solver"
+    )
+    assert "3.0" not in argv and "40.0" not in argv and "7.0" not in argv, (
+        f"a whole-number BUDGET box reached the solver as a float ({argv!r}): "
+        "--dump-stride, --n-line and --volume-frames are integers on the "
+        "writer's side too, so the same refusal waits there"
+    )
+
+
+def test_the_argv_builder_carries_the_whole_form() -> None:
+    """The flag list IS the form: all eight boxes, in the solver's own spelling.
+
+    Called directly, with no boot and no child: this function is the last thing
+    the press writes before the solver owns the run, so a box dropped here is
+    named here rather than three assertions into a spawned run.  The three flags
+    the page has always sent first keep their order, ``--pulse-freq-ghz`` keeps
+    its place behind them, and the dump budget travels after it.
+    """
+    from emfit.config import RunConfig
+
+    config = RunConfig(
+        nsteps=600,
+        volume_stride=5,
+        dump_stride=3,
+        volume_frames=7,
+        pulse_freq_ghz=10.0,
+        xcut_near_mm=18.0,
+        xcut_far_mm=21.0,
+        n_line=40,
+    )
+    flags = app._run_config_argv(config)
+    wanted = [
+        "--nsteps",
+        "600",
+        "--volume-stride",
+        "5",
+        "--xcut-far-mm",
+        "21",
+        "--pulse-freq-ghz",
+        "10",
+        "--dump-stride",
+        "3",
+        "--n-line",
+        "40",
+        "--volume-frames",
+        "7",
+    ]
+    assert flags == wanted, (
+        f"the argv builder produced {flags!r}, not {wanted!r}: a box missing "
+        "from this list is a box the press SHOWS and the solver never hears "
+        "about - the dump budget travels with the same press as the physics"
+    )
+
+
+def test_the_argv_builder_omits_the_caps_it_does_not_have() -> None:
+    """``None`` is "no cap", not a number to pass - and no form is no flags."""
+    from emfit.config import RunConfig
+
+    flags = app._run_config_argv(
+        RunConfig(nsteps=600, volume_frames=None, pulse_freq_ghz=None)
+    )
+    assert "--volume-frames" not in flags, (
+        f"a config carrying no frame cap still asked the solver for one "
+        f"({flags!r}): None is the ABSENCE of the flag, and an invented cap "
+        "would shorten the volume the reader asked for"
+    )
+    assert "--pulse-freq-ghz" not in flags, (
+        f"a config carrying no pulse still asked the solver for a frequency "
+        f"({flags!r}): None is the reference's own pulse, not a number"
+    )
+    assert app._run_config_argv(None) == [], (
+        "the no-form case stopped producing the bare command line every caller "
+        f"had before the form existed ({app._run_config_argv(None)!r})"
     )
 
 
@@ -580,7 +660,7 @@ def test_the_solved_page_is_drawn_here_and_not_reloaded(viewer) -> None:
 
 
 def test_a_finished_solve_puts_the_run_form_away(viewer) -> None:
-    """Once a run is behind the page, the five boxes describe a job nobody starts.
+    """Once a run is behind the page, the eight boxes describe a job nobody starts.
 
     The form is a form for the NEXT run; the dump that just landed IS a run, and
     its own numbers are fixed. Leaving the boxes on screen invites the reader to
@@ -599,7 +679,7 @@ def test_a_finished_solve_puts_the_run_form_away(viewer) -> None:
     _land_one_press(viewer)
 
     assert viewer.state.run_config_visible is False, (
-        "the solved page still shows the Run Config form: its five boxes now "
+        "the solved page still shows the Run Config form: its eight boxes now "
         "describe a run that has already happened, and editing them reaches "
         "nothing"
     )
@@ -633,7 +713,7 @@ def test_the_refusal_is_one_shared_decision(viewer) -> None:
     )
     assert app._run_config_form_shown(with_data) is False, (
         "a page already showing a field is offered the Run Config form: those "
-        "five boxes would describe a run nobody is going to start"
+        "eight boxes would describe a run nobody is going to start"
     )
 
     assert app._solve_refused_page(None, no_data) is False, (
@@ -731,7 +811,7 @@ def test_a_page_with_no_data_at_all_may_be_solved(bare_page) -> None:
     """
     assert bare_page.state.run_config_visible is True, (
         "the bare page did not arrive with its Run Config form: the flag the "
-        "five fields' v_if reads starts false, so the boxes would be hidden on "
+        "eight fields' v_if reads starts false, so the boxes would be hidden on "
         "the one page that has nothing else to offer"
     )
     assert bare_page.state.solve_disabled is False, (
@@ -752,11 +832,11 @@ def test_a_page_with_no_data_at_all_may_be_solved(bare_page) -> None:
 
 
 def test_the_clim_select_is_not_gated_with_the_form(bare_page) -> None:
-    """The gate is on the five run fields, not on the Clim Mode select.
+    """The gate is on the eight run fields, not on the Clim Mode select.
 
     Clim Mode changes how a volume is RENDERED, so it is meaningful exactly
     where there is a volume - gating it with the run form would make it dead in
-    the place it matters. The five run fields are the opposite kind of control
+    the place it matters. The eight run fields are the opposite kind of control
     (a run that has not happened) so they carry the ``v_if``; the select must
     not, and both halves are read off the widgets the boot actually emitted.
     """
