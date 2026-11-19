@@ -35,16 +35,23 @@ P4  ``serialize.serialize`` no longer attaches a ``vtkCommand.DeleteEvent``
     gains a *witness* that drops a record for an id that is PROVABLY recycled.
     See the two sections below.
 
-WHY THE CACHE IS KEYED ON ``id()`` AND NOT ON A WEAKREF KEY.  A weakref to a VTK
-array CAN be created (``weakref.ref(vtk.vtkFloatArray())`` works), but the
+WHY THE DIGEST CACHE IS KEYED ON THE POINTER, NOT ON ``id()``.  A weakref to a
+VTK array CAN be created (``weakref.ref(vtk.vtkFloatArray())`` works), but the
 wrapper is UNHASHABLE (``hash(vtkFloatArray())`` raises ``TypeError``), so a
-weakref cannot be a dict key -- ``hash(weakref.ref(obj))`` is
-``hash(obj)``.  The cache therefore keys on ``id(array)`` and validates every hit
-with the weakref it stores in the record: a record only ever answers for the very
-object it was made from, and the weakref's callback drops the record when that
-object dies.  Address reuse is thus harmless; the fingerprint
-(``reference_id``, mtime, shape, type) is kept in the record for diagnostics and
-is the whole key only on the (never observed) path where weakrefs are refused.
+weakref cannot be a dict key -- ``hash(weakref.ref(obj))`` is ``hash(obj)``.
+Keying on ``id(array)`` is the other obvious choice, and it was the first version
+of this patch, but it defeats the cache's only purpose: trame_vtk re-wraps the
+same C++ array on every export (``data.py``'s ``get_array_description`` on a
+``vtkCellArray``, ``GetProperty()``/``GetInput()``-style accessors), so those
+wrappers are short-lived, the record dies with each of them, and the very same
+content is re-MD5'd several times per export (measured 1250 rehashes over 20
+exports of a 50-actor scene, where stock rehashed none).  The cache is therefore
+keyed the way stock keys it -- on ``reference_id``, the C++ pointer -- and a hit
+is validated by the array's shape, its ``GetMTime()`` (monotonic and global in
+VTK) and a three-value content sample; a record that outlives its Python wrapper
+is refreshed with the new wrapper's weakref.  A wrapper at a RECYCLED address
+therefore cannot be answered with the dead array's hash: a newly created array
+has a strictly greater MTime, so it misses and is re-hashed.
 
 WHY THERE IS NO DeleteEvent OBSERVER ANY MORE (DO NOT PUT IT BACK).  Stock
 ``serialize()`` attaches ``lambda *_a, **_k: remove(instance_id)`` as a
@@ -373,24 +380,34 @@ def _verify(mods):
 
 
 def _trim(mapping, cap):
-    """Drop the oldest ``len(mapping) - cap`` entries of an insertion-ordered dict."""
-    excess = len(mapping) - int(cap)
-    if excess <= 0:
-        return 0
-    for key in list(mapping)[:excess]:
-        mapping.pop(key, None)
-    return excess
+    """Drop the oldest ``len(mapping) - cap`` entries of an insertion-ordered dict.
+
+    ``next(iter(mapping))`` and ``pop`` are both O(1), so the cost is one step per
+    entry actually dropped.  The previous version built ``list(mapping)[:excess]
+    first, which materialises EVERY key (20k+ on ``PROP_CACHE``) to drop one or
+    two of them -- and it runs on the export path, per object, so that copy was
+    paid on every frame that overflowed a cache by a single entry.
+    """
+    limit = int(cap)
+    dropped = 0
+    while len(mapping) > limit and mapping:
+        if mapping.pop(next(iter(mapping)), _MISSING) is _MISSING:
+            break
+        dropped += 1
+    return dropped
 
 
-def _forget_record(cache, key):
-    """Weakref callback: the record goes when the object it describes goes."""
+def _weakref_of(obj):
+    """A plain ``weakref`` to ``obj``, or None if it refuses one.  No callback.
 
-    def _forget(ref):
-        record = cache.data.get(key)
-        if record is not None and record["ref"] is ref:
-            cache.data.pop(key, None)
-
-    return _forget
+    Nothing of this module may run when an object is reclaimed (that re-entrancy
+    is the crash P4 removes), so the digest cache's records are not tied to their
+    wrapper's lifetime: they are bounded by the LRU cap and validated per hit.
+    """
+    try:
+        return weakref.ref(obj)
+    except TypeError:  # pragma: no cover - VTK wrappers do support weakrefs
+        return None
 
 
 def _safe_pop(mapping, key):
@@ -415,6 +432,30 @@ def _shape_of(array):
             array.GetNumberOfComponents(),
             array.GetDataType(),
         )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sample_of(array, shape=None):
+    """Three values out of ``array`` -- (size, components, first, middle, last).
+
+    Cheap on purpose (three ``GetComponent`` calls, no traversal): it is the
+    tie-breaker for a cache hit whose stored weakref no longer has a live
+    referent, i.e. for a re-created wrapper at the same address.  ``None`` when
+    the object cannot be sampled, which makes the caller recompute.
+    """
+    try:
+        if shape is None:
+            shape = _shape_of(array)
+        size = int(shape[0])
+        components = int(shape[1])
+        if size <= 0 or components <= 0:
+            return (size, components, None, None, None)
+        values = tuple(
+            array.GetComponent(index // components, index % components)
+            for index in (0, size // 2, size - 1)
+        )
+        return (size, components) + values
     except Exception:  # noqa: BLE001
         return None
 
@@ -519,12 +560,18 @@ def _witness(instance_id, instance) -> bool:
 
 
 class _DigestCache:
-    """``helpers.data_array_sha_mapping``: bounded, identity-validated records.
+    """``helpers.data_array_sha_mapping``: bounded, pointer-keyed records.
 
-    A record answers only for the object it was built from, so a hash can never
-    be handed to a different array -- not even to one that a freed array's
-    address was recycled into.  Entries disappear with their object (weakref
-    callback) and the LRU cap bounds what a long-lived page accumulates.
+    Keyed on the array's C++ pointer (``helpers.reference_id``), like stock, so a
+    re-created Python wrapper for the same C++ array HITS instead of paying
+    another MD5 -- that is the whole point, and keying on ``id(array)`` (the
+    earlier version) missed on every re-wrap.  A record is validated before it
+    answers: same shape, same ``GetMTime()``, and either the same live wrapper or
+    the same three-value content sample.  Records do not die with their wrapper
+    (no weakref callback -- nothing of this module may run during a collection);
+    the LRU cap bounds what a long-lived page accumulates.  Recycling of an
+    address cannot produce a stale answer because VTK's MTime counter is global
+    and monotonic: a newly created array is strictly newer than the dead one.
     """
 
     def __init__(self, maxsize=SHA_CACHE_MAX):
@@ -573,43 +620,39 @@ class _DigestCache:
 
     # -- the cache itself ---------------------------------------------------
     def lookup(self, array, hash_data_array, reference_id):
-        key = id(array)
+        key = _instance_of(array, reference_id)
         try:
             mtime = array.GetMTime()
         except Exception:  # noqa: BLE001 - not something we can key on
             return hash_data_array(array)
+        shape = _shape_of(array)
+        if key is None or shape is None:
+            # Nothing to key on or to validate with: answer, but remember nothing.
+            return hash_data_array(array)
 
         record = self.data.get(key)
-        if record is not None and record["mtime"] == mtime:
+        if record is not None and record["mtime"] == mtime and record["shape"] == shape:
             ref = record["ref"]
-            if ref is not None:
-                if ref() is array:
-                    self.hits += 1
-                    self.data.move_to_end(key)
-                    return record["sha"]
-            elif record["fingerprint"] == (
-                _instance_of(array, reference_id),
-                mtime,
-                _shape_of(array),
-            ):
-                # No weakref available for this object: the fingerprint is the
-                # whole key, so a recorded shape/mtime/pointer triple may answer.
+            owner = ref() if ref is not None else None
+            if owner is array or record["sample"] == _sample_of(array, shape):
+                # Same pointer, same mtime, same shape, same content: the record
+                # answers.  ``owner is not array`` means trame_vtk re-wrapped the
+                # same C++ array -- adopt the new wrapper and keep the record.
                 self.hits += 1
                 self.data.move_to_end(key)
+                if owner is not array:
+                    record["ref"] = _weakref_of(array)
                 return record["sha"]
 
         sha = hash_data_array(array)
         self.recomputed += 1
-        try:
-            ref = weakref.ref(array, _forget_record(self, key))
-        except TypeError:
-            ref = None
         self.data[key] = {
             "sha": sha,
             "mtime": mtime,
-            "ref": ref,
-            "instance": _instance_of(array, reference_id),
-            "fingerprint": (_instance_of(array, reference_id), mtime, _shape_of(array)),
+            "shape": shape,
+            "sample": _sample_of(array, shape),
+            "ref": _weakref_of(array),
+            "instance": key,
         }
         self.data.move_to_end(key)
         while len(self.data) > self.maxsize:

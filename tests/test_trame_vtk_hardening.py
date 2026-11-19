@@ -7,9 +7,11 @@ problem these tests pin:
   tracks (``serializers/serialize.py:44-46``, ``list.remove`` on a plain list) -
   it must become total, and ``DELETE_CALLBACKS`` must keep O(1) membership;
 * ``helpers.data_array_sha_mapping`` is keyed on the array POINTER and never
-  pruned, so it grows without bound AND can answer one array with another
-  array's hash once an address is recycled - it must stay bounded and it must
-  never answer for an object it was not built from;
+  pruned, so it grows without bound AND answers a pointer with whatever hash was
+  stored for it, however old - the map must stay bounded, must never answer with
+  a hash the array's current content does not produce, and must still HIT when
+  trame_vtk re-wraps the same C++ array (it re-wraps on every export, so a cache
+  keyed on the Python object would re-hash every array of every frame);
 * ``helpers.data_table_to_list`` re-unpacks the whole table on every export - an
   unchanged table must be memoised, and the memo must return the same JSON;
 * ``serialize.serialize`` attaches a ``vtkCommand.DeleteEvent`` observer to every
@@ -155,16 +157,23 @@ def test_remove_of_an_unknown_id_does_not_raise_and_a_known_id_is_forgotten(patc
 
 
 def test_the_sha_map_stays_bounded_under_churn(patched):
-    """The unpatched map grows with every array the page ever built."""
+    """The unpatched map grows with every array the page ever built.
+
+    The CAP is what bounds this cache, not wrapper death: a record outlives its
+    Python wrapper on purpose (trame_vtk re-wraps the same C++ array on every
+    export, so dropping a record when its wrapper dies is what made the cache
+    re-hash the same array five times per frame), so the arrays below really do
+    leave records behind and only eviction may remove them.
+    """
     churn = 300
     for index in range(churn):
         array = _float_array(index)
         helpers.digest(array)
         del array  # one tick: the array is gone with the frame it was drawn in
 
-    leaked = len(helpers.data_array_sha_mapping)
-    assert leaked <= 16, (
-        f"the sha map kept {leaked} entries after {churn} dropped arrays: it is "
+    kept = len(helpers.data_array_sha_mapping)
+    assert kept <= hardening.SHA_CACHE_MAX, (
+        f"the sha map kept {kept} entries after {churn} dropped arrays: it is "
         "still growing with the number of arrays the page has ever built"
     )
 
@@ -175,11 +184,15 @@ def test_the_sha_map_stays_bounded_under_churn(patched):
         helpers.digest(array)
     assert len(helpers.data_array_sha_mapping) >= 50
 
-    del held
-    gc.collect()
-    assert len(helpers.data_array_sha_mapping) <= 16, (
-        "the records outlived the arrays they describe"
-    )
+    # Churn it hard: the allocator hands the same addresses back, so the map is
+    # bounded by the number of DISTINCT pointers (and by the cap), never by the
+    # number of arrays the page ever built - and it still answers correctly.
+    for index in range(4 * hardening.SHA_CACHE_MAX):
+        helpers.digest(_float_array(index))
+    assert len(helpers.data_array_sha_mapping) <= hardening.SHA_CACHE_MAX
+    array = _float_array(7.0)
+    assert helpers.digest(array) == helpers.hash_data_array(array)
+    assert len(helpers.data_array_sha_mapping) <= hardening.SHA_CACHE_MAX
 
 
 def test_the_digest_cache_evicts_at_its_cap(patched):
@@ -196,12 +209,13 @@ def test_the_digest_cache_evicts_at_its_cap(patched):
 
 
 def test_a_recycled_address_cannot_be_answered_with_another_arrays_sha(patched):
-    """The real defect: the unpatched map is keyed on the POINTER.
+    """The real defect: the unpatched map is keyed on the POINTER and never checked.
 
-    Once a freed array's address comes back as a different array, the old record
-    answers for it - a stale hash handed to a fresh array.  The hardening keys on
-    ``id()`` but validates with the weakref it stored, so a record only ever
-    answers for the very object it was built from.
+    Once a freed array's address comes back as a different array, stock answers
+    with the record the dead array left behind - a stale hash handed to a fresh
+    array.  The hardening keys on the pointer too (that is what makes re-wrapped
+    arrays hit), but every record is validated by mtime, shape and content, so a
+    fresh array can never be answered with the dead one's hash.
     """
     digests = hardening._DIGEST_CACHE
     digests.clear()
@@ -216,20 +230,142 @@ def test_a_recycled_address_cannot_be_answered_with_another_arrays_sha(patched):
     assert sha_second == helpers.hash_data_array(second)
     assert sha_second != sha_first
 
-    # Forge exactly the record the pointer-keyed implementation would have left
-    # behind: right key, right mtime, and a weakref to a DIFFERENT object.
+    # Forge exactly the record the dead array would have left under the pointer
+    # the new array now answers to: right key, right mtime, right shape, and the
+    # DEAD array's content sample.  Content is what decides, so it must not answer.
     other = _float_array(9.0)
-    digests.data[id(second)] = {
+    pointer = helpers.reference_id(second)
+    digests.data[pointer] = {
         "sha": sha_first,
         "mtime": second.GetMTime(),
+        "shape": hardening._shape_of(second),
+        "sample": hardening._sample_of(other),
         "ref": weakref.ref(other),
-        "instance": helpers.reference_id(second),
-        "fingerprint": (helpers.reference_id(second), second.GetMTime(), None),
+        "instance": pointer,
     }
+    assert hardening._sample_of(other) != hardening._sample_of(second)
     assert helpers.digest(second) != sha_first, (
         "a stale record answered for an array it was not built from"
     )
     assert helpers.digest(second) == sha_second
+
+
+class _FakeArray:
+    """A duck-typed array: two instances can share one C++ pointer and one mtime."""
+
+    def __init__(self, pointer, mtime, values):
+        self.pointer = pointer
+        self.mtime = mtime
+        self.values = values
+
+    def GetMTime(self):
+        return self.mtime
+
+    def GetNumberOfValues(self):
+        return len(self.values)
+
+    def GetNumberOfComponents(self):
+        return 1
+
+    def GetDataType(self):
+        return 10
+
+    def GetComponent(self, tuple_index, component):
+        return self.values[tuple_index]
+
+
+def _counted_digest():
+    """A digest cache plus counting stand-ins for hash/reference_id."""
+    hashed = []
+
+    def hash_data_array(array):
+        hashed.append(array.pointer)
+        return "sha-%s-%s" % (array.pointer, array.values[0])
+
+    def reference_id(array):
+        return array.pointer
+
+    return hardening._DigestCache(maxsize=8), hashed, hash_data_array, reference_id
+
+
+def test_a_re_wrapped_array_hits_instead_of_being_hashed_again(patched):
+    """A second Python wrapper for the same C++ array must not pay another MD5.
+
+    This is the regression that made the cache useless: trame_vtk re-wraps the
+    same C++ array on every export, so a cache keyed on the wrapper misses on
+    every one of those wrappers (measured 1250 rehashes over 20 exports of a
+    50-actor scene) while stock rehashes none.
+    """
+    digests, hashed, hash_data_array, reference_id = _counted_digest()
+
+    wrapper = _FakeArray("0000dead", 7, (1.0, 2.0, 3.0, 4.0))
+    sha = digests.lookup(wrapper, hash_data_array, reference_id)
+    again = _FakeArray("0000dead", 7, (1.0, 2.0, 3.0, 4.0))  # a fresh wrapper
+    assert again is not wrapper
+    assert digests.lookup(again, hash_data_array, reference_id) == sha
+    assert hashed == ["0000dead"], "the re-wrapped array was hashed again"
+    assert (digests.recomputed, digests.hits) == (1, 1)
+    assert len(digests) == 1, "the record was duplicated per wrapper"
+
+
+def test_a_recycled_pointer_is_never_answered_with_a_stale_sha(patched):
+    """Same pointer, same mtime, different content: recompute; later mtime: recompute."""
+    digests, hashed, hash_data_array, reference_id = _counted_digest()
+
+    first = _FakeArray("0000dead", 7, (1.0, 0.0, 0.0, 0.0))
+    digests.lookup(first, hash_data_array, reference_id)
+
+    recycled = _FakeArray("0000dead", 8, (9.0, 0.0, 0.0, 0.0))  # newer array at it
+    assert digests.lookup(recycled, hash_data_array, reference_id).endswith("9.0")
+
+    overwritten = _FakeArray("0000dead", 8, (5.0, 0.0, 0.0, 0.0))  # same mtime!
+    assert digests.lookup(overwritten, hash_data_array, reference_id).endswith("5.0")
+
+    assert hashed == ["0000dead"] * 3
+    assert digests.recomputed == 3 and digests.hits == 0
+
+
+class _CountingDict(dict):
+    """A dict that counts the keys ``iter()`` yields."""
+
+    def __init__(self):
+        super().__init__()
+        self.yielded = 0
+
+    def __iter__(self):
+        for key in super().__iter__():
+            self.yielded += 1
+            yield key
+
+
+def test_trim_drops_one_entry_without_copying_every_key(patched):
+    """``_trim`` runs per exported object: it may not walk the whole cache.
+
+    The old version built ``list(mapping)[:excess]``, so overflowing
+    ``PROP_CACHE`` by ONE entry copied 20 001 keys on that frame's export path.
+    """
+    cap = hardening.PROP_CACHE_MAX
+    mapping = _CountingDict()
+    for index in range(cap + 1):
+        mapping[index] = index
+
+    mapping.yielded = 0
+    assert hardening._trim(mapping, cap) == 1
+
+    assert len(mapping) == cap
+    assert mapping.yielded <= 2, (
+        f"_trim() yielded {mapping.yielded} keys to drop one: it copies the map"
+    )
+    assert 0 not in mapping, "the OLDEST entry is the one that must go"
+    assert (cap - 1) in mapping and cap in mapping
+
+    # And it is still a cap, not a one-shot: an empty and an under-cap map are
+    # left alone.
+    assert hardening._trim(_CountingDict(), cap) == 0
+    under = _CountingDict()
+    under.update({index: index for index in range(3)})
+    assert hardening._trim(under, cap) == 0
+    assert len(under) == 3
 
 
 # ---------------------------------------------------------------------------
