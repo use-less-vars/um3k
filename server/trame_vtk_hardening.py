@@ -30,6 +30,10 @@ P2  ``helpers.digest`` gets an identity-validated, LRU-capped cache (it can neve
     evict what has stopped being serialized.
 P3  ``helpers.data_table_to_list`` is memoised on (identity, mtime) and returns an
     immutable tuple-of-tuples -- the same JSON as the list-of-lists it replaces.
+P4  ``serialize.serialize`` no longer attaches a ``vtkCommand.DeleteEvent``
+    observer to every object it exports (``serialize.py:27-31``); ``cache.PROP_CACHE``
+    gains a *witness* that drops a record for an id that is PROVABLY recycled.
+    See the two sections below.
 
 WHY THE CACHE IS KEYED ON ``id()`` AND NOT ON A WEAKREF KEY.  A weakref to a VTK
 array CAN be created (``weakref.ref(vtk.vtkFloatArray())`` works), but the
@@ -41,6 +45,45 @@ object it was made from, and the weakref's callback drops the record when that
 object dies.  Address reuse is thus harmless; the fingerprint
 (``reference_id``, mtime, shape, type) is kept in the record for diagnostics and
 is the whole key only on the (never observed) path where weakrefs are refused.
+
+WHY THERE IS NO DeleteEvent OBSERVER ANY MORE (DO NOT PUT IT BACK).  Stock
+``serialize()`` attaches ``lambda *_a, **_k: remove(instance_id)`` as a
+``vtkCommand.DeleteEvent`` observer to EVERY object it exports, and a page that
+re-draws every tick exports thousands of short-lived Python wrappers per frame
+(``GetTable()``, ``GetProperty()``, ``GetInput()`` and friends).  When a garbage
+collection reclaims one of those wrappers the VTK destructor fires the event and
+VTK calls back into Python: ``remove()`` runs dict/list surgery from inside a
+destructor, during a collection pass, while ``vtkPythonCommand`` is also dropping
+the callable it holds.  That re-entrancy is the landmine this module used to step
+on: the first crash died inside ``helpers.data_table_to_list`` (the allocation
+storm P3 removes); with that storm gone the next collection to happen was in the
+state-flush/publish path (``state.flush`` -> ``protocol.push_state_change`` ->
+``wslink.publish`` -> the serializer's lambda -> Garbage-collecting) and it died
+there instead.  P1 made the callback raise-proof, which was never enough: it must
+not run at all.  So ``serialize()`` does not attach it.
+
+WHAT REPLACES THE OBSERVER.  Nothing is told that an object died, and nothing
+runs during a collection: the witness ``serialize()`` records is a plain
+``weakref`` with NO callback, so reclaiming an object cannot re-enter this module
+at all.  Invalidation instead rides on the properties the caches already have:
+they are BOUNDED (nothing accumulates for a long-lived page), and
+``cache.PROP_CACHE`` drops an id at the next export, from ordinary Python, when
+that id is PROVABLY recycled -- i.e. when it is claimed by a different live
+wrapper, or by a different class, than the one that cached it.  What is
+deliberately NOT done is dropping the record merely because the wrapper died:
+trame_vtk re-wraps the same C++ object on every export (``GetProperty()``,
+``GetLookupTable()``, ``GetInput()`` and friends hand back a fresh short-lived
+wrapper), so wrapper death is the normal case and not a death certificate.
+Treating it as one re-sends every object's full property set on every frame --
+measured 17,167 B -> 23,629 B on a two-export scene, i.e. the delta protocol
+defeated.  The residual case is accepted and named here: a new object at a
+recycled address OF THE SAME CLASS can be answered with a delta computed against
+the dead object's values.  That is a short property set, never a crash, and it
+clears as soon as that object changes.
+
+``DELETE_CALLBACKS``, ``remove()`` and ``remove_from_cache()`` still exist and
+still work (they are part of ``serialize``'s surface); nothing drives them from
+destruction any more, so ``DELETE_CALLBACKS`` simply stays empty.
 
 FAIL SAFE.  ``install()`` verifies every attribute it means to wrap -- existence,
 kind, callable, defining module, signature -- BEFORE it patches anything.  Any
@@ -95,6 +138,9 @@ _CTX_MEMBERS = (
 #: verified through ``__init__``'s code object, not with ``hasattr`` on the class.
 _CTX_STATE = ("data_array_cache",)
 
+#: Attributes of ``serialize`` the P4 replacement reads at call time.
+_SERIALIZE_GLOBALS = ("SERIALIZERS", "class_name", "NO_SERIALIZER_FOR_INSTANCE", "logger")
+
 _MISSING = object()
 
 #: (module key, attribute, kind, expected leading parameter names)
@@ -118,12 +164,13 @@ _SPEC = (
 
 #: The names reported back in ``report["patches"]``.
 _PATCHES = (
+    "serialize.serialize(no observer, PROP_CACHE dropped on recycling)",
     "serialize.remove",
     "serialize.DELETE_CALLBACKS",
     "helpers.digest",
     "helpers.data_array_sha_mapping",
     "helpers.data_table_to_list",
-    "cache.cache_properties(PROP_CACHE)",
+    "cache.cache_properties(PROP_CACHE cap)",
     "sync.SynchronizationContext.data_array_cache",
 )
 
@@ -137,6 +184,12 @@ _RESTORE: list = []
 #: new value of ``helpers.data_array_sha_mapping``.
 _DIGEST_CACHE = None
 _TABLE_CACHE = None
+
+#: ``instance_id`` (pointer string) -> ``(weakref to the wrapper that claimed it,
+#: that wrapper's class name)``, or ``(_UNWITNESSED, name)`` when no weakref could
+#: be taken.  This is what P4 uses instead of a ``DeleteEvent`` observer.
+_WITNESS: dict = {}
+_UNWITNESSED = object()
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +357,13 @@ def _verify(mods):
             for member in _CTX_STATE:
                 if not hasattr(obj, member) and member not in init_names:
                     problems.append(f"{where}.{member}: missing")
+
+    # P4's replacement dispatches through these globals of ``serialize``.
+    serialize_mod = mods.get("serialize")
+    if serialize_mod is not None:
+        for attribute in _SERIALIZE_GLOBALS:
+            if not hasattr(serialize_mod, attribute):
+                problems.append(f"{_MODULES['serialize']}.{attribute}: missing")
     return problems
 
 
@@ -331,6 +391,14 @@ def _forget_record(cache, key):
             cache.data.pop(key, None)
 
     return _forget
+
+
+def _safe_pop(mapping, key):
+    """``mapping.pop(key, None)`` that cannot raise into a serializer."""
+    try:
+        mapping.pop(key, None)
+    except Exception:  # noqa: BLE001 - a cache lookup must never break an export
+        pass
 
 
 def _instance_of(array, reference_id):
@@ -408,6 +476,41 @@ class _IdRegistry(list):
         for instance_id in self[:excess]:
             self._ids.discard(instance_id)
         del self[:excess]
+
+
+# ---------------------------------------------------------------------------
+# P4 -- the witness that replaces the DeleteEvent observer
+# ---------------------------------------------------------------------------
+
+
+def _witness(instance_id, instance) -> bool:
+    """Record that ``instance`` owns ``instance_id``; True if the id is PROVABLY recycled.
+
+    No callback is attached to the weakref on purpose: nothing of this module may
+    run when an object is reclaimed (that re-entrancy is the crash P4 removes).
+    A dead wrapper is not a death certificate either -- trame_vtk re-wraps the
+    same C++ object on every export -- so only proof of recycling drops the
+    record: a DIFFERENT live owner for one address, or a different class at it.
+    """
+    entry = _WITNESS.get(instance_id, _MISSING)
+    recycled = False
+    if entry is not _MISSING:
+        ref, owner_type = entry
+        if ref is not _UNWITNESSED:
+            owner = ref()
+            if owner is instance:
+                return False  # the same live wrapper: nothing to record
+            if owner is not None:
+                recycled = True  # two live wrappers cannot own one address
+        if not recycled and owner_type != type(instance).__name__:
+            recycled = True
+    try:
+        record = (weakref.ref(instance), type(instance).__name__)
+    except TypeError:  # pragma: no cover - VTK wrappers do support weakrefs
+        record = (_UNWITNESSED, type(instance).__name__)
+    _WITNESS[instance_id] = record
+    _trim(_WITNESS, PROP_CACHE_MAX)
+    return recycled
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +730,37 @@ def _apply(mods):
     serialize_mod.remove = remove
     _RESTORE.append((serialize_mod, "remove", original_remove))
 
+    # -- P4: serialize() without the DeleteEvent observer ---------------------
+    original_serialize = serialize_mod.serialize
+    _WITNESS.clear()
+
+    def serialize(parent, instance, instance_id, context, depth):
+        """``serialize.serialize`` minus the per-object ``DeleteEvent`` observer.
+
+        Stock ``serialize`` attaches ``lambda: remove(instance_id)`` as a Python
+        ``DeleteEvent`` observer to every object it exports, which fires from a
+        VTK destructor during garbage collection.  That attachment is the crash;
+        cache invalidation is carried by the bounded/identity-validated caches
+        and by the witness recorded here instead (see the module docstring).
+        """
+        if _witness(instance_id, instance):
+            _safe_pop(cache_mod.PROP_CACHE, instance_id)
+        instance_type = serialize_mod.class_name(instance)
+        serializer = serialize_mod.SERIALIZERS.get(instance_type, None)
+        if serializer:
+            return serializer(parent, instance, instance_id, context, depth)
+        if instance_type not in serialize_mod.NO_SERIALIZER_FOR_INSTANCE:
+            serialize_mod.logger.warning(
+                "!!!No serializer for %s with id %s", instance_type, instance_id
+            )
+            serialize_mod.NO_SERIALIZER_FOR_INSTANCE[instance_type] = instance_id
+        return None
+
+    serialize.__doc__ = original_serialize.__doc__
+    serialize_mod.serialize = serialize
+    _RESTORE.append((serialize_mod, "serialize", original_serialize))
+    _rebind(original_serialize, serialize)
+
     # -- P2: digest ----------------------------------------------------------
     _DIGEST_CACHE = _DigestCache(SHA_CACHE_MAX)
     original_digest = helpers_mod.digest
@@ -658,11 +792,11 @@ def _apply(mods):
     _RESTORE.append((helpers_mod, "data_table_to_list", original_table_to_list))
     _rebind(original_table_to_list, data_table_to_list)
 
-    # -- P2: PROP_CACHE ------------------------------------------------------
+    # -- P2: PROP_CACHE (cap) ------------------------------------------------
     original_cache_properties = cache_mod.cache_properties
 
     def cache_properties(obj_id, ctx, props):
-        """``cache.cache_properties`` with the module cache held under its cap."""
+        """``cache.cache_properties`` with ``PROP_CACHE`` capped."""
         delta = original_cache_properties(obj_id, ctx, props)
         _trim(cache_mod.PROP_CACHE, PROP_CACHE_MAX)
         return delta
@@ -750,6 +884,7 @@ def uninstall():
     for cache in (_DIGEST_CACHE, _TABLE_CACHE):
         if cache is not None:
             cache.clear()
+    _WITNESS.clear()
     _STATE["installed"] = False
     _STATE["report"] = None
     return {"status": "uninstalled", "was_installed": was_installed}

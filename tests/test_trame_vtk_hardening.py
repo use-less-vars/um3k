@@ -11,7 +11,12 @@ problem these tests pin:
   array's hash once an address is recycled - it must stay bounded and it must
   never answer for an object it was not built from;
 * ``helpers.data_table_to_list`` re-unpacks the whole table on every export - an
-  unchanged table must be memoised, and the memo must return the same JSON.
+  unchanged table must be memoised, and the memo must return the same JSON;
+* ``serialize.serialize`` attaches a ``vtkCommand.DeleteEvent`` observer to every
+  object it exports (``serializers/serialize.py:27-31``), and that Python
+  callback runs from a VTK destructor during garbage collection - it must not be
+  attached at all, and nothing may be lost by not attaching it (no stale cached
+  properties, no unbounded bookkeeping).
 
 Everything here is behaviour of the installed hardening, not of trame_vtk: the
 patches are applied by ``install()`` and are undoable, so each test states the
@@ -52,6 +57,7 @@ import importlib  # noqa: E402
 import trame_vtk_hardening as hardening  # noqa: E402  (after the importorskip guards)
 import vtkmodules.vtkCommonCore as vtk_core  # noqa: E402
 from trame_vtk.modules.vtk.serializers import cache, helpers  # noqa: E402
+from trame_vtk.modules.vtk.serializers import initialize_serializers  # noqa: E402
 from trame_vtk.modules.vtk.serializers import synchronization_context as sync  # noqa: E402
 
 #: ``from ...serializers import serialize`` would hand back the FUNCTION of that
@@ -60,12 +66,13 @@ serialize = importlib.import_module("trame_vtk.modules.vtk.serializers.serialize
 
 #: Everything ``install()`` reports having replaced, by name.
 EXPECTED_PATCHES = {
+    "serialize.serialize(no observer, PROP_CACHE dropped on recycling)",
     "serialize.remove",
     "serialize.DELETE_CALLBACKS",
     "helpers.digest",
     "helpers.data_array_sha_mapping",
     "helpers.data_table_to_list",
-    "cache.cache_properties(PROP_CACHE)",
+    "cache.cache_properties(PROP_CACHE cap)",
     "sync.SynchronizationContext.data_array_cache",
 }
 
@@ -257,6 +264,199 @@ def test_data_table_to_list_memoises_an_unchanged_table(patched):
         for index in range(len(values) // components)
     ]
     assert [list(row) for row in first] == expected
+
+
+# ---------------------------------------------------------------------------
+# P4 - no DeleteEvent observer, and nothing is lost by not attaching one
+# ---------------------------------------------------------------------------
+
+#: ``vtkCommand.DeleteEvent`` as the int ``AddObserver``/``HasObserver`` take.
+_DELETE_EVENT = int(vtk_core.vtkCommand.DeleteEvent)
+
+
+def _scene():
+    """A tiny real render window: source -> mapper -> actor -> property -> renderer."""
+    import vtk
+
+    source = vtk.vtkSphereSource()
+    source.SetThetaResolution(16)
+    source.SetPhiResolution(16)
+    mapper = vtk.vtkPolyDataMapper()
+    mapper.SetInputConnection(source.GetOutputPort())
+    actor = vtk.vtkActor()
+    actor.SetMapper(mapper)
+    renderer = vtk.vtkRenderer()
+    renderer.AddActor(actor)
+    window = vtk.vtkRenderWindow()
+    window.AddRenderer(renderer)
+    return {
+        "source": source,
+        "mapper": mapper,
+        "actor": actor,
+        "property": actor.GetProperty(),
+        "renderer": renderer,
+        "window": window,
+    }
+
+
+def _context():
+    """A fresh export context, with the serializers registered exactly once."""
+    initialize_serializers()
+    return sync.SynchronizationContext()
+
+
+def test_exporting_a_real_window_attaches_no_delete_observer(patched):
+    """Stock ``serialize`` puts a Python ``DeleteEvent`` callback on every object."""
+    scene = _scene()
+    payload = serialize.serialize(None, scene["window"], "1", _context(), 1)
+
+    assert payload["id"] == "1"
+    blob = json.dumps(payload, default=str)
+    exported = {
+        name: instance
+        for name, instance in scene.items()
+        if helpers.reference_id(instance) in blob
+    }
+    assert len(exported) >= 4, f"only {sorted(exported)} was exported; the test proves little"
+
+    for name, instance in exported.items():
+        assert instance.HasObserver(_DELETE_EVENT) == 0, (
+            f"exporting the {name} attached a DeleteEvent observer to it: that callback "
+            "runs from a VTK destructor during garbage collection"
+        )
+    assert serialize.DELETE_CALLBACKS == [], (
+        f"stock serialize() appended {len(serialize.DELETE_CALLBACKS)} ids to "
+        "DELETE_CALLBACKS; the observer is still being attached"
+    )
+
+    # Positive control: HasObserver really does report an observer when one exists.
+    import vtk
+
+    control = vtk.vtkSphereSource()
+    control.AddObserver(_DELETE_EVENT, lambda *_a, **_k: None)
+    assert control.HasObserver(_DELETE_EVENT) == 1, "HasObserver cannot see an observer"
+    control.RemoveAllObservers()
+    assert control.HasObserver(_DELETE_EVENT) == 0
+
+
+def test_a_scene_can_be_built_exported_and_collected_over_and_over(patched):
+    """The page's loop, shrunk: build a window, export it, drop it, collect."""
+    context = _context()
+    before = len(cache.PROP_CACHE)
+
+    for _ in range(5):
+        scene = _scene()
+        payload = serialize.serialize(None, scene["window"], "1", context, 1)
+        assert payload["dependencies"], "the window exported nothing to cache"
+        del scene, payload
+        gc.collect()
+
+    assert len(cache.PROP_CACHE) > before, "the exports cached nothing; this proves little"
+    assert len(cache.PROP_CACHE) <= 20000
+    assert len(helpers.data_array_sha_mapping) <= 16
+    assert serialize.DELETE_CALLBACKS == []
+    assert len(context.data_array_cache) <= 4096
+
+
+def test_a_recycled_id_of_another_class_gets_the_full_property_set(patched):
+    """Dropping the observer must not let a recycled id inherit stale properties.
+
+    A dead wrapper is NOT proof of death (trame_vtk re-wraps the same C++ object on
+    every export), so the witness only drops the ``PROP_CACHE`` record when it can
+    PROVE recycling - here, a different class claiming a known id.  Without that
+    drop the new object would be answered with a delta against the dead one's
+    values: a short ``properties`` dict, silently wrong on the client.
+    """
+    import vtk
+
+    context = _context()
+    # State it needs, not inherited: a cold PROP_CACHE makes the first export full.
+    cache.PROP_CACHE.clear()
+    hardening._WITNESS.clear()
+    scene = _scene()  # a bare vtkActor serialises to None; it needs a mapper
+    actor = scene["actor"]
+
+    first = vtk.vtkLight()
+    light_id = helpers.reference_id(first)
+    payload = serialize.serialize(None, first, light_id, context, 1)
+
+    full = payload["properties"]
+    assert len(full) > 5, f"the light serializer emitted only {sorted(full)}"
+    assert hardening._WITNESS[light_id][0]() is first, "the export left no witness behind"
+    assert cache.PROP_CACHE[light_id] == full, "the export cached nothing to go stale"
+
+    del first
+    gc.collect()
+    assert hardening._WITNESS[light_id][0]() is None, "the witness outlived its object"
+
+    recycled = serialize.serialize(None, actor, light_id, context, 1)
+    fresh = serialize.serialize(None, actor, "an-id-nobody-used-before", context, 1)
+
+    assert recycled["properties"] == fresh["properties"], (
+        "the recycled id was answered with a delta against a dead object's values"
+    )
+    assert len(recycled["properties"]) > 5, (
+        f"the actor declared only {sorted(recycled['properties'])}"
+    )
+
+
+def _property_dicts(payload):
+    """Every ``properties`` dict in a payload, keyed by the id it belongs to."""
+    found = {}
+
+    def walk(node):
+        if isinstance(node, dict):
+            properties = node.get("properties")
+            if isinstance(properties, dict) and "id" in node:
+                found[node["id"]] = properties
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload)
+    return found
+
+
+def test_a_second_export_of_an_unchanged_window_is_still_a_delta(patched):
+    """The point of ``PROP_CACHE``: an unchanged object costs ``{}`` per frame.
+
+    Whatever replaces the observer may not turn every frame into a full re-send.
+    The parity test measures the payload in bytes; this pins the mechanism, so a
+    regression names itself instead of showing up as a doubled frame.
+    """
+    context = _context()
+    # State it needs, not inherited: a cold PROP_CACHE makes the first export full
+    # and the second one all-deltas, whatever the earlier tests cached.
+    cache.PROP_CACHE.clear()
+    hardening._WITNESS.clear()
+    scene = _scene()
+
+    first = serialize.serialize(None, scene["window"], "1", context, 1)
+    second = serialize.serialize(None, scene["window"], "1", context, 1)
+
+    before, after = _property_dicts(first), _property_dicts(second)
+
+    # Only the nodes that go through ``cache.cache_properties`` can be deltas: a
+    # render window, a renderer and a camera re-send a fixed property set every
+    # frame by design (their serializers do not consult PROP_CACHE at all).
+    cached = {
+        "actor": helpers.reference_id(scene["actor"]),
+        "mapper": helpers.reference_id(scene["mapper"]),
+        "property": helpers.reference_id(scene["property"]),
+        "lookup table": helpers.reference_id(scene["mapper"].GetLookupTable()),
+    }
+    for name, obj_id in cached.items():
+        assert before.get(obj_id), f"the {name} declared no properties on the first export"
+        assert after.get(obj_id) == {}, (
+            f"the unchanged {name} was re-sent in full on the second export "
+            f"({sorted(after.get(obj_id) or ())}): the delta protocol is not in effect"
+        )
+
+    assert len(json.dumps(second)) < len(json.dumps(first)), (
+        "the second export is no smaller than the first: nothing was sent as a delta"
+    )
 
 
 # ---------------------------------------------------------------------------
