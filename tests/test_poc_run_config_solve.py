@@ -274,7 +274,7 @@ def test_the_eight_form_values_reach_the_solver(viewer) -> None:
         pulse_freq_ghz="10",
         xcut_near_mm="18",
         xcut_far_mm="21",
-        n_line="40",
+        n_line="44",
     )
     assert job is not None, (
         "the press spawned nothing, so the eight boxes went nowhere: "
@@ -288,7 +288,7 @@ def test_the_eight_form_values_reach_the_solver(viewer) -> None:
         ("--xcut-near-mm", "18"),
         ("--xcut-far-mm", "21"),
         ("--dump-stride", "3"),
-        ("--n-line", "40"),
+        ("--n-line", "44"),
         ("--volume-frames", "7"),
     ):
         assert flag in argv, (

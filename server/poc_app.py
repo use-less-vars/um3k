@@ -14343,6 +14343,50 @@ def _volume_clim_warning(mode) -> str:
     return ""
 
 
+# How many cells the box may put on the line. The grid is nx = n_pml(6) + n_ref(2)
+# + n_line wide, so n_line decides how wide the board is.
+# Floor 43: the board has to enclose the near cut and the load column, which at the
+# box's DEFAULT cut/load position sit at column 51 (20.4 mm / 0.4 mm cell); moving the
+# cut further out raises this floor.
+# Ceiling 116: 124 columns is twice the reference board's 62, and nobody has a reason
+# to ask this machine for more.
+RUN_N_LINE_MIN = 43
+RUN_N_LINE_MAX = 116
+RUN_N_LINE_REFERENCE = 54
+RUN_N_LINE_REFERENCE_CELLS = 289168
+RUN_MESH_NX_OFFSET = 8      # n_pml 6 + n_ref 2: columns the line does not own
+RUN_MESH_NY = 212           # 2*n_pml 6 + n_strip 8 + 2*n_clean 96
+RUN_MESH_NZ = 22            # n_sub 4 + n_air 12 + n_top 6
+
+
+def _run_n_line_board(n_line) -> str:
+    """One sentence: the board this many cells on the line buys, and how it compares."""
+    try:
+        value = int(n_line)
+    except (TypeError, ValueError):
+        return (
+            f"n_line: {n_line!r} is not a whole number of cells "
+            f"({RUN_N_LINE_MIN}-{RUN_N_LINE_MAX})"
+        )
+    nx = RUN_MESH_NX_OFFSET + value
+    cells = nx * RUN_MESH_NY * RUN_MESH_NZ
+    ratio = cells / float(RUN_N_LINE_REFERENCE_CELLS)
+    board = (
+        f"board {nx} x {RUN_MESH_NY} x {RUN_MESH_NZ} = {cells:,} cells, "
+        f"{ratio:.1f}x the {RUN_N_LINE_REFERENCE_CELLS:,}-cell reference mesh"
+    )
+    if value > RUN_N_LINE_MAX:
+        return f"{board} - over the {RUN_N_LINE_MAX}-cell ceiling, the press will refuse"
+    if value < RUN_N_LINE_MIN:
+        return (
+            f"{board} - under the {RUN_N_LINE_MIN}-cell floor, the grid would cut the "
+            "near cut, the press will refuse"
+        )
+    if value == RUN_N_LINE_REFERENCE:
+        return f"{board} (the shipped default)"
+    return board
+
+
 #: The Run Config form's eight controls, as ONE table: the state name the browser
 #: writes, the label it reads, and the ``emfit.config.RunConfig`` field that names
 #: the default. The emit loop, the boot values and the drift test all walk this,
@@ -14503,9 +14547,20 @@ def run_config_from_form(values) -> "RunConfig":
         if value is not None:
             kwargs[field_name] = value
     try:
-        return RunConfig(**kwargs)
+        config = RunConfig(**kwargs)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"run config refused: {exc}") from None
+    # n_line is a MESH, and both ends of its board are physics, not taste (see
+    # RUN_N_LINE_MIN / RUN_N_LINE_MAX). RunConfig only checks that it IS a whole
+    # number of cells, so the range is enforced HERE, on the value it returned -
+    # one place, AFTER the defaults are filled in, so a blank box (54) and a
+    # typed 54 are the same press. The refusal names the board, and the solve
+    # trigger already turns a ValueError into the page's own refusal sentence.
+    if not RUN_N_LINE_MIN <= int(config.n_line) <= RUN_N_LINE_MAX:
+        raise ValueError(
+            f"run config refused: {_run_n_line_board(config.n_line)}"
+        )
+    return config
 
 
 def _run_config_argv(config) -> list[str]:
@@ -15711,8 +15766,13 @@ def run_web_vis(
     # field that started at a number this file invented would make every run that
     # did not retype it a run nobody specified. Initialised beside the mode for the
     # same reason - the first paint reads them.
-    for _run_state_name, _run_default in _run_config_defaults().items():
+    _run_defaults = _run_config_defaults()
+    for _run_state_name, _run_default in _run_defaults.items():
         setattr(state, _run_state_name, _run_default)
+    # The board BESIDE the box, at the same default the box boots with: read on
+    # the very first paint, so the range is explained before the first press -
+    # a note that only appeared once somebody typed would explain nothing.
+    state.run_n_line_note = _run_n_line_board(_run_defaults.get("run_n_line"))
 
     # The Confidence & Accuracy pane: TEXT, prose rather than a picture. Its tab
     # owns its visibility, so (like the S-parameters pane) there is no style
@@ -17989,6 +18049,22 @@ def run_web_vis(
                 file=sys.stderr,
             )
 
+    # n_line: the board-size note under the box. Same shape as the Grid box above.
+    @state.change("run_n_line")
+    def _on_run_n_line(**_kwargs) -> None:
+        """Re-describe the n_line board for the box the browser just wrote.
+
+        TEXT ONLY: no solve, no redraw, no spawn - the box describes the NEXT
+        run, and typing in it must not start one. NEVER raises: it fires on the
+        first browser write, possibly before the note exists.
+        """
+        try:
+            state.run_n_line_note = _run_n_line_board(
+                _kwargs.get("run_n_line", state.run_n_line)
+            )
+        except Exception as exc:  # noqa: BLE001 - a note is not worth the page
+            print(f"[poc_app] n_line note ignored: {exc}", file=sys.stderr)
+
     # The Substrate slider. Same rule as the Grid box above it: the widget only
     # WRITES the flag, and the slab on screen is moved HERE, so a tick never
     # re-cuts, rebuilds or re-solves anything.
@@ -18467,6 +18543,16 @@ def run_web_vis(
                     density="compact",
                     hide_details=True,
                     classes="mb-1",
+                )
+            # The board the LAST box must stay on, under the boxes it annotates:
+            # the same sentence the refusal and the change handler produce, so the
+            # range shown is the range enforced. Under the SAME flag the boxes
+            # carry, so a page that has put the form away keeps no note about it.
+            if html_div is not None:
+                html_div(
+                    "{{ run_n_line_note }}",
+                    v_if=("run_config_visible", True),
+                    style="font-size: 11px; color: #555; padding: 2px 0;",
                 )
 
         # The SOLVE form, in its OWN guarded block: a binding failure here costs
