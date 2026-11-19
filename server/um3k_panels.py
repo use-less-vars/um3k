@@ -418,7 +418,15 @@ def build_right_panel(ctx) -> None:
             "font-size: 13px; line-height: 1.4;"
         )
     ):
-        html_div("{{ structure_readout }}")
+        html_div(
+            "{{ structure_readout }}",
+            # The readout is this strip's one long, unbroken string (a page
+            # path), so it wraps INSIDE the box instead of being cut mid-word.
+            style=(
+                "font-size: 11px; line-height: 1.35; white-space: pre-wrap; "
+                "overflow-wrap: anywhere; word-break: break-word;"
+            ),
+        )
         html_div("{{ t_label }}")
         html_div("{{ mode_label }}")
         html_div("{{ phase_label }}")

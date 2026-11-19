@@ -230,6 +230,9 @@ COLOR_PERCENTILE = 99.5
 # Cell edges ON for the animated field sheets. A smooth-shaded sheet hides the
 # grid the field is sampled on, so a coarse dump reads as a continuous picture
 # and the eye cannot tell one cell from the interpolation between two of them.
+# WHETHER, not WHICH: the colour and width below cannot fix the density this
+# switch is now blamed for - on a cut sheet ~212 hairlines read as a MESH laid
+# over the field, and no toggle exists yet, so this value is the default only.
 # Only the field sheets get this: the overlay boxes are decoration, not data.
 VIS_SHOW_EDGES = True
 # WHAT that mesh is drawn IN, now that it is on. A near-black cell edge reads as
@@ -12042,12 +12045,12 @@ def _vis_geometry(plotter, info: dict, planes=None) -> None:
 
     if np.isfinite(substrate_h) and substrate_h > 0.0:
         try:
-            # 0.3, not a solid: the ground plane under it and whatever field is
-            # inside the dielectric have to stay visible THROUGH it.
+            # 0.10, not 0.3: at 0.3 the box read as a PALE SLAB that dimmed the
+            # ground plane and the field inside the dielectric, not as a casing.
             plotter.add_mesh(
                 pv.Box(bounds=(0.0, x_span, 0.0, y_span, 0.0, substrate_h)),
                 color="steelblue",
-                opacity=0.3,
+                opacity=0.10,
                 name="substrate",
             )
         except Exception as exc:  # noqa: BLE001 - losing one box is survivable
@@ -15275,7 +15278,7 @@ def run_web_vis(
         _apply_msaa(plotter, msaa)
     plotter.set_background("white")
     try:
-        plotter.add_axes(xlabel="x [mm]", ylabel="y [mm]", zlabel="z [mm]")
+        plotter.add_axes(xlabel="x", ylabel="y", zlabel="z")
     except Exception as exc:  # noqa: BLE001 - decoration only
         print(f"[poc_app] axes not drawn: {exc}", file=sys.stderr)
 
@@ -16795,8 +16798,8 @@ def run_web_vis(
                         # Square on to the x-z sheet the substrate is edge-on and
                         # would cover the field it is meant to annotate, so it is
                         # dimmed (and outlined) only for this family.
-                        actor.prop.opacity = 0.15
-                        actor.prop.show_edges = True
+                        actor.prop.opacity = 0.08
+                        actor.prop.show_edges = VIS_SHOW_EDGES
                     else:
                         actor.prop.opacity = drawn_opacity
                 except Exception as exc:  # noqa: BLE001 - decoration only
@@ -19357,7 +19360,7 @@ def run_web_vis(
                                 build_left_panel(ctx)
                             with VCol(
                                 style=(
-                                    "flex: 1 1 0; min-width: 240px; "
+                                    "flex: 1 1 0; min-width: 0; "
                                     "min-height: 0; height: 100%;"
                                 )
                             ):
