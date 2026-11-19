@@ -46,6 +46,14 @@ The four claims appended below are the P2b repair, made on the same terms:
 (h) that dump is opt-in through ``POC_DUMP_ACTORS``, resolved ONCE at import,
     and it spends its one-shot flag BEFORE it prints, so a dump that raises
     halfway is never retried on every tick.
+
+The one claim appended below is the P2c repair, on the same terms:
+
+(i) every flat field sheet is drawn on a VISIBLE mesh - it passes
+    ``edge_color=VIS_EDGE_COLOR`` and ``line_width=VIS_EDGE_WIDTH`` on its own
+    call, those two constants keep the values the lattice was tuned to, and NO
+    other ``add_mesh`` call passes them, because the geometry under the sheets
+    already draws its own edges.
 """
 
 from __future__ import annotations
@@ -443,3 +451,101 @@ def test_the_actor_dump_is_opt_in_at_import_and_spent_before_it_prints():
         "raises halfway is retried on every tick, at full volume"
     )
 
+
+# ---------------------------------------------------------------------------
+# P2c: the field sheet is drawn on a MESH THE READER CAN SEE - a pale lattice.
+#
+# A flat turbo field is one colour per cell, so on screen the mesh is the only
+# evidence of how coarse the discretisation is. P2c asks for that evidence: the
+# edge colour and width on every sheet, and on NOTHING else - the geometry under
+# the sheets already draws its own edges, and a second set over it is noise.
+# ---------------------------------------------------------------------------
+
+
+def test_every_field_sheet_carries_the_cell_lattice_and_nothing_else_does():
+    """(i) The three field sheets pass the lattice constants; no other call does.
+
+    The colour and the width are named CONSTANTS rather than literals at the
+    call sites, so the plane can be retuned in one place - which is only true if
+    the call sites pass those NAMES and not a copy of their values.
+    """
+    source = _source()
+    tree = ast.parse(source)
+    sheets = _scalar_sheets(source)
+    assert len(sheets) == 3, (
+        f"{len(sheets)} flat field sheets found at lines "
+        f"{[line for line, _ in sheets]}, not three: the selection has drifted "
+        "off the page's three field sites, so the claims below are about some "
+        "other call"
+    )
+
+    constants = {
+        target.id: node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    for name in ("VIS_SHOW_EDGES", "VIS_EDGE_COLOR", "VIS_EDGE_WIDTH"):
+        assert name in constants, (
+            f"no MODULE-LEVEL {name!r} assignment in {POC_APP.name}: the sheet "
+            "call sites pass a name that does not resolve to the lattice, or a "
+            "literal that cannot be retuned in one place"
+        )
+    assert ast.literal_eval(constants["VIS_SHOW_EDGES"]) is True, (
+        "'VIS_SHOW_EDGES' is not True: the lattice the user asked to see is "
+        "switched off, and a sheet with no edges looks exactly like a field "
+        "whose cells are too small to matter - the reading it must not invite"
+    )
+    assert ast.literal_eval(constants["VIS_EDGE_COLOR"]) == "#b8c4d0", (
+        f"'VIS_EDGE_COLOR' is {ast.literal_eval(constants['VIS_EDGE_COLOR'])!r}, "
+        "not the pale grey the lattice was tuned to: a near-black edge over a "
+        "turbo field reads as a LATTICE of its own, not as the mesh the field "
+        "is drawn on"
+    )
+    assert ast.literal_eval(constants["VIS_EDGE_WIDTH"]) == 0.4, (
+        f"'VIS_EDGE_WIDTH' is {ast.literal_eval(constants['VIS_EDGE_WIDTH'])!r}, "
+        "not 0.4: at a readable width the edges start to win against the field "
+        "they are only supposed to describe"
+    )
+
+    missing = [
+        line
+        for line, segment in sheets
+        if "edge_color=VIS_EDGE_COLOR" not in segment
+        or "line_width=VIS_EDGE_WIDTH" not in segment
+    ]
+    assert not missing, (
+        f"the field sheet call(s) at line(s) {missing} do not pass BOTH "
+        "edge_color=VIS_EDGE_COLOR and line_width=VIS_EDGE_WIDTH on their OWN "
+        "call: the mesh is invisible again there, or its width is vtk's default"
+    )
+
+    # The mode picture is the ONE sheet that keeps ``show_edges=False``: it is
+    # the coarse companion view, and P2c asked for the mesh on the field sheets,
+    # not for a second lattice in a picture that is read as a shape. Named here
+    # rather than left implicit, so that turning it on later is a decision.
+    off = [line for line, segment in sheets if "show_edges=False" in segment]
+    assert len(off) == 1, (
+        f"{len(off)} field sheet(s) at line(s) {off} have show_edges=False; "
+        "exactly one is expected - the mode picture - and any other is a sheet "
+        "whose mesh is still hidden"
+    )
+    owner = _enclosing_name(tree, off[0])
+    assert owner == "_draw_mode_picture", (
+        f"the sheet with show_edges=False is drawn by {owner!r}, not by "
+        "'_draw_mode_picture': the lattice is missing from a sheet that is "
+        "supposed to carry it"
+    )
+
+    strays = [
+        line
+        for line, segment in _add_mesh_segments(source)
+        if not ('cmap="turbo"' in segment and "smooth_shading=False" in segment)
+        and ("VIS_EDGE_COLOR" in segment or "VIS_EDGE_WIDTH" in segment)
+    ]
+    assert not strays, (
+        f"the non-sheet add_mesh call(s) at line(s) {strays} pass the sheet "
+        "lattice constants: the geometry under the sheets already draws its own "
+        "edges, and a second set over it is noise the reader has to filter out"
+    )

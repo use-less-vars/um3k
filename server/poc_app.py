@@ -232,6 +232,16 @@ COLOR_PERCENTILE = 99.5
 # and the eye cannot tell one cell from the interpolation between two of them.
 # Only the field sheets get this: the overlay boxes are decoration, not data.
 VIS_SHOW_EDGES = True
+# WHAT that mesh is drawn IN, now that it is on. A near-black cell edge reads as
+# a LATTICE over a field: on the light page it competes with the colours the
+# reader is being asked to compare against the bar, and swallows the shape of the
+# pulse instead of annotating it. A light steel grey sits just off the
+# background, so one cell is still clearly separable from the next without the
+# grid becoming the picture - the user asked to see WHERE the mesh is, not to
+# read the mesh. Only the field sheets take these two: the geometry actors keep
+# the default mesh they were tuned for.
+VIS_EDGE_COLOR = "#b8c4d0"
+VIS_EDGE_WIDTH = 0.4
 
 # The solver that writes a fresh wave dump. It is NOT at the repo root: it lives
 # beside the study that produced the dumps this viewer opens, and is run from
@@ -15301,6 +15311,10 @@ def run_web_vis(
                 # colour the reader is being asked to compare against the bar.
                 lighting=False,
                 show_edges=VIS_SHOW_EDGES,
+                # Light and thin: the cell grid is here so the reader can see
+                # WHERE the field is sampled, not to be read as a lattice.
+                edge_color=VIS_EDGE_COLOR,
+                line_width=VIS_EDGE_WIDTH,
                 show_scalar_bar=(family == "ycut"),
                 # A FRESH mapping per call: ``add_mesh`` fills in defaults on the
                 # dict it is handed, so one shared dict is one sheet's arguments
@@ -16000,6 +16014,12 @@ def run_web_vis(
             # read off the colour, and light would modulate it.
             lighting=False,
             show_edges=False,
+            # The mesh stays OFF on this one, as the mode picture has always
+            # been drawn. The light colour and width are declared anyway, so a
+            # later decision to show this sheet's cell grid cannot arrive as the
+            # black lattice the animated sheets were just rescued from.
+            edge_color=VIS_EDGE_COLOR,
+            line_width=VIS_EDGE_WIDTH,
             show_scalar_bar=False,
             name="mode_picture",
         )
@@ -16802,6 +16822,10 @@ def run_web_vis(
                     # statement: a rebuilt dump must not arrive lit.
                     lighting=False,
                     show_edges=VIS_SHOW_EDGES,
+                    # Same light mesh as the boot sheets: a rebuilt dump must
+                    # not come back as a black lattice over the field.
+                    edge_color=VIS_EDGE_COLOR,
+                    line_width=VIS_EDGE_WIDTH,
                     show_scalar_bar=False,
                 )
             except Exception as exc:  # noqa: BLE001 - one sheet is not the page
