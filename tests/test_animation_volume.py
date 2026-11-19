@@ -2080,3 +2080,294 @@ def test_the_left_panel_header_counts_the_frames_the_player_steps(tmp_path):
         "'of' form is for a page where they DIFFER"
     )
 
+# ---------------------------------------------------------------------------
+# THE CUT SLIDERS MOVE THE SHEETS, AND THE PAGE ALONE CAN SWITCH THE LAYER ON
+#
+# Two things the |E| layer promises beyond the frame it paints: the two cut
+# sheets follow ``state.cut_y`` / ``state.cut_z`` (the sliders wired at
+# poc_app.py:15910), and the page's OWN answer - published at :15873 - is
+# enough to draw the layer even while the module constant stays False.  Both
+# are asserted against the live page: the sheet is found among the layer's
+# actors and its position is read off the dataset's own bounds, never off a
+# number the test restated.
+# ---------------------------------------------------------------------------
+
+
+def _lattice_cell(live) -> float:
+    """The |E| lattice's cell, in mm, read off the volume actor's OWN grid.
+
+    Taken from the drawn image rather than restated as a constant: a test that
+    hard-coded the spacing would keep passing if the dump or the colocation
+    changed it.  ``bounds`` spans ``(n - 1)`` cells on x, so the spacing is that
+    span over the point count minus one.
+    """
+    dataset = _volume_actor(live).mapper.dataset
+    bounds = tuple(float(value) for value in dataset.bounds)
+    points = int(dataset.dimensions[0])
+    assert points > 1, (
+        f"the |E| volume has {points} samples on x: its cell size is not "
+        "readable off its own bounds"
+    )
+    return (bounds[1] - bounds[0]) / (points - 1)
+
+
+def _cut_sheet_plane(live, axis: str) -> float:
+    """The ``y`` (axis "y") or ``z`` (axis "z") cut sheet's constant, in mm.
+
+    The layer's two sheets are ``extract_subset`` of the |E| image, one sample
+    thick (poc_app.py:9196-9199, measured there): the y sheet is a cut at one
+    ``j`` and the z sheet at one ``k``.  WHICH axis a sheet is flat on is read
+    off the dataset's own ``bounds`` and not off ``dimensions``: ``add_mesh``
+    hands the actor a PolyData, so ``dimensions`` is not there any more, while
+    a one-sample-thick sheet still reports a DEGENERATE extent (``min == max``)
+    on the axis it is a cut on.  So the test is: x is NOT degenerate (an axes
+    triad, and two of the three port markers, are), and exactly ONE of y / z is
+    (the S21 marker is degenerate on both, and "exactly one" rejects it).  The
+    position is then that degenerate axis's own min, in mm.  A missing sheet,
+    or two of them, is a failure here rather than a wrong number later.
+    """
+    import pyvista
+
+    index = 1 if axis == "y" else 2
+    found = []
+    for actor in _layer_entry(live)["actors"]:
+        if isinstance(actor, pyvista.Volume):
+            continue
+        dataset = getattr(getattr(actor, "mapper", None), "dataset", None)
+        bounds = getattr(dataset, "bounds", None)
+        if bounds is None or len(bounds) != 6:
+            continue
+        if float(bounds[0]) == float(bounds[1]):
+            continue
+        thin = [
+            i
+            for i in (1, 2)
+            if float(bounds[2 * i]) == float(bounds[2 * i + 1])
+        ]
+        if thin != [index]:
+            continue
+        found.append(float(bounds[2 * index]))
+    assert len(found) == 1, (
+        f"the layer holds {len(found)} cut sheets matching the {axis} test "
+        "(x not degenerate in bounds, and exactly one of y / z degenerate), "
+        "expected exactly ONE: the slider below can only be read against the "
+        "sheet it moves"
+    )
+    return found[0]
+
+
+def test_dragging_the_cut_slider_moves_the_sheet(volume_page):
+    """The cut is part of the cache KEY, so a moved slider REPAINTS the sheets.
+
+    THE TRAP this pins: ``_draw_volume_layer`` caches on
+    ``(page, volume frame, load, port, cut_y, cut_z, clim mode)``.  A cut that
+    stayed out of that key would make the second draw below a CACHE HIT - the
+    early return keeps the sheets where the first draw put them, and the
+    slider looks dead until the frame slider reaches another stored volume
+    frame.  So ``handles`` is deliberately LEFT ALONE between the two draws:
+    the only thing that changes is the cut index.
+    """
+    live = volume_page
+    info = live.page["info"]
+    index = 3
+    was_y = getattr(live.state, "cut_y", None)
+    was_z = getattr(live.state, "cut_z", None)
+    try:
+        # --- the z cut -----------------------------------------------------
+        live.state.cut_z = None
+        live.draw(index, "ycut")
+        first = _layer_entry(live)
+        n_k = app._cut_layout(info, 0, 0)["n_k"]
+        mid = n_k // 2
+        live.state.cut_z = mid
+        live.draw(index, "ycut")
+        after_mid = _layer_entry(live)
+        assert after_mid is not first, (
+            "moving the z cut reused the layer entry instead of rebuilding it: "
+            "cut_z does not participate in the cache key, so the next draw of "
+            "this same frame is a HIT and the sheet never moves"
+        )
+        plane_mid = _cut_sheet_plane(live, "z")
+        cell = _lattice_cell(live)
+        live.state.cut_z = 0
+        live.draw(index, "ycut")
+        assert _layer_entry(live) is not after_mid, (
+            "moving the z cut to its first sample was a cache HIT: the layer "
+            "was not rebuilt"
+        )
+        plane_first = _cut_sheet_plane(live, "z")
+        assert plane_first != plane_mid, (
+            f"the z sheet is at z = {plane_first} mm for BOTH cut_z = 0 and "
+            f"cut_z = {mid}: the slider moved and the sheet did not"
+        )
+        assert abs(plane_mid - plane_first) == pytest.approx(abs(mid) * cell, abs=1e-6), (
+            f"the z sheet went from z = {plane_first} mm at cut_z = 0 to "
+            f"z = {plane_mid} mm at cut_z = {mid}, a move of "
+            f"{abs(plane_mid - plane_first)} mm: {abs(mid)} slider step(s) on "
+            f"a {cell} mm lattice is a move of {abs(mid) * cell} mm, so the "
+            "sheet is not travelling one cell per step"
+        )
+        assert plane_first < plane_mid, (
+            f"cut_z = 0 drew the z sheet at {plane_first} mm and cut_z = {mid} "
+            f"drew it at {plane_mid} mm: a LARGER k must be a larger "
+            "coordinate, so the two cut axes are swapped"
+        )
+
+        # --- the y cut -----------------------------------------------------
+        live.state.cut_z = was_z
+        live.draw(index, "ycut")
+        before_y = _layer_entry(live)
+        n_j = app._cut_layout(info, 0, 0)["n_j"]
+        live.state.cut_y = 0
+        live.draw(index, "ycut")
+        assert _layer_entry(live) is not before_y, (
+            "moving the y cut reused the layer entry: cut_y is not in the "
+            "cache key, so the y sheet cannot move"
+        )
+        plane_y = _cut_sheet_plane(live, "y")
+        live.state.cut_y = n_j - 1
+        live.draw(index, "ycut")
+        plane_y_last = _cut_sheet_plane(live, "y")
+        assert plane_y_last != plane_y, (
+            f"the y sheet is at y = {plane_y} mm for BOTH cut_y = 0 and "
+            f"cut_y = {n_j - 1}: the slider moved and the sheet did not"
+        )
+        assert abs(plane_y_last - plane_y) == pytest.approx(
+            abs(n_j - 1) * cell, abs=1e-6
+        ), (
+            f"the y sheet went from y = {plane_y} mm at cut_y = 0 to "
+            f"y = {plane_y_last} mm at cut_y = {n_j - 1}, a move of "
+            f"{abs(plane_y_last - plane_y)} mm: {n_j - 1} slider step(s) on "
+            f"a {cell} mm lattice is a move of {(n_j - 1) * cell} mm, so the "
+            "sheet is not travelling one cell per step"
+        )
+        assert plane_y_last > plane_y, (
+            f"cut_y = 0 drew the y sheet at {plane_y} mm and cut_y = "
+            f"{n_j - 1} drew it at {plane_y_last} mm: a LARGER j must be a "
+            "larger coordinate, so the two cut axes are swapped"
+        )
+        # ONE volume beside the two sheets, whatever the cuts are: moving a cut
+        # rebuilds the layer, and a rebuild that left the old volume on the
+        # plotter would occlude the new one.
+        assert _volume_actor(live) is not None
+    finally:
+        live.state.cut_y = was_y
+        live.state.cut_z = was_z
+
+
+# RECORDED DEFECT, not a wish: the cut LABEL and the drawn SHEET disagree by
+# half a lattice cell, and this test exists to hold that number where a run
+# will read it.  It is expected to FAIL today.  ``strict=True`` on purpose:
+# the day the app is fixed it XPASSes, which is a FAILURE, so the suite says
+# so rather than quietly gaining a test nobody notices.
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "DR-half-cell: the cut label prints _cut_layout's *_mm, which adds "
+        "0.5*cell, while a decimated volume's sheet is drawn at k*cell "
+        "(poc_app.py:9020-9022 vs the decimated image origin). See "
+        "docs/design/defect_register.md."
+    ),
+)
+def test_the_drawn_sheet_is_half_a_cell_from_the_labelled_coordinate(volume_page):
+    """The number on the label against the number on the plotter.
+
+    ``_cut_layout`` reports the cut at ``k * cell + 0.5 * cell`` (the cell
+    CENTRE), and that is what the label prints; the sheet actually drawn on a
+    decimated |E| volume sits at ``k * cell`` (the image's own origin is 0).
+    One number, both sides, no exploration.
+    """
+    live = volume_page
+    info = live.page["info"]
+    n_k = app._cut_layout(info, 0, 0)["n_k"]
+    k = n_k // 2
+    was_z = getattr(live.state, "cut_z", None)
+    try:
+        live.state.cut_z = k
+        live.draw(3, "ycut")
+        drawn = _cut_sheet_plane(live, "z")
+    finally:
+        live.state.cut_z = was_z
+    labelled = app._cut_layout(info, 0, k)["z_mm"]
+    assert drawn == pytest.approx(labelled, abs=1e-6), (
+        f"DR-half-cell: the z label prints z = {labelled} mm "
+        f"(_cut_layout, which adds 0.5*cell) but the sheet is DRAWN at "
+        f"z = {drawn} mm for k = {k} - half a {_lattice_cell(live)} mm cell "
+        "apart. Until this is fixed the suite asserts the sheet's MOVEMENT "
+        "only; delete the xfail marker when the two numbers agree"
+    )
+
+
+def test_a_page_policy_alone_draws_the_layer(tmp_path):
+    """The page's own answer switches the layer ON with the constant off.
+
+    ``_volume_layer_enabled`` asks, in order: the runtime box, ``POC_SHOW_VOLUME``,
+    the PAGE policy ``run_web_vis`` publishes (:15873), and only then the
+    module constant.  A vis dump carries ``e_abs_volume`` and at most one
+    station, so the page's policy is True - and the layer must be drawn with
+    ``SHOW_VOLUME_LAYER_DEFAULT = False`` and no environment variable.  The
+    converse is asserted the other way round, through ``_show``: the box
+    speaking OFF must take the layer and the volume OFF the plotter.
+    """
+    import pyvista
+
+    before = dict(app._VOLUME_LAYER_STATE)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(app, "SHOW_VOLUME_LAYER_DEFAULT", False)
+        patch.delenv("POC_SHOW_VOLUME", raising=False)
+        app._VOLUME_LAYER_STATE.clear()
+        app._VOLUME_LAYER_STATE.update({"on": None, "page": False})
+        try:
+            with _render_doubled():
+                live = _boot(tmp_path, with_volume=True)
+                _silence_view(live)
+            assert live.page["info"]["e_abs_volume"] is not None, (
+                "the booted dump lost its |E| volume: there is no layer to "
+                "switch on"
+            )
+            assert app._volume_layer_enabled() is True, (
+                "with the constant False, POC_SHOW_VOLUME unset and the box "
+                "silent, _volume_layer_enabled() is False - the page's own "
+                "policy (published at poc_app.py:15873) never beat the "
+                "constant, so a vis dump draws no layer on a bare run"
+            )
+            entry = _layer_entry(live)
+            assert entry["actors"], (
+                "the page recorded a volume_layer entry with no actors: the "
+                "policy said draw and nothing was drawn"
+            )
+            volume = _volume_actor(live)
+            assert isinstance(volume, pyvista.Volume), (
+                f"the layer's single volume is {type(volume)!r}, not a "
+                "pyvista.Volume"
+            )
+            # ... and it survives a redraw at another frame slider position.
+            live.draw(1, "ycut")
+            assert _volume_actor(live) is not None, (
+                "redrawing at another position lost the volume the policy drew"
+            )
+
+            # THE CONVERSE, last: the box speaking OFF wins over the page.
+            # ``_show`` is the caller here on purpose - it is the gate
+            # (:17291-17299), and it is the path a tick takes.
+            app._VOLUME_LAYER_STATE["on"] = False
+            assert app._volume_layer_enabled() is False
+            live.show(1, "ycut")
+            assert "volume_layer" not in live.handles, (
+                "with the runtime switch OFF the layer is still in handles: "
+                f"{sorted(live.handles)} - the off path must DROP the layer, "
+                "not leave it on the plotter"
+            )
+            stray = [
+                actor
+                for actor in live.plotter.actors.values()
+                if isinstance(actor, pyvista.Volume)
+            ]
+            assert not stray, (
+                f"{len(stray)} pyvista.Volume actor(s) are still on the "
+                "plotter after the switch went OFF: they would keep painting "
+                "the |E| layer the page says is off"
+            )
+        finally:
+            app._VOLUME_LAYER_STATE.clear()
+            app._VOLUME_LAYER_STATE.update(before)
