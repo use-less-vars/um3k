@@ -12251,6 +12251,21 @@ def _probe_trame_ui():
     return None
 
 
+#: The style of the LIVE LOG under the Solve card, and the one that keeps it off
+#: screen until there is something to show. Both are BOUND to
+#: ``state.solve_log_style`` (``style=("solve_log_style", _SOLVE_LOG_HIDDEN)``),
+#: because the card is emitted once and a run starts later: a literal here could
+#: not unhide the panel, and a page that has never run a solve would carry an
+#: empty ``<pre>`` - a box of height that says nothing. The height cap is what
+#: makes this a WINDOW on a log rather than the whole of it: SolveJob keeps 400
+#: lines and ``log_lines`` hands over the last dozen, which is what fits.
+_SOLVE_LOG_STYLE = (
+    "font-size: 10px; white-space: pre-wrap; margin: 4px 0; "
+    "max-height: 15em; overflow-y: auto;"
+)
+_SOLVE_LOG_HIDDEN = "display: none;"
+
+
 #: The sequence number every solve's OWN artefact name is built from. Two
 # presses must not land on one file: the second would overwrite the first, and
 # the page would then report "solved -> x.json" over numbers nobody had read.
@@ -14833,6 +14848,12 @@ class SolveJob:
     #: worth of numbers; the operator needs the last screen of it, not all of it.
     LOG_TAIL_CHARS = 4000
     LOG_TAIL_LINES = 400
+    #: How much of that tail the CARD shows, line by line. The operator reads
+    #: the last screen of a running solve, not the transcript: a dozen lines is
+    #: the window, and a line longer than the card is trimmed exactly as
+    #: ``last_line``'s is.
+    LOG_LINES_SHOWN = 12
+    LOG_LINE_CHARS = 160
 
     def __init__(self, argv, cwd=None):
         self.argv = list(argv)
@@ -14874,6 +14895,26 @@ class SolveJob:
             if text:
                 return text[-160:]
         return ""
+
+    @property
+    def log_lines(self) -> list:
+        """The tail as LINES, oldest first - what the card's log panel shows.
+
+        ``log`` is ONE string: enough for a failure sentence, but it has no
+        idea where the lines break, so a card can only print it as a blob.
+        A panel wants whole lines, the LAST few of them (that is where a
+        running child says what it is doing) and nothing older than the box
+        can show - hence the two bounds, ``LOG_LINES_SHOWN`` lines of at most
+        ``LOG_LINE_CHARS`` characters each. Blank lines are dropped for
+        ``last_line``'s reason: the panel is screen space, and a blank line
+        spends it saying nothing.
+        """
+        lines = []
+        for line in list(self._tail)[-self.LOG_LINES_SHOWN:]:
+            text = line.strip()
+            if text:
+                lines.append(text[-self.LOG_LINE_CHARS:])
+        return lines
 
     def _read_loop(self) -> None:
         """THE reader: drain the child's pipe for as long as the child lives.
@@ -18187,6 +18228,21 @@ def run_web_vis(
                 )
             if "VLabel" in widgets:
                 widgets["VLabel"]("{{ solve_status }}")
+            # THE LOG under that line: the status names the child's LAST line,
+            # the panel shows the dozen lines before it (SolveJob.log_lines, as
+            # re-published by _tick_solve_status). It is a <pre> for the same
+            # reason the Confidence rows are (server/poc_app.py:confidence_rows):
+            # the lines are already formatted, and wrapping them is what makes
+            # a long march's numbers readable. Its style is BOUND - hidden until
+            # a run has printed something - and gets the same getattr fallback
+            # the other html-layer panels use, so a build without that layer
+            # loses the panel and keeps its button.
+            pre_cls = getattr(html_widgets, "Pre", None)
+            if pre_cls is not None:
+                pre_cls(
+                    "{{ solve_log }}",
+                    style=("solve_log_style", _SOLVE_LOG_HIDDEN),
+                )
 
         # WHICH PAGE has no field data: the GATED half of the Run Config card is a
         # form for the NEXT run, so it is offered exactly where there is nothing to
@@ -18768,6 +18824,14 @@ def run_web_vis(
     state.solve_structure = default_arm
     state.solve_xcut_mm = SOLVE_DEFAULT_XCUT_MM
     state.solve_status = "no solve run in this session"
+    # The LIVE LOG under that line: the same tail the status names only the END
+    # of, as whole lines, re-published every half second by _tick_solve_status.
+    # EMPTY and HIDDEN at boot - a page that has never run a solve has no log,
+    # and an empty <pre> is a box of height that says nothing - and the style is
+    # in the state (not a literal on the widget) because the widget is emitted
+    # once and the run that fills it starts later.
+    state.solve_log = ""
+    state.solve_log_style = _SOLVE_LOG_HIDDEN
     # The LABEL and the ENABLED state describe the PAGE, not the job: this shell
     # serves a static field snapshot as well as an animation dump, and a static
     # page (nt is None - no frame axis, um3k_panels.py:127-140) has no timeline
@@ -18806,7 +18870,7 @@ def run_web_vis(
     solve: dict = {}
 
     def _tick_solve_status(job) -> None:
-        """Say what the running solve is doing: elapsed time and last line.
+        """Say what the running solve is doing: the clock, the last line, the log.
 
         The old sentence was written once at press and once at the single
         final poll, so a twenty-minute march displayed second-one text the
@@ -18824,6 +18888,17 @@ def run_web_vis(
                 )
             tail = job.last_line
             state.solve_status = f"{head}\n{tail}" if tail else head
+            # The SAME tail, as LINES and not just its end. solve_status names
+            # one line, which is one line of a child that prints a study's worth
+            # of numbers; the panel under it shows the last dozen (SolveJob
+            # .log_lines), newest last, and it is HIDDEN again whenever the job
+            # has printed nothing - a header over an empty box is worse than no
+            # box.
+            lines = job.log_lines
+            state.solve_log = "\n".join(lines)
+            state.solve_log_style = (
+                _SOLVE_LOG_STYLE if lines else _SOLVE_LOG_HIDDEN
+            )
         except Exception as exc:  # noqa: BLE001 - never take the page down
             print(f"[poc_app] solve status not updated: {exc}", file=sys.stderr)
 
@@ -18900,10 +18975,21 @@ def run_web_vis(
         if status != "ok":
             # The OLD page stays live and drawable: a failed solve is a message,
             # not a broken viewer.
+            # The child's own last lines are ALREADY on screen: the same
+            # watcher published them into the log panel (_tick_solve_status,
+            # every half second), so appending the 400-character blob here as
+            # well printed the last screen of a failed solve TWICE - once as
+            # lines, once as one string with no line breaks the card can use.
+            # It is kept for the case the panel cannot carry it: a status set
+            # before any tick ran (a build with no html layer, or a job that
+            # died before the first poll), where the blob is the only copy of
+            # the child's output the reader would ever see.
+            shown = str(getattr(state, "solve_log", "") or "").strip()
+            blob = "" if shown else f"\n{job.log[-400:]}"
             state.solve_status = (
                 f"solve {status} after {elapsed} s (rc={job.returncode}) - "
                 f"the page on screen is "
-                f"still the previous dump\n{job.log[-400:]}"
+                f"still the previous dump{blob}"
             )
             return
         try:
