@@ -81,14 +81,16 @@ import numpy as np
 # resolve; package form (`import server.poc_app` or `-m server.poc_app`) has no
 # such entry and needs the relative form. Both hold state and layout only.
 try:
+    import step_time as _step_time
     import timeline as _timeline
     import um3k_context
     from um3k_panels import build_center_panel, build_left_panel, build_right_panel
 except ModuleNotFoundError as exc:
     # Narrow, on purpose: only OUR two names may be re-routed. A dependency
     # missing inside them must surface as itself, not as a relative import.
-    if exc.name not in ("timeline", "um3k_context", "um3k_panels"):
+    if exc.name not in ("step_time", "timeline", "um3k_context", "um3k_panels"):
         raise
+    from . import step_time as _step_time
     from . import timeline as _timeline
     from . import um3k_context
     from .um3k_panels import build_center_panel, build_left_panel, build_right_panel
@@ -772,6 +774,11 @@ def _play_caption(frames, rate, fps) -> str:
 
 
 TIME_AXIS_KEY = "time_axis"
+
+# Where a loaded dump keeps one :class:`step_time.SurfaceSpec` per plane FAMILY.
+# Filed by load_vis, read by every frame->step conversion, so the stride and
+# offset in force are the ones derived from the dump's own recorded axes.
+SURFACE_SPECS_KEY = "surface_specs"
 
 
 @dataclass(frozen=True, eq=False)
@@ -4713,38 +4720,89 @@ def _longest_true_run(mask):
     return best
 
 
+def _derive_surface_spec(info, name):
+    """The :class:`step_time.SurfaceSpec` a dump's own axis implies for ``name``.
+
+    ``name`` is the plane FAMILY, "ez_ycut" or "ez_xcut": both x-cut planes are
+    written on the one recorded x-cut axis and therefore share one spec. Nothing
+    is assumed about the cadence - it is read from the step numbers the dump
+    wrote (``frame_index`` for the y-cut, ``frame_index_xcut`` for the x-cuts),
+    with ``offset`` the first recorded step and ``stride`` the median positive
+    gap, so a single missing frame cannot set the spacing. A dump whose axis is
+    missing, empty or unreadable is described as one step per frame with no
+    recorded frames - the only claim that survives, and the same fallback
+    ``build_time_axis`` makes.
+    """
+    xcut = str(name).startswith("ez_xcut")
+    axis = "x" if xcut else "y"
+    steps = info.get("frame_index_xcut" if xcut else "frame_index")
+    values = None
+    if steps is not None:
+        try:
+            values = np.asarray(steps, dtype=float).ravel()
+        except (TypeError, ValueError):
+            values = None
+    if values is None or values.size < 1:
+        return _step_time.SurfaceSpec(axis=axis, position=0.0)
+    stride = 1
+    if values.size >= 2:
+        gaps = np.diff(values)
+        gaps = gaps[np.isfinite(gaps) & (gaps > 0.0)]
+        if gaps.size >= 1:
+            spacing = int(round(float(np.median(gaps))))
+            if spacing >= 1:
+                stride = spacing
+    return _step_time.SurfaceSpec(
+        axis=axis,
+        position=0.0,
+        stride=stride,
+        offset=max(0, int(values[0])),
+        n_frames=int(values.size),
+    )
+
+
+def _surface_spec(info, key):
+    """The ONE description of how plane ``key`` is sampled from the step axis.
+
+    ``step_time.SurfaceSpec`` is the single source of truth: frame ``f`` of the
+    plane was captured at step ``offset + f * stride``, and no other mapping is
+    legal. The spec is filed on the loaded dump by :func:`load_vis`, so every
+    caller shares the one derived when the dump was read. A dict that never went
+    through :func:`load_vis` (a bare fixture) is described on demand from the
+    same recorded arrays.
+    """
+    name = "ez_xcut" if str(key).startswith("ez_xcut") else "ez_ycut"
+    filed = info.get(SURFACE_SPECS_KEY)
+    if isinstance(filed, dict):
+        spec = filed.get(name)
+        if spec is not None:
+            return spec
+    return _derive_surface_spec(info, name)
+
+
+def _surface_frame_count(info, key, default) -> int:
+    """How many frames plane ``key`` holds, per its spec; ``default`` if unrecorded.
+
+    ``default`` is the count the dump's header states. An empty spec means "this
+    dump records no step axis", NOT "this surface holds no frames", so the
+    header's count is used there rather than a zero the page would draw.
+    """
+    count = int(_surface_spec(info, key).frame_count())
+    return count if count > 0 else max(0, int(default))
+
+
 def _plane_step_spacing(info, key):
     """How many solver steps ONE recorded frame of plane ``key`` stands for.
 
     The y-cut is sampled on ``frame_index`` and the two x-cuts on
     ``frame_index_xcut``; both are recorded step numbers, so their own spacing is
-    the plane's stride. A dump whose recorded axis is missing or unreadable is
-    read as one step per frame - the only claim that survives, and the same
-    fallback ``build_time_axis`` makes.
+    the plane's stride. :func:`_surface_spec` is the once-and-only place that
+    spacing is read off the dump, so this answers from the plane's own spec
+    rather than re-measuring the axis per call. A dump whose recorded axis is
+    missing or unreadable is read as one step per frame - the only claim that
+    survives, and the same fallback ``build_time_axis`` makes.
     """
-    axis_keys = (
-        ("frame_index_xcut", "frame_index")
-        if str(key).startswith("ez_xcut")
-        else ("frame_index",)
-    )
-    for axis_key in axis_keys:
-        steps = info.get(axis_key)
-        if steps is None:
-            continue
-        try:
-            values = np.asarray(steps, dtype=float).ravel()
-        except (TypeError, ValueError):
-            continue
-        if values.size < 2:
-            continue
-        gaps = np.diff(values)
-        gaps = gaps[np.isfinite(gaps) & (gaps > 0.0)]
-        if gaps.size < 1:
-            continue
-        spacing = int(round(float(np.median(gaps))))
-        if spacing >= 1:
-            return spacing
-    return 1
+    return int(_surface_spec(info, key).stride)
 
 
 def _phase_from_complex_planes(info, stride):
@@ -5230,8 +5288,19 @@ def load_vis(path: Path) -> dict:
             )
         for key, size, expected in (
             ("t_ns", info["t_ns"].size, info["nt"]),
-            ("frame_index", info["frame_index"].size, info["nt"]),
-            ("frame_index_xcut", info["frame_index_xcut"].size, info["nt_x"]),
+            # The length a step axis must have IS its surface's frame count, read
+            # from the spec derived off that self-same axis, so the spec and the
+            # plane arrays cannot disagree about how many frames were stored.
+            (
+                "frame_index",
+                _surface_frame_count(info, "ez_ycut", info["nt"]),
+                info["nt"],
+            ),
+            (
+                "frame_index_xcut",
+                _surface_frame_count(info, "ez_xcut", info["nt_x"]),
+                info["nt_x"],
+            ),
             ("x_mm", info["x_mm"].size, info["nx"]),
             ("y_mm", info["y_mm"].size, info["ny"]),
             ("z_mm", info["z_mm"].size, info["nz"]),
@@ -5283,6 +5352,14 @@ def load_vis(path: Path) -> dict:
         dt_s=info["dt_s"],
         n_frames=info["nt"],
     )
+
+    # THE PER-SURFACE SAMPLING, derived once here from the axes just validated:
+    # which step each stored frame of each plane family was captured at. Every
+    # frame->step conversion on the page reads this, so one stride and one offset
+    # are in force instead of a copy per call site.
+    info[SURFACE_SPECS_KEY] = {
+        name: _derive_surface_spec(info, name) for name in ("ez_ycut", "ez_xcut")
+    }
 
     # Computed once, here, from every stored frame of every plane: the viewer
     # then has no way to rescale between frames because it is never given a
@@ -7881,8 +7958,8 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
     # Facts about the FILE, not about the player's clock: how many frames each
     # stored array holds. The clock is ``_position_count``; on a recorded dump
     # the two agree, because a position is one recorded plane frame.
-    nt = int(info["nt"])
-    nt_x = int(info["nt_x"])
+    nt = _surface_frame_count(info, "ez_ycut", info["nt"])
+    nt_x = _surface_frame_count(info, "ez_xcut", info["nt_x"])
     t_ns = info["t_ns"]
     cell_mm = _cell_mm(info)
     return {
@@ -11601,7 +11678,19 @@ def _vis_frame_time_ns(info: dict, mode: str, frame) -> float:
         if index is None or index.size == 0:
             return float("nan")
         frame = max(0, min(index.size - 1, frame))
-        return float(int(index[frame]) * float(info["dt_s"]) * 1e9)
+        # frame -> step -> seconds, in that order and through the surface's own
+        # spec, so the stride that produced the frame stays visible and the time
+        # is the one the step base says it is.
+        step = int(_step_time.step_for_frame(_surface_spec(info, "ez_xcut"), frame))
+        recorded = int(index[frame])
+        if step != recorded:
+            # An axis whose samples do not sit on ``offset + frame * stride`` (a
+            # restart or a dropped capture leaves gaps no single spec can
+            # describe): the recorded step is the only reading left, so it wins
+            # over a reconstructed one.
+            step = recorded
+        time_base = _step_time.TimeBase(float(info["dt_s"]))
+        return float(time_base.time_of(step) * 1e9)
     # A page with no timeline records no clock at all: nan is this module's
     # "not recorded" and _show already renders it as exactly that.
     t_ns = info.get("t_ns")
