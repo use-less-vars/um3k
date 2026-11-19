@@ -1259,8 +1259,8 @@ def test_a_failed_still_is_named_neither(prof, capsys):
     assert "push_by_site: none" in poc_app._profile_summary_text()
 
 
-def test_the_report_is_said_once_more_after_the_first_draw(capsys, renderer):
-    """gl=unknown at boot is the pending answer, not the answer."""
+def test_the_report_is_said_once_and_only_after_a_frame_really_drew(capsys, renderer):
+    """A queued draw is not a rendered one: nothing is said, and nothing is burnt."""
     window = _Window(
         caps="OpenGL vendor string: Mesa/X.org\n"
         "OpenGL renderer string: llvmpipe (LLVM 15.0.7)\n"
@@ -1271,23 +1271,33 @@ def test_the_report_is_said_once_more_after_the_first_draw(capsys, renderer):
     image = poc_app._apply_image_knobs(_View(), None, 55)
     handles = {"renderer_image": image, "renderer_msaa": 8}
 
-    # Boot: nothing has drawn, so the line says pending and the caps are NOT read.
+    # Boot: nothing has drawn, so there is nothing to say and the caps are NOT read.
     poc_app._renderer_report(plotter=plotter, image=image, msaa=8)
     assert poc_app._RENDERER["gl_mode"] == "unknown"
     assert window.caps_reads == 0
 
-    # The first tick really draws, and only then is the SAME report said again.
+    # The same tick as the first push: the view only QUEUED the draw, so the
+    # window is still unrendered and the report must wait rather than say
+    # "gl=unknown" and burn its one shot (that is the bug this covers).
+    assert poc_app._renderer_report_after_render(plotter, handles) is False
+    assert capsys.readouterr().out == ""
+    assert "renderer_reported" not in handles, "the one shot was burnt unspent"
+    assert window.caps_reads == 0
+
+    # The first tick really draws, and then the report is said - once.
     assert poc_app._tick_render_and_push(plotter, None) is True
     assert poc_app._renderer_report_after_render(plotter, handles) is True
     out = capsys.readouterr().out.splitlines()
-    assert len(out) == 1, "the post-render report is one line, not a spray"
-    assert out[0].startswith("[poc_app] renderer (after first render): gl=software")
+    assert len(out) == 2, "one report line, and one shout for the CPU rasteriser"
+    assert out[0].startswith("[poc_app] renderer: gl=software")
     assert "vendor=Mesa/X.org" in out[0]
     assert "renderer=llvmpipe (LLVM 15.0.7)" in out[0]
     assert "pixels=1024x768" in out[0]
     assert "msaa requested=8 applied=8" in out[0]
     assert "quality=55" in out[0]
     assert "not been rendered" not in out[0]
+    assert out[1].startswith("[poc_app] WARNING: software rasteriser")
+    assert "llvmpipe (LLVM 15.0.7)" in out[1]
     assert window.caps_reads == 1
 
     # The second tick is silent, and does not ask the window for its caps again.
@@ -1315,9 +1325,10 @@ def test_the_second_report_names_a_direct_gl_renderer(capsys, renderer):
     assert poc_app._tick_render_and_push(plotter, None) is True
     assert poc_app._renderer_report_after_render(plotter, handles) is True
     line = capsys.readouterr().out
-    assert line.startswith("[poc_app] renderer (after first render): gl=direct")
+    assert line.startswith("[poc_app] renderer: gl=direct")
     assert "vendor=NVIDIA Corporation" in line
     assert "msaa requested=4 applied=8" in line
+    assert "WARNING" not in line, "a real driver earns no shout"
 
 
 def test_a_boot_report_that_already_knew_is_not_said_again(capsys, renderer):

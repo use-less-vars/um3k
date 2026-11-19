@@ -3767,23 +3767,24 @@ def _renderer_report(plotter=None, image=None, msaa=None):
     return _RENDERER
 
 
-def _renderer_report_line(report=None, after_render=False) -> str:
-    """The boot report as ONE ``[poc_app]`` line: renderer, pixels, knobs.
+def _renderer_report_line(report=None) -> str:
+    """The renderer report as ONE ``[poc_app]`` line: renderer, pixels, knobs.
 
-    ``after_render`` marks the SECOND printing of the same report - the one made
-    once the first frame has really drawn - in the prefix, so a log reader can
-    tell the boot line (which cannot know the driver yet) from the line that can.
-    The rest of the line is byte-identical, because it is the same report.
+    Said once per run, and only when the GL stack can be asked - i.e. once a
+    frame has really drawn (see ``_gl_capabilities`` and
+    ``_renderer_report_after_render``) - so the ``gl=``/``vendor=``/``renderer=``
+    fields are either the real answer or an explicit statement that it was not
+    readable. A line that said ``gl=unknown`` before anything was drawn would be
+    a fact about the log, not about the box.
     """
     report = _RENDERER if report is None else report
     pixels = report.get("pixels")
     samples = _value_text(report.get("multi_samples"))
     return (
-        "[poc_app] renderer%s: gl=%s vendor=%s renderer=%s version=%s | "
+        "[poc_app] renderer: gl=%s vendor=%s renderer=%s version=%s | "
         "pixels=%s | plotter multi_samples=%s | msaa requested=%s applied=%s | "
         "trame image encoding=%s quality=%s%s%s"
         % (
-            " (after first render)" if after_render else "",
             report.get("gl_mode") or "unknown",
             report.get("gl_vendor") or "?",
             report.get("gl_renderer") or "?",
@@ -3797,6 +3798,26 @@ def _renderer_report_line(report=None, after_render=False) -> str:
             " | " + report["gl_note"] if report.get("gl_note") else "",
             " | " + report["image_note"] if report.get("image_note") else "",
         )
+    )
+
+
+def _renderer_software_warning(report=None) -> str:
+    """The shout a CPU rasteriser earns, or ``""`` when a GPU really drew.
+
+    ``gl_mode == "software"`` means the strings matched ``_GL_SOFTWARE_MARKERS``
+    (llvmpipe, softpipe, swrast, osmesa, ...): the frame came off the CPU, so
+    every timing this run measures is a CPU timing and predicts nothing about
+    frame time on real hardware. That is said in words a log scan cannot miss
+    rather than left for the reader to infer from the vendor string.
+    """
+    report = _RENDERER if report is None else report
+    if report.get("gl_mode") != "software":
+        return ""
+    return (
+        "[poc_app] WARNING: software rasteriser - renderer=%s vendor=%s. "
+        "Nothing here was drawn on a GPU, so every number this run measures is "
+        "a CPU timing: it does not predict frame time on real hardware."
+        % (report.get("gl_renderer") or "?", report.get("gl_vendor") or "?")
     )
 
 
@@ -3832,31 +3853,58 @@ def _renderer_report_lines():
 
 
 def _renderer_report_after_render(plotter, handles) -> bool:
-    """Say the renderer report AGAIN, once, after the first frame has drawn.
+    """Say the renderer report ONCE, on the first tick whose frame really drew.
 
-    The boot line can only report what is safe to ask BEFORE anything is drawn,
-    and on a box with no GL driver that is nothing (see ``_gl_capabilities``): it
-    says ``gl=unknown`` and "the window has not been rendered yet". So the SAME
-    report is rebuilt - same plotter, same image record, same msaa request - once
-    a tick has really rendered, and printed ONCE. The flag lives on ``handles``
-    because that is the per-run record the tick can see; later ticks read one key
-    and pay nothing. Never raises: a report is not the tick.
+    The GL strings are only askable of a window that has really rendered (see
+    ``_gl_capabilities``), and a trame view's ``update()`` only QUEUES the draw:
+    a report rebuilt on the same tick as the first push still finds
+    ``GetNeverRendered()`` true, and would print ``gl=unknown`` a second time -
+    and burn the one-shot flag doing it, so the real vendor string never reached
+    the log on a GPU box at all. So the flag is set only when the line is said:
+    until a frame has drawn this returns False and costs one ``GetNeverRendered()``
+    per tick, then the report is rebuilt from the SAME plotter, image record and
+    msaa request the boot site parked on ``handles``, printed once, and followed by
+    the software-rasteriser warning when there is one. Never raises: a report is
+    not the tick.
     """
     if handles is None or handles.get("renderer_reported"):
         return False
-    handles["renderer_reported"] = True
     if _RENDERER.get("gl_mode") != "unknown":
-        # The boot line already answered: a second reading adds nothing.
+        # The boot line already answered: nothing left to add, and nothing to ask.
+        handles["renderer_reported"] = True
         return False
+    if "renderer_msaa" not in handles:
+        # The page draws ONCE before the boot report runs (_show(0, "ycut", "boot")
+        # precedes the layout that owns the view), and that draw may well be the
+        # first real render - but the knob record is parked on ``handles`` only by
+        # the boot report itself. A line said here would name no msaa request and
+        # no image record, so it waits for the boot site to have spoken.
+        return False
+    window = getattr(plotter, "render_window", None)
+    if window is None:
+        # No window means nothing will ever answer: stay silent rather than lie.
+        return False
+    try:
+        if window.GetNeverRendered():
+            # The frame is still queued, not drawn. Ask again on a later tick and
+            # keep the flag: this is the retry, not the report.
+            return False
+    except Exception:  # noqa: BLE001 - cannot tell, so let the report say so
+        pass
     try:
         report = _renderer_report(
             plotter=plotter,
             image=handles.get("renderer_image"),
             msaa=handles.get("renderer_msaa"),
         )
-        print(_renderer_report_line(report, after_render=True))
+        handles["renderer_reported"] = True
+        print(_renderer_report_line(report))
+        warning = _renderer_software_warning(report)
+        if warning:
+            print(warning)
         return True
     except Exception as exc:  # noqa: BLE001 - a report is not the tick
+        handles["renderer_reported"] = True  # do not retry a broken report each tick
         print(f"[poc_app] renderer report skipped: {exc}", file=sys.stderr)
         return False
 
@@ -16009,9 +16057,10 @@ def run_web_vis(
         # (see _tick_render_and_push).
         rendered = _tick_render_and_push(plotter, handles.get("view"), site)
         if rendered:
-            # The boot report could only ask about a window that had not drawn
-            # yet, so on a box whose GL strings need a real render it still says
-            # "unknown". Say it again now, once (see _renderer_report_after_render).
+            # The GL strings are only askable once a frame has really drawn, and a
+            # view push only QUEUES that draw - so this says the report on the
+            # first tick that finds the window rendered, once (see
+            # _renderer_report_after_render).
             _renderer_report_after_render(plotter, handles)
         _timing_tick_end(
             plotter,
@@ -18360,23 +18409,30 @@ def run_web_vis(
 
     handles["view"] = view
 
-    # The image knobs go on the trame VIEW (its real properties), and the boot
+    # The image knobs go on the trame VIEW (its real properties), and the renderer
     # report then names every knob beside what the GL stack actually answered.
-    # The plotter is OFF-SCREEN and, on a box with no GL driver, has not really
-    # drawn: the renderer strings are reported as pending rather than guessed,
-    # and asking for them anyway would take the process down (see
-    # _gl_capabilities).
+    # The plotter is OFF-SCREEN and has not really drawn yet, so the GL strings
+    # are not askable here - asking would take the process down on a box with no
+    # GL driver (see _gl_capabilities) - and the line is deferred to the first
+    # frame that really drew rather than guessed now.
     _image = _apply_image_knobs(view, image_encoding, image_quality)
-    # Parked on ``handles`` for the post-render report: that line must name the
-    # SAME image record and msaa request this one does, and it runs from a tick
-    # closure that never saw these locals.
+    # Parked on ``handles`` for the renderer report: that line must name the SAME
+    # image record and msaa request made here, and it runs from a tick closure
+    # that never saw these locals.
     handles["renderer_image"] = _image
     handles["renderer_msaa"] = msaa
-    print(
-        _renderer_report_line(
-            _renderer_report(plotter=plotter, image=_image, msaa=msaa)
-        )
-    )
+    _renderer_known = _renderer_report(plotter=plotter, image=_image, msaa=msaa)
+    # The plotter is off-screen and NOTHING has drawn yet, so the GL strings are
+    # not askable (see _gl_capabilities) and there is nothing honest to say about
+    # them: the line is said by the first tick whose frame really drew, which is
+    # where _renderer_report_after_render fires. Only a window that had ALREADY
+    # drawn - it answered here, so nothing is left to add - is named now, once.
+    if _renderer_known.get("gl_mode") != "unknown":
+        handles["renderer_reported"] = True
+        print(_renderer_report_line(_renderer_known))
+        _renderer_warning = _renderer_software_warning(_renderer_known)
+        if _renderer_warning:
+            print(_renderer_warning)
 
     if nt is None or nt_x is None:
         # The shell: no timeline, so there is no rate and no stride to report.
