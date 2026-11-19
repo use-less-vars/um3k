@@ -1,10 +1,10 @@
 ---
 status: current
 layer: root
-pinned_commit: 36c71d3eaaecf9ee04857dac2d68b04ba5ab97ef
-pinned_at: 2026-11-18
+pinned_commit: c6195cfb33e94a289ccabd8d5675bd7ff41d03c9
+pinned_at: 2026-11-19
 byte_budget: 6144
-last_verified: 2026-11-18
+last_verified: 2026-11-19
 reads_when: before you run the gate or scripts/repin_kb.py, or commit anything under docs/kb, on a host that has git
 supersedes: null
 superseded_by: null

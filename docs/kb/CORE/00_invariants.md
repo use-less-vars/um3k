@@ -1,10 +1,10 @@
 ---
 status: current
 layer: core
-pinned_commit: 36c71d3eaaecf9ee04857dac2d68b04ba5ab97ef
-pinned_at: 2026-11-18
+pinned_commit: c6195cfb33e94a289ccabd8d5675bd7ff41d03c9
+pinned_at: 2026-11-19
 byte_budget: 2560
-last_verified: 2026-11-18
+last_verified: 2026-11-19
 reads_when: every session, before any code and before any other kb file - this is the whole invariant set
 supersedes: null
 superseded_by: null

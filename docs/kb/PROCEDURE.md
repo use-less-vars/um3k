@@ -1,10 +1,10 @@
 ---
 status: current
 layer: root
-pinned_commit: 36c71d3eaaecf9ee04857dac2d68b04ba5ab97ef
-pinned_at: 2026-11-18
+pinned_commit: c6195cfb33e94a289ccabd8d5675bd7ff41d03c9
+pinned_at: 2026-11-19
 byte_budget: 20480
-last_verified: 2026-11-18
+last_verified: 2026-11-19
 reads_when: when you are about to add, move, cite or re-pin any file under docs/kb
 supersedes: null
 superseded_by: null
