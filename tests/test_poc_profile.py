@@ -1725,8 +1725,14 @@ def test_a_wrapper_keeps_the_marker_wslink_finds_its_rpcs_by(prof):
 #   stalls on every tick cannot bury itself in stderr;
 # * a gc pause is measured INTO the tick that paid for it, from gc.callbacks,
 #   which is the one sample no phase mark can see;
-# * the summary is <= 40 lines - per-phase percentiles, gc per GENERATION, and
-#   the worst ticks - and the file IS that text, in the run directory.
+# * a screenshot is paid for INSIDE the tick that reports it, so that tick SAYS
+#   SO - a ``shot=`` field on its line, a shot_ms column in the window table -
+#   and the 100-tick cadence becomes visible instead of inferred;
+# * the worst tick of each 100-tick WINDOW is kept, one summary row per window,
+#   because a periodic stall owns the same slot of every window;
+# * the summary is <= 40 lines - per-phase percentiles, gc per GENERATION, the
+#   worst ticks and the window table - and the file IS that text, in the run
+#   directory.
 # ---------------------------------------------------------------------------
 
 
@@ -1780,6 +1786,12 @@ def test_the_stall_probe_is_off_unless_asked(tmp_path, monkeypatch):
     assert poc_app._STALL["ticks"] == 0
     assert poc_app._STALL["slow"] == 0
     assert poc_app._STALL["worst"] == []
+    # The shot/window bookkeeping rides the same switch: no mark, no window.
+    assert poc_app._stall_mark_shot(12.0, tick=100) is None
+    assert poc_app._stall_window_note({"n": 100, "total_ms": 1.0}) is None
+    assert poc_app._STALL["window"] is None
+    assert poc_app._STALL["windows"] == []
+    assert poc_app._STALL["shot"] is None
     # The flush breakdown rides the same switch: no clock, no hook, no bucket.
     assert poc_app._stall_flush_begin() is None
     assert poc_app._stall_hook_protocol(None) is False
@@ -2105,3 +2117,155 @@ def test_the_delivery_hook_is_instance_level_and_undone(stall, monkeypatch):
     monkeypatch.setattr(poc_app, "_stall_delivery_for", lambda *a, **k: None)
     assert poc_app._stall_hook_protocol(None) is False
     assert poc_app._STALL["protocol_hooked"] is False
+
+
+# ---------------------------------------------------------------------------
+# The tick that pays for a screenshot is the tick that reports it.
+#
+# _timing_screenshot reads a PNG back INSIDE the tick it is timing (its own
+# docstring prices it at 40-75 ms), and it only shoots every _TIMING_SHOT_EVERY
+# (100) ticks.  So the 100th tick of every timing run carries a cost no draw
+# path paid for - and a per-tick "worst ticks" table shows that tick as a slow
+# one without saying why.  These tests hold the probe to the honest version:
+# the mark is left where the readback really ran, and the worst tick of every
+# 100-tick window is reported on its own line, shot and all.
+# ---------------------------------------------------------------------------
+
+
+def test_a_screenshot_is_charged_to_the_tick_that_paid_for_it(stall, capsys):
+    """_stall_mark_shot lands on the OPEN record - never on a guessed tick."""
+    poc_app._STALL["threshold_ms"] = 100.0
+
+    poc_app._profile_tick_begin(11, "ycut")
+    stall.run.advance(120.0)
+    poc_app._profile_phase("draw")
+    # In the real _show this is _timing_tick_end: inside the SAME tick, before
+    # _profile_tick_end closes the record.
+    mark = poc_app._stall_mark_shot(41.5, tick=100)
+    assert mark == {"tick": 100, "ms": 41.5}, mark
+    poc_app._profile_tick_end(11, mode="ycut")
+
+    record = poc_app._STALL["worst"][0]
+    assert (record["n"], record["shot_ms"]) == (1, 41.5)
+    assert record["total_ms"] == pytest.approx(120.0), "the shot is not re-added"
+    assert "shot=41.5ms" in capsys.readouterr().err
+    assert poc_app._STALL["shot"] == {"tick": 100, "ms": 41.5}
+
+    # The next tick bought no picture: the record is silent about it, rather
+    # than inheriting the previous tick's mark.
+    stall.run.tick(frame=12)
+    quiet = [rec for rec in poc_app._STALL["worst"] if rec["n"] == 2]
+    assert quiet and quiet[0]["shot_ms"] is None
+    assert "shot=" not in poc_app._stall_line(quiet[0], 100.0)
+
+
+def test_the_worst_tick_of_each_100_tick_window_is_kept(stall):
+    """Every tick is compared against its window; the 100th one closes it."""
+    poc_app._STALL["threshold_ms"] = 200.0
+    for i in range(1, 101):
+        stall.run.tick(frame=i, phases=(("draw", 90.0 if i == 37 else 5.0),))
+
+    assert poc_app._STALL["ticks"] == 100
+    assert poc_app._STALL["window"] is None, "the 100th tick closed the window"
+    (window,) = poc_app._STALL["windows"]
+    assert window["window"] == 1
+    assert window["n"] == 37, "the window keeps its WORST tick, not its last"
+    assert window["frame"] == 37
+    assert window["total_ms"] == pytest.approx(90.0)
+
+    # A second window is in progress and is not a closed window.
+    stall.run.tick(frame=101, phases=(("draw", 7.0),))
+    assert len(poc_app._STALL["windows"]) == 1
+    assert poc_app._STALL["window"]["window"] == 2
+    assert poc_app._STALL["window"]["n"] == 101
+
+
+def test_a_tie_in_a_window_keeps_the_earlier_tick(stall):
+    """Equal totals: the FIRST one is the tick the later one may be paying for."""
+    poc_app._STALL["threshold_ms"] = 200.0
+    for i in range(1, 4):
+        stall.run.tick(frame=i, phases=(("draw", 8.0),))
+    assert poc_app._STALL["window"]["n"] == 1
+
+
+def test_the_summary_reports_each_window_and_the_shot_that_owned_it(stall):
+    """A periodic readback owns the same slot of every window - and says so."""
+    poc_app._STALL["threshold_ms"] = 60.0
+    for i in range(1, 121):
+        poc_app._profile_tick_begin(i, "ycut")
+        stall.run.advance(40.0)
+        if i % 100 == 0:
+            # Exactly what _timing_screenshot does: the readback is spent inside
+            # the tick, and only then is it marked.
+            stall.run.advance(45.0)
+            assert poc_app._stall_mark_shot(45.0, tick=i) is not None
+        poc_app._profile_tick_end(i, mode="ycut")
+
+    text = poc_app._stall_summary_text()
+    lines = text.splitlines()
+    assert len(lines) <= 40
+    assert "worst tick per 100-tick window:" in text, text
+    rows = [line for line in lines if line.startswith("  w")]
+    assert len(rows) == 2, rows
+
+    closed, open_window = rows
+    fields = closed.split()
+    assert fields[0] == "w1"
+    assert fields[1] == "1-100"
+    assert fields[2] == "100", "the 100th tick is the window's worst"
+    assert fields[3] == "85.0"
+    assert fields[5] == "45.0", "and it carries the readback it paid for"
+    assert closed.endswith("slow"), closed
+
+    fields = open_window.split()
+    assert fields[0] == "w2*", "the window in progress is marked"
+    assert fields[1] == "101-200"
+    assert fields[2] == "101"
+    assert fields[3] == "40.0"
+    assert fields[5] == "-", "no screenshot on this one"
+
+
+def test_the_summary_stays_inside_40_lines_with_every_table_on(stall):
+    """The window table is not allowed to push the summary past its cap."""
+    import gc as _gc
+
+    poc_app._STALL["threshold_ms"] = 60.0
+    was_enabled = _gc.isenabled()
+    _gc.disable()
+    try:
+        for i in range(1, 701):
+            if i % 150 == 0:
+                poc_app._stall_gc_callback("start", {"generation": 0})
+                stall.run.advance(4.0)
+                poc_app._stall_gc_callback("stop", {"generation": 0})
+            if i % 300 == 0:
+                poc_app._stall_gc_callback("start", {"generation": 2})
+                stall.run.advance(9.0)
+                poc_app._stall_gc_callback("stop", {"generation": 2})
+            stall.run.tick(frame=i)
+    finally:
+        if was_enabled:
+            _gc.enable()
+
+    lines = poc_app._stall_summary_text().splitlines()
+    assert len(lines) <= 40, lines
+    assert "worst ticks:" in "\n".join(lines), "the cap ate the worst ticks"
+    rows = [line for line in lines if line.startswith("  w")]
+    # Seven windows were closed (tick 700 closed the last); the summary shows
+    # the newest _STALL_MAX_WINDOW_ROWS of them and nothing in progress.
+    assert len(rows) == poc_app._STALL_MAX_WINDOW_ROWS, rows
+    assert rows[-1].split()[0] == "w7"
+
+
+def test_the_window_state_is_reset_with_the_rest_of_the_probe(stall):
+    """A reset that left a window behind would report a tick that never ran."""
+    for i in range(1, 61):
+        stall.run.tick(frame=i, phases=(("draw", 5.0),))
+    poc_app._stall_mark_shot(12.0, tick=60)
+    assert poc_app._STALL["window"] is not None
+    assert poc_app._STALL["shot"] is not None
+
+    poc_app._stall_reset()
+    assert poc_app._STALL["window"] is None
+    assert poc_app._STALL["windows"] == []
+    assert poc_app._STALL["shot"] is None

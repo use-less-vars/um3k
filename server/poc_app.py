@@ -1338,6 +1338,9 @@ def _timing_screenshot(plotter):
                 _timing_write(f"SCREENSHOT disabled at tick {tick}: {exc!r}")
             return None
         probe["shot_count"] = int(probe.get("shot_count", 0)) + 1
+        # A readback is paid INSIDE the tick it is measuring, so the tick that
+        # paid must say so: this is the only place that knows the shot ran.
+        _stall_mark_shot(elapsed, tick)
         return elapsed
     except Exception:  # noqa: BLE001 - telemetry is not the app
         return None
@@ -1856,6 +1859,13 @@ _STALL_MAX_PHASE = 20000  # samples kept per phase
 _STALL_MAX_GC = 4096  # gc events kept
 _STALL_MAX_LINES = 200  # stderr lines; the rest are COUNTED, not printed
 _STALL_SUMMARY_EVERY = 200  # ticks between summary rewrites
+# A WINDOW is _STALL_WINDOW ticks. The worst tick of each window is kept for
+# ONE reason: a periodic artefact (a screenshot every 100 ticks, a summary
+# rewrite every 200) owns the same slot in every window, and a per-tick list
+# of ten samples of that artefact cannot say so.
+_STALL_WINDOW = 100
+_STALL_MAX_WINDOWS = 100  # closed windows kept; the oldest is dropped
+_STALL_MAX_WINDOW_ROWS = 5  # closed windows in the summary, newest last
 # Fixed order for the phase columns, so two runs are read side by side.
 _STALL_PHASE_ORDER = ("reanchor", "target", "draw", "flush", "yield")
 
@@ -1865,6 +1875,9 @@ _STALL = {
     "ticks": 0,
     "slow": 0,
     "worst": [],
+    "window": None,  # the worst tick of the window in progress
+    "windows": [],  # closed windows, oldest first
+    "shot": None,  # {"tick": n, "ms": elapsed} of the last screenshot taken
     "phases": {},
     "gc": {},  # generation -> {"n", "total_ms", "max_ms"}
     "gc_events": [],
@@ -2155,6 +2168,9 @@ def _stall_reset() -> None:
     _STALL["ticks"] = 0
     _STALL["slow"] = 0
     _STALL["worst"] = []
+    _STALL["window"] = None
+    _STALL["windows"] = []
+    _STALL["shot"] = None
     _STALL["phases"] = {}
     _STALL["gc"] = {}
     _STALL["gc_events"] = []
@@ -2313,6 +2329,101 @@ def _stall_phase(name, ms) -> None:
         return
 
 
+def _stall_mark_shot(ms, tick=None):
+    """Mark the OPEN tick as the one that paid for a screenshot, and its ms.
+
+    Called from _timing_screenshot - the only place that KNOWS a readback ran.
+    Every ration gate lives there and nowhere else: a plotter that cannot
+    screenshot, a client-rendered view (suppress_rendering), the every-100-ticks
+    cadence and the 60-shot budget. Re-deriving that here from the tick number
+    would mark ticks whose shot was refused, which is exactly the wrong answer.
+    OFF is a no-op, and so is a record that is not open.
+    """
+    if not _STALL["enabled"]:
+        return None
+    try:
+        value = float(ms)
+    except (TypeError, ValueError):
+        return None
+    try:
+        mark = {"tick": tick, "ms": round(value, 3)}
+        _STALL["shot"] = mark
+        open_tick = _STALL["tick"]
+        if open_tick is not None:
+            # _timing_tick_end runs inside _show, before _profile_tick_end closes
+            # this record: the mark lands on the tick it belongs to.
+            open_tick["shot_ms"] = mark["ms"]
+        return mark
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _stall_window_note(record) -> None:
+    """Fold one closed tick into its 100-tick window, and close the window.
+
+    The window is derived from the probe's OWN tick count (1-100, 101-200, ...)
+    so it does not depend on any other suite's clock, and the last tick of a
+    window is the only tick that closes it: a run shorter than one window still
+    reports the window in progress, marked.
+    """
+    if not _STALL["enabled"]:
+        return
+    try:
+        n = int(record["n"])
+        window = (n - 1) // _STALL_WINDOW + 1
+        slim = {
+            "window": window,
+            "n": n,
+            "frame": record.get("frame"),
+            "mode": record.get("mode"),
+            "total_ms": float(record["total_ms"]),
+            "gap_ms": record.get("gap_ms"),
+            "shot_ms": record.get("shot_ms"),
+            "slow": bool(record.get("slow")),
+        }
+        best = _STALL["window"]
+        if best is None or int(best["window"]) != window:
+            # A window that never saw its 100th tick (a reset, or the run
+            # ending) is replaced, never merged: it is not a full window.
+            _STALL["window"] = slim
+        elif slim["total_ms"] > float(best["total_ms"]):
+            # >= keeps the EARLIER tick on a tie: it is the one whose cost the
+            # later tick may still be paying for.
+            _STALL["window"] = slim
+        if n % _STALL_WINDOW == 0:
+            closed = _STALL["window"]
+            if closed is not None:
+                windows = _STALL["windows"]
+                windows.append(closed)
+                del windows[:-_STALL_MAX_WINDOWS]
+            _STALL["window"] = None
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _stall_window_row(record, partial) -> str:
+    """One window of the summary: the ticks it spans, its worst tick, its shot."""
+    window = int(record["window"])
+    first = (window - 1) * _STALL_WINDOW + 1
+    last = window * _STALL_WINDOW
+    gap = record.get("gap_ms")
+    shot = record.get("shot_ms")
+    line = "  %-6s %6d-%-6d %5d %8.1f %7s %7s  %5s %s" % (
+        "w%d%s" % (window, "*" if partial else ""),
+        first,
+        last,
+        int(record["n"]),
+        float(record["total_ms"]),
+        "-" if gap is None else "%.1f" % float(gap),
+        "-" if shot is None else "%.1f" % float(shot),
+        record.get("frame"),
+        record.get("mode"),
+    )
+    # "slow" says the window's worst tick also crossed the threshold; without it
+    # the row is the worst of a quiet window, which is worth its line too.
+    return line + (" slow" if record.get("slow") else "")
+
+
 def _stall_tick_end(row=None):
     """Close the record: total ms, the gc inside it, and whether it was slow."""
     if not _STALL["enabled"]:
@@ -2337,6 +2448,10 @@ def _stall_tick_end(row=None):
             "gc_ms": round(float(_STALL["gc_ms_total"]) - float(tick["gc_ms0"]), 3),
             "counts": counts,
         }
+        # The readback is charged to THIS tick (see _timing_screenshot): the mark
+        # was left on the open record, so nothing has to be inferred from n.
+        shot_ms = tick.get("shot_ms")
+        record["shot_ms"] = None if shot_ms is None else round(float(shot_ms), 3)
         threshold = _stall_threshold_ms()
         record["slow"] = bool(total >= threshold)
         if record["slow"]:
@@ -2346,6 +2461,7 @@ def _stall_tick_end(row=None):
         worst.append(record)
         worst.sort(key=lambda item: item["total_ms"], reverse=True)
         del worst[_STALL_MAX_WORST:]
+        _stall_window_note(record)
         if int(_STALL["ticks"]) % _STALL_SUMMARY_EVERY == 0:
             _stall_write_summary()
         return record
@@ -2382,6 +2498,12 @@ def _stall_line(record, threshold) -> str:
     gap = record.get("gap_ms")
     if gap is not None:
         parts.append("gap=%.1fms" % float(gap))
+    shot = record.get("shot_ms")
+    if shot is not None:
+        # Absent unless a screenshot really ran: tens of ms spent inside the
+        # tick that reports them, and the first thing to blame when the slow
+        # ticks line up on a 100-tick cadence.
+        parts.append("shot=%.1fms" % float(shot))
     return " ".join(parts)
 
 
@@ -2477,7 +2599,9 @@ def _stall_summary_text() -> str:
             out.append(
                 "  (none recorded - gc hook %s)" % ("on" if _STALL["gc_hooked"] else "OFF")
             )
-        worst = _STALL["worst"][:10]
+        # Six, not ten: the window table below reports the same ticks a
+        # second way, and the summary is capped at 40 lines.
+        worst = _STALL["worst"][:6]
         if worst:
             out.append("")
             out.append("worst ticks:       n    total     gap      gc   frame mode")
@@ -2494,6 +2618,21 @@ def _stall_summary_text() -> str:
                         record.get("mode"),
                     )
                 )
+        # One line per window (plus the one in progress, marked *): a periodic
+        # stall repeats in the same slot of every window, and this is the table
+        # that shows the repeat instead of ten samples of it.
+        closed = _STALL["windows"][-_STALL_MAX_WINDOW_ROWS:]
+        open_window = _STALL["window"]
+        if closed or open_window is not None:
+            out.append("")
+            out.append(
+                "worst tick per %d-tick window:  window     ticks     n    total      gap  shot_ms  frame mode"
+                % _STALL_WINDOW
+            )
+            for window in closed:
+                out.append(_stall_window_row(window, False))
+            if open_window is not None:
+                out.append(_stall_window_row(open_window, True))
         return "\n".join(out[:40]) + "\n"
     except Exception:  # noqa: BLE001 - a summary is not the app
         return ""
