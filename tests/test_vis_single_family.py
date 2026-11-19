@@ -921,3 +921,81 @@ def test_the_title_names_both_pictures_when_both_are_up():
         "single-family title would gain a second half, and that string is "
         f"what every existing page shows today.\n{code}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Step 6b: the READER gets the switch, and the switch actually repaints.
+#
+# The helper, the flag and the sentence all landed above; what was still
+# missing was any way for a reader to move the flag, and - once a box exists -
+# any guarantee that moving it changes the picture. Two claims, one per half:
+# the box is EMITTED (once, and NOT behind the marker-plane guard, which asks
+# about the two X-MARKERS and not about families), and the state change has a
+# handler that reaches _show() rather than merely writing state.
+# ---------------------------------------------------------------------------
+def test_the_other_family_box_is_emitted_before_the_marker_guard():
+    """(g) One box for the second family, and nothing gates it away."""
+    source = _source()
+    tree = ast.parse(source)
+    node = _one_def(tree, "_emit_vector_toggle")
+    code = _code_text(source, node)
+
+    occurrences = code.count("show_other_family")
+    assert occurrences == 1, (
+        f"_emit_vector_toggle binds 'show_other_family' {occurrences} time(s), "
+        "expected exactly one: a second binding would be a second control over "
+        "one flag, and the page would then carry two boxes nobody could tell "
+        f"apart.\n{code}"
+    )
+    assert '"Show Other Plane"' in code, (
+        "the box that switches the other family carries no label of its own, "
+        "so a reader cannot tell which control opens the second sheet - the "
+        f"label is kept in the CODE text above, so this is not a prose miss.\n"
+        f"{code}"
+    )
+
+    guard = "if not _plane_toggles_available():"
+    assert guard in code, (
+        "the marker-plane guard is gone from _emit_vector_toggle: the two "
+        "marker boxes would then be emitted on pages that have no marker to "
+        "hide, which is the lie that guard exists to stop."
+    )
+    assert code.index("show_other_family") < code.index(guard), (
+        "the other-family box is emitted AFTER 'if not "
+        "_plane_toggles_available(): return', so a question about the two "
+        "X-MARKERS decides whether a reader may see the second SHEET. A page "
+        "with no marker stack and no |E| volume loses the box, which is "
+        f"exactly the page that draws it.\n{code}"
+    )
+
+
+def test_the_other_family_switch_repaints_the_scene():
+    """(h) The flag has a handler, and the handler reaches ``_show``."""
+    source = _source()
+    tree = ast.parse(source)
+
+    switches = [
+        call
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "change"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and call.args[0].value == "show_other_family"
+    ]
+    assert len(switches) == 1, (
+        f"{POC_APP.name} registers {len(switches)} "
+        "@state.change('show_other_family'): the box writes the flag and "
+        "nothing else does, so exactly one handler may answer it - zero is a "
+        "control that does nothing, and two would race for the same redraw."
+    )
+
+    node = _one_def(tree, "_on_show_other_family")
+    code = _code_text(source, node)
+    assert "_show(" in code, (
+        "the other-family handler never calls _show: flipping the box would "
+        "write state.show_other_family and change nothing on screen - the "
+        "second sheet stays hidden and the control is inert, which is the "
+        f"failure this pin exists to catch.\n{code}"
+    )

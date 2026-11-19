@@ -17718,6 +17718,26 @@ def run_web_vis(
         """Draw or drop the purple S11 port plane. NEVER raises."""
         _redraw_for_plane_toggle("S11 port")
 
+    # The other-family box. Same rule as the three controls above it: the box
+    # only WRITES the flag, and the redraw hangs off the state change, so every
+    # writer of the flag takes one path.
+    @state.change("show_other_family")
+    def _on_show_other_family(**_kwargs) -> None:
+        """Draw or drop the second plane family. NEVER raises.
+
+        WHY ``_show`` and not a bare redraw: WHICH sheets are drawn is decided
+        INSIDE the draw (``_visible_families``), together with the camera bounds
+        that must hold every visible sheet and the family the colour bar
+        describes - none of which a re-cut re-enters. ``plotter.render()`` is
+        then inside ``_show``, so there is exactly one draw.
+        """
+        try:
+            _show(state.frame, state.mode, "family")
+        except Exception as exc:  # noqa: BLE001 - a second sheet is an EXTRA
+            print(
+                f"[poc_app] other family toggle skipped: {exc}", file=sys.stderr
+            )
+
     # The fallback expander's handler. Only the VBtn path binds it: the panels
     # path is opened and closed by Vuetify itself and never reaches the server.
     @ctrl.set("netlist_toggle")
@@ -19090,6 +19110,25 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - a toggle is never the page
             print(
                 f"[poc_app] vector field toggle unavailable: {exc}", file=sys.stderr
+            )
+        # The OTHER plane family's box: beside the arrow field's, and NOT behind
+        # the marker guard below. That guard asks whether a page can HIDE one of
+        # the two X-markers, and a family is not a marker - gating this box on it
+        # would withhold the second sheet on exactly the pages that can draw it.
+        try:
+            checkbox_cls(
+                # The same (state_name, default) binding as the box above: the
+                # browser writes the flag and the @state.change handler below
+                # decides what a change means. OFF at boot, so a page that never
+                # touches it draws the one family it has always drawn.
+                v_model=("show_other_family", False),
+                label="Show Other Plane",
+                hide_details=True,
+                style="padding: 2px 0;",
+            )
+        except Exception as exc:  # noqa: BLE001 - a toggle is never the page
+            print(
+                f"[poc_app] other plane toggle unavailable: {exc}", file=sys.stderr
             )
         # WHAT THIS GUARD GATES, and what it must NOT: the two MARKER boxes
         # only. The original guard asked ``cut_redraw`` and meant "a page with no
