@@ -14058,6 +14058,13 @@ def run_web_vis(
         )
         return 1
 
+    try:
+        import trame_vtk_hardening
+
+        trame_vtk_hardening.install()
+    except Exception as exc:  # noqa: BLE001 - a missing sibling must not stop the app
+        print(f"[poc_app] trame_vtk hardening: not applied ({exc})", file=sys.stderr)
+
     from trame.app import get_server
 
     # THE LIVE PAGE, in ONE mutable dict. Every draw path reads `page["info"]`
