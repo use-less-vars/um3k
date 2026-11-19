@@ -15382,6 +15382,10 @@ def run_web_vis(
     # stops showing the dump - see _set_picture_title() below.
     state.trame__title = _animation_title_text(structure_label)
     state.mode = "ycut"
+    # The view holds sheets of two families and draws ONE of them; this flag
+    # is the only switch that may say otherwise (read in _visible_families,
+    # below, and nowhere else).
+    state.show_other_family = False
     state.playing = False
     state.frame = 0
     # No timeline: the scrubber's range is ABSENT (None), never 0 frames.
@@ -15788,6 +15792,21 @@ def run_web_vis(
         else:
             _set_picture_title(_animation_title_text(structure_label))
 
+    def _visible_families(mode: str) -> frozenset:
+        """The families this view is showing, as ONE set every caller asks.
+
+        WHY a set and not the single name ``state.mode`` used to be: each
+        comparison below was a private opinion about which families are
+        drawn, and a private opinion is exactly how a second plane ends up
+        left visible on a frame it was never drawn for. Membership is the
+        same question asked in one place, so turning the second family on
+        is one flag rather than a hunt for comparison sites.
+        """
+        other = "xcut" if mode == "ycut" else "ycut"
+        if state.show_other_family:
+            return frozenset((mode, other))
+        return frozenset((mode,))
+
     def _swap_scalar_bar(mode: str) -> None:
         """Leave exactly ONE PLANE bar standing, for the family now on screen.
 
@@ -15814,7 +15833,7 @@ def run_web_vis(
                 (
                     item
                     for item in sheets.values()
-                    if item["family"] == mode
+                    if item["family"] in _visible_families(mode)
                 ),
                 None,
             )
@@ -16039,7 +16058,7 @@ def run_web_vis(
         }
         # _show's rule, applied immediately: a press made from the y-cut view
         # leaves the picture hidden instead of letting it appear edge-on.
-        actor.visibility = state.mode == "xcut"
+        actor.visibility = "xcut" in _visible_families(state.mode)
         # The overlay follows the same rule and is drawn only when it was asked
         # for: off (the default) leaves this view byte-for-byte what it was.
         if state.show_quiver:
@@ -16106,7 +16125,7 @@ def run_web_vis(
             }
             # The picture's own rule, applied to its overlay: arrows on a hidden
             # picture are hidden too, so the y-cut view stays as clean as it was.
-            actor.visibility = state.mode == "xcut"
+            actor.visibility = "xcut" in _visible_families(state.mode)
         except Exception as exc:  # noqa: BLE001 - the overlay is an EXTRA
             print(f"[poc_app] mode vector field skipped: {exc}", file=sys.stderr)
 
@@ -16461,7 +16480,7 @@ def run_web_vis(
 
         _timing_mark("sheet_start")
         for key, entry in sheets.items():
-            visible = entry["family"] == mode
+            visible = entry["family"] in _visible_families(mode)
             try:
                 entry["actor"].visibility = visible
             except Exception as exc:  # noqa: BLE001 - a stuck sheet is not fatal
@@ -16509,7 +16528,7 @@ def run_web_vis(
         if mode_entry is not None:
             try:
                 mode_entry["actor"].visibility = (
-                    mode_entry.get("family") == mode
+                    mode_entry.get("family") in _visible_families(mode)
                     and mode_entry.get("page_path") == page.get("path")
                 )
             except Exception as exc:  # noqa: BLE001 - a picture is not the page
@@ -16525,7 +16544,7 @@ def run_web_vis(
             try:
                 quiver_entry["actor"].visibility = (
                     bool(state.show_quiver)
-                    and quiver_entry.get("family") == mode
+                    and quiver_entry.get("family") in _visible_families(mode)
                     and quiver_entry.get("page_path") == page.get("path")
                 )
             except Exception as exc:  # noqa: BLE001 - an overlay is not the page
