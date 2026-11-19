@@ -29,7 +29,9 @@ suites:
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +69,30 @@ def _code_only(node) -> str:
     ):
         body = body[1:]
     return "\n".join(ast.unparse(statement) for statement in body)
+
+
+def _prose_free_source(source: str) -> str:
+    """The module text with every comment and string literal removed.
+
+    WHY: several pins below count how often a NAME appears in the module, and
+    the docstrings - whose whole job is to explain that name to a reader - and
+    the comments quote it as well. A raw count made a prose edit move a pin
+    that was really about code, which is a pin lying about what it guards.
+    What is left here is the tokens the interpreter acts on: string literals go
+    with the comments because a name that only ever appears inside a message is
+    not a use of it.
+    """
+    dropped = {tokenize.COMMENT, tokenize.STRING}
+    for name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END"):
+        value = getattr(tokenize, name, None)  # 3.12 splits f-strings up
+        if value is not None:
+            dropped.add(value)
+    lines = io.StringIO(source).readline
+    return "".join(
+        token.string
+        for token in tokenize.generate_tokens(lines)
+        if token.type not in dropped
+    )
 
 
 def _lines_with(source: str, needle: str) -> list:
@@ -288,12 +314,16 @@ def test_every_family_visibility_write_asks_the_helper():
         )
 
     # One definition plus the six sites above, plus the camera latch and the
-    # plane bar's own latch.
-    total = source.count("_visible_families(")
-    assert total == 9, (
-        f"'_visible_families(' appears {total} time(s): one definition, the "
-        "six write sites (sheet loop, mode picture, quiver, two draw helpers, "
-        "plane-bar pick), the camera latch's family set and the plane bar's."
+    # plane bar's own latch - plus step 6a's four: the mode-label call in
+    # _show, the label builder's own set, and the two title syncs that had no
+    # set to ask before. Counted over CODE, not raw text: the docstrings that
+    # explain this helper name it, and prose must not move a pin.
+    total = _prose_free_source(source).count("_visible_families(")
+    assert total == 13, (
+        f"'_visible_families(' appears {total} time(s) in code: one "
+        "definition, the six write sites (sheet loop, mode picture, quiver, "
+        "two draw helpers, plane-bar pick), the camera latch's family set, "
+        "the plane bar's, the mode label, and the three title syncs."
     )
 
     # The sweep: no OTHER actor visibility write keeps a family opinion.
@@ -663,4 +693,231 @@ def test_the_plane_legend_is_rebuilt_when_the_family_set_changes():
         f"{len(boot)} add_mesh call(s) build the plane bar at boot, expected "
         "exactly one: with none, the first tick has no bar to replace; with "
         "more, the page starts with bars for families it is not drawing."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step 6a: the SENTENCE and the TITLE name every sheet drawn.
+#
+# Once a second family can share the page, "which families are drawn?" stops
+# being the same question as "what is state.mode?", and two pieces of prose
+# were the last places still asking it privately: the one sentence under the
+# picture (state.mode_label) and the page title. The pins below are about the
+# SHAPE of that repair - one builder per family, the primary family named
+# first, one writer of the sentence, and a title sync that is TOLD the set
+# instead of reading a name of its own - because the render itself cannot be
+# imported here (see the module docstring).
+# ---------------------------------------------------------------------------
+def _one_def(tree: ast.Module, name: str):
+    """The single ``def name`` node, or a failure naming what was found."""
+    nodes = _function_defs(tree, name)
+    assert len(nodes) == 1, (
+        f"{len(nodes)} def(s) named {name!r} in server/poc_app.py: these pins "
+        "name one function each, so a second one would make them ambiguous "
+        "and no one would be minding the one the page calls."
+    )
+    return nodes[0]
+
+
+def _flat(text: str) -> str:
+    """``text`` with every run of whitespace collapsed to one space."""
+    return re.sub(r"\s+", " ", text)
+
+
+def test_the_mode_sentence_has_one_builder_per_family():
+    """(a) Each family's sentence is declared in ONE table, by its own name."""
+    source = _source()
+    tree = ast.parse(source)
+    node = _one_def(tree, "_mode_label_text")
+    tables = [
+        statement
+        for statement in ast.walk(node)
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "builders"
+            for target in statement.targets
+        )
+    ]
+    assert len(tables) == 1, (
+        f"_mode_label_text assigns 'builders' {len(tables)} time(s), expected "
+        "exactly one: that table is the declaration of which families have a "
+        "sentence on this page."
+    )
+    table = tables[0].value
+    assert isinstance(table, ast.Dict), (
+        "the family table is no longer a literal dict, so the set of families "
+        "with a sentence can no longer be read off the source."
+    )
+    mapping = {}
+    for key, value in zip(table.keys, table.values):
+        assert isinstance(key, ast.Constant) and isinstance(key.value, str), (
+            f"non-literal family key {ast.unparse(key)} in the builder table."
+        )
+        assert isinstance(value, ast.Name), (
+            f"the builder for {key.value!r} is {ast.unparse(value)}, not a "
+            "name: a family whose sentence is built inline cannot be reused "
+            "and cannot be skipped when it fails."
+        )
+        mapping[key.value] = value.id
+    assert mapping == {
+        "ycut": "_ycut_mode_label_text",
+        "xcut": "_xcut_mode_label_text",
+    }, (
+        f"the builder table is {mapping}. Each family must map to its OWN "
+        "builder - a swap here puts the y-z sentence on the x-z sheet - and a "
+        "third family has to be declared here to ever be named on the page."
+    )
+    for name in mapping.values():
+        _one_def(tree, name)
+
+
+def test_each_family_sentence_names_its_own_sheet():
+    """(b) The words that say WHICH sheet this is stay in their own builder."""
+    source = _source()
+    tree = ast.parse(source)
+    ycut = _flat(_code_text(source, _one_def(tree, "_ycut_mode_label_text")))
+    xcut = _flat(_code_text(source, _one_def(tree, "_xcut_mode_label_text")))
+    assert "x-z sheet" in ycut, (
+        "the y-cut sentence no longer says 'x-z sheet', so the sentence under "
+        f"the picture does not name the sheet it describes:\n{ycut}"
+    )
+    assert "Transverse cross-section (y-z)" in xcut, (
+        "the x-cut sentence no longer opens with 'Transverse cross-section "
+        f"(y-z)', so it does not name the sheet it describes:\n{xcut}"
+    )
+    assert "Transverse cross-section" not in ycut and "x-z sheet" not in xcut, (
+        "the two sentences have been swapped or merged: the y-cut builder is "
+        f"meant to name the x-z sheet and the x-cut builder the y-z "
+        f"cross-section.\nycut: {ycut}\nxcut: {xcut}"
+    )
+
+
+def test_the_primary_family_leads_the_sentence():
+    """(c) ``mode`` is named first, the rest follow - the controls steer one."""
+    source = _source()
+    code = _flat(
+        _code_text(source, _one_def(ast.parse(source), "_mode_label_text"))
+    )
+    assert (
+        "others = sorted(family for family in visible if family != mode)"
+        in code
+    ), (
+        "the 'others' sequence is no longer the visible families MINUS the "
+        f"primary one, so a family could be named twice or missed:\n{code}"
+    )
+    assert "for family in [mode] + others" in code, (
+        "the sentence is no longer built as '[mode] + others': the sheet the "
+        f"controls steer must lead it, whatever the set holds.\n{code}"
+    )
+    assert code.index("[mode] + others") > code.index("others = sorted"), (
+        "the primary family is added to the sequence BEFORE the others are "
+        f"chosen, so it can no longer be the first entry:\n{code}"
+    )
+
+
+def test_the_mode_sentence_is_written_in_one_place():
+    """(d) ONE writer of state.mode_label, and it asks for the family set."""
+    source = _source()
+    tree = ast.parse(source)
+    writes = _lines_with(source, "state.mode_label = ")
+    assert len(writes) == 1, (
+        f"state.mode_label is written on {len(writes)} line(s) at {writes}: "
+        "a second writer is a second opinion about which sheets are on the "
+        "page, and the one the tick does not run keeps the old sentence."
+    )
+    owner = _enclosing_name(tree, writes[0])
+    assert owner == "_show", (
+        f"the sentence is written at line {writes[0]}, inside {owner!r}: it "
+        "belongs to the draw, beside the frame label it sits under."
+    )
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_mode_label_text"
+    ]
+    assert len(calls) == 1, (
+        f"_mode_label_text is called {len(calls)} time(s), expected once: it "
+        "is the ONE builder of the sentence, called by the one writer above."
+    )
+    assert calls[0].lineno == writes[0], (
+        f"line {writes[0]} writes state.mode_label but the _mode_label_text "
+        f"call is on line {calls[0].lineno}: the sentence is being assembled "
+        "somewhere other than the helper that owns it."
+    )
+    arguments = [ast.unparse(argument) for argument in calls[0].args]
+    assert arguments == ["info", "mode", "_visible_families(mode)"], (
+        f"the sentence is built from {arguments}: it must be handed the page "
+        "being drawn, the primary family, and the families actually on "
+        "screen - a name of its own would describe half the picture."
+    )
+
+
+def test_the_title_is_told_the_family_set():
+    """(e) The title sync takes the set; it does not read ``state.mode``."""
+    source = _source()
+    tree = ast.parse(source)
+    node = _one_def(tree, "_sync_picture_title")
+    assert node.args.args, (
+        "_sync_picture_title takes no parameter: it would have to decide for "
+        "itself which families are drawn, which is the private opinion "
+        "_visible_families() exists to end."
+    )
+    assert not node.args.defaults and not node.args.kw_defaults, (
+        "the family set has a default, so a caller that forgets it silently "
+        "gets 'no families' (or a stale one) instead of a failure."
+    )
+    code = _flat(_code_text(source, node))
+    assert "state.mode" not in code, (
+        "the title sync still reads state.mode: with a second family on the "
+        "page the title would name the primary family's picture only. Its "
+        f"verdict has to come from the set it was handed.\n{code}"
+    )
+    assert 'entry.get("family") in visible' in code, (
+        "the sync no longer asks whether the picture's family is IN the set "
+        f"it was handed, so a hidden picture can still own the title:\n{code}"
+    )
+
+    lines = [
+        line
+        for line in _lines_with(source, "_sync_picture_title(")
+        if not source.splitlines()[line - 1].strip().startswith("def ")
+    ]
+    assert len(lines) == 3, (
+        f"_sync_picture_title is called on {len(lines)} line(s) at {lines}, "
+        "expected three: the drop, the press, and the family switch."
+    )
+    for line in lines:
+        text = source.splitlines()[line - 1]
+        assert "_visible_families(" in text, (
+            f"the call at line {line} does not pass a family set:\n{text}\n"
+            "A sync that is not told the set cannot know what is on screen."
+        )
+    owners = tuple(sorted(_enclosing_name(tree, line) for line in lines))
+    assert owners == ("_clear_mode_picture", "_draw_mode_picture", "_show"), (
+        f"the calls are inside {owners}: a picture is dropped in "
+        "_clear_mode_picture, drawn in _draw_mode_picture and revealed in "
+        "_show, and those are the three moments the title can change."
+    )
+
+
+def test_the_title_names_both_pictures_when_both_are_up():
+    """(f) Two families on the page means a title naming BOTH pictures."""
+    source = _source()
+    code = _flat(
+        _code_text(source, _one_def(ast.parse(source), "_sync_picture_title"))
+    )
+    assert "_animation_title_text(" in code and "_mode_title_text(" in code, (
+        "the title sync no longer builds both picture titles, so one of the "
+        f"two things on the page goes unnamed:\n{code}"
+    )
+    assert '" + "' in code, (
+        "the two picture titles are no longer JOINED, so a page showing the "
+        f"|Ez| dump and an |E_t| cross-section can only name one:\n{code}"
+    )
+    assert "len(visible) > 1" in code, (
+        "the join is not guarded on there being more than one family: the "
+        "single-family title would gain a second half, and that string is "
+        f"what every existing page shows today.\n{code}"
     )

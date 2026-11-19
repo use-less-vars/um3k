@@ -15776,25 +15776,50 @@ def run_web_vis(
         except Exception as exc:  # noqa: BLE001 - decoration only
             print(f"[poc_app] header title not set: {exc}", file=sys.stderr)
 
-    def _sync_picture_title() -> None:
-        """Point the title at the field the 3D view is ACTUALLY showing.
+    def _sync_picture_title(visible) -> None:
+        """Point the title at the fields the 3D view is ACTUALLY showing.
 
-        Same rule _show applies to the mode picture's visibility - its own
-        family, and only the dump it was solved from - so a picture that
-        exists but is hidden (a family switch, a solve that swapped the page)
-        leaves the |Ez| title standing. Cheap enough to call on every draw:
-        _set_picture_title() writes nothing when the string has not changed.
+        WHY the caller hands in a SET: a title is a claim about the picture
+        under it, and this view can now show two pictures at once. The rule
+        _show applies to the mode picture's visibility is the same rule here -
+        its own family, and only the dump it was solved from - so "is this
+        picture on screen" has to be asked against the same families the sheets
+        were drawn for, not against the single name ``state.mode``. The set
+        comes from _visible_families(), so the view keeps ONE opinion about
+        what is drawn instead of the title growing its own.
+
+        WHY the two titles are JOINED when both pictures are up: with the
+        second family switched on, the |Ez| dump and the |E_t| cross-section
+        are both on the page, and a title naming only one of them would lie
+        about the other half of the view. With one family showing there is
+        exactly one picture, so the title is that picture's own string, byte
+        for byte what it was before this took a set.
+
+        Cheap enough to call on every draw: _set_picture_title() writes
+        nothing when the string has not changed.
         """
-        entry = handles.get("mode_actor")
-        on_screen = (
-            entry is not None
-            and entry.get("family") == state.mode
-            and entry.get("page_path") == page.get("path")
-        )
-        if on_screen:
-            _set_picture_title(_mode_title_text(structure_label, entry.get("index")))
-        else:
-            _set_picture_title(_animation_title_text(structure_label))
+        try:
+            entry = handles.get("mode_actor")
+            on_screen = (
+                entry is not None
+                and entry.get("family") in visible
+                and entry.get("page_path") == page.get("path")
+            )
+            index = None if entry is None else entry.get("index")
+            if not on_screen:
+                _set_picture_title(_animation_title_text(structure_label))
+            elif len(visible) > 1:
+                _set_picture_title(
+                    _animation_title_text(structure_label)
+                    + " + "
+                    + _mode_title_text(structure_label, index)
+                )
+            else:
+                _set_picture_title(
+                    _mode_title_text(structure_label, index)
+                )
+        except Exception as exc:  # noqa: BLE001 - decoration only
+            print(f"[poc_app] picture title kept: {exc}", file=sys.stderr)
 
     def _visible_families(mode: str) -> frozenset:
         """The families this view is showing, as ONE set every caller asks.
@@ -15810,6 +15835,113 @@ def run_web_vis(
         if state.show_other_family:
             return frozenset((mode, other))
         return frozenset((mode,))
+
+    def _ycut_mode_label_text(info) -> str:
+        """The on-page sentence naming the x-z sheet. NEVER raises.
+
+        WHY ``info`` is an ARGUMENT and not a name closed over from this scope:
+        _show() REBINDS ``info`` for the page it is drawing - a solve swaps the
+        dump under the live page - so a helper reading the outer name would
+        describe whichever page happened to be current when it was called,
+        rather than the page whose frame is being labelled. Handing the page in
+        keeps the sentence and the sheets it names on the same record.
+        """
+        # The y the x-z sheet sits on is READ per draw, from the LIVE page,
+        # and is None when the dump records no j_cut - in which case no such
+        # sheet exists to name. The readout says that rather than quoting a
+        # station nothing was drawn at.
+        station = _finite(info.get("j_cut"))
+        return (
+            "x-z sheet: not recorded - this dump carries no j_cut, "
+            "so no x-z sheet is drawn"
+            if station is None
+            else (
+                f"x-z sheet at y = {float(station) * cell_mm:.4f} mm "
+                "(one recorded y sample)"
+            )
+        )
+
+    def _xcut_mode_label_text(info) -> str:
+        """The on-page sentence naming the fixed y-z planes. NEVER raises.
+
+        An ``info`` argument for the reason above: every position in this
+        sentence is READ from the dump, so it has to be read from the dump THIS
+        frame is drawing. The near/far names are claimed only when the recorded
+        load position agrees with them - otherwise they are slice 1 and 2.
+        """
+        # FIXED planes. These two y-z slices are the only ones the dump
+        # carries, so the viewer cannot sweep x through them: that would
+        # mean dumping the whole 3-D field (~2 GB) instead of two sheets.
+        # The positions are read from the dump, never written as literals,
+        # and the near/far names are claimed only when the recorded load
+        # position agrees with them - otherwise they are slice 1 and 2.
+        near_mm = _finite(info["xcut_near_mm"])
+        far_mm = _finite(info["xcut_far_mm"])
+        load_mm = _finite(info["load_x_mm"])
+        near_side, far_side = "slice 1", "slice 2"
+        if (
+            near_mm is not None
+            and far_mm is not None
+            and load_mm is not None
+            and abs(near_mm - load_mm) <= abs(far_mm - load_mm)
+        ):
+            near_side, far_side = "load side", "stub side"
+        near_text = (
+            "not recorded" if near_mm is None else f"{near_mm:.4f}"
+        )
+        far_text = "not recorded" if far_mm is None else f"{far_mm:.4f}"
+        strip_mm = _finite(info["strip_w_mm"])
+        width_mm = _finite(y_span_mm)
+        strip_text = (
+            "not recorded" if strip_mm is None else f"{strip_mm:.1f}"
+        )
+        width_text = (
+            "not recorded" if width_mm is None else f"{width_mm:.1f}"
+        )
+        return (
+            "Transverse cross-section (y-z) looking down the line. "
+            f"Strip width = {strip_text} mm, "
+            f"domain width = {width_text} mm."
+            f" Planes FIXED at x = {near_text} / {far_text} mm "
+            f"({near_side} / {far_side}; the dump stores only these two)."
+        )
+
+    def _mode_label_text(info, mode: str, visible) -> str:
+        """The on-page sentence naming EVERY sheet drawn on this frame. NEVER raises.
+
+        WHY the family SET and not just ``mode``: _visible_families() is the one
+        place that decides what is drawn, and with the second family switched on
+        the page shows two sheets, one from each family. A sentence built from
+        the mode alone would describe half the picture - the same class of bug
+        as a comparison site holding its own opinion about visibility.
+
+        WHY the primary family leads: the controls steer ``mode``, so the sheet
+        they steer is named first and the second family follows it. The order is
+        fixed (``mode``, then the rest sorted), so a stable page produces a
+        stable string.
+
+        WHY a failing sentence does not take the page with it: a label is
+        decoration. A dump missing the keys one builder wants loses that
+        builder's sentence, keeps the other, and says so on stderr.
+        """
+        builders = {
+            "ycut": _ycut_mode_label_text,
+            "xcut": _xcut_mode_label_text,
+        }
+        sentences = []
+        others = sorted(family for family in visible if family != mode)
+        for family in [mode] + others:
+            build = builders.get(family)
+            if build is None:
+                continue
+            try:
+                sentences.append(build(info))
+            except Exception as exc:  # noqa: BLE001 - a caption is not the page
+                print(
+                    f"[poc_app] {family} sheet sentence skipped: {exc}",
+                    file=sys.stderr,
+                )
+        return " ".join(text for text in sentences if text)
 
     def _swap_scalar_bar(mode: str) -> None:
         """Leave exactly ONE PLANE bar standing, for the family now on screen.
@@ -15926,7 +16058,7 @@ def run_web_vis(
         # HERE, at the one place a picture is dropped, so every path that
         # removes one - a fresh draw, a refusal, a finished solve replacing
         # the page - resets it together.
-        _sync_picture_title()
+        _sync_picture_title(_visible_families(state.mode))
 
     def _draw_mode_picture(result, index=None) -> None:
         """Draw a solve's 48 x 48 |E| on the cross-section plane. NEVER raises.
@@ -16097,7 +16229,7 @@ def run_web_vis(
         # The picture just put on the view is |E_t| of the mode, so the title
         # says so. A press that could not draw returned above, having already
         # reset the title through _clear_mode_picture().
-        _sync_picture_title()
+        _sync_picture_title(_visible_families(state.mode))
 
     def _draw_mode_quiver(
         result, *, x_mm: float, y_centre_mm: float = 0.0, index=None
@@ -16603,9 +16735,10 @@ def run_web_vis(
                     f"[poc_app] mode vector field visibility skipped: {exc}",
                     file=sys.stderr,
                 )
-        # The family switch above is also a title switch: the picture just went
-        # hidden (or came back), and the title names the field now on screen.
-        _sync_picture_title()
+        # The family switch above is also a title switch: the pictures just
+        # went hidden (or came back), and the title names the fields now on
+        # screen.
+        _sync_picture_title(_visible_families(mode))
 
         # The bar describes a SET of families for the same reason the camera
         # does: switching the second family on changes what is drawn without
@@ -16710,58 +16843,14 @@ def run_web_vis(
             paint_fps,
         )
         state.phase_label = _vis_phase_text(t_ns, info.get("t_traverse_ns"))
-        if mode == "ycut":
-            # The y the x-z sheet sits on is READ per draw, from the LIVE page,
-            # and is None when the dump records no j_cut - in which case no such
-            # sheet exists to name. The readout says that rather than quoting a
-            # station nothing was drawn at.
-            station = _finite(info.get("j_cut"))
-            state.mode_label = (
-                "x-z sheet: not recorded - this dump carries no j_cut, "
-                "so no x-z sheet is drawn"
-                if station is None
-                else (
-                    f"x-z sheet at y = {float(station) * cell_mm:.4f} mm "
-                    "(one recorded y sample)"
-                )
-            )
-        else:
-            # FIXED planes. These two y-z slices are the only ones the dump
-            # carries, so the viewer cannot sweep x through them: that would
-            # mean dumping the whole 3-D field (~2 GB) instead of two sheets.
-            # The positions are read from the dump, never written as literals,
-            # and the near/far names are claimed only when the recorded load
-            # position agrees with them - otherwise they are slice 1 and 2.
-            near_mm = _finite(info["xcut_near_mm"])
-            far_mm = _finite(info["xcut_far_mm"])
-            load_mm = _finite(info["load_x_mm"])
-            near_side, far_side = "slice 1", "slice 2"
-            if (
-                near_mm is not None
-                and far_mm is not None
-                and load_mm is not None
-                and abs(near_mm - load_mm) <= abs(far_mm - load_mm)
-            ):
-                near_side, far_side = "load side", "stub side"
-            near_text = (
-                "not recorded" if near_mm is None else f"{near_mm:.4f}"
-            )
-            far_text = "not recorded" if far_mm is None else f"{far_mm:.4f}"
-            strip_mm = _finite(info["strip_w_mm"])
-            width_mm = _finite(y_span_mm)
-            strip_text = (
-                "not recorded" if strip_mm is None else f"{strip_mm:.1f}"
-            )
-            width_text = (
-                "not recorded" if width_mm is None else f"{width_mm:.1f}"
-            )
-            state.mode_label = (
-                "Transverse cross-section (y-z) looking down the line. "
-                f"Strip width = {strip_text} mm, "
-                f"domain width = {width_text} mm."
-                f" Planes FIXED at x = {near_text} / {far_text} mm "
-                f"({near_side} / {far_side}; the dump stores only these two)."
-            )
+        # The sentence names EVERY sheet this frame drew, so it is built
+        # from the same family set the sheets were drawn for: with the
+        # second family on, a label built from ``mode`` alone would
+        # describe half the picture. Primary first, so the field the
+        # controls steer leads the sentence.
+        state.mode_label = _mode_label_text(
+            info, mode, _visible_families(mode)
+        )
         # The |E| volume layer last, and BEFORE the render: it is part of this
         # frame, so it rides the single draw the sheets already paid for - and
         # it is handed the same position resolved to the two indices it paints,
