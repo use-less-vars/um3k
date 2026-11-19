@@ -1,7 +1,7 @@
 {
   "schema": "emfit.structures/1",
   "generated_utc": "2026-11-09T00:17:45Z",
-  "note": "Entries exist only where artefacts exist. Two field dumps are published in the tree: the legacy Build A dump below, and the one-time release volume under artifacts/. The S-parameter record beside Build A is from a different run, and that mismatch is recorded per entry rather than hidden.",
+  "note": "Entries exist only where artefacts exist. Four of them name a field dump that is in the tree: the legacy Build A plane dump, the 100-ohm Build B vis dump, the live-run slot a press writes, and the one-time release volume under artifacts/. The S-parameter record beside Build A is from a different run, and that mismatch is recorded per entry rather than hidden; the Build B dump is a third run again and carries no S-parameters at all. Build A at 100 ohm and the series-R build have no artefact yet and stay listed as records so the gap is visible rather than absent.",
   "structures": [
     {
       "id": "build_A_50ohm",
@@ -35,6 +35,21 @@
       "notes": ""
     },
     {
+      "id": "build_B_100ohm",
+      "label": "Build B - 100 ohm load (field dump)",
+      "status": "field only (no sparams, no multifreq)",
+      "field_dump": {
+        "path": "artifacts/vis_dump_B_100ohm.npz",
+        "cells": "62x212x22",
+        "run": "B (n_line 54, 100 ohm load, 1500 of 2400 steps)"
+      },
+      "sparams": null,
+      "multifreq": null,
+      "mismatch": false,
+      "anchors": {},
+      "notes": "The tree's only field dump of a second load, and the only second arm the picker can reach. Legacy schema emfit.wavedude/2 (still in VIS_SCHEMAS), provenance structure_id B with load_ohm 100, nt 1500 and nt_x 150 - so its timeline stops at 1500 of the run's 2400 steps and playback is a partial record. Its own nx is 62, i.e. n_line 54, which is NOT the 72x212x22 (n_line 64) that the build_A_50ohm sparams block attributes to run B: the 100-ohm S-parameters and this field dump are not the same run either. There is no S-parameter record for this dump at all."
+    },
+    {
       "id": "build_A_50ohm_100ohm",
       "label": "Build A - 100 ohm load",
       "status": "record only",
@@ -55,6 +70,21 @@
       "mismatch": false,
       "anchors": {},
       "notes": "No artefact in the tree as of this commit."
+    },
+    {
+      "id": "live_run",
+      "label": "Last solve from this page (live_run)",
+      "status": "field+volume+load trace (rewritten by every press)",
+      "field_dump": {
+        "path": "artifacts/live_run.npz",
+        "cells": "62x212x22",
+        "run": "live (page solve, n_line 54)"
+      },
+      "sparams": null,
+      "multifreq": null,
+      "mismatch": false,
+      "anchors": {},
+      "notes": "The slot a press writes: emfit.vis/2, 2400 steps, a 24-frame |E| volume at volume stride 100, and a load trace beside it. A working file, not a record - every solve overwrites it, so this entry is record-only until a solve has run in this checkout, and afterwards it shows whatever was solved last. Registered so the solve-and-look loop is visible in the picker instead of requiring a path to be typed by hand."
     },
     {
       "id": "reference_sim",
