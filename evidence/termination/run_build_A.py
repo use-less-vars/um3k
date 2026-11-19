@@ -563,6 +563,59 @@ VIS_XCUT_STRIDE = 1
 #: hand back a different set of steps than the ones asked for.  Over budget is
 #: therefore a refusal that names the two knobs, not a substitution.
 VIS_VOLUME_BUDGET_MB = 48.0
+
+# --- the memory pre-flight ---------------------------------------------------
+# WHY THIS EXISTS.  ``--mem-ceiling-mb`` is enforced POST HOC: ``Trip._watch``
+# (:418-430) compares ``ru_maxrss`` against the ceiling and ``_fire`` (:432-456)
+# calls ``os._exit(3)`` only once the high-water mark has ALREADY crossed it.
+# That bounds the damage of a run that is already dying; it cannot save a
+# process the kernel's OOM killer reaches first, and the 15,673 MB kill this
+# pre-flight answers was exactly that -- no ``.trip.json``, no message, nothing
+# to read afterwards.  So the footprint of a run is now ESTIMATED from the
+# requested mesh BEFORE the first timestep, and a run that cannot fit REFUSES to
+# start instead of discovering the price out of memory.
+#: The owner's ceiling [MB decimal]: above it a run must not be launched at all.
+#: A number to obey, not a budget to tune.  Rejected alternative: reuse
+#: ``MEM_CEILING_MB_DEFAULT`` 2000 (the ``--mem-ceiling-mb`` trip).  That is the
+#: TRIP's number, crossed at run time with the banked runs peaking at 298 MB
+#: against it (:1905-1912); treating it as a fit-for-the-host limit would either
+#: refuse every run this file has ever made or force the trip up to a figure
+#: nobody measured.
+MEM_SAFE_LIMIT_MB = 12000.0
+#: Everything the dtype count in ``_solve_estimate_mb`` does NOT contain, as one
+#: term [MB decimal]: the interpreter, numpy, scipy and emfit's import-time
+#: state.  A MEASURED RESIDUAL, not a guess: Run A recorded 297.82 MB peak RSS
+#: on a 280,984-cell mesh (:1905-1912, ``build_A_50ohm.json``) and the count
+#: below prices that same mesh at ~149 MB, so ~149 MB of the measurement is not
+#: arrays; rounded up to 150 because the measurement is a high-water mark that
+#: includes the allocator's own slack.  Rejected alternative: a per-cell
+#: overhead scaled with the mesh -- ``import numpy`` does not grow with
+#: ``n_line``, and a scaled term would double-count arrays already counted.
+MEM_PROCESS_OVERHEAD_MB = 150.0
+#: Bytes per float64, named rather than typed as an 8 in the arithmetic below:
+#: a dtype move is the one thing that would make this whole estimate wrong.
+MEM_BYTES_PER_FLOAT64 = 8
+#: float64 arrays on the EDGE list (``n_edges``): the permittivity ``m_eps`` and
+#: its inverse, the field ``e``, its ``current``, the PML's ``sigma_e`` and its
+#: edge factor, the load's ``sigma`` and its ``eps`` copy, and the loss pair
+#: ``loss_num`` / ``loss_den``.
+MEM_EDGE_ARRAYS = 10
+#: float64 arrays on the FACE list (``n_faces``): ``m_mu`` and its inverse, the
+#: field ``h``, and the PML's ``sigma_m`` and its face factor.
+MEM_FACE_ARRAYS = 5
+#: bool masks over the EDGE list -- ``pec``, ``strip``, ``free`` -- one byte
+#: each, so they are NOT counted as 8 B float64 above.
+MEM_EDGE_MASKS = 3
+#: Stored entries per row of the sparse curl ``C`` (:170-210: every face
+#: circulates four edges) and the bytes per entry in the assembled CSR -- a
+#: float64 value and a 4-byte index.  The row pointer is one integer per
+#: face-row, below the rounding of a number this size.  ``curl_dual`` is a
+#: zero-copy view of the same ``.data`` (:242-247), so the second curl is not
+#: counted.  Rejected alternative: price ``C`` as dense (``n_faces * n_edges *
+#: 8`` B = ~6.4 TB on Run A's mesh), which is not a representable object at all.
+MEM_SPARSE_ENTRIES_PER_FACE = 4
+MEM_SPARSE_BYTES_PER_ENTRY = 12
+
 #: The measurement frequency of this geometry, recorded unconditionally.  This
 #: is ``geometry.f`` of every banked Run A artefact (k = 8 of the 0.4 mm-cell
 #: ladder: c0 * k / (2 pi ... )) and is NOT moved by --pulse-freq-ghz.
@@ -999,6 +1052,112 @@ def vis_geometry(kwargs: dict) -> dict:
     j_cut = n_pml + n_clean + n_strip // 2
     return {"nx": nx, "ny": ny, "nz": nz, "cell_m": cell_m,
             "j_cut": j_cut, "n_sub": n_sub, "n_strip": n_strip}
+
+
+def _solve_estimate_mb(nx: int, ny: int, nz: int) -> float:
+    """Price the SOLVER's own arrays on an ``nx x ny x nz`` bounded mesh [MB].
+
+    This is an ESTIMATE built from dtypes and entity counts, not a measurement.
+    The counts are ``emfit/operators.py:54-64`` -- ``n_ex = nx*nyn*nzn``,
+    ``n_ey = nxn*ny*nzn``, ``n_ez = nxn*nyn*nz`` and the three faces, with
+    ``nxn, nyn, nzn = nx+1, ny+1, nz+1`` on a bounded axis
+    (``emfit/grid.py:63-68``) -- so the arrays are sized by EDGES and FACES and
+    not by cells; that is the whole reason a per-cell guess is wrong here.
+    ``MEM_EDGE_ARRAYS`` / ``MEM_FACE_ARRAYS`` / ``MEM_EDGE_MASKS`` name the
+    arrays, and every one of them is float64 except the bool masks.
+
+    CHECKED against the one measured figure this file owns: on the banked Run A
+    mesh, 62 x 206 x 22 = 280,984 cells, this returns ~149 MB, and the run's
+    recorded peak RSS is 297.82 MB (:1905-1912, ``build_A_50ohm.json``) -- the
+    difference being ``MEM_PROCESS_OVERHEAD_MB``, which is how that constant's
+    number was obtained.  It is deliberately NOT tuned until it equals 297.82:
+    a fit is not an estimate.
+
+    The divergence pair ``S`` / ``S_tilde`` (``emfit/operators.py:216-237``) is
+    NOT counted separately.  It is real (six entries per cell) but the overhead
+    residual was taken from a run that already contained it, so counting it
+    again would push this estimate above the measurement it is checked against.
+    """
+    nxn, nyn, nzn = int(nx) + 1, int(ny) + 1, int(nz) + 1
+    nx, ny, nz = int(nx), int(ny), int(nz)
+    n_edges = (nx * nyn * nzn        # n_ex
+               + nxn * ny * nzn      # n_ey
+               + nxn * nyn * nz)     # n_ez
+    n_faces = (nxn * ny * nz         # n_fx
+               + nx * nyn * nz       # n_fy
+               + nx * ny * nzn)      # n_fz
+    n_bytes = MEM_BYTES_PER_FLOAT64 * (MEM_EDGE_ARRAYS * n_edges
+                                       + MEM_FACE_ARRAYS * n_faces)
+    n_bytes += MEM_EDGE_MASKS * n_edges
+    n_bytes += (MEM_SPARSE_ENTRIES_PER_FACE * MEM_SPARSE_BYTES_PER_ENTRY
+                * n_faces)
+    return n_bytes / 1e6 + MEM_PROCESS_OVERHEAD_MB
+
+
+def _memory_preflight(kwargs: dict, args, meta: dict) -> int:
+    """Refuse a run whose ESTIMATED footprint cannot fit, before the solve.
+
+    Returns 0 (silent) or 2 (two lines on stderr).  Silent on the pass path on
+    purpose: existing runs' stderr is compared by tests, and a new line on
+    every run would break them for no information -- a pre-flight that passes
+    has nothing to say.
+
+    The mesh comes from :func:`vis_geometry` and the dump's price from
+    :func:`_vis_estimate_mb` / :func:`vis_volume_estimate_mb` rather than from a
+    second copy of either formula: a mesh or a budget that moves must move this
+    estimate with it, and two copies would drift.
+    """
+    geo = vis_geometry(dict(kwargs))
+    nx, ny, nz = int(geo["nx"]), int(geo["ny"]), int(geo["nz"])
+    cells = nx * ny * nz
+    est_mb = _solve_estimate_mb(nx, ny, nz)
+
+    # The dump terms, and they are ZERO when no dump was asked for: the
+    # recorder allocates nothing in that case (:1073-1099, the ``volume_stride``
+    # gate), so a plain run pays nothing here.  The frame counts are the
+    # recorder's own plan -- ``nt = ceil(nsteps / stride)``, ``n_vol = ceil(nt /
+    # volume_stride)`` capped by ``volume_frames``.
+    #
+    # The stride used is the REQUESTED ``--dump-stride``, NOT the one
+    # ``_vis_plan_stride`` would settle on.  Two reasons, and the second is the
+    # one that decides it: calling the planner here would write its "RAISED the
+    # stride" warning on runs that then PASS, and the planner can only ever
+    # RAISE the stride, i.e. LOWER the frame count -- so the requested value is
+    # an upper bound on this term and can never hide a refusal.
+    n_vol = 0
+    if args.vis_dump is not None:
+        stride = max(1, int(args.dump_stride))
+        nsteps = max(0, int(kwargs["nsteps"]))
+        nt = (nsteps + stride - 1) // stride
+        nt_x = (nt + VIS_XCUT_STRIDE - 1) // VIS_XCUT_STRIDE
+        est_mb += _vis_estimate_mb(nt, nt_x, nx, ny, nz)
+        vol_stride = (None if args.no_volume or args.volume_stride is None
+                      else max(1, int(args.volume_stride)))
+        if vol_stride is not None:
+            n_vol = (nt + vol_stride - 1) // vol_stride
+            if args.volume_frames is not None:
+                n_vol = min(n_vol, max(0, int(args.volume_frames)))
+            est_mb += vis_volume_estimate_mb(n_vol, nx, ny, nz)
+
+    # The cgroup number is the one that actually KILLS this process, so it can
+    # only tighten the owner's ceiling and never loosen it: a run that fits
+    # 12000 MB on the host is still dead at 4096 in the container.  Rejected
+    # alternative: raise the limit to the cgroup value when it is larger -- that
+    # would be an unasked-for licence to use memory the owner drew a line below.
+    limit_mb = MEM_SAFE_LIMIT_MB
+    cg = meta.get("cgroup_limit_mb")
+    if cg is not None:
+        limit_mb = min(limit_mb, float(cg))
+
+    if est_mb <= limit_mb:
+        return 0
+
+    sys.stderr.write(
+        f"MEM: estimated footprint ~{est_mb:.1f} MB for {nx}x{ny}x{nz} "
+        f"({cells} cells, {n_vol} volume frames) exceeds the safe limit "
+        f"{limit_mb:.1f} MB\n"
+        "Error: Estimated memory exceeds safe limits. Reduce mesh density, volume_stride, or n_line.\n")
+    return 2
 
 
 def vis_xcut_column(xcut_mm: float, nx: int, cell_m: float,
@@ -3567,6 +3726,17 @@ def main(argv: list[str] | None = None) -> int:
         "n_threads_env": os.environ.get("OMP_NUM_THREADS"),
         "n_threads_env_requested": n_threads_env_requested,
     }
+
+    # The memory pre-flight, and it sits HERE for two reasons.  ``kwargs`` is
+    # already built above, so the mesh cannot move again; and it is ABOVE the
+    # ``--dry-run`` return below, so a dry run PROVES the refusal without
+    # spending a timestep -- which is the whole point of refusing before the
+    # solve.  Above the cgroup check as well, deliberately: that one compares
+    # the TRIP against the container, this one compares the RUN's price against
+    # both, and a run can fit the trip and still be killed by the container.
+    mem_rc = _memory_preflight(kwargs, args, meta)
+    if mem_rc != 0:
+        return mem_rc
 
     if args.dry_run:
         dry = {
