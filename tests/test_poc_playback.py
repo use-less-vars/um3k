@@ -5681,7 +5681,7 @@ def _view_handle(info) -> object:
 
 
 def test_the_default_page_renders_its_picture_on_the_server(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     """If this fails, a plain run renders in the BROWSER - the default moved."""
     pytest.importorskip("pyvista")
@@ -5696,10 +5696,16 @@ def test_the_default_page_renders_its_picture_on_the_server(
         f"{type(view).__name__} was built instead, so a plain run now depends on "
         "the client's WebGL context"
     )
+    out, err = capsys.readouterr()
+    assert app._local_view_notice(True) not in out + err, (
+        "a plain run warned about the local view: nothing about the browser "
+        "mode belongs in the default page's log, and a run that never opted in "
+        f"must not be told it did: {(out, err)!r}"
+    )
 
 
 def test_local_view_builds_the_browser_rendered_view(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     """If this fails, --local-view reaches the page but not the picture."""
     pytest.importorskip("pyvista")
@@ -5713,5 +5719,108 @@ def test_local_view_builds_the_browser_rendered_view(
         "POC_LOCAL_VIEW=1 did not move the rendering into the browser: "
         f"{type(view).__name__} was built, so a host with no GL to render WITH "
         "still gets nothing"
+    )
+    notice = app._local_view_notice(True)
+    assert capsys.readouterr().out.count(notice) == 1, (
+        "the browser-rendered boot did not print its ONE warning line: the "
+        "operator whose server draws no pixels is told exactly once, and a run "
+        "that prints nothing looks like a page whose pictures silently vanished"
+    )
+
+
+class _ScreenshotProbe:
+    """A plotter whose only interesting surface is ``screenshot``.
+
+    ``suppress_rendering`` is pyvista's own flag, set by trame_pyvista for a
+    ``mode="client"`` view; ``asked`` records every path handed to the readback,
+    which is the subject here - a refused still must never reach the filter.
+    """
+
+    def __init__(self, suppress_rendering) -> None:
+        self.suppress_rendering = suppress_rendering
+        self.asked: list = []
+
+    def screenshot(self, path, **_kwargs):
+        self.asked.append(path)
+        return None
+
+
+def test_a_browser_rendered_plotter_is_never_asked_for_a_screenshot(
+    monkeypatch,
+) -> None:
+    """If this fails, the timing probe renders a window a browser view never had.
+
+    pyvista's ``render()`` honours ``suppress_rendering`` (plotter.py:2557), but
+    the STILL does not: ``Plotter.image`` goes through vtkWindowToImageFilter,
+    which renders the window ITSELF.  On a client-rendered view that is a
+    C-level crash rather than an exception, so it cannot be caught downstream -
+    the refusal has to happen before the request.
+    """
+    import poc_app as app
+
+    monkeypatch.setattr(
+        app,
+        "_TIMING",
+        {
+            "tick": 0,
+            "shot_count": 0,
+            "shots_ok": True,
+            "shot_error_logged": False,
+        },
+    )
+    monkeypatch.setattr(app, "_timing_ensure_dirs", lambda: None)
+
+    client = _ScreenshotProbe(True)
+    assert app._timing_screenshot(client) is None, (
+        "a plotter that suppresses its rendering was not refused a still: the "
+        "readback renders the very window this view has no GL context for"
+    )
+    assert client.asked == [], (
+        "the suppress_rendering guard let a readback through anyway: "
+        f"{client.asked!r}"
+    )
+
+    # The OTHER half of the pin: the guard is about the flag, not about refusing
+    # every plotter.  A server-rendered view must still be screenshotted, or the
+    # probe silently stops measuring what it exists to measure.
+    server = _ScreenshotProbe(False)
+    assert app._timing_screenshot(server) is not None, (
+        "a normally-rendered plotter got no screenshot either: the guard refuses "
+        "unconditionally instead of on suppress_rendering"
+    )
+    assert len(server.asked) == 1, (
+        f"a server-rendered view was screenshotted {len(server.asked)} times, "
+        "not once"
+    )
+    assert app._TIMING["shot_count"] == 1, (
+        "the shot that WAS taken was not counted, so the 60-file ration is off"
+    )
+
+
+def test_the_local_view_notice_is_one_line_and_only_when_the_mode_is_on() -> None:
+    """If this fails, either mode says the wrong thing about where it renders.
+
+    One LINE because it is a boot message, not a manual: an operator scrolling
+    the log must see it whole.  None when the mode is off, because a plain run's
+    output is not allowed to grow a warning about a mode it did not ask for.
+    """
+    import poc_app as app
+
+    assert app._local_view_notice(False) is None, (
+        "a run that is NOT browser-rendered was given a warning saying it is"
+    )
+    notice = app._local_view_notice(True)
+    assert isinstance(notice, str) and notice, (
+        f"the browser-rendered boot got no notice to print: {notice!r}"
+    )
+    assert "\n" not in notice, (
+        f"the boot notice spans more than one line: {notice!r}"
+    )
+    assert "BROWSER" in notice, (
+        f"the notice does not say where the picture is actually drawn: {notice!r}"
+    )
+    assert "crash" in notice, (
+        "the notice does not warn that this experimental path can take the "
+        f"process down: {notice!r}"
     )
 

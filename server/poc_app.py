@@ -1077,6 +1077,25 @@ def _local_view_enabled(flag: bool = False) -> bool:
     return value.strip().lower() in ("1", "true")
 
 
+def _local_view_notice(render_local) -> str | None:
+    """The ONE boot line a browser-rendered run prints, or None when it does not.
+
+    A helper, not an inline print, for two reasons: the sentence is the whole
+    subject of a test that must not boot a server to read it, and a flag-OFF run
+    has to add NOTHING to the log - None means the caller emits no line at all,
+    so the default page's output stays byte-for-byte what it was.
+    """
+    if not render_local:
+        return None
+    return (
+        "[poc_app] local view: the BROWSER draws the picture and this server "
+        "renders nothing, so the timing screenshots (which read pixels back on "
+        "the server) are unavailable; the mode is experimental and VTK's scene "
+        "export is the part that can crash the process - a plain run (no "
+        "--local-view) renders on the server"
+    )
+
+
 # ---------------------------------------------------------------------------
 # OPT-IN TIMING PROBE (POC_TIMING)
 #
@@ -1285,6 +1304,18 @@ def _timing_screenshot(plotter):
     try:
         probe = _TIMING
         if plotter is None or not probe.get("shots_ok"):
+            return None
+        # A plotter that is SUPPRESSING its rendering (a browser-rendered view:
+        # trame_pyvista sets suppress_rendering=True for mode="client") has
+        # never had a GL context and never will, and asking it for a picture is
+        # not the harmless no-op a draw is: pyvista's render() honours the flag
+        # (plotter.py:2557), but the READBACK does NOT - Plotter.image goes
+        # through vtkWindowToImageFilter, which renders the window ITSELF.
+        # So the flag is walked around exactly here, and a client-rendered view
+        # asked for a still is a C-level crash waiting for _rendered to become
+        # true. Refuse: no pixel is requested, and the result is the same None
+        # (and the same untouched timing bookkeeping) as a capture that failed.
+        if getattr(plotter, "suppress_rendering", False):
             return None
         tick = int(probe.get("tick", 0))
         if tick % _TIMING_SHOT_EVERY != 0:
@@ -17701,6 +17732,9 @@ def run_web_vis(
     # the thing the CALLER asked and this stays the ANSWER (flag or env) the page
     # is actually built with.
     render_local = _local_view_enabled(local_view)
+    notice = _local_view_notice(render_local)
+    if notice is not None:
+        print(notice)
 
     with SinglePageLayout(server) as layout:
         # The header is the second place the page title lives, so it is written
