@@ -4162,6 +4162,11 @@ def field_page(tmp_path_factory):
         state, ctrl = srv.state, srv.controller
 
         opened = {
+            # the dict this boot was handed: ``@state.change`` registrations are
+            # APPENDED per boot and this process boots several pages on the same
+            # Server, so the identity of ``info`` is what picks this boot's
+            # listener out of ``state._change_callbacks``.
+            "info": info,
             # what the boot itself drew, reported rather than asserted: that
             # number belongs to the page, not to the cuts.
             "boot_renders": len(renders),
@@ -4295,7 +4300,29 @@ def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
     """
     app, srv, renders, opened = field_page
     state, ctrl = srv.state, srv.controller
-    cut_y = _registered_trigger(ctrl, "cut_y")
+    # cut_y is bound with @state.change (poc_app.py:16150), so the browser's
+    # event for it is a WRITE to the key that the flush then dispatches to the
+    # registered listener; cut_z is still a @ctrl.set trigger.  The listener is
+    # called DIRECTLY, the way the loop test does (:694) and for the same
+    # reason: this harness never marks the state ready, so ``state.flush()``
+    # returns without dispatching (state.py:461-462) and a flush-based drive
+    # would pass for the wrong reason - it measured 0 renders, not 9.  Both are driven the way the client drives
+    # them, so the two render counts stay comparable.
+    entries = [
+        entry
+        for entry in (state._change_callbacks.get("cut_y") or [])
+        if _closure_cells(entry[0]).get("info") is opened["info"]
+    ]
+    assert len(entries) == 1, (
+        f"{len(entries)} 'cut_y' listeners were registered by this page's boot; "
+        "expected exactly 1"
+    )
+    cut_y_listener = entries[0][0]
+
+    def cut_y(value):
+        state.cut_y = value          # the client's write, as trame commits it
+        cut_y_listener(cut_y=value)  # what the flush calls (state.py:429-447)
+
     cut_z = _registered_trigger(ctrl, "cut_z")
 
     before = len(renders)

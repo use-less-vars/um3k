@@ -174,6 +174,14 @@ def page(tmp_path_factory):
         poc_app._push_still = real_push
 
 
+def _cut_event(page, value) -> list:
+    """Write ``value`` to the y cut and flush: one client event's pushes."""
+    before = len(page.pushes)
+    page.state.cut_y = value
+    page.state.flush()
+    return page.pushes[before:]
+
+
 def _station_event(page, value) -> list:
     """Write ``value`` to the station and flush: one client event's pushes.
 
@@ -207,7 +215,14 @@ class TestStationSlider:
         drawn, which is why neither the value nor the label moves - the cost is
         one repeat of the draw, not a visible jump.
         """
-        assert page.boot_pushes == ["station"]
+        # cut_y is bound with @state.change as well, and its opening write fires
+        # on this same first flush, so the boot pushes a "cut" beside the
+        # "station".  A SET, not an order: the flush runs the listener set, whose
+        # iteration order is not fixed.
+        assert sorted(page.boot_pushes) == ["cut", "station"], (
+            f"the boot flush pushed {page.boot_pushes!r}: the station listener "
+            "and the cut_y listener are the two the boot write leaves pending"
+        )
         assert page.state.station == BOOT_STATION
         assert page.state.station_label == OPENING_LABEL
 
@@ -266,4 +281,61 @@ class TestBindingReversionGuard:
         assert '@ctrl.set("station")' not in source, (
             '@ctrl.set("station") is back: it registers a controller trigger, '
             "not a state listener, so a drag would stop reaching the handler"
+        )
+
+
+class TestCutYSlider:
+    """``v_model=("cut_y", cut_y)`` reaches ``_on_cut_y`` (poc_app.py:11335)."""
+
+    def test_the_row_opens_on_the_middle_sample(self, page):
+        """The boot's own cut, before anything drags it."""
+        assert page.state.cut_y == 6, (
+            f"the page opened on cut_y={page.state.cut_y!r}, not the middle "
+            "sample of 12 (the legacy dump's ny)"
+        )
+        assert "7/12" in page.state.cut_label, page.state.cut_label
+
+    def test_a_chosen_cut_moves_and_relabels_the_row(self, page):
+        """THE FIX: a write to ``state.cut_y`` moves the cut and redraws.
+
+        Under ``@ctrl.set("cut_y")`` this is the test that fails: the write is
+        swallowed, the row keeps its old numbers and nothing is pushed.
+        """
+        assert _cut_event(page, 3) == ["cut"], (
+            "one drag must push exactly one still and no more"
+        )
+        assert page.state.cut_y == 3
+        assert "4/12" in page.state.cut_label, page.state.cut_label
+        assert "4/12" in str(page.state.view_label), page.state.view_label
+
+    def test_a_clamped_cut_is_drawn_once(self, page):
+        """The write-back cannot re-enter the handler for one client event."""
+        assert _cut_event(page, 999) == ["cut"], (
+            "a clamped drag pushed more than one still: the write-back in "
+            "_on_cut_change re-entered the listener inside the same flush"
+        )
+        assert page.state.cut_y == 11, "the clamp to n_j - 1 is gone"
+
+    def test_an_unparsable_cut_keeps_the_cut_and_draws_once(self, page):
+        """A string from the client cannot move or wedge the cut.
+
+        The junk value has already landed in ``state.cut_y`` by the time the
+        listener runs (trame_server/state.py:420-424), which is why the
+        fallback reads the index the page last drew instead of ``cut_y``.
+        """
+        assert _cut_event(page, "junk") == ["cut"], page.pushes[-3:]
+        assert page.state.cut_y == 11, page.state.cut_y
+        assert "12/12" in page.state.cut_label, page.state.cut_label
+
+    def test_the_cut_slider_is_bound_to_the_state_not_the_controller(self):
+        """The one-line guard, for the same silent-failure reason as station."""
+        source = Path(poc_app.__file__).read_text()
+        assert '@state.change("cut_y")' in source, (
+            'the cut_y handler is no longer registered with @state.change: the '
+            "slider is bound to state.cut_y through v_model, so a controller "
+            "trigger hears nothing and the slider is dead again"
+        )
+        assert '@ctrl.set("cut_y")' not in source, (
+            '@ctrl.set("cut_y") is back: it registers a controller trigger, not '
+            "a state listener, so a drag would stop reaching the handler"
         )
