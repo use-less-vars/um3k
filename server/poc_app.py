@@ -10766,18 +10766,30 @@ def _on_cut_change(
     """
     n_j, n_k = _cut_axis_counts(info, n_j, n_k)
     current = state.cut_y if axis == "y" else state.cut_z
+    last_key = "cut_last_y" if axis == "y" else "cut_last_z"
     limit = (n_j if axis == "y" else n_k) - 1
     try:
         idx = int(round(float(value)))
     except (TypeError, ValueError):
         # WHY not ``int(current)`` any more: where the key itself is bound
-        # (v_model, :10839) the junk value has ALREADY landed in
-        # ``state.cut_y`` before a listener runs (trame state.py:420-424),
-        # so ``current`` is the unparsable value and the fallback would raise
-        # inside the fallback. The page remembers the last index it really drew
-        # in ``handles["cut_last_y"]``, seeded where the cut_y listener is
-        # registered.
-        idx = int(handles.get("cut_last_y", current))
+        # (v_model, :10859 and :10869) the junk value has ALREADY landed in
+        # ``state.cut_y`` / ``state.cut_z`` before a listener runs (trame
+        # state.py:420-424), so ``current`` is the unparsable value and the
+        # fallback would raise inside the fallback. The page remembers the last
+        # index it really drew in ``handles["cut_last_y"]`` /
+        # ``handles["cut_last_z"]``, seeded where each listener is registered
+        # (:11353 and :16187).
+        remembered = handles.get(last_key)
+        if remembered is None:
+            # WHY this second resort: the seeded entries are plain dict items,
+            # so a listener that fires before its page wrote them - the boot
+            # write survives to the first flush, state.py:407-452 - finds
+            # nothing here, and ``current`` is the junk value in that case too.
+            # The middle sample is where ``_cut_layout`` opens both axes
+            # (:9001-9002), so it is the one index certainly on the grid.
+            idx = (n_j if axis == "y" else n_k) // 2
+        else:
+            idx = int(remembered)
     idx = max(0, min(limit, idx))
     if axis == "y":
         handles["cut_last_y"] = idx
@@ -10788,11 +10800,19 @@ def _on_cut_change(
         # (state.py:429-447) would run the handler a second time - two _redraw
         # and two _push_still for one drag. The suppressed write still reaches
         # the client: the stack skips the listener, not the push. Same guard,
-        # same reason as the play_rate write-back (:17711).
+        # same reason as the play_rate write-back (:17756).
         with state.suppress_change_listeners("cut_y"):
             state.cut_y = idx
     else:
-        state.cut_z = idx
+        handles["cut_last_z"] = idx
+        # WHY the guard here too: the same re-entry as the cut_y block just
+        # above (:10796-10805), reached through the other key. ``cut_z`` is a
+        # bound key with its own listener (:11380), so writing back the clamped
+        # index (999 -> n_k - 1) is a NEW pending key (state.py:225-236) and
+        # the flush loop (state.py:429-447) would run this handler a second
+        # time. Suppressed, the write still reaches the client.
+        with state.suppress_change_listeners("cut_z"):
+            state.cut_z = idx
     layout = _cut_layout(
         info, int(state.cut_y), int(state.cut_z), (planes or {}).get("stations_mm")
     )
@@ -11324,13 +11344,17 @@ def run_web(
         _push_still(handles.get("view"), "toggle")
 
     # WHY @state.change and not @ctrl.set: the slider is declared
-    # ``v_model=("cut_y", int(state.cut_y))`` (:10839), so a drag arrives as a
+    # ``v_model=("cut_y", int(state.cut_y))`` (:10859), so a drag arrives as a
     # WRITE to state.cut_y and a controller trigger is never called - bound with
     # @ctrl.set the slider is dead and nothing fails (a dead slider and a
     # working one look identical in a layout). @state.change is the decorator
     # the flush consults (state.py:429-447, registration :488-517). The seed is
-    # the opening index, for the fallback in _on_cut_change (:10770-10780).
+    # the opening index, for the fallback in _on_cut_change (:10771-10792).
     handles["cut_last_y"] = int(state.cut_y)
+    # The same seed for the z slider: ``cut_z`` is the other bound key
+    # (:10869), so ``_on_cut_change``'s fallback needs a last-good index for it
+    # as well - a separate dict entry, never shared with ``cut_last_y``.
+    handles["cut_last_z"] = int(state.cut_z)
 
     @state.change("cut_y")
     def _on_cut_y(*args, **_kwargs) -> None:
@@ -11348,7 +11372,12 @@ def run_web(
             handles,
         )
 
-    @ctrl.set("cut_z")
+    # WHY @state.change on cut_z too, and not @ctrl.set: ``v_model=("cut_z",
+    # int(state.cut_z))`` (:10869) is the SAME kind of binding as cut_y above,
+    # so the same silent death applied to it. Its own function, not a second
+    # decorator on _on_cut_y: one handler per key is what the two seeds
+    # (:11353, :11357) and a traceback can be read against.
+    @state.change("cut_z")
     def _on_cut_z(*args, **_kwargs) -> None:
         value = args[0] if args else _kwargs.get("cut_z", state.cut_z)
         _on_cut_change(
@@ -16019,7 +16048,7 @@ def run_web_vis(
         _cut_seen = {"y": int(state.cut_y), "z": int(state.cut_z)}
 
         def _redraw_cut(axis, value) -> None:
-            # The same clamp ``_on_cut_change`` applies (:10767-10781), but
+            # The same clamp ``_on_cut_change`` applies (:10767-10793), but
             # two calls that need a plane stack.
             limit = (n_j if axis == "y" else n_k) - 1
             try:
@@ -16029,13 +16058,17 @@ def run_web_vis(
             idx = max(0, min(limit, idx))
             _cut_seen[axis] = idx
             if axis == "y":
-                # WHY the guard: see _on_cut_change (:10784-10793) - a clamped
+                # WHY the guard: see _on_cut_change (:10796-10805) - a clamped
                 # index differs from the pushed one and would re-enter this
                 # listener inside the same flush (state.py:429-447).
                 with state.suppress_change_listeners("cut_y"):
                     state.cut_y = idx
             else:
-                state.cut_z = idx
+                # The same guard for the z key, same reason: cut_z has its own
+                # listener below (:16092) and a clamped write-back would run it
+                # a second time inside one flush.
+                with state.suppress_change_listeners("cut_z"):
+                    state.cut_z = idx
             state.cut_label = _cut_text(
                 _cut_layout(info, int(state.cut_y), int(state.cut_z))
             )
@@ -16046,14 +16079,17 @@ def run_web_vis(
         # (:16953, issued once for real at boot :17450), so there is
         # nothing here that a repaint would add; installing the handle would
         # only draw the layer twice at boot.
-        # WHY @state.change: same binding, same reason as run_web (:11335) -
-        # v_model=("cut_y", ...) writes the KEY (:10839).
+        # WHY @state.change: same binding, same reason as run_web (:11359) -
+        # v_model=("cut_y", ...) writes the KEY (:10859).
         @state.change("cut_y")
         def _on_cut_y(*args, **_kwargs) -> None:
             value = args[0] if args else _kwargs.get("cut_y", state.cut_y)
             _redraw_cut("y", value)
 
-        @ctrl.set("cut_z")
+        # WHY @state.change on cut_z: the other v_model key of this same row
+        # (:10869) - under @ctrl.set this slider was dead for the reason the
+        # cut_y binding above gives. Its own function, one decorator each.
+        @state.change("cut_z")
         def _on_cut_z(*args, **_kwargs) -> None:
             value = args[0] if args else _kwargs.get("cut_z", state.cut_z)
             _redraw_cut("z", value)
@@ -16137,15 +16173,19 @@ def run_web_vis(
         ctx.register_handle("cut_shape", (n_j, n_k))
 
         # Registered BEFORE the layout is built, so the listener exists before
-        # anything can write the key. WHY @state.change on cut_y: the slider is
-        # declares ``v_model=("cut_y", int(state.cut_y))`` (:10839): a drag is
+        # anything can write the key. WHY @state.change on cut_y: the slider
+        # declares ``v_model=("cut_y", int(state.cut_y))`` (:10859): a drag is
         # a WRITE to state.cut_y and never a controller trigger - under
-        # @ctrl.set the cut slider of THIS branch (:16061), the page a default
-        # run boots (:20563), was dead. cut_z keeps @ctrl.set: a separate
-        # binding, and the two sliders do not share a decorator. The arguments
-        # are run_web's own (:11338 and :11354) in that order: the clamp, both
+        # @ctrl.set the cut slider of THIS branch (:16097), the page a default
+        # run boots (:20608), was dead. cut_z gets its own @state.change below
+        # (:16211) for the same reason on the other key: a separate binding,
+        # and the two sliders do not share a decorator. The arguments are
+        # run_web's own (:11362 and :11383) in that order: the clamp, both
         # labels and the redraw are the shipped functions, not a second copy.
+        # Each seed is the opening index, for _on_cut_change's fallback
+        # (:10771-10792): one last-good entry per axis, never shared.
         handles["cut_last_y"] = int(state.cut_y)
+        handles["cut_last_z"] = int(state.cut_z)
 
         @state.change("cut_y")
         def _on_cut_y(*args, **_kwargs) -> None:
@@ -16163,7 +16203,12 @@ def run_web_vis(
                 handles,
             )
 
-        @ctrl.set("cut_z")
+        # WHY @state.change on cut_z: ``v_model=("cut_z", int(state.cut_z))``
+        # (:10869) is bound the same way, so @ctrl.set left this slider dead
+        # too. A separate function: two decorators on one function would make
+        # _on_cut_change the listener for both keys, and the guard it needs per
+        # key (:10807-10815) could then not be told apart.
+        @state.change("cut_z")
         def _on_cut_z(*args, **_kwargs) -> None:
             value = args[0] if args else _kwargs.get("cut_z", state.cut_z)
             _on_cut_change(

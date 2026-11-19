@@ -72,6 +72,28 @@ OPENING_LABEL = "station 9/9   x = 0.8000 mm"
 STATION_3_LABEL = "station 4/9   x = 0.3000 mm"
 STATION_4_LABEL = "station 5/9   x = 0.4000 mm"
 
+#: The grid the cut row runs on: the same dump's ny and nz, and the pair the
+#: boot settles on - the middle sample of each axis.
+N_CUT_Y = 12
+N_CUT_Z = 5
+BOOT_CUT_Y = 6
+BOOT_CUT_Z = 2
+
+#: The cut label, byte for byte, at the two z rows the z tests pin: y held on
+#: the middle sample (7/12) and z on the middle (3/5 -> 0.2000 mm) or the last
+#: (5/5 -> 0.4000 mm).  ``_cut_text``'s three spaces and four decimals; 0.1 mm
+#: cells, so the mm column is arithmetic.
+Z_MID_LABEL = (
+    "cut y = 7/12 (y = 0.6000 mm)   cut z = 3/5 (z = 0.2000 mm)   "
+    "one sample each   (one stored x-plane of 9 captured stations, "
+    "no interpolation)"
+)
+Z_LAST_LABEL = (
+    "cut y = 7/12 (y = 0.6000 mm)   cut z = 5/5 (z = 0.4000 mm)   "
+    "one sample each   (one stored x-plane of 9 captured stations, "
+    "no interpolation)"
+)
+
 
 class _Stop(Exception):
     """Unwinds ``run_web`` just before it enters the event loop."""
@@ -167,8 +189,18 @@ def page(tmp_path_factory):
             "trame's state.ready() did not mark this page ready, so no flush "
             "can run a listener"
         )
+        # The cut indices the boot itself left, read here: after its first
+        # flush, before any test writes either key.  ``_settle_row`` pins
+        # both, so a test that read them afterwards would be asserting the
+        # value it had just written.
+        boot_cut_y = state.cut_y
+        boot_cut_z = state.cut_z
         yield SimpleNamespace(
-            state=state, pushes=pushes, boot_pushes=boot_pushes
+            state=state,
+            pushes=pushes,
+            boot_pushes=boot_pushes,
+            boot_cut_y=boot_cut_y,
+            boot_cut_z=boot_cut_z,
         )
     finally:
         poc_app._push_still = real_push
@@ -178,6 +210,30 @@ def _cut_event(page, value) -> list:
     """Write ``value`` to the y cut and flush: one client event's pushes."""
     before = len(page.pushes)
     page.state.cut_y = value
+    page.state.flush()
+    return page.pushes[before:]
+
+
+def _settle_row(page, cut_y, cut_z) -> list:
+    """Pin both cut axes and flush: the row the z tests start from.
+
+    The one page is shared in file order, so ``cut_y`` is left on 11 by the y
+    class's clamp and ``cut_z`` wherever a previous z test left it.  Writing
+    both keys makes every z test independent of that order.  The pushes this
+    produces are the row moving into place, not the event under test, so they
+    are returned only so a caller can assert on them if it wants to.
+    """
+    before = len(page.pushes)
+    page.state.cut_y = cut_y
+    page.state.cut_z = cut_z
+    page.state.flush()
+    return page.pushes[before:]
+
+
+def _cut_z_event(page, value) -> list:
+    """Write ``value`` to the z cut and flush: one client event's pushes."""
+    before = len(page.pushes)
+    page.state.cut_z = value
     page.state.flush()
     return page.pushes[before:]
 
@@ -215,13 +271,14 @@ class TestStationSlider:
         drawn, which is why neither the value nor the label moves - the cost is
         one repeat of the draw, not a visible jump.
         """
-        # cut_y is bound with @state.change as well, and its opening write fires
-        # on this same first flush, so the boot pushes a "cut" beside the
-        # "station".  A SET, not an order: the flush runs the listener set, whose
-        # iteration order is not fixed.
-        assert sorted(page.boot_pushes) == ["cut", "station"], (
+        # BOTH cut axes are bound with @state.change as well, and their opening
+        # writes fire on this same first flush, so the boot pushes one "cut" per
+        # bound axis beside the "station".  A SET, not an order: the flush runs
+        # the listener set, whose iteration order is not fixed.
+        assert sorted(page.boot_pushes) == ["cut", "cut", "station"], (
             f"the boot flush pushed {page.boot_pushes!r}: the station listener "
-            "and the cut_y listener are the two the boot write leaves pending"
+            "and the cut_y and cut_z listeners are the three the boot write "
+            "leaves pending, one push each"
         )
         assert page.state.station == BOOT_STATION
         assert page.state.station_label == OPENING_LABEL
@@ -337,5 +394,81 @@ class TestCutYSlider:
         )
         assert '@ctrl.set("cut_y")' not in source, (
             '@ctrl.set("cut_y") is back: it registers a controller trigger, not '
+            "a state listener, so a drag would stop reaching the handler"
+        )
+
+
+class TestCutZSlider:
+    """``v_model=("cut_z", cut_z)`` reaches ``_on_cut_z`` (poc_app.py:11380)."""
+
+    def test_the_row_opens_with_z_on_the_middle_sample(self, page):
+        """The index is the boot's own; the label is the settled row's.
+
+        ``page.boot_cut_y`` and ``page.boot_cut_z`` are recorded by the
+        fixture at the boot's first flush and written by no test, so the two
+        index assertions are about the page opening on the middle sample.
+        The label is then asserted byte for byte on the row the shared page
+        is pinned to here: the y class above left ``cut_y`` on its clamp, so
+        a label taken at boot would say so.
+        """
+        assert page.boot_cut_y == BOOT_CUT_Y, (
+            f"the page opened on cut_y={page.boot_cut_y!r}, not the middle "
+            "sample of 12 (the legacy dump's ny)"
+        )
+        assert page.boot_cut_z == BOOT_CUT_Z, (
+            f"the page opened on cut_z={page.boot_cut_z!r}, not the middle "
+            "sample of 5 (the legacy dump's nz)"
+        )
+        _settle_row(page, BOOT_CUT_Y, BOOT_CUT_Z)
+        assert page.state.cut_label == Z_MID_LABEL, page.state.cut_label
+
+    def test_a_chosen_z_cut_moves_and_relabels_the_row(self, page):
+        """THE FIX: a write to ``state.cut_z`` moves the cut and redraws.
+
+        Under ``@ctrl.set("cut_z")`` this is the test that fails: the write is
+        swallowed, the row keeps its old numbers and nothing is pushed.
+        """
+        _settle_row(page, BOOT_CUT_Y, BOOT_CUT_Z)
+        assert _cut_z_event(page, N_CUT_Z - 1) == ["cut"], (
+            "one drag must push exactly one still and no more"
+        )
+        assert page.state.cut_z == N_CUT_Z - 1
+        assert page.state.cut_y == BOOT_CUT_Y, (
+            "moving the z cut dragged the y cut with it"
+        )
+        assert page.state.cut_label == Z_LAST_LABEL, page.state.cut_label
+
+    def test_a_clamped_z_cut_is_drawn_once(self, page):
+        """The write-back cannot re-enter the handler for one client event."""
+        _settle_row(page, BOOT_CUT_Y, BOOT_CUT_Z)
+        assert _cut_z_event(page, 999) == ["cut"], (
+            "a clamped drag pushed more than one still: the write-back in "
+            "_on_cut_change re-entered the listener inside the same flush"
+        )
+        assert page.state.cut_z == N_CUT_Z - 1, "the clamp to n_k - 1 is gone"
+        assert page.state.cut_label == Z_LAST_LABEL, page.state.cut_label
+
+    def test_an_unparsable_z_cut_keeps_the_cut_and_draws_once(self, page):
+        """A string from the client cannot move or wedge the z cut.
+
+        The junk value has already landed in ``state.cut_z`` by the time the
+        listener runs (trame_server/state.py:420-424), which is why the
+        fallback reads the index the page last drew instead of ``cut_z``.
+        """
+        _settle_row(page, BOOT_CUT_Y, N_CUT_Z - 1)
+        assert _cut_z_event(page, "junk") == ["cut"], page.pushes[-3:]
+        assert page.state.cut_z == N_CUT_Z - 1, page.state.cut_z
+        assert page.state.cut_label == Z_LAST_LABEL, page.state.cut_label
+
+    def test_the_z_cut_slider_is_bound_to_the_state_not_the_controller(self):
+        """The one-line guard, for the same silent-failure reason as station."""
+        source = Path(poc_app.__file__).read_text()
+        assert '@state.change("cut_z")' in source, (
+            'the z cut handler is no longer registered with @state.change: the '
+            "slider is bound to state.cut_z through v_model, so a controller "
+            "trigger hears nothing and the slider is dead again"
+        )
+        assert '@ctrl.set("cut_z")' not in source, (
+            '@ctrl.set("cut_z") is back: it registers a controller trigger, not '
             "a state listener, so a drag would stop reaching the handler"
         )

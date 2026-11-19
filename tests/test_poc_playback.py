@@ -4300,14 +4300,15 @@ def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
     """
     app, srv, renders, opened = field_page
     state, ctrl = srv.state, srv.controller
-    # cut_y is bound with @state.change (poc_app.py:16150), so the browser's
-    # event for it is a WRITE to the key that the flush then dispatches to the
-    # registered listener; cut_z is still a @ctrl.set trigger.  The listener is
+    # Both cut sliders are bound with @state.change - cut_y at :16190, cut_z
+    # at :16211 - so the browser's event for either is a WRITE to the key the
+    # flush then dispatches to the registered listener.  The listener is
     # called DIRECTLY, the way the loop test does (:694) and for the same
     # reason: this harness never marks the state ready, so ``state.flush()``
     # returns without dispatching (state.py:461-462) and a flush-based drive
-    # would pass for the wrong reason - it measured 0 renders, not 9.  Both are driven the way the client drives
-    # them, so the two render counts stay comparable.
+    # would pass for the wrong reason - it measured 0 renders, not 9.  Both are
+    # driven the way the client drives them - the write committed to state
+    # first, then the listener - so the two render counts stay comparable.
     entries = [
         entry
         for entry in (state._change_callbacks.get("cut_y") or [])
@@ -4323,7 +4324,20 @@ def test_vis_cut_change_moves_the_cut_and_redraws(field_page):
         state.cut_y = value          # the client's write, as trame commits it
         cut_y_listener(cut_y=value)  # what the flush calls (state.py:429-447)
 
-    cut_z = _registered_trigger(ctrl, "cut_z")
+    z_entries = [
+        entry
+        for entry in (state._change_callbacks.get("cut_z") or [])
+        if _closure_cells(entry[0]).get("info") is opened["info"]
+    ]
+    assert len(z_entries) == 1, (
+        f"{len(z_entries)} 'cut_z' listeners were registered by this page's "
+        "boot; expected exactly 1"
+    )
+    cut_z_listener = z_entries[0][0]
+
+    def cut_z(value):
+        state.cut_z = value          # the client's write, as trame commits it
+        cut_z_listener(cut_z=value)  # what the flush calls (state.py:429-447)
 
     before = len(renders)
     cut_y(9)
