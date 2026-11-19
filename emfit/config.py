@@ -163,7 +163,7 @@ class RunConfig:
 
     #: ``series_r`` load resistance [ohm]; ``None`` is the ARM's own value (A
     #: 50 ohm, B 100 ohm), and a number here is the same explicit override the
-    #: flag is.  ``scripts/run_reference_sim.py``'s CONFIG_DRIVEN table (:205-220)
+    #: flag is.  ``scripts/run_reference_sim.py``'s CONFIG_DRIVEN table (:209-220)
     #: does not forward this field yet; ``server/poc_app.py`` does.
     load_ohm: float | None = DEFAULT_LOAD_OHM
 
