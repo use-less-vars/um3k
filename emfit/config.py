@@ -4,22 +4,22 @@ WHAT THIS IS.  ``scripts/run_reference_sim.py`` drives
 ``evidence/termination/run_build_A.py`` (arm A: the microstrip terminated in a
 50 ohm ``series_r`` load) with a 3-D ``|E|`` volume dump.  Every number that run
 prices -- the step count, the plane dump stride, the volume cadence, the mesh's
-line length, the two x-cut positions, the pulse centre and the two output paths
--- is a flag on that script, and a flag is a thing you have to retype (and can
-mistype in the one direction that costs 1400 s: the volume budget REFUSES rather
-than thins).  This dataclass is those numbers in one JSON document, so a run can
-be handed to somebody else, diffed against another run, or committed next to the
-artefact it produced.
+line length, the two x-cut positions, the pulse centre, the load resistance, the
+wall ceiling and the two output paths -- is a flag on that script, and a flag is
+a thing you have to retype (and can mistype in the one direction that costs
+1400 s: the volume budget REFUSES rather than thins).  This dataclass is those
+numbers in one JSON document, so a run can be handed to somebody else, diffed
+against another run, or committed next to the artefact it produced.
 
 WHY THE FIELD NAMES ARE THE REFERENCE'S NAMES.  A configuration file is a second
 place for a name to live, and the only thing that keeps it honest is that the
-name it carries is the name the code already uses: ``nsteps``,
-``dump_stride``, ``volume_stride``, ``volume_frames``, ``pulse_freq_ghz``,
-``n_line``, ``xcut_near_mm``, ``xcut_far_mm`` -- each is the validator's own
-flag spelling in ``run_build_A.py``, so ``grep xcut_near_mm`` finds the flag, the
-plan line and this field and they cannot drift apart silently.  Two of the names
-asked for when this was specified do NOT exist anywhere in the FDTD path and are
-deliberately absent rather than invented here:
+name it carries is the name the code already uses: ``nsteps``, ``dump_stride``,
+``volume_stride``, ``volume_frames``, ``pulse_freq_ghz``, ``n_line``,
+``xcut_near_mm``, ``xcut_far_mm``, ``wall_limit_s``, ``load_ohm`` -- each is the
+validator's own flag spelling in ``run_build_A.py``, so ``grep xcut_near_mm``
+finds the flag, the plan line and this field and they cannot drift apart
+silently.  Two of the names asked for when this was specified do NOT exist
+anywhere in the FDTD path and are deliberately absent rather than invented here:
 
 * there is no ``modes_to_calculate`` / ``n_modes``: the reference is a
   time-domain march, it computes no modes.  (``nmodes`` exists only in the
@@ -64,6 +64,8 @@ __all__ = [
     "DEFAULT_N_LINE",
     "DEFAULT_XCUT_NEAR_MM",
     "DEFAULT_XCUT_FAR_MM",
+    "DEFAULT_WALL_LIMIT_S",
+    "DEFAULT_LOAD_OHM",
 ]
 
 #: Bumped when a field is removed or its meaning changes; a document that names a
@@ -80,6 +82,22 @@ DEFAULT_VOLUME_STRIDE = 100
 DEFAULT_N_LINE = 54          # -> nx = n_pml 6 + n_ref 2 + 54 = 62 columns
 DEFAULT_XCUT_NEAR_MM = 20.4  # run_build_A.py --xcut-near-mm
 DEFAULT_XCUT_FAR_MM = 22.0   # run_build_A.py --xcut-far-mm
+
+#: The wall ceiling ``--wall-limit-s`` falls back to (``run_build_A.py:128``
+#: ``WALL_LIMIT_S_DEFAULT``), and the number the reference TRIPS on rather than
+#: spends (:427-430 -> exit 4).  A literal for the reason above: a config file
+#: that only means something when ``evidence/`` is importable is not a config
+#: file.
+DEFAULT_WALL_LIMIT_S = 1400.0
+
+#: What ``--load-ohm`` falls back to: ``None``, i.e. "the ARM's own resistance"
+#: (``run_build_A.py:3593-3594`` resolves an absent flag from
+#: ``STRUCTURES[structure]["load_ohm"]`` -- 50 ohm for A at :692 through the
+#: ``LOAD_VALUE_OHM`` constant (:137), 100 ohm for B's literal at :703).  Not
+#: 50.0: a document that named 50 would silently re-terminate a 100 ohm arm,
+#: which is the trap the WARNING at :3585-3588 names (:3589-3592 is only the
+#: comment explaining why an explicit flag wins).
+DEFAULT_LOAD_OHM = None
 
 
 def _is_int(value: Any) -> bool:
@@ -138,6 +156,16 @@ class RunConfig:
 
     #: x position of the far x-cut frame [mm] (past the load).
     xcut_far_mm: float = DEFAULT_XCUT_FAR_MM
+
+    #: Hard wall ceiling [s]; ``None`` is the reference's own 1400 s.  The trip
+    #: thread exits 4 past it, so this is the run's worst case, not its cost.
+    wall_limit_s: float | None = DEFAULT_WALL_LIMIT_S
+
+    #: ``series_r`` load resistance [ohm]; ``None`` is the ARM's own value (A
+    #: 50 ohm, B 100 ohm), and a number here is the same explicit override the
+    #: flag is.  ``scripts/run_reference_sim.py``'s CONFIG_DRIVEN table (:205-220)
+    #: does not forward this field yet; ``server/poc_app.py`` does.
+    load_ohm: float | None = DEFAULT_LOAD_OHM
 
     #: Where the field dump goes; ``None`` is the script's ``artifacts/`` default.
     npz: str | None = None
@@ -212,6 +240,23 @@ class RunConfig:
                 f"xcut_far_mm {self.xcut_far_mm}: 'near' is the frame before "
                 "the load and 'far' the one past it, and a swapped pair silently "
                 "labels the two pictures the wrong way round")
+
+        # The run's two runtime guards.  Both are plain ``type=float`` flags on
+        # the reference's parser (run_build_A.py:3380 ``--wall-limit-s``, :3344
+        # ``--load-ohm``) with NO range check of their own, so nothing here
+        # refuses a value the command line accepts: a form or a file that were
+        # the stricter of the two would be the drift this module exists to stop.
+        # Non-finite is the one refusal, and it is about THIS document rather
+        # than about the physics: ``NaN``/``Infinity`` are tokens no strict JSON
+        # reader takes back, and a lossless round trip is the file's promise.
+        for name in ("wall_limit_s", "load_ohm"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if not _is_number(value):
+                raise TypeError(
+                    f"{name} must be a finite number or null, not {value!r} "
+                    f"({type(value).__name__})")
 
         for name in ("npz", "out"):
             value = getattr(self, name)

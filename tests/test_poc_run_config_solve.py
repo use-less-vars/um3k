@@ -1,10 +1,10 @@
-"""The Run Config form drives the solve: eight boxes, ONE child, auto-loaded.
+"""The Run Config form drives the solve: ten boxes, ONE child, auto-loaded.
 
-``server/poc_app.py``'s Run Config card is the eight ``run_*`` states; the two
+``server/poc_app.py``'s Run Config card is the ten ``run_*`` states; the two
 halves of the gate that draws it are pinned in
 ``tests/test_poc_run_config_form.py`` (arrives on a no-data page) and
 ``tests/test_poc_run_config_panel.py`` (absent on a dump-backed one).  This
-module pins the FAR end of the same wire: a press of Solve reads those eight
+module pins the FAR end of the same wire: a press of Solve reads those ten
 values, builds the ONE ``emfit.config.RunConfig`` the child is given, and hands
 it to the ONE argv builder the viewer has always used - so the form has no
 second route into a solve that could drift away from the button's.
@@ -122,7 +122,7 @@ def viewer(tmp_path_factory):
 
     WHY once for the module: ``trame.app.get_server`` hands back ONE server per
     process, so a second boot would serve the same state again while paying for
-    the whole layout a second time.  The eight boxes are the same eight states on
+    the whole layout a second time.  The ten boxes are the same ten states on
     every page, and the child stand-in is stateless, so nothing below depends on
     which test ran first.
     """
@@ -231,12 +231,12 @@ def viewer(tmp_path_factory):
 
 
 def _write_boxes(state, **boxes) -> None:
-    """Put the eight boxes where the browser would, then press.
+    """Put the ten boxes where the browser would, then press.
 
     ``boxes`` uses the short names (``nsteps``, ``volume_stride``, ...); a box
     NOT named is written BLANK, which is exactly what an untouched VTextField
     hands over.  Written through ``state`` because RUN_CONFIG_FIELDS IS the
-    binding: there is no other place a press could read these eight from.
+    binding: there is no other place a press could read these ten from.
     """
     for state_name, _label, _field in app.RUN_CONFIG_FIELDS:
         setattr(state, state_name, str(boxes.get(state_name[len("run_"):], "")))
@@ -255,7 +255,7 @@ def _press(viewer, **boxes):
     return viewer.solve.get("job")
 
 
-def test_the_eight_form_values_reach_the_solver(viewer) -> None:
+def test_the_ten_form_values_reach_the_solver(viewer) -> None:
     """Every box the user typed is in the child's command line, as typed.
 
     WHY the argv and not a config object: the argv is the last thing this process
@@ -277,7 +277,7 @@ def test_the_eight_form_values_reach_the_solver(viewer) -> None:
         n_line="44",
     )
     assert job is not None, (
-        "the press spawned nothing, so the eight boxes went nowhere: "
+        "the press spawned nothing, so the ten boxes went nowhere: "
         f"{viewer.state.solve_status!r}"
     )
     argv = list(job.argv)
@@ -311,7 +311,7 @@ def test_the_eight_form_values_reach_the_solver(viewer) -> None:
 
 
 def test_the_argv_builder_carries_the_whole_form() -> None:
-    """The flag list IS the form: all eight boxes, in the solver's own spelling.
+    """The flag list IS the form: all ten boxes, in the solver's own spelling.
 
     Called directly, with no boot and no child: this function is the last thing
     the press writes before the solver owns the run, so a box dropped here is
@@ -347,6 +347,11 @@ def test_the_argv_builder_carries_the_whole_form() -> None:
         "40",
         "--volume-frames",
         "7",
+        # The runtime guards: the ceiling is always sent (RunConfig's default IS
+        # the reference's 1400 s), the load only when a box names one - None is
+        # the ARM's own termination, so no --load-ohm here.
+        "--wall-limit-s",
+        "1400",
     ]
     assert flags == wanted, (
         f"the argv builder produced {flags!r}, not {wanted!r}: a box missing "
@@ -660,7 +665,7 @@ def test_the_solved_page_is_drawn_here_and_not_reloaded(viewer) -> None:
 
 
 def test_a_finished_solve_puts_the_run_form_away(viewer) -> None:
-    """Once a run is behind the page, the eight boxes describe a job nobody starts.
+    """Once a run is behind the page, the ten boxes describe a job nobody starts.
 
     The form is a form for the NEXT run; the dump that just landed IS a run, and
     its own numbers are fixed. Leaving the boxes on screen invites the reader to
@@ -679,7 +684,7 @@ def test_a_finished_solve_puts_the_run_form_away(viewer) -> None:
     _land_one_press(viewer)
 
     assert viewer.state.run_config_visible is False, (
-        "the solved page still shows the Run Config form: its eight boxes now "
+        "the solved page still shows the Run Config form: its ten boxes now "
         "describe a run that has already happened, and editing them reaches "
         "nothing"
     )
@@ -713,7 +718,7 @@ def test_the_refusal_is_one_shared_decision(viewer) -> None:
     )
     assert app._run_config_form_shown(with_data) is False, (
         "a page already showing a field is offered the Run Config form: those "
-        "eight boxes would describe a run nobody is going to start"
+        "ten boxes would describe a run nobody is going to start"
     )
 
     assert app._solve_refused_page(None, no_data) is False, (
@@ -811,7 +816,7 @@ def test_a_page_with_no_data_at_all_may_be_solved(bare_page) -> None:
     """
     assert bare_page.state.run_config_visible is True, (
         "the bare page did not arrive with its Run Config form: the flag the "
-        "eight fields' v_if reads starts false, so the boxes would be hidden on "
+        "ten fields' v_if reads starts false, so the boxes would be hidden on "
         "the one page that has nothing else to offer"
     )
     assert bare_page.state.solve_disabled is False, (
@@ -832,11 +837,11 @@ def test_a_page_with_no_data_at_all_may_be_solved(bare_page) -> None:
 
 
 def test_the_clim_select_is_not_gated_with_the_form(bare_page) -> None:
-    """The gate is on the eight run fields, not on the Clim Mode select.
+    """The gate is on the ten run fields, not on the Clim Mode select.
 
     Clim Mode changes how a volume is RENDERED, so it is meaningful exactly
     where there is a volume - gating it with the run form would make it dead in
-    the place it matters. The eight run fields are the opposite kind of control
+    the place it matters. The ten run fields are the opposite kind of control
     (a run that has not happened) so they carry the ``v_if``; the select must
     not, and both halves are read off the widgets the boot actually emitted.
     """

@@ -1,6 +1,6 @@
 """The other half of the run-form gate: a page with NO field data gets the form.
 
-``server/poc_app.py``'s Run Config card draws its eight fields only on a page
+``server/poc_app.py``'s Run Config card draws its ten fields only on a page
 that carries no field data at all - a page with a recording behind it already
 knows those numbers.  ``tests/test_poc_run_config_panel.py`` pins the "absent"
 half on a dump-backed page; this module pins the arriving half on the bare
@@ -149,7 +149,7 @@ def test_the_page_really_has_no_field_data(bare_boot):
 
 
 def test_the_eight_run_fields_arrive_at_the_run_config_defaults(bare_boot):
-    """All eight, once each, on the numbers the reference run would start from."""
+    """All ten, once each, on the numbers the reference run would start from."""
     from emfit.config import RunConfig
 
     _live, records, _page = bare_boot
@@ -274,3 +274,65 @@ def test_the_clim_select_is_on_this_page_too(bare_boot):
         "field data: it is the run form that is gated, not the select"
     )
     assert _v_model(found[0]) == ("volume_clim_mode", app.VOLUME_CLIM_DEFAULT)
+
+
+GUARD_ROWS = (
+    ("run_wall_limit_s", "wall_limit_s"),
+    ("run_load_ohm", "load_ohm"),
+)
+
+
+def test_the_runtime_guards_are_two_more_form_rows() -> None:
+    """``--wall-limit-s`` and ``--load-ohm`` are rows like the other eight.
+
+    Row, default and argv, all three off the ONE table: the state name the form
+    writes, the ``RunConfig`` field behind it (``_run_config_defaults`` reads the
+    default off that field, so a row without a field is a KeyError at boot, not a
+    silent zero), and the flag the press sends.  The CEILING opens on the
+    reference's own 1400 s (run_build_A.py:128), so a blank box still sends it;
+    the LOAD opens blank ON PURPOSE - the reference resolves it per ARM (A 50
+    ohm at :692 from the LOAD_VALUE_OHM constant at :137, B 100 ohm at :703, the
+    absent flag resolved at :3593-3594) and a box opened on 50 would silently
+    re-terminate an arm B press, the trap the WARNING at :3585-3588 names.
+    """
+    from emfit.config import RunConfig
+
+    table = {state_name: field for state_name, _label, field in app.RUN_CONFIG_FIELDS}
+    defaults = app._run_config_defaults()
+    reference = RunConfig()
+    for state_name, field in GUARD_ROWS:
+        assert table.get(state_name) == field, (
+            f"{state_name} is not a row of RUN_CONFIG_FIELDS mapped to {field}: "
+            f"{sorted(table)}"
+        )
+        assert hasattr(reference, field), (
+            f"{field} is not a RunConfig field, so {state_name} has no default"
+        )
+        assert defaults[state_name] == getattr(reference, field), (
+            f"{state_name} opens on {defaults[state_name]!r}, not on RunConfig's "
+            f"{getattr(reference, field)!r}"
+        )
+    assert RunConfig().wall_limit_s == 1400.0, (
+        "the ceiling must open on the reference's own 1400 s, so a blank box "
+        "states the number a bare command line would have used"
+    )
+    assert RunConfig().load_ohm is None, (
+        "the load must open BLANK: None is the ARM's own termination, and 50 "
+        "would re-terminate an arm B press"
+    )
+
+    blank = app._run_config_argv(app.run_config_from_form({}))
+    assert blank[-2:] == ["--wall-limit-s", "1400"], (
+        f"an untouched form produced {blank!r}: the ceiling travels on every press"
+    )
+    assert "--load-ohm" not in blank, (
+        f"an untouched form produced {blank!r}: it must not name a load"
+    )
+
+    filled = app.run_config_from_form(
+        {"run_wall_limit_s": "60", "run_load_ohm": "75.5"}
+    )
+    flags = app._run_config_argv(filled)
+    assert flags[-4:] == ["--wall-limit-s", "60", "--load-ohm", "75.5"], (
+        f"typed boxes produced {flags!r}, not the values that were typed"
+    )

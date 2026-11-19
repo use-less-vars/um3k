@@ -12391,8 +12391,9 @@ def solve_argv(
     ``config`` is the Run Config form built into ONE ``RunConfig``
     (``run_config_from_form``). When it is given it is the AUTHORITY for
     ``--xcut-near-mm`` as well as for the flags only it can carry
-    (``--nsteps``, ``--volume-stride``, ``--xcut-far-mm`` and, when that box was
-    filled, ``--pulse-freq-ghz``): a press must run what the form says, and two
+    (``--nsteps``, ``--volume-stride``, ``--xcut-far-mm``, ``--wall-limit-s``
+    and, when those boxes were filled, ``--pulse-freq-ghz`` and ``--load-ohm``):
+    a press must run what the form says, and two
     sources for one flag is how a page ends up solving something it never
     displayed. ``xcut_near_mm`` stays the default for a caller with no form, and
     the no-config command line is unchanged, byte for byte.
@@ -14433,15 +14434,25 @@ def _run_n_line_board(n_line) -> str:
     return board
 
 
-#: The Run Config form's eight controls, as ONE table: the state name the browser
+#: The Run Config form's ten controls, as ONE table: the state name the browser
 #: writes, the label it reads, and the ``emfit.config.RunConfig`` field that names
 #: the default. The emit loop, the boot values and the drift test all walk this,
 #: so a field cannot be added to the form without a default behind it. The three
 #: added rows are the dump budget - how often planes are kept, the mesh's line
 #: cells, and the volume's frame cap - the knobs that decide how BIG a run's
 #: output is: the cost of a press, not just its physics. Their ORDER is the
-#: browser's: the budget rows sit together after the volume stride, and the mesh
-#: row sits last, with the geometry it moves.
+#: browser's: the budget rows sit together after the volume stride, the mesh row
+#: sits with the geometry it moves, and the last two close the form.
+#:
+#: Those last two are the solver's RUNTIME guards rather than anything the plan
+#: prices: ``--wall-limit-s`` is the trip thread's ceiling (run_build_A.py:3380,
+#: tripped at :427-430, exit 4) and ``--load-ohm`` is the ``series_r`` termination
+#: (:3344, used at :2093). The ceiling opens on the reference's own 1400 s
+#: (:128), so a blank box states the number a bare command line would have used.
+#: The load opens BLANK on purpose: the reference resolves it per ARM - A 50 ohm
+#: (:692, from the LOAD_VALUE_OHM constant at :137), B 100 ohm (:703), the absent
+#: flag resolved at :3593-3594 - and a box opened on A's 50 would silently
+#: re-terminate an arm B press, the trap the WARNING at :3585-3588 names.
 RUN_CONFIG_FIELDS = (
     ("run_nsteps", "Steps", "nsteps"),
     ("run_volume_stride", "Volume stride", "volume_stride"),
@@ -14451,6 +14462,8 @@ RUN_CONFIG_FIELDS = (
     ("run_xcut_near_mm", "Cut near x [mm]", "xcut_near_mm"),
     ("run_xcut_far_mm", "Cut far x [mm]", "xcut_far_mm"),
     ("run_n_line", "Line cells (n_line)", "n_line"),
+    ("run_wall_limit_s", "Wall ceiling [s]", "wall_limit_s"),
+    ("run_load_ohm", "Load [ohm] (blank = arm's own)", "load_ohm"),
 )
 
 
@@ -14460,11 +14473,12 @@ def _run_config_defaults() -> dict:
     WHY the function-local import: this module's import time is stdlib + numpy -
     ``load_vis`` reaches ``emfit.operators`` the same way (:295) and the surface
     reader ``emfit.ntff`` (:750) - so a machine with no ``emfit`` on ``sys.path``
-    still imports and serves the viewer. WHY ``RunConfig`` and not eight literals:
-    these ARE the reference run's knobs, and a second copy of 2400/100/20.4/22.0
-    written into the UI drifts the day the reference changes. Nothing is invented
-    on any path: a build where ``emfit`` cannot be imported gets an EMPTY mapping,
-    so the eight fields render blank rather than with numbers this file made up.
+    still imports and serves the viewer. WHY ``RunConfig`` and not ten literals:
+    these ARE the reference run's knobs, and a second copy of 2400/100/20.4/22.0 -
+    or of the wall ceiling's 1400 s and the load's per-arm 50/100 ohm - written
+    into the UI drifts the day the reference changes. Nothing is invented on any
+    path: a build where ``emfit`` cannot be imported gets an EMPTY mapping, so the
+    ten fields render blank rather than with numbers this file made up.
     """
     try:
         from emfit.config import RunConfig
@@ -14481,11 +14495,11 @@ def _run_config_defaults() -> dict:
 
 
 def _run_config_form_shown(available) -> bool:
-    """Is the Run Config FORM (the eight run fields) offered on this page?
+    """Is the Run Config FORM (the ten run fields) offered on this page?
 
     The form describes a run that has not happened yet, so it belongs exactly
     where there is nothing to look at - a page already showing a field has a run
-    behind it, and those eight boxes would silently describe a job nobody is
+    behind it, and those ten boxes would silently describe a job nobody is
     going to start. The four flags below are that question, asked once: a
     volume field, a plane stack, a captured port plane and a frame axis are all
     statements about the DATA (um3k_context.py:99, :123-137), so any of them
@@ -14523,8 +14537,11 @@ def _solve_refused_page(nt, available) -> bool:
 
 
 #: Which RunConfig fields are whole numbers, so the form's text is parsed as
-#: one. The remaining three in RUN_CONFIG_FIELDS (``pulse_freq_ghz``,
-#: ``xcut_near_mm``, ``xcut_far_mm``) are floats. The KIND is checked here
+#: one. The remaining five in RUN_CONFIG_FIELDS (``pulse_freq_ghz``,
+#: ``xcut_near_mm``, ``xcut_far_mm``, ``wall_limit_s``, ``load_ohm``) are floats -
+#: the last two are plain ``type=float`` on the reference's own parser
+#: (``run_build_A.py:3380``, ``:3344``), so a whole-number box would refuse a
+#: value the command line takes. The KIND is checked here
 #: because ``RunConfig.validate`` refuses a float where an int belongs ("a JSON
 #: 2400.0 is not 2400"), and a VTextField only ever hands over a STRING.
 _RUN_CONFIG_INT_FIELDS = (
@@ -14576,10 +14593,11 @@ def run_config_from_form(values) -> "RunConfig":
 
     ``values`` maps the state name the browser writes to the text it left there
     (``{state_name: state.<state_name>}`` for RUN_CONFIG_FIELDS). WHY a config at
-    all: ``RunConfig`` is where these eight knobs are validated (whole steps, a
-    positive finite pulse, the far cut beyond the near cut), so building it HERE
-    means a bad box refuses the press rather than spawning a solver that would
-    fail on its own argv or, worse, quietly run the numbers it prefers.
+    all: ``RunConfig`` is where these ten knobs are validated (whole steps, a
+    positive finite pulse, the far cut beyond the near cut, a finite wall ceiling
+    and load), so building it HERE means a bad box refuses the press rather than
+    spawning a solver that would fail on its own argv or, worse, quietly run the
+    numbers it prefers.
 
     Blank fields fall to ``RunConfig``'s defaults (see
     ``_run_config_field_value``), so a page nobody typed into solves exactly what
@@ -14620,7 +14638,9 @@ def _run_config_argv(config) -> list[str]:
     box in ``RUN_CONFIG_FIELDS`` reaches the solver here. Two of them are budgets
     rather than physics: ``--dump-stride`` is a FLOOR - ``_vis_plan_stride`` may
     raise it to fit the plane budget - and ``--volume-frames`` is omitted when
-    the config carries ``None``, which means no cap at all.
+    the config carries ``None``, which means no cap at all. The last two are the
+    solver's RUNTIME guards: ``--wall-limit-s`` is the trip thread's ceiling
+    (run_build_A.py:3380) and ``--load-ohm`` the ``series_r`` termination (:3344).
     """
     if config is None:
         return []
@@ -14647,6 +14667,19 @@ def _run_config_argv(config) -> list[str]:
         # None is "no cap", not a number to pass - the same rule
         # --pulse-freq-ghz follows above.
         flags += ["--volume-frames", str(int(config.volume_frames))]
+    # The runtime guards. The ceiling is ALWAYS sent: RunConfig's default IS the
+    # reference's own 1400 s (run_build_A.py:128), so an untouched box states the
+    # number a bare command line would have used - the --dump-stride rule, not a
+    # number this file invented. The load is sent only when a box names one:
+    # ``None`` is the ARM's own termination, which the reference resolves per ARM
+    # (A 50 ohm at :692, B 100 ohm at :703, both read from the absent flag at
+    # :3593-3594; A's number is the LOAD_VALUE_OHM constant at :137). Sending 50
+    # for an arm B press is the silent re-termination the WARNING at :3585-3588
+    # names; :3589-3592 is only the comment explaining why the flag wins.
+    if config.wall_limit_s is not None:
+        flags += ["--wall-limit-s", f"{float(config.wall_limit_s):g}"]
+    if config.load_ohm is not None:
+        flags += ["--load-ohm", f"{float(config.load_ohm):g}"]
     return flags
 
 
@@ -15807,7 +15840,7 @@ def run_web_vis(
     # three cannot disagree about which mode carries a warning.
     state.clim_relative_warning = bool(_volume_clim_warning(state.volume_clim_mode))
 
-    # THE Run Config form's eight numbers, at the reference run's own defaults (see
+    # THE Run Config form's ten numbers, at the reference run's own defaults (see
     # ``_run_config_defaults``): the form is a STARTING POINT for a later run, so a
     # field that started at a number this file invented would make every run that
     # did not retype it a run nobody specified. Initialised beside the mode for the
@@ -18650,10 +18683,10 @@ def run_web_vis(
         # WHICH PAGE has no field data: the GATED half of the Run Config card is a
         # form for the NEXT run, so it is offered exactly where there is nothing to
         # look at - a page already showing a field has a run behind it, and those
-        # eight boxes would silently describe a job nobody is going to start.
+        # ten boxes would silently describe a job nobody is going to start.
         # Decided HERE, at build time, off the frozen snapshot the layout builders
         # read the same way (server/um3k_panels.py:83): a plain python branch emits
-        # the eight fields or does not, so a page with data carries no hidden form
+        # the ten fields or does not, so a page with data carries no hidden form
         # and no flag that has to stay in step with the data.
         # A one-station dump and an animation dump have a run behind them too:
         # ``port_planes`` is one captured x-plane and ``animation`` is a frame
@@ -18671,7 +18704,7 @@ def run_web_vis(
             WHY THE COLOR SCALE SELECT IS NOT GATED: it changes how the |E| volume is
             RENDERED, so it is meaningful exactly when a volume is on screen - it
             is the page WITH data that needs it, and gating it on 'no data' would
-            make it dead where it matters. The eight run fields are the opposite
+            make it dead where it matters. The ten run fields are the opposite
             kind of control (they describe a run that has not happened) and are
             gated at build time instead.
             """
@@ -19571,9 +19604,10 @@ def run_web_vis(
             return
         structure = str(state.solve_structure or default_arm)
         # ---- the Run Config form, as ONE validated config --------------------
-        # Built HERE, at press time: the eight boxes are whatever the browser has
+        # Built HERE, at press time: the ten boxes are whatever the browser has
         # written by now, and RunConfig is where they are checked (whole steps, a
-        # positive pulse, a far cut beyond the near one). A box that is not a
+        # positive pulse, a far cut beyond the near one, a finite wall ceiling and
+        # load). A box that is not a
         # number refuses the press with a sentence and spawns nothing - the same
         # shape as a refused netlist just below.
         form_values = {
