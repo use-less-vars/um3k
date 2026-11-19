@@ -115,6 +115,20 @@ DEFAULT_NSTEPS = 2400
 DEFAULT_VOLUME_STRIDE = 100
 DEFAULT_DUMP_STRIDE = 1
 
+#: The wall ceiling the reference TRIPS on rather than spends
+#: (``run_build_A.py:128`` ``WALL_LIMIT_S_DEFAULT``; the trip thread fires at
+#: :427-430 and exits 4).  A literal for the reason the defaults above are
+#: literals, and the same number ``emfit/config.py:91`` states, so a run typed
+#: here, a run from a --config document and the reference's own default agree.
+DEFAULT_WALL_LIMIT_S = 1400.0
+
+#: What an absent ``--load-ohm`` means: ``None``, i.e. the ARM's own resistance
+#: (``run_build_A.py:3593-3594`` resolves it from ``STRUCTURES[structure][
+#: "load_ohm"]`` -- 50 ohm for A at :692).  Not 50.0: a default that named 50
+#: would re-terminate a 100 ohm arm in silence, which is the trap
+#: ``emfit/config.py:93-100`` documents.
+DEFAULT_LOAD_OHM = None
+
 EVIDENCE_DIR = (REPO / "evidence").resolve()
 
 
@@ -217,6 +231,14 @@ CONFIG_DRIVEN = (
     ("n_line", None),
     ("xcut_near_mm", None),
     ("xcut_far_mm", None),
+    # The run's two runtime guards.  They belong in this table for the same
+    # reason every other row does: a --config that names a load or a ceiling
+    # and is then not forwarded is a document that lies about the run (DR-52).
+    # ``reference_argv`` states the ceiling always (its fallback is a real
+    # number) and the load only when one was NAMED, because an absent load is
+    # the arm's own and there is no flag for it.
+    ("wall_limit_s", DEFAULT_WALL_LIMIT_S),
+    ("load_ohm", DEFAULT_LOAD_OHM),
 )
 
 
@@ -283,6 +305,19 @@ def reference_argv(args: argparse.Namespace) -> list[str]:
         argv += ["--xcut-near-mm", str(args.xcut_near_mm)]
     if args.xcut_far_mm is not None:
         argv += ["--xcut-far-mm", str(args.xcut_far_mm)]
+    # The two guards.  Stated, not left to be inferred, for the reason
+    # --no-volume is stated: the plan prints these values, and a number the
+    # plan prints and the solve never receives is the drift DR-52 recorded.
+    # ``%g`` because that is what server/poc_app.py's form sends, so the two
+    # front ends emit the same argv for the same run.
+    if args.wall_limit_s is not None:
+        argv += ["--wall-limit-s", f"{float(args.wall_limit_s):g}"]
+    # Absent means the ARM's own resistance, which the reference reads out of
+    # its own STRUCTURES table -- so there is no flag to pass, and passing 50
+    # here would be exactly the silent re-termination emfit/config.py:93-100
+    # warns of.
+    if args.load_ohm is not None:
+        argv += ["--load-ohm", f"{float(args.load_ohm):g}"]
     return argv
 
 
@@ -380,14 +415,33 @@ def print_plan(p: dict, kwargs: dict, args: argparse.Namespace,
     # plan that printed "None GHz" would hide which pulse is being solved.
     pulse_hz = (float(args.pulse_freq_ghz) * 1e9 if args.pulse_freq_ghz
                 else float(reference.VIS_F_PULSE_HZ))
-    print(f"PLAN - the reference simulation (arm {STRUCTURE}, 50 ohm series_r at "
-          f"p2) with "
+    # The load the solve will ACTUALLY use: an absent --load-ohm is the ARM's
+    # own resistance, which the reference resolves from its own table
+    # (run_build_A.py:3593-3594), so neither a literal "50 ohm" nor "None" is
+    # true here -- the line said 50 for every run until DR-52, including one
+    # whose config named 75.
+    own_ohm = float(reference.STRUCTURES[STRUCTURE]["load_ohm"])
+    load_ohm = own_ohm if args.load_ohm is None else float(args.load_ohm)
+    print(f"PLAN - the reference simulation (arm {STRUCTURE}, {load_ohm:g} ohm "
+          f"series_r at p2) with "
           + ("NO |E| volume (cut planes only)" if args.no_volume
              else "a 3-D |E| volume"))
     print(f"  mesh        {geo['nx']} x {geo['ny']} x {geo['nz']} = "
           f"{cells:,} cells at {geo['cell_m'] * 1e3:.3f} mm")
     print(f"  solve       excite='pulse' at {pulse_hz / 1e9:.3f} GHz, "
           f"{int(kwargs['nsteps'])} steps, ONE FDTD solve")
+    # Both of these END the run, so a plan that priced the mesh and the frames
+    # and stayed silent about them would be pricing the wrong run.  The ceiling
+    # is guarded because this helper is also called from tests that build a
+    # bare namespace; main() always resolves it first via apply_config.
+    wall_s = float(DEFAULT_WALL_LIMIT_S if args.wall_limit_s is None
+                   else args.wall_limit_s)
+    print(f"  wall        {wall_s:g} s ceiling: the trip thread exits 4 past "
+          f"it and this run stops there (the worst case, not its cost)")
+    print(f"  load        {load_ohm:g} ohm series_r at p2 - "
+          + (f"NAMED, and arm {STRUCTURE}'s own is {own_ohm:g} ohm"
+             if args.load_ohm is not None
+             else "the arm's own, from STRUCTURES"))
     print(f"  Ez planes   stride {p['stride']}: {p['nt']} frames of "
           f"{geo['nx']}x{geo['nz']} on the j={geo['j_cut']} z-cut + {p['nt_x']} "
           f"frames of two {geo['ny']}x{geo['nz']} x-cuts, ~{p['est_mb']:.1f} MB "
@@ -505,7 +559,7 @@ def main(argv: list[str] | None = None) -> int:
              "stride of 0 and a JSON 2400.0 are refused there, before anything "
              "is priced. --npz/--out/--nsteps/--volume-stride/--dump-stride "
              "/--volume-frames/--pulse-freq-ghz/--n-line/--xcut-near-mm "
-             "/--xcut-far-mm are all config-driven.")
+             "/--xcut-far-mm/--wall-limit-s/--load-ohm are all config-driven.")
     ap.add_argument(
         "--npz", default=None, metavar="PATH",
         help="where the field dump goes (default: artifacts/reference_sim_volume"
@@ -585,6 +639,26 @@ def main(argv: list[str] | None = None) -> int:
              "VIS_F_PULSE_HZ, 15 GHz). A dump is the march of ONE packet, so the "
              "excitation is pulse and not CW. There is no --freq: a pulse carries "
              "a band, so a single CW frequency is not a knob this run has.")
+    # The run's two guards, not picture knobs: neither changes what is
+    # recorded, both decide whether the run finishes.  They sit together and
+    # after the VIS flags for that reason.
+    ap.add_argument(
+        "--wall-limit-s", type=float, default=None, metavar="S",
+        help="hard wall ceiling in seconds (default: run_build_A.py's "
+             "WALL_LIMIT_S_DEFAULT, 1400 s). The trip thread exits 4 past it, "
+             "so this is the run's WORST CASE and not its cost: the default "
+             "2400 steps finish well inside it. Raise it for a longer march "
+             "than the certified one; lower it to fail fast when all you are "
+             "checking is that the flags are right.")
+    ap.add_argument(
+        "--load-ohm", type=float, default=None, metavar="OHM",
+        help="series_r load resistance in ohm (default: none, i.e. the ARM's "
+             "own -- 50 ohm for A, resolved by run_build_A.py:3593-3594). "
+             "Passing it is the same explicit override the reference's own "
+             "flag is, and the reference WARNS (:3585-3588) that an explicit "
+             "load beats the arm: a value that disagrees with the arm's own "
+             "makes this a different termination wearing arm A's name, which "
+             "is why the plan prints the load the solve will use.")
     ap.add_argument(
         "--dry-run", action="store_true",
         help="print the plan and the command that would serve the result, and "

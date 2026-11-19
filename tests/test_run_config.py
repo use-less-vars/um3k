@@ -29,9 +29,11 @@ import pytest
 
 from emfit.config import (
     DEFAULT_DUMP_STRIDE,
+    DEFAULT_LOAD_OHM,
     DEFAULT_N_LINE,
     DEFAULT_NSTEPS,
     DEFAULT_VOLUME_STRIDE,
+    DEFAULT_WALL_LIMIT_S,
     DEFAULT_XCUT_FAR_MM,
     DEFAULT_XCUT_NEAR_MM,
     SCHEMA_VERSION,
@@ -83,6 +85,13 @@ VARIANT = dict(
     n_line=79,
     xcut_near_mm=20.4,
     xcut_far_mm=22.0,
+    # The two runtime guards, at values that are deliberately NOT their
+    # defaults: 300 s rather than the reference's 1400 s ceiling, and 75 ohm
+    # rather than the ARM's own 50 -- a field that is silently dropped now
+    # shows up as two more numbers the plan did not move (DR-52 shipped
+    # exactly that).
+    wall_limit_s=300.0,
+    load_ohm=75.0,
 )
 
 
@@ -112,6 +121,11 @@ def test_defaults_are_the_scripts_own_defaults():
     assert cfg.n_line == DEFAULT_N_LINE
     assert cfg.xcut_near_mm == DEFAULT_XCUT_NEAR_MM
     assert cfg.xcut_far_mm == DEFAULT_XCUT_FAR_MM
+    assert cfg.wall_limit_s == sim.DEFAULT_WALL_LIMIT_S == DEFAULT_WALL_LIMIT_S
+    # None is "the arm's own" (A 50 ohm, B 100 ohm), NOT a number: a default of
+    # 50.0 would re-terminate a 100 ohm arm in silence (emfit/config.py:93-100).
+    assert cfg.load_ohm is None
+    assert sim.DEFAULT_LOAD_OHM is None
     # None is "the script's own path", not a path relative to the config file.
     assert cfg.npz is None and cfg.out is None
 
@@ -177,32 +191,74 @@ def _namespace(config_path):
         npz=None, out=None, nsteps=None, volume_stride=None, dump_stride=None,
         volume_frames=None, pulse_freq_ghz=None, n_line=None, xcut_near_mm=None,
         xcut_far_mm=None,
-        # --no-volume is action="store_true" (scripts/run_reference_sim.py:541),
-        # so the parser's own default is False; reference_argv reads it (:266).
+        # The two runtime guards are action-less float flags whose ABSENT
+        # value is meaningful (None = the arm's own load,
+        # scripts/run_reference_sim.py:130), so the namespace has to carry
+        # them or reference_argv cannot tell "absent" from "not given".
+        wall_limit_s=None, load_ohm=None,
+        # --no-volume is action="store_true" (scripts/run_reference_sim.py:595),
+        # so the parser's own default is False; reference_argv reads it (:288).
         no_volume=False,
     )
 
 
-def test_every_config_field_reaches_the_reference_argv(tmp_path):
-    """The fields a plan cannot show (x-cuts) still have to arrive at the solve."""
-    npz = tmp_path / "vol.npz"
-    args = _namespace(
-        write_config(tmp_path, **VARIANT, npz=str(npz), out=str(tmp_path / "r.json")))
-    cfg = sim.load_config(args.config)
-    sim.apply_config(args, cfg)
+#: The RunConfig fields that are NOT run knobs, and are therefore absent from
+#: CONFIG_DRIVEN by design.
+NOT_FORWARDED = frozenset({"schema_version"})
+
+#: The one CONFIG_DRIVEN row whose flag is not its name with dashes for
+#: underscores: the dump path reaches the reference as ``--vis-dump``
+#: (scripts/run_reference_sim.py:278), while ``--npz`` is only THIS script's own
+#: spelling of that field.  Stated once here rather than as a third column,
+#: because the table's job is the wiring, not the reference's spelling.
+FLAG_NAMES = {"npz": "--vis-dump"}
+
+
+def test_config_driven_is_exactly_the_run_config_knobs():
+    """CONFIG_DRIVEN, in scripts/run_reference_sim.py, is the contract.
+
+    A field added to RunConfig and forgotten there is a document that
+    validates, loads, and silently does nothing -- which is how load_ohm and
+    wall_limit_s shipped (DR-52).  Set equality, not a subset, so a table row
+    naming a field that no longer exists fails the same way.
+    """
+    forwarded = {name for name, _ in sim.CONFIG_DRIVEN}
+    knobs = set(RunConfig.__dataclass_fields__) - NOT_FORWARDED
+    assert forwarded == knobs, (
+        f"CONFIG_DRIVEN is missing {sorted(knobs - forwarded)} and names "
+        f"{sorted(forwarded - knobs)}, which RunConfig does not have")
+
+
+@pytest.mark.parametrize("name", [name for name, _ in sim.CONFIG_DRIVEN])
+def test_every_config_field_reaches_the_reference_argv(tmp_path, name):
+    """The fields a plan cannot show (x-cuts, the load) still reach the solve.
+
+    Driven by the TABLE, one field at a time, each at a value that is not its
+    default: the version of this test that spelled a dozen flag/value pairs by
+    hand stayed green while two table rows were missing (DR-52).  The flag
+    spelling is the table's other invariant -- a row's flag is its name with
+    underscores turned into dashes, FLAG_NAMES being the single documented
+    exception -- so a row that is spelled wrongly fails here too.
+    """
+    values = dict(VARIANT, npz=str(tmp_path / "vol.npz"),
+                  out=str(tmp_path / "r.json"))
+    value = values[name]
+    args = _namespace(write_config(tmp_path, **{name: value}))
+    sim.apply_config(args, sim.load_config(args.config))
     argv = sim.reference_argv(args)
 
-    assert flag_value(argv, "--nsteps") == "600"
-    assert flag_value(argv, "--dump-stride") == "2"
-    assert flag_value(argv, "--volume-stride") == "30"
-    assert flag_value(argv, "--volume-frames") == "8"
-    assert flag_value(argv, "--pulse-freq-ghz") == "10.0"
-    assert flag_value(argv, "--n-line") == "79"
-    assert flag_value(argv, "--xcut-near-mm") == "20.4"
-    assert flag_value(argv, "--xcut-far-mm") == "22.0"
-    assert flag_value(argv, "--vis-dump") == str(npz)
-    assert flag_value(argv, "--out") == str(tmp_path / "r.json")
-    # Arm A is not a knob (B/C/D are other terminations, a different errand).
+    flag = FLAG_NAMES.get(name, "--" + name.replace("_", "-"))
+    got = flag_value(argv, flag)
+    if isinstance(value, str):
+        assert got == value
+    else:
+        # float(): reference_argv formats the two guards with %g and the rest
+        # with str(), so 75.0 arrives as '75' and 600 as '600' -- the VALUE is
+        # the contract, not the spelling.
+        assert float(got) == float(value)
+    # Arm A is not a config knob (B/C/D are other terminations, a different
+    # errand), but every argv states it: the one test that builds an argv from a
+    # document keeps the prologue honest.
     assert flag_value(argv, "--structure") == sim.STRUCTURE == "A"
 
 
@@ -311,3 +367,49 @@ def test_a_missing_config_file_is_refused_by_path(tmp_path):
     with pytest.raises(SystemExit) as exc:
         dry_run(["--config", str(missing)])
     assert "REFUSED" in str(exc.value.code) and str(missing) in str(exc.value.code)
+
+
+# --------------------------------------------------------------------------- #
+# DR-52: the guards the plan PRINTS are the guards the solve receives
+# --------------------------------------------------------------------------- #
+def test_dr52_a_named_load_is_what_the_plan_states(tmp_path):
+    """A --config that names 75 ohm is solved at 75 ohm AND printed as 75.
+
+    DR-52's old behaviour: the header said "50 ohm" for every run, because the
+    number was a literal in the print (scripts/run_reference_sim.py:441-444), so
+    a document that named 75 solved at 75 while the plan that prices a 1400 s
+    solve read back as arm A's own 50 -- the two halves of one run disagreed.
+    """
+    npz = tmp_path / "never_written.npz"
+    path = write_config(tmp_path, load_ohm=75.0, npz=str(npz),
+                        out=str(tmp_path / "never_written.json"))
+
+    rc, out = dry_run(["--config", path])
+
+    assert rc == 0
+    assert "75 ohm series_r at p2" in out
+    assert "NAMED, and arm A's own is 50 ohm" in out
+    # The line that used to be printed whatever the document said.
+    assert "50 ohm series_r" not in out
+    assert not npz.exists(), "a dry run must not write the dump"
+
+
+def test_dr52_an_absent_load_is_the_arms_own(tmp_path):
+    """Neither guard named: the plan states arm A's own 50 ohm and 1400 s.
+
+    DR-52's old behaviour: the ceiling and the load were literals in the print
+    (scripts/run_reference_sim.py:439-444), so a --config that named either one
+    solved one thing and was priced as another.  Absent has to read as "the
+    arm's own", not as 50.0, which would re-terminate a 100 ohm arm in silence
+    (emfit/config.py:93-100).
+    """
+    npz = tmp_path / "never_written.npz"
+    path = write_config(tmp_path, npz=str(npz),
+                        out=str(tmp_path / "never_written.json"))
+
+    rc, out = dry_run(["--config", path])
+
+    assert rc == 0
+    assert "50 ohm series_r at p2 - the arm's own, from STRUCTURES" in out
+    assert "1400 s ceiling" in out
+    assert not npz.exists(), "a dry run must not write the dump"
