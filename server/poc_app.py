@@ -221,9 +221,11 @@ DEFAULT_PLAY_STRIDE = 4
 # its first move to its last, and short enough that a single press of << PREV / NEXT
 # resumes visibly at once. A VIEWING choice, like the two constants above.
 SCRUB_HOLD_S = 0.5
-# ONE colour ceiling for the whole animation, taken at this percentile of |Ez|
-# over every stored frame of every plane. Frame-local scaling would renormalise
-# on each step and make a decaying pulse look like it never decays.
+# ONE colour ceiling for the whole animation, taken as the MEDIAN of the
+# per-frame percentiles of |Ez| across every plane. Frame-local scaling would
+# renormalise on each step and make a decaying pulse look like it never decays;
+# a single percentile POOLED over the whole clip lets one hot frame dim all the
+# others, which is what made a bounced pulse read as black.
 COLOR_PERCENTILE = 99.5
 # Cell edges ON for the animated field sheets. A smooth-shaded sheet hides the
 # grid the field is sampled on, so a coarse dump reads as a continuous picture
@@ -430,17 +432,59 @@ def _vis_colour_limit(arrays, percentile: float = COLOR_PERCENTILE):
     cost is that the brightest 0.5 % of cells clip, and the page's scale label
     says so in words.
 
+    WHY the MEDIAN OF THE PER-FRAME ceilings: a percentile pooled over the whole
+    clip is one number for every frame, so the few hot frames set the scale for
+    all the rest. On ``vis_dump_1500.npz`` 538 of the 1500 frames carry a p99.5
+    above 10 V/m (the record's largest cell is a 149.9 V/m spike at frame 329),
+    so the pooled p99.5 came out at 24.81 V/m while the median per-frame ceiling
+    was 3.20 and the median per-frame maximum was 4.15 - 97 % of the cells of a
+    typical frame then sat in the darkest tenth of the map and the picture read
+    as black. The median of the per-frame p99.5 values is still ONE constant for
+    the whole animation (nothing rescales while the clip plays, so the decay
+    stays visible), but it is decided by the TYPICAL frame instead of by the
+    worst one: 3.20 V/m on that dump.
+
+    FRAME BY FRAME, never a stacked copy of the dump: one frame's arrays are
+    concatenated at a time, so the cost is O(samples) time and O(one frame)
+    memory, and only the per-frame ceilings are kept. A frame that is empty or
+    entirely non-finite is skipped - it has no ceiling of its own, and letting it
+    contribute one would be a claim about a picture that was never drawn.
+
     Returns ``(0.0, ceiling, empty)``. |Ez| is a magnitude, so the floor is 0: a
     symmetric -vmax..+vmax clim would spend half the colour map on values this
     array cannot hold.
     """
-    magnitudes = [
-        np.abs(np.asarray(array, dtype=np.float64)).ravel() for array in arrays
-    ]
-    magnitudes = [flat for flat in magnitudes if flat.size]
-    if not magnitudes:
+    frames = []
+    for array in arrays:
+        block = np.abs(np.asarray(array, dtype=np.float64))
+        if block.size == 0:
+            continue
+        if block.ndim == 0:
+            block = block.reshape(1, 1)  # a bare scalar: one frame, one sample
+        elif block.ndim == 1:
+            block = block.reshape(1, -1)  # no frame axis to walk
+        else:
+            block = block.reshape(block.shape[0], -1)  # (frame, sample)
+        frames.append(block)
+    if not frames:
         return 0.0, 1.0, True
-    ceiling = float(np.percentile(np.concatenate(magnitudes), percentile))
+    ceilings = []
+    for index in range(max(block.shape[0] for block in frames)):
+        # The planes need not share a frame count (the x-cuts are recorded on a
+        # coarser schedule), so a frame is every plane that HAS one.
+        parts = [block[index] for block in frames if index < block.shape[0]]
+        parts = [part for part in parts if part.size]
+        if not parts:
+            continue
+        chunk = np.concatenate(parts)
+        if not np.any(np.isfinite(chunk)):
+            continue  # an all-NaN frame has no ceiling; it must not be one
+        value = float(np.nanpercentile(chunk, percentile))
+        if np.isfinite(value):
+            ceilings.append(value)
+    if not ceilings:
+        return 0.0, 1.0, True
+    ceiling = float(np.median(ceilings))
     if not np.isfinite(ceiling) or ceiling <= 0.0:
         # An all-zero (or non-finite) cube has no scale of its own. 1.0 keeps a
         # degenerate range away from VTK, and the flag says why the page shows
@@ -5572,8 +5616,9 @@ def _scale_label(info: dict) -> str:
     vmin, vmax = color_range
     return (
         f"scale: |Ez| {vmin:.4e} .. {vmax:.4e} V/m, ONE limit for EVERY "
-        f"frame (p{COLOR_PERCENTILE:g} ceiling; the brightest "
-        f"{100.0 - COLOR_PERCENTILE:g} % of cells clip)"
+        f"frame, the median of each frame's p{COLOR_PERCENTILE:g} |Ez| so a "
+        f"single hot spot cannot dim the whole clip (the brightest "
+        f"{100.0 - COLOR_PERCENTILE:g} % of cells in a frame clip)"
     )
 
 
@@ -8054,9 +8099,10 @@ def _animation_block(info: dict, fps: int = DEFAULT_FPS) -> dict:
             "percentile": COLOR_PERCENTILE,
             "empty": bool(info["color_range_empty"]),
             "basis": (
-                "one limit for every frame of every plane: the "
-                f"{COLOR_PERCENTILE:g}th percentile of |Ez| over all stored frames; "
-                "a per-frame maximum would renormalise each step and hide the decay"
+                "one limit for every frame of every plane: the MEDIAN of each "
+                f"frame's {COLOR_PERCENTILE:g}th percentile of |Ez|, so a single "
+                "hot spot cannot dim the whole clip; a per-frame limit would "
+                "renormalise each step and hide the decay"
             ),
         },
         "planes": [
@@ -9273,8 +9319,9 @@ def _print_vis_keys(info: dict) -> None:
     vmin, vmax = info["color_range"]
     print(
         f"colour      : ONE limit for every frame and plane: |Ez| {vmin:.6e} .. "
-        f"{vmax:.6e} (percentile {COLOR_PERCENTILE} of |Ez| over all stored "
-        f"frames); a per-frame limit would renormalise a decaying pulse"
+        f"{vmax:.6e} (median of each frame's p{COLOR_PERCENTILE} of |Ez|, so a "
+        f"single hot spot cannot dim the whole clip); a per-frame limit would "
+        f"renormalise a decaying pulse"
     )
     if info.get("color_range_empty"):
         print(
