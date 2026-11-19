@@ -235,19 +235,21 @@ why: the ruling arrived as chat text and was never written to disk, so any VERIF
 
 **Decision.** y and z have no station axis: the page captures nine
 x-stations (`server/poc_app.py:8289`) and a y/z cut draws one of them
-(`build_cut_sheets` `:9104`, slices `:9157` and `:9165`), no `np.interp`
-or `interp1d`. So the cut row says one stored plane, the x-station count, no
-interpolation (`_cut_text`, `:9031`), and a snapped millimetre reads
-nearest saved station, not the value asked for (`_station_text` `:5769`,
-`:8734`, `:11824`).
+(`build_cut_sheets` `:9120`, slices `:9173` and `:9181`), no `np.interp`
+or `interp1d`. So the cut row says one stored x-plane of the captured
+stations and their count, from the layout and not written as nine, on the
+planes branch only; on the volume branch `n_st` is the |E| volume's own nx
+(`_cut_text`, `:9031`), and a snapped millimetre reads nearest saved
+station, not the value asked for (`_station_text` `:5769`, `:8734`,
+`:11824`).
 
-**Defects.** The row ended "one sample each, no interpolation" (`:9044`),
-yet one plane or many went unsaid, so a y/z cut read as resampled; and the
-1.2 mm snap from 10.4 mm (`:8731-8732`) printed a station's x unlabelled.
+**Defects.** The row ended "one sample each, no interpolation", so many
+planes went unsaid and a y/z cut read as resampled; and the 1.2 mm snap
+from 10.4 mm (`:8731-8732`) printed a station's x unlabelled. The first
+closed in `45a75a0`; the second is open.
 
-**Rejected.** Interpolating between stations so the label becomes true,
-which invents fields no solve produced. Or a bare millimetre, the snap
-unspoken.
+**Rejected.** Interpolating between stations so the label becomes true, which
+invents fields no solve produced. Or a bare millimetre, the snap unspoken.
 
 ## ADR-006 — boot draws the volume only where there is no plane stack
 
