@@ -3265,6 +3265,223 @@ def test_setup_project_picker_offers_the_solvers_own_arms(tmp_path: Path,
     )
 
 
+# --- the Structure picker has to be READABLE, not just selectable ------------
+#
+# The picker's value is a bare arm id ("A", "B", "C", "D"): one letter, and
+# not one number behind it (``load_ohm``, the netlist that closes the cut) is on
+# the page at all.  The three tests below are about the caption that fixes that:
+# where its sentences come from, that a selection repaints it through the SHIPPED
+# state-change listener, and that an id nobody described is a harmless line
+# rather than a traceback or an empty box.
+
+
+def _capture_v_labels(monkeypatch):
+    """Record every VLabel the layout builds, in construction order.
+
+    The same module-attribute patch ``_capture_v_selects`` uses: ``poc_app``
+    resolves ``VLabel`` from the vuetify3 MODULE, so the page sees the recorder -
+    and the real class is still constructed, so what is measured is the shipped
+    layout.
+    """
+    import trame.widgets.vuetify3 as vuetify3
+
+    log = []
+    real = vuetify3.VLabel
+
+    def _factory(*args, **kwargs):
+        log.append({"args": args, "kwargs": kwargs})
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(vuetify3, "VLabel", _factory)
+    return log
+
+
+def test_every_solver_arm_has_a_blurb() -> None:
+    """The caption map may not lag behind the solver's own arm table.
+
+    The picker's ITEMS are read from the solver's ``STRUCTURES``
+    (``_structure_registry``), the SENTENCES from ``STRUCTURE_ARM_BLURBS`` in
+    this file - two tables that can drift.  An arm with no line still WORKS (it
+    is offered, nothing raises inside the handler), it just wears the fallback
+    sentence, so not one other test in the suite would say a word about it.
+    Asserted against the REGISTRY, not against a hardcoded ``A/B/C/D``: a test
+    that spelled the arms out would pass just as happily after the solver had
+    grown a fifth one.
+    """
+    import poc_app as app
+
+    registry = app._structure_registry()
+    assert registry, (
+        "_structure_registry() returned nothing: the solver's STRUCTURES could "
+        "not be read, so this test would be checking the caption against an "
+        "empty arm list"
+    )
+
+    fallback = app._STRUCTURE_ARM_FALLBACK_BLURB
+    missing = sorted(
+        arm for arm in registry if arm not in app.STRUCTURE_ARM_BLURBS
+    )
+    assert not missing, (
+        f"the solver dispatches on arm(s) {missing} that STRUCTURE_ARM_BLURBS "
+        "does not describe: the picker offers them and their caption would be "
+        f"the generic line {fallback!r} - add their sentence beside the arm "
+        "row they are read from (evidence/termination/run_build_A.py:689)"
+    )
+
+    for arm in sorted(registry):
+        blurb = app.structure_arm_blurb(arm)
+        assert isinstance(blurb, str) and blurb.strip(), (
+            f"arm {arm!r} has a BLANK caption: the line under the picker would "
+            "be an empty element on a column that is read before anything is "
+            "pressed"
+        )
+        assert blurb != fallback, (
+            f"arm {arm!r} answers with the fallback sentence, so its own line "
+            "is missing or unreachable"
+        )
+        # The two NETLIST rows (C, D) are the ones whose termination is not a
+        # number at all: a reader who is not told that would take the arm for
+        # another resistor, which is the one thing the caption must not do.
+        if registry[arm].get("netlist"):
+            assert "netlist" in blurb.lower(), (
+                f"arm {arm!r} is a netlist row but its caption never says so: "
+                f"{blurb!r}"
+            )
+
+
+def test_selecting_an_arm_repaints_its_blurb(tmp_path: Path, monkeypatch) -> None:
+    """A write to ``solve_structure`` repaints the caption - through the shipped listener.
+
+    The listener is taken out of ``state._change_callbacks`` and called the way
+    trame's flush calls it (the value as a kwarg, the write already committed to
+    the state), so the machinery exercised is the ``@state.change`` the page
+    registers, not a copy of it.  The picker itself only WRITES the key, which
+    is why the caption cannot hang off a trigger.
+    """
+    import trame.app as trame_app
+
+    import poc_app as app
+
+    labels = _capture_v_labels(monkeypatch)
+    info = _fixture_info(app, tmp_path / "arms.npz")
+
+    # ``@state.change`` registrations are APPENDED per boot and every ``_boot_app``
+    # in this process lands on the SAME trame Server (see field_page:4077), so
+    # the listeners this boot adds are the TAIL of the list.  Counted rather
+    # than picked by closure identity: the handler closes over ``state`` alone,
+    # which every boot in the process shares.
+    before = len(
+        trame_app.get_server().state._change_callbacks.get("solve_structure")
+        or ()
+    )
+    _app, srv = _boot_app(info)
+    state = srv.state
+    entries = state._change_callbacks.get("solve_structure") or []
+    assert len(entries) - before == 1, (
+        f"this boot registered {len(entries) - before} 'solve_structure' "
+        "listeners; expected exactly 1 - a picker whose write reaches no "
+        "listener leaves the old arm's sentence on screen"
+    )
+    listener = entries[-1][0]
+
+    def pick(arm):
+        state.solve_structure = arm          # the client's write, as trame commits it
+        listener(solve_structure=arm)        # what the flush calls (state.py:429-447)
+
+    # The caption is ON the page, not just in the state: one VLabel bound to it.
+    texts = [str(entry["args"][0]) for entry in labels if entry["args"]]
+    assert "{{ solve_structure_blurb }}" in texts, (
+        "the SETUP column emitted no VLabel bound to solve_structure_blurb, so "
+        f"nothing on screen carries the sentence: {texts}"
+    )
+
+    opening = app.structure_arm_blurb(app._structure_key(info.get("structure_id")))
+    assert str(state.solve_structure_blurb) == opening, (
+        "the page did not open on the loaded dump's own arm: "
+        f"{state.solve_structure_blurb!r} (expected {opening!r})"
+    )
+
+    pick("B")
+    assert str(state.solve_structure_blurb) == app.STRUCTURE_ARM_BLURBS["B"], (
+        "selecting arm B did not repaint the caption: "
+        f"{state.solve_structure_blurb!r}"
+    )
+    assert str(state.solve_structure_blurb) != opening, (
+        "arm B wears arm A's sentence, so the caption does not follow the "
+        "selection at all"
+    )
+
+    pick("D")
+    assert str(state.solve_structure_blurb) == app.STRUCTURE_ARM_BLURBS["D"], (
+        f"selecting arm D did not repaint the caption: "
+        f"{state.solve_structure_blurb!r}"
+    )
+
+    # The value is normalised the way every other reader of it normalises it
+    # (_structure_key): a client that writes lower case is still arm B.
+    pick("b")
+    assert str(state.solve_structure_blurb) == app.STRUCTURE_ARM_BLURBS["B"], (
+        "a lower-case arm id fell through to the wrong sentence: "
+        f"{state.solve_structure_blurb!r}"
+    )
+
+    # Put the page back on arm A: the trame Server (and its state) is shared by
+    # every boot in this process, so leaving an unusual value behind would be a
+    # gift to whatever runs next.
+    pick("A")
+    assert str(state.solve_structure_blurb) == app.STRUCTURE_ARM_BLURBS["A"]
+
+
+def test_an_arm_with_no_blurb_gets_a_harmless_line(tmp_path: Path, monkeypatch) -> None:
+    """An arm id nobody described is a vague caption, not a traceback and not blank.
+
+    A stale browser, a hand-typed value or an arm added to the solver without a
+    line in ``STRUCTURE_ARM_BLURBS`` all land here.  None of them may take the
+    page down or leave the reader with an empty element: the caption is prose
+    about a control, and being one edit behind is not an error state.
+    """
+    import trame.app as trame_app
+
+    import poc_app as app
+
+    info = _fixture_info(app, tmp_path / "arms.npz")
+    before = len(
+        trame_app.get_server().state._change_callbacks.get("solve_structure")
+        or ()
+    )
+    _app, srv = _boot_app(info)
+    state = srv.state
+    entries = state._change_callbacks.get("solve_structure") or []
+    assert len(entries) - before == 1, (
+        f"this boot registered {len(entries) - before} 'solve_structure' "
+        "listeners; expected exactly 1"
+    )
+    listener = entries[-1][0]
+
+    known = app.STRUCTURE_ARM_BLURBS["A"]
+    for unknown in ("Q", "", "   ", None, 7):
+        state.solve_structure = unknown     # committed first, as trame does
+        listener(solve_structure=unknown)   # must not raise
+        blurb = str(state.solve_structure_blurb)
+        assert blurb.strip(), (
+            f"the caption went BLANK for the unknown arm {unknown!r}: the "
+            "SETUP column would show an empty element where the description "
+            "belongs"
+        )
+        assert blurb == app._STRUCTURE_ARM_FALLBACK_BLURB, (
+            f"the unknown arm {unknown!r} did not get the fallback sentence: "
+            f"{blurb!r}"
+        )
+        assert blurb != known, (
+            f"the unknown arm {unknown!r} was given arm A's own description"
+        )
+
+    # Restore arm A for the boots that follow (one trame Server per process).
+    state.solve_structure = "A"
+    listener(solve_structure="A")
+    assert str(state.solve_structure_blurb) == known
+
+
 def test_selecting_a_solver_arm_with_no_sweep_registry_says_so(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -6203,6 +6203,77 @@ def _structure_registry() -> dict:
     return dict(structures) if isinstance(structures, dict) else {}
 
 
+#: One human line per SOLVE arm, keyed by the arm id the Structure picker writes.
+#:
+#: WHY THIS IS A LITERAL MAP: the picker's ITEMS come from the solver's own
+#: ``STRUCTURES`` (see _structure_registry), but that table carries NUMBERS, not
+#: prose - ``load_ohm``, ``netlist``, ``out``, ``vis_dump`` - and there is no
+#: field over there holding a sentence about what the arm IS.  The prose lives
+#: in those rows' own comments (evidence/termination/run_build_A.py:689-796),
+#: and each line below is that comment restated where the page can reach it.  A
+#: map of numbers copied into this file would be a second source of truth and
+#: could drift; a sentence cannot, because the solver never had one.
+#:
+#: THE COST OF A LITERAL, stated so nobody has to discover it: an arm added to
+#: the solver's STRUCTURES shows up in the picker BY ITSELF (the items are read
+#: from there) but has no line here, and would then wear
+#: _STRUCTURE_ARM_FALLBACK_BLURB.  That is the harmless answer, not the correct
+#: one - so ADDING AN ARM TO THE SOLVER MEANS ADDING ITS LINE HERE, and
+#: tests/test_poc_playback.py::test_every_solver_arm_has_a_blurb fails the day
+#: the two drift apart.
+STRUCTURE_ARM_BLURBS = {
+    # A's row (run_build_A.py:690): LOAD_VALUE_OHM, i.e. the matched load the
+    # acceptance cases AC-3/AC-6/AC-7 are written for.
+    "A": (
+        "50 ohm matched resistive load (|s21| ~ 1, |s11| ~ 0): the arm the "
+        "acceptance cases are written against"
+    ),
+    # B's row (run_build_A.py:696): the same line and the same mesh as A, with
+    # load_ohm 100.0 - the exploratory arm (scope L520 Ruling 3).
+    "B": (
+        "100 ohm resistive load: the same line and mesh as A, only the load "
+        "value moves - the exploratory mismatched arm"
+    ),
+    # C's row (run_build_A.py:731): netlist load_stub.json, a quarter-wave
+    # SHORT-CIRCUITED stub, which presents an OPEN at the analysed tone.
+    "C": (
+        "Quarter-wave short-circuited stub (netlist load_stub.json): the cut "
+        "is closed by a reactance - an open at the analysed tone, no "
+        "dissipative element anywhere in the circuit"
+    ),
+    # D's row (run_build_A.py:707): netlist load_diode.json.
+    "D": (
+        "Diode-terminated cut (netlist load_diode.json): the cut is closed by "
+        "a CIRCUIT, not by a lumped resistance"
+    ),
+}
+
+#: What an arm with no line above shows.  A sentence, not an empty box and not
+#: a raise: the picker is read before anyone presses Solve, and an arm this file
+#: has not described yet is a caption that is one edit behind - not a page that
+#: ends.
+_STRUCTURE_ARM_FALLBACK_BLURB = (
+    "no description of this arm is written down on this page yet"
+)
+
+
+def structure_arm_blurb(arm) -> str:
+    """One readable line for a solve arm.  NEVER raises, NEVER empty.
+
+    The picker's value is a bare arm id (``"A"``), so the key is normalised the
+    way every other reader of that value normalises it (``_structure_key``:
+    strip and upper) - a client that writes ``"b"`` must not fall through to the
+    fallback sentence while arm B is on screen.  An id this file does not know
+    answers with the fallback sentence rather than raising: see
+    STRUCTURE_ARM_BLURBS for why that is the honest trade.
+    """
+    try:
+        key = _structure_key(arm)
+    except Exception:  # noqa: BLE001 - a caption may never take the page down
+        key = None
+    return STRUCTURE_ARM_BLURBS.get(key or "", _STRUCTURE_ARM_FALLBACK_BLURB)
+
+
 def load_structures() -> list:
     """Every usable entry of structures.json, in file order. [] when unreadable."""
     data = _read_json(REPO_ROOT / STRUCTURES_FILE)
@@ -19009,6 +19080,18 @@ def run_web_vis(
                     hide_details=True,
                     classes="mb-1",
                 )
+            # WHAT the chosen arm is, on the line under the field that chose it:
+            # the picker shows a letter, and a reader who does not already know
+            # the arms cannot tell a 50 ohm load from a diode termination. BOUND
+            # to the state key _on_solve_structure keeps in step, so a selection
+            # repaints the sentence without a trigger of its own. Emitted
+            # OUTSIDE the `if` above: a variant without VSelect still has a
+            # Structure state to describe.
+            if "VLabel" in widgets:
+                widgets["VLabel"](
+                    "{{ solve_structure_blurb }}",
+                    classes="text-caption mb-2",
+                )
 
         def _mesh_and_geometry() -> None:
             # The old max-width/margin styles are gone: inside a card the
@@ -19675,6 +19758,13 @@ def run_web_vis(
         iter(MULTIFREQ_BY_STRUCTURE)
     )
     state.solve_structure = default_arm
+    # The line under that picker: WHAT this arm is, in words. Written here from
+    # the same default the select starts on, and re-written by the
+    # @state.change("solve_structure") listener below - so the caption and the
+    # value cannot disagree, not even for one paint. The ids are single letters
+    # and the numbers behind them (load_ohm, a netlist) are not on this page at
+    # all, which is the whole reason it exists.
+    state.solve_structure_blurb = structure_arm_blurb(default_arm)
     state.solve_xcut_mm = SOLVE_DEFAULT_XCUT_MM
     state.solve_status = "no solve run in this session"
     # The LIVE LOG under that line: the same tail the status names only the END
@@ -19720,6 +19810,29 @@ def run_web_vis(
     # (v_model=("solve_netlist_json", "")) and the button reads it from here;
     # empty means "solve the built-in resistor study".
     state.solve_netlist_json = ""
+
+    # The Structure picker's caption. v_model=("solve_structure", ...) only
+    # WRITES state["solve_structure"]: trame turns a callable into a server call
+    # for EVENT kwargs (click=, change=), never for v_model, so an
+    # @ctrl.set("solve_structure") trigger would never be reached - the browser
+    # calls "trame.trigger" only for the triggers it was TOLD to call. Hang the
+    # caption off the state change itself, exactly as the Mode picker (:18411)
+    # and the frame slider (:17953) do, and every writer of `solve_structure` -
+    # the select, a proof, a future button - takes one path.
+    @state.change("solve_structure")
+    def _on_solve_structure(solve_structure=None, **_kwargs) -> None:
+        """Re-describe the arm the Structure picker names. NEVER raises.
+
+        Nothing else follows the picker: the arm is what the SOLVE child is
+        launched with (``solve_argv``), so the only thing a selection can
+        honestly do without a press is say what the arm IS. A value this file
+        has no line for - or one that is not even a string - answers with the
+        fallback sentence rather than raising, so an unknown id costs the reader
+        one vague caption and not the page.
+        """
+        arm = state.solve_structure if solve_structure is None else solve_structure
+        state.solve_structure_blurb = structure_arm_blurb(arm)
+
     solve: dict = {}
 
     def _tick_solve_status(job) -> None:
