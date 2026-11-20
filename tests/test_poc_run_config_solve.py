@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -767,9 +768,14 @@ def bare_page(tmp_path_factory):
     class _StubJob:
         """``SolveJob``'s surface, minus the process: it never finishes."""
 
-        def __init__(self, argv, cwd=None):
+        def __init__(self, argv, cwd=None, env=None):
             self.argv = list(argv)
             self.cwd = cwd
+            # ``env`` is the other half of the launch: the handler passes
+            # ``_solve_child_env()`` so the child can import the compiled
+            # kernel, and a stub that dropped the argument would read as
+            # "the handler passes nothing" to the test below.
+            self.env = env
             self.status = "running"
             self.returncode = None
             self.log = ""
@@ -888,3 +894,153 @@ def test_the_clim_select_is_not_gated_with_the_form(bare_page) -> None:
             "has already happened"
         )
 
+
+
+# =============================================================================
+# The memory ceiling the press hands a solve, and the env it hands the child
+# =============================================================================
+
+
+def test_the_default_press_leaves_the_line_as_the_policy_says(tmp_path):
+    """The button's own default is ``_AUTO_CEILING``, not the solver's 2000 MB.
+
+    The solver's default ceiling is 2000 MB (``run_build_A.py:129``) and the
+    refusal at ``run_build_A.py:3767-3772`` turns it into exit 2 in a 512 MB
+    container - the solve never starts at all.  So the default has to be
+    "work it out from the box", and what it works out has to be the flag on
+    the line, where the solver's parser expects it (last, after ``--out``).
+    """
+    argv = app.solve_argv("B", 20.4, tmp_path / "live_run.npz")
+
+    ceiling = app._solve_mem_ceiling_mb(app._cgroup_limit_mb())
+    if ceiling is None:
+        assert "--mem-ceiling-mb" not in argv, (
+            "this container needs no ceiling flag, yet the line carries "
+            f"one: {argv!r}"
+        )
+        assert argv[-2] == "--out", (
+            f"the line ends {argv[-2:]!r}: with no ceiling flag --out and "
+            "its artefact are the last two tokens"
+        )
+    else:
+        assert argv[-2:] == ["--mem-ceiling-mb", f"{ceiling:g}"], (
+            f"the line ends {argv[-2:]!r}, not the ceiling this box allows "
+            f"({ceiling:g} MB, from {app._cgroup_limit_mb()} MB): the "
+            "solver's own 2000 MB default is refused here before it starts"
+        )
+        assert argv[argv.index("--out") + 2] == "--mem-ceiling-mb", (
+            f"the ceiling is not after --out: {argv!r}, and the solver reads "
+            "the flags in the order this builder writes them"
+        )
+
+
+def test_no_ceiling_asked_for_sends_no_flag(tmp_path):
+    """``None`` is an answer: "do not touch the line", not "ask the box"."""
+    argv = app.solve_argv(
+        "B", 20.4, tmp_path / "live_run.npz", mem_ceiling_mb=None
+    )
+
+    assert "--mem-ceiling-mb" not in argv, (
+        f"mem_ceiling_mb=None still produced a ceiling: {argv!r}"
+    )
+    assert argv[-2] == "--out", (
+        f"the line ends {argv[-2:]!r}: with no ceiling, --out is last"
+    )
+
+
+def test_an_asked_for_ceiling_goes_last_and_reads_as_one_number(tmp_path):
+    """500.0 is written ``500``: the solver parses either, the log reads one.
+
+    ``%g`` is the formatting the near cut already uses, and it matters here
+    for the same reason: the child echoes the ceiling into its own refusal
+    and trip lines, so a trailing ``.0`` would read as a different quantity.
+    """
+    argv = app.solve_argv(
+        "B", 20.4, tmp_path / "live_run.npz", mem_ceiling_mb=500.0
+    )
+
+    assert argv[-2:] == ["--mem-ceiling-mb", "500"], (
+        f"an explicit 500.0 MB ceiling produced {argv[-2:]!r}: it has to be "
+        "the last pair, and read as 500"
+    )
+    assert argv.count("--mem-ceiling-mb") == 1, (
+        f"the ceiling is on the line {argv.count('--mem-ceiling-mb')} times: "
+        f"{argv!r}, and the solver takes one"
+    )
+
+
+def test_the_netlist_run_keeps_its_own_flags_and_carries_the_ceiling(tmp_path):
+    """A netlist press sends --netlist, --out AND the ceiling, in that order.
+
+    The netlist branch returns its own list (``solve_argv``), so a ceiling
+    added only to the resistor branch would leave every circuit run on the
+    solver's 2000 MB default - the same fatal refusal, in the rarer path.
+    """
+    document = {"name": "cut diode", "nodes": ["p", "n"], "elements": []}
+
+    argv = app.solve_argv(
+        "A",
+        20.4,
+        tmp_path / "live_run.npz",
+        netlist_json=json.dumps(document),
+        mem_ceiling_mb=500.0,
+    )
+    netlist_file = app.solve_netlist_file(argv)
+    try:
+        assert netlist_file is not None and Path(netlist_file).is_file(), (
+            f"the netlist run has no file on disk: {argv!r}"
+        )
+        assert argv[-2:] == ["--mem-ceiling-mb", "500"], (
+            f"the netlist line ends {argv[-2:]!r}, not the ceiling"
+        )
+        order = [argv.index(flag) for flag in ("--netlist", "--out")]
+        assert order == sorted(order), (
+            f"the netlist flags are out of order in {argv!r}: the solver "
+            "reads them in the order this builder writes them"
+        )
+        assert max(order) < argv.index("--mem-ceiling-mb"), (
+            f"the ceiling is not after --out in {argv!r}"
+        )
+    finally:
+        if netlist_file is not None:
+            Path(netlist_file).unlink(missing_ok=True)
+
+
+def test_the_press_hands_the_child_an_env_that_reaches_the_kernel(bare_page):
+    """The spawned child is given ``_solve_child_env()``, not ``None``.
+
+    The launch the documents give - ``PYTHONPATH=. python3
+    server/poc_app.py``, RUN.md and docs/kb/WORK/run.md:33-58 - never puts
+    ``.venv/lib/python3.12/site-packages`` on the path, and ``import
+    emfit_core`` raises ModuleNotFoundError in that child
+    (``emfit/evolve.py:258-260``): passing ``None`` would inherit exactly
+    that parent path, which is the defect this env exists for.
+    """
+    bare_page.trigger()  # exactly what the button calls
+
+    assert bare_page.spawned, (
+        "the press spawned nothing, so there is no launch to check: "
+        f"{bare_page.state.solve_status!r}"
+    )
+    job = bare_page.spawned[-1]
+    env = job.env
+    assert isinstance(env, dict), (
+        f"the child was spawned with env={env!r}: it then inherits the "
+        "parent's PYTHONPATH, which is the missing-kernel defect"
+    )
+    entries = (env.get("PYTHONPATH") or "").split(":")
+    assert str(app._VENV_SITE_PACKAGES) in entries, (
+        f"the child's PYTHONPATH is {env.get('PYTHONPATH')!r}: the kernel's "
+        f"directory {app._VENV_SITE_PACKAGES} is not on it, so the import "
+        "of emfit_core fails before the solver does any work"
+    )
+    assert entries.count(str(app._VENV_SITE_PACKAGES)) == 1, (
+        f"the kernel's directory is on the child's PYTHONPATH "
+        f"{entries.count(str(app._VENV_SITE_PACKAGES))} times "
+        f"({env.get('PYTHONPATH')!r}): a second copy says nothing new and "
+        "grows a string the child has to walk"
+    )
+    # Its PLACE on the path is pinned in tests/test_solve_child_env.py, where
+    # the parent's PYTHONPATH is a literal this file cannot control: this
+    # process's own path starts with the venv, so the ordering here would be
+    # the harness's, not the function's.

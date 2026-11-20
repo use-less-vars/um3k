@@ -1363,7 +1363,11 @@ def test_solve_argv_targets_the_existing_cut_plane_flag(tmp_path: Path) -> None:
     """
     import poc_app as app
 
-    argv = app.solve_argv("B", 20.4, app.LIVE_DUMP)
+    # ``mem_ceiling_mb=None`` is pinned because the DEFAULT is auto, and auto
+    # follows this container: on a small one it appends ``--mem-ceiling-mb``
+    # and the ten-token count below would fail for a reason that has nothing to
+    # do with the flag this test is about.  The ceiling has its own tests.
+    argv = app.solve_argv("B", 20.4, app.LIVE_DUMP, mem_ceiling_mb=None)
 
     assert len(argv) == 10, (
         f"the solve argv is {argv!r}: exactly [python, solver, --structure, sid, "

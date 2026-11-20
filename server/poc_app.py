@@ -12407,14 +12407,17 @@ _SOLVE_LOG_STYLE = (
 _SOLVE_LOG_HIDDEN = "display: none;"
 
 
-# The two FAILURE CAUSES this build can name, and WHY only two. The child's own
-# last screen is on the card already (``state.solve_log``), but "No module
-# named 'emfit_core'" is a fact about how the SERVER was launched rather than
-# about the model, and a reader should not have to know that to act on it. Both
-# causes below are measured (DR-55): an interpreter that cannot reach the
-# compiled kernel (emfit/evolve.py:260) and a solver that refuses its own
-# memory ceiling before the first step
-# (evidence/termination/run_build_A.py:3767-3772, exit 2). The launch the
+# The FAILURE CAUSES this build can name, and WHY so few. The child's own last
+# screen is on the card already (``state.solve_log``), but "No module named
+# 'emfit_core'" is a fact about how the SERVER was launched rather than about
+# the model, and a reader should not have to know that to act on it. Every
+# cause below is measured (DR-55): an interpreter that cannot reach the
+# compiled kernel (emfit/evolve.py:260) and the three ways the solver's own
+# memory arithmetic ends a run - a ceiling above the container
+# (evidence/termination/run_build_A.py:3767-3772, exit 2, BEFORE the first
+# step), an estimate that does not fit the memory there is (:1155-1160, exit
+# 2, also before the first step), and a run that crosses its own ceiling while
+# it is going (:423-426, exit 3, after ``TRIP (memory)``). The launch the
 # first of those names is NOT the one the documents give: RUN.md and
 # docs/kb/WORK/run.md:33-58 both carry only
 # ``PYTHONPATH=. python3 server/poc_app.py``, which puts the repository
@@ -12425,6 +12428,13 @@ _SOLVE_LOG_HIDDEN = "display: none;"
 # import and reaches the solver's own mem-ceiling refusal, without it it
 # dies at import), so the hint names a command the documents do not - and
 # says which part is its own, so the reader can tell an addition from a quote.
+#
+# The memory hints say "this environment", never "the model": all three are the
+# solver's own arithmetic against the ceiling THIS build chose
+# (``_solve_mem_ceiling_mb``), so the remedy is a bigger container or a smaller
+# study, and the page can supply neither. They are worth naming because the
+# child's last screen for a ceiling trip is a ``TRIP (memory)`` line and a
+# marker path, which reads like a crash rather than like a decision.
 #
 # ANYTHING ELSE returns None, deliberately: a hint is a claim about the
 # operator's machine, and a wrong one sends the reader after a fix that is not
@@ -12453,6 +12463,24 @@ def _solve_failure_hint(log_text) -> str | None:
             "the requested memory ceiling is above the limit of the "
             "environment the app runs in, so the solver refuses before it "
             "starts"
+        )
+    if "TRIP (memory)" in text or "exceeded --mem-ceiling-mb" in text:
+        return (
+            "the solve was stopped by its own memory ceiling "
+            "(--mem-ceiling-mb, evidence/termination/run_build_A.py:423-426, "
+            "exit 3): the run needed more memory than this environment "
+            "allows, so the study has to be smaller (fewer cells, a larger "
+            "volume stride) or the container has to be bigger"
+        )
+    if (
+        "exceeds the safe limit" in text
+        or "Estimated memory exceeds safe limits" in text
+    ):
+        return (
+            "the solver refused before its first step: the mesh and volume "
+            "frames it planned do not fit the memory this environment allows "
+            "(evidence/termination/run_build_A.py:1155-1160, exit 2), so "
+            "reduce the mesh density, the volume stride or n_line"
         )
     return None
 
@@ -12493,15 +12521,176 @@ def _solve_netlist_slug(netlist_document) -> str:
     return slug[:40] or "custom"
 
 
+# --- what a solve child needs BEFORE it is spawned --------------------------
+#
+# TWO measured defects belong to the PARENT, and this is the only place early
+# enough to fix either: by the time the child would discover a kernel it cannot
+# import, or a ceiling its own solver refuses, it has already exited, and the
+# page can only report a failure whose cause is the launch rather than the
+# model. So the parent asks both questions itself, before the spawn.
+
+#: The solver's OWN default memory ceiling [MB], QUOTED from
+#: ``evidence/termination/run_build_A.py:129`` (``MEM_CEILING_MB_DEFAULT``)
+#: rather than re-derived: it is what a command line carrying no
+#: ``--mem-ceiling-mb`` already means, so a copy that drifted from it would
+#: change WHEN this build passes the flag at all.
+_SOLVER_MEM_CEILING_MB_DEFAULT = 2000.0
+
+#: Headroom kept UNDER the container's limit, in MB. A solve that trips its own
+#: ceiling writes a marker and exits 3 (run_build_A.py:423-426); one killed by
+#: the cgroup itself writes nothing, so the ceiling has to sit below the limit.
+#: 12 MB is MEASURED, not chosen: every certified run made in a 512.0 MB cgroup
+#: used 500.0 (evidence/termination/build_A_50ohm_cal.json,
+#: build_A_50ohm_sweepN51..N59.json, build_A_50ohm_v3b_*.json,
+#: build_A_50ohm_v3c.json, build_A_50ohm_twin_p51_s11fix.json) or 480.0
+#: (build_A_n_default_p51.json, build_A_p51_n4800.json, build_A_p51_n9600.json,
+#: gate_gate_build_A_p50.json, gate_gate_build_A_p51.json).
+_CEILING_MARGIN_MB = 12.0
+
+#: ``solve_argv``'s ``mem_ceiling_mb`` default: "this build was not told, so
+#: WORK IT OUT from the container". A sentinel rather than ``None`` because
+#: ``None`` is a different, real answer - "send no flag" - and one default
+#: cannot mean both.
+_AUTO_CEILING = object()
+
+#: Where the compiled kernel lives: the venv's site-packages. NOT on the path
+#: the documents give (``PYTHONPATH=. python3 server/poc_app.py``, RUN.md and
+#: docs/kb/WORK/run.md:33-58), which is why the child needs it added below.
+_VENV_SITE_PACKAGES = (
+    REPO_ROOT / ".venv" / "lib" / "python3.12" / "site-packages"
+)
+
+
+def _cgroup_limit_mb() -> float | None:
+    """This container's memory ceiling [MB], or ``None`` when it has none.
+
+    A DELIBERATE duplicate of the solver's own ``cgroup_limit_mb()``
+    (evidence/termination/run_build_A.py:157-175): the app has to decide what
+    command line to build BEFORE it spawns the child, so it cannot ask the
+    child - the question is answered by the time the answer would arrive, and
+    the child is gone. The two paths, the ``max`` token, the non-integer and
+    the non-positive/absurd value are copied from there unchanged, so the
+    number this build plans around is the number the solver will refuse on.
+    """
+    for path in (
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ):
+        try:
+            with open(path, "r", encoding="ascii") as fh:
+                raw = fh.read().strip()
+        except OSError:
+            continue
+        if not raw or raw == "max":
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            return None
+        if value <= 0 or value > (1 << 50):
+            return None
+        return value / (1024.0 * 1024.0)
+    return None
+
+
+def _solve_mem_ceiling_mb(cgroup_mb) -> float | None:
+    """The ``--mem-ceiling-mb`` a solve needs HERE, or ``None`` for no flag.
+
+    ``cgroup_mb`` is ``_cgroup_limit_mb()``'s answer, handed in rather than
+    read here, so this stays PURE and the policy can be pinned at any container
+    size a test likes.
+
+    ``None`` means "leave the command line alone", and there are two such cases:
+
+    * the container has no limit this reader can see, so there is nothing to
+      stay under and nothing to say;
+    * the limit is at or above the solver's own default
+      (``MEM_CEILING_MB_DEFAULT``, evidence/termination/run_build_A.py:129).
+      The refusal is STRICT (``cg < args.mem_ceiling_mb``, :3767), so a limit
+      equal to the default is not refused, and the bare command line is already
+      right: adding a flag there would change a line that works, for no gain.
+
+    Otherwise the ceiling is the limit MINUS the 12 MB margin: 512 -> 500.0.
+    That is not a guess, it is the number the certified runs already used -
+    ``mem_ceiling_mb`` 500.0 in evidence/termination/build_A_50ohm_cal.json,
+    build_A_50ohm_sweepN51..N59.json, build_A_50ohm_v3b_*.json,
+    build_A_50ohm_v3c.json and build_A_50ohm_twin_p51_s11fix.json (480.0 in
+    build_A_n_default_p51.json, build_A_p51_n4800.json,
+    build_A_p51_n9600.json, gate_gate_build_A_p50.json and
+    gate_gate_build_A_p51.json) - and a real solve fits the 512 MB it ran in:
+    the shipped 280,984-cell mesh peaked at 368.33984375 MB
+    (evidence/termination/build_A_50ohm.json:215, ``meta.peak_rss_mb``). A
+    limit so small that the margin leaves nothing is ``None`` rather than a
+    nonsense ceiling: the solver's own refusal is a better answer than a
+    negative one.
+    """
+    if cgroup_mb is None:
+        return None
+    limit = float(cgroup_mb)
+    if limit >= _SOLVER_MEM_CEILING_MB_DEFAULT:
+        return None
+    ceiling = limit - _CEILING_MARGIN_MB
+    if ceiling <= 0.0:
+        return None
+    return ceiling
+
+
+def _solve_child_env() -> dict:
+    """``os.environ`` for the solve child, with the kernel's dir on the path.
+
+    The child inherits ``PYTHONPATH`` and nothing else, and the launch the
+    documents give puts the REPOSITORY ROOT on it, never the venv
+    (``PYTHONPATH=. python3 server/poc_app.py``, RUN.md and
+    docs/kb/WORK/run.md:33-58). Measured: ``import emfit_core`` raises
+    ModuleNotFoundError in that child, and reaches the solver once
+    ``.venv/lib/python3.12/site-packages`` is on the path. That directory is
+    ``_VENV_SITE_PACKAGES``.
+
+    APPENDED, not prepended. ``PYTHONPATH=.:.venv/lib/python3.12/site-packages``
+    is the arrangement that was measured to reach the solver, so the repository
+    root keeps precedence and the venv only answers what the root cannot.
+
+    Two refusals, both deliberate. The directory is used only when it really
+    carries ``emfit_core.cpython-*.so`` - globbed, never a hardcoded file name,
+    which would silently stop matching under a new interpreter tag - and an
+    entry already on the path is left alone, so a second call cannot pile up
+    duplicates. Failing either, the env comes back UNCHANGED: a path that does
+    not exist on a child's ``PYTHONPATH`` only hides the real failure behind a
+    new one, and this must not invent an interpreter either (``.venv/bin/python``
+    is a stale symlink, docs/kb/WORK/run.md:86-87).
+    """
+    env = dict(os.environ)
+    if not list(_VENV_SITE_PACKAGES.glob("emfit_core.cpython-*.so")):
+        return env
+    venv_dir = str(_VENV_SITE_PACKAGES)
+    entries = [
+        part
+        for part in str(env.get("PYTHONPATH") or "").split(os.pathsep)
+        if part
+    ]
+    if venv_dir in entries:
+        return env
+    entries.append(venv_dir)
+    env["PYTHONPATH"] = os.pathsep.join(entries)
+    return env
+
+
 def solve_argv(
-    structure_id, xcut_near_mm, out_npz, netlist_json="", config=None
+    structure_id,
+    xcut_near_mm,
+    out_npz,
+    netlist_json="",
+    config=None,
+    *,
+    mem_ceiling_mb=_AUTO_CEILING,
 ) -> list[str]:
     """The argv that would run a fresh field solve. BUILT here, never run.
 
     It exists so the command line is assertable without paying for a solve: the
     flags are the solver's OWN - ``--structure``, ``--xcut-near-mm``,
-    ``--vis-dump``, ``--netlist`` and ``--out`` all already exist over there - so
-    this function adds no solver option and touches no solver behaviour.
+    ``--vis-dump``, ``--netlist``, ``--out`` and ``--mem-ceiling-mb`` all
+    already exist over there - so this function adds no solver option and
+    touches no solver behaviour.
 
     ``structure_id`` is REQUIRED: the arm is a choice, and when the caller did
     not name one there is no default arm worth guessing.
@@ -12531,6 +12720,15 @@ def solve_argv(
     sources for one flag is how a page ends up solving something it never
     displayed. ``xcut_near_mm`` stays the default for a caller with no form, and
     the no-config command line is unchanged, byte for byte.
+
+    ``mem_ceiling_mb`` is the memory ceiling the CHILD is spawned under, and the
+    default ``_AUTO_CEILING`` means "work it out from the container". The
+    solver's own default (``MEM_CEILING_MB_DEFAULT``, 2000 MB, quoted at
+    :12504-12509) is a statement about a roomy machine: inside a 512 MB cgroup
+    it lets the solver approve work the kernel then kills, and that death leaves
+    neither an artefact nor a marker. So the ceiling is lowered to fit the
+    container (``_solve_mem_ceiling_mb``), and ``None`` stays available as the
+    caller's own different answer - "pass no flag at all".
     """
     sid = _structure_key(structure_id)
     if not sid:
@@ -12596,8 +12794,28 @@ def solve_argv(
         "--vis-dump",
         str(out),
     ] + _run_config_argv(config)
+
+    # The solver's ceiling is its VIEW of the box; the cgroup IS the box. A
+    # 2000 MB ceiling inside a 512 MB container passes the solver's own
+    # pre-flight check and then lets the kernel kill the run, which writes no
+    # marker and no artefact - the press can only report nothing. Lowering it
+    # to fit is the fix, and the arithmetic is the solver's own
+    # (evidence/termination/run_build_A.py:157-175 for the limit,
+    # ``_solve_mem_ceiling_mb`` for the margin).
+    if mem_ceiling_mb is _AUTO_CEILING:
+        ceiling = _solve_mem_ceiling_mb(_cgroup_limit_mb())
+    elif mem_ceiling_mb is None:
+        ceiling = None
+    else:
+        ceiling = float(mem_ceiling_mb)
+    # %g, so 500.0 reads as 500: the solver parses a float either way, but a
+    # trailing .0 in the log line reads like a different quantity.
+    ceiling_argv = (
+        [] if ceiling is None else ["--mem-ceiling-mb", f"{ceiling:g}"]
+    )
+
     if document is None:
-        return argv + ["--out", str(artefact)]
+        return argv + ["--out", str(artefact)] + ceiling_argv
 
     # The netlist reaches the solver as a FILE - that is its interface - and it
     # is written beside this run's own artefact rather than in /tmp: same
@@ -12606,7 +12824,12 @@ def solve_argv(
     # named off the artefact's stem, so the pair is unmistakable in a listing.
     netlist_path = artefact.with_suffix(".netlist.json")
     netlist_path.write_text(text, encoding="utf-8")
-    return argv + ["--netlist", str(netlist_path), "--out", str(artefact)]
+    return argv + [
+        "--netlist",
+        str(netlist_path),
+        "--out",
+        str(artefact),
+    ] + ceiling_argv
 
 
 def solve_netlist_file(argv):
@@ -15121,6 +15344,13 @@ class SolveJob:
 
     ``cwd`` defaults to the solver's OWN directory because the solver imports its
     siblings - started anywhere else it cannot even be imported.
+
+    ``env`` is the child's WHOLE environment, and ``None`` means "inherit the
+    parent's" - what every caller but the live one wants. The live Solve
+    handler hands over ``_solve_child_env()`` instead, because the launch the
+    documents give does not put the compiled kernel where the child can import
+    it (_VENV_SITE_PACKAGES). Copied here, once, so the env the job runs under
+    cannot be re-read from ``os.environ`` after the spawn.
     """
 
     #: How much of the combined output is kept. The child can print a study's
@@ -15134,9 +15364,13 @@ class SolveJob:
     LOG_LINES_SHOWN = 12
     LOG_LINE_CHARS = 160
 
-    def __init__(self, argv, cwd=None):
+    def __init__(self, argv, cwd=None, env=None):
         self.argv = list(argv)
         self.cwd = str(SOLVER_SCRIPT.parent if cwd is None else cwd)
+        # None is a real answer - "inherit" - so it is stored as given and
+        # handed to Popen unchanged; copying os.environ here would make the
+        # job's env a snapshot the caller never asked for.
+        self.env = env
         self.status = "idle"
         self.returncode = None
         self._tail: deque = deque(maxlen=self.LOG_TAIL_LINES)
@@ -15262,6 +15496,9 @@ class SolveJob:
             self._proc = subprocess.Popen(
                 self.argv,
                 cwd=self.cwd,
+                # None keeps Popen's own default (inherit), which is what
+                # every caller but the live handler passes.
+                env=self.env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -19838,7 +20075,12 @@ def run_web_vis(
         netlist_path = solve_netlist_file(argv)
         try:
             LIVE_DUMP.parent.mkdir(parents=True, exist_ok=True)
-            job = SolveJob(argv)
+            # The env is decided HERE, before the spawn: the child is the one
+            # that has to import the compiled kernel, and under the launch the
+            # documents give it cannot (see _solve_child_env). Passing it in
+            # rather than mutating os.environ keeps the page's own interpreter
+            # untouched - the button fixes the CHILD, not the server.
+            job = SolveJob(argv, env=_solve_child_env())
             threading.Thread(
                 target=_run_job,
                 args=(job, netlist_path),

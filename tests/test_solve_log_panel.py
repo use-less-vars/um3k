@@ -685,3 +685,152 @@ def test_a_solved_run_says_so_and_leaves_the_panel_alone():
     assert state.solve_log_style == _constant("_SOLVE_LOG_HIDDEN"), (
         f"the success path unhid the panel: {state.solve_log_style!r}"
     )
+
+
+# =============================================================================
+# The memory ceiling this environment can survive
+# =============================================================================
+
+
+def _ceiling():
+    """``_solve_mem_ceiling_mb``, whose policy reads two module constants."""
+    return _exec_def(
+        "_solve_mem_ceiling_mb",
+        {
+            "_SOLVER_MEM_CEILING_MB_DEFAULT": _constant(
+                "_SOLVER_MEM_CEILING_MB_DEFAULT"
+            ),
+            "_CEILING_MARGIN_MB": _constant("_CEILING_MARGIN_MB"),
+        },
+    )
+
+
+def test_a_512_mb_container_gets_the_ceiling_the_certified_runs_used():
+    """512 MB -> 500.0: the number the certified runs in one cgroup used.
+
+    The solver's own default is 2000 MB, and the refusal at
+    ``evidence/termination/run_build_A.py:3767-3772`` (exit 2) turns that
+    default into a solve that never starts inside 512 MB.  The 12 MB margin
+    is what keeps the cgroup's killer - which writes no marker and no
+    artefact - from firing before the solver's own trip, which writes both
+    and exits 3 (``run_build_A.py:452-453``).
+    """
+    ceiling = _ceiling()
+
+    assert ceiling(512.0) == 500.0, (
+        f"a 512 MB container gets {ceiling(512.0)!r}: every certified run "
+        "made in one used 500.0 (evidence/termination/build_A_50ohm_cal.json)"
+    )
+    assert ceiling(512) == 500.0, (
+        f"an int limit of 512 MB gets {ceiling(512)!r}: _cgroup_limit_mb "
+        "divides in floats, but an int handed in must not fall to None"
+    )
+
+
+def test_a_container_with_no_visible_limit_gets_no_flag():
+    """No cgroup limit: nothing to stay under, so the line is left alone."""
+    ceiling = _ceiling()
+
+    assert ceiling(None) is None, (
+        f"an unbounded container gets {ceiling(None)!r}: there is no limit "
+        "to stay under, so any number here would be one nobody measured"
+    )
+
+
+def test_a_limit_the_solver_would_not_refuse_leaves_the_line_alone():
+    """At or above the solver's own default the bare line already works.
+
+    The refusal is STRICT (``cg < args.mem_ceiling_mb``,
+    ``run_build_A.py:3767``), so a limit equal to the 2000 MB default is not
+    refused, and a flag there would rewrite a command line that works.
+    """
+    ceiling = _ceiling()
+    default = _constant("_SOLVER_MEM_CEILING_MB_DEFAULT")
+
+    for limit in (default, 4096.0):
+        assert ceiling(limit) is None, (
+            f"a {limit} MB container gets {ceiling(limit)!r}: the solver "
+            f"does not refuse its {default:g} MB default there, so the flag "
+            "would change a line that is already right"
+        )
+
+
+def test_a_limit_the_margin_would_swallow_gets_no_flag():
+    """8 MB minus a 12 MB margin is below zero: silence beats nonsense.
+
+    The solver's own refusal names the number it wanted; a negative ceiling
+    would be a value no run could honour and no reader could act on.
+    """
+    ceiling = _ceiling()
+
+    assert ceiling(8.0) is None, (
+        f"an 8 MB container gets {ceiling(8.0)!r}: 8 - 12 is negative, and "
+        "the solver's own refusal is a better answer than a negative ceiling"
+    )
+
+
+#: The trip's own words, verbatim from ``run_build_A.py:452-453`` (``_fire``,
+#: exit 3): the marker's path is this build's own naming, kept to its shape.
+TRIP_LOG = (
+    "\nTRIP (memory): peak RSS 512.4 MB exceeded --mem-ceiling-mb 500.0 MB\n"
+    "marker: /tmp/vis_run_B_20250101T000000_001.trip.json\n"
+)
+
+#: The pre-flight refusal, verbatim from ``run_build_A.py:1155-1160``
+#: (exit 2): written before the first step of the march.
+PREFLIGHT_LOG = (
+    "MEM: estimated footprint ~1830.4 MB for 220x220x120 "
+    "(5808000 cells, 40 volume frames) exceeds the safe limit 500.0 MB\n"
+    "Error: Estimated memory exceeds safe limits. Reduce mesh density, "
+    "volume_stride, or n_line.\n"
+)
+
+
+def test_a_tripped_ceiling_is_named_as_the_builds_own_ceiling():
+    """A run the ceiling stopped is a fact about the study's size, not a bug.
+
+    ``_fire`` (``run_build_A.py:443-455``) writes a marker and exits 3, so
+    there is no traceback and nothing that reads like a crash: without this
+    sentence the card shows a log and a return code and stops.
+    """
+    hint = _exec_def("_solve_failure_hint", {})
+
+    text = hint(TRIP_LOG)
+    assert text, (
+        "the trip's own line reached the card with no hint: the reader is "
+        f"shown {TRIP_LOG!r} and left to guess what stopped the run"
+    )
+    assert "--mem-ceiling-mb" in text and "exit 3" in text, (
+        f"the trip hint is {text!r}: it has to name the flag and the exit "
+        "status the child used, or the reader cannot check it against the log"
+    )
+    assert "traceback" not in text.lower(), (
+        f"the trip hint is {text!r}: a trip is a ceiling that fired, not a "
+        "crash, and calling it one sends the reader after the wrong cause"
+    )
+
+
+def test_the_preflight_refusal_is_named_and_is_not_the_trip():
+    """A solve refused BEFORE its first step says something else.
+
+    ``run_build_A.py:1155-1160`` exits 2 without building a mesh, so the
+    reader's next move is a smaller study rather than a bigger container; the
+    two hints must differ, or the card would say one thing about a run that
+    never started and one that was stopped mid-march.
+    """
+    hint = _exec_def("_solve_failure_hint", {})
+
+    text = hint(PREFLIGHT_LOG)
+    assert text, (
+        "the pre-flight refusal reached the card with no hint: "
+        f"{PREFLIGHT_LOG!r}"
+    )
+    assert "exit 2" in text, (
+        f"the pre-flight hint is {text!r}: the child exited 2 there "
+        "(run_build_A.py:1155-1160), and that code is what ties the sentence "
+        "to this refusal rather than to the trip's"
+    )
+    assert text != hint(TRIP_LOG), (
+        f"both causes produce {text!r}: a run stopped mid-march and a run "
+        "that never started need different advice, and now share one sentence"
+    )
