@@ -372,6 +372,15 @@ def _failure_branch():
     namespace: dict = {
         "_SOLVE_LOG_STYLE": _constant("_SOLVE_LOG_STYLE"),
         "_SOLVE_LOG_HIDDEN": _constant("_SOLVE_LOG_HIDDEN"),
+        # ``_solve_failure_hint`` reads these only for a child a SIGNAL ended
+        # (rc=-15/143, -9/137), so the branch needs them to reach any of its
+        # own sentences: without them a signalled job raises NameError here.
+        "_SOLVE_HINT_STOPPED_FROM_OUTSIDE": _constant(
+            "_SOLVE_HINT_STOPPED_FROM_OUTSIDE"
+        ),
+        "_SOLVE_HINT_KILLED_FROM_OUTSIDE": _constant(
+            "_SOLVE_HINT_KILLED_FROM_OUTSIDE"
+        ),
     }
     _exec_def("_solve_failure_hint", namespace)
     exec(compile(wrapper, "<failure>", "exec"), namespace)
@@ -548,6 +557,12 @@ def _poll():
         "_tick_solve_status": lambda job: None,
         "_SOLVE_LOG_STYLE": _constant("_SOLVE_LOG_STYLE"),
         "_SOLVE_LOG_HIDDEN": _constant("_SOLVE_LOG_HIDDEN"),
+        "_SOLVE_HINT_STOPPED_FROM_OUTSIDE": _constant(
+            "_SOLVE_HINT_STOPPED_FROM_OUTSIDE"
+        ),
+        "_SOLVE_HINT_KILLED_FROM_OUTSIDE": _constant(
+            "_SOLVE_HINT_KILLED_FROM_OUTSIDE"
+        ),
     }
     _exec_def("_solve_failure_hint", namespace)
     exec(compile(wrapper, "<poll>", "exec"), namespace)
@@ -833,4 +848,183 @@ def test_the_preflight_refusal_is_named_and_is_not_the_trip():
     assert text != hint(TRIP_LOG), (
         f"both causes produce {text!r}: a run stopped mid-march and a run "
         "that never started need different advice, and now share one sentence"
+    )
+
+
+# =============================================================================
+# A solve a SIGNAL ended: the cause the child never gets to write down
+# =============================================================================
+
+
+def _hint_with_signals():
+    """``_solve_failure_hint`` with the two signal sentences in its globals."""
+    return _exec_def(
+        "_solve_failure_hint",
+        {
+            "_SOLVE_HINT_STOPPED_FROM_OUTSIDE": _constant(
+                "_SOLVE_HINT_STOPPED_FROM_OUTSIDE"
+            ),
+            "_SOLVE_HINT_KILLED_FROM_OUTSIDE": _constant(
+                "_SOLVE_HINT_KILLED_FROM_OUTSIDE"
+            ),
+        },
+    )
+
+
+#: The sentence the measured death (rc=-15 at 4.33 s, 350 MB peak in a 4 GB
+#: cgroup, ``oom_kill=0``, no trip marker) has to put under the verdict: words
+#: for ``rc``, and for nothing this process did not observe.
+SIGTERM_HINT = (
+    "the solve was stopped by a signal from outside the process "
+    "(exit code -15): it did not reach its own memory ceiling - a ceiling "
+    "trip writes a marker and exits 3, and neither happened - and it is not "
+    "a model or geometry error; something outside the child ended the run"
+)
+
+SIGKILL_HINT = (
+    "the solve was killed outright by a signal from outside the process "
+    "(exit code -9): a run that reaches its own memory ceiling stops "
+    "itself, writes a marker and exits 3, so a signal this direct is "
+    "usually the container's own memory limit killing the process rather "
+    "than the ceiling this build chose"
+)
+
+
+def test_a_sigterm_is_named_and_is_not_claimed_to_be_memory():
+    """The measured death: a signal, and a cause no reader could see before."""
+    hint = _hint_with_signals()
+
+    text = hint("", returncode=-15)
+    assert text == SIGTERM_HINT, (
+        f"an rc=-15 solve is explained as {text!r}: that run left a return "
+        "code and nothing else, and the card showed the verdict with no "
+        "cause under it at all"
+    )
+    assert "out of memory" not in text.lower(), (
+        f"the SIGTERM sentence is {text!r}: that run peaked at 350 MB inside "
+        "a 4 GB cgroup whose memory.events said oom_kill=0, and a cause this "
+        "process cannot prove must not be printed as one"
+    )
+    assert "traceback" not in text.lower(), (
+        f"the SIGTERM sentence is {text!r}: nothing in that child's output "
+        "read like a crash, and calling it one sends the reader after the "
+        "model"
+    )
+
+
+def test_the_shell_encoding_of_the_same_signal_says_the_same_thing():
+    """143 is 128 + 15: the same fact, so the same sentence, code and all."""
+    hint = _hint_with_signals()
+
+    text = hint("", returncode=143)
+    assert text == SIGTERM_HINT.replace(
+        "(exit code -15)", "(exit code 143)"
+    ), (
+        f"an rc=143 solve is explained as {text!r}: a caller holding the "
+        "shell's encoding of SIGTERM has the same evidence as one holding "
+        "Popen's -15, and must not fall through to no hint at all"
+    )
+
+
+def test_a_sigkill_names_the_container_limit_and_hedges():
+    """-9 leaves even less than -15: the box's limit is the ordinary why."""
+    hint = _hint_with_signals()
+
+    text = hint("", returncode=-9)
+    assert text == SIGKILL_HINT, (
+        f"an rc=-9 solve is explained as {text!r}: a child killed outright "
+        "wrote no marker either, and the container's own limit is the thing "
+        "a reader can act on"
+    )
+    assert text != SIGTERM_HINT, (
+        "a SIGTERM and a SIGKILL get the same sentence: the second is the "
+        "one that can name memory, and the first one must not"
+    )
+    assert hint("", returncode=137) == SIGKILL_HINT.replace(
+        "(exit code -9)", "(exit code 137)"
+    ), "the shell encoding of SIGKILL (137) is not read as the same signal"
+
+
+def test_an_ordinary_exit_code_still_reads_the_childs_words():
+    """Every code this build knows is left to the text it already matched."""
+    hint = _hint_with_signals()
+
+    assert hint(TRIP_LOG, returncode=3) == hint(TRIP_LOG), (
+        "the ceiling's own exit 3 was rewritten as a signal: a trip writes "
+        "the marker, so it is never one of these"
+    )
+    assert hint(PREFLIGHT_LOG, returncode=2) == hint(PREFLIGHT_LOG), (
+        "the pre-flight refusal's exit 2 was rewritten as a signal"
+    )
+    for code in (0, 1, 2, 3, None):
+        assert hint(CRASH_LOG, returncode=code) is None, (
+            f"rc={code} over an unrecognised crash produced a hint: only a "
+            "signalled child gets that sentence, or every real error would "
+            "arrive wearing it"
+        )
+
+
+def test_a_child_killed_by_sigterm_reaches_the_card_as_a_signal():
+    """End to end over a REAL child: the code the parent measured, used."""
+    child = (
+        "import os, signal, sys\n"
+        "print('step 41: march')\n"
+        "sys.stdout.flush()\n"
+        "os.kill(os.getpid(), signal.SIGTERM)\n"
+    )
+    job = _job(child)
+
+    assert job.run() == "failed", (
+        f"a child that killed itself ends as {job.status!r}, not failed"
+    )
+    assert job.returncode == -15, (
+        f"the parent measured {job.returncode!r} for a SIGTERM: the sentence "
+        "under the verdict is built from that number, so it has to be the "
+        "signal itself (-15), not the shell's encoding and not a guess"
+    )
+    assert "step 41: march" in job.log, (
+        "the child's line never reached the log"
+    )
+    assert _hint_with_signals()(job.log, job.returncode) == SIGTERM_HINT, (
+        "a real signalled child's own log plus its return code does not "
+        "produce the SIGTERM sentence: the card falls back to the verdict "
+        "with no cause under it, which is the defect these tests are for"
+    )
+
+
+def test_the_verdict_under_the_log_panel_names_the_signal():
+    """The sentence a reader actually sees, for the measured rc=-15 run."""
+    failure = _failure_branch()
+    state = _Holder(
+        solve_log="", solve_log_style=_constant("_SOLVE_LOG_HIDDEN")
+    )
+
+    failure(
+        state,
+        _DeadJob(
+            "step 41: march\nstep 42: march\n",
+            returncode=-15,
+            elapsed=4.3,
+            lines=["step 41: march", "step 42: march"],
+        ),
+        "failed",
+        "4.3",
+    )
+
+    assert state.solve_status == (
+        "solve failed after 4.3 s (rc=-15) - the page on screen is still the "
+        "previous dump\n"
+        "hint: the solve was stopped by a signal from outside the process "
+        "(exit code -15): it did not reach its own memory ceiling - a ceiling "
+        "trip writes a marker and exits 3, and neither happened - and it is "
+        "not a model or geometry error; something outside the child ended the "
+        "run"
+    ), (
+        f"the panel reads {state.solve_status!r}: this is the screen the "
+        "4.33 s run produced - a verdict and a return code - and the reader "
+        "was given no cause to act on"
+    )
+    assert state.solve_log == "step 41: march\nstep 42: march", (
+        f"the panel carries {state.solve_log!r}: the child's own lines stay "
+        "the evidence, and the hint is the ONE line added under the verdict"
     )

@@ -12478,6 +12478,51 @@ _SOLVE_LOG_STYLE = (
 _SOLVE_LOG_HIDDEN = "display: none;"
 
 
+#: The TWO sentences a solve that a SIGNAL from OUTSIDE the process ended gets,
+#: kept as module-level literals so a test can pin the words the reader acts on
+#: instead of rebuilding them from this file's own f-string
+#: (tests/test_solve_log_panel.py). ``{rc}`` is the only variable part: the
+#: return code the PARENT measured (``SolveJob.returncode``, :15588).
+#:
+#: WHY they exist. A solve child of this build was measured dying at 4.33 s
+#: with rc=-15 (shell encoding 143), a 350 MB peak RSS inside a 4 GB cgroup,
+#: and ``oom_kill=0`` in that container's memory.events - nothing about that
+#: run ran out of memory. This build's own ceiling never fired either: the flag
+#: is only sent below a 2000 MB limit (``_solve_mem_ceiling_mb``, :12730)
+#: and a trip writes a marker and exits 3
+#: (evidence/termination/run_build_A.py:443-455). So the marker path was never
+#: taken, the run wrote no npz AND no sentence, and a reader who pressed Solve
+#: got a verdict with no cause in it.
+#:
+#: WHY the wording is what it is. Nothing here says "out of memory" for the
+#: SIGTERM case: the evidence says the opposite, and a cause this process
+#: cannot prove must not be printed as one. Nothing names a host watchdog
+#: either - that is the likeliest account of that run, not something this
+#: process observed - so the sentence states only what the parent DID measure:
+#: a signal, from outside, with that exit code. The SIGKILL sentence is the one
+#: that can name memory, and it hedges ("usually"): a killed child leaves a
+#: bare return code and the container's own limit is the ordinary reason for
+#: it, but the ceiling this build chose is a different thing and the sentence
+#: says so. Neither sentence quotes a peak RSS: this app measures none per
+#: child, and ``resource.getrusage(RUSAGE_CHILDREN).ru_maxrss`` - the one
+#: number to hand - is the maximum over EVERY child this process ever waited
+#: for, so it would print some earlier run's figure under this run's verdict
+#: (rejected for that reason, not for want of a source).
+_SOLVE_HINT_STOPPED_FROM_OUTSIDE = (
+    "the solve was stopped by a signal from outside the process "
+    "(exit code {rc}): it did not reach its own memory ceiling - a ceiling "
+    "trip writes a marker and exits 3, and neither happened - and it is not "
+    "a model or geometry error; something outside the child ended the run"
+)
+_SOLVE_HINT_KILLED_FROM_OUTSIDE = (
+    "the solve was killed outright by a signal from outside the process "
+    "(exit code {rc}): a run that reaches its own memory ceiling stops "
+    "itself, writes a marker and exits 3, so a signal this direct is "
+    "usually the container's own memory limit killing the process rather "
+    "than the ceiling this build chose"
+)
+
+
 # The FAILURE CAUSES this build can name, and WHY so few. The child's own last
 # screen is on the card already (``state.solve_log``), but "No module named
 # 'emfit_core'" is a fact about how the SERVER was launched rather than about
@@ -12510,15 +12555,33 @@ _SOLVE_LOG_HIDDEN = "display: none;"
 # ANYTHING ELSE returns None, deliberately: a hint is a claim about the
 # operator's machine, and a wrong one sends the reader after a fix that is not
 # theirs - the child's own words are still on the card for that case.
-def _solve_failure_hint(log_text) -> str | None:
+def _solve_failure_hint(log_text, returncode=None) -> str | None:
     """One sentence naming a KNOWN cause of a failed solve, else ``None``.
 
     A PURE function over the child's combined output, so it is testable without
     a job, a process or a page: the caller hands over ``SolveJob.log`` and puts
     what comes back under the verdict. ``None`` means "this build has nothing to
     add", which is what keeps the card from guessing at a cause it cannot name.
+
+    ``returncode`` is ``SolveJob.returncode``, optional because the cases that
+    need it are the ones that leave NO words of their own: a signal from
+    outside ends the child mid-line, so its last screen names nothing and the
+    one piece of evidence there is, is the code the parent measured
+    (``SolveJob._finish``, :15588). It is read BEFORE any pattern in the
+    text on purpose - a return code is a measurement, a matched line is an
+    inference - and the two memory causes named below exit 2 and 3 of their own
+    accord (evidence/termination/run_build_A.py:3767-3772, :443-455), so a
+    signal can never be one of those arriving late.
     """
     text = str(log_text or "")
+    # 143 and 137 are the SHELL encodings of the same two signals (128 + 15 and
+    # 128 + 9): Popen reports -15/-9 for a child that was signalled, but a
+    # caller holding the encoded form has the same fact in its hands, and
+    # neither number can mean anything else here.
+    if returncode in (-15, 143):
+        return _SOLVE_HINT_STOPPED_FROM_OUTSIDE.format(rc=returncode)
+    if returncode in (-9, 137):
+        return _SOLVE_HINT_KILLED_FROM_OUTSIDE.format(rc=returncode)
     if (
         "No module named 'emfit_core'" in text
         or "emfit_core exists on disk but could not be imported" in text
@@ -19964,9 +20027,11 @@ def run_web_vis(
             blob = "" if shown else f"\n{job.log[-400:]}"
             # WHY it died, when this build recognises the cause: the child's
             # own words say what failed, not which launch or which box to
-            # change (_solve_failure_hint, :12432). ONE line under the
-            # verdict, so the panel above keeps the whole screen it had.
-            hint = _solve_failure_hint(job.log)
+            # change (_solve_failure_hint, :12558). The return code goes
+            # with them because a run a SIGNAL ended leaves no words at all
+            # (:12511). ONE line under the verdict, so the panel above
+            # keeps the whole screen it had.
+            hint = _solve_failure_hint(job.log, job.returncode)
             state.solve_status = (
                 f"solve {status} after {elapsed} s (rc={job.returncode}) - "
                 f"the page on screen is "
