@@ -12407,6 +12407,56 @@ _SOLVE_LOG_STYLE = (
 _SOLVE_LOG_HIDDEN = "display: none;"
 
 
+# The two FAILURE CAUSES this build can name, and WHY only two. The child's own
+# last screen is on the card already (``state.solve_log``), but "No module
+# named 'emfit_core'" is a fact about how the SERVER was launched rather than
+# about the model, and a reader should not have to know that to act on it. Both
+# causes below are measured (DR-55): an interpreter that cannot reach the
+# compiled kernel (emfit/evolve.py:260) and a solver that refuses its own
+# memory ceiling before the first step
+# (evidence/termination/run_build_A.py:3767-3772, exit 2). The launch the
+# first of those names is NOT the one the documents give: RUN.md and
+# docs/kb/WORK/run.md:33-58 both carry only
+# ``PYTHONPATH=. python3 server/poc_app.py``, which puts the repository
+# root - never the venv - on the path, and WORK/run.md:86-87 adds that
+# ``.venv/bin/python`` is stale, so the venv is not the interpreter
+# either. The compiled kernel is in ``.venv/lib/python3.12/site-packages``
+# (measured: with that directory on PYTHONPATH the child gets past the
+# import and reaches the solver's own mem-ceiling refusal, without it it
+# dies at import), so the hint names a command the documents do not - and
+# says which part is its own, so the reader can tell an addition from a quote.
+#
+# ANYTHING ELSE returns None, deliberately: a hint is a claim about the
+# operator's machine, and a wrong one sends the reader after a fix that is not
+# theirs - the child's own words are still on the card for that case.
+def _solve_failure_hint(log_text) -> str | None:
+    """One sentence naming a KNOWN cause of a failed solve, else ``None``.
+
+    A PURE function over the child's combined output, so it is testable without
+    a job, a process or a page: the caller hands over ``SolveJob.log`` and puts
+    what comes back under the verdict. ``None`` means "this build has nothing to
+    add", which is what keeps the card from guessing at a cause it cannot name.
+    """
+    text = str(log_text or "")
+    if (
+        "No module named 'emfit_core'" in text
+        or "emfit_core exists on disk but could not be imported" in text
+    ):
+        return (
+            "the child interpreter cannot import the compiled kernel: "
+            "start the app with the venv site-packages on PYTHONPATH "
+            "(PYTHONPATH=.:.venv/lib/python3.12/site-packages python3 "
+            "server/poc_app.py), which RUN.md's PYTHONPATH=. alone does not do"
+        )
+    if "--mem-ceiling-mb" in text and "is above the container limit" in text:
+        return (
+            "the requested memory ceiling is above the limit of the "
+            "environment the app runs in, so the solver refuses before it "
+            "starts"
+        )
+    return None
+
+
 #: The sequence number every solve's OWN artefact name is built from. Two
 # presses must not land on one file: the second would overwrite the first, and
 # the page would then report "solved -> x.json" over numbers nobody had read.
@@ -19541,6 +19591,16 @@ def run_web_vis(
         if status != "ok":
             # The OLD page stays live and drawable: a failed solve is a message,
             # not a broken viewer.
+            # The panel is UNHIDDEN here as well as from the tick: a solve
+            # that dies on its first import is over in about two seconds,
+            # and the tick is every half second, so the last tick can land
+            # BEFORE the death and leave the log hidden on the one screen
+            # that explains it. ``log_lines`` is the same window the tick
+            # shows, so this publishes the same text, never a second format
+            # of it.
+            if job.log_lines:
+                state.solve_log = "\n".join(job.log_lines)
+                state.solve_log_style = _SOLVE_LOG_STYLE
             # The child's own last lines are ALREADY on screen: the same
             # watcher published them into the log panel (_tick_solve_status,
             # every half second), so appending the 400-character blob here as
@@ -19552,10 +19612,16 @@ def run_web_vis(
             # the child's output the reader would ever see.
             shown = str(getattr(state, "solve_log", "") or "").strip()
             blob = "" if shown else f"\n{job.log[-400:]}"
+            # WHY it died, when this build recognises the cause: the child's
+            # own words say what failed, not which launch or which box to
+            # change (_solve_failure_hint, :12432). ONE line under the
+            # verdict, so the panel above keeps the whole screen it had.
+            hint = _solve_failure_hint(job.log)
             state.solve_status = (
                 f"solve {status} after {elapsed} s (rc={job.returncode}) - "
                 f"the page on screen is "
                 f"still the previous dump{blob}"
+                + (f"\nhint: {hint}" if hint else "")
             )
             return
         try:

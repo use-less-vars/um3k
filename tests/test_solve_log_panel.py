@@ -369,13 +369,23 @@ def _failure_branch():
     wrapper = "def _failure(state, job, status, elapsed):\n" + textwrap.indent(
         textwrap.dedent(segment), "    "
     )
-    namespace: dict = {}
+    namespace: dict = {
+        "_SOLVE_LOG_STYLE": _constant("_SOLVE_LOG_STYLE"),
+        "_SOLVE_LOG_HIDDEN": _constant("_SOLVE_LOG_HIDDEN"),
+    }
+    _exec_def("_solve_failure_hint", namespace)
     exec(compile(wrapper, "<failure>", "exec"), namespace)
     return namespace["_failure"]
 
 
 class _CrashedJob:
+    """A dead job with nothing to say: what the failure branch reads of it."""
+
     returncode = 2
+    #: The branch unhides the panel from ``log_lines``. A job that died before
+    #: its first line leaves this empty, which is exactly the case the
+    #: 400-character blob is kept for.
+    log_lines = ()
 
     def __init__(self, log):
         self.log = log
@@ -416,4 +426,262 @@ def test_a_failure_before_the_first_tick_still_carries_the_output():
         f"the failure sentence is {state.solve_status!r}: with an empty log "
         "panel the child's last 400 characters are the ONLY thing the reader "
         "has to go on, and they are missing"
+    )
+
+
+# =============================================================================
+# The hint: WHY it died, when this build can name the cause
+# =============================================================================
+
+
+#: The child's own words for each measured cause, verbatim: the import failure
+#: is emfit/evolve.py:260's, the refusal is
+#: evidence/termination/run_build_A.py:3767-3772's (exit 2).
+EMFIT_LOG = (
+    "Traceback (most recent call last):\n"
+    '  File "emfit/evolve.py", line 258, in _load\n'
+    "import emfit_core\n"
+    "ModuleNotFoundError: No module named 'emfit_core'\n"
+)
+MEM_LOG = (
+    "REFUSED: --mem-ceiling-mb 2000.0 MB is above the container limit "
+    "512.0 MB, so the solver does not start\n"
+)
+
+
+def test_the_hint_names_the_two_measured_causes():
+    """The pure function: both causes get a sentence, junk gets nothing."""
+    hint = _exec_def("_solve_failure_hint", {})
+
+    assert hint(EMFIT_LOG) == (
+        "the child interpreter cannot import the compiled kernel: "
+        "start the app with the venv site-packages on PYTHONPATH "
+        "(PYTHONPATH=.:.venv/lib/python3.12/site-packages python3 "
+        "server/poc_app.py), which RUN.md's PYTHONPATH=. alone does not do"
+    ), "the missing-kernel hint is not the venv launch RUN.md leaves out"
+    assert hint("emfit_core exists on disk but could not be imported") == (
+        "the child interpreter cannot import the compiled kernel: "
+        "start the app with the venv site-packages on PYTHONPATH "
+        "(PYTHONPATH=.:.venv/lib/python3.12/site-packages python3 "
+        "server/poc_app.py), which RUN.md's PYTHONPATH=. alone does not do"
+    ), (
+        "the same cause in evolve.py:260's own wording is not recognised: "
+        "the reader gets the log and no name for what it means"
+    )
+    assert hint(MEM_LOG) == (
+        "the requested memory ceiling is above the limit of the "
+        "environment the app runs in, so the solver refuses before it "
+        "starts"
+    ), "the refusal's hint is not the fix the refusal is asking for"
+
+    for text in (
+        "",
+        None,
+        CRASH_LOG,
+        "emfit_core is fine, honestly",
+        "--mem-ceiling-mb 2000 MB, with no limit named anywhere",
+    ):
+        assert hint(text) is None, (
+            f"a hint was invented for {text!r}: a hint is a claim about the "
+            "operator's machine, and a wrong one sends the reader after a fix "
+            "that is not theirs. The child's own words are on the card."
+        )
+
+
+class _DeadJob:
+    """A job that has LANDED: the things ``_poll_solve`` reads of it."""
+
+    def __init__(self, log, returncode=1, status="failed", elapsed=3.0,
+                 lines=()):
+        self.log = log
+        self.returncode = returncode
+        self.status = status
+        self.elapsed_seconds = elapsed
+        self.log_lines = list(lines)
+        self.last_line = self.log_lines[-1] if self.log_lines else ""
+
+    def poll(self):
+        return self.status
+
+
+def _poll():
+    """The WHOLE ``_poll_solve``, exec'd over a stand-in page and job slot.
+
+    The shipped function is a closure (``nonlocal nt, nt_x``), so its source
+    is wrapped in one enclosing ``def`` that owns those two names. Everything
+    else it reads - the page, the state, the panel loaders, the repaint - is a
+    stand-in: this test is about the two sentences the watcher writes, not
+    about the page it repaints.
+    """
+    segment = ast.get_source_segment(TEXT, _node("_poll_solve"))
+    wrapper = (
+        "def _make():\n"
+        "    nt = nt_x = None\n"
+        + textwrap.indent(textwrap.dedent(segment), "    ")
+        + "\n    return _poll_solve\n"
+    )
+    state = _Holder(
+        solve_log="",
+        solve_log_style=_constant("_SOLVE_LOG_HIDDEN"),
+        frame="0",
+    )
+    page = {"info": {}}
+    namespace = {
+        "sys": sys,
+        "Path": Path,
+        "state": state,
+        "solve": {},
+        "page": page,
+        "LIVE_DUMP": "probes/live_run.npz",
+        "reload_page": lambda path: page,
+        "apply_page": lambda loaded, dump: {"new_path": "runs/live_run.npz"},
+        "ctx": _Holder(available=True, recompute_available=lambda: None),
+        "handles": {},
+        "_load_s_params_panel": lambda: None,
+        "_load_far_field_panel": lambda: None,
+        "_load_confidence_panel": lambda: None,
+        "_is_vis": lambda info: False,
+        "_rebuild_sheets": lambda: None,
+        "_show": lambda frame, mode, site: None,
+        "_push_still": lambda view, site: True,
+        "_solve_refused_page": lambda nt, available: False,
+        "_tick_solve_status": lambda job: None,
+        "_SOLVE_LOG_STYLE": _constant("_SOLVE_LOG_STYLE"),
+        "_SOLVE_LOG_HIDDEN": _constant("_SOLVE_LOG_HIDDEN"),
+    }
+    _exec_def("_solve_failure_hint", namespace)
+    exec(compile(wrapper, "<poll>", "exec"), namespace)
+    return namespace["_make"](), namespace
+
+
+def test_a_missing_kernel_unhides_the_log_and_names_the_launch():
+    """The panel the reader needs, and the ONE launch that explains it.
+
+    A solve that dies on its first import is over in about two seconds, and
+    the tick is every half second: the last tick can land before the death and
+    leave the log hidden on the one screen that explains it. The verdict has
+    to unhide it, and say which launch is being asked for.
+    """
+    poll, namespace = _poll()
+    state = namespace["state"]
+    namespace["solve"]["job"] = _DeadJob(
+        EMFIT_LOG,
+        returncode=1,
+        status="failed",
+        elapsed=3.0,
+        lines=[
+            "import emfit_core",
+            "ModuleNotFoundError: No module named 'emfit_core'",
+        ],
+    )
+
+    poll()
+
+    assert state.solve_log == (
+        "import emfit_core\n"
+        "ModuleNotFoundError: No module named 'emfit_core'"
+    ), (
+        f"the card carries {state.solve_log!r}: the child's own words are the "
+        "evidence for the hint under them, and the panel is where they live"
+    )
+    assert state.solve_log_style == _constant("_SOLVE_LOG_STYLE"), (
+        f"the panel is still styled {state.solve_log_style!r} on a failed "
+        "solve: the log exists in the state and nowhere on screen"
+    )
+    assert state.solve_status == (
+        "solve failed after 3.0 s (rc=1) - the page on screen is still the "
+        "previous dump\n"
+        "hint: the child interpreter cannot import the compiled kernel: "
+        "start the app with the venv site-packages on PYTHONPATH "
+        "(PYTHONPATH=.:.venv/lib/python3.12/site-packages python3 "
+        "server/poc_app.py), which RUN.md's PYTHONPATH=. alone does not do"
+    ), (
+        f"the verdict is {state.solve_status!r}: what failed is the child's "
+        "own words, which launch fixes it is this build's to say"
+    )
+
+
+def test_a_refused_memory_ceiling_says_which_limit_was_asked_for():
+    """The refusal names a box, not a model: the hint has to place it.
+
+    The refusal is ONE physical line of ~180 characters, so the panel's
+    160-character trim can cut the half that matters: the hint reads
+    ``job.log``, the untrimmed tail, not the panel.
+    """
+    failure = _failure_branch()
+    state = _Holder(
+        solve_log="", solve_log_style=_constant("_SOLVE_LOG_HIDDEN")
+    )
+
+    failure(
+        state,
+        _DeadJob(
+            MEM_LOG,
+            returncode=2,
+            status="crashed",
+            elapsed=0.4,
+            lines=[MEM_LOG.strip()],
+        ),
+        "crashed",
+        "0.4",
+    )
+
+    assert state.solve_status == (
+        "solve crashed after 0.4 s (rc=2) - the page on screen is still the "
+        "previous dump\n"
+        "hint: the requested memory ceiling is above the limit of the "
+        "environment the app runs in, so the solver refuses before it starts"
+    ), (
+        f"the verdict is {state.solve_status!r}: a refusal that never started "
+        "a solve is a fact about the environment, and the reader cannot see "
+        "that in the child's own words"
+    )
+    assert state.solve_log == MEM_LOG.strip(), (
+        f"the panel carries {state.solve_log!r}: the refusal's own line is "
+        "the evidence for the hint"
+    )
+    assert state.solve_log_style == _constant("_SOLVE_LOG_STYLE"), (
+        f"the panel is styled {state.solve_log_style!r} with a line to show"
+    )
+
+
+def test_an_unrecognised_failure_adds_no_hint():
+    """No cause this build can name: the child's words and nothing else."""
+    failure = _failure_branch()
+    state = _Holder(solve_log="step 28\nstep 29\nTraceback (most recently)")
+
+    failure(state, _CrashedJob(CRASH_LOG), "failed", "3.0")
+
+    assert "\nhint:" not in state.solve_status, (
+        "a hint was invented for an unrecognised crash: "
+        f"{state.solve_status!r}"
+    )
+    assert state.solve_status == (
+        "solve failed after 3.0 s (rc=2) - the page on screen is still the "
+        "previous dump"
+    ), f"the failure sentence changed shape: {state.solve_status!r}"
+
+
+def test_a_solved_run_says_so_and_leaves_the_panel_alone():
+    """The OK path is untouched: no hint line, no log written by the verdict."""
+    poll, namespace = _poll()
+    state = namespace["state"]
+    namespace["solve"]["job"] = _DeadJob(
+        "step 29\ndone\n", returncode=0, status="ok", elapsed=1.2
+    )
+
+    poll()
+
+    assert state.solve_status == (
+        "solved -> live_run.npz in 1.2 s; result loaded"
+    ), (
+        f"the success sentence is {state.solve_status!r}: a solved run must "
+        "not grow a second line about a cause"
+    )
+    assert state.solve_log == "", (
+        f"the success path wrote {state.solve_log!r} into the panel: the log "
+        "belongs to what is running, and nothing is"
+    )
+    assert state.solve_log_style == _constant("_SOLVE_LOG_HIDDEN"), (
+        f"the success path unhid the panel: {state.solve_log_style!r}"
     )
